@@ -1,5 +1,4 @@
 import json
-import time
 from typing import Optional, List, Dict, Any
 
 import utils.config as config
@@ -474,10 +473,15 @@ class BotManagementMixin(ApplicationManagerProtocol):
     def get_user_authorized_apps(
         self, user_id: SnowflakeID
     ) -> List[UserAuthorizedApplication]:
-        now_ms = int(time.time() * 1000)
+        # M12: expired or revoked tokens must never surface as authorized.
+        # The SQL WHERE clause is the primary filter; the Python loop below
+        # is defense-in-depth so a row that slips past the query (quirky
+        # driver, clock skew between layers) can never leak an expired or
+        # revoked grant into the authorized list.
+        now_ms = self._get_timestamp()
         rows = self._db.fetch_all(
             """SELECT t.id, t.application_id, t.scopes, t.created_at, t.expires_at,
-                      t.last_used_at,
+                      t.revoked, t.last_used_at,
                       a.name as app_name, a.icon_url as app_icon
                FROM app_oauth_tokens t
                JOIN app_applications a ON t.application_id = a.id
@@ -486,18 +490,30 @@ class BotManagementMixin(ApplicationManagerProtocol):
             (user_id, now_ms),
         )
 
-        return [
-            UserAuthorizedApplication(
-                id=row["id"],
-                application_id=row["application_id"],
-                application_name=row["app_name"],
-                application_icon=row["app_icon"],
-                scopes=json.loads(row["scopes"]) if row["scopes"] else [],
-                authorized_at=row["created_at"],
-                last_used_at=row["last_used_at"],
+        apps = []
+        for row in rows:
+            try:
+                revoked = int(row["revoked"]) if row["revoked"] is not None else 0
+            except (TypeError, ValueError):
+                continue  # fail closed: unreadable flag -> not authorized
+            try:
+                expires_at = int(row["expires_at"])
+            except (TypeError, ValueError):
+                continue  # fail closed: no parseable expiry -> not authorized
+            if revoked or expires_at <= now_ms:
+                continue
+            apps.append(
+                UserAuthorizedApplication(
+                    id=row["id"],
+                    application_id=row["application_id"],
+                    application_name=row["app_name"],
+                    application_icon=row["app_icon"],
+                    scopes=json.loads(row["scopes"]) if row["scopes"] else [],
+                    authorized_at=row["created_at"],
+                    last_used_at=row["last_used_at"],
+                )
             )
-            for row in rows
-        ]
+        return apps
 
     def revoke_authorized_app(
         self, token_id: SnowflakeID, user_id: SnowflakeID

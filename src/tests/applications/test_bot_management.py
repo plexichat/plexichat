@@ -177,3 +177,120 @@ class TestBotManagement:
         assert row is not None
         assert row["last_used_at"] is not None
         assert row["last_used_at"] > 0
+
+
+@pytest.mark.applications
+class TestAuthorizedAppsExpiryFiltering:
+    """M12: expired/revoked OAuth tokens must not be listed as authorized."""
+
+    def _mint_token(self, app_manager, test_user, app):
+        from src.core.applications.oauth.flows import OAuth2Flow
+        from src.core.applications.oauth.tokens import generate_client_secret
+
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        client_secret, secret_hash = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (secret_hash, app.id),
+        )
+        return flow.exchange_code(
+            app.id, client_secret, code.code, "https://example.com/callback"
+        )
+
+    def test_valid_token_is_listed(self, app_manager, test_user):
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="Authorized App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        token = self._mint_token(app_manager, test_user, app)
+
+        listed = app_manager.get_user_authorized_apps(test_user.id)
+
+        assert [entry.id for entry in listed] == [token.id]
+
+    def test_expired_token_is_not_listed(self, app_manager, test_user):
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="Expired Grant App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        token = self._mint_token(app_manager, test_user, app)
+        app_manager._db.execute(
+            "UPDATE app_oauth_tokens SET expires_at = ? WHERE id = ?",
+            (app_manager._get_timestamp() - 1000, token.id),
+        )
+
+        assert app_manager.get_user_authorized_apps(test_user.id) == []
+
+    def test_revoked_token_is_not_listed(self, app_manager, test_user):
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="Revoked Grant App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        token = self._mint_token(app_manager, test_user, app)
+        app_manager._db.execute(
+            "UPDATE app_oauth_tokens SET revoked = 1, expires_at = ? WHERE id = ?",
+            (app_manager._get_timestamp() + 604800000, token.id),
+        )
+
+        assert app_manager.get_user_authorized_apps(test_user.id) == []
+
+    def test_python_layer_drops_rows_past_sql_filter(self):
+        """Even if the query returned stale rows, expired (<= now) and
+        revoked grants must never surface as authorized."""
+        import json
+        from unittest.mock import MagicMock
+
+        from src.core.applications.manager.bot_management import BotManagementMixin
+
+        now_ms = 1_700_000_000_000
+
+        class AuthzTestManager(BotManagementMixin):
+            def __init__(self, db):
+                self._db = db
+
+            def _get_timestamp(self):
+                return now_ms
+
+        def row(token_id, expires_at, revoked):
+            return {
+                "id": token_id,
+                "application_id": 10,
+                "scopes": json.dumps(["identify"]),
+                "created_at": now_ms - 1000,
+                "expires_at": expires_at,
+                "revoked": revoked,
+                "last_used_at": None,
+                "app_name": "Test App",
+                "app_icon": None,
+            }
+
+        db = MagicMock()
+        db.fetch_all.return_value = [
+            row(1, now_ms + 1000, 0),  # valid
+            row(2, now_ms - 1000, 0),  # expired
+            row(3, now_ms, 0),  # boundary: expires exactly now
+            row(4, now_ms + 1000, 1),  # revoked but unexpired
+        ]
+
+        listed = AuthzTestManager(db).get_user_authorized_apps(100)
+
+        assert [entry.id for entry in listed] == [1]
+        sql = db.fetch_all.call_args[0][0]
+        assert "t.revoked = 0" in sql
+        assert "t.expires_at > ?" in sql
