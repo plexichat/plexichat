@@ -114,6 +114,58 @@ class TestDeleteRaceMapping:
         assert excinfo.value.status_code == 404
 
 
+class TestCreateRateLimitAtomic:
+    """L3: the sticker-create limiter must be a single atomic increment.
+
+    The old implementation read the counter (increment 0), compared it
+    against the budget, then incremented (+1) — two separate storage calls
+    that let concurrent requests both read the same sub-limit value and
+    both pass. increment_custom_usage is atomic under the storage lock, so
+    the check and the charge must happen in ONE call.
+    """
+
+    def _install_ratelimit(self, monkeypatch, manager):
+        monkeypatch.setattr(ratelimit, "is_setup", lambda: True)
+        monkeypatch.setattr(ratelimit, "get_manager", lambda: manager)
+
+    def test_over_budget_rejects_with_single_increment(self, monkeypatch):
+        """The (max+1)th request in the window is rejected."""
+        from src.api.routes.stickers import _check_sticker_create_rate_limit
+
+        calls = []
+
+        class _FakeManager:
+            def increment_custom_usage(self, key, field, amount, ttl=86400):
+                calls.append((key, field, amount, ttl))
+                return 21  # one past the 20/min budget
+
+        self._install_ratelimit(monkeypatch, _FakeManager())
+
+        with pytest.raises(HTTPException) as excinfo:
+            _check_sticker_create_rate_limit(user_id=7)
+        assert excinfo.value.status_code == 429
+        # Atomic: exactly one +1 increment, never a separate read call.
+        assert len(calls) == 1
+        assert calls[0][2] == 1
+
+    def test_at_budget_passes_with_single_increment(self, monkeypatch):
+        """Requests 1..max pass; only the (max+1)th is cut off."""
+        from src.api.routes.stickers import _check_sticker_create_rate_limit
+
+        calls = []
+
+        class _FakeManager:
+            def increment_custom_usage(self, key, field, amount, ttl=86400):
+                calls.append((key, field, amount, ttl))
+                return 20  # exactly at budget
+
+        self._install_ratelimit(monkeypatch, _FakeManager())
+
+        _check_sticker_create_rate_limit(user_id=7)
+        assert len(calls) == 1
+        assert calls[0][2] == 1
+
+
 class TestUsageRateLimit:
     @pytest.mark.asyncio
     async def test_send_usage_429_when_limited(self, stub_api, monkeypatch):

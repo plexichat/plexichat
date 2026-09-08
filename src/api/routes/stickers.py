@@ -66,9 +66,15 @@ def _check_sticker_create_rate_limit(user_id: int) -> None:
     now_seconds = int(time.time())
     minute_window = now_seconds - (now_seconds % 60)
     key = f"stickers:create:minute:{user_id}:{minute_window}"
-    count = manager.increment_custom_usage(key, "count", 0, ttl=120)
+    # L3: a check-then-increment (read 0, then +1) lets concurrent requests
+    # both read the same sub-limit count and both pass, so the effective
+    # budget is N*limit under parallelism. increment_custom_usage is atomic
+    # under the storage lock — do the increment in ONE call and treat the
+    # returned counter as authoritative: requests 1..max pass, the (max+1)th
+    # is rejected.
+    count = manager.increment_custom_usage(key, "count", 1, ttl=120)
     max_per_minute = 20
-    if count >= max_per_minute:
+    if count > max_per_minute:
         raise HTTPException(
             status_code=429,
             detail={
@@ -78,7 +84,6 @@ def _check_sticker_create_rate_limit(user_id: int) -> None:
                 }
             },
         )
-    manager.increment_custom_usage(key, "count", 1, ttl=120)
 
 
 async def _dispatch_stickers_update(server_id: int, user_id: int):
