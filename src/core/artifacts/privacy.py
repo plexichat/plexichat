@@ -11,7 +11,7 @@ link to that content is gone.
 """
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import utils.logger as logger
 
@@ -28,6 +28,49 @@ def _parse_json(text: Any) -> Any:
         return json.loads(text)
     except (ValueError, TypeError):
         return None
+
+
+# Column order of the owned-artifact SELECT in anonymize_user_artifacts and of
+# the voice_calls SELECT below. Used to read tuple-shaped rows (raw cursor
+# rows from drivers that do not return mappings) positionally.
+_OWNED_ARTIFACT_COLUMNS: Tuple[str, ...] = (
+    "id",
+    "artifact_type",
+    "payload",
+    "server_id",
+)
+_VOICE_CALL_COLUMNS: Tuple[str, ...] = (
+    "id",
+    "artifact_id",
+    "initiator_id",
+    "consented_participants",
+)
+
+
+def _row_get(
+    row: Any, key: str, default: Any = None, columns: Tuple[str, ...] = ()
+) -> Any:
+    """Read a DB row field across dict, Row-like, tuple, and object shapes.
+
+    ``db.fetch_all`` normalizes rows to dicts, but tuple-shaped rows (raw
+    cursor rows or other backends) can still reach here. Mapping-only access
+    would raise TypeError and abort anonymization before title/summary are
+    overwritten, leaving PII in place (M21).
+    """
+    if isinstance(row, dict):
+        return row.get(key, default)
+    if hasattr(row, "keys"):
+        try:
+            return row[key]
+        except Exception:
+            return default
+    if isinstance(row, (list, tuple)):
+        if columns and key in columns:
+            idx = columns.index(key)
+            if idx < len(row):
+                return row[idx]
+        return default
+    return getattr(row, key, default)
 
 
 _SCRUB_TEXT_KEYS = {
@@ -62,24 +105,31 @@ def _scrub_transcript_text(payload: Any) -> Optional[str]:
     return json.dumps(_scrub_node(data), ensure_ascii=False)
 
 
-def _scrub_owned_artifact_row(db, row: Dict[str, Any]) -> bool:
+def _scrub_owned_artifact_row(db, row: Any) -> bool:
     """Remove a user's identity from one owned artifact row, in place.
 
     Sets ``author_id`` to the sentinel anonymized id, blanks title/summary,
     and strips inline transcript/document text from the ``payload``. Shared
     code path for the anonymize policy and for hard erasure of content that
-    must survive because other members co-own it (L22).
+    must survive because other members co-own it (L22). Accepts dict rows as
+    well as tuple-shaped rows (read positionally per _OWNED_ARTIFACT_COLUMNS)
+    so title/summary are overwritten regardless of row shape (M21).
     """
-    artifact_id = row["id"]
+    artifact_id = _row_get(row, "id", columns=_OWNED_ARTIFACT_COLUMNS)
+    if artifact_id is None:
+        logger.error("Failed to anonymize artifact: row has no id")
+        return False
     new_payload: Optional[str] = None
-    if row.get("artifact_type") in (
+    if _row_get(row, "artifact_type", columns=_OWNED_ARTIFACT_COLUMNS) in (
         "transcript",
         "plexiscribe",
         "plexiscript",
         "whiteboard",
         "voice_call",
     ):
-        new_payload = _scrub_transcript_text(row.get("payload"))
+        new_payload = _scrub_transcript_text(
+            _row_get(row, "payload", columns=_OWNED_ARTIFACT_COLUMNS)
+        )
     try:
         if new_payload is not None:
             db.execute(
@@ -157,12 +207,14 @@ def anonymize_user_artifacts(
     artifact_manager = ArtifactManager(db, config)
 
     for row in owned_artifacts:
-        artifact_id = row["id"]
+        artifact_id = _row_get(row, "id", columns=_OWNED_ARTIFACT_COLUMNS)
         # Anonymization deliberately keeps the artifact/media relationship
         # intact: the documented policy preserves rows while removing the
         # user's identity. Hard deletion owns media cleanup through the
         # manager's cascade path below.
-        is_server_shared = row.get("server_id") is not None
+        is_server_shared = (
+            _row_get(row, "server_id", columns=_OWNED_ARTIFACT_COLUMNS) is not None
+        )
         # L22: content shared with a server (SUM docs, shared voice
         # recordings, whiteboards, ...) is co-owned by the server's other
         # members. Even a hard erasure must not delete it out from under
@@ -200,8 +252,17 @@ def anonymize_user_artifacts(
             voice_calls = [
                 row
                 for row in voice_calls
-                if int(row.get("initiator_id") or 0) == user_id
-                or user_id in (_parse_json(row.get("consented_participants")) or [])
+                if int(_row_get(row, "initiator_id", 0, _VOICE_CALL_COLUMNS) or 0)
+                == user_id
+                or user_id
+                in (
+                    _parse_json(
+                        _row_get(
+                            row, "consented_participants", columns=_VOICE_CALL_COLUMNS
+                        )
+                    )
+                    or []
+                )
             ]
     except Exception as e:
         logger.error(
@@ -210,13 +271,15 @@ def anonymize_user_artifacts(
         voice_calls = []
 
     for row in voice_calls:
-        call_id = row["id"]
-        consented = _parse_json(row.get("consented_participants"))
+        call_id = _row_get(row, "id", columns=_VOICE_CALL_COLUMNS)
+        consented = _parse_json(
+            _row_get(row, "consented_participants", columns=_VOICE_CALL_COLUMNS)
+        )
         if not isinstance(consented, list):
             consented = []
         new_consented = [p for p in consented if p != user_id]
         try:
-            if row.get("initiator_id") == user_id:
+            if _row_get(row, "initiator_id", columns=_VOICE_CALL_COLUMNS) == user_id:
                 if anonymize:
                     db.execute(
                         """
@@ -233,7 +296,7 @@ def anonymize_user_artifacts(
                 else:
                     # The linked artifact cascade owns the voice_calls row.
                     # If there is no linked artifact, remove the orphan row.
-                    linked = row.get("artifact_id")
+                    linked = _row_get(row, "artifact_id", columns=_VOICE_CALL_COLUMNS)
                     if linked:
                         # The owned-artifact pass may already have cascaded this
                         # voice_calls row. Only delete a still-existing linked
