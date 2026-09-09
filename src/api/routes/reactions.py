@@ -12,6 +12,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.reactions import ReactionResponse, ReactionUserResponse
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core import ratelimit
+from src.core.reactions.exceptions import InvalidEmojiError
 import utils.logger as logger
 
 router = APIRouter(tags=["Reactions"])
@@ -512,6 +513,15 @@ async def remove_reaction(
             )
 
             return SuccessResponse(success=True, message=None)
+        except InvalidEmojiError:
+            # M5: invalid emoji on remove is a client error (400), not a
+            # server error. Explicit class handler (mirrors the PUT
+            # add_reaction Invalid -> 400 mapping); genuine server errors
+            # still fall through to the generic 500 below.
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid emoji"}},
+            )
         except Exception as e:
             exc_name = type(e).__name__
             if "NotFound" in exc_name:
