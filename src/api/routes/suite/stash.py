@@ -223,6 +223,7 @@ def _grant_response(model_cls: type, grant: Dict[str, Any]) -> Any:
 async def list_items(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, max_length=32),
     search: Optional[str] = Query(None, max_length=200),
     scope: Optional[str] = Query(None, pattern="^(personal|server)$"),
     server_id: Optional[str] = Query(None),
@@ -230,23 +231,42 @@ async def list_items(
     pinned: Optional[bool] = Query(None),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashItemListResponse:
-    """List metadata visible to the current user, with bounded search/paging."""
+    """List metadata visible to the current user, with bounded search/paging.
+
+    ``cursor`` is the opaque ``next_cursor``-style offset issued by the
+    manager's cursor pagination; when present it overrides ``offset`` so
+    clients can walk more than one page with no silent truncation.
+    """
     try:
         parsed_server = int(server_id) if server_id is not None else None
-        items, total = _manager().list_items(
-            current_user.user_id,
-            limit=limit,
-            offset=offset,
-            search=search,
-            scope=scope,
-            server_id=parsed_server,
-            pinned=pinned,
-            collection_id=collection_id,
-        )
+        if cursor is not None:
+            items, total, next_cursor = _manager().list_items_page(
+                current_user.user_id,
+                limit=limit,
+                cursor=cursor,
+                search=search,
+                scope=scope,
+                server_id=parsed_server,
+                pinned=pinned,
+                collection_id=collection_id,
+            )
+            has_more = next_cursor is not None
+        else:
+            items, total = _manager().list_items(
+                current_user.user_id,
+                limit=limit,
+                offset=offset,
+                search=search,
+                scope=scope,
+                server_id=parsed_server,
+                pinned=pinned,
+                collection_id=collection_id,
+            )
+            has_more = offset + len(items) < total
         return _items_response(
             items,
             total=total,
-            has_more=offset + len(items) < total,
+            has_more=has_more,
         )
     except (ValueError, StashValidationError) as exc:
         raise _error(exc) from exc

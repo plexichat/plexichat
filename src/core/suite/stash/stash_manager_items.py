@@ -155,6 +155,7 @@ class StashManagerItems(StashManagerProtocol):
         *,
         limit: int = 50,
         offset: int = 0,
+        cursor: Optional[str] = None,
         search: Optional[str] = None,
         scope: Optional[str] = None,
         server_id: Optional[int] = None,
@@ -162,7 +163,85 @@ class StashManagerItems(StashManagerProtocol):
         collection_id: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         limit = max(1, min(int(limit), 100))
-        offset = max(0, int(offset))
+        offset = self._resolve_list_offset(offset, cursor)
+        return self._query_item_page(
+            user_id,
+            limit=limit,
+            offset=offset,
+            search=search,
+            scope=scope,
+            server_id=server_id,
+            pinned=pinned,
+            collection_id=collection_id,
+        )
+
+    def list_items_page(
+        self,
+        user_id: int,
+        *,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+        search: Optional[str] = None,
+        scope: Optional[str] = None,
+        server_id: Optional[int] = None,
+        pinned: Optional[bool] = None,
+        collection_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, Optional[str]]:
+        """Cursor-paginated item listing.
+
+        ``cursor`` is the opaque ``next_cursor`` value from a previous page
+        (a decimal row offset). ``limit`` is clamped to ``[1, 100]``. Returns
+        ``(items, total, next_cursor)`` where ``next_cursor`` is ``None`` when
+        the page reaches the end, so callers can enumerate every visible item
+        with no silent truncation.
+        """
+        limit = max(1, min(int(limit), 100))
+        offset = self._resolve_list_offset(0, cursor)
+        items, total = self._query_item_page(
+            user_id,
+            limit=limit,
+            offset=offset,
+            search=search,
+            scope=scope,
+            server_id=server_id,
+            pinned=pinned,
+            collection_id=collection_id,
+        )
+        next_cursor: Optional[str] = None
+        if offset + len(items) < total:
+            next_cursor = str(offset + len(items))
+        return items, total, next_cursor
+
+    @staticmethod
+    def _resolve_list_offset(offset: int, cursor: Optional[str]) -> int:
+        """Resolve the effective row offset from ``offset``/``cursor``.
+
+        An explicit ``cursor`` (opaque offset issued as ``next_cursor``)
+        overrides ``offset``. Garbage cursors fail closed with a validation
+        error instead of silently restarting or skipping rows.
+        """
+        if cursor is None:
+            return max(0, int(offset))
+        try:
+            resolved = int(str(cursor).strip())
+        except (TypeError, ValueError) as exc:
+            raise StashValidationError("Invalid pagination cursor") from exc
+        if resolved < 0:
+            raise StashValidationError("Invalid pagination cursor")
+        return resolved
+
+    def _query_item_page(
+        self,
+        user_id: int,
+        *,
+        limit: int,
+        offset: int,
+        search: Optional[str] = None,
+        scope: Optional[str] = None,
+        server_id: Optional[int] = None,
+        pinned: Optional[bool] = None,
+        collection_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         now = int(time.time() * 1000)
         # Keyset-paginate the user's grants (cursor over item_id) so a user
         # with more than one batch of grants still sees every granted item.
