@@ -292,13 +292,33 @@ class ArtifactManager(BaseManager):
         sum_purged = False
         if artifact is not None and artifact.artifact_type == ArtifactType.SUM:
             sum_purged = self._purge_sum_workbook(artifact)
-        # A valid linked SUM purge deletes the workbook and artifact in Sum's
-        # single metadata transaction. Otherwise the repository owns the
-        # standalone artifact-row deletion.
-        deleted = True if sum_purged else delete_artifact(self._db, artifact_id)
+        # L3: the metadata row must be gone before reporting success.
+        # The repository DELETE checks cursor.rowcount (>0 means exactly the
+        # one targeted row was removed); a concurrent second delete matches
+        # zero rows and returns False. A successful SUM workbook purge removes
+        # the artifact row in Sum's own transaction, so verify it disappeared
+        # (falling back to a direct delete if it is still present).
+        if sum_purged:
+            try:
+                still_present = get_artifact(self._db, artifact_id) is not None
+            except Exception:  # pragma: no cover - defensive
+                still_present = False
+            if still_present:
+                deleted = delete_artifact(self._db, artifact_id)
+            else:
+                deleted = True
+        else:
+            deleted = delete_artifact(self._db, artifact_id)
         if deleted and artifact is not None:
             if purge_media:
-                self._purge_artifact_media(artifact)
+                # L3: media cleanup is best-effort and runs only after the
+                # confirmed row delete; media errors never fail the delete.
+                try:
+                    self._purge_artifact_media(artifact)
+                except Exception as exc:  # pragma: no cover - best-effort
+                    logger.debug(
+                        "Media purge failed for artifact %s: %s", artifact.id, exc
+                    )
             if emit_event:
                 self._emit_lifecycle_event("delete", artifact)
         return deleted
@@ -526,8 +546,8 @@ class ArtifactManager(BaseManager):
         Returns the created artifact.
 
         Raises:
-            ValueError: when the attachment size exceeds the configured
-                ``max_artifact_size_mb``.
+            ValueError: when the attachment size is unparseable ("invalid
+                size") or exceeds the configured ``max_artifact_size_mb``.
         """
         attachment_id = attachment.get("attachment_id") or attachment.get("id")
         if attachment_id is None:
@@ -538,14 +558,17 @@ class ArtifactManager(BaseManager):
         )
         max_size_bytes = max_size_mb * 1024 * 1024
         # L4: ``size`` may arrive as a string (form/JSON coercion); a raw
-        # comparison would raise TypeError and surface as a 500. Coerce
-        # safely; unparseable values are treated as 0 so only the actual
-        # byte count can trip the limit.
+        # comparison would raise TypeError and surface as a 500. Coerce via
+        # int() fail-closed: numeric strings are accepted, unparseable
+        # values raise ValueError ("invalid size" -> 400), never 500.
         raw_size = attachment.get("size", 0)
-        try:
-            declared_size = int(raw_size or 0)
-        except (TypeError, ValueError):
+        if raw_size is None:
             declared_size = 0
+        else:
+            try:
+                declared_size = int(raw_size)
+            except (TypeError, ValueError):
+                raise ValueError("invalid size")
         if declared_size > max_size_bytes:
             raise ValueError(f"Attachment exceeds maximum size of {max_size_mb} MB")
 
