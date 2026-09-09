@@ -252,7 +252,9 @@ class TestAuthPrefixScoping:
 
 
 class TestExceptionMessageLeakage:
-    """M6: third-party exception strings must not reach clients."""
+    """M6: no mapped exception string (third-party OR project-owned) may
+    reach clients verbatim — every mapped type gets a generic per-type
+    message; detail is logged server-side only."""
 
     def test_third_party_mapped_exception_gets_generic_message(self):
         class SecretValidationError(Exception):
@@ -260,7 +262,7 @@ class TestExceptionMessageLeakage:
 
         SecretValidationError.__module__ = "some_third_party_library"
         exc = SecretValidationError("postgres://user:secret@db:5432/internal")
-        assert _safe_error_message(exc, 400) == "Invalid request"
+        assert _safe_error_message(exc, 400) == "Validation failed"
 
     def test_third_party_unmapped_exception_gets_generic_500(self):
         class OopsError(Exception):
@@ -271,15 +273,15 @@ class TestExceptionMessageLeakage:
             "Internal server error"
         )
 
-    def test_project_exception_message_preserved(self):
+    def test_project_mapped_exception_redacted(self):
         class ProjectValidationError(Exception):
             pass
 
         ProjectValidationError.__module__ = "src.core.something"
-        assert (
-            _safe_error_message(ProjectValidationError("Username taken"), 400)
-            == "Username taken"
+        exc = ProjectValidationError(
+            "postgres://user:secret@db:5432/internal SELECT * FROM users"
         )
+        assert _safe_error_message(exc, 400) == "Validation failed"
 
     def test_general_handler_does_not_leak_third_party_details(self):
         from fastapi import FastAPI
@@ -308,7 +310,7 @@ class TestExceptionMessageLeakage:
         assert resp.status_code == 400
         assert "postgres" not in resp.text
         assert "secret" not in resp.text
-        assert resp.json()["error"]["message"] == "Invalid request"
+        assert resp.json()["error"]["message"] == "Validation failed"
 
 
 class TestTracebackDisclosureGate:

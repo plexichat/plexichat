@@ -55,15 +55,88 @@ ERROR_MAPPINGS = {
 }
 
 
+# Generic, stable client-facing messages per mapped exception type (M6).
+# Mapped exceptions NEVER echo str(exc) verbatim: internal validation detail,
+# filesystem paths, SQL fragments, or config values must not reach clients.
+# The original detail is logged server-side at the catch site instead.
+GENERIC_ERROR_MESSAGES = {
+    "NotFoundError": "Resource not found",
+    "AccessDeniedError": "Access denied",
+    "PermissionDeniedError": "Permission denied",
+    "FileUploadError": "File upload failed",
+    "InvalidCredentialsError": "Invalid credentials",
+    "TokenExpiredError": "Authentication token has expired",
+    "TokenInvalidError": "Invalid authentication token",
+    "AccountLockedError": "Account is locked",
+    "AccountDisabledError": "Account is disabled",
+    "UserExistsError": "User already exists",
+    "AlreadyExistsError": "Resource already exists",
+    "ExistsError": "Resource already exists",
+    "ValidationError": "Validation failed",
+    "InvalidError": "Invalid request",
+    "LimitError": "Request limit exceeded",
+    "AttachmentLimitError": "Attachment limit exceeded",
+    "ChannelFullError": "Channel is full",
+    "LicenseFeatureError": "Feature not available",
+    "UserNotInChannelError": "User is not in the channel",
+    "UserAlreadyInChannelError": "User is already in the channel",
+    "ChannelTypeError": "Invalid channel type",
+    "NotSpeakerError": "Speaker permission required",
+    "AlreadySpeakerError": "Already a speaker",
+    "RateLimitError": "Rate limit exceeded",
+    "BlockedError": "Action is blocked",
+    "LockedError": "Resource is locked",
+    "ArchivedError": "Resource is archived",
+    "InvalidRecipientError": "Invalid recipient",
+}
+
+_FALLBACK_MESSAGE_BY_STATUS = {
+    400: "Invalid request",
+    401: "Authentication required",
+    403: "Access denied",
+    404: "Resource not found",
+    409: "Resource already exists",
+    410: "Resource is archived",
+    413: "Request too large",
+    423: "Resource is locked",
+    429: "Rate limit exceeded",
+    507: "Channel is full",
+}
+
+
+def _match_mapped_pattern(exc_name: str) -> str | None:
+    """Return the ERROR_MAPPINGS key matching an exception class name.
+
+    Exact matches win; otherwise the longest suffix pattern wins so that
+    e.g. ``RateLimitError`` maps to its own entry rather than the shorter
+    ``LimitError`` suffix (which previously shadowed it and yielded 400
+    instead of the mapped 429).
+    """
+    if exc_name in ERROR_MAPPINGS:
+        return exc_name
+    best: str | None = None
+    for pattern in ERROR_MAPPINGS:
+        if exc_name.endswith(pattern) and (best is None or len(pattern) > len(best)):
+            best = pattern
+    return best
+
+
+def _generic_message_for_exception(exc: Exception, status_code: int) -> str:
+    """Return the generic per-type message for a mapped exception."""
+    pattern = _match_mapped_pattern(type(exc).__name__)
+    if pattern is not None:
+        code = ERROR_MAPPINGS[pattern]
+        return GENERIC_ERROR_MESSAGES.get(
+            pattern, _FALLBACK_MESSAGE_BY_STATUS.get(code, "Invalid request")
+        )
+    return _FALLBACK_MESSAGE_BY_STATUS.get(status_code, "Internal server error")
+
+
 def get_status_code_for_exception(exc: Exception) -> int:
     """Determine HTTP status code based on exception type."""
-    exc_name = type(exc).__name__
-
-    for pattern, code in ERROR_MAPPINGS.items():
-        # Use endswith to avoid false positives from substring matches
-        # e.g. "NotFoundInCacheError" ends with "Error", not "NotFoundError"
-        if exc_name == pattern or exc_name.endswith(pattern):
-            return code
+    pattern = _match_mapped_pattern(type(exc).__name__)
+    if pattern is not None:
+        return ERROR_MAPPINGS[pattern]
 
     return 500
 
@@ -113,20 +186,31 @@ def _sanitize_error_message(
     return safe_message
 
 
-def _safe_error_message(exc: Exception, status_code: int) -> str:
+def _safe_error_message(
+    exc: Exception, status_code: int, debug_detail: bool = False
+) -> str:
     """Return a client-safe message for a mapped exception.
 
-    Project-owned exceptions (``src.*`` modules) format their own messages
-    for clients. Third-party exceptions whose class name merely matches an
-    ``ERROR_MAPPINGS`` suffix (e.g. a library's ``*ValidationError``) can
-    embed internal details - SQL fragments, filesystem paths, config values -
-    in ``str(exc)``; echoing those verbatim (M6) leaks internals. Such
-    exceptions get a generic message keyed to the status code instead.
+    M6: mapped exceptions NEVER echo ``str(exc)`` verbatim — not even for
+    project-owned (``src.*``) exceptions, whose messages can embed
+    validation detail, filesystem paths, SQL fragments, or config values.
+    Every mapped type gets a generic, stable per-type message; the
+    original detail is logged server-side at the catch site instead.
+    When ``debug_detail`` is True (api.debug AND a valid internal
+    self-test request per M5), the raw message is returned so internal
+    diagnostics keep working; otherwise the generic message applies.
     """
-    module = type(exc).__module__
-    if status_code >= 500 or not module.startswith("src."):
-        return "Internal server error" if status_code >= 500 else "Invalid request"
-    return str(exc)
+    if debug_detail:
+        return str(exc)
+    pattern = _match_mapped_pattern(type(exc).__name__)
+    if pattern is not None:
+        return GENERIC_ERROR_MESSAGES.get(
+            pattern,
+            _FALLBACK_MESSAGE_BY_STATUS.get(status_code, "Invalid request"),
+        )
+    if status_code >= 500:
+        return "Internal server error"
+    return _generic_message_for_exception(exc, status_code)
 
 
 def _merge_error_headers(
@@ -298,8 +382,11 @@ class ErrorHandlingMiddleware:
             # api.debug AND localhost+secret — never the flag alone.
             debug_detail = _debug_detail_allowed(request)
 
-            # M6: never echo third-party exception strings verbatim.
-            message = _safe_error_message(exc, status_code)
+            # M6: mapped exceptions get generic per-type messages; the
+            # original detail was already logged server-side above and is
+            # never echoed. Raw detail only for valid internal self-test
+            # requests (M5 gate).
+            message = _safe_error_message(exc, status_code, debug_detail)
             if not debug_detail:
                 message = _sanitize_error_message(status_code, message, False)
 
@@ -399,20 +486,14 @@ def setup_exception_handlers(app: FastAPI):
         errors = exc.errors()
         headers = _get_cors_headers(request)
 
-        # Log validation errors for debugging
+        # Log validation detail server-side only; clients get a generic,
+        # stable message (M6) so field names/paths/validators never leak.
         logger.warning(
             f"Validation error on {request.method} {request.url.path}: {errors}"
         )
         # SECURITY: Do not read/log full request body to avoid memory DOS
 
-        if errors:
-            first_error = errors[0]
-            loc = first_error.get("loc", [])
-            msg = first_error.get("msg", "Validation error")
-            field = loc[-1] if loc else "unknown"
-            message = f"Invalid {field}: {msg}"
-        else:
-            message = "Request validation failed"
+        message = "Request validation failed"
 
         # Documented contract: validation errors surface as 400
         # (docs/errors.md "Validation Errors (400)").
@@ -426,14 +507,22 @@ def setup_exception_handlers(app: FastAPI):
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle all other exceptions."""
         status_code = get_status_code_for_exception(exc)
-        # M6: project exceptions may carry client-facing messages; anything
-        # else must not leak internal detail strings.
-        message = _safe_error_message(exc, status_code)
+        # M6: never echo exception strings verbatim — generic per-type
+        # message only. Detail goes to server logs, never the response
+        # (raw detail only for valid internal self-test requests per M5).
+        logger.error(
+            f"General handler caught exception: {type(exc).__name__}: {exc}",
+            exc_info=True,
+        )
+        debug_detail = _debug_detail_allowed(request)
+        message = _safe_error_message(exc, status_code, debug_detail)
+        if not debug_detail:
+            message = _sanitize_error_message(status_code, message, False)
         headers = _get_cors_headers(request)
 
         return JSONResponse(
             status_code=status_code,
-            content=format_error_response(status_code, message),
+            content=format_error_response(status_code, message, debug_detail),
             headers=headers,
         )
 
