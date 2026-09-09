@@ -66,3 +66,39 @@ def test_002_down_drops_the_column(db):
     migration.up(db)
     cols = {row["name"] for row in db.fetch_all("PRAGMA table_info(artifacts)")}
     assert "rev" in cols
+
+
+def test_002_down_then_up_roundtrip_preserves_backfilled_revs(db):
+    """A down()/up() cycle must reproduce the same rev values.
+
+    ``down`` drops the column but leaves the payloads untouched (the legacy
+    ``payload.rev`` chain is not re-encoded), so a subsequent ``up`` must
+    backfill the identical revisions - not restart everyone at 0. Without
+    that property, a rollback + re-migrate would silently reset every
+    editor's optimistic-concurrency chain and the first autosave after the
+    re-migration would 409 as stale.
+    """
+    migration = _load_migration()
+
+    # Simulate a pre-002 database and seed a mix of edited / never-edited /
+    # non-numeric-rev artifacts, then apply the migration once.
+    db.execute("ALTER TABLE artifacts DROP COLUMN rev")
+    _insert_artifact(db, 2001, '{"content": "a", "rev": 12}')
+    _insert_artifact(db, 2002, '{"content": "b"}')
+    _insert_artifact(db, 2003, '{"rev": "draft"}')
+    migration.up(db)
+
+    assert get_artifact(db, 2001).rev == 12
+    assert get_artifact(db, 2002).rev == 0
+    assert get_artifact(db, 2003).rev == 0
+
+    # Roll back, then re-apply: the payloads still carry the rev chain, so
+    # the backfill must reproduce the exact same column values.
+    migration.down(db)
+    cols = {row["name"] for row in db.fetch_all("PRAGMA table_info(artifacts)")}
+    assert "rev" not in cols
+
+    migration.up(db)
+    assert get_artifact(db, 2001).rev == 12
+    assert get_artifact(db, 2002).rev == 0
+    assert get_artifact(db, 2003).rev == 0
