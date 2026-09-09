@@ -200,8 +200,16 @@ def create_sticker_from_file(
     content_type: str,
     tags: Optional[List[str]] = None,
     related_emoji: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> Sticker:
     """Create a sticker from an uploaded file."""
     return _get_manager().create_sticker_from_file(
-        user_id, pack_id, name, image_data, content_type, tags, related_emoji
+        user_id,
+        pack_id,
+        name,
+        image_data,
+        content_type,
+        tags,
+        related_emoji,
+        description,
     )
