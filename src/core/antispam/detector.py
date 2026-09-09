@@ -43,6 +43,48 @@ _LOCAL_WINDOW_MAX_KEYS = 50_000
 _VALKEY_DOWN_WARNED = False
 
 
+def _row_dict(row: Any) -> Dict[str, Any]:
+    """Normalize a DB row to a plain dict.
+
+    The database layer normally returns dicts, but tuple-shaped rows
+    (plain tuples with cursor.description available, sqlite3.Row, or
+    objects) must not crash callers — see get_filters/_get_user_filters.
+    """
+    if isinstance(row, dict):
+        return dict(row)
+    if hasattr(row, "keys"):
+        try:
+            return dict(row)
+        except Exception:
+            pass
+        try:
+            return {k: row[k] for k in row.keys()}
+        except Exception:
+            pass
+    if isinstance(row, (list, tuple)):
+        # Positional fallback for the dm_spam_filters column order
+        # (id, user_id, target_user_id, pattern, filter_type, action,
+        #  threshold, window_seconds, enabled, created_at, updated_at).
+        keys = (
+            "id",
+            "user_id",
+            "target_user_id",
+            "pattern",
+            "filter_type",
+            "action",
+            "threshold",
+            "window_seconds",
+            "enabled",
+            "created_at",
+            "updated_at",
+        )
+        return {k: (row[i] if i < len(row) else None) for i, k in enumerate(keys)}
+    try:
+        return dict(row)
+    except Exception:
+        return {}
+
+
 def reset_local_windows() -> None:
     """Clear process-local counters (used on detector re-init / tests)."""
     with _LOCAL_WINDOWS_LOCK:
@@ -156,7 +198,20 @@ class DMSpamDetector:
             return False
         if not row:
             return False
-        age = self._get_timestamp() - row["created_at"]
+        if isinstance(row, dict):
+            created_at = row.get("created_at")
+        elif hasattr(row, "keys"):
+            try:
+                created_at = dict(row).get("created_at")
+            except Exception:
+                created_at = None
+        elif isinstance(row, (list, tuple)):
+            created_at = row[0] if row else None
+        else:
+            created_at = getattr(row, "created_at", None)
+        if created_at is None:
+            return False
+        age = self._get_timestamp() - created_at
         return age < self.DEFAULT_NEW_USER_AGE_MS
 
     def _get_user_filters(
@@ -178,7 +233,7 @@ class DMSpamDetector:
             return []
         applicable = []
         for row in rows or []:
-            filter_row = dict(row)
+            filter_row = _row_dict(row)
             target = filter_row.get("target_user_id")
             if target is None or int(target) == int(sender_id):
                 applicable.append(filter_row)
@@ -540,4 +595,4 @@ class DMSpamDetector:
             "SELECT * FROM dm_spam_filters WHERE user_id = ? ORDER BY created_at",
             (user_id,),
         )
-        return [dict(row) for row in rows]
+        return [_row_dict(row) for row in (rows or [])]
