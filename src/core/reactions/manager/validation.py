@@ -70,6 +70,12 @@ class ReactionValidationMixin(ReactionProtocol):
         if KEYCAP_EMOJI_PATTERN.match(text):
             return True
 
+        # Fail closed (M1): plain ASCII words are never emoji. The range
+        # check below already rejects them, but reject explicitly so a
+        # future range edit cannot reopen arbitrary-text reactions.
+        if re.fullmatch(r"[A-Za-z0-9_]+", text):
+            return False
+
         zwj_count = 0
         for char in text:
             code = ord(char)
