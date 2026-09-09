@@ -6,6 +6,7 @@ from ..exceptions import (
     ThreadError,
     ThreadNotFoundError,
     ThreadAccessDeniedError,
+    ThreadArchivedError,
     ThreadLockedError,
 )
 
@@ -62,7 +63,7 @@ class ThreadMessagingMixin(ThreadProtocol):
             raise ThreadAccessDeniedError("Cannot send messages in this thread")
 
         if thread.state == ThreadState.ARCHIVED:
-            self._unarchive_thread_internal(thread_id)
+            raise ThreadArchivedError("Thread is archived")
 
         if not self._is_member(user_id, thread_id):
             self.join_thread(user_id, thread_id)
@@ -73,6 +74,15 @@ class ThreadMessagingMixin(ThreadProtocol):
             )
 
         self._enforce_slowmode(user_id, thread_id, can_manage)
+
+        # TOCTOU guard (M5): re-read state immediately before writing — an
+        # archive may have committed after the checks above, and the stale
+        # snapshot must not let a message land in an archived thread.
+        fresh = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
+        if fresh is None:
+            raise ThreadNotFoundError(f"Thread {thread_id} not found")
+        if fresh.state == ThreadState.ARCHIVED:
+            raise ThreadArchivedError("Thread is archived")
 
         now = self._get_timestamp()
 

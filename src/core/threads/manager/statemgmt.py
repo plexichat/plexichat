@@ -18,10 +18,19 @@ class ThreadStateMixin(ThreadProtocol):
         # last_activity, so an explicitly unarchived (stale) thread would
         # otherwise be instantly re-archived by _check_auto_archive on the
         # very next read.
+        # TOCTOU guard (M5): only flip ARCHIVED -> ACTIVE so a concurrent
+        # archive/unarchive race resolves to exactly one winner instead of
+        # last-writer-wins on stale state. A lost race is a harmless no-op;
+        # callers re-read afterwards.
         self._db.execute(
             "UPDATE thread_threads SET state = ?, archived_at = NULL, "
-            "last_message_at = ? WHERE id = ?",
-            (ThreadState.ACTIVE.value, self._get_timestamp(), thread_id),
+            "last_message_at = ? WHERE id = ? AND state = ?",
+            (
+                ThreadState.ACTIVE.value,
+                self._get_timestamp(),
+                thread_id,
+                ThreadState.ARCHIVED.value,
+            ),
         )
 
     def archive_thread(self, user_id: int, thread_id: int) -> Thread:
@@ -36,10 +45,28 @@ class ThreadStateMixin(ThreadProtocol):
             return thread
 
         now = self._get_timestamp()
-        self._db.execute(
-            "UPDATE thread_threads SET state = ?, archived_at = ? WHERE id = ?",
-            (ThreadState.ARCHIVED.value, now, thread_id),
+        # TOCTOU guard (M5): only archive a non-archived thread. A
+        # concurrent archiver that commits first makes this UPDATE match
+        # zero rows; treat that as already-in-desired-state (re-read and
+        # return, fail closed when the thread is gone) instead of blindly
+        # overwriting archived_at on stale state.
+        cursor = self._db.execute(
+            "UPDATE thread_threads SET state = ?, archived_at = ? "
+            "WHERE id = ? AND state != ?",
+            (
+                ThreadState.ARCHIVED.value,
+                now,
+                thread_id,
+                ThreadState.ARCHIVED.value,
+            ),
         )
+        if getattr(cursor, "rowcount", 1) == 0:
+            current = _get_thread_internal(
+                self._db, thread_id, self._encrypt_thread_names
+            )
+            if current is None:
+                raise ThreadNotFoundError(f"Thread {thread_id} not found")
+            return current
 
         logger.debug(f"Thread {thread_id} archived by user {user_id}")
 
@@ -59,6 +86,13 @@ class ThreadStateMixin(ThreadProtocol):
             return thread
 
         self._unarchive_thread_internal(thread_id)
+
+        # Re-read after the conditional UPDATE: a lost concurrent race
+        # leaves the row untouched, so return the current state (no-op
+        # when already ACTIVE); fail closed when the thread is gone.
+        current = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
+        if current is None:
+            raise ThreadNotFoundError(f"Thread {thread_id} not found")
 
         logger.debug(f"Thread {thread_id} unarchived by user {user_id}")
 

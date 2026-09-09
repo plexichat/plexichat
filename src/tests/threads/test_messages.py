@@ -4,6 +4,7 @@ Tests for thread message functionality.
 
 import pytest
 from src.core.threads import (
+    ThreadArchivedError,
     ThreadLockedError,
     ThreadAccessDeniedError,
     ThreadNotFoundError,
@@ -87,19 +88,25 @@ class TestSendMessage:
         with pytest.raises(ThreadLockedError):
             threads.send_message(member1.id, thread.id, "Should fail")
 
-    def test_send_message_unarchives_thread(self, server_with_channel):
-        """Test that sending message unarchives thread."""
+    def test_send_message_to_archived_thread_fails(self, server_with_channel):
+        """Test that sending a message to an archived thread is rejected."""
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id, channel_id=channel.id, name="Unarchive Test"
+            user_id=owner.id, channel_id=channel.id, name="Archived Send Test"
         )
 
         threads.archive_thread(owner.id, thread.id)
         archived = threads.get_thread(owner.id, thread.id)
         assert archived.state == ThreadState.ARCHIVED
 
-        threads.send_message(owner.id, thread.id, "Unarchive message")
+        with pytest.raises(ThreadArchivedError):
+            threads.send_message(owner.id, thread.id, "Should fail")
+
+        # Explicit unarchive restores sending.
+        threads.unarchive_thread(owner.id, thread.id)
+        msg = threads.send_message(owner.id, thread.id, "After unarchive")
+        assert msg["content"] == "After unarchive"
 
         updated = threads.get_thread(owner.id, thread.id)
         assert updated.state == ThreadState.ACTIVE
