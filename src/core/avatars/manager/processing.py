@@ -85,6 +85,10 @@ class AvatarProcessingMixin(AvatarProtocol):
             original_format = img.format
             n_frames = getattr(img, "n_frames", 1)
             is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
+            # Capture the animation loop count while positioned on the first
+            # frame: Pillow keeps the loop extension on frame 0, so reading
+            # img.info after seeking to later frames may lose it.
+            loop_count = img.info.get("loop", 0)
         except Exception as e:
             if isinstance(e, ValueError):
                 raise e
@@ -126,7 +130,7 @@ class AvatarProcessingMixin(AvatarProtocol):
                         save_all=True,
                         append_images=frames[1:],
                         duration=durations,
-                        loop=img.info.get("loop", 0),
+                        loop=loop_count,
                     )
                     return output.getvalue(), new_width, new_height, True
                 except Exception as e:
@@ -159,7 +163,7 @@ class AvatarProcessingMixin(AvatarProtocol):
                         save_all=True,
                         append_images=frames[1:],
                         duration=durations,
-                        loop=img.info.get("loop", 0),
+                        loop=loop_count,
                         quality=90,
                     )
                     return output.getvalue(), new_width, new_height, True
@@ -197,7 +201,7 @@ class AvatarProcessingMixin(AvatarProtocol):
                     save_all=True,
                     append_images=frames[1:],
                     duration=durations,
-                    loop=img.info.get("loop", 0),
+                    loop=loop_count,
                 )
                 return output.getvalue(), width, height, True
             except Exception as e:
@@ -214,20 +218,24 @@ class AvatarProcessingMixin(AvatarProtocol):
             content_type = "image/png"
         elif content_type == "image/webp":
             if is_animated and n_frames > 1:
-                # M2: animated WebP must also keep all frames.
+                # M2: animated WebP must also keep all frames. Durations are
+                # collected per frame: reusing the last frame's info for every
+                # frame would mistime the animation.
                 img.seek(0)
                 frames = []
+                durations = []
                 for frame_num in range(n_frames):
                     img.seek(frame_num)
                     frames.append(img.copy())
+                    durations.append(img.info.get("duration", 100))
                 try:
                     frames[0].save(
                         output,
                         format="WEBP",
                         save_all=True,
                         append_images=frames[1:],
-                        duration=[img.info.get("duration", 100)] * n_frames,
-                        loop=img.info.get("loop", 0),
+                        duration=durations,
+                        loop=loop_count,
                         quality=90,
                     )
                     return output.getvalue(), width, height, True
