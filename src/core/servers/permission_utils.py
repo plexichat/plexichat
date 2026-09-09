@@ -109,12 +109,21 @@ def apply_channel_overrides(
 
     Order of application:
     1. Start with base permissions from roles
-    2. Apply role-specific overrides (deny first, then allow)
-    3. Apply member-specific override (deny first, then allow)
+    2. Apply role-specific overrides one role at a time, LOWEST position
+       first (deny then allow per role)
+    3. Apply member-specific override last (deny then allow)
+
+    Applying each role's overwrite in position order (lowest first) means
+    the highest-position role's decision wins for every permission: a deny
+    on a high role beats an allow on a lower role, mirroring Discord's
+    hierarchy semantics. Flattening every deny before every allow would let
+    the lowest role's allow override the highest role's deny.
 
     Args:
         base_permissions: Base permissions from roles
-        role_overrides: List of role override dicts with 'allow' and 'deny' keys
+        role_overrides: List of role override dicts with 'allow' and 'deny'
+            keys, ordered LOWEST role position first (callers sort by
+            srv_roles.position ascending)
         member_override: Optional member-specific override
 
     Returns:
@@ -126,10 +135,10 @@ def apply_channel_overrides(
     if result.get("administrator"):
         return {perm: True for perm in SERVER_PERMISSIONS}
 
-    # Apply role overrides
-    role_allow = {}
-    role_deny = {}
-
+    # Apply role overrides in the order given (lowest position first). Each
+    # override is applied deny-then-allow, so later (higher-position) roles
+    # win conflicts and within a single override allow still beats deny,
+    # preserving the stored allow/deny semantics of a lone overwrite.
     for override in role_overrides:
         allow = override.get("allow", {})
         deny = override.get("deny", {})
@@ -146,21 +155,13 @@ def apply_channel_overrides(
             except (json.JSONDecodeError, TypeError):
                 deny = {}
 
-        for perm, value in allow.items():
-            if value:
-                role_allow[perm] = True
-
         for perm, value in deny.items():
             if value:
-                role_deny[perm] = True
+                result[perm] = False
 
-    # Apply role denies first
-    for perm in role_deny:
-        result[perm] = False
-
-    # Then role allows
-    for perm in role_allow:
-        result[perm] = True
+        for perm, value in allow.items():
+            if value:
+                result[perm] = True
 
     # Apply member override last
     if member_override:

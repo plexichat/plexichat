@@ -509,6 +509,11 @@ class RoleHandler:
         if role_ids and not all(isinstance(rid, int) for rid in role_ids):
             raise ValueError("All role IDs must be integers")
 
+        # Role-position map so overrides can be applied LOWEST position
+        # first: a higher-position role's deny must beat a lower role's
+        # allow (see apply_channel_overrides ordering contract).
+        role_positions = {int(r["id"]): int(r.get("position") or 0) for r in role_rows}
+
         # Avoid dynamic IN clause to satisfy bandit - use individual queries
         overrides_rows = []
         for channel_id in channel_ids:
@@ -542,6 +547,12 @@ class RoleHandler:
                     member_overrides[cid] = dict(row)
                 else:
                     channel_overrides[cid].append(dict(row))
+
+        # Lowest-position role first so the highest role's decision wins.
+        for cid in channel_overrides:
+            channel_overrides[cid].sort(
+                key=lambda o: role_positions.get(int(o.get("target_id") or 0), 0)
+            )
 
         # 4. Calculate permissions for each channel
         result = {}
@@ -639,7 +650,18 @@ class RoleHandler:
                         )
                         if row:
                             override_rows.append(row)
-                    role_overrides = [dict(row) for row in override_rows]
+                    # Lowest-position role first so a higher role's deny
+                    # beats a lower role's allow (apply_channel_overrides
+                    # applies them in the order given).
+                    role_positions = {
+                        int(r["id"]): int(r.get("position") or 0) for r in role_rows
+                    }
+                    role_overrides = sorted(
+                        (dict(row) for row in override_rows),
+                        key=lambda o: role_positions.get(
+                            int(o.get("target_id") or 0), 0
+                        ),
+                    )
 
                 member_override_row = self.db.fetch_one(
                     """SELECT * FROM srv_channel_overrides

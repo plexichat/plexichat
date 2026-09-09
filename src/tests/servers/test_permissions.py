@@ -483,3 +483,53 @@ class TestBackfillDefaultRolePermissions:
         second = self._get_everyone_permissions(db, server.id)
 
         assert first == second
+
+
+class TestChannelOverrideHierarchy:
+    """M1: role channel overrides apply LOWEST position first so a higher
+    role's deny beats a lower role's allow (Discord hierarchy semantics)."""
+
+    def test_high_role_deny_beats_low_role_allow(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        low_role = {"allow": {"messages.send": True}, "deny": {}}
+        high_role = {"allow": {}, "deny": {"messages.send": True}}
+        result = apply_channel_overrides(base, [low_role, high_role], None)
+        assert result["messages.send"] is False
+
+    def test_low_role_allow_beats_base_deny(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": False}
+        low_role = {"allow": {"messages.send": True}, "deny": {}}
+        high_role = {"allow": {}, "deny": {}}
+        result = apply_channel_overrides(base, [low_role, high_role], None)
+        assert result["messages.send"] is True
+
+    def test_highest_role_wins_conflicting_overrides(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        mid_role = {"allow": {}, "deny": {"messages.send": True}}
+        high_role = {"allow": {"messages.send": True}, "deny": {}}
+        result = apply_channel_overrides(base, [mid_role, high_role], None)
+        assert result["messages.send"] is True
+
+    def test_member_override_beats_all_roles(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        high_role = {"allow": {}, "deny": {"messages.send": True}}
+        member = {"allow": {"messages.send": True}, "deny": {}}
+        result = apply_channel_overrides(base, [high_role], member)
+        assert result["messages.send"] is True
+
+    def test_json_string_allow_deny_still_parsed(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        low_role = {"allow": '{"messages.send": true}', "deny": "{}"}
+        high_role = {"allow": "{}", "deny": '{"messages.send": true}'}
+        result = apply_channel_overrides(base, [low_role, high_role], None)
+        assert result["messages.send"] is False
