@@ -96,6 +96,39 @@ def _get_threads():
     return threads_mod
 
 
+# M6: ciphertext blobs must never leave the API in default list/detail
+# payloads. The manager storage layer legitimately keeps
+# ``content_encrypted`` for decryption fallback, so stripping happens here
+# at the route serialization layer.
+_CIPHERTEXT_RESPONSE_FIELDS = frozenset({"content_encrypted"})
+
+
+def _strip_message_ciphertext(msg):
+    """Return a copy of a thread-message payload without ciphertext fields."""
+    if isinstance(msg, dict):
+        clean = dict(msg)
+        for field in _CIPHERTEXT_RESPONSE_FIELDS:
+            clean.pop(field, None)
+        return clean
+    if hasattr(msg, "model_copy"):
+        try:
+            return msg.model_copy(update={f: None for f in _CIPHERTEXT_RESPONSE_FIELDS})
+        except Exception:
+            pass
+    for field in _CIPHERTEXT_RESPONSE_FIELDS:
+        if hasattr(msg, field):
+            try:
+                setattr(msg, field, None)
+            except Exception:
+                pass
+    return msg
+
+
+def _strip_messages_ciphertext(msgs):
+    """Strip ciphertext fields from a list of thread-message payloads."""
+    return [_strip_message_ciphertext(m) for m in (msgs or [])]
+
+
 def _parse_type(threads_mod, value: str):
     try:
         return threads_mod.ThreadType(value)
@@ -826,7 +859,7 @@ async def get_thread_messages(
         msgs = threads_mod.get_messages(
             current_user.user_id, tid, limit=limit, before_id=before, after_id=after
         )
-        return msgs or []
+        return _strip_messages_ciphertext(msgs or [])
     except Exception as e:
         mapped = _map_thread_exception(e)
         if mapped:
@@ -864,7 +897,7 @@ async def send_thread_message(
         )
     try:
         msg = threads_mod.send_message(current_user.user_id, tid, str(content))
-        return msg
+        return _strip_message_ciphertext(msg)
     except Exception as e:
         mapped = _map_thread_exception(e)
         if mapped:
