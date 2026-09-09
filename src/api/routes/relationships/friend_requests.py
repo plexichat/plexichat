@@ -30,6 +30,40 @@ import utils.logger as logger
 # Maximum friend requests a single user may send per rolling minute.
 FRIEND_REQUEST_RATE_LIMIT = 10
 
+# Setting key consulted on the recipient's profile. Absent/unreadable → open.
+ALLOW_FRIEND_REQUESTS_SETTING_KEY = "allow_friend_requests"
+
+# Stored values treated as "not accepting friend requests".
+_FRIEND_REQUESTS_DISABLED_VALUES = frozenset(
+    {"0", "false", "off", "no", "disabled", "none"}
+)
+
+
+def _recipient_accepts_friend_requests(recipient_id: int) -> bool:
+    """Best-effort read of the recipient's allow_friend_requests flag.
+
+    Defaults to open (accepting) when the settings module is unavailable,
+    the flag is unset, or the lookup fails — matching the historical
+    behaviour. Never raises.
+    """
+    try:
+        settings = api.get_settings()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request privacy check unavailable: {e}")
+        return True
+    if settings is None:
+        return True
+    try:
+        raw = settings.get(recipient_id, ALLOW_FRIEND_REQUESTS_SETTING_KEY)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request privacy lookup failed for {recipient_id}: {e}")
+        return True
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in _FRIEND_REQUESTS_DISABLED_VALUES
+
 
 def _check_friend_request_rate_limit(user_id: int) -> None:
     """Throttle friend-request submission per user (best-effort).
@@ -109,6 +143,27 @@ class FriendRequestMixin:
                 )
 
             _check_friend_request_rate_limit(current_user.user_id)
+
+            if not _recipient_accepts_friend_requests(target_id):
+                # M2: recipient disabled incoming friend requests. Denied
+                # with 403 (permission/privacy denial, per this file's
+                # PermissionDeniedError convention). This is intentionally
+                # distinct from the M3 generic 404 used for blocked/missing
+                # targets — it reflects the recipient's own public setting,
+                # not a block — and the message says nothing about blocks.
+                logger.debug(
+                    f"User {current_user.user_id} friend request to {target_id} "
+                    f"refused: recipient is not accepting friend requests"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "This user is not accepting friend requests",
+                        }
+                    },
+                )
 
             try:
                 request = relationships.send_friend_request(
