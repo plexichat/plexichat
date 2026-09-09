@@ -871,7 +871,12 @@ async def update_artifact(
             # 409 so the client re-fetches and re-bases instead of retrying.
             # Only enforced when both payloads carry a numeric ``rev``; other
             # artifact types and legacy clients are unaffected.
-            if stale_payload_write(artifact.payload, body.payload):
+            #
+            # New-style writes carry the expected rev at the TOP level
+            # (``body.rev``) and are guarded atomically below via
+            # ``UPDATE ... WHERE rev = ?``; this legacy payload-carried guard
+            # only applies when the caller did not supply a top-level rev.
+            if body.rev is None and stale_payload_write(artifact.payload, body.payload):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
@@ -925,12 +930,44 @@ async def update_artifact(
         if "retention_policy" in getattr(body, "model_fields_set", set()):
             update_fields["retention_policy"] = body.retention_policy
 
-        updated = manager.update(artifact_id, **update_fields)
-        if updated is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": 404, "message": "Artifact not found"}},
+        if body.rev is not None:
+            # Optimistic concurrency on the dedicated rev column: the row is
+            # updated atomically only while its revision still matches, and the
+            # revision advances by one in the same statement — no read-modify-
+            # write race. A zero-row update means a concurrent writer already
+            # moved the revision: reject the stale write with 409.
+            updated = manager.update(
+                artifact_id, expected_rev=body.rev, **update_fields
             )
+            if updated is None:
+                current = manager.get(artifact_id)
+                if current is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={
+                            "error": {"code": 404, "message": "Artifact not found"}
+                        },
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": (
+                                "Stale artifact revision: the artifact is already "
+                                f"at revision {current.rev}, but this write expects "
+                                f"revision {body.rev}. Reload the artifact and retry."
+                            ),
+                        }
+                    },
+                )
+        else:
+            updated = manager.update(artifact_id, **update_fields)
+            if updated is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"error": {"code": 404, "message": "Artifact not found"}},
+                )
         return _artifact_response(current_user.user_id, updated)
     except HTTPException:
         raise

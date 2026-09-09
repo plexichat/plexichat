@@ -325,6 +325,7 @@ async def send_artifact_sync(
     ops: Optional[list] = None,
     rate_limit_per_minute: Optional[int] = None,
     snapshot_truncated: bool = False,
+    rev: Optional[int] = None,
 ) -> bool:
     """
     Send an ARTIFACT_SYNC full snapshot to a single connection.
@@ -347,6 +348,9 @@ async def send_artifact_sync(
         snapshot_truncated: True when the caller omitted an oversized
             payload (see :func:`cap_snapshot_payload`); the frame then
             carries the flag so the client fetches the body over REST.
+        rev: The artifact's current revision (dedicated column). Carried on
+            the frame so a late joiner restores its editor rev chain even
+            though the revision no longer lives inside the payload.
 
     Returns:
         True if the frame was sent successfully.
@@ -374,6 +378,7 @@ async def send_artifact_sync(
             # L36: True when the payload was omitted because it exceeded the
             # snapshot cap; the client must fetch the body over REST.
             "snapshot_truncated": bool(snapshot_truncated),
+            "rev": rev if rev is not None else 0,
         },
     }
     try:
@@ -425,4 +430,47 @@ async def send_artifact_ack(
         return await connection.send_json(payload)
     except Exception as e:  # pragma: no cover - defensive
         logger.debug(f"Failed to ack ARTIFACT_OP to {connection.connection_id}: {e}")
+        return False
+
+
+async def send_artifact_op_rejected(
+    connection: Connection,
+    artifact_id: int,
+    op: Dict[str, object],
+    current_rev: int,
+    reason: str = "stale revision",
+    rate_limit_per_minute: Optional[int] = None,
+) -> bool:
+    """Tell an actor its ARTIFACT_OP was rejected and why.
+
+    Used by the gateway op rev guard: an ``edit`` op whose ``rev`` is older
+    than the artifact's committed revision is not persisted or relayed — the
+    sender must re-fetch and re-base. The frame echoes the offending op so
+    the client can match it against its own ``client_id``.
+    """
+    limit = (
+        int(rate_limit_per_minute)
+        if rate_limit_per_minute is not None
+        else getattr(connection, "rate_limit_per_minute", 120)
+    )
+    if not (
+        hasattr(connection, "is_selftest") and connection.is_selftest
+    ) and not connection.check_rate_limit(limit):
+        return False
+
+    payload = {
+        "op": int(GatewayOpcode.ARTIFACT_OP_REJECTED),
+        "d": {
+            "artifact_id": str(artifact_id),
+            "reason": reason,
+            "current_rev": int(current_rev),
+            "op": op,
+        },
+    }
+    try:
+        return await connection.send_json(payload)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(
+            f"Failed to send ARTIFACT_OP_REJECTED to {connection.connection_id}: {e}"
+        )
         return False

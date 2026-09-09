@@ -172,3 +172,98 @@ class TestPatchRevGuard:
             headers={"Authorization": f"Bearer {token_b}"},
         )
         assert intruder.status_code == 403, intruder.text
+
+
+class TestAtomicRevGuard:
+    """Optimistic concurrency on the dedicated rev column (top-level ``rev``)."""
+
+    def test_response_carries_rev_field(self, test_client, auth_manager):
+        token, _ = _register_and_login(auth_manager)
+        headers = {"Authorization": f"Bearer {token}"}
+        artifact_id = _create_artifact(test_client, headers)
+        resp = test_client.get(f"/api/v1/artifacts/{artifact_id}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["rev"] == 0  # never edited yet
+
+    def test_first_write_with_expected_rev_advances_column(
+        self, test_client, auth_manager
+    ):
+        token, _ = _register_and_login(auth_manager)
+        headers = {"Authorization": f"Bearer {token}"}
+        artifact_id = _create_artifact(test_client, headers)
+
+        ok = test_client.patch(
+            f"/api/v1/artifacts/{artifact_id}",
+            json={"payload": {"content": "v1", "language": "plaintext"}, "rev": 0},
+            headers=headers,
+        )
+        assert ok.status_code == 200, ok.text
+        body = ok.json()
+        assert body["rev"] == 1
+        assert body["payload"]["content"] == "v1"
+        # The rev no longer lives in the payload.
+        assert "rev" not in body["payload"]
+
+    def test_stale_expected_rev_rejected_atomically(self, test_client, auth_manager):
+        token, _ = _register_and_login(auth_manager)
+        headers = {"Authorization": f"Bearer {token}"}
+        artifact_id = _create_artifact(test_client, headers)
+
+        assert (
+            test_client.patch(
+                f"/api/v1/artifacts/{artifact_id}",
+                json={"payload": {"content": "a"}, "rev": 0},
+                headers=headers,
+            ).status_code
+            == 200
+        )
+        # Same expected rev again: the column already moved to 1.
+        stale = test_client.patch(
+            f"/api/v1/artifacts/{artifact_id}",
+            json={"payload": {"content": "stale"}, "rev": 0},
+            headers=headers,
+        )
+        assert stale.status_code == 409, stale.text
+        assert "revision 1" in stale.json()["error"]["message"]
+
+        # Persisted state untouched by the rejected write.
+        current = test_client.get(f"/api/v1/artifacts/{artifact_id}", headers=headers)
+        assert current.json()["payload"]["content"] == "a"
+        assert current.json()["rev"] == 1
+
+    def test_sequential_writes_advance_rev(self, test_client, auth_manager):
+        token, _ = _register_and_login(auth_manager)
+        headers = {"Authorization": f"Bearer {token}"}
+        artifact_id = _create_artifact(test_client, headers)
+
+        for expected, content in ((0, "a"), (1, "b"), (2, "c")):
+            resp = test_client.patch(
+                f"/api/v1/artifacts/{artifact_id}",
+                json={"payload": {"content": content}, "rev": expected},
+                headers=headers,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["rev"] == expected + 1
+
+    def test_legacy_payload_rev_still_guarded_when_no_top_level_rev(
+        self, test_client, auth_manager
+    ):
+        token, _ = _register_and_login(auth_manager)
+        headers = {"Authorization": f"Bearer {token}"}
+        artifact_id = _create_artifact(test_client, headers)
+
+        assert (
+            test_client.patch(
+                f"/api/v1/artifacts/{artifact_id}",
+                json={"payload": {"content": "a", "rev": 1}},
+                headers=headers,
+            ).status_code
+            == 200
+        )
+        # Legacy stale write (rev 1 again, no top-level rev) still rejected.
+        stale = test_client.patch(
+            f"/api/v1/artifacts/{artifact_id}",
+            json={"payload": {"content": "stale", "rev": 1}},
+            headers=headers,
+        )
+        assert stale.status_code == 409, stale.text

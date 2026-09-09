@@ -70,6 +70,7 @@ class Artifact:
     payload: Dict[str, Any]
     created_at: int
     updated_at: int
+    rev: int = 0
     retention_policy: Optional[Any] = None
     expires_at: Optional[int] = None
     license_feature: Optional[str] = None

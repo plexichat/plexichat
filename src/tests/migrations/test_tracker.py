@@ -15,10 +15,10 @@ class TestTracker:
         assert isinstance(applied, list)
 
     def test_get_applied_migrations(self, migration_manager):
-        """The template DB has both migrations recorded as applied."""
+        """The template DB has all migrations recorded as applied."""
         migration_manager.tracker.ensure_table_exists()
         applied = migration_manager.tracker.get_applied_migrations()
-        assert applied == ["000", "001"]
+        assert applied == ["000", "001", "002"]
 
     def test_record_migration_start(self, migration_manager):
         """Test recording migration start."""

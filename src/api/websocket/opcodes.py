@@ -44,6 +44,9 @@ class GatewayOpcode(IntEnum):
     ARTIFACT_UNSUBSCRIBE = 61
     ARTIFACT_OP = 62
     ARTIFACT_SYNC = 63
+    # Server-to-client: an op was rejected (e.g. stale revision) and the
+    # sender should re-fetch/re-base instead of retrying it.
+    ARTIFACT_OP_REJECTED = 68
     # Plexichat PlexiSum real-time fabric opcodes (collaborative workbooks).
     SUM_SUBSCRIBE = 64
     SUM_UNSUBSCRIBE = 65

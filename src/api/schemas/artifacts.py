@@ -48,6 +48,13 @@ class ArtifactResponse(BaseModel):
     )
     created_at: int = Field(..., description="Creation timestamp (ms)")
     updated_at: int = Field(..., description="Last-update timestamp (ms)")
+    rev: int = Field(
+        0,
+        description=(
+            "Monotonic revision for optimistic concurrency: the PATCH route "
+            "rejects a write whose expected rev does not match this value."
+        ),
+    )
     my_permissions: Optional[Dict[str, Any]] = Field(
         None,
         description=(
@@ -115,6 +122,16 @@ class ArtifactUpdateRequest(_PayloadSizeMixin, BaseModel):
     )
     has_transcript: Optional[bool] = Field(
         None, description="Whether a transcript exists"
+    )
+    rev: Optional[int] = Field(
+        None,
+        ge=0,
+        description=(
+            "Expected current revision for optimistic concurrency. When "
+            "supplied the write succeeds only if the artifact is still at this "
+            "revision, and the revision advances by one; a mismatch is "
+            "rejected with 409 Conflict."
+        ),
     )
     retention_policy: Optional[Any] = Field(
         None, description="Per-artifact retention override"

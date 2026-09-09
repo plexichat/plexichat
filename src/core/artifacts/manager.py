@@ -232,9 +232,16 @@ class ArtifactManager(BaseManager):
         self,
         artifact_id: SnowflakeID,
         emit_event: bool = True,
+        expected_rev: Optional[int] = None,
         **fields: Any,
     ) -> Optional[Artifact]:
-        """Update an artifact's mutable fields and retention deadline."""
+        """Update an artifact's mutable fields and retention deadline.
+
+        ``expected_rev`` enables optimistic concurrency: when provided the row
+        is only updated if its current ``rev`` matches, and the revision is
+        advanced atomically in the same statement. Returns ``None`` when the
+        artifact is missing OR the revision has already moved on.
+        """
         existing = get_artifact(self._db, artifact_id)
         if existing is None:
             return None
@@ -252,7 +259,9 @@ class ArtifactManager(BaseManager):
                 )
 
         fields.setdefault("updated_at", self._get_timestamp())
-        updated = update_artifact(self._db, artifact_id, **fields)
+        updated = update_artifact(
+            self._db, artifact_id, expected_rev=expected_rev, **fields
+        )
         if updated is not None and emit_event:
             self._emit_lifecycle_event("update", updated)
         return updated

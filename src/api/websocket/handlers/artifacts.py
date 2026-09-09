@@ -30,10 +30,12 @@ from src.api.websocket.artifacts import (
     get_artifact_subscription_registry,
     relay_artifact_op,
     send_artifact_ack,
+    send_artifact_op_rejected,
     send_artifact_sync,
 )
 from src.core.artifacts.repository import get_artifact
 from src.core.artifacts.capabilities import capability_allows_artifact
+from src.core.artifacts.revision import payload_revision
 
 if TYPE_CHECKING:
     from src.api.websocket.dispatcher import GatewayDispatcher
@@ -190,6 +192,7 @@ class ArtifactHandler:
                 ops=ops,
                 rate_limit_per_minute=rate_limit_per_minute,
                 snapshot_truncated=snapshot_truncated,
+                rev=getattr(artifact, "rev", 0),
             )
             if not sent:
                 # The sync was rejected (rate limit or send failure): do not
@@ -301,6 +304,38 @@ class ArtifactHandler:
                 f"User {connection.user_id} op on artifact {artifact_id} denied or "
                 "artifact unknown; dropping op"
             )
+            return None, None, None
+
+        # Rev guard: an ``edit`` op carrying a numeric ``rev`` that is OLDER
+        # than the artifact's committed revision is stale — a concurrent write
+        # already landed. Persisting or relaying it would pollute the ops log
+        # with superseded full-content edits and let peers re-apply them;
+        # reject it instead and tell the sender to re-fetch/re-base. Ops
+        # without a numeric rev (strokes, cursors, PlexiScribe deltas, or the
+        # equal-rev echo of this tab's own just-committed write) pass through.
+        op_rev = payload_revision(op)
+        if (
+            artifact is not None
+            and op_type == "edit"
+            and op_rev is not None
+            and op_rev < int(getattr(artifact, "rev", 0) or 0)
+        ):
+            logger.debug(
+                f"User {connection.user_id} stale edit op (rev {op_rev} < "
+                f"{artifact.rev}) on artifact {artifact_id}; rejecting"
+            )
+            try:
+                await send_artifact_op_rejected(
+                    connection,
+                    artifact_id,
+                    op,
+                    current_rev=int(getattr(artifact, "rev", 0) or 0),
+                    rate_limit_per_minute=getattr(
+                        dispatcher, "_rate_limit_per_minute", None
+                    ),
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"Failed to send artifact op rejection: {e}")
             return None, None, None
 
         # Persist the op to the ordered ops log so it survives the relay and

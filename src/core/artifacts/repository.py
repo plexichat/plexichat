@@ -38,6 +38,7 @@ _COLUMNS = (
     "retention_policy",
     "expires_at",
     "license_feature",
+    "rev",
     "created_at",
     "updated_at",
 )
@@ -114,6 +115,7 @@ def row_to_artifact(row: Dict[str, Any]) -> Artifact:
         payload=_json_loads(row.get("payload")) or {},
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        rev=int(row.get("rev", 0) or 0),
         retention_policy=_json_loads(row.get("retention_policy")),
         expires_at=row.get("expires_at"),
         license_feature=row.get("license_feature"),
@@ -138,14 +140,26 @@ def artifact_to_row(artifact: Artifact) -> Dict[str, Any]:
         "retention_policy": _json_dumps(artifact.retention_policy),
         "expires_at": artifact.expires_at,
         "license_feature": artifact.license_feature,
+        "rev": int(artifact.rev or 0),
         "created_at": artifact.created_at,
         "updated_at": artifact.updated_at,
     }
 
 
 def create_artifact(db, artifact: Artifact) -> Artifact:
-    """Insert an artifact row and return it unchanged."""
+    """Insert an artifact row and return it unchanged.
+
+    A new artifact whose payload carries a legacy numeric ``rev`` (editor
+    stamps) seeds the column from it so the first optimistic write continues
+    the chain instead of colliding at rev 1.
+    """
     row = artifact_to_row(artifact)
+    if int(row["rev"] or 0) <= 0:
+        from .revision import payload_revision
+
+        seeded = payload_revision(artifact.payload)
+        if seeded is not None and seeded > 0:
+            row["rev"] = seeded
     placeholders = ", ".join("?" for _ in _COLUMNS)
     column_list = ", ".join(_COLUMNS)
     query = f"INSERT INTO artifacts ({column_list}) VALUES ({placeholders})"
@@ -161,26 +175,46 @@ def get_artifact(db, artifact_id: SnowflakeID) -> Optional[Artifact]:
     return row_to_artifact(row)
 
 
-def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Artifact]:
+# Columns that may never be rewritten directly through ``update_artifact``:
+# ``rev`` is the optimistic-concurrency revision and only moves via the
+# atomic ``expected_rev`` path (or is seeded at insert). A stray ``rev`` in
+# fields would let a caller rewind/forge the revision chain.
+_IMMUTABLE_UPDATE_COLUMNS = frozenset({"rev"})
+
+
+def update_artifact(
+    db,
+    artifact_id: SnowflakeID,
+    expected_rev: Optional[int] = None,
+    **fields: Any,
+) -> Optional[Artifact]:
     """Update the given columns for an artifact and return the refreshed row.
 
     Only known columns are accepted; unknown keys are ignored to avoid
-    constructing SQL from arbitrary input.
+    constructing SQL from arbitrary input. ``rev`` is never writable through
+    ``fields``; it is only advanced by the optimistic-concurrency path.
 
     Args:
         db: Database connection.
         artifact_id: The ID of the artifact to update.
+        expected_rev: When provided, the row is updated only if its current
+            ``rev`` equals this value, and ``rev`` is advanced by one in the
+            same statement (``SET rev = rev + 1 ... WHERE id = ? AND rev = ?``).
+            A concurrent writer who already advanced the revision makes the
+            UPDATE match zero rows and this returns ``None`` — the caller can
+            distinguish a stale write from a missing artifact by re-fetching.
         **fields: Column-value pairs to update. Only keys listed in
             ``_COLUMNS`` are accepted; unknown keys are silently ignored.
 
     Returns:
-        The updated :class:`Artifact`, or ``None`` if no artifact exists
-        with the given ``artifact_id``.
+        The updated :class:`Artifact`, ``None`` when no artifact exists with
+        the given ``artifact_id``, or (with ``expected_rev``) ``None`` when
+        the row exists but its revision has already moved past ``expected_rev``.
     """
     allowed: Dict[str, Any] = {}
     model_fields = set(Artifact.__dataclass_fields__.keys())
     for key, value in fields.items():
-        if key not in _COLUMNS:
+        if key not in _COLUMNS or key in _IMMUTABLE_UPDATE_COLUMNS:
             continue
         if key in model_fields and key in ("artifact_type",):
             allowed[key] = value.value if hasattr(value, "value") else value
@@ -194,6 +228,20 @@ def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Art
             allowed[key] = value
 
     if not allowed:
+        return get_artifact(db, artifact_id)
+
+    if expected_rev is not None:
+        set_clause = ", ".join(f"{col} = ?" for col in allowed)
+        # ``rev = rev + 1`` is a raw expression: it must NOT be bound as a
+        # parameter (SQLite binds literals, and ``rev = ? + 1`` with the old
+        # value would not be atomic under a concurrent writer).
+        params = tuple(allowed.values()) + (artifact_id, expected_rev)
+        cursor = db.execute(
+            f"UPDATE artifacts SET {set_clause}, rev = rev + 1 WHERE id = ? AND rev = ?",
+            params,
+        )
+        if getattr(cursor, "rowcount", 0) <= 0:
+            return None
         return get_artifact(db, artifact_id)
 
     set_clause = ", ".join(f"{col} = ?" for col in allowed)
