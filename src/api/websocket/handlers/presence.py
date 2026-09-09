@@ -2,6 +2,7 @@
 Presence handlers - Handle presence-related opcodes (presence_update, typing).
 """
 
+import time
 from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 
 import utils.logger as logger
@@ -12,6 +13,18 @@ from src.api.websocket.opcodes import GatewayCloseCode
 
 if TYPE_CHECKING:
     from src.core.presence.manager import PresenceManager
+
+# F12: the typing-event audience for a server channel is a per-channel
+# property, not a per-sender one, so a typing burst in a large server used
+# to re-run a per-member permission sweep for every frame. The resolved
+# audience is cached per (server_id, channel_id) for a short TTL — the
+# finding's "cached member list" — turning each subsequent event into a
+# dict lookup. Typing indicators are ephemeral, and the cache is only ever
+# consulted for the next few seconds, so a just-revoked member may receive
+# at most one stale burst before the entry expires.
+_TYPING_AUDIENCE_TTL_S = 10.0
+_MAX_TYPING_AUDIENCE_ENTRIES = 4096
+_typing_audience_cache: Dict[Tuple[int, int], Tuple[float, Tuple[int, ...]]] = {}
 
 
 def _get_channel_recipients(
@@ -44,6 +57,12 @@ def _get_channel_recipients(
                 sid = getattr(channel, "server_id", None)
                 if sid:
                     server_id = sid
+                    cache_key = (int(sid), int(channel_id))
+                    now = time.monotonic()
+                    cached = _typing_audience_cache.get(cache_key)
+                    if cached is not None and now - cached[0] < _TYPING_AUDIENCE_TTL_S:
+                        return list(cached[1]), server_id
+
                     member_user_ids = servers_mod.get_member_user_ids(
                         sid, exclude_user_id=user_id
                     )
@@ -59,6 +78,12 @@ def _get_channel_recipients(
                                 user_ids.append(member_user_id)
                         except Exception:
                             continue
+
+                    # Cache the resolved audience; bound the map so a flood of
+                    # distinct channels cannot grow it without limit.
+                    if len(_typing_audience_cache) >= _MAX_TYPING_AUDIENCE_ENTRIES:
+                        _typing_audience_cache.clear()
+                    _typing_audience_cache[cache_key] = (now, tuple(user_ids))
         except Exception:
             pass
 

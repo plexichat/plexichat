@@ -633,6 +633,58 @@ class TestTypingChannelScoping:
         assert owner.id not in recipients
         assert outsider.id not in recipients
 
+    def test_typing_audience_cached_per_channel(
+        self,
+        monkeypatch,
+        user_pool,
+        rel_manager,
+        server_manager,
+    ):
+        """F12: the resolved typing audience is cached per channel, so a
+        second typing event in the same channel does not re-run the channel
+        lookup or the per-member permission sweep."""
+        import src.api as api_mod
+
+        monkeypatch.setattr(api_mod, "_servers", server_manager)
+        monkeypatch.setattr(api_mod, "_relationships", rel_manager)
+
+        from src.api.websocket.handlers.presence import (
+            _get_channel_recipients,
+            _typing_audience_cache,
+        )
+
+        owner = user_pool.get_user()
+        member = user_pool.get_user()
+        server = server_manager.create_server(owner.id, "F12 Test Server")
+        server_manager.add_member(server.id, member.id)
+        channel = server_manager.create_channel(owner.id, server.id, "general")
+
+        _typing_audience_cache.clear()
+
+        # get_member_user_ids only runs in the compute path (never inside
+        # has_permission), so it is a clean indicator of a cache miss: a
+        # second call served from the cache must not sweep members again.
+        get_member_ids = server_manager.get_member_user_ids
+        member_calls = {"count": 0}
+
+        def counting_get_member_ids(*args, **kwargs):
+            member_calls["count"] += 1
+            return get_member_ids(*args, **kwargs)
+
+        monkeypatch.setattr(
+            server_manager, "get_member_user_ids", counting_get_member_ids
+        )
+
+        first_recipients, server_id = _get_channel_recipients(owner.id, channel.id)
+        second_recipients, _ = _get_channel_recipients(owner.id, channel.id)
+
+        assert server_id == server.id
+        assert first_recipients == [member.id]
+        assert second_recipients == first_recipients
+        # The second call must be served from the cache: the member sweep ran
+        # exactly once across both calls.
+        assert member_calls["count"] == 1
+
     def test_typing_start_inaccessible_channel_not_recorded(
         self, monkeypatch, user_pool, valkey_presence
     ):
