@@ -14,6 +14,7 @@ import fnmatch
 import hashlib
 import re
 import threading
+import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
@@ -41,6 +42,35 @@ _LOCAL_WINDOWS: Dict[str, List[float]] = {}
 _LOCAL_WINDOWS_LOCK = threading.Lock()
 _LOCAL_WINDOW_MAX_KEYS = 50_000
 _VALKEY_DOWN_WARNED = False
+
+# H6: canonicalization for all user-controlled matching/hashing/counting.
+# Strict ``==``/exact-byte comparisons let trivial variants (trailing space,
+# case change, fullwidth Unicode, zero-width joiners) evade blocking, so every
+# content and pattern comparison below goes through _canonical_text first:
+# NFKC (folds fullwidth/compat forms to ASCII), casefold (stronger than
+# lower()), zero-width/format char removal, whitespace-run collapsing, trim.
+_WS_RUN_PATTERN = re.compile(r"\s+")
+_ZERO_WIDTH_PATTERN = re.compile("[\u200b\u200c\u200d\ufeff\u2060]")
+
+
+def _canonical_text(content: Any) -> str:
+    """Canonicalize text before matching, hashing, or counting."""
+    if content is None:
+        return ""
+    if not isinstance(content, str):
+        content = str(content)
+    text = unicodedata.normalize("NFKC", content)
+    text = text.casefold()
+    text = _ZERO_WIDTH_PATTERN.sub("", text)
+    return _WS_RUN_PATTERN.sub(" ", text).strip()
+
+
+def _is_unique_violation(exc: BaseException) -> bool:
+    """Detect duplicate-key errors across sqlite/postgres drivers."""
+    name = type(exc).__name__
+    if name in ("IntegrityError", "UniqueViolation", "UniqueViolationError"):
+        return True
+    return "unique" in str(exc).lower()
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -240,11 +270,24 @@ class DMSpamDetector:
         return applicable
 
     @staticmethod
+    def _filter_type_matches(flt: Dict[str, Any], filter_type: str) -> bool:
+        """Compare filter types on canonical form (H6 variant hardening).
+
+        A stored ``"Rate"``/``" rate "`` row is the same scope as ``"rate"``;
+        strict ``==`` would silently ignore it and fall back to defaults
+        (fail-open for blocks, fail-closed for warns).
+        """
+        return (
+            str(flt.get("filter_type") or "").strip().casefold()
+            == str(filter_type or "").strip().casefold()
+        )
+
+    @classmethod
     def _first_filter(
-        filters: List[Dict[str, Any]], filter_type: str
+        cls, filters: List[Dict[str, Any]], filter_type: str
     ) -> Optional[Dict[str, Any]]:
         for flt in filters:
-            if flt.get("filter_type") == filter_type:
+            if cls._filter_type_matches(flt, filter_type):
                 return flt
         return None
 
@@ -282,7 +325,7 @@ class DMSpamDetector:
         ``warn`` records the event but lets the message through; any other
         action (including the default ``block``) rejects the message.
         """
-        effective_action = (action or "block").lower()
+        effective_action = str(action or "block").strip().lower()
         stored_type = (
             event_type if effective_action != "warn" else f"{event_type}_warned"
         )
@@ -325,6 +368,14 @@ class DMSpamDetector:
         now_ms = self._get_timestamp()
         now_s = now_ms // 1000
 
+        # H6: match/hash/count the canonical form so case, padding, and
+        # Unicode variants of the same content cannot evade detection.
+        if content is None:
+            content = ""
+        elif not isinstance(content, str):
+            content = str(content)
+        canonical = _canonical_text(content)
+
         filters = self._get_user_filters(recipient_id, sender_id)
         rate_filter = self._first_filter(filters, "rate")
         duplicate_filter = self._first_filter(filters, "duplicate")
@@ -358,7 +409,9 @@ class DMSpamDetector:
 
         # 2. Duplicate content check, scoped per (sender, conversation) so the
         # same benign text sent to different recipients never accumulates.
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        # The hash covers the canonical form: "Buy Crypto NOW " and
+        # "buy crypto now" are the same message for spam purposes.
+        content_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
         dup_threshold = self.DEFAULT_DUPLICATE_THRESHOLD
         dup_window = self.DEFAULT_DUPLICATE_WINDOW
         if duplicate_filter:
@@ -388,18 +441,24 @@ class DMSpamDetector:
             )
 
         # 3. Recipient-defined pattern filters (fnmatch-style globs), evaluated
-        # in deterministic order; the first match decides.
+        # in deterministic order; the first match decides. Both sides are
+        # canonicalized so filter variants cannot be evaded by padding, case,
+        # or Unicode lookalikes (H6).
         for flt in filters:
-            if flt.get("filter_type") != "pattern":
+            if not self._filter_type_matches(flt, "pattern"):
                 continue
             pattern = flt.get("pattern")
             if not pattern:
                 continue
+            canonical_pattern = _canonical_text(pattern)
+            if not canonical_pattern:
+                continue
             try:
-                # Case-insensitive fnmatch via fnmatchcase + lowering:
-                # deterministic on every OS (fnmatch() alone defers to
-                # os.path.normcase, which differs per platform).
-                matched = fnmatch.fnmatchcase(content.lower(), str(pattern).lower())
+                # Case-insensitive fnmatch via fnmatchcase on canonical
+                # (casefolded) strings: deterministic on every OS
+                # (fnmatch() alone defers to os.path.normcase, which differs
+                # per platform).
+                matched = fnmatch.fnmatchcase(canonical, canonical_pattern)
             except Exception as e:
                 logger.debug(f"Invalid DM spam pattern skipped: {e}")
                 continue
@@ -429,23 +488,37 @@ class DMSpamDetector:
 
     @classmethod
     def _spam_indicators(cls, content: str) -> int:
-        """Score heuristic spam indicators in the content."""
+        """Score heuristic spam indicators in the content.
+
+        Block threshold is 3 (see _check_message step 4). Tiers are chosen so
+        a single benign URL or a single shared invite (1 indicator) always
+        passes, while bulk URL/mention bursts can block on their own (M11):
+        3-5 URLs or 5-9 mentions alone stay under threshold, 6+ URLs or 10+
+        mentions alone reach it, and invite markers count toward the URL
+        bucket plus contribute their own unconditional signal.
+        """
+        # H6: count on the canonical form so fullwidth/zero-width/case
+        # variants of URLs, mentions, and invite markers are still caught.
+        text = _canonical_text(content)
         # Parse real URLs instead of counting raw substrings: case-insensitive
         # schemes are caught and embedded decoys like "xhttp://" are not.
-        url_count = len(cls.URL_PATTERN.findall(content))
+        url_count = len(cls.URL_PATTERN.findall(text))
         # Collapse whitespace-split mention evasion ("< @123") before counting.
-        mention_count = len(cls.MENTION_SPLIT_PATTERN.findall(content))
-        lower = content.lower()
+        mention_count = len(cls.MENTION_SPLIT_PATTERN.findall(text))
         # L4: invite markers count toward the URL bucket so invite-only spam
         # (e.g. three discord.gg links and nothing else) reaches the URL
         # threshold without needing http(s):// links at all.
-        invite_count = sum(lower.count(marker) for marker in cls.INVITE_MARKERS)
+        invite_count = sum(text.count(marker) for marker in cls.INVITE_MARKERS)
         url_count += invite_count
 
         indicators = 0
-        if url_count >= 3:
+        if url_count >= 6:
+            indicators += 3
+        elif url_count >= 3:
             indicators += 2
-        if mention_count >= 5:
+        if mention_count >= 10:
+            indicators += 3
+        elif mention_count >= 5:
             indicators += 2
         # L4: previously the invite signal only counted when paired with 2+
         # URLs or mentions, so an isolated invite scored 0 and invite-only
@@ -515,6 +588,65 @@ class DMSpamDetector:
             logger.warning(f"dm_spam_events retention prune failed: {e}")
             return 0
 
+    def _ensure_filter_scope_uniqueness(self) -> None:
+        """Install NULL-safe UNIQUE guards for filter scopes (best-effort).
+
+        M12: the transactional UPDATE-then-INSERT upsert still has a TOCTOU
+        window — two concurrent writers can both UPDATE 0 rows and both
+        INSERT, creating duplicates. Partial UNIQUE indexes (one per scope,
+        since ``= NULL`` never matches) turn the loser into a unique
+        violation that set_filter retries as an UPDATE. The statements are
+        idempotent (IF NOT EXISTS) and run on every upsert — deliberately not
+        cached per-process, because tests and workers routinely open fresh
+        database handles that each need the guard. Any failure (e.g.
+        pre-existing duplicates, read-only handle) degrades to the previous
+        transactional behavior.
+        """
+        try:
+            self._db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_dm_spam_filters_global "
+                "ON dm_spam_filters(user_id, filter_type) "
+                "WHERE target_user_id IS NULL"
+            )
+            self._db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_dm_spam_filters_targeted "
+                "ON dm_spam_filters(user_id, filter_type, target_user_id) "
+                "WHERE target_user_id IS NOT NULL"
+            )
+        except Exception as e:
+            logger.debug(f"DM spam filter uniqueness guard unavailable: {e}")
+
+    def _update_filter_row(
+        self,
+        user_id: int,
+        filter_type: str,
+        target_user_id: Optional[int],
+        action: str,
+        threshold: int,
+        window_seconds: int,
+        pattern: Optional[str],
+        now: int,
+    ) -> int:
+        cursor = self._db.execute(
+            """UPDATE dm_spam_filters SET action = ?, threshold = ?,
+               window_seconds = ?, pattern = ?, enabled = 1, updated_at = ?
+               WHERE user_id = ? AND filter_type = ?
+                 AND ((target_user_id IS NULL AND ? IS NULL)
+                      OR target_user_id = ?)""",
+            (
+                action,
+                threshold,
+                window_seconds,
+                pattern,
+                now,
+                user_id,
+                filter_type,
+                target_user_id,
+                target_user_id,
+            ),
+        )
+        return int(getattr(cursor, "rowcount", 0) or 0)
+
     def set_filter(
         self,
         user_id: int,
@@ -529,50 +661,71 @@ class DMSpamDetector:
 
         Transactional upsert: global (NULL-target) and per-sender targeted
         filters are matched with proper IS NULL semantics so an update can
-        never duplicate rows or rewrite the wrong scope.
+        never duplicate rows or rewrite the wrong scope. The scope key is
+        canonicalized (H6) so ``"Rate"``/``" rate "`` variants cannot fork
+        duplicate rows, and a lost concurrent-insert race is retried as an
+        UPDATE via the NULL-safe UNIQUE guards (M12).
         """
+        # H6: canonicalize the scope key before matching.
+        filter_type = str(filter_type or "rate").strip().casefold() or "rate"
+        action = str(action or "warn").strip().casefold() or "warn"
+        threshold = int(threshold)
+        window_seconds = int(window_seconds)
+        if target_user_id is not None:
+            target_user_id = int(target_user_id)
+        if pattern is not None:
+            pattern = str(pattern)
         now = self._get_timestamp()
 
+        self._ensure_filter_scope_uniqueness()
         self._db.begin_transaction()
         try:
-            cursor = self._db.execute(
-                """UPDATE dm_spam_filters SET action = ?, threshold = ?,
-                   window_seconds = ?, pattern = ?, enabled = 1, updated_at = ?
-                   WHERE user_id = ? AND filter_type = ?
-                     AND ((target_user_id IS NULL AND ? IS NULL)
-                          OR target_user_id = ?)""",
-                (
-                    action,
-                    threshold,
-                    window_seconds,
-                    pattern,
-                    now,
-                    user_id,
-                    filter_type,
-                    target_user_id,
-                    target_user_id,
-                ),
+            updated = self._update_filter_row(
+                user_id,
+                filter_type,
+                target_user_id,
+                action,
+                threshold,
+                window_seconds,
+                pattern,
+                now,
             )
-            if getattr(cursor, "rowcount", 0) == 0:
-                filter_id = self._generate_id()
-                self._db.execute(
-                    """INSERT INTO dm_spam_filters
-                       (id, user_id, target_user_id, pattern, filter_type, action,
-                        threshold, window_seconds, enabled, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
-                    (
-                        filter_id,
+            if updated == 0:
+                try:
+                    filter_id = self._generate_id()
+                    self._db.execute(
+                        """INSERT INTO dm_spam_filters
+                           (id, user_id, target_user_id, pattern, filter_type, action,
+                            threshold, window_seconds, enabled, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                        (
+                            filter_id,
+                            user_id,
+                            target_user_id,
+                            pattern,
+                            filter_type,
+                            action,
+                            threshold,
+                            window_seconds,
+                            now,
+                            now,
+                        ),
+                    )
+                except Exception as e:
+                    if not _is_unique_violation(e):
+                        raise
+                    # M12: lost the concurrent-insert race — the row now
+                    # exists, so re-apply as an UPDATE instead of duplicating.
+                    self._update_filter_row(
                         user_id,
-                        target_user_id,
-                        pattern,
                         filter_type,
+                        target_user_id,
                         action,
                         threshold,
                         window_seconds,
+                        pattern,
                         now,
-                        now,
-                    ),
-                )
+                    )
             self._db.commit()
         except Exception:
             self._db.rollback()
