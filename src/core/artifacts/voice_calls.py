@@ -12,6 +12,10 @@ every artifact interaction is wrapped so that a failure there never breaks the
 voice pipeline (voice must keep working even when the artifacts feature is off).
 """
 
+import random
+import threading
+import time
+
 import utils.logger as logger
 import utils.config as config
 from typing import Any, Dict, List, Optional
@@ -63,6 +67,15 @@ class VoiceCallManager(BaseManager):
         # store, while this snapshot lets duplicate join callbacks be
         # distinguished from a real join after someone has departed.
         self._voice_call_participants: Dict[int, set[int]] = {}
+        # M13: guard every read-modify-write on _voice_call_participants.
+        # Join/leave callbacks arrive on SFU/event-loop threads; without this
+        # lock two concurrent joins both read a stale set and the last writer
+        # silently drops the other participant, so recording can start on an
+        # incomplete roster. The lock is held only around the in-memory
+        # snapshot update (plus the live-membership read that feeds it, so a
+        # stale view can never overwrite a fresher one) — never across DB
+        # writes or recording-manager calls.
+        self._participants_lock = threading.Lock()
 
     def set_recording_manager(self, recording_manager: Any) -> None:
         """Attach a RecordingManager (may be ``None`` to disable recording)."""
@@ -75,9 +88,10 @@ class VoiceCallManager(BaseManager):
         process-local snapshot only records identities seen by join callbacks,
         so a later rejoin can correctly require fresh recording consent.
         """
-        participants = self._voice_call_participants.get(int(call_id))
-        if participants is not None:
-            participants.discard(int(user_id))
+        with self._participants_lock:
+            participants = self._voice_call_participants.get(int(call_id))
+            if participants is not None:
+                participants.discard(int(user_id))
 
     # === Config helpers ===
 
@@ -174,9 +188,10 @@ class VoiceCallManager(BaseManager):
             recorded=recorded,
         )
         result = create_voice_call(self._db, call)
-        self._voice_call_participants[int(call_id)] = self._current_participant_ids(
-            channel_id
-        )
+        with self._participants_lock:
+            self._voice_call_participants[int(call_id)] = self._current_participant_ids(
+                channel_id
+            )
 
         # Fire-and-forget: request recording via RecordingManager.  When
         # consent is required the manager intentionally keeps this pending
@@ -255,7 +270,8 @@ class VoiceCallManager(BaseManager):
         # Fire-and-forget: stop recording via RecordingManager
         if updated.recorded and self._recording_manager is not None:
             self._recording_manager.stop_call_recording(call_id)
-        self._voice_call_participants.pop(int(call_id), None)
+        with self._participants_lock:
+            self._voice_call_participants.pop(int(call_id), None)
 
         return updated
 
@@ -352,23 +368,28 @@ class VoiceCallManager(BaseManager):
         if call is None:
             raise ValueError(f"Voice call {call_id} not found")
         normalized_user_id = int(user_id)
-        current_ids = self._current_participant_ids(self._require_channel_id(call))
-        if normalized_user_id not in current_ids:
-            raise ValueError(
-                f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
-            )
-        previous_ids = self._voice_call_participants.get(int(call_id))
-        if previous_ids is None:
-            # A manager reconstructed after the call began cannot know the
-            # prior snapshot. Treat this callback conservatively as a join so
-            # recording cannot continue without a fresh consent check.
-            previous_ids = current_ids - {normalized_user_id}
-        else:
-            # Drop departed users before comparing: a later rejoin must count
-            # as a new membership even when participant_count is historical.
-            previous_ids = previous_ids & current_ids
-        is_new_membership = normalized_user_id not in previous_ids
-        self._voice_call_participants[int(call_id)] = set(current_ids)
+        # M13: the live-membership read and the snapshot read-modify-write run
+        # atomically under _participants_lock. Otherwise two concurrent joins
+        # interleave as fetch(stale) / fetch(fresh) / write(fresh) /
+        # write(stale) and the stale write drops a participant from the roster.
+        with self._participants_lock:
+            current_ids = self._current_participant_ids(self._require_channel_id(call))
+            if normalized_user_id not in current_ids:
+                raise ValueError(
+                    f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
+                )
+            previous_ids = self._voice_call_participants.get(int(call_id))
+            if previous_ids is None:
+                # A manager reconstructed after the call began cannot know the
+                # prior snapshot. Treat this callback conservatively as a join so
+                # recording cannot continue without a fresh consent check.
+                previous_ids = current_ids - {normalized_user_id}
+            else:
+                # Drop departed users before comparing: a later rejoin must count
+                # as a new membership even when participant_count is historical.
+                previous_ids = previous_ids & current_ids
+            is_new_membership = normalized_user_id not in previous_ids
+            self._voice_call_participants[int(call_id)] = set(current_ids)
         # The callback can be delivered more than once for the same live
         # membership. With no participant identity roster in the existing
         # schema, the live set gives us the safe idempotence boundary: never
@@ -427,11 +448,11 @@ class VoiceCallManager(BaseManager):
         updated: Optional[VoiceCall] = None
         before_consented_ids: set[int] = set()
         last_error: Optional[Exception] = None
-        for _ in range(5):
+        for attempt in range(5):
             caller_transaction = getattr(self._db, "in_transaction", False)
-            if not caller_transaction:
-                self._db.begin_transaction()
             try:
+                if not caller_transaction:
+                    self._db.begin_transaction()
                 # Re-read INSIDE the transaction so the append applies to the
                 # latest persisted roster, never to a snapshot taken before a
                 # competing writer's commit.
@@ -454,6 +475,15 @@ class VoiceCallManager(BaseManager):
                     self._db.commit()
                 updated = candidate
                 break
+            except ValueError:
+                # Non-transient (unknown call, failed update): rolling back
+                # our own transaction but retrying cannot help — re-raise.
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                raise
             except Exception as exc:
                 last_error = exc
                 if not caller_transaction:
@@ -461,6 +491,12 @@ class VoiceCallManager(BaseManager):
                         self._db.rollback()
                     except Exception:  # pragma: no cover - defensive
                         pass
+                if attempt < 4:
+                    # Back off with jitter so concurrent consent writers
+                    # serialize instead of colliding on every retry (a tight
+                    # spin burns all attempts while a peer still holds the
+                    # write lock, turning contention into hard failures).
+                    time.sleep(0.005 * (2**attempt) + random.uniform(0, 0.005))
         if updated is None:
             if isinstance(last_error, ValueError):
                 raise last_error
