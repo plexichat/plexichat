@@ -512,36 +512,62 @@ class PasskeyManager:
         expires_at = self._get_timestamp() + (self._challenge_ttl * 1000)
 
         allow_credentials = []
-        if username:
-            email_index = self._crypto.blind_index(username, "user_email")
+        # M7: normalize the probe so whitespace-only input follows the
+        # discoverable-credential path exactly like an omitted username
+        # (no per-user lookup, hence no oracle either way).
+        probe = username.strip() if isinstance(username, str) else username
+        if probe:
+            email_index = self._crypto.blind_index(probe, "user_email")
             user_row = self._db.fetch_one(
                 "SELECT id, webauthn_user_handle FROM auth_users WHERE username = ? OR email_index = ?",
-                (username, email_index),
+                (probe, email_index),
             )
             if user_row:
-                user_id = user_row["id"]
+                user_id = user_row["id"] if isinstance(user_row, dict) else user_row[0]
                 creds = self._db.fetch_all(
                     "SELECT credential_id FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
                     (user_id,),
                 )
                 for row in creds:
-                    cred_id = row["credential_id"]
+                    cred_id = row["credential_id"] if isinstance(row, dict) else row[0]
                     allow_credentials.append(
                         PublicKeyCredentialDescriptor(
                             id=self._base64url_decode(cred_id)
                         )
                     )
-            # F4: enumeration mitigation — when the user has no passkeys or
-            # does not exist, inject a constant-time dummy credential so that
-            # allowCredentials shape is indistinguishable from a single-credential
-            # account. This is a best-effort tradeoff: accounts with multiple
-            # credentials still differ in count, but the existence oracle for
-            # "has any passkey" is closed. The endpoint remains rate-limited
-            # 10/min (see api/routes/auth/passkeys.py) as defense-in-depth.
-            # Operators who prefer empty allowCredentials for discoverable
-            # flows can disable this by setting authentication.passkeys
-            # .dummy_credential to false.
-            if not allow_credentials and self._config.get("dummy_credential", True):
+            else:
+                # M7: same-timing dummy work for unknown users. The
+                # known-user path above performs a second DB roundtrip
+                # (credential lookup) plus per-credential base64 decodes;
+                # without this, an unknown username returns measurably
+                # faster, preserving the enumeration oracle via latency.
+                # The result is discarded; cost is what matters.
+                try:
+                    self._db.fetch_all(
+                        "SELECT credential_id FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
+                        (-1,),
+                    )
+                except Exception:  # nosec B110 - timing ballast only
+                    pass
+                try:
+                    self._base64url_decode(self._base64url_encode(os.urandom(32)))
+                except Exception:  # nosec B110 - timing ballast only
+                    pass
+            # M7: enumeration mitigation — unknown users and known users
+            # with no passkeys both receive a single random dummy
+            # credential, so allowCredentials shape is indistinguishable
+            # from a single-credential account and the endpoint never
+            # 404s on unknown users (always 200 + challenge). This is
+            # unconditional: the legacy
+            # authentication.passkeys.dummy_credential=false opt-out is
+            # retired because disabling the dummy reintroduces the
+            # username-existence oracle. Multi-credential accounts still
+            # differ in count by WebAuthn design (each entry is needed
+            # for authentication); the "has any passkey" oracle is
+            # closed, which is what this finding covers. The endpoint
+            # remains rate-limited 10/min (see api/routes/auth/passkeys.py)
+            # as defense-in-depth.
+            if not allow_credentials:
                 dummy_id = os.urandom(32)
                 allow_credentials.append(PublicKeyCredentialDescriptor(id=dummy_id))
 

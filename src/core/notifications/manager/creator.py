@@ -288,6 +288,15 @@ class NotificationCreatorMixin(NotificationProtocol):
             if override.level == NotificationLevel.NOTHING:
                 return False
 
+        # M2 (muted fallback): a MUTED level on the resolved settings row
+        # is an indefinite mute and must suppress. For DMs (server_id None)
+        # the resolved row IS the global one and no per-channel override is
+        # on the path (channel_id unset), so without this check a
+        # globally-muted user still receives DM notifications. The explicit
+        # per-channel override above stays authoritative: an active
+        # per-channel mute (or NOTHING) already returned False, while an
+        # expired per-channel mute falls through to here and inherits the
+        # global/per-server mute instead of unmuting.
         if not settings or settings.level == NotificationLevel.NOTHING:
             return False
 
@@ -295,7 +304,7 @@ class NotificationCreatorMixin(NotificationProtocol):
         # served but never consulted, so a user who disabled DM
         # notifications still got mentioned in direct messages. There is no
         # server scope on a DM, so server_id is None exactly there; a global
-        # level of NOTHING above already silenced those users.
+        # level of NOTHING/MUTED above already silenced those users.
         if server_id is None and not settings.dm_notifications:
             return False
 
