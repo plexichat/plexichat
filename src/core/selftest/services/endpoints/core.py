@@ -240,6 +240,15 @@ class CoreMixin(EndpointTesterBase):
             # latency is bounded by the origin, not the app. Give that one
             # path room (it still fails loudly past the deadline).
             req_timeout = 30 if url_path.startswith("/api/v1/media/proxy") else 5
+            # M9: POST /auth/refresh rotates the bearer and the rotated
+            # credential leaves the JSON body ONLY for explicit non-browser
+            # opt-in. This probe adopts the rotated token from the body
+            # below, so drive the Bearer path here (same opt-in the login
+            # setup already uses); otherwise the runner keeps the revoked
+            # bearer and every later auto-loop request 401s.
+            request_headers: Dict[str, str] = {}
+            if method == "POST" and url_path.endswith("/auth/refresh"):
+                request_headers["X-Plexichat-Token-Mode"] = "bearer"
             resp = active_session.request(
                 method,
                 f"{self.ctx.base_url}{url_path}",
@@ -247,6 +256,7 @@ class CoreMixin(EndpointTesterBase):
                 data=form_data if form_data else None,
                 files=files,
                 params=query_params,
+                headers=request_headers or None,
                 timeout=req_timeout,
             )
             duration = (time.time() - start) * 1000
@@ -271,7 +281,10 @@ class CoreMixin(EndpointTesterBase):
                     )
                 else:
                     extra_headers: Dict[str, str] = {
-                        "X-Plexichat-SelfTest-Debug": "true"
+                        "X-Plexichat-SelfTest-Debug": "true",
+                        # Preserve the M9 bearer opt-in so the retry
+                        # exercises the same credential path as the attempt.
+                        **request_headers,
                     }
                     if non_idempotent:
                         # Same key for the original attempt and the retry so
