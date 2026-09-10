@@ -179,6 +179,41 @@ class OAuthStateManager:
         """Hash a token for storage using SHA-256."""
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
+    def verify_nonce(
+        self,
+        stored_nonce_hash: Optional[str],
+        presented_nonce: Optional[str],
+    ) -> bool:
+        """
+        Verify a presented OIDC nonce against the stored hash (M6).
+
+        The raw nonce is never persisted — only its SHA-256 hash is stored
+        with the state record. Verification re-hashes the presented value
+        and compares in constant time.
+
+        Fail-closed semantics:
+          - No nonce bound to this state (stored hash is None) -> True
+            (caller skips the check; non-OIDC provider).
+          - Nonce bound but presented value missing/empty -> False.
+          - Mismatch -> False.
+
+        Args:
+            stored_nonce_hash: SHA-256 hex digest stored with the state.
+            presented_nonce: Raw ``nonce`` claim from the IdP id_token.
+
+        Returns:
+            True only on match (or when no nonce was bound).
+        """
+        if not stored_nonce_hash:
+            return True
+        if not presented_nonce or not isinstance(presented_nonce, str):
+            return False
+        candidate_hash = self._hash_token(presented_nonce)
+        try:
+            return secrets.compare_digest(candidate_hash, stored_nonce_hash)
+        except Exception:
+            return False
+
     def _check_ip_rate_limit(self, ip_address: Optional[str]) -> bool:
         """
         Check if IP has too many pending states.
@@ -516,3 +551,31 @@ def cleanup_expired_states() -> int:
     if _state_manager is None:
         return 0
     return _state_manager.cleanup_expired()
+
+
+def verify_oauth_nonce(
+    stored_nonce_hash: Optional[str],
+    presented_nonce: Optional[str],
+) -> bool:
+    """
+    Verify a presented OIDC nonce against a stored hash (M6).
+
+    Constant-time comparison via :meth:`OAuthStateManager.verify_nonce`;
+    fails closed when a nonce is bound but the presented value is
+    missing or mismatched. Returns True when no nonce was bound
+    (non-OIDC provider) so callers can skip the check.
+
+    Falls back to a direct constant-time string comparison when no
+    manager is initialised (same fail-closed contract).
+    """
+    if not stored_nonce_hash:
+        return True
+    if not presented_nonce or not isinstance(presented_nonce, str):
+        return False
+    if _state_manager is not None:
+        return _state_manager.verify_nonce(stored_nonce_hash, presented_nonce)
+    try:
+        candidate = hashlib.sha256(presented_nonce.encode("utf-8")).hexdigest()
+        return secrets.compare_digest(candidate, stored_nonce_hash)
+    except Exception:
+        return False

@@ -18,6 +18,7 @@ from .oauth_config import OAUTH_PROVIDERS
 from src.core.auth.oauth import (
     create_oauth_state,
     verify_oauth_state,
+    verify_oauth_nonce,
     verify_pkce,
 )
 
@@ -490,29 +491,64 @@ async def oauth_callback(
         # token it returns, otherwise the nonce is decoration with no
         # consumer. OIDC binds the nonce to the authorization session, so a
         # stolen/misrouted authorization code can no longer be exchanged into
-        # a session minted for a different browser. The JWT arrives over the
-        # TLS channel straight from the IdP's token endpoint, so the nonce
-        # claim is read without a JWKS round-trip (signature verification is
-        # not what the nonce protects against here). Placed OUTSIDE the token
-        # exchange try/except so an HTTPException is not remapped to a generic
-        # token-exchange failure.
+        # a session minted for a different browser. The raw nonce is never
+        # persisted — only its SHA-256 hash rides with the state record — so
+        # the claim is re-hashed and compared in constant time via
+        # verify_oauth_nonce. The state was already atomically consumed
+        # (single-use UPDATE ... WHERE used = 0) by verify_oauth_state above,
+        # so a failed nonce leaves no replayable state behind. Fail closed:
+        # a nonce-bound flow without a matching id_token nonce is rejected.
+        # Placed OUTSIDE the token exchange try/except so an HTTPException is
+        # not remapped to a generic token-exchange failure.
         id_token = token_result.get("id_token")
-        nonce_sent = getattr(state_record, "nonce_value", None)
-        if id_token and nonce_sent:
+        stored_nonce_hash = getattr(state_record, "nonce", None)
+        legacy_nonce_raw = getattr(state_record, "nonce_value", None)
+        if stored_nonce_hash or legacy_nonce_raw:
             import base64
             import json as _json
+            import secrets as _secrets
 
+            if not id_token or not isinstance(id_token, str):
+                logger.warning(
+                    f"OAuth nonce check failed for {provider}: "
+                    f"nonce-bound flow returned no id_token"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": {
+                            "code": 401,
+                            "message": "OAuth nonce mismatch",
+                        }
+                    },
+                )
             try:
-                payload = id_token.split(".")[1]
+                parts = id_token.split(".")
+                if len(parts) < 2:
+                    raise ValueError("malformed id_token")
+                payload = parts[1]
                 padding = "=" * (-len(payload) % 4)
                 claims = _json.loads(base64.urlsafe_b64decode(payload + padding))
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Failed to decode id_token from {provider}: {e}")
                 raise HTTPException(
                     status_code=401,
                     detail={"error": {"code": 401, "message": "Invalid id_token"}},
                 )
-            if claims.get("nonce") != nonce_sent:
+            presented_nonce = claims.get("nonce") if isinstance(claims, dict) else None
+            if stored_nonce_hash:
+                nonce_ok = verify_oauth_nonce(stored_nonce_hash, presented_nonce)
+            else:
+                # Fallback for creation-time records carrying the raw value
+                # (e.g. unit tests): constant-time direct comparison.
+                nonce_ok = bool(
+                    isinstance(presented_nonce, str)
+                    and isinstance(legacy_nonce_raw, str)
+                    and _secrets.compare_digest(presented_nonce, legacy_nonce_raw)
+                )
+            if not nonce_ok:
                 logger.warning(
                     f"OAuth nonce mismatch for {provider} from "
                     f"{getattr(request, 'client', None)}"
