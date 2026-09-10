@@ -8,8 +8,6 @@ from .protocol import AuthManagerProtocol
 
 
 class IpBlacklistMixin(AuthManagerProtocol):
-    _last_ip_verdict: Dict[str, bool] = {}
-
     def block_ip(
         self,
         ip_address: str,
@@ -67,13 +65,9 @@ class IpBlacklistMixin(AuthManagerProtocol):
 
     @cached(ttl=300, prefix="ip_blocked")
     def is_ip_blocked(self, ip_address: str) -> bool:
-        # Preserve the last known verdict during a transient crypto/database
-        # outage. Returning True unconditionally turns infrastructure failure
-        # into a site-wide 5-minute self-DoS; returning False would weaken the
-        # blacklist. A short local fallback keeps availability while retaining
-        # the last security decision.
-        cache_key = str(ip_address)
-        last_verdict = getattr(self, "_last_ip_verdict", {})
+        # Fail OPEN on DB/crypto/cache errors: a transient outage must not
+        # turn into a site-wide lockout. Listed IPs are still blocked via
+        # the normal DB path below; only the error path returns False.
         try:
             ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
             legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
@@ -83,33 +77,19 @@ class IpBlacklistMixin(AuthManagerProtocol):
                 (ip_index, legacy_index, legacy_index),
             )
             if not row:
-                last_verdict[cache_key] = False
-                if len(last_verdict) > 10000:
-                    last_verdict.pop(next(iter(last_verdict)))
-                self._last_ip_verdict = last_verdict
                 return False
 
             expires_at = row["expires_at"]
             if expires_at and expires_at < self._get_timestamp():
                 self.unblock_ip(ip_address)
-                last_verdict[cache_key] = False
-                if len(last_verdict) > 10000:
-                    last_verdict.pop(next(iter(last_verdict)))
-                self._last_ip_verdict = last_verdict
                 return False
 
-            last_verdict[cache_key] = True
-            if len(last_verdict) > 10000:
-                last_verdict.pop(next(iter(last_verdict)))
-            self._last_ip_verdict = last_verdict
             return True
         except Exception as e:
-            logger.error(
+            logger.warning(
                 f"is_ip_blocked: failed to check IP blacklist for {ip_address}: {e}"
             )
-            # Fail closed only when there is no previous verdict. This avoids
-            # flipping every known-good IP to blocked during a transient outage.
-            return bool(last_verdict.get(cache_key, True))
+            return False
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:
         rows = self._db.fetch_all(
