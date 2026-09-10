@@ -297,7 +297,11 @@ class NotificationCreatorMixin(NotificationProtocol):
         # per-channel mute (or NOTHING) already returned False, while an
         # expired per-channel mute falls through to here and inherits the
         # global/per-server mute instead of unmuting.
-        if not settings or settings.level == NotificationLevel.NOTHING:
+        if (
+            not settings
+            or settings.level == NotificationLevel.NOTHING
+            or settings.level == NotificationLevel.MUTED
+        ):
             return False
 
         # M2: the per-user ``dm_notifications`` preference was stored and
