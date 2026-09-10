@@ -8,6 +8,7 @@ constrained to an explicit allow-list so no user input is interpolated into SQL.
 """
 
 import json
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -429,6 +430,26 @@ _TRANSIENT_OP_TYPES = {
 _MAX_ARTIFACT_OP_BYTES = 256 * 1024
 
 
+# Serializes in-process seq allocation per artifact. SQLite already
+# serializes writers at the database level, so this lock adds no effective
+# contention beyond what the engine imposes — but it collapses the
+# SELECT-MAX/INSERT race window between threads of this process so the
+# UNIQUE-retry loop below (which still arbitrates cross-process races)
+# almost never has to fire more than once.
+_APPEND_LOCKS_GUARD = threading.Lock()
+_APPEND_LOCKS: Dict[Any, threading.Lock] = {}
+
+
+def _append_lock(artifact_id: SnowflakeID) -> threading.Lock:
+    """Return the process-wide mutex serializing appends to one artifact."""
+    with _APPEND_LOCKS_GUARD:
+        lock = _APPEND_LOCKS.get(artifact_id)
+        if lock is None:
+            lock = threading.Lock()
+            _APPEND_LOCKS[artifact_id] = lock
+        return lock
+
+
 def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
     """Return the next per-artifact sequence number (MAX(seq) + 1).
 
@@ -492,23 +513,39 @@ def append_artifact_op(
         return None
     now = int(time.time() * 1000)
     data_json = _json_dumps(data)
-    for _ in range(8):
-        seq = _fetch_next_seq(db, artifact_id)
-        try:
-            cursor = db.execute(
-                "INSERT INTO artifact_ops "
-                "(artifact_id, seq, op_type, actor_id, data, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (artifact_id, seq, op_type, actor_id, data_json, now),
-            )
-        except Exception as e:
-            # Retry only on unique/integrity collisions; anything else surfaces.
-            lowered = str(e).lower()
-            if "unique" in lowered or "integrity" in lowered:
-                continue
-            logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
-            return None
-        if getattr(cursor, "rowcount", 0):
+    # Atomic seq allocation: in-process threads serialize on the per-artifact
+    # mutex while ``UNIQUE(artifact_id, seq)`` (schema.py) arbitrates races
+    # from other processes/connections — a colliding loser retries with a
+    # fresh number instead of dropping an op. Transient lock contention
+    # ("database is locked") is retried too; anything else surfaces.
+    with _append_lock(artifact_id):
+        for _ in range(32):
+            seq = _fetch_next_seq(db, artifact_id)
+            try:
+                db.execute(
+                    "INSERT INTO artifact_ops "
+                    "(artifact_id, seq, op_type, actor_id, data, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (artifact_id, seq, op_type, actor_id, data_json, now),
+                )
+            except Exception as e:
+                # Retry only on unique/integrity collisions or transient lock
+                # contention; anything else surfaces.
+                lowered = str(e).lower()
+                if (
+                    "unique" in lowered
+                    or "integrity" in lowered
+                    or "database is locked" in lowered
+                    or "database table is locked" in lowered
+                    or "deadlock" in lowered
+                ):
+                    continue
+                logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
+                return None
+            # A successful INSERT without an exception IS success: return the
+            # seq unconditionally. A rowcount guard here would be wrong — some
+            # drivers report 0/-1 rowcount on successful INSERTs, which would
+            # loop and insert phantom duplicate ops for a single append call.
             return seq
     logger.warning(f"Failed to persist artifact op for {artifact_id}: seq contention")
     return None
