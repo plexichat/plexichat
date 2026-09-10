@@ -65,10 +65,15 @@ def _check_port_available(host: str, port: int) -> None:
         s.settimeout(1.0)
         try:
             s.connect((host, port))
-            logger.error(f"Port {port} on {host} is already in use - cannot start")
-            sys.exit(1)
         except OSError:
-            pass
+            return
+    # Occupied port: this check runs BEFORE setup_logging(), so the
+    # configured logger is not usable yet — logger.error() here raises
+    # RuntimeError("Logger not configured...") instead of reporting the
+    # conflict. Write to stderr directly (like the buffered early_logs
+    # pattern below, an exit path cannot be replayed later).
+    print(f"Port {port} on {host} is already in use - cannot start", file=sys.stderr)
+    sys.exit(1)
 
 
 def _ensure_media_signing_key() -> None:
