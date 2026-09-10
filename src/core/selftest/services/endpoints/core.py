@@ -234,6 +234,36 @@ class CoreMixin(EndpointTesterBase):
                     r"[^a-z0-9_]", "_", json_body["name"].lower()
                 )
 
+        # Ownership transfer requires the new owner (other_user, set by
+        # get_minimal_body) to be a current member — the route 404s by
+        # design otherwise. Setup seeds other_user as a member, but an
+        # earlier ban/kick/leave probe may have stranded them (a failed
+        # probe skips the auto-restore below), so best-effort rejoin
+        # through a fresh invite before exercising the endpoint.
+        if (
+            method == "POST"
+            and "/servers/" in path
+            and path.rstrip("/").endswith("/transfer")
+            and self.ctx.test_other_user_id
+            and self.ctx.test_channel_id
+        ):
+            try:
+                _tinv = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/channels/"
+                    f"{self.ctx.test_channel_id}/invites",
+                    json={"max_uses": 5},
+                    timeout=5,
+                )
+                if 200 <= _tinv.status_code < 300:
+                    _tcode = _tinv.json().get("code")
+                    if _tcode and self.ctx.other_session is not None:
+                        self.ctx.other_session.post(
+                            f"{self.ctx.base_url}/api/v1/channels/invites/{_tcode}",
+                            timeout=10,
+                        )
+            except Exception as exc:
+                logger.debug(f"Transfer membership-ensure note: {exc}")
+
         start = time.time()
         try:
             # The media proxy fetches remote content server-side; its
@@ -383,7 +413,7 @@ class CoreMixin(EndpointTesterBase):
                         )
                         if 200 <= _inv.status_code < 300:
                             _code = _inv.json().get("code")
-                            if _code:
+                            if _code and self.ctx.other_session is not None:
                                 _rj = self.ctx.other_session.post(
                                     f"{self.ctx.base_url}/api/v1/channels/"
                                     f"invites/{_code}",
@@ -416,7 +446,7 @@ class CoreMixin(EndpointTesterBase):
                     )
                     if 200 <= _linv.status_code < 300:
                         _lcode = _linv.json().get("code")
-                        if _lcode:
+                        if _lcode and self.ctx.other_session is not None:
                             _lrj = self.ctx.other_session.post(
                                 f"{self.ctx.base_url}/api/v1/channels/invites/{_lcode}",
                                 timeout=10,
@@ -425,6 +455,33 @@ class CoreMixin(EndpointTesterBase):
                                 logger.info("Rejoined other_user after leave probe")
                 except Exception as exc:
                     logger.debug(f"Leave-restore note: {exc}")
+            # Ownership transfer moves the server to other_user by design;
+            # hand it back to the admin right away so later owner-only
+            # probes (PATCH/DELETE server) exercise the intended path
+            # instead of 403ing against the new owner.
+            if (
+                success
+                and method == "POST"
+                and "/servers/" in path
+                and path.rstrip("/").endswith("/transfer")
+                and active_session is self.ctx.session
+                and self.ctx.other_session is not None
+                and self.ctx.test_user_id
+            ):
+                try:
+                    _back = self.ctx.other_session.post(
+                        f"{self.ctx.base_url}{url_path}",
+                        json={"new_owner_id": str(self.ctx.test_user_id)},
+                        timeout=10,
+                    )
+                    if 200 <= _back.status_code < 300:
+                        logger.info("Transferred server back to admin after probe")
+                    else:
+                        logger.warning(
+                            f"Transfer-back probe returned {_back.status_code}"
+                        )
+                except Exception as exc:
+                    logger.debug(f"Transfer-back note: {exc}")
             # Relationship blocks are privacy-enforcing (see above): unblock
             # the same target right away so later social flows stay clean.
             if success and method == "POST" and path.endswith("/relationships/block"):
@@ -452,6 +509,7 @@ class CoreMixin(EndpointTesterBase):
                                 else ""
                             )
                             and active_session is self.ctx.session
+                            and self.ctx.other_session is not None
                         ):
                             try:
                                 self.ctx.other_session.post(

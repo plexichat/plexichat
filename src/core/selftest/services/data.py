@@ -747,6 +747,23 @@ class DataGenerator:
                     else str(self.ctx.test_user_id)
                 )
 
+            if (
+                "/servers/" in path
+                and path.rstrip("/").endswith("/transfer")
+                and method == "POST"
+            ):
+                # Ownership transfer requires the new owner to already be a
+                # member: the core raises MemberNotFoundError (mapped to 404
+                # "Server or member not found") otherwise. Schema-driven
+                # generation invents a random snowflake for new_owner_id,
+                # which deterministically 404s. Point at other_user, a real
+                # member seeded by setup (fallback: the acting owner, which
+                # the core accepts as a member rather than 404ing).
+                if self.ctx.test_other_user_id:
+                    body["new_owner_id"] = str(self.ctx.test_other_user_id)
+                elif self.ctx.test_user_id:
+                    body["new_owner_id"] = str(self.ctx.test_user_id)
+
             if "force-username-change" in path and method == "POST":
                 # Explicitly disable username banning to avoid polluting the
                 # banned_usernames table with self-test usernames.
