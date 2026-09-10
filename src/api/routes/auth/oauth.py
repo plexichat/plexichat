@@ -13,7 +13,12 @@ from src.api.schemas.auth import OAuthLoginResponse, OAuthCallbackRequest, Login
 from src.api.schemas.common import ErrorResponse
 from src.core.auth.models import AuthStatus
 from .helpers import _user_to_response
-from .cookies import set_session_cookie, session_cookie_secure
+from .cookies import (
+    set_session_cookie,
+    session_cookie_secure,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from .oauth_config import OAUTH_PROVIDERS
 from src.core.auth.oauth import (
     create_oauth_state,
@@ -753,10 +758,15 @@ async def oauth_callback(
         response.delete_cookie(
             OAUTH_STATE_COOKIE, path=_oauth_cookie_params(60)["path"]
         )
+        # M9 (same as login): browsers receive the session ONLY via the
+        # HttpOnly cookie; the body carries a marker plus the session
+        # lifetime, with the raw token echoed back solely for explicit
+        # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
         if result.token:
             set_session_cookie(response, result.token)
         return LoginResponse(
             status="success",
-            token=result.token,
+            token=session_token_for_response(request, result.token),
             user=_user_to_response(result.user) if result.user else None,
+            expires_in=session_cookie_max_age(),
         )

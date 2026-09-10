@@ -14,7 +14,11 @@ from src.api.schemas.auth import (
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
-from .cookies import clear_session_cookie
+from .cookies import (
+    clear_session_cookie,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
@@ -159,7 +163,11 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
     try:
         # Rotation (F3): mint a fresh token and invalidate the old one.
         # The response re-issues the HttpOnly cookie (F4) so the browser
-        # and JS storage stay in sync.
+        # and JS storage stay in sync. M9: the rotated token is echoed in
+        # the body SOLELY for explicit non-browser opt-in
+        # (``X-Plexichat-Token-Mode: bearer``); cookie flows get only the
+        # marker plus the session lifetime, with the credential in the
+        # re-issued HttpOnly cookie.
         new_token = auth.refresh_session(token)
         if not new_token:
             raise TokenInvalidError("Invalid or expired session")
@@ -175,8 +183,9 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
 
         return LoginResponse(
             status="success",
-            token=new_token,
+            token=session_token_for_response(request, new_token),
             user=_user_to_response(user),
+            expires_in=session_cookie_max_age(),
         )
     except (TokenInvalidError, TokenExpiredError):
         logger.warning("Session refresh failed: invalid or expired token")

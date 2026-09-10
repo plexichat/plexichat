@@ -87,12 +87,28 @@ class SessionResponse(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Login response."""
+    """Login response.
+
+    M9: ``token`` is the raw session bearer and is present SOLELY when the
+    caller explicitly opts in with ``X-Plexichat-Token-Mode: bearer``
+    (non-browser clients that cannot persist cookies). Browser cookie
+    flows receive ``token=None`` plus a ``status`` marker and
+    ``expires_in`` (session lifetime in seconds, mirroring the HttpOnly
+    ``plexichat_token`` cookie Max-Age) — the credential travels only in
+    the ``Set-Cookie`` header, never in JS-readable JSON.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     status: str = Field(..., description="Login status: success, two_factor_required")
-    token: Optional[str] = Field(default=None, description="Session token (if success)")
+    token: Optional[str] = Field(
+        default=None,
+        description=(
+            "Session token — present ONLY for explicit non-browser opt-in "
+            "(X-Plexichat-Token-Mode: bearer); None for cookie flows where "
+            "the HttpOnly cookie is the credential"
+        ),
+    )
     user: Optional[UserResponse] = Field(
         default=None, description="User info (if success)"
     )
@@ -103,7 +119,12 @@ class LoginResponse(BaseModel):
         default=None, description="Available 2FA methods"
     )
     expires_in: Optional[int] = Field(
-        default=None, description="Challenge expiration seconds"
+        default=None,
+        description=(
+            "Session lifetime in seconds on success (mirrors the HttpOnly "
+            "cookie Max-Age); 2FA challenge TTL when status is "
+            "two_factor_required"
+        ),
     )
 
 

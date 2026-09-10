@@ -6,7 +6,11 @@ from utils.logger import mask_email, mask_string
 from src.api.schemas.auth import RegisterRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
-from .cookies import set_session_cookie
+from .cookies import (
+    set_session_cookie,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     AuthError,
     UserExistsError,
@@ -145,11 +149,16 @@ async def register(
             },
         )
 
-    # SECURITY: auto-login after registration delivers the session the
-    # same way login/oauth/passkeys do — as an HttpOnly cookie so the
-    # browser holds an XSS-resistant credential path. (This route never
-    # returns two_factor_required: a fresh registration has no 2FA yet.)
+    # M9 (same as login): browsers receive the session ONLY via the
+    # HttpOnly cookie; the JSON body carries a status marker plus the
+    # session lifetime, and the raw token is echoed back solely for
+    # non-browser clients that opt in with
+    # ``X-Plexichat-Token-Mode: bearer``. (This route never returns
+    # two_factor_required: a fresh registration has no 2FA yet.)
     set_session_cookie(response, result.token)
     return LoginResponse(
-        status="success", token=result.token, user=_user_to_response(user)
+        status="success",
+        token=session_token_for_response(request, result.token),
+        user=_user_to_response(user),
+        expires_in=session_cookie_max_age(),
     )

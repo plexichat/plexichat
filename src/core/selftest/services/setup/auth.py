@@ -204,6 +204,9 @@ class AuthSetupMixin(SetupServiceBase):
                 # device to address instead of fuzzed ids (404 by design).
                 "device_fingerprint": "selftest-device-01",
             },
+            # M9: raw session tokens leave the JSON body ONLY for explicit
+            # non-browser opt-in; self-test drives the Bearer path.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
             timeout=10,
         )
 
@@ -258,6 +261,8 @@ class AuthSetupMixin(SetupServiceBase):
                     "username": self.ctx._setup_other_username,
                     "password": self.ctx._test_password,
                 },
+                # M9 opt-in: self-test needs the raw bearer in the body.
+                headers={"X-Plexichat-Token-Mode": "bearer"},
                 timeout=10,
             )
             if other_resp.status_code == 200:

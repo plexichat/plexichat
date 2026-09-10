@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, Response, HTTPException, Depends
 
 import src.api as api
 import utils.logger as logger
@@ -17,6 +17,11 @@ from src.api.schemas.auth import (
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
+from .cookies import (
+    set_session_cookie,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     InvalidCredentialsError,
     AccountLockedError,
@@ -257,6 +262,7 @@ async def passkey_authenticate_options(
 async def passkey_authenticate(
     body: PasskeyAuthenticateRequest,
     request: Request,
+    response: Response,
 ) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
@@ -286,10 +292,18 @@ async def passkey_authenticate(
                 expires_in=result.expires_in,
             )
 
+        # M9 (same as login): the session goes to browsers ONLY via the
+        # HttpOnly cookie (previously this route set NO cookie at all —
+        # bearer-only); the body carries a marker plus the session
+        # lifetime, with the raw token echoed back solely for explicit
+        # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
+        if result.token:
+            set_session_cookie(response, result.token)
         return LoginResponse(
             status="success",
-            token=result.token,
+            token=session_token_for_response(request, result.token),
             user=_user_to_response(result.user) if result.user else None,
+            expires_in=session_cookie_max_age(),
         )
     except InvalidCredentialsError:
         raise HTTPException(

@@ -36,6 +36,8 @@ def ensure_user_session(ctx, session, username: str) -> bool:
         resp = session.post(
             f"{ctx.base_url}/api/v1/auth/login",
             json={"username": username, "password": ctx._test_password},
+            # M9 opt-in: the bearer is read from the body here.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
             timeout=10,
         )
         if resp.status_code != 200:
@@ -91,6 +93,8 @@ def third_user_session(ctx):
         resp = sess.post(
             f"{ctx.base_url}/api/v1/auth/login",
             json={"username": username, "password": password},
+            # M9 opt-in: the bearer is read from the body here.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
             timeout=10,
         )
         if resp.status_code != 200:

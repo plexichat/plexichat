@@ -351,13 +351,37 @@ class TestCookieAndOauthHttp:
             "/api/v1/auth/refresh", headers={"X-Plexichat-Request": "1"}
         )
         assert r2.status_code == 200
-        assert r2.json().get("token")
+        # M9: cookie-flow refresh carries no raw token in the body — the
+        # rotated credential travels in the re-issued HttpOnly cookie.
+        assert r2.json().get("token") is None
+        assert "plexichat_token=" in r2.headers.get("set-cookie", "")
+
+        # Explicit non-browser opt-in still yields a body bearer. Re-login
+        # first for a fresh cookie: refresh rotates (single-use), and the
+        # rolling-cookie middleware re-issues the presented cookie
+        # alongside the rotated one, so a second immediate refresh would
+        # present the consumed token by jar ordering.
+        test_client.post(
+            "/api/v1/auth/login",
+            json={"username": username, "password": "TestPass123!"},
+        )
+        r3 = test_client.post(
+            "/api/v1/auth/refresh",
+            headers={
+                "X-Plexichat-Request": "1",
+                "X-Plexichat-Token-Mode": "bearer",
+            },
+        )
+        assert r3.status_code == 200
+        assert r3.json().get("token")
 
     def test_ws_ticket_route_roundtrip(self, test_client):
         username = self._mk_user(test_client)
         r = test_client.post(
             "/api/v1/auth/login",
             json={"username": username, "password": "TestPass123!"},
+            # M9 opt-in: this test drives the Bearer path explicitly.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
         )
         bearer = r.json()["token"]
 

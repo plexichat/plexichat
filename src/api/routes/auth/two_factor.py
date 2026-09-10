@@ -15,7 +15,11 @@ from src.api.schemas.auth import (
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
-from .cookies import set_session_cookie
+from .cookies import (
+    set_session_cookie,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     AuthError,
     InvalidCredentialsError,
@@ -134,15 +138,18 @@ async def complete_2fa(
     logger.info(
         f"2FA completed successfully for user ID: {getattr(result.user, 'id', 'unknown')}"
     )
-    # SECURITY: full session established — hand out the HttpOnly cookie too.
+    # M9 (same as login): the full session goes to browsers ONLY via the
+    # HttpOnly cookie; the body carries a marker plus the session
+    # lifetime, with the raw token echoed back solely for explicit
+    # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
     set_session_cookie(response, result.token)
     return LoginResponse(
         status="success",
-        token=result.token,
+        token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,
         methods=None,
-        expires_in=None,
+        expires_in=session_cookie_max_age(),
     )
 
 

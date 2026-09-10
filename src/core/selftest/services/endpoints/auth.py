@@ -89,6 +89,8 @@ class AuthMixin(EndpointTesterBase):
         resp = login_session.post(
             f"{self.ctx.base_url}/api/v1/auth/login",
             json={"username": username, "password": password},
+            # M9 opt-in: this probe reads the raw bearer from the body.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
             timeout=5,
         )
         duration = (time.time() - login_start) * 1000
@@ -202,6 +204,8 @@ class AuthMixin(EndpointTesterBase):
             re_login_resp = login_session.post(
                 f"{self.ctx.base_url}/api/v1/auth/login",
                 json={"username": username, "password": password},
+                # M9 opt-in: the re-issued bearer is read from the body.
+                headers={"X-Plexichat-Token-Mode": "bearer"},
                 timeout=5,
             )
             if re_login_resp.status_code == 200:
@@ -257,6 +261,8 @@ class AuthMixin(EndpointTesterBase):
             _reauth_resp = self.ctx.session.post(
                 f"{self.ctx.base_url}/api/v1/auth/login",
                 json={"username": username, "password": password},
+                # M9 opt-in: the fresh bearer is read from the body.
+                headers={"X-Plexichat-Token-Mode": "bearer"},
                 timeout=5,
             )
             if _reauth_resp.status_code == 200:

@@ -7,7 +7,11 @@ from utils.logger import mask_string
 from src.api.schemas.auth import LoginRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
-from .cookies import set_session_cookie
+from .cookies import (
+    set_session_cookie,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     InvalidCredentialsError,
     AccountLockedError,
@@ -103,14 +107,18 @@ async def login(
     logger.info(
         f"User '{masked_username}' logged in successfully (ID: {getattr(result.user, 'id', 'unknown')})"
     )
-    # SECURITY: also deliver the session as an HttpOnly cookie so the
-    # browser holds a credential that XSS payloads cannot exfiltrate.
+    # M9: the session travels to browsers ONLY as an HttpOnly cookie so an
+    # XSS payload cannot exfiltrate it from the JSON body. The body carries
+    # just a status marker plus the session lifetime; the raw token is
+    # echoed back SOLELY for non-browser clients that explicitly opt in
+    # with ``X-Plexichat-Token-Mode: bearer``. Browser WebSocket auth uses
+    # short-lived single-use wst.* tickets minted via /auth/ws-ticket.
     set_session_cookie(response, result.token)
     return LoginResponse(
         status="success",
-        token=result.token,
+        token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,
         methods=None,
-        expires_in=None,
+        expires_in=session_cookie_max_age(),
     )
