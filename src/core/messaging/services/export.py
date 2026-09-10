@@ -46,6 +46,56 @@ class TranscriptExportService(BaseService):
     def _records_dir(cls) -> Path:
         return cls._storage_parent() / "records"
 
+    @classmethod
+    def _new_export_id(cls) -> str:
+        """Generate a collision-free unpredictable export id (256-bit)."""
+        for _ in range(5):
+            candidate = f"export_{secrets.token_urlsafe(32)}"
+            with cls._lock:
+                if candidate not in cls._exports:
+                    return candidate
+        # Astronomically unlikely; fall back to timestamp-mixed entropy.
+        return f"export_{secrets.token_urlsafe(32)}_{time.time_ns()}"
+
+    @staticmethod
+    def _ensure_private_dir(path: Path) -> None:
+        """Create a directory with 0700 perms (chmod fixes pre-existing)."""
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _write_private_file(path: str, content: Any) -> None:
+        """Write a file atomically with 0600 perms (no world-readable window).
+
+        ``open()`` + ``chmod`` leaves the bytes world-readable under a
+        permissive umask until the chmod lands; ``os.open`` with an explicit
+        mode applies the restriction at creation time instead.
+        """
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(path, flags, 0o600)
+        try:
+            if isinstance(content, str):
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                fd = -1
+            else:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(content)
+                fd = -1
+        finally:
+            if fd != -1:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+
     def __init__(
         self,
         db: Any,
@@ -66,35 +116,61 @@ class TranscriptExportService(BaseService):
         timezone: str = "UTC",
     ) -> Dict[str, Any]:
         """Request a transcript export."""
-        # Unpredictable export id: timestamp+user_id ids were guessable.
-        export_id = f"export_{secrets.token_urlsafe(16)}"
         export_config = config.get("transcript_export", {})
-
-        # Rate limit BEFORE doing any generation work so a rate-limited
-        # caller never produces an untracked plaintext file on disk.
-        min_interval = export_config.get("rate_limit", {}).get("requests_per_hour", 5)
-        self._hydrate()
-        with self._lock:
-            recent_count = sum(
-                1
-                for e in self._exports.values()
-                if e.get("user_id") == str(user_id)
-                and e.get("created_at", 0) > time.time() - 3600
-            )
-        if recent_count >= min_interval:
-            return {
-                "export_id": export_id,
-                "status": "failed",
-                "message_count": 0,
-                "file_url": None,
-                "expires_at": None,
-                "error": f"Rate limit exceeded (max {min_interval} exports per hour)",
-            }
-
-        max_messages = export_config.get("max_messages_per_export", 10000)
+        retention_hours = export_config.get("temporary_storage_hours", 24)
+        export_id = self._new_export_id()
 
         file_path: Optional[str] = None
+        now = time.time()
         try:
+            # AUTHORIZATION FIRST: a non-participant must never consume
+            # rate-limit budget nor produce any artifact on disk, even when
+            # the HTTP route's own checks are bypassed.
+            if not self._participant_repo.exists(conversation_id, user_id):
+                raise PermissionError(
+                    f"User {user_id} is not a participant of "
+                    f"conversation {conversation_id}"
+                )
+
+            # RATE LIMIT next, enforced BEFORE any generation work or file
+            # creation so a rate-limited caller never produces an untracked
+            # plaintext file on disk. The pending placeholder is reserved
+            # under the SAME lock hold as the count, so concurrent bursts
+            # cannot each pass the check before the others are recorded.
+            min_interval = export_config.get("rate_limit", {}).get(
+                "requests_per_hour", 5
+            )
+            self._hydrate()
+            with self._lock:
+                recent_count = sum(
+                    1
+                    for e in self._exports.values()
+                    if e.get("user_id") == str(user_id)
+                    and (e.get("created_at") or 0) > now - 3600
+                )
+                if recent_count >= min_interval:
+                    rate_limited = True
+                else:
+                    rate_limited = False
+                    self._exports[export_id] = {
+                        "export_id": export_id,
+                        "user_id": str(user_id),
+                        "status": "pending",
+                        "created_at": now,
+                        "expires_at": int(now) + retention_hours * 3600,
+                    }
+            if rate_limited:
+                return {
+                    "export_id": export_id,
+                    "status": "failed",
+                    "message_count": 0,
+                    "file_url": None,
+                    "expires_at": None,
+                    "error": f"Rate limit exceeded (max {min_interval} exports per hour)",
+                }
+
+            max_messages = export_config.get("max_messages_per_export", 10000)
+
             messages = self._get_messages_for_export(
                 user_id, conversation_id, from_date, to_date, max_messages
             )
@@ -114,19 +190,15 @@ class TranscriptExportService(BaseService):
             # the shared system tempdir is typically world-readable and
             # these bytes contain users' message contents.
             parent = self._storage_parent()
-            parent.mkdir(parents=True, exist_ok=True)
-            os.chmod(parent, 0o700)
+            self._ensure_private_dir(parent)
             session_dir = tempfile.mkdtemp(prefix="gen_", dir=str(parent))
-            os.chmod(session_dir, 0o700)
+            try:
+                os.chmod(session_dir, 0o700)
+            except OSError:
+                pass
             file_path = os.path.join(session_dir, f"{export_id}.{export_format}")
 
-            if isinstance(content, str):
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-            else:
-                with open(file_path, "wb") as f:
-                    f.write(content)
-            os.chmod(file_path, 0o600)
+            self._write_private_file(file_path, content)
 
             expiry = int(time.time()) + (
                 export_config.get("temporary_storage_hours", 24) * 3600
@@ -152,13 +224,27 @@ class TranscriptExportService(BaseService):
         except Exception as e:
             logger.error(f"Export generation failed: {e}", exc_info=True)
             # Failure path: never leave an orphaned plaintext transcript
-            # behind on disk.
+            # behind on disk. The placeholder is replaced with a terminal
+            # failed record under lock so concurrent bookkeeping never
+            # loses or corrupts the entry.
             if file_path:
                 try:
                     os.remove(file_path)
                     os.rmdir(os.path.dirname(file_path))
                 except OSError:
                     pass
+            failed_at = time.time()
+            with self._lock:
+                self._exports[export_id] = {
+                    "export_id": export_id,
+                    "user_id": str(user_id),
+                    "status": "failed",
+                    "message_count": 0,
+                    "file_url": None,
+                    "expires_at": int(failed_at) + 3600,
+                    "created_at": now,
+                    "error": str(e),
+                }
             return {
                 "export_id": export_id,
                 "status": "failed",
@@ -172,33 +258,51 @@ class TranscriptExportService(BaseService):
         """Get the status of an export."""
         self._cleanup_expired()
         self._hydrate()
-        return self._exports.get(export_id)
+        with self._lock:
+            info = self._exports.get(export_id)
+            return dict(info) if info is not None else None
 
     def get_export_file_path(self, export_id: str, user_id: str = "") -> Optional[str]:
         """Get the file path for a completed export (with optional ownership check)."""
         self._cleanup_expired()
         self._hydrate()
-        info = self._exports.get(export_id)
-        if not info or info.get("status") != "ready":
-            return None
-        if user_id and str(info.get("user_id", "")) != str(user_id):
-            return None
-        return info.get("file_path")
+        with self._lock:
+            info = self._exports.get(export_id)
+            if not info or info.get("status") != "ready":
+                return None
+            if user_id and str(info.get("user_id", "")) != str(user_id):
+                return None
+            return info.get("file_path")
 
     @classmethod
     def _persist_record(cls, info: Dict[str, Any]) -> None:
         """Persist an export record so other worker processes can see it."""
         try:
             records_dir = cls._records_dir()
-            records_dir.mkdir(parents=True, exist_ok=True)
-            os.chmod(cls._storage_parent(), 0o700)
-            os.chmod(records_dir, 0o700)
+            cls._ensure_private_dir(records_dir)
+            try:
+                os.chmod(cls._storage_parent(), 0o700)
+            except OSError:
+                pass
             record_path = records_dir / f"{info['export_id']}.json"
             tmp_path = str(record_path) + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(info, f)
+            payload = json.dumps(info)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            fd = os.open(tmp_path, flags, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(payload)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             os.replace(tmp_path, record_path)
-            os.chmod(record_path, 0o600)
+            try:
+                os.chmod(record_path, 0o600)
+            except OSError:
+                pass
         except Exception as e:
             logger.warning(
                 f"Transcript export: failed to persist record "
@@ -224,7 +328,7 @@ class TranscriptExportService(BaseService):
                             eid = info.get("export_id")
                             if not eid:
                                 continue
-                            if info.get("expires_at", 0) < now:
+                            if (info.get("expires_at") or 0) < now:
                                 record_file.unlink(missing_ok=True)
                                 continue
                             cls._exports.setdefault(eid, info)
@@ -238,14 +342,18 @@ class TranscriptExportService(BaseService):
         """Remove expired exports from memory, records, and disk."""
         self._hydrate()
         now = time.time()
-        expired_ids = [
-            eid
-            for eid, info in self._exports.items()
-            if info.get("expires_at", 0) < now
-        ]
+        # Snapshot + pop under lock: iterating the live dict without the
+        # lock races with concurrent request_export inserts and raises
+        # "dictionary changed size during iteration".
+        with self._lock:
+            expired_ids = [
+                eid
+                for eid, info in self._exports.items()
+                if (info.get("expires_at") or 0) < now
+            ]
+            expired_infos = {eid: self._exports.pop(eid, None) for eid in expired_ids}
         for eid in expired_ids:
-            with self._lock:
-                info = self._exports.pop(eid, None)
+            info = expired_infos.get(eid)
             if info and info.get("file_path"):
                 try:
                     os.remove(info["file_path"])
