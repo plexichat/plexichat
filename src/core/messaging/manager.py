@@ -233,7 +233,12 @@ class MessagingManager(BaseManager):
         """Leave a conversation."""
         result = self._conversation_svc.leave_conversation(user_id, conversation_id)
 
-        if result:
+        # M14: leaving a DM (or being the last group member to leave)
+        # deletes the conversation; a system message cannot be posted into
+        # a deleted conversation, so only broadcast when it still exists.
+        # Previously this raised ConversationNotFoundError (HTTP 500) on
+        # every DM leave.
+        if result and self._conversation_svc.conversation_exists(conversation_id):
             # Send system message
             self.send_system_message(
                 conversation_id,

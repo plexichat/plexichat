@@ -133,6 +133,8 @@ class ConversationService(BaseService):
         lookup_id = self._generate_id()
         try:
             self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
+            if valkey_available():
+                cache_set(cache_key, conv_id, ttl=3600)
         except Exception:
             # M13: the concurrent-create race surfaces as a driver-specific
             # IntegrityError whose message text varies across backends
@@ -459,16 +461,39 @@ class ConversationService(BaseService):
 
         # For DMs, also remove the lookup entry
         if conv_type == ConversationType.DM.value:
+            # M14 (stale-cache): resolve the TRUE participant pair for the
+            # DM-lookup cache key BEFORE deleting. The previous code keyed
+            # invalidation off (user_id, conv.owner_id), but DMs are created
+            # with owner_id=NULL, so it invalidated the phantom key
+            # dm_lookup:<user>:<user> -- never the real dm_lookup:<u1>:<u2>
+            # entry -- leaving a stale pair->conversation mapping behind that
+            # DM-channel resolution / list-DMs kept reading post-transfer and
+            # resolving to the deleted conversation.
+            try:
+                _dm_user_ids = list(
+                    self._participant_svc.get_participant_ids(conversation_id)
+                )
+            except Exception:
+                _dm_user_ids = []
+            if len(_dm_user_ids) >= 2:
+                _dm_a, _dm_b = _dm_user_ids[0], _dm_user_ids[1]
+            elif len(_dm_user_ids) == 1:
+                _dm_a, _dm_b = user_id, _dm_user_ids[0]
+            else:
+                _dm_a, _dm_b = user_id, (conv.owner_id or user_id)
             self._repo.delete_dm_lookup(conversation_id)
-            # Invalidate DM lookup cache
-            u1, u2 = (
-                min(user_id, conv.owner_id or user_id),
-                max(user_id, conv.owner_id or user_id),
-            )
+            # Invalidate BOTH participant mappings, in EITHER user-pair
+            # ordering (writers key the canonical min:max form, but a
+            # reversed key must never survive either), plus per-user
+            # wildcards so any other DM-lookup key mentioning either
+            # participant is evicted and re-reads fresh from the DB.
             # NOTE: no local import here — ``invalidate_pattern`` is already
             # imported at module level; a local import would shadow it for the
             # whole function and raise UnboundLocalError above.
-            invalidate_pattern(f"dm_lookup:{u1}:{u2}")
+            invalidate_pattern(f"dm_lookup:{_dm_a}:{_dm_b}")
+            invalidate_pattern(f"dm_lookup:{_dm_b}:{_dm_a}")
+            invalidate_pattern(f"dm_lookup:*{_dm_a}*")
+            invalidate_pattern(f"dm_lookup:*{_dm_b}*")
 
         logger.debug(f"Deleted conversation {conversation_id}")
         return True
