@@ -2,7 +2,9 @@
 FastAPI middleware for rate limiting.
 """
 
+import hashlib
 import re
+import threading
 from typing import Optional, Dict, Callable, Any
 
 from fastapi import Request
@@ -11,6 +13,83 @@ from starlette.types import ASGIApp
 
 import utils.config as config
 from src.utils.net import get_client_ip
+
+
+# ---------------------------------------------------------------------------
+# F8: bounded rate-limit keyspace.
+# ---------------------------------------------------------------------------
+# ``extract_route_info`` used to return ``f"{method} {path}"`` verbatim for
+# any path that matched no known route. An attacker could therefore craft
+# distinct URLs (``/api/a?x=1..N``, ``/api/evil/<id>``) and each one created
+# a brand-new bucket row in the persistent backends (DB/Valkey) with no
+# eviction -- unbounded storage growth / DoS via key exhaustion.
+#
+# The fix normalizes attacker-controlled input BEFORE it becomes a bucket
+# key, and bounds whatever keyspace remains:
+#   1. the query string / fragment is stripped (``?`` / ``#`` never fan out);
+#   2. UUID-like, pure-numeric, and long-hex path segments collapse to
+#      ``{id}`` so ``/api/evil/1..N`` shares one bucket;
+#   3. overlong paths are truncated to ``MAX_ROUTE_LENGTH``;
+#   4. genuinely-distinct unknown routes are kept 1:1 only up to
+#      ``MAX_DISTINCT_UNKNOWN_ROUTES`` -- beyond that they hash into a fixed
+#      set of ``UNKNOWN_BUCKET_COUNT`` overflow buckets, so 1000 distinct
+#      paths can never create 1000 buckets.  Legitimate low-cardinality
+#      routes still get distinct buckets (per-route limiting keeps working).
+# Every storage backend additionally enforces TTL + row-count eviction, so
+# even a full overflow set cannot grow without bound.
+MAX_ROUTE_LENGTH = 512
+MAX_DISTINCT_UNKNOWN_ROUTES = 128
+UNKNOWN_BUCKET_COUNT = 16
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_HEXISH_RE = re.compile(r"^[0-9a-fA-F]{16,}$")
+
+_unknown_lock = threading.Lock()
+# Insertion-ordered set of distinct normalized unknown routes (py3.7+ dict).
+_unknown_routes: Dict[str, None] = {}
+
+
+def _reset_unknown_route_cache() -> None:
+    """Clear the bounded unknown-route registry (used by tests)."""
+    with _unknown_lock:
+        _unknown_routes.clear()
+
+
+def _collapse_id_segments(path: str) -> str:
+    """Replace ID-like path segments with ``{id}``."""
+    segments = path.split("/")
+    collapsed = []
+    for seg in segments:
+        if not seg:
+            collapsed.append(seg)
+            continue
+        if seg.isdigit():
+            collapsed.append("{id}")
+        elif _UUID_RE.match(seg):
+            collapsed.append("{id}")
+        elif _HEXISH_RE.match(seg):
+            collapsed.append("{id}")
+        else:
+            # Cap absurd single-segment lengths so one giant segment
+            # cannot blow up key memory.
+            collapsed.append(seg[:64] if len(seg) > 64 else seg)
+    return "/".join(collapsed)
+
+
+def _register_unknown_route(candidate: str, method: str) -> str:
+    """Bound the distinct unknown-route keyspace via hashed overflow."""
+    with _unknown_lock:
+        if candidate in _unknown_routes:
+            return candidate
+        if len(_unknown_routes) < MAX_DISTINCT_UNKNOWN_ROUTES:
+            _unknown_routes[candidate] = None
+            return candidate
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    slot = int(digest[:8], 16) % UNKNOWN_BUCKET_COUNT
+    return f"{method} /unknown/{{overflow-{slot}}}"
 
 
 # Common routes for fast lookup (without regex)
@@ -143,6 +222,21 @@ def extract_route_info(path: str, method: str) -> tuple:
     Returns:
         Tuple of (route_pattern, resource_id, webhook_id).
     """
+    # F8: strip query string / fragment first -- they are attacker-controlled
+    # and must never fan out into distinct buckets. (ASGI ``scope["path"]``
+    # is already decoded without the query string, but callers/tests may
+    # pass a full path, so normalize defensively.)
+    path = path.split("?", 1)[0].split("#", 1)[0]
+    if not path.startswith("/"):
+        path = "/" + path
+    # Collapse duplicate slashes and drop a trailing slash (except root).
+    path = re.sub(r"/{2,}", "/", path)
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+    # Hard cap on raw path length before any further processing.
+    if len(path) > MAX_ROUTE_LENGTH:
+        path = path[:MAX_ROUTE_LENGTH]
+
     # 1. Try fast lookup
     if path in COMMON_ROUTES:
         return COMMON_ROUTES[path].replace("{method}", method), None, None
@@ -164,7 +258,12 @@ def extract_route_info(path: str, method: str) -> tuple:
                 except (ValueError, IndexError):
                     pass
             return route, resource_id, webhook_id
-    return f"{method} {path}", resource_id, webhook_id
+    # 3. Unknown path: collapse ID-like segments, then bound the keyspace.
+    normalized = _collapse_id_segments(path)
+    if len(normalized) > MAX_ROUTE_LENGTH:
+        normalized = normalized[:MAX_ROUTE_LENGTH]
+    candidate = f"{method} {normalized}"
+    return _register_unknown_route(candidate, method), resource_id, webhook_id
 
 
 class RateLimitMiddlewareASGI:

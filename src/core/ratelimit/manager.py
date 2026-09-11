@@ -49,6 +49,11 @@ def _internal_bypass_enabled() -> bool:
 class RateLimitManager:
     """Manages rate limit checking and bucket state with atomic operations."""
 
+    # F8: bound the route component of bucket keys. The middleware already
+    # normalizes paths, but defence-in-depth caps the key here too so a
+    # 5KB route string can never become a 5KB storage key.
+    MAX_ROUTE_KEY_LENGTH = 256
+
     def __init__(
         self,
         storage_backend: Optional[RateLimitStorage] = None,
@@ -109,13 +114,25 @@ class RateLimitManager:
             parts.append(f"ip:{ip_address}")
 
         if route:
-            # We use the raw route string, it's safer and avoids hash collisions/overhead
+            # F8: cap the route component so unbounded path input cannot
+            # create unbounded storage keys. Long routes are truncated and
+            # disambiguated with a hash suffix (still deterministic, so
+            # per-route limiting keeps working).
+            if len(route) > self.MAX_ROUTE_KEY_LENGTH:
+                digest = hashlib.sha256(route.encode("utf-8")).hexdigest()[:16]
+                budget = max(32, self.MAX_ROUTE_KEY_LENGTH - 17)
+                route = f"{route[:budget]}#{digest}"
             parts.append(f"r:{route}")
         if resource_id is not None:
             parts.append(f"res:{resource_id}")
         if webhook_id is not None:
             parts.append(f"wh:{webhook_id}")
-        return ":".join(parts)
+        key = ":".join(parts)
+        # F8: belt-and-braces total key cap (prefixes + ids included).
+        if len(key) > self.MAX_ROUTE_KEY_LENGTH + 32:
+            digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+            key = f"{key[: self.MAX_ROUTE_KEY_LENGTH]}#{digest}"
+        return key
 
     def _generate_bucket_id(self, key: str) -> str:
         """Generate a short bucket ID for headers."""

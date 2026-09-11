@@ -21,9 +21,19 @@ def _is_lock_error(exc: Exception) -> bool:
 class DatabaseStorage(RateLimitStorage):
     """Atomic relational database storage for rate limit buckets."""
 
+    # F8: bound the bucket table so crafted distinct URLs cannot grow it
+    # without limit. Rows always carry ``expires_at`` (TTL) and excess rows
+    # beyond this cap are evicted oldest-first on the write path.
+    MAX_BUCKET_ROWS = 50000
+    DEFAULT_BUCKET_TTL = 86400.0
+    # Class-level default so instances built via ``__new__`` (as some
+    # tests do) still have the counter before ``__init__`` runs.
+    _write_count = 0
+
     def __init__(self, db: Optional[Database] = None):
         """Initialize database storage."""
         self._db = db or Database()
+        self._write_count = 0
         self._ensure_table()
 
     def _ensure_table(self):
@@ -56,6 +66,37 @@ class DatabaseStorage(RateLimitStorage):
         now = time.time()
         # Database.execute converts ? to %s for PostgreSQL
         self._db.execute("DELETE FROM ratelimit_buckets WHERE expires_at < ?", (now,))
+
+    def _maybe_enforce_cap(self) -> None:
+        """Evict oldest rows when the bucket table exceeds its bound.
+
+        F8: called on the write path (throttled to every 10th write plus
+        an expired-row purge). Best-effort -- a cap failure must never
+        break the rate-limit check itself.
+        """
+        try:
+            self._write_count = getattr(self, "_write_count", 0) + 1
+            if self._write_count % 10 != 0:
+                return
+            now = time.time()
+            self._db.execute(
+                "DELETE FROM ratelimit_buckets WHERE expires_at < ?", (now,)
+            )
+            row = self._db.fetch_one("SELECT COUNT(*) AS c FROM ratelimit_buckets")
+            count = int(row["c"]) if row and "c" in row else 0
+            if count > self.MAX_BUCKET_ROWS:
+                excess = count - self.MAX_BUCKET_ROWS
+                # Delete oldest-expiring rows first. (``Database.execute``
+                # converts ``?`` to ``%s`` for PostgreSQL.)
+                self._db.execute(
+                    """DELETE FROM ratelimit_buckets WHERE key IN (
+                        SELECT key FROM ratelimit_buckets
+                        ORDER BY expires_at ASC LIMIT ?
+                    )""",
+                    (excess,),
+                )
+        except Exception:
+            pass
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
         """Get bucket state."""
@@ -104,6 +145,9 @@ class DatabaseStorage(RateLimitStorage):
             ),
             conflict_columns=["key"],
         )
+        # F8: TTL is always set (expires_at above) and the row cap is
+        # enforced on the write path.
+        self._maybe_enforce_cap()
 
     def delete_bucket(self, key: str) -> bool:
         """Delete a bucket."""
@@ -192,9 +236,12 @@ class DatabaseStorage(RateLimitStorage):
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                return self._eval_token_bucket_once(
+                result = self._eval_token_bucket_once(
                     key, capacity, refill_rate, cost, ttl
                 )
+                # F8: bound table growth on the write path (never raises).
+                self._maybe_enforce_cap()
+                return result
             except Exception as exc:
                 self._rollback_safely()
                 if attempt + 1 < max_attempts and _is_lock_error(exc):
@@ -209,62 +256,47 @@ class DatabaseStorage(RateLimitStorage):
     ) -> tuple:
         """Perform a single token-bucket evaluation.
 
-        SECURITY: the previous SELECT-then-UPDATE inside one transaction
-        lost updates under PostgreSQL READ COMMITTED with multiple
-        workers — two transactions read the same ``tokens`` value, both
-        deducted, and the last writer won (limit bypass scaling with
-        worker count). We now use a conditional compare-and-set loop:
-        the deduction only lands via
-        ``UPDATE ... WHERE key = ? AND tokens >= ?`` so two workers can
-        never both spend the same token; on rowcount 0 we re-read and
-        retry.
+        SECURITY (F6): the previous SELECT-then-UPDATE inside one
+        transaction lost updates under concurrent consumers (multi-worker
+        when Valkey is absent): two workers read the same ``tokens``
+        value, both deducted from that stale snapshot, and the last
+        writer won — a 5-token bucket admitted ~10 parallel requests.
+        A follow-up compare-and-set attempt (``SET tokens = <stale-1>
+        ... WHERE tokens >= cost``) did NOT fix it: the predicate only
+        checks that *some* token remains, so two workers holding the
+        same stale balance both land their absolute write and one
+        deduction is still lost.
+
+        The deduction is therefore a single RELATIVE statement —
+        ``UPDATE ... SET tokens = tokens - ? ... WHERE key = ? AND
+        tokens >= ?`` — so the database itself serializes concurrent
+        spends and ``cursor.rowcount`` tells exactly whether *this*
+        worker got the tokens. Refill accrual is likewise applied as a
+        relative, capacity-clamped add (portable ``CASE`` instead of
+        ``LEAST``/``min()``, which differ between PostgreSQL and
+        SQLite) guarded by ``last_update <= ?`` so a refill computed
+        from a stale read can never clobber a concurrent spend; on
+        ``rowcount == 0`` we re-read and retry. Denied requests write
+        nothing (refill is formula-based from ``last_update``, so no
+        accrual is lost). ``?`` placeholders are converted to ``%s``
+        for PostgreSQL by the Database layer, keeping this portable
+        across both dialects without ``SELECT FOR UPDATE``.
         """
-        now = time.time()
-        expires_at = now + ttl
+        max_cas_attempts = 10
+        for _ in range(max_cas_attempts):
+            # Fresh clock per attempt: a stale ``now`` carried across
+            # retries would under-compute refill and could move
+            # ``last_update`` backwards past a concurrent worker's write.
+            now = time.time()
+            expires_at = now + ttl
 
-        # First, ensure entry exists
-        self._db.insert_or_ignore(
-            "ratelimit_buckets",
-            ["key", "tokens", "last_update", "expires_at"],
-            (key, float(capacity), float(now), float(expires_at)),
-        )
-
-        # Persist the computed refill MONOTONICALLY before the CAS loop.
-        # SECURITY: the CAS predicate (``WHERE tokens >= cost``) compares
-        # the RAW STORED balance, while ``allowed`` is decided on REFILLED
-        # tokens. Without this pre-persist, a drained bucket whose stored
-        # balance sat below ``cost`` but whose refilled balance was above
-        # it evaluated as allowed yet could never land its deduction —
-        # rowcount 0 on every retry -> RuntimeError -> fail-closed denial
-        # until the row TTL lapsed (~24h of spurious 429s).
-        initial_row = self._db.fetch_one(
-            "SELECT tokens, last_update FROM ratelimit_buckets WHERE key = ?",
-            (key,),
-        )
-        if initial_row:
-            refilled = min(
-                float(capacity),
-                float(initial_row["tokens"])
-                + max(0.0, now - float(initial_row["last_update"])) * refill_rate,
+            # First, ensure entry exists
+            self._db.insert_or_ignore(
+                "ratelimit_buckets",
+                ["key", "tokens", "last_update", "expires_at"],
+                (key, float(capacity), float(now), float(expires_at)),
             )
-            if refilled > float(initial_row["tokens"]):
-                self._db.execute(
-                    """
-                    UPDATE ratelimit_buckets
-                    SET tokens = ?, last_update = ?, expires_at = ?
-                    WHERE key = ? AND tokens < ?
-                """,
-                    (
-                        refilled,
-                        now,
-                        expires_at,
-                        key,
-                        refilled,
-                    ),
-                )
 
-        max_cas_attempts = 5
-        for attempt in range(max_cas_attempts):
             row = self._db.fetch_one(
                 "SELECT tokens, last_update FROM ratelimit_buckets WHERE key = ?",
                 (key,),
@@ -274,70 +306,107 @@ class DatabaseStorage(RateLimitStorage):
                 # treat as a fresh full bucket without spending tokens.
                 return True, capacity, 0.0
 
-            stored_tokens = float(row["tokens"])
-            tokens = min(
-                float(capacity),
-                stored_tokens + max(0.0, now - float(row["last_update"])) * refill_rate,
-            )
+            try:
+                stored = float(row["tokens"])
+            except (TypeError, ValueError):
+                stored = float(capacity)
 
-            if tokens > stored_tokens:
-                # Refill accumulated since our last read: persist it
-                # monotonically BEFORE the CAS so the conditional
-                # deduction below compares against refill-aware state
-                # (see the pre-loop comment). The guard keeps this from
-                # clobbering a concurrent worker's higher balance or
-                # resetting its last_update.
-                self._db.execute(
+            if row["last_update"] is None:
+                # Legacy row with no clock: normalize it under an
+                # ``IS NULL`` guard (portable across SQLite/PostgreSQL)
+                # so a concurrent spend that set the clock makes us
+                # retry instead of clobbering it.
+                refilled_legacy = min(float(capacity), stored)
+                cursor = self._db.execute(
                     """
                     UPDATE ratelimit_buckets
                     SET tokens = ?, last_update = ?, expires_at = ?
-                    WHERE key = ? AND tokens < ?
-                """,
-                    (tokens, now, expires_at, key, tokens),
+                    WHERE key = ? AND last_update IS NULL
+                    """,
+                    (refilled_legacy, now, expires_at, key),
                 )
+                if cursor.rowcount == 0:
+                    continue
+                stored = refilled_legacy
+                last_update = now
+            else:
+                try:
+                    last_update = float(row["last_update"])
+                except (TypeError, ValueError):
+                    last_update = now
+
+            elapsed = max(0.0, now - last_update)
+            refilled = min(
+                float(capacity),
+                stored + elapsed * refill_rate,
+            )
+
+            if refilled > stored:
+                # Persist accrual as a RELATIVE clamped add so a
+                # concurrent relative spend is preserved (both are
+                # order-independent increments), never overwritten.
+                # The ``last_update <= ?`` guard makes a stale refill
+                # back off (rowcount 0 -> re-read) instead of double
+                # -applying accrual another worker already persisted.
+                # Inequality (not equality) keeps this robust to REAL
+                # float4 rounding on PostgreSQL.
+                delta = refilled - stored
+                cap = float(capacity)
+                cursor = self._db.execute(
+                    """
+                    UPDATE ratelimit_buckets
+                    SET tokens = CASE WHEN tokens + ? > ?
+                                        THEN ? ELSE tokens + ? END,
+                        last_update = ?, expires_at = ?
+                    WHERE key = ? AND last_update <= ?
+                    """,
+                    (delta, cap, cap, delta, now, expires_at, key, last_update),
+                )
+                if cursor.rowcount == 0:
+                    # Another worker touched the row after our read:
+                    # re-read and recompute instead of spending stale.
+                    continue
                 row = self._db.fetch_one(
                     "SELECT tokens FROM ratelimit_buckets WHERE key = ?",
                     (key,),
                 )
                 if not row:
                     return True, capacity, 0.0
-                stored_tokens = min(float(capacity), float(row["tokens"]))
-                tokens = stored_tokens
+                stored = float(row["tokens"])
 
-            allowed = stored_tokens >= cost
-            if allowed:
-                tokens = stored_tokens - cost
-
-            if allowed:
+            if stored >= cost:
+                # ATOMIC SPEND: relative decrement guarded by the
+                # balance predicate in the SAME statement. Concurrent
+                # spends serialize in the database; exactly one worker
+                # wins each token and rowcount reports who.
                 cursor = self._db.execute(
                     """
                     UPDATE ratelimit_buckets
-                    SET tokens = ?, last_update = ?, expires_at = ?
+                    SET tokens = tokens - ?, last_update = ?, expires_at = ?
                     WHERE key = ? AND tokens >= ?
-                """,
-                    (tokens, now, expires_at, key, float(cost)),
+                    """,
+                    (float(cost), now, expires_at, key, float(cost)),
                 )
-                if cursor.rowcount > 0:
-                    remaining = int(tokens)
-                    reset_after = 0.0
-                    return allowed, remaining, max(0.0, reset_after)
-                # Another worker spent the token first: re-read and retry.
-                continue
+                if cursor.rowcount == 0:
+                    # Another worker spent the tokens first: re-read
+                    # and retry.
+                    continue
+                # The spend landed (rowcount > 0): the database applied
+                # exactly one ``cost`` decrement. Report remaining from
+                # the balance this spend was computed against — the same
+                # contract as before (a re-SELECT here would race a
+                # concurrent spend and attribute *its* deduction to us).
+                return True, max(0, int(stored - cost)), 0.0
 
-            # Denied: persist refilled state unconditionally (no CAS
-            # needed — writing a higher/refilled value is monotonic and
-            # cannot double-spend).
-            self._db.execute(
-                """
-                UPDATE ratelimit_buckets
-                SET tokens = ?, last_update = ?, expires_at = ?
-                WHERE key = ?
-            """,
-                (tokens, now, expires_at, key),
-            )
-            remaining = int(tokens)
-            reset_after = (cost - tokens) / refill_rate
-            return allowed, remaining, max(0.0, reset_after)
+            # Denied: persist nothing. Refill accrues from last_update
+            # by formula, so skipping the write loses no accrual and —
+            # critically — cannot overwrite a concurrent spend.
+            remaining = int(stored)
+            if refill_rate > 0:
+                reset_after = max(0.0, (cost - stored) / refill_rate)
+            else:
+                reset_after = float(ttl)
+            return False, remaining, reset_after
 
         # CAS contention did not settle after retries: fail closed.
         raise RuntimeError(f"token bucket CAS did not converge for key {key!r}")

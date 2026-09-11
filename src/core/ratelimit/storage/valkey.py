@@ -17,6 +17,10 @@ from .base import RateLimitStorage
 class ValkeyStorage(RateLimitStorage):
     """Distributed Valkey storage for rate limit buckets."""
 
+    # F8: every bucket write carries a TTL so crafted distinct URLs expire
+    # instead of accumulating forever.
+    DEFAULT_BUCKET_TTL = 86400
+
     def __init__(self, key_prefix: str = "ratelimit"):
         """
         Initialize Valkey storage.
@@ -54,7 +58,7 @@ class ValkeyStorage(RateLimitStorage):
         try:
             # Valkey TTL is usually an int (seconds), but can be float in some clients (miliseconds)
             # ValkeyClient.set_json expects Optional[int]
-            int_ttl = int(ttl) if ttl is not None else None
+            int_ttl = int(ttl) if ttl is not None else self.DEFAULT_BUCKET_TTL
             client.set_json(full_key, state, ttl=int_ttl)
         except ValkeyOperationError:
             pass
@@ -122,7 +126,7 @@ class ValkeyStorage(RateLimitStorage):
                 current = bucket.get(field, 0)
                 new_value = current + amount
                 bucket[field] = new_value
-                client.set_json(full_key, bucket)
+                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
                 return new_value
             except ValkeyOperationError:
                 return 0
@@ -144,7 +148,7 @@ class ValkeyStorage(RateLimitStorage):
                 bucket = cast(Dict[str, Any], client.get_json(full_key) or {})
                 previous = bucket.get(field, default)
                 bucket[field] = value
-                client.set_json(full_key, bucket)
+                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
                 return previous
             except ValkeyOperationError:
                 return default
@@ -173,7 +177,7 @@ class ValkeyStorage(RateLimitStorage):
                 if len(lst) > max_size:
                     lst = lst[-max_size:]
                 bucket[field] = lst
-                client.set_json(full_key, bucket)
+                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
                 return len(lst)
             except ValkeyOperationError:
                 return 0
@@ -199,7 +203,7 @@ class ValkeyStorage(RateLimitStorage):
                 original_len = len(lst)
                 lst = [v for v in lst if v >= min_value]
                 bucket[field] = lst
-                client.set_json(full_key, bucket)
+                client.set_json(full_key, bucket, ttl=self.DEFAULT_BUCKET_TTL)
                 return original_len - len(lst)
             except ValkeyOperationError:
                 return 0

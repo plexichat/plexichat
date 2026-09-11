@@ -92,6 +92,24 @@ class MemoryStorage(RateLimitStorage):
                     for k in orphan_keys[:drop_quota]:
                         self._locks.pop(k, None)
 
+    def _enforce_cap_locked(self) -> None:
+        """Evict oldest buckets while over ``max_buckets``.
+
+        Caller must hold ``_global_lock``. F8: the cap applies on the WRITE
+        path (not only on periodic cleanup) so a flood of distinct keys can
+        never grow the dict without bound, even if ``cleanup_interval`` is
+        huge.
+        """
+        if len(self._buckets) <= self._max_buckets:
+            return
+        oldest_keys = sorted(
+            self._buckets.keys(),
+            key=lambda k: self._buckets[k].get("last_update", 0),
+        )[: len(self._buckets) - self._max_buckets]
+        for key in oldest_keys:
+            self._buckets.pop(key, None)
+            self._ttls.pop(key, None)
+
     def _get_lock(self, key: str) -> threading.Lock:
         """Get or create lock for a key."""
         with self._global_lock:
@@ -148,6 +166,8 @@ class MemoryStorage(RateLimitStorage):
                 self._ttls[key] = time.monotonic() + ttl
             elif key in self._ttls:
                 del self._ttls[key]
+            # F8: enforce the bucket cap on the write path.
+            self._enforce_cap_locked()
 
     def delete_bucket(self, key: str) -> bool:
         """Delete a bucket.
@@ -306,6 +326,8 @@ class MemoryStorage(RateLimitStorage):
                     self._ttls[key] = now + ttl
                 elif key in self._ttls:
                     del self._ttls[key]
+                # F8: bound key growth on the write path.
+                self._enforce_cap_locked()
 
     def eval_token_bucket(
         self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
@@ -352,6 +374,8 @@ class MemoryStorage(RateLimitStorage):
                     self._ttls[key] = now + ttl
                 else:
                     self._ttls.pop(key, None)
+                # F8: bound key growth on the write path.
+                self._enforce_cap_locked()
 
             remaining = int(tokens)
             reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
