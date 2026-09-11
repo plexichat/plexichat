@@ -648,7 +648,7 @@ class CoreMixin(EndpointTesterBase):
                 except Exception:
                     pass
 
-            if not success:
+            if not success and not is_optional_unavailable:
                 logger.error(
                     f"FAILED: {method:<6} {path:<40} -> Status {resp.status_code} ({duration:.1f}ms)"
                 )
