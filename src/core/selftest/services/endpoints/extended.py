@@ -403,6 +403,25 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                     resp = self.ctx.session.get(url, timeout=5)
                 else:
                     resp = self.ctx.session.post(url, json={}, timeout=5)
+                # Honest 503 (optional webauthn dep missing) is recorded as
+                # SKIPPED with reason — never as pass, and 500 still fails.
+                if resp.status_code == 503:
+                    logger.info(
+                        f"SKIPPED (optional dep unavailable): {method} {ep} -> 503"
+                    )
+                    self.ctx.results.append(
+                        {
+                            "method": method,
+                            "path": f"{ep} (stub)",
+                            "status_code": resp.status_code,
+                            "duration_ms": 0,
+                            "success": False,
+                            "skipped": True,
+                            "note": "optional dependency unavailable (503): "
+                            f"{method} {ep} (webauthn not installed)",
+                        }
+                    )
+                    continue
                 success = resp.status_code in expected
                 self.ctx.results.append(
                     {

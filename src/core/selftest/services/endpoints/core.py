@@ -293,6 +293,13 @@ class CoreMixin(EndpointTesterBase):
 
             success = 200 <= resp.status_code < 300
 
+            # Honest 503 for optional deps (e.g. /qr without qrcode lib):
+            # record as SKIPPED with reason, never as pass or as
+            # accepted-500. Any 500 here still fails loudly below.
+            is_optional_unavailable = resp.status_code == 503 and (
+                url_path.startswith("/api/v1/qr") or url_path.startswith("/qr")
+            )
+
             traceback_data = None
             if not success and self.ctx.config.get("retry_on_failure", True):
                 # Preserve the original request shape on retry.  The previous
@@ -347,6 +354,15 @@ class CoreMixin(EndpointTesterBase):
                 "success": success,
                 "traceback": traceback_data,
             }
+            if is_optional_unavailable:
+                result["success"] = False
+                result["skipped"] = True
+                result["note"] = (
+                    f"optional dependency unavailable (503): {method} {url_path}"
+                )
+                logger.info(
+                    f"SKIPPED (optional dep unavailable): {method} {path} -> 503"
+                )
             self.ctx.results.append(result)
 
             # If the auto-loop just tested POST /admin/blocked-users and
