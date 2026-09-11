@@ -19,22 +19,134 @@ from src.api.schemas.common import ErrorResponse, SuccessResponse
 import utils.logger as logger
 
 import hashlib
+import threading
+import time
+from collections import OrderedDict
 from typing import Optional
 
 router = APIRouter(tags=["Avatars"])
 
-# Local in-memory cache for checksums to avoid DB hits for ETags.
-# M5: previously unbounded plain dicts — enumerating /users/{id} or
-# /servers/{id} grew them without limit. Both caches are now capped at a few
-# thousand entries with simple insertion-ordered eviction (dict preserves
-# insertion order), so probing arbitrary ids cannot leak memory.
-_avatar_checksum_cache = {}  # {uid: checksum}
-_icon_checksum_cache = {}  # {sid: checksum}
+# (M5) Bounded LRU + TTL checksum caches.
+# Previously these were unbounded plain dicts: every unique user/server ID
+# ever fetched stayed resident (slow memory leak / OOM risk via ID probing).
+# Each cache is now an insertion-ordered OrderedDict capped at
+# ``_MAX_CHECKSUM_CACHE_ENTRIES`` entries with per-entry TTL
+# (``_CHECKSUM_CACHE_TTL_SEC``) and a threading.Lock. Reads refresh recency
+# (true LRU), writes evict expired entries first then the oldest, so size
+# never exceeds the cap. ``_cache_set_checksum`` also accepts plain dicts
+# (legacy/test path) and applies the same cap there.
 _MAX_CHECKSUM_CACHE_ENTRIES = 4096
+_CHECKSUM_CACHE_TTL_SEC = 1800.0
 
 
-def _cache_set_checksum(cache: dict, key: int, checksum: str) -> None:
+class _BoundedChecksumCache:
+    """Thread-safe bounded LRU cache with TTL for checksum strings. (M5)"""
+
+    def __init__(
+        self,
+        maxsize: int = _MAX_CHECKSUM_CACHE_ENTRIES,
+        ttl: float = _CHECKSUM_CACHE_TTL_SEC,
+    ) -> None:
+        self._maxsize = maxsize
+        self._ttl = ttl
+        self._data: "OrderedDict[int, tuple[str, float]]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _expired(self, ts: float, now: float) -> bool:
+        return (now - ts) > self._ttl
+
+    def _purge_expired(self, now: float) -> None:
+        # Oldest-first; stop at first live entry (timestamps are not
+        # strictly ordered after LRU touch, so fall back to full scan
+        # only when the cache is at/over capacity).
+        for key in list(self._data.keys()):
+            try:
+                _, ts = self._data[key]
+            except KeyError:
+                continue
+            if self._expired(ts, now):
+                self._data.pop(key, None)
+            if len(self._data) <= self._maxsize:
+                # Still scan the head for staleness when small; cheap.
+                pass
+        # Enforce hard cap (evict oldest first).
+        while len(self._data) > self._maxsize:
+            self._data.popitem(last=False)
+
+    def get(self, key: int, default: Optional[str] = None) -> Optional[str]:
+        now = time.monotonic()
+        with self._lock:
+            try:
+                value, ts = self._data[key]
+            except KeyError:
+                return default
+            if self._expired(ts, now):
+                self._data.pop(key, None)
+                return default
+            self._data.move_to_end(key)
+            return value
+
+    def __getitem__(self, key: int) -> str:
+        result = self.get(key)
+        if result is None:
+            # Distinguish missing from stored None (we never store None).
+            with self._lock:
+                if key not in self._data:
+                    raise KeyError(key)
+            return result  # type: ignore[return-value]
+        return result
+
+    def __setitem__(self, key: int, value: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if key in self._data:
+                self._data.pop(key, None)
+            self._data[key] = (value, now)
+            if len(self._data) > self._maxsize:
+                self._purge_expired(now)
+                while len(self._data) > self._maxsize:
+                    self._data.popitem(last=False)
+
+    def __contains__(self, key: object) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            try:
+                _, ts = self._data[key]  # type: ignore[index]
+            except KeyError:
+                return False
+            if self._expired(ts, now):
+                self._data.pop(key, None)  # type: ignore[arg-type]
+                return False
+            return True
+
+    def pop(self, key: int, default: Optional[str] = None) -> Optional[str]:
+        with self._lock:
+            entry = self._data.pop(key, None)
+        if entry is None:
+            return default
+        return entry[0]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def __len__(self) -> int:
+        now = time.monotonic()
+        with self._lock:
+            self._purge_expired(now)
+            return len(self._data)
+
+
+_avatar_checksum_cache = _BoundedChecksumCache()  # {uid: checksum}
+_icon_checksum_cache = _BoundedChecksumCache()  # {sid: checksum}
+
+
+def _cache_set_checksum(cache, key: int, checksum: str) -> None:
     """Insert into a checksum cache, evicting the oldest entry at the cap."""
+    if isinstance(cache, _BoundedChecksumCache):
+        cache[key] = checksum
+        return
+    # Legacy plain-dict path (kept for backwards compatibility / tests).
     if len(cache) >= _MAX_CHECKSUM_CACHE_ENTRIES:
         # Evict the first-inserted entry (dicts preserve insertion order).
         try:
@@ -289,7 +401,7 @@ async def upload_my_avatar(
                 image_data=file_data,
                 content_type=file.content_type,
             )
-        except ValueError:
+        except (ValueError, TypeError):
             # M1: invalid image data is a CLIENT error - report it as such
             # instead of a misleading "Internal server error" 400.
             raise HTTPException(
@@ -431,8 +543,9 @@ async def delete_my_avatar(
         )
 
 
-# Local in-memory cache for icon checksums
-_icon_checksum_cache = {}  # {sid: checksum}
+# NOTE (M5): _icon_checksum_cache is defined once at module top as a
+# _BoundedChecksumCache; no second definition here (it would rebind to an
+# unbounded plain dict and wipe the cache).
 
 
 @router.get(
@@ -707,7 +820,7 @@ async def upload_server_icon(
             result = avatars.upload_server_icon(
                 server_id=sid, image_data=file_data, content_type=file.content_type
             )
-        except ValueError:
+        except (ValueError, TypeError):
             # M1: invalid image data is a CLIENT error - report it as such
             # instead of a misleading "Internal server error" 400.
             raise HTTPException(
