@@ -2,7 +2,7 @@
 Sticker routes - Sticker and pack management endpoints.
 """
 
-from typing import List, Optional
+from typing import List, NoReturn, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query
 
 import time
@@ -45,23 +45,82 @@ _STICKER_CLIENT_ERRORS = (
 router = APIRouter(tags=["Stickers"])
 
 
-def _check_sticker_create_rate_limit(user_id: int) -> None:
-    """Throttle sticker creation per user (best-effort).
+def _build_shared_ratelimit_storage():
+    """Build the shared/persistent storage backend used at startup.
 
-    Reuses the shared rate-limit manager used by the media module. If the
-    manager cannot be initialised we skip the check rather than blocking
-    legitimate requests.
+    Mirrors ``src.server.initializer`` preference order: Valkey
+    (distributed) first, then the shared relational database. Returns
+    ``None`` when no shared backend is available so the caller can fail
+    closed instead of silently downgrading to per-process memory (F7).
     """
     try:
-        import src.core.ratelimit as ratelimit
-        from src.core.ratelimit.storage import MemoryStorage
+        from src.core.database.valkey_client import (
+            is_available as valkey_is_available,
+        )
 
-        if not ratelimit.is_setup():
-            ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
+        if valkey_is_available():
+            from src.core.ratelimit.storage import ValkeyStorage
+
+            return ValkeyStorage()
+    except Exception as e:
+        logger.debug(f"Sticker rate-limit Valkey backend unavailable: {e}")
+    try:
+        db = api.get_db()
+        if db is not None:
+            from src.core.ratelimit.storage import DatabaseStorage
+
+            return DatabaseStorage(db)
+    except Exception as e:
+        logger.debug(f"Sticker rate-limit database backend unavailable: {e}")
+    return None
+
+
+def _rate_limit_unavailable() -> NoReturn:
+    """Fail closed with an honest 503 (never silently allow N x quota)."""
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "error": {
+                "code": 503,
+                "message": "Sticker rate limiter unavailable. Please try again later.",
+            }
+        },
+        headers={"Retry-After": "60"},
+    )
+
+
+def _check_sticker_create_rate_limit(user_id: int) -> None:
+    """Throttle sticker creation per user (fail-closed).
+
+    Reuses the shared rate-limit manager configured at startup. If the
+    manager is not set up yet, lazily initialise it with the shared
+    persistent backend (Valkey, else the shared database) and the global
+    limiter enabled. When no shared backend is available, fail closed
+    with 503 + Retry-After instead of downgrading to per-process memory
+    with the global limiter disabled (which grants N x quota under
+    multi-worker).
+    """
+    import src.core.ratelimit as ratelimit
+
+    if not ratelimit.is_setup():
+        storage = _build_shared_ratelimit_storage()
+        if storage is None:
+            logger.warning(
+                "Sticker rate limiter unavailable (no shared backend); "
+                "failing closed with 503"
+            )
+            _rate_limit_unavailable()
+        try:
+            ratelimit.setup(storage_backend=storage, enable_global_limit=True)
+        except Exception as e:
+            logger.warning(f"Sticker rate-limit setup failed, failing closed: {e}")
+            _rate_limit_unavailable()
+
+    try:
         manager = ratelimit.get_manager()
     except Exception as e:
-        logger.debug(f"Sticker rate-limit unavailable, skipping check: {e}")
-        return
+        logger.warning(f"Sticker rate-limit unavailable, failing closed: {e}")
+        _rate_limit_unavailable()
 
     now_seconds = int(time.time())
     minute_window = now_seconds - (now_seconds % 60)
@@ -72,7 +131,11 @@ def _check_sticker_create_rate_limit(user_id: int) -> None:
     # under the storage lock — do the increment in ONE call and treat the
     # returned counter as authoritative: requests 1..max pass, the (max+1)th
     # is rejected.
-    count = manager.increment_custom_usage(key, "count", 1, ttl=120)
+    try:
+        count = manager.increment_custom_usage(key, "count", 1, ttl=120)
+    except Exception as e:
+        logger.warning(f"Sticker rate-limit increment failed, failing closed: {e}")
+        _rate_limit_unavailable()
     max_per_minute = 20
     if count > max_per_minute:
         raise HTTPException(
