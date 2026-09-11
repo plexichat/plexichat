@@ -66,9 +66,9 @@ class SettingsManager(BaseManager):
 
         for reserved in self.config.reserved_prefixes:
             if key.startswith(reserved):
-                raise SettingsKeyReserved(
-                    f"Key '{key}' uses reserved prefix '{reserved}'"
-                )
+                # Static message: never reflect the raw key — the bulk route
+                # surfaces str(e) in per-key failure bodies.
+                raise SettingsKeyReserved("Key uses a reserved prefix")
 
     def _validate_server_key(self, key: str) -> None:
         """Validate a key written through a dedicated server path.
@@ -91,14 +91,11 @@ class SettingsManager(BaseManager):
 
         for reserved in self.config.reserved_keys:
             if key.startswith(reserved):
-                raise SettingsKeyReserved(
-                    f"Key '{key}' uses reserved prefix '{reserved}'"
-                )
+                # Static message: never reflect the raw key (see _validate_key).
+                raise SettingsKeyReserved("Key uses a reserved prefix")
 
         if key.startswith("_") and key not in self.config.server_setting_keys:
-            raise SettingsKeyReserved(
-                f"Key '{key}' is not a recognised server-managed setting"
-            )
+            raise SettingsKeyReserved("Key is not a recognised server-managed setting")
 
     def _is_readable_key(self, key: str) -> bool:
         """Whether a stored (possibly legacy) key may be surfaced on reads.
@@ -402,7 +399,16 @@ class SettingsManager(BaseManager):
 
         Returns:
             True if deleted, False if not found
+
+        Raises:
+            SettingsKeyInvalid: If key fails the charset/format contract
+            SettingsKeyTooLong: If key is too long
+            SettingsKeyReserved: If key uses a reserved prefix
         """
+        # Validate before touching the DB: evil keys must not reach the
+        # DELETE statement nor the cache-invalidation patterns built from
+        # the key downstream (cache pattern injection).
+        self._validate_key(key)
         cursor = self._db.execute(
             "DELETE FROM user_settings WHERE user_id = ? AND key = ?", (user_id, key)
         )

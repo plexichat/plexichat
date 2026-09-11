@@ -15,25 +15,25 @@ class SettingsLimitExceeded(SettingsError):
     pass
 
 
-class SettingsKeyTooLong(SettingsError):
+class SettingsKeyTooLong(SettingsError, ValueError):
     """Raised when setting key exceeds maximum length."""
 
     pass
 
 
-class SettingsValueTooLong(SettingsError):
+class SettingsValueTooLong(SettingsError, ValueError):
     """Raised when setting value exceeds maximum length."""
 
     pass
 
 
-class SettingsKeyReserved(SettingsError):
+class SettingsKeyReserved(SettingsError, ValueError):
     """Raised when trying to use a reserved key."""
 
     pass
 
 
-class SettingsKeyInvalid(SettingsError):
+class SettingsKeyInvalid(SettingsError, ValueError):
     """Raised when a setting key fails the charset/format contract."""
 
     pass
