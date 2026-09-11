@@ -299,7 +299,12 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         dispatcher=dispatcher,
     )
 
-    dispatcher.set_event_loop(asyncio.get_event_loop())
+    # C7: bind the *running* loop. asyncio.get_event_loop() is deprecated
+    # when no loop is running (DeprecationWarning on 3.10+, detached-loop
+    # risk on 3.12+ startup ordering) and could bind the dispatcher to the
+    # wrong loop so events never dispatch. This coroutine always executes
+    # inside the serving loop, so get_running_loop() is exact.
+    dispatcher.set_event_loop(asyncio.get_running_loop())
 
     logger.debug(f"New gateway connection: {connection_id}")
 

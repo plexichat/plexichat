@@ -390,7 +390,11 @@ async def _cross_worker_poll_loop() -> None:
         poll_count = 0
         healthy_polls = 0
         reconnect = False
-        last_heartbeat = asyncio.get_event_loop().time()
+        # C7: use the running loop's clock. asyncio.get_event_loop() is
+        # deprecated when no loop is running (3.10+) and can hand back a
+        # detached loop; this poll loop always runs inside the serving
+        # loop, so get_running_loop() is the correct clock source.
+        last_heartbeat = asyncio.get_running_loop().time()
 
         try:
             while not _cross_worker_stop.is_set():
@@ -414,7 +418,9 @@ async def _cross_worker_poll_loop() -> None:
 
                 # Record a periodic heartbeat alert so operators can see
                 # healthy worker activity in the Alerts tab timeline.
-                now = asyncio.get_event_loop().time()
+                # C7: same running-loop clock as above (see comment at
+                # last_heartbeat); never the deprecated get_event_loop().
+                now = asyncio.get_running_loop().time()
                 if now - last_heartbeat >= _HEARTBEAT_ALERT_INTERVAL_SEC:
                     last_heartbeat = now
                     _record_system_alert(
