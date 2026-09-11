@@ -91,7 +91,8 @@ router = APIRouter()
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        500: {"model": ErrorResponse, "description": "Passkey support not available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
@@ -127,10 +128,11 @@ async def passkey_register_options(
             challenge_id=options["challenge_id"],
             options=options["options"],
         )
-    except RuntimeError:
+    except RuntimeError as e:
+        logger.warning(f"Passkey registration options unavailable: {e}")
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey registration options failed: {e}", exc_info=True)
@@ -200,6 +202,12 @@ async def passkey_register(
             status_code=400,
             detail={"error": {"code": 400, "message": "Internal server error"}},
         )
+    except RuntimeError as e:
+        logger.warning(f"Passkey registration unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
+        )
     except Exception as e:
         logger.error(f"Passkey registration failed: {e}", exc_info=True)
         raise HTTPException(
@@ -214,7 +222,8 @@ async def passkey_register(
     summary="Get passkey authentication options",
     responses={
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        500: {"model": ErrorResponse, "description": "Passkey support not available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
 @(rate_limit(requests=10, window_seconds=60) if rate_limit else lambda f: f)
@@ -235,10 +244,11 @@ async def passkey_authenticate_options(
             challenge_id=options["challenge_id"],
             options=options["options"],
         )
-    except RuntimeError:
+    except RuntimeError as e:
+        logger.warning(f"Passkey authentication options unavailable: {e}")
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication options failed: {e}", exc_info=True)
@@ -256,6 +266,7 @@ async def passkey_authenticate_options(
         401: {"model": ErrorResponse, "description": "Authentication failed"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
@@ -319,6 +330,12 @@ async def passkey_authenticate(
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Internal server error"}},
+        )
+    except RuntimeError as e:
+        logger.warning(f"Passkey authentication unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication failed: {e}", exc_info=True)

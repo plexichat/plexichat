@@ -54,6 +54,7 @@ router = APIRouter(tags=["Utilities"])
             "content": {"image/png": {}, "image/jpeg": {}},
         },
         400: {"model": ErrorResponse, "description": "Invalid input data"},
+        503: {"model": ErrorResponse, "description": "QR dependency missing"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -78,9 +79,10 @@ async def generate_qr(
             detail={"error": {"code": 400, "message": "Data is required"}},
         )
     if qrcode is None:
+        logger.warning("QR generation unavailable: qrcode dependency missing")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "QR code dependency missing"}},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"code": 503, "message": "QR code dependency missing"}},
         )
 
     from fastapi.concurrency import run_in_threadpool
