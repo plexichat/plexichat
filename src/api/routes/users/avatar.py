@@ -101,7 +101,7 @@ class AvatarMixin:
                     size=result["size"],
                     animated=result["animated"],
                 )
-            except ValueError:
+            except (ValueError, TypeError):
                 # M1: invalid image data is a client error; use the same
                 # message as the sibling /avatars/users/@me endpoint so the
                 # two upload paths behave identically.

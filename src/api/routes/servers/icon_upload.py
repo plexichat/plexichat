@@ -91,6 +91,13 @@ async def upload_server_icon(
         return _server_to_response(server)
     except HTTPException:
         raise
+    except (ValueError, TypeError):
+        # M1: invalid image bytes are a CLIENT error - same static message
+        # as the sibling /avatars endpoints; never leak str(e).
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid image file"}},
+        )
     except Exception as e:
         exc_name = type(e).__name__
         # M1: invalid image data (size/type/blocked/malware) is a CLIENT
