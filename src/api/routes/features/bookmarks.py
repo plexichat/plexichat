@@ -7,7 +7,7 @@ import asyncio
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import parse_id, call_or_raise, raise_internal
+from .common import parse_id, raise_internal
 import utils.logger as logger
 
 router = APIRouter()
@@ -63,7 +63,11 @@ async def _dispatch_bookmark_event(event_type: str, user_id: int, bookmark: dict
 @router.post(
     "/bookmarks",
     summary="Bookmark a message",
-    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 async def add_bookmark(
     body: BookmarkRequest, current_user: TokenInfo = Depends(get_current_user)
@@ -84,13 +88,34 @@ async def add_bookmark(
         db = api.get_db()
         bookmark_svc = BookmarkService(db, messaging)
 
-    result = call_or_raise(
-        bookmark_svc.add_bookmark,
-        user_id=current_user.user_id,
-        message_id=message_id,
-        conversation_id=conversation_id,
-        label=body.label,
-    )
+    # M8 existence-oracle contract: nonexistent messages, conversation
+    # mismatches, and non-participant callers all produce the IDENTICAL
+    # 404 "Message not found" response. This mirrors the message-GET route
+    # (messages_crud/retrieve.py), where a non-viewable message also yields
+    # 404 rather than 403, so probing bookmark IDs cannot disclose whether
+    # a message exists. Details stay server-side; never echo exception text.
+    try:
+        result = bookmark_svc.add_bookmark(
+            user_id=current_user.user_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            label=body.label,
+        )
+    except (ValueError, PermissionError) as exc:
+        logger.debug(
+            "Bookmark create denied for user %s: %s",
+            current_user.user_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Message not found"}},
+        )
+    except Exception:
+        logger.error(
+            "Bookmark create failed for user %s", current_user.user_id, exc_info=True
+        )
+        raise_internal("Internal server error")
     # Fire-and-forget: notify our own websocket so bookmarks modal stays live
     asyncio.create_task(
         _dispatch_bookmark_event("add", current_user.user_id, result or {})
@@ -112,6 +137,9 @@ async def remove_bookmark(
     from src.core.messaging.services.bookmarks import BookmarkService
 
     bookmark_svc = BookmarkService(db, messaging)
+    # M8: deletion is scoped to (user_id, message_id) and stays idempotent
+    # (always success) so it discloses nothing about message existence or
+    # other users' bookmarks; no view check applies here.
     bookmark_svc.remove_bookmark(current_user.user_id, mid)
     # Fire-and-forget: notify our own websocket so bookmarks modal can remove it
     asyncio.create_task(
@@ -134,7 +162,10 @@ async def remove_bookmark(
 @router.get(
     "/bookmarks",
     summary="List your bookmarks",
-    responses={401: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 async def list_bookmarks(
     conversation_id: Optional[str] = None,
@@ -149,14 +180,14 @@ async def list_bookmarks(
     conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
     try:
         results = bookmark_svc.get_bookmarks(current_user.user_id, conv_id, limit)
-    except PermissionError:
+    except (PermissionError, ValueError):
+        # M8: same oracle contract as bookmark creation — a conversation
+        # filter the caller cannot view yields the identical 404 rather
+        # than 403/400, so conversation IDs cannot be probed via this
+        # endpoint. Never echo exception text to the client.
+        logger.debug("Bookmark list denied for user %s", current_user.user_id)
         raise HTTPException(
-            status_code=403,
-            detail={"error": {"code": 403, "message": "Bookmark access denied"}},
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid bookmark request"}},
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Conversation not found"}},
         )
     return {"bookmarks": results}

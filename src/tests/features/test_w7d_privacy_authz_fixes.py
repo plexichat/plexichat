@@ -228,9 +228,11 @@ class TestBookmarkMembership:
             },
             headers=_headers(mallory_tok),
         )
-        assert resp.status_code == 403, resp.text
+        # M8 oracle contract: no-access yields the identical 404 as a
+        # missing message (mirrors message-GET), never 403.
+        assert resp.status_code == 404, resp.text
         body = resp.json()
-        assert body["error"]["message"] == ("Not a participant in this conversation")
+        assert body["error"]["message"] == "Message not found"
 
     def test_message_conversation_mismatch_is_rejected(
         self, test_client, auth_manager, messaging_manager, trio
@@ -250,7 +252,8 @@ class TestBookmarkMembership:
             },
             headers=_headers(bob_tok),
         )
-        assert resp.status_code == 403, resp.text
+        # M8: conversation mismatch is indistinguishable from missing.
+        assert resp.status_code == 404, resp.text
 
     def test_missing_message_is_bad_request(
         self, test_client, auth_manager, messaging_manager, trio
@@ -264,7 +267,8 @@ class TestBookmarkMembership:
             json={"message_id": "999999999", "conversation_id": str(dm.id)},
             headers=_headers(bob_tok),
         )
-        assert resp.status_code == 400, resp.text
+        # M8: missing message yields the same 404 as no-access (no oracle).
+        assert resp.status_code == 404, resp.text
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,14 @@ class BookmarkService:
         Raises ``ValueError`` when the message does not exist (or lives in a
         different conversation than claimed) and ``PermissionError`` when the
         user is not a participant of the target conversation.
+
+        NOTE (M8 oracle contract): callers MUST map both exception types to
+        the same HTTP 404 ``{"error": {"code": 404, "message":
+        "Message not found"}}`` response. This mirrors the message-GET route
+        (``messages_crud/retrieve.py``), which returns 404 — not 403 — when
+        ``messaging.get_message`` yields nothing for a non-participant, so
+        probing arbitrary message IDs cannot distinguish "nonexistent" from
+        "no access". Never surface ``str(e)`` to the client.
         """
         msg_row = self._db.fetch_one(
             "SELECT conversation_id FROM msg_messages WHERE id = ? AND deleted = 0",
@@ -65,6 +73,80 @@ class BookmarkService:
                 (conversation_id, user_id),
             )
             allowed = row is not None
+        if not allowed:
+            raise PermissionError("Not a participant in this conversation")
+
+    def _is_viewable_by(self, user_id: int, message_id: int) -> bool:
+        """Return True iff ``user_id`` can currently view ``message_id``.
+
+        Reuses the same view gate as the message retrieval path: when the
+        messaging module is available, ``get_message`` already returns None
+        for non-participants and missing/deleted rows; otherwise falls back
+        to a direct participant-table probe (fail closed) so the check can
+        never fail open.
+        """
+        if self._messaging is not None:
+            get_message = getattr(self._messaging, "get_message", None)
+            if callable(get_message):
+                try:
+                    return get_message(user_id, message_id) is not None
+                except Exception:
+                    return False
+        try:
+            msg_row = self._db.fetch_one(
+                "SELECT conversation_id FROM msg_messages WHERE id = ? AND deleted = 0",
+                (message_id,),
+            )
+        except Exception:
+            return False
+        if not msg_row:
+            return False
+        conv_id = (
+            msg_row["conversation_id"] if isinstance(msg_row, dict) else msg_row[0]
+        )
+        participant_svc = (
+            getattr(self._messaging, "_participant_svc", None)
+            if self._messaging
+            else None
+        )
+        try:
+            if participant_svc is not None:
+                return bool(participant_svc.is_participant(int(conv_id), user_id))
+            row = self._db.fetch_one(
+                "SELECT 1 FROM msg_participants WHERE conversation_id = ? "
+                "AND user_id = ?",
+                (int(conv_id), user_id),
+            )
+            return row is not None
+        except Exception:
+            return False
+
+    def _ensure_list_access(self, user_id: int, conversation_id: Optional[int]) -> None:
+        """Gate conversation-scoped bookmark listing on participation.
+
+        Raises ``PermissionError`` when the caller is not a participant of
+        the requested conversation. Route layers MUST map this to HTTP 404
+        (same oracle contract as :meth:`_ensure_bookmark_access`).
+        """
+        if conversation_id is None:
+            return
+        participant_svc = (
+            getattr(self._messaging, "_participant_svc", None)
+            if self._messaging
+            else None
+        )
+        try:
+            if participant_svc is not None:
+                allowed = participant_svc.is_participant(conversation_id, user_id)
+            else:
+                row = self._db.fetch_one(
+                    "SELECT 1 FROM msg_participants WHERE conversation_id = ? "
+                    "AND user_id = ?",
+                    (conversation_id, user_id),
+                )
+                allowed = row is not None
+        except Exception:
+            allowed = False
         if not allowed:
             raise PermissionError("Not a participant in this conversation")
 
@@ -163,7 +245,17 @@ class BookmarkService:
         limit: int = 50,
         before_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Get bookmarks for a user, optionally filtered by conversation."""
+        """Get bookmarks for a user, optionally filtered by conversation.
+
+        M8: a conversation-scoped listing requires participation in that
+        conversation (raises ``PermissionError``, mapped to 404 by the
+        route), and rows pointing at messages the caller can no longer view
+        (deleted, or access revoked) are silently dropped so listing can
+        never leak inaccessible message metadata.
+        """
+        # Gate the conversation filter first so probing conversation IDs
+        # cannot distinguish "empty" from "no access" (route maps to 404).
+        self._ensure_list_access(user_id, conversation_id)
         query = "SELECT * FROM user_bookmarks WHERE user_id = ?"
         params: list = [user_id]
 
@@ -180,7 +272,10 @@ class BookmarkService:
 
         rows = self._db.fetch_all(query, tuple(params))
 
-        # Enrich with message content if messaging module available
+        # Enrich with message content if messaging module available.
+        # M8: drop rows the caller can no longer view (deleted message or
+        # revoked membership) instead of leaking their metadata. The view
+        # check reuses the message retrieval path's own gate.
         results = []
         for row in rows:
             data = (
@@ -198,11 +293,16 @@ class BookmarkService:
             if self._messaging:
                 try:
                     msg = self._messaging.get_message(user_id, data["message_id"])
-                    if msg:
-                        data["content_preview"] = (msg.content or "")[:200]
-                        data["author_id"] = msg.author_id
-                        data["message_created_at"] = msg.created_at
+                    if not msg:
+                        # Not viewable (deleted or no longer a participant):
+                        # drop rather than leak metadata.
+                        continue
+                    data["content_preview"] = (msg.content or "")[:200]
+                    data["author_id"] = msg.author_id
+                    data["message_created_at"] = msg.created_at
                 except Exception:
+                    # Transient enrichment failure: keep the row without a
+                    # preview rather than hide a legitimate bookmark.
                     pass
             results.append(data)
         return results
