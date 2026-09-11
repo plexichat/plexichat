@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json as _json
 import re as _re
+import shutil as _shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -286,11 +287,18 @@ class StaticClientManager:
                                 # HMAC/hash failure that is not a proven key
                                 # migration means the install is UNTRUSTED:
                                 # never re-sign whatever happens to be on
-                                # disk — re-download from the release source.
+                                # disk — quarantine the tampered bytes so they
+                                # can never be served, then re-download from
+                                # the release source.
                                 logger.warning(
                                     f"static_client: install "
                                     f"{format_release_tag(parsed)} untrusted "
                                     f"(status={status}); re-downloading"
+                                )
+                                self._quarantine_untrusted_install(
+                                    path,
+                                    format_release_tag(parsed),
+                                    status,
                                 )
                                 return self._fetch_and_install(parsed, asset)
                     logger.info(
@@ -318,6 +326,59 @@ class StaticClientManager:
             already_current=True,
             error="below_min_age",
         )
+
+    def _quarantine_untrusted_install(
+        self, path: Path, tag: str, status: str
+    ) -> Optional[Path]:
+        """Quarantine an UNTRUSTED install so tampered bytes can never run.
+
+        Moves *path* aside into ``<install_dir>/.quarantine/<tag>.untrusted-
+        <epoch>-<status>`` (never re-signs it) and logs a warning carrying
+        only the file identity (tag/status/dir name — no key or hash
+        material). Falls back to deleting the directory if the move fails,
+        so tampered bytes are never left at the live path. Returns the
+        quarantine location, or ``None`` if nothing remained to move.
+        """
+        try:
+            if not path.exists():
+                return None
+        except OSError:
+            return None
+        logger.warning(
+            "static_client: quarantining untrusted install "
+            f"{tag} (status={status}) at {path.name}; "
+            "manifest NOT re-signed, forcing re-download"
+        )
+        quarantine_root = self._install_dir / ".quarantine"
+        try:
+            quarantine_root.mkdir(parents=True, exist_ok=True)
+            dest = quarantine_root / f"{tag}.untrusted-{int(time.time())}-{status}"
+            suffix = 0
+            final = dest
+            while final.exists():
+                suffix += 1
+                final = dest.with_name(f"{dest.name}-{suffix}")
+            _shutil.move(str(path), str(final))
+            try:
+                (final / ".untrusted").write_text(
+                    f"tag={tag} status={status}\n", encoding="utf-8"
+                )
+            except OSError:
+                pass
+            return final
+        except OSError as exc:
+            logger.warning(
+                f"static_client: quarantine move failed for {tag} "
+                f"(status={status}): {exc}; deleting untrusted bytes"
+            )
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    _shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
 
     def _maybe_repair_key_migration(self, path: Path, key: bytes) -> bool:
         """Re-sign the manifest ONLY for a proven key migration.
