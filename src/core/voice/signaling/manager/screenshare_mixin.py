@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 import utils.logger as logger
 
 from ..exceptions import NotConnectedError, ScreenShareError
+from ...exceptions import PermissionDeniedError
 from ..models import ScreenShareState
 
 
@@ -34,7 +35,12 @@ class ScreenShareMixin:
         get_channel = getattr(manager, "_get_server_channel", None)
         require_permission = getattr(manager, "_require_permission", None)
         if get_channel is None or require_permission is None:
-            return
+            # See ``_require_connect_permission``: an authorization guard that
+            # cannot be evaluated denies rather than skips.
+            raise PermissionDeniedError(
+                "Cannot verify voice.speak for this channel",
+                permission="voice.speak",
+            )
 
         try:
             channel = get_channel(channel_id)

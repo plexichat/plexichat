@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List, Dict, Any, Optional
 import utils.logger as logger
 
 from ..exceptions import AlreadyConnectedError, NotConnectedError
+from ...exceptions import PermissionDeniedError
 from ..models import SignalingState, VoiceServerInfo, VoiceConnection
 
 
@@ -52,7 +53,14 @@ class ConnectionManagementMixin:
         get_channel = getattr(manager, "_get_server_channel", None)
         require_permission = getattr(manager, "_require_permission", None)
         if get_channel is None or require_permission is None:
-            return
+            # The manager resolved, so both helpers are expected (see
+            # ``_voice_manager``). If one is missing the check cannot be
+            # evaluated at all, and an unevaluable authorization guard must
+            # deny rather than skip.
+            raise PermissionDeniedError(
+                "Cannot verify voice.connect for this channel",
+                permission="voice.connect",
+            )
 
         try:
             channel = get_channel(channel_id)
