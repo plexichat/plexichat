@@ -22,8 +22,10 @@ import pytest
 from src.core.voice.signaling.sfu.mediasoup_ws import (
     MediasoupWSAdapter,
     PeerConnection,
-    _canonical_channel_id,
-    _canonical_user_id,
+)
+from src.core.voice.signaling.sfu.quality import (
+    canonical_channel_id,
+    canonical_user_id,
 )
 
 
@@ -58,7 +60,7 @@ def _connection(
     ],
 )
 def test_canonical_channel_id(room_id, expected):
-    assert _canonical_channel_id(room_id) == expected
+    assert canonical_channel_id(room_id) == expected
 
 
 @pytest.mark.parametrize(
@@ -76,7 +78,7 @@ def test_canonical_channel_id(room_id, expected):
     ],
 )
 def test_canonical_user_id(peer_id, expected):
-    assert _canonical_user_id(peer_id) == expected
+    assert canonical_user_id(peer_id) == expected
 
 
 # === Score notifications ===================================================
