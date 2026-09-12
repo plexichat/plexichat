@@ -411,8 +411,14 @@ docker:build_and_push:
     - name: docker:27-dind
       alias: docker
   variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
     DOCKER_BUILDKIT: "1"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
@@ -451,8 +457,14 @@ docker:backup:
     - name: docker:27-dind
       alias: docker
   variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
     DOCKER_BUILDKIT: "1"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
@@ -476,8 +488,14 @@ docker:cleanup_old_images:
     - name: docker:27-dind
       alias: docker
   variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
