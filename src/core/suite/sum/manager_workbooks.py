@@ -394,6 +394,14 @@ class SumManagerWorkbooks(SumManagerProtocol):
                     "calculation_state": str(row.get("calculation_state") or "none"),
                     "created_at": int(row["created_at"]),
                     "updated_at": int(row["updated_at"]),
+                    # SECURITY: the listing must report the viewer's REAL
+                    # effective access. Omitting this let the API response
+                    # schema's default (can_view/can_edit = true) fabricate a
+                    # full-edit grant on every listed workbook, so a view-only
+                    # grantee was told they could edit.
+                    "my_permissions": self._viewer_permissions(
+                        user_id, int(row["id"]), workbook=row
+                    ),
                 }
             )
         return items, int(count["count"]) if count else 0

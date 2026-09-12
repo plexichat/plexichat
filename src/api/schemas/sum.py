@@ -42,10 +42,17 @@ class SumViewerPermissionsResponse(BaseModel):
 
     ``read_only_ranges`` is populated on per-sheet responses (viewport); at
     the workbook level it is empty because range protection is sheet-scoped.
+
+    FAIL CLOSED: the defaults are deny. This object is a per-viewer grant
+    claim, so a producer that forgets to populate it must not be able to
+    fabricate access — the defaults previously asserted ``can_view`` and
+    ``can_edit`` were both true, which turned every omission into a
+    full-edit claim (e.g. the workbook list, which omitted the field
+    entirely).
     """
 
-    can_view: bool = True
-    can_edit: bool = True
+    can_view: bool = False
+    can_edit: bool = False
     reason: Optional[str] = None
     read_only_ranges: List["SumRangePermissionResponse"] = Field(default_factory=list)
 
@@ -141,7 +148,10 @@ class SumViewportResponse(BaseModel):
     validations: List[SumValidationInfo] = Field(default_factory=list)
     conditional_formats: List[SumConditionalFormatInfo] = Field(default_factory=list)
     comments: List[SumCommentInfo] = Field(default_factory=list)
-    can_edit: bool = True
+    # FAIL CLOSED: the viewport producer populates this from
+    # ``_viewer_permissions``; an omission must render read-only, not
+    # editable.
+    can_edit: bool = False
     read_only_ranges: List["SumRangePermissionResponse"] = Field(default_factory=list)
 
 

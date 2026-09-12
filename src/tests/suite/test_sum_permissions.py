@@ -139,6 +139,50 @@ def test_view_only_user_can_read_but_not_mutate(db, two_users, server_manager):
         )
 
 
+def test_list_workbooks_reports_real_permissions(db, two_users, server_manager):
+    """The workbook listing must not fabricate a full-edit grant.
+
+    Regression guard: ``list_workbooks`` omitted ``my_permissions``, so the
+    API response schema's default (can_view/can_edit = true) told a view-only
+    grantee they could edit every listed workbook.
+    """
+    owner, viewer = two_users
+    manager = _make_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Listed")
+    manager.grant_workbook(owner.id, int(workbook["id"]), viewer.id, ["view"])
+
+    owner_items, _ = manager.list_workbooks(owner.id)
+    viewer_items, _ = manager.list_workbooks(viewer.id)
+
+    assert owner_items[0]["my_permissions"]["can_edit"] is True
+    assert viewer_items[0]["my_permissions"]["can_view"] is True
+    assert viewer_items[0]["my_permissions"]["can_edit"] is False
+    assert viewer_items[0]["my_permissions"]["reason"] == "view_only"
+
+
+def test_workbook_response_schema_fails_closed(db):
+    """An unpopulated permissions projection must deny, not grant."""
+    from src.api.schemas.sum import SumViewerPermissionsResponse, SumViewportResponse
+
+    defaults = SumViewerPermissionsResponse()
+    assert defaults.can_view is False
+    assert defaults.can_edit is False
+
+    # A minimal viewport payload (production always populates can_edit).
+    viewport = SumViewportResponse.model_validate(
+        {
+            "workbook_id": "1",
+            "sheet_id": "2",
+            "revision": 0,
+            "row_start": 0,
+            "row_end": 1,
+            "column_start": 0,
+            "column_end": 1,
+        }
+    )
+    assert viewport.can_edit is False
+
+
 def test_server_member_without_manage_is_view_only(db, two_users, server_manager):
     owner, member = two_users
     server = server_manager.create_server(owner.id, "Suite server")
