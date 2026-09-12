@@ -6,7 +6,7 @@ Setup once in main.py, use anywhere via import.
 Usage:
     # In main.py (setup once)
     from src.core import soundboard
-    soundboard.setup(db, servers)
+    soundboard.setup(db, servers_module=servers)
 
     # In any other file (use directly)
     from src.core import soundboard

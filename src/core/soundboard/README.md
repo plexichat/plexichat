@@ -23,7 +23,7 @@ auth.setup(db)
 servers.setup(db, auth, messaging)
 
 # Recommended: wire the servers module so permission checks fail closed
-soundboard.setup(db, servers)
+soundboard.setup(db, servers_module=servers)
 ```
 
 Without the servers module, permission and membership checks fail closed. See `manager.py:91`.
