@@ -52,6 +52,31 @@ class EmojiOpsMixin(ReactionProtocol):
             except Exception as e:
                 logger.debug(f"Migration step failed (possibly column exists): {e}")
 
+    def _require_manage_server(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> None:
+        """Enforce ``server.manage`` for server-scoped custom-emoji writes.
+
+        SECURITY: fail CLOSED when the servers module is not wired. The
+        previous ``if self._servers:`` guard skipped the check entirely in
+        that state, so any authenticated caller could create/update/delete a
+        server's custom emojis without authorization. This mirrors
+        ``_check_server_permission``, which also denies what it cannot
+        verify.
+        """
+        if not self._servers:
+            logger.error(
+                "Servers module unavailable; denying custom-emoji management "
+                f"for user {user_id} in server {server_id}"
+            )
+            raise PermissionDeniedError(
+                "Missing permission to manage server", "server.manage"
+            )
+        if not self._servers.has_permission(user_id, server_id, "server.manage"):
+            raise PermissionDeniedError(
+                "Missing permission to manage server", "server.manage"
+            )
+
     def _check_emoji_limits(self, server_id: SnowflakeID, animated: bool) -> None:
         if animated:
             max_count = self._config.get("max_animated_emojis_per_server", 50)
@@ -83,11 +108,7 @@ class EmojiOpsMixin(ReactionProtocol):
         image_data: bytes,
         content_type: str,
     ) -> CustomEmoji:
-        if self._servers:
-            if not self._servers.has_permission(user_id, server_id, "server.manage"):
-                raise PermissionDeniedError(
-                    "Missing permission to manage server", "server.manage"
-                )
+        self._require_manage_server(user_id, server_id)
 
         name = self._validate_emoji_name(name)
 
@@ -224,13 +245,7 @@ class EmojiOpsMixin(ReactionProtocol):
         if not emoji:
             raise CustomEmojiNotFoundError("Custom emoji not found")
 
-        if self._servers:
-            if not self._servers.has_permission(
-                user_id, emoji.server_id, "server.manage"
-            ):
-                raise PermissionDeniedError(
-                    "Missing permission to manage server", "server.manage"
-                )
+        self._require_manage_server(user_id, emoji.server_id)
 
         if name is not None:
             name = self._validate_emoji_name(name)
@@ -268,13 +283,7 @@ class EmojiOpsMixin(ReactionProtocol):
         if not emoji:
             raise CustomEmojiNotFoundError("Custom emoji not found")
 
-        if self._servers:
-            if not self._servers.has_permission(
-                user_id, emoji.server_id, "server.manage"
-            ):
-                raise PermissionDeniedError(
-                    "Missing permission to manage server", "server.manage"
-                )
+        self._require_manage_server(user_id, emoji.server_id)
 
         try:
             self._db.begin_transaction()

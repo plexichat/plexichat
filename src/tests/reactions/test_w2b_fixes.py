@@ -134,6 +134,44 @@ class TestW2BFixes:
         finally:
             reaction_manager._servers = original_servers
 
+    def test_emoji_management_fails_closed_without_servers(
+        self, users_with_server, sample_image
+    ):
+        """Server-scoped custom-emoji writes must deny without servers.
+
+        The previous ``if self._servers:`` guard skipped the ``server.manage``
+        check entirely when the servers module was unwired, letting any
+        authenticated caller manage a server's emojis.
+        """
+        (
+            owner,
+            member,
+            server,
+            group,
+            msg,
+            server_manager,
+            reaction_manager,
+        ) = users_with_server
+
+        original_servers = reaction_manager._servers
+        try:
+            reaction_manager._servers = server_manager
+            emoji = reaction_manager.create_custom_emoji(
+                owner.id, server.id, "closed_emoji", sample_image, "image/png"
+            )
+
+            reaction_manager._servers = None
+            with pytest.raises(PermissionDeniedError):
+                reaction_manager.create_custom_emoji(
+                    owner.id, server.id, "closed_emoji_2", sample_image, "image/png"
+                )
+            with pytest.raises(PermissionDeniedError):
+                reaction_manager.update_custom_emoji(owner.id, emoji.id, name="renamed")
+            with pytest.raises(PermissionDeniedError):
+                reaction_manager.delete_custom_emoji(owner.id, emoji.id)
+        finally:
+            reaction_manager._servers = original_servers
+
     def test_m4_counts_filter_blocked_users(
         self, auth_manager, messaging_manager, reaction_manager, rel_manager
     ):

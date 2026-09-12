@@ -9,6 +9,24 @@ import uuid
 
 
 @pytest.fixture
+def reaction_manager(db, server_manager, rel_manager):
+    """Reactions manager with the servers module wired.
+
+    The shared root fixture constructs ``ReactionManager`` without a
+    ``servers_module``, which only worked because the server-scoped
+    permission checks used to be skipped when it was absent. Those checks
+    now fail closed (matching ``_check_server_permission``), so the
+    reactions suite wires the real server manager — the production shape —
+    and exercises ``server.manage`` against actual roles.
+    """
+    from src.core.reactions.manager import ReactionManager
+
+    return ReactionManager(
+        db, servers_module=server_manager, relationships_module=rel_manager
+    )
+
+
+@pytest.fixture
 def sample_image():
     """Generate a minimal valid PNG image (1x1 transparent pixel)."""
     import struct
