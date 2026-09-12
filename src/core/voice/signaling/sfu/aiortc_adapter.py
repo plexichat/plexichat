@@ -9,8 +9,9 @@ It runs in-process with the FastAPI application for maximum integration.
 import asyncio
 import os
 import re
+import time
 import uuid
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
 import utils.logger as logger
@@ -23,6 +24,7 @@ from .base import (
     TransportDirection,
     MediaKind,
 )
+from .quality import QualityReporter, parse_quality_metrics
 from .acoustic_defense import (
     AcousticDefenseConfig,
     AudioProcessingTrack,
@@ -76,6 +78,119 @@ def _parse_ice_candidates_from_sdp(sdp: str) -> List[Dict[str, Any]]:
             }
         )
     return candidates
+
+
+# aiortc reports RTP jitter in the codec's clock-rate units
+# (``StreamStatistics.jitter`` accumulates ``arrival - rtp_timestamp``
+# differences where arrival is scaled by the stream clock rate). The quality
+# store and BandwidthEstimator measure jitter in milliseconds, so the raw
+# value must be divided by the codec clock rate. Dividing is also the safe
+# direction: an unexpected unit can only under-report, never fabricate a
+# degradation.
+_CLOCK_RATES = {"audio": 48000, "video": 90000}
+_DEFAULT_CLOCK_RATE = 48000
+
+
+def _as_number(value: Any) -> Optional[float]:
+    """Coerce a stat field to a finite float, or ``None``."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _quality_metrics_from_stats(records: Any) -> Dict[str, Any]:
+    """Map aiortc ``pc.getStats()`` records to canonical quality metrics.
+
+    ``remote-inbound-rtp`` records are the remote endpoint's report about the
+    stream the SFU sends it -- exactly the downlink signal BandwidthEstimator
+    needs -- and are preferred. ``inbound-rtp`` (what the SFU receives) is the
+    fallback while no RTCP report has arrived yet. Records with nothing
+    measurable are skipped rather than guessed at, and all values go through
+    the shared alias mapper so this adapter reports the same canonical keys as
+    the janus and mediasoup adapters.
+    """
+    buckets: Dict[str, Dict[str, Any]] = {
+        "remote-inbound-rtp": {
+            "seen": False,
+            "lost": 0,
+            "received": 0,
+            "jitter_ms": None,
+            "rtt_ms": None,
+        },
+        "inbound-rtp": {
+            "seen": False,
+            "lost": 0,
+            "received": 0,
+            "jitter_ms": None,
+            "rtt_ms": None,
+        },
+    }
+    for record in records or ():
+        stat_type = getattr(record, "type", None)
+        if stat_type not in buckets:
+            continue
+        bucket = buckets[stat_type]
+        bucket["seen"] = True
+        lost = _as_number(getattr(record, "packetsLost", None))
+        received = _as_number(getattr(record, "packetsReceived", None))
+        if lost is not None and lost > 0:
+            bucket["lost"] += int(lost)
+        if received is not None and received > 0:
+            bucket["received"] += int(received)
+
+        kind = str(getattr(record, "kind", "") or "").lower()
+        clock = _CLOCK_RATES.get(kind, _DEFAULT_CLOCK_RATE)
+        jitter = _as_number(getattr(record, "jitter", None))
+        if jitter is not None and jitter >= 0:
+            jitter_ms = jitter * 1000.0 / clock
+            current = bucket["jitter_ms"]
+            bucket["jitter_ms"] = (
+                jitter_ms if current is None else max(current, jitter_ms)
+            )
+        rtt = _as_number(getattr(record, "roundTripTime", None))
+        if rtt is not None and rtt >= 0:
+            # RTCP round-trip times are seconds.
+            rtt_ms = rtt * 1000.0
+            current_rtt = bucket["rtt_ms"]
+            bucket["rtt_ms"] = (
+                rtt_ms if current_rtt is None else max(current_rtt, rtt_ms)
+            )
+
+    remote = buckets["remote-inbound-rtp"]
+    bucket = remote if remote["seen"] else buckets["inbound-rtp"]
+    if not bucket["seen"]:
+        return {}
+
+    raw: Dict[str, Any] = {}
+    total = bucket["received"] + bucket["lost"]
+    if total > 0:
+        raw["packetLoss"] = bucket["lost"] * 100.0 / total
+    if bucket["jitter_ms"] is not None:
+        raw["jitter"] = bucket["jitter_ms"]
+    if bucket["rtt_ms"] is not None:
+        raw["roundTripTime"] = bucket["rtt_ms"]
+    return parse_quality_metrics(raw)
+
+
+def _total_bytes_sent(records: Any) -> Optional[int]:
+    """Sum the ``outbound-rtp`` byte counters of one peer's pc, if present."""
+    total = 0
+    seen = False
+    for record in records or ():
+        if getattr(record, "type", None) != "outbound-rtp":
+            continue
+        value = _as_number(getattr(record, "bytesSent", None))
+        if value is None or value < 0:
+            continue
+        total += int(value)
+        seen = True
+    return total if seen else None
 
 
 def _parse_dtls_params_from_sdp(sdp: str) -> Dict[str, Any]:
@@ -137,6 +252,11 @@ class AiortcAdapter(SFUAdapter):
         self._ice_servers = ice_servers or []
         self._acoustic_defense = acoustic_defense or AcousticDefenseConfig()
         self._recordings: Dict[str, Dict[str, Any]] = {}
+        # Quality bridge state (see ``collect_quality``).
+        self._quality_mixin: Any = None
+        self._quality_reporter: Optional[QualityReporter] = None
+        # Last ``(bytesSent, monotonic ts)`` per peer, for bitrate deltas.
+        self._last_quality_sample: Dict[str, Tuple[int, float]] = {}
         if AIORTC_RECORDING_AVAILABLE:
             logger.info("aiortc MediaRecorder available for call recording")
         else:
@@ -174,6 +294,7 @@ class AiortcAdapter(SFUAdapter):
                 await peer.pc.close()
             except Exception as e:
                 logger.warning(f"Error closing peer {peer_id}: {e}")
+            self._last_quality_sample.pop(peer_id, None)
 
         del self._rooms[room_id]
         logger.info(f"Closed aiortc SFU room: {room_id}")
@@ -425,6 +546,7 @@ class AiortcAdapter(SFUAdapter):
         peer.consumers.clear()
 
         del self._rooms[room_id][peer_id]
+        self._last_quality_sample.pop(peer_id, None)
         logger.info(f"Peer {peer_id} left room {room_id}")
 
         if not self._rooms[room_id]:
@@ -800,6 +922,72 @@ class AiortcAdapter(SFUAdapter):
         return AIORTC_AVAILABLE
 
     # ------------------------------------------------------------------
+    # Quality reporting
+    # ------------------------------------------------------------------
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Wire the quality sink and start polling aiortc connection stats.
+
+        aiortc never pushes scores, so quality is pulled from
+        ``RTCPeerConnection.getStats()``. Without this the default in-process
+        backend reported nothing at all and BandwidthEstimator had no input,
+        the same gap the janus and mediasoup-REST adapters had.
+        """
+        super().set_quality_mixin(quality_mixin)
+        if self._quality_reporter is None:
+            self._quality_reporter = QualityReporter(self)
+        self._quality_reporter.start()
+
+    def _bitrate_for(
+        self, peer_id: str, bytes_sent: Optional[int], now: float
+    ) -> Optional[int]:
+        """Egress bitrate in bits/s from the change in the peer's byte counter.
+
+        Returns ``None`` for the first observation of a peer: a rate needs two
+        samples, and a fabricated one would drive degradation decisions.
+        """
+        if bytes_sent is None:
+            return None
+        previous = self._last_quality_sample.get(peer_id)
+        self._last_quality_sample[peer_id] = (bytes_sent, now)
+        if previous is None:
+            return None
+        last_bytes, last_ts = previous
+        elapsed = now - last_ts
+        delta = bytes_sent - last_bytes
+        if elapsed <= 0 or delta < 0:
+            return None
+        return int(delta * 8.0 / elapsed)
+
+    async def collect_quality(self) -> List[tuple]:
+        """Poll each peer's aiortc stats into canonical quality samples.
+
+        Returns ``(room_id, peer_id, metrics)`` with the SFU-scoped ids the
+        manager minted, so the base ``report_quality`` can map them back to
+        the numeric ``(channel_id, user_id)`` the quality store is keyed by.
+        Peers whose pc reports nothing measurable are skipped.
+        """
+        samples: List[tuple] = []
+        now = time.monotonic()
+        for room_id, peers in list(self._rooms.items()):
+            for peer_id, peer in list(peers.items()):
+                try:
+                    records = await peer.pc.getStats()
+                except Exception as exc:
+                    logger.debug(
+                        f"aiortc quality poll failed for peer {peer_id} "
+                        f"in room {room_id}: {exc}"
+                    )
+                    continue
+                metrics = _quality_metrics_from_stats(records)
+                bitrate = self._bitrate_for(peer_id, _total_bytes_sent(records), now)
+                if bitrate is not None:
+                    metrics["bitrate"] = bitrate
+                if metrics:
+                    samples.append((room_id, peer_id, metrics))
+        return samples
+
+    # ------------------------------------------------------------------
     # Recording
     # ------------------------------------------------------------------
 
@@ -893,6 +1081,11 @@ class AiortcAdapter(SFUAdapter):
 
     async def close(self) -> None:
         """Close the adapter and clean up all resources."""
+        if self._quality_reporter is not None:
+            self._quality_reporter.stop()
+            self._quality_reporter = None
+        self._last_quality_sample.clear()
+
         for room_id in list(self._recordings.keys()):
             await self.stop_recording(room_id)
 
