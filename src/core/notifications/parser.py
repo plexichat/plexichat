@@ -18,7 +18,7 @@ from .models import Mention, MentionType
 USER_MENTION_PATTERN = re.compile(r"<@(\d+)>")
 ROLE_MENTION_PATTERN = re.compile(r"<@&(\d+)>")
 CHANNEL_MENTION_PATTERN = re.compile(r"<#(\d+)>")
-EVERYONE_PATTERN = re.compile(r"@everyone\b")
+EVERYONE_PATTERN = re.compile(r"(?<!\w)@everyone\b")
 HERE_PATTERN = re.compile(r"(?<!\w)@here\b")
 
 
