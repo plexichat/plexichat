@@ -24,33 +24,16 @@ import src.api as api
 import src.core.suite.sum as sum_domain
 import src.api.websocket.handlers.artifacts as ha
 import src.api.websocket.handlers.sum as hs
-from src.api.websocket.connection import Connection
 from src.api.websocket.dispatcher import GatewayDispatcher
 from src.api.websocket.handlers import OpcodeHandler
 from src.api.websocket.opcodes import GatewayOpcode
 from src.core.artifacts.models import Artifact, ArtifactStatus, ArtifactType
 from src.core.artifacts.repository import create_artifact
 from src.core.base import generate_id
-from src.core.events.types import GatewayIntent
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
-
-def _connect(session_manager, websocket, user_id: int) -> Connection:
-    """Create a READY gateway connection for ``user_id``."""
-    connection = Connection(
-        websocket=websocket,
-        connection_id=session_manager.generate_connection_id(),
-        heartbeat_interval_ms=45000,
-    )
-    session_manager.add_connection(connection)
-    session = session_manager.create_session(
-        connection, user_id=user_id, intents=GatewayIntent.all_intents()
-    )
-    connection.set_identified(user_id, session.session_id, GatewayIntent.all_intents())
-    return connection
 
 
 @pytest.fixture
@@ -64,7 +47,7 @@ def fabric(
     monkeypatch,
     session_manager,
     mock_auth_module,
-    mock_websocket,
+    connect_as,
 ):
     """A real server with an owner (member) and an outsider (non-member)."""
     owner, outsider = two_users
@@ -146,8 +129,8 @@ def fabric(
             artifact_relay=artifact_relay,
             sum_sync=sum_sync,
             sum_relay=sum_relay,
-            owner_conn=_connect(session_manager, mock_websocket, owner.id),
-            outsider_conn=_connect(session_manager, mock_websocket, outsider.id),
+            owner_conn=connect_as(owner.id),
+            outsider_conn=connect_as(outsider.id),
             db=db,
         )
     finally:

@@ -101,6 +101,32 @@ def connection(mock_websocket):
 
 
 @pytest.fixture
+def connect_as(session_manager, mock_websocket):
+    """Factory creating a READY connection for an arbitrary real user id.
+
+    ``authenticated_connection`` is pinned to the mock auth user (12345);
+    end-to-end suites that create real users need a connection identified as
+    a specific one of them, with real session bookkeeping behind it.
+    """
+    from src.core.events.types import GatewayIntent
+
+    def _connect(user_id: int) -> Connection:
+        conn = Connection(
+            websocket=mock_websocket,
+            connection_id=session_manager.generate_connection_id(),
+            heartbeat_interval_ms=45000,
+        )
+        session_manager.add_connection(conn)
+        session = session_manager.create_session(
+            conn, user_id=user_id, intents=GatewayIntent.all_intents()
+        )
+        conn.set_identified(user_id, session.session_id, GatewayIntent.all_intents())
+        return conn
+
+    return _connect
+
+
+@pytest.fixture
 def authenticated_connection(connection, session_manager):
     """Concrete READY connection for authenticated opcode tests.
 
