@@ -120,6 +120,47 @@ def _stable_peer_id(purpose: bytes) -> str:
 _load_stable_peer_secret()
 
 
+# SFU-scoped identifier formats minted by the signaling manager
+# (``sdp_mixin``: room = ``voice_<channel_id>``, peer = ``user_<user_id>``).
+# The quality store is keyed by the *canonical* numeric channel and user ids,
+# so score notifications arriving from the SFU must be translated back before
+# they are reported to ``QualityMixin.update_quality_hint``.
+_SFU_ROOM_PREFIX = "voice_"
+_SFU_PEER_PREFIX = "user_"
+
+
+def _canonical_channel_id(room_id: Any) -> Optional[int]:
+    """Map an SFU room id (``voice_<channel_id>``) to the channel id."""
+    if isinstance(room_id, bool):
+        return None
+    if isinstance(room_id, int):
+        return room_id if room_id > 0 else None
+    text = str(room_id or "")
+    if not text.startswith(_SFU_ROOM_PREFIX):
+        return None
+    try:
+        value = int(text[len(_SFU_ROOM_PREFIX) :])
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _canonical_user_id(peer_id: Any) -> Optional[int]:
+    """Map an SFU peer id (``user_<user_id>``) to the user id."""
+    if isinstance(peer_id, bool):
+        return None
+    if isinstance(peer_id, int):
+        return peer_id if peer_id > 0 else None
+    text = str(peer_id or "")
+    if not text.startswith(_SFU_PEER_PREFIX):
+        return None
+    try:
+        value = int(text[len(_SFU_PEER_PREFIX) :])
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 @dataclass
 class PendingRequest:
     """A pending protoo request."""
@@ -369,10 +410,19 @@ class MediasoupWSAdapter(SFUAdapter):
                     )
         elif data.get("request"):
             # Server request (e.g., newConsumer)
-            await self._handle_server_request(connection, data)
+            try:
+                await self._handle_server_request(connection, data)
+            except Exception as e:
+                # One malformed frame must not tear down the peer's SFU
+                # session: an escaping exception ends the receive loop in
+                # ``_receive_messages`` and drops the connection.
+                logger.warning(f"Failed to handle SFU server request: {e}")
         elif data.get("notification"):
             # Server notification
-            await self._handle_notification(connection, data)
+            try:
+                await self._handle_notification(connection, data)
+            except Exception as e:
+                logger.warning(f"Failed to handle SFU notification: {e}")
 
     async def _handle_server_request(self, connection: PeerConnection, data: Dict):
         """Handle server-initiated request."""
@@ -410,6 +460,42 @@ class MediasoupWSAdapter(SFUAdapter):
         # Send response
         await connection.websocket.send(json.dumps(response))
 
+    def _report_peer_quality(
+        self,
+        connection: PeerConnection,
+        notification_data: Dict[str, Any],
+        **metrics: Any,
+    ) -> None:
+        """Report an SFU score notification to the canonical quality store.
+
+        ``producerScore`` / ``consumerScore`` carry SFU-scoped identifiers
+        (``voice_<channel>`` / ``user_<id>``) while ``QualityMixin`` keys
+        everything by the numeric channel and user ids. Reporting the raw SFU
+        ids raised ``ValueError`` inside its ``int(...)`` coercion, which
+        escaped the receive loop and permanently tore down the peer's SFU
+        session (no further notifications, and every later request timed out).
+        Translate here and drop anything that cannot be mapped.
+        """
+        if self._quality_mixin is None:
+            return
+        channel_id = _canonical_channel_id(connection.room_id)
+        raw_peer = notification_data.get("peerId") or connection.peer_id
+        user_id = _canonical_user_id(raw_peer)
+        if channel_id is None or user_id is None:
+            logger.debug(
+                f"Ignoring SFU quality notification with unmappable ids: "
+                f"room={connection.room_id!r} peer={raw_peer!r}"
+            )
+            return
+        payload = {key: value for key, value in metrics.items() if value is not None}
+        try:
+            self._quality_mixin.update_quality_hint(channel_id, user_id, **payload)
+        except Exception as exc:  # never let a metric update kill the media session
+            logger.debug(
+                f"Failed to record SFU quality for channel {channel_id} "
+                f"user {user_id}: {exc}"
+            )
+
     async def _handle_notification(self, connection: PeerConnection, data: Dict):
         """Handle server notification."""
         method = data.get("method")
@@ -428,37 +514,24 @@ class MediasoupWSAdapter(SFUAdapter):
                 f"Peer left room {connection.room_id}: {notification_data.get('peerId')}"
             )
         elif method == "producerScore":
-            if self._quality_mixin is not None:
-                peer_id = notification_data.get("peerId") or connection.peer_id
-                score = notification_data.get("score", 0)
-                bitrate = notification_data.get("bitrate", 0)
-                packet_loss = notification_data.get("packetLoss", 0.0)
-                jitter = notification_data.get("jitter", 0.0)
-                self._quality_mixin.update_quality_hint(
-                    connection.room_id,
-                    peer_id,
-                    bitrate=bitrate,
-                    packet_loss=packet_loss,
-                    jitter=jitter,
-                    score=score,
-                )
+            self._report_peer_quality(
+                connection,
+                notification_data,
+                bitrate=notification_data.get("bitrate", 0),
+                packet_loss=notification_data.get("packetLoss", 0.0),
+                jitter=notification_data.get("jitter", 0.0),
+                score=notification_data.get("score", 0),
+            )
         elif method == "consumerScore":
-            if self._quality_mixin is not None:
-                peer_id = notification_data.get("peerId") or connection.peer_id
-                score = notification_data.get("score", 0)
-                bitrate = notification_data.get("bitrate", 0)
-                packet_loss = notification_data.get("packetLoss", 0.0)
-                jitter = notification_data.get("jitter", 0.0)
-                rtt = notification_data.get("roundTripTime", 0)
-                self._quality_mixin.update_quality_hint(
-                    connection.room_id,
-                    peer_id,
-                    bitrate=bitrate,
-                    packet_loss=packet_loss,
-                    jitter=jitter,
-                    round_trip_time=rtt,
-                    score=score,
-                )
+            self._report_peer_quality(
+                connection,
+                notification_data,
+                bitrate=notification_data.get("bitrate", 0),
+                packet_loss=notification_data.get("packetLoss", 0.0),
+                jitter=notification_data.get("jitter", 0.0),
+                round_trip_time=notification_data.get("roundTripTime", 0),
+                score=notification_data.get("score", 0),
+            )
         elif method == "activeSpeaker":
             # Active speaker changed
             handler_key = f"activeSpeaker:{connection.room_id}"
