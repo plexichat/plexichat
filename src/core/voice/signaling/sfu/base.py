@@ -4,8 +4,12 @@ SFU base adapter - Abstract base class for SFU integrations.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
+
+import utils.logger as logger
+
+from .quality import canonical_channel_id, canonical_user_id
 
 
 class TransportDirection(Enum):
@@ -393,11 +397,55 @@ class SFUAdapter(ABC):
         pass
 
     def set_quality_mixin(self, quality_mixin: Any) -> None:
-        """Set the quality mixin reference for score notifications.
+        """Retain the quality sink for SFU-side metric reporting.
 
-        Override in subclasses that support quality reporting.
+        Push-based adapters call :meth:`report_quality` from their receive
+        loop; request/response adapters override this to additionally start a
+        :class:`~.quality.QualityReporter` feeding from ``collect_quality``.
         """
-        pass
+        self._quality_mixin = quality_mixin
+
+    def report_quality(
+        self, room_id: Any, peer_id: Any, metrics: Dict[str, Any]
+    ) -> None:
+        """Forward one SFU-side metric sample to the canonical quality store.
+
+        ``room_id`` / ``peer_id`` are SFU-scoped identifiers and are mapped
+        back to the numeric channel/user ids the store is keyed by. Samples
+        whose identifiers cannot be mapped are dropped, and a failing sink
+        never raises into a media-path coroutine.
+        """
+        mixin = getattr(self, "_quality_mixin", None)
+        if mixin is None:
+            return
+        channel_id = canonical_channel_id(room_id)
+        user_id = canonical_user_id(peer_id)
+        if channel_id is None or user_id is None:
+            logger.debug(
+                f"Ignoring SFU quality sample with unmappable ids: "
+                f"room={room_id!r} peer={peer_id!r}"
+            )
+            return
+        payload = {key: value for key, value in metrics.items() if value is not None}
+        if not payload:
+            return
+        try:
+            mixin.update_quality_hint(channel_id, user_id, **payload)
+        except Exception as exc:  # never let a metric update kill the media session
+            logger.debug(
+                f"Failed to record SFU quality for channel {channel_id} "
+                f"user {user_id}: {exc}"
+            )
+
+    async def collect_quality(
+        self,
+    ) -> List[Tuple[Any, Any, Dict[str, Any]]]:
+        """Return ``(room_id, peer_id, metrics)`` samples for pull backends.
+
+        Default is empty: adapters with no pollable stat source report nothing
+        rather than fabricating samples.
+        """
+        return []
 
     async def close(self) -> None:
         """Release resources held by the adapter.

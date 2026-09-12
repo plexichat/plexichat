@@ -25,6 +25,7 @@ from .base import (
     SFUProducer,
     SFUConsumer,
 )
+from .quality import QualityReporter, parse_quality_metrics
 
 
 class JanusAdapter(SFUAdapter):
@@ -65,6 +66,7 @@ class JanusAdapter(SFUAdapter):
             str, Dict[str, Any]
         ] = {}  # room_id -> recording info
         self._janus_recording_roots: Dict[str, str] = {}
+        self._quality_reporter: Optional[QualityReporter] = None
         self._acoustic_defense = acoustic_defense
 
     def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
@@ -658,6 +660,57 @@ class JanusAdapter(SFUAdapter):
         # Janus VideoRoom handles simulcast differently
         return True
 
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Wire the quality sink and start polling Janus for peer metrics.
+
+        Janus is request/response only (no server-pushed scores on this
+        transport), so quality is pulled from the room's participant list.
+        """
+        super().set_quality_mixin(quality_mixin)
+        if self._quality_reporter is None:
+            self._quality_reporter = QualityReporter(self)
+        self._quality_reporter.start()
+
+    async def collect_quality(self) -> List[tuple]:
+        """Poll room participants for any per-peer metrics Janus reports.
+
+        The VideoRoom ``listparticipants`` response carries ``id`` / ``display``
+        and codec info; stat-aware deployments or plugins may additionally
+        return ``bitrate`` / ``packet_loss`` / ``jitter`` / ``round_trip_time``
+        / ``score``. Only participants carrying at least one numeric metric are
+        reported, so stock Janus yields nothing rather than fabricated values.
+        """
+        samples: List[tuple] = []
+        for room_id, session_id in list(self._janus_sessions.items()):
+            handle_id = self._janus_handles.get(room_id, {}).get("admin")
+            if not session_id or not handle_id:
+                continue
+            try:
+                result = await self._send_message(
+                    session_id,
+                    handle_id,
+                    {
+                        "request": "listparticipants",
+                        "room": stable_numeric_id(room_id, "room"),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("Janus quality poll failed for room %s: %s", room_id, exc)
+                continue
+            participants = (
+                result.get("plugindata", {}).get("data", {}).get("participants", [])
+            )
+            if not isinstance(participants, list):
+                continue
+            for participant in participants:
+                if not isinstance(participant, dict):
+                    continue
+                peer_id = participant.get("display") or participant.get("id")
+                metrics = parse_quality_metrics(participant)
+                if peer_id is not None and metrics:
+                    samples.append((room_id, str(peer_id), metrics))
+        return samples
+
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
         """Start recording in a Janus room.
 
@@ -752,6 +805,10 @@ class JanusAdapter(SFUAdapter):
                 logger.debug(
                     f"Failed to destroy Janus session {session_id} for room {room_id}: {e}"
                 )
+
+        if self._quality_reporter is not None:
+            self._quality_reporter.stop()
+            self._quality_reporter = None
 
         self._janus_sessions.clear()
         self._janus_handles.clear()
