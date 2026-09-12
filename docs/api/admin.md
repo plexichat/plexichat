@@ -45,6 +45,11 @@ Router: `src/api/routes/admin/auth.py`.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `<admin-base>/dashboard` | Operator dashboard data |
+| `GET` | `<admin-base>/dashboard/cross-worker-tuning` | Get worker poll-loop tuning |
+| `PATCH` | `<admin-base>/dashboard/cross-worker-tuning` | Update worker poll-loop tuning (`admin.dashboard.tuning`) |
+| `GET` | `<admin-base>/dashboard/cross-worker-tuning/audit` | Tuning change history |
+| `GET` | `<admin-base>/dashboard/system-alerts` | System alerts |
+| `GET` | `<admin-base>/dashboard/system-alerts/stats` | Alert stats |
 | `GET` | `<admin-base>/logs` | List available log files |
 | `GET` | `<admin-base>/logs/{filename}` | Fetch a log file |
 | `GET` | `<admin-base>/database/pool-health` | Database pool health |
@@ -104,7 +109,7 @@ Router: `users/admin_users.py`. Role hierarchy is enforced: you can only manage 
 | `GET` | `<admin-base>/admins/{admin_id}/roles` | List an admin's roles |
 | `GET` | `<admin-base>/approvals` | List approval requests |
 | `POST` | `<admin-base>/approvals/{approval_id}/approve` | Approve a request |
-| `POST` | `<admin-base>/approvals/{approval_id}/deny` | Deny a request |
+| `POST` | `<admin-base>/approvals/{approval_id}/reject` | Reject a request |
 
 Routers: `roles`, `approvals`. Valid scopes are defined in `src/core/admin/permissions.py:42`.
 
@@ -153,6 +158,8 @@ Router: `security` (`device-trust/overview` is served by `device_trust.py`, regi
 
 | Method | Path | Description | Required scope |
 |---|---|---|---|
+| `GET` | `<admin-base>/reports` | List enhanced reports | `reports.read` |
+| `GET` | `<admin-base>/reports/counts` | Count enhanced reports | `reports.read` |
 | `GET` | `<admin-base>/hash-reports` | List hash reports | `reports.read` |
 | `GET` | `<admin-base>/hash-reports/counts` | Count hash reports | `reports.read` |
 | `POST` | `<admin-base>/hash-reports/{report_id}/review` | Review a hash report | `reports.action` |
@@ -181,27 +188,44 @@ Router: `moderation`.
 
 | Method | Path | Description | Required scope |
 |---|---|---|---|
-| `POST` | `<admin-base>/reindex` | Rebuild the search index | `admin.data.reindex` |
-| `GET` | `<admin-base>/reindex/status` | Get reindex status | `admin.data.reindex` or `admin.read` |
+| `POST` | `<admin-base>/search/reindex` | Rebuild the search index | `admin.data.reindex` |
+| `POST` | `<admin-base>/search/reindex/standalone` | Rebuild the index in a standalone worker | `admin.data.reindex` |
+| `POST` | `<admin-base>/search/reindex/cancel` | Cancel a running reindex | `admin.data.reindex` |
+| `GET` | `<admin-base>/search/reindex/status` | Get reindex status | `admin.data.reindex` or `admin.read` |
 | `GET` | `<admin-base>/migrations` | List migrations | `admin.migrations.execute` / `config.read` |
-| `POST` | `<admin-base>/migrations/run` | Run a migration | `admin.migrations.execute` |
-| `POST` | `<admin-base>/migrations/rollback` | Roll back a migration | `admin.migrations.execute` |
-| `POST` | `<admin-base>/migrations/apply-all` | Apply all pending migrations | `admin.migrations.execute` |
+| `GET` | `<admin-base>/migrations/status` | Migration system status and integrity | `admin.migrations.execute` / `config.read` |
+| `GET` | `<admin-base>/migrations/{version}` | Get one migration | `admin.migrations.execute` / `config.read` |
+| `POST` | `<admin-base>/migrations/{version}/run` | Run a migration | `admin.migrations.execute` |
+| `POST` | `<admin-base>/migrations/{version}/rollback` | Roll back a migration | `admin.migrations.execute` |
+| `POST` | `<admin-base>/migrations/emergency-override` | Emergency migration override | `admin.migrations.execute` |
+| `GET` | `<admin-base>/database/migrations/status` | Database migration status | `maintenance` |
+| `POST` | `<admin-base>/database/migrations/apply-all` | Apply all pending migrations | `maintenance` / `admin.migrations.execute` |
+| `POST` | `<admin-base>/database/migrations/apply/{version}` | Apply one migration | `maintenance` / `admin.migrations.execute` |
+| `POST` | `<admin-base>/database/migrations/rollback/{version}` | Roll back one migration | `maintenance` / `admin.migrations.execute` |
 
-Routers: `reindex`, `migrations`.
+Routers: `reindex`, `migrations`, `database`.
 
 ### Bots, artifacts, and licensing
 
 | Method | Path | Description | Required scope |
 |---|---|---|---|
-| `GET` | `<admin-base>/bots` | List bots | `admin.read` |
-| `POST` | `<admin-base>/bots/{bot_id}/approve` | Approve a bot | `admin.edit` |
-| `POST` | `<admin-base>/bots/{bot_id}/deny` | Deny a bot | `admin.edit` |
+| `GET` | `<admin-base>/bots/stats` | Bot dashboard stats | `admin.read` |
+| `GET` | `<admin-base>/bots/applications` | List bot applications | `admin.read` |
+| `GET` | `<admin-base>/bots/requests` | List bot install requests | `admin.read` |
 | `GET` | `<admin-base>/artifacts` | List artifacts | `admin.artifacts.manage` |
-| `POST` | `<admin-base>/artifacts/{artifact_id}/force-delete` | Force-delete an artifact | `admin.artifacts.manage` |
-| `GET` | `<admin-base>/audit` | Query the audit log | `admin.audit.read` |
-| `GET` | `<admin-base>/licensing/status` | Get license status | `admin.license.manage` / `admin.read` |
-| `POST` | `<admin-base>/licensing/apply` | Apply a license | `admin.license.manage` |
+| `DELETE` | `<admin-base>/artifacts/{artifact_id}` | Delete an artifact | `admin.artifacts.manage` |
+| `POST` | `<admin-base>/artifacts/retention/purge` | Purge expired artifacts | `admin.artifacts.manage` |
+| `POST` | `<admin-base>/artifacts/retention/server` | Set a per-server retention override | `admin.artifacts.manage` |
+| `GET` | `<admin-base>/artifacts/features/{feature}?server_id=...` | Get per-server feature settings | `admin.artifacts.manage` |
+| `POST` | `<admin-base>/artifacts/features/{feature}` | Set per-server feature settings (`{ "server_id": ..., "settings": {...} }`) | `admin.artifacts.manage` |
+| `GET` | `<admin-base>/audit/logs` | Query the audit log | `admin.audit.read` |
+| `GET` | `<admin-base>/audit/logs/stats` | Audit log stats | `admin.audit.read` |
+| `GET` | `<admin-base>/audit/logs/export` | Export the audit log (CSV/JSON) | `admin.audit.read` |
+| `GET` | `<admin-base>/license/status` | Get license status | `admin.license.manage` / `admin.read` |
+| `GET` | `<admin-base>/license/features` | List licensed features | `admin.license.manage` / `admin.read` |
+| `POST` | `<admin-base>/license/validate` | Validate the license | `admin.license.manage` |
+| `POST` | `<admin-base>/license/apply` | Apply a license | `admin.license.manage` |
+| `POST` | `<admin-base>/license/check` | Re-check license state | `admin.license.manage` |
 
 Routers: `bots`, `artifacts`, `audit`, `licensing`.
 
@@ -209,11 +233,17 @@ Routers: `bots`, `artifacts`, `audit`, `licensing`.
 
 | Method | Path | Description | Required scope |
 |---|---|---|---|
-| `GET` | `<admin-base>/plexijoin/links` | List federation links | `admin.plexijoin.manage` |
-| `POST` | `<admin-base>/plexijoin/links` | Create a federation link | `admin.plexijoin.manage` |
-| `DELETE` | `<admin-base>/plexijoin/links/{link_id}` | Remove a federation link | `admin.plexijoin.manage` |
-| `GET` | `<admin-base>/capabilities` | Get server capabilities | `config.read` |
-| `PUT` | `<admin-base>/capabilities` | Update capabilities | `config.edit` |
+| `GET` | `<admin-base>/plexijoin/connections` | List federation connections | `admin.plexijoin.manage` |
+| `POST` | `<admin-base>/plexijoin/connections` | Create a federation connection | `admin.plexijoin.manage` |
+| `GET` | `<admin-base>/plexijoin/connections/{connection_id}` | Get a connection | `admin.plexijoin.manage` |
+| `DELETE` | `<admin-base>/plexijoin/connections/{connection_id}` | Remove a connection | `admin.plexijoin.manage` |
+| `POST` | `<admin-base>/plexijoin/connections/{connection_id}/test` | Test a connection | `admin.plexijoin.manage` |
+| `GET` | `<admin-base>/plexijoin/requests` | List federation requests | `admin.plexijoin.manage` |
+| `POST` | `<admin-base>/plexijoin/requests/{request_id}/approve` | Approve a request | `admin.plexijoin.manage` |
+| `POST` | `<admin-base>/plexijoin/requests/{request_id}/deny` | Deny a request | `admin.plexijoin.manage` |
+| `GET` | `<admin-base>/plexijoin/status` | Federation status | `admin.plexijoin.manage` |
+| `GET` | `<admin-base>/plexijoin/traffic` | Federation traffic | `admin.plexijoin.manage` |
+| `GET` | `<admin-base>/capabilities` | Get artifact feature capabilities | `config.read` |
 | `GET` | `<admin-base>/telemetry/stats` | Get telemetry stats | `admin.read` / `metrics.read` |
 | `GET` | `<admin-base>/telemetry/history` | Get telemetry history | `admin.read` / `metrics.read` |
 | `POST` | `<admin-base>/telemetry/reset` | Reset telemetry | `admin.telemetry.reset` |

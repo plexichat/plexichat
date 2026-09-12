@@ -14,11 +14,11 @@ OAuth integration with Plexichat means one of two things:
 Users sign in through an external provider. Plexichat performs the code-to-token exchange internally, so your app never handles provider tokens.
 
 ```
-GET  /api/v1/auth/oauth/{provider}/login    →  { url, state, code_verifier }
+GET  /api/v1/auth/oauth/{provider}/login    →  { url, auth_url, state }
 POST /api/v1/auth/oauth/{provider}/callback →  LoginResponse
 ```
 
-Replace `{provider}` with `google`, `github`, `microsoft`, or `gitlab`. For full request and response shapes, see the [authentication API](../api/authentication.md#oauth-sign-in).
+Replace `{provider}` with `google`, `github`, `microsoft`, or `gitlab`. For full request and response shapes, see the [authentication API](../api/authentication.md#sign-in-with-oauth).
 
 Plexichat uses PKCE toward the provider when enabled. The `state` value is single-use and short-lived (10 minutes). Mark it used after you verify it on callback.
 
