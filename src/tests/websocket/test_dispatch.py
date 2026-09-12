@@ -275,3 +275,105 @@ class TestReplayEvents:
         """Test replay events with no session."""
         count = await dispatcher.replay_events(connection, 0)
         assert count == 0
+
+
+class TestBroadcastToServerScoping:
+    """`broadcast_to_server` must reach server members only, and fail closed.
+
+    Regression guard: the method used to iterate EVERY connected
+    authenticated connection, so a server-scoped event leaked to non-members.
+    """
+
+    @staticmethod
+    def _connect(session_manager, user_id):
+        websocket = AsyncMock()
+        conn = Connection(
+            websocket=websocket,
+            connection_id=session_manager.generate_connection_id(),
+            heartbeat_interval_ms=45000,
+        )
+        session_manager.add_connection(conn)
+        session_manager.create_session(
+            conn, user_id=user_id, intents=GatewayIntent.all_intents()
+        )
+        return conn, websocket
+
+    @pytest.mark.asyncio
+    async def test_only_members_receive_the_event(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """A non-member connection must not receive a server-scoped event."""
+        import src.api.websocket as ws_pkg
+
+        member_conn, member_ws = self._connect(session_manager, 111)
+        non_member_conn, non_member_ws = self._connect(session_manager, 222)
+
+        servers = AsyncMock()
+        servers.get_member_user_ids = lambda server_id: [111]
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: servers)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event)
+
+        assert count == 1
+        member_ws.send_json.assert_called()
+        non_member_ws.send_json.assert_not_called()
+        assert non_member_conn.user_id == 222
+
+    @pytest.mark.asyncio
+    async def test_unwired_servers_module_fails_closed(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """An unwired servers module must broadcast to nobody, not everybody."""
+        import src.api.websocket as ws_pkg
+
+        _, ws = self._connect(session_manager, 111)
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: None)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event)
+
+        assert count == 0
+        ws.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_membership_lookup_failure_fails_closed(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """A failing membership lookup must not over-broadcast."""
+        import src.api.websocket as ws_pkg
+
+        _, ws = self._connect(session_manager, 111)
+
+        def _boom(server_id):
+            raise RuntimeError("db down")
+
+        servers = AsyncMock()
+        servers.get_member_user_ids = _boom
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: servers)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event)
+
+        assert count == 0
+        ws.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_excluded_members_are_skipped(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """`exclude_user_ids` still applies within the member set."""
+        import src.api.websocket as ws_pkg
+
+        _, ws = self._connect(session_manager, 111)
+
+        servers = AsyncMock()
+        servers.get_member_user_ids = lambda server_id: [111, 333]
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: servers)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event, exclude_user_ids=[111])
+
+        # 333 is a member but has no live connection; 111 is excluded.
+        assert count == 0
+        ws.send_json.assert_not_called()

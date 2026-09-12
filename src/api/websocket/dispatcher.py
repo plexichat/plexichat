@@ -380,6 +380,37 @@ class GatewayDispatcher:
             )
             return False
 
+    def _resolve_server_member_ids(self, server_id: int) -> set:
+        """Resolve the user ids that are members of ``server_id``.
+
+        Returns an empty set when membership cannot be determined (no
+        servers module wired, or the lookup failed) so callers fail closed
+        instead of over-broadcasting.
+        """
+        try:
+            from src.api.websocket import get_servers_module
+
+            servers_module = get_servers_module()
+        except Exception as e:
+            logger.warning(
+                f"GatewayDispatcher: servers module unavailable while resolving "
+                f"members of server {server_id}: {e}"
+            )
+            return set()
+        if not servers_module:
+            logger.warning(
+                f"GatewayDispatcher: no servers module wired; refusing to "
+                f"resolve members of server {server_id}"
+            )
+            return set()
+        try:
+            return {int(uid) for uid in servers_module.get_member_user_ids(server_id)}
+        except Exception as e:
+            logger.warning(
+                f"GatewayDispatcher: failed to list members of server {server_id}: {e}"
+            )
+            return set()
+
     async def broadcast_to_server(
         self,
         server_id: int,
@@ -388,6 +419,12 @@ class GatewayDispatcher:
     ) -> int:
         """
         Broadcast an event to all members of a server.
+
+        SECURITY: this previously fanned out to EVERY connected authenticated
+        user regardless of membership, despite its name and docstring, so any
+        server-scoped event pushed through it leaked to non-members. Recipients
+        are now resolved through the servers module and the broadcast fails
+        closed (sends nothing) when membership cannot be determined.
 
         Args:
             server_id: Server ID
@@ -401,9 +438,17 @@ class GatewayDispatcher:
         sent_count = 0
         tasks = []
 
-        with self._lock:
-            all_connections = self._session_manager.get_all_connections()
-        for conn in all_connections:
+        member_ids = self._resolve_server_member_ids(server_id)
+        target_ids = [uid for uid in member_ids if uid not in exclude_set]
+        if not target_ids:
+            logger.debug(
+                f"GatewayDispatcher: no deliverable members for server "
+                f"{server_id}; dropping {event.event_type.value}"
+            )
+            return 0
+
+        connections = self._session_manager.get_connections_for_users(target_ids)
+        for conn in connections:
             if not conn.is_authenticated:
                 continue
             # conn.user_id is guaranteed to be non-None by is_authenticated
