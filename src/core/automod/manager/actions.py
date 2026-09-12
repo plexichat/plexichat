@@ -16,6 +16,22 @@ from ..models import (
 from .protocol import AutoModProtocol
 
 
+# Permission an actor must hold to invoke ``trigger_action`` manually. The rule
+# driven path (``process_violation``) is a system actor and does not use this;
+# a *manual* action executes on behalf of the named user, so that user must be
+# allowed to perform it on the target server.
+MANUAL_ACTION_PERMISSION: Dict[ActionType, str] = {
+    ActionType.BAN_USER: "members.ban",
+    ActionType.KICK_USER: "members.kick",
+    # There is no dedicated members.timeout grant; a timeout is a temporary
+    # kick, so it is gated on the kick permission.
+    ActionType.TIMEOUT_USER: "members.kick",
+    ActionType.DELETE_MESSAGE: "messages.manage",
+    ActionType.ALERT_MODERATORS: "server.automod",
+    ActionType.LOG_ONLY: "server.automod",
+}
+
+
 class ActionMixin(AutoModProtocol):
     def process_violation(
         self,
@@ -193,6 +209,39 @@ class ActionMixin(AutoModProtocol):
         duration_seconds: Optional[int] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> bool:
+        """Execute a manual action on behalf of ``user_id``.
+
+        ``user_id`` is the moderator requesting the action, not a system
+        actor: the matching permission is verified here before the action
+        executors' system-context flag is set. That flag exists precisely so
+        the raw-SQL ban/kick/delete fallback is only reached once a permission
+        layer approved the call, so asserting it without checking
+        ``user_id`` would let any caller ban, kick or delete on any server.
+        Refuses (returns False) when the permission cannot be resolved.
+        """
+        required = MANUAL_ACTION_PERMISSION.get(action_type, "server.automod")
+        servers = self._servers
+        if servers is None:
+            logger.error(
+                f"AutoMod manual action REFUSED: servers module unavailable, "
+                f"cannot verify {required} for user {user_id} in server {server_id}"
+            )
+            return False
+        try:
+            allowed = bool(servers.has_permission(user_id, server_id, required))
+        except Exception as e:
+            logger.error(
+                f"AutoMod manual action REFUSED: permission check for user "
+                f"{user_id} in server {server_id} failed: {e}"
+            )
+            return False
+        if not allowed:
+            logger.warning(
+                f"AutoMod manual action REFUSED: user {user_id} lacks "
+                f"{required} in server {server_id}"
+            )
+            return False
+
         action = RuleAction(
             action_type=action_type, duration_seconds=duration_seconds, reason=reason
         )
@@ -215,10 +264,9 @@ class ActionMixin(AutoModProtocol):
         if action_type == ActionType.LOG_ONLY:
             success = True
         else:
-            # SECURITY: ad-hoc moderator-triggered ``trigger_action``
-            # calls (admin CLI buttons, manual bans, audit re-walks)
-            # also need the system context flag set so the
-            # ban/kick/delete executors do not refuse the call.
+            # SECURITY: the permission check above is the layer that has now
+            # approved this call, so the system-context flag can be asserted
+            # for the ban/kick/delete executors' raw-SQL fallback.
             if context is None:
                 context = {}
             context.setdefault("__system_context__", True)

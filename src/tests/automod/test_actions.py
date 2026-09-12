@@ -96,6 +96,53 @@ class TestActions:
         )
         assert result is True
 
+    def test_trigger_manual_action_requires_permission(
+        self, automod_manager, test_server, user_pool, modules
+    ):
+        """A member without the action's permission cannot trigger it.
+
+        ``trigger_action`` executes on behalf of ``user_id`` and sets the
+        system-context flag the ban/kick/delete executors require, so without
+        this check any caller could ban on any server.
+        """
+        server, owner = test_server
+        outsider = user_pool.get_user()
+        modules.servers.add_member(server.id, outsider.id)
+
+        assert (
+            automod_manager.trigger_action(
+                user_id=outsider.id,
+                server_id=server.id,
+                target_user_id=99999,
+                action_type=ActionType.BAN_USER,
+                reason="must be refused",
+            )
+            is False
+        )
+        # Refused before execution, so nothing was audited either.
+        assert automod_manager.get_audit_log(server.id) == []
+
+    def test_trigger_manual_action_refused_without_servers_module(
+        self, automod_manager, test_server
+    ):
+        """An unverifiable permission must deny, not skip."""
+        server, owner = test_server
+        original = automod_manager._servers
+        automod_manager._servers = None
+        try:
+            assert (
+                automod_manager.trigger_action(
+                    user_id=owner.id,
+                    server_id=server.id,
+                    target_user_id=99999,
+                    action_type=ActionType.BAN_USER,
+                    reason="must be refused",
+                )
+                is False
+            )
+        finally:
+            automod_manager._servers = original
+
     def test_invalid_action_type_rejected(self, automod_manager, test_server):
         """Test that invalid action type raises validation error."""
         server, owner = test_server
