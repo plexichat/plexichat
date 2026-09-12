@@ -69,10 +69,26 @@ ots:push_proofs:
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-  PIP_INDEX_URL: "http://192.168.3.133:3141/root/pypi/+simple/"
-  PIP_TRUSTED_HOST: "192.168.3.133"
+  # No repository-wide PIP_INDEX_URL / PIP_TRUSTED_HOST here on purpose.
+  #
+  # A committed plaintext-HTTP package index applies to *every* job, so an
+  # on-path attacker could inject arbitrary wheels (and thus control the
+  # dependency tree, including the unhashed `pip install pip-audit safety`
+  # bootstrap). Jobs now install from the default HTTPS PyPI index unless the
+  # operator deliberately points them at an internal mirror.
+  #
+  # To use an internal mirror, define PIP_INDEX_URL as a *protected, masked*
+  # CI/CD variable (Settings -> CI/CD -> Variables) with an https:// URL.
+  # If — and only if — a mirror genuinely cannot serve TLS, also set
+  # PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1 (plus the host's PIP_TRUSTED_HOST);
+  # the guard in .python_base.before_script keeps that a loud, explicit
+  # opt-in rather than a silent default.
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
+
+  # Fail closed before any pip install when a plaintext HTTP index is
+  # configured without an explicit opt-in (Agent 55 F23).
+  PLEXICHAT_CI_ALLOW_INSECURE_INDEX: "0"
 
 cache:
   key:
@@ -93,6 +109,20 @@ cache:
     pull_policy: if-not-present
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1
+    - |
+      # Refuse a plaintext HTTP package index unless the operator has
+      # explicitly opted in; otherwise the build could be hijacked by an
+      # on-path attacker (Agent 55 F23).
+      case "${PIP_INDEX_URL:-}" in
+        http://*)
+          if [ "${PLEXICHAT_CI_ALLOW_INSECURE_INDEX:-0}" != "1" ]; then
+            echo "FATAL: PIP_INDEX_URL uses plaintext http:// without PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1" >&2
+            echo "       Use an https:// mirror or set the opt-in variable deliberately." >&2
+            exit 1
+          fi
+          echo "WARNING: installing from a plaintext HTTP package index (PIP_INDEX_URL=$PIP_INDEX_URL); PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1." >&2
+          ;;
+      esac
     - |
       if [ -d ".venv" ]; then
         echo "Using cached virtual environment"
@@ -140,6 +170,17 @@ lint:pre-commit:
       policy: pull-push
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1 nodejs
+    - |
+      # Same fail-closed package-index guard as .python_base (Agent 55 F23).
+      case "${PIP_INDEX_URL:-}" in
+        http://*)
+          if [ "${PLEXICHAT_CI_ALLOW_INSECURE_INDEX:-0}" != "1" ]; then
+            echo "FATAL: PIP_INDEX_URL uses plaintext http:// without PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1" >&2
+            exit 1
+          fi
+          echo "WARNING: installing from a plaintext HTTP package index (PIP_INDEX_URL=$PIP_INDEX_URL); PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1." >&2
+          ;;
+      esac
     - |
       if [ -d ".venv" ]; then
         echo "Using cached virtual environment"

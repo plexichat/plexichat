@@ -117,6 +117,15 @@ class AuthManager(
         self.deletion_log = DeletionLog()
         self.passkeys = PasskeyManager(db, crypto=self.crypto)
         self._ensure_system_user()
+        # Cross-worker TOTP replay protection: give the global replay cache a
+        # shared database so a claim holds across workers even when no shared
+        # cache backend (Valkey) is configured.
+        try:
+            from .. import totp as totp_module
+
+            totp_module.set_replay_cache_db(db)
+        except Exception:
+            logger.debug("TOTP replay cache DB wiring skipped", exc_info=True)
         # Store as global instance
         AuthManager._instance = self
 

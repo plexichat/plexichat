@@ -450,6 +450,29 @@ def ensure_ws_tickets_table(db) -> None:
         db.execute(converted)
 
 
+# Cross-worker TOTP replay claims. The claim key is a PRIMARY KEY, which makes
+# the insert-or-ignore below an atomic claim shared by every worker using the
+# same database — the fallback used when no shared Valkey backend is present.
+_TOTP_REPLAY_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS auth_totp_replay (
+        claim_key TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auth_totp_replay_expires
+        ON auth_totp_replay(expires_at)
+    """,
+)
+
+
+def ensure_totp_replay_table(db) -> None:
+    for sql in _TOTP_REPLAY_DDL:
+        converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+        db.execute(converted)
+
+
 def create_tables(db) -> None:
     statements = split_sql_statements(SCHEMA_SQLITE)
     for statement in statements:
@@ -461,3 +484,4 @@ def create_tables(db) -> None:
     ensure_failed_logins_table(db)
     ensure_trusted_devices_columns(db)
     ensure_ws_tickets_table(db)
+    ensure_totp_replay_table(db)

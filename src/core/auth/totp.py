@@ -54,6 +54,87 @@ class TOTPReplayCache:
         self._ttl = ttl_seconds
         self._lock = threading.Lock()
         self._last_cleanup = 0
+        # Shared-database claim store (set via set_db). Used when no Valkey
+        # backend is configured so replay protection still holds across
+        # workers on the same database.
+        self._db: Optional[Any] = None
+        self._db_table_ready = False
+        self._db_lock = threading.Lock()
+        self._last_db_cleanup = 0
+
+    def set_db(self, db: Any) -> None:
+        """Attach the shared database used for cross-worker replay claims."""
+        self._db = db
+        self._db_table_ready = False
+
+    def _ensure_db_table(self) -> bool:
+        """Create the claim table on first use. Returns False when unusable."""
+        db = self._db
+        if db is None:
+            return False
+        if self._db_table_ready:
+            return True
+        with self._db_lock:
+            if self._db_table_ready:
+                return True
+            try:
+                from .schema import ensure_totp_replay_table
+
+                ensure_totp_replay_table(db)
+                self._db_table_ready = True
+                return True
+            except Exception as e:
+                logger.warning(
+                    f"TOTP replay cache: could not prepare the shared claim table: {e}"
+                )
+                return False
+
+    def _db_cleanup(self, now: int) -> None:
+        """Best-effort purge of expired claims (rate-limited to once per 5min)."""
+        if now - self._last_db_cleanup < 300:
+            return
+        self._last_db_cleanup = now
+        db = self._db
+        if db is None:
+            return
+        try:
+            db.execute("DELETE FROM auth_totp_replay WHERE expires_at <= ?", (now,))
+        except Exception:
+            pass
+
+    def _db_cache_claim(self, key: str, ttl_seconds: int) -> Optional[bool]:
+        """Claim ``key`` in the shared database.
+
+        Returns:
+            True  - claim succeeded (code not seen before in any worker).
+            False - replay detected (a live claim already exists).
+            None  - no usable database; caller must fall back to the
+                    process-local cache.
+
+        ``insert_or_ignore`` is an atomic primary-key claim on both SQLite
+        and PostgreSQL, so exactly one worker wins even under concurrency.
+        """
+        db = self._db
+        if db is None or not self._ensure_db_table():
+            return None
+        now = int(time.time())
+        expires = now + ttl_seconds
+        try:
+            # Free an expired leftover first so a stale row cannot block a
+            # legitimate new window; the conditional delete is atomic and the
+            # subsequent insert is the actual single-winner claim.
+            db.execute(
+                "DELETE FROM auth_totp_replay WHERE claim_key = ? AND expires_at <= ?",
+                (key, now),
+            )
+            claimed = db.insert_or_ignore(
+                "auth_totp_replay", ["claim_key", "expires_at"], (key, expires)
+            )
+            self._db_cleanup(now)
+            return bool(claimed)
+        except Exception as e:
+            logger.warning(f"TOTP replay cache: shared database fallback failed: {e}")
+            return None
 
     @staticmethod
     def _shared_cache_claim(key: str, ttl_seconds: int) -> Optional[bool]:
@@ -137,6 +218,12 @@ class TOTPReplayCache:
         if shared is not None:
             return shared
 
+        # No shared cache backend: fall back to the shared database so the
+        # claim is still cross-worker on deployments without Valkey.
+        db_claim = self._db_cache_claim(key, self._ttl)
+        if db_claim is not None:
+            return db_claim
+
         with self._lock:
             self._cleanup(now)
 
@@ -149,6 +236,15 @@ class TOTPReplayCache:
 
 # Global replay cache instance
 _replay_cache = TOTPReplayCache(ttl_seconds=90)
+
+
+def set_replay_cache_db(db: Any) -> None:
+    """Attach a shared database to the global replay cache.
+
+    Called from the auth manager at setup so TOTP replay protection spans
+    all workers even when no shared cache backend is configured.
+    """
+    _replay_cache.set_db(db)
 
 
 def get_totp_config() -> Dict[str, Any]:

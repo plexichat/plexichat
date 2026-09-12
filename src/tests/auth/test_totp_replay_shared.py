@@ -1,0 +1,80 @@
+"""Regression tests for cross-worker TOTP replay protection.
+
+Without a shared cache backend the replay cache used to fall back to a
+process-local dict, so the same TOTP code presented to two workers inside its
+validity window was accepted twice (2FA replay). The cache now claims each
+code in the shared auth database with an atomic insert-or-ignore, so a second
+worker using the same database sees the replay even when Valkey is absent.
+"""
+
+import time
+from unittest.mock import patch
+
+import pytest
+
+from src.core.auth.totp import TOTPReplayCache, set_replay_cache_db
+
+
+def _no_shared_cache():
+    """Force the shared (Valkey) claim path to report 'unavailable'."""
+    return patch("src.core.database.valkey_client.get_client", return_value=None)
+
+
+class TestTOTPReplaySharedDatabase:
+    def test_replay_blocked_across_cache_instances(self, db):
+        """Two caches on one DB (two workers) cannot both claim a code."""
+        worker_a = TOTPReplayCache(ttl_seconds=90)
+        worker_b = TOTPReplayCache(ttl_seconds=90)
+        worker_a.set_db(db)
+        worker_b.set_db(db)
+        with _no_shared_cache():
+            assert worker_a.check_and_mark(7, "123456", purpose="login") is True
+            # Same code, second worker, same shared DB -> replay.
+            assert worker_b.check_and_mark(7, "123456", purpose="login") is False
+
+    def test_scope_isolation_is_preserved(self, db):
+        """Different purposes claim independently on the DB fallback."""
+        worker_a = TOTPReplayCache(ttl_seconds=90)
+        worker_b = TOTPReplayCache(ttl_seconds=90)
+        worker_a.set_db(db)
+        worker_b.set_db(db)
+        with _no_shared_cache():
+            assert worker_a.check_and_mark(8, "654321", purpose="login") is True
+            assert worker_b.check_and_mark(8, "654321", purpose="disable_2fa") is True
+
+    def test_expired_claim_is_reusable(self, db):
+        """A claim whose window elapsed does not block a later use."""
+        cache = TOTPReplayCache(ttl_seconds=1)
+        cache.set_db(db)
+        with _no_shared_cache():
+            assert cache.check_and_mark(9, "111111", purpose="login") is True
+            assert cache.check_and_mark(9, "111111", purpose="login") is False
+            time.sleep(1.1)
+            assert cache.check_and_mark(9, "111111", purpose="login") is True
+
+    def test_falls_back_when_db_lacks_claim_support(self):
+        """A DB without a working claim path degrades to the local cache."""
+
+        class _NoClaimDb:
+            def convert_schema(self, sql):
+                return sql
+
+            def execute(self, *args, **kwargs):
+                raise RuntimeError("no usable db")
+
+        cache = TOTPReplayCache(ttl_seconds=90)
+        cache.set_db(_NoClaimDb())
+        with _no_shared_cache():
+            assert cache.check_and_mark(3, "222222", purpose="login") is True
+            assert cache.check_and_mark(3, "222222", purpose="login") is False
+
+    def test_global_cache_accepts_db_wiring(self, db):
+        """The auth manager wiring path attaches the shared DB."""
+        set_replay_cache_db(db)
+        from src.core.auth import totp as totp_module
+
+        with _no_shared_cache():
+            assert (
+                totp_module._replay_cache.check_and_mark(42, "333333", purpose="login")
+                is True
+            )
