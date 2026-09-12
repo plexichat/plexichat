@@ -382,7 +382,21 @@ class DeletionLog:
 
                     if action == "SCHEDULED":
                         state[uid] = entry
-                    elif action in ("CANCELLED", "PURGED"):
+                    elif action == "DELAYED":
+                        # An admin moved the deadline: refresh the stored
+                        # SCHEDULED entry's metadata so rollback re-freezes
+                        # honor the NEW deletion_at instead of resurrecting
+                        # the stale pre-delay deadline.
+                        if uid in state:
+                            try:
+                                new_meta = entry.get("metadata") or {}
+                            except AttributeError:
+                                new_meta = {}
+                            if isinstance(new_meta, dict) and "deletion_at" in new_meta:
+                                stored_meta = state[uid].setdefault("metadata", {})
+                                if isinstance(stored_meta, dict):
+                                    stored_meta["deletion_at"] = new_meta["deletion_at"]
+                    elif action in ("CANCELLED", "PURGED", "FORCE_PURGED"):
                         if uid in state:
                             del state[uid]
             return state

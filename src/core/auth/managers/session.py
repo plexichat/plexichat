@@ -173,8 +173,12 @@ class SessionMixin(AuthManagerProtocol):
             deletion_at = row.get("deletion_at")
             logger.warning(f"Login attempt for frozen account {user_id}")
             try:
-                if deletion_at and deletion_at < 32536799999:
-                    dt = datetime.datetime.fromtimestamp(deletion_at).strftime(
+                # deletion_at is stored in MILLISECONDS; the sanity bound is
+                # therefore also ms (32536799999 s ~= year 3001, * 1000).
+                # Comparing ms against a seconds bound (or passing ms to
+                # fromtimestamp) always fell through to "a future date".
+                if deletion_at and deletion_at < 32536799999 * 1000:
+                    dt = datetime.datetime.fromtimestamp(deletion_at / 1000).strftime(
                         "%Y-%m-%d %H:%M:%S"
                     )
                 else:

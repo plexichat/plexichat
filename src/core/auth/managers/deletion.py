@@ -126,6 +126,26 @@ class DeletionMixin(AuthManagerProtocol):
         if row["deletion_status"] != "frozen":
             raise ValueError("Account is not scheduled for deletion")
 
+        # ``deletion_at`` is stored in MILLISECONDS (see
+        # schedule_account_deletion / AccountReaper.harvest), but callers
+        # (e.g. the admin delay endpoint) supply seconds-epoch values.
+        # Storing a seconds value raw would place the deadline in 1970 and
+        # the reaper would purge the account on its NEXT cycle — the exact
+        # ms/s collision this module guards against. Normalize defensively:
+        # anything below 1e11 is unambiguously seconds-scale (ms-epoch today
+        # is ~1.8e12) and is converted; anything else is already ms.
+        try:
+            deletion_at = int(deletion_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("deletion_at must be an integer epoch") from exc
+        if deletion_at <= 0:
+            raise ValueError("deletion_at must be in the future")
+        if deletion_at < 100_000_000_000:
+            deletion_at *= 1000
+        now_ms = int(time.time() * 1000)
+        if deletion_at <= now_ms:
+            raise ValueError("deletion_at must be in the future")
+
         logger.info(f"Delay deletion: user_id={user_id}, deletion_at={deletion_at}")
 
         self._db.execute(
