@@ -146,6 +146,49 @@ class Handlers:
     )
     _write(
         tmp_path,
+        "src/core/probe/guards.py",
+        """
+from typing import TYPE_CHECKING, Any, Optional
+
+
+class ProbeGuards:
+    # The module-or-manager facade shape (sweep F).
+
+    if TYPE_CHECKING:
+        def _voice_manager(self) -> Optional[Any]: ...
+
+    def _require_thing_permission(self, user_id, channel_id):
+        # Fail open: the helpers are probed off a facade that may be the
+        # module, and an unresolvable helper bails out of the guard.
+        manager = self._voice_manager()
+        if manager is None:
+            return
+        get_channel = getattr(manager, "_get_server_channel", None)
+        require_permission = getattr(manager, "_require_permission", None)
+        if get_channel is None or require_permission is None:
+            return
+        channel = get_channel(channel_id)
+        require_permission(user_id, channel, "thing.connect", channel_id)
+
+    def _require_other_permission(self, user_id, channel_id):
+        # Fail closed: the same probe, but the missing branch denies.
+        manager = self._voice_manager()
+        get_channel = getattr(manager, "_get_server_channel", None)
+        require_permission = getattr(manager, "_require_permission", None)
+        if get_channel is None or require_permission is None:
+            raise PermissionDeniedError("cannot verify")
+        require_permission(user_id, channel_id, "thing.speak", channel_id)
+
+    def schedule_thing(self, thing_id):
+        # Feature detection on non-authorization plumbing: not a guard.
+        db = getattr(self, "_db", None)
+        if db is None:
+            return
+        schedule(thing_id, db)
+""",
+    )
+    _write(
+        tmp_path,
         "src/js/example.js",
         """
 function canEdit(artifact) {
@@ -210,6 +253,30 @@ def test_flags_manager_write_ignoring_its_caller(synthetic: Path) -> None:
 def test_real_repository_manager_writes_all_resolve_the_caller() -> None:
     hits = af.sweep_managers(REPO_ROOT)
     assert [h.path for h in hits if h.kind == af.UNCHECKED] == []
+
+
+def test_flags_authz_guard_that_skips_on_unresolvable_helper(synthetic: Path) -> None:
+    grants = [h for h in af.sweep_facades(synthetic) if h.kind == af.GRANT]
+    # Both probed helpers are reported, and only for the guard that skips.
+    assert {h.symbol for h in grants} == {"_get_server_channel", "_require_permission"}
+    assert all("_require_thing_permission" in h.detail for h in grants)
+
+
+def test_does_not_flag_authz_guard_that_denies(synthetic: Path) -> None:
+    grants = [h for h in af.sweep_facades(synthetic) if h.kind == af.GRANT]
+    assert not any("_require_other_permission" in h.detail for h in grants)
+
+
+def test_does_not_flag_non_authorization_facade_probe(synthetic: Path) -> None:
+    hits = af.sweep_facades(synthetic)
+    assert ("src/core/probe/guards.py", "_db") not in {
+        (h.path, h.symbol) for h in hits if h.kind == af.GRANT
+    }
+    assert "_db" in {h.symbol for h in hits if h.kind == af.NON_AUTH}
+
+
+def test_real_repository_has_no_facade_probe_grants() -> None:
+    assert [h for h in af.sweep_facades(REPO_ROOT) if h.kind == af.GRANT] == []
 
 
 def test_flags_fail_open_client_helper(synthetic: Path) -> None:

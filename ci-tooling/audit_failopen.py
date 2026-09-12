@@ -29,6 +29,13 @@ Four sweeps:
      caller id (``user_id``/``admin_id``/...) and a resource id but never uses
      the caller to resolve access: the manager-layer mirror of D's
      ``UNAUTHZ``.
+  F. ``src`` private-helper probes -- ``getattr(<facade>, "_helper", None)``
+     where the helper is resolved off an object that may be a *module* facade
+     or a *manager* instance, and the ``None`` branch bails out of an
+     authorization guard instead of denying. This is the shape the voice
+     fail-open took: the production wiring passes the ``src.core.voice``
+     module, the private helpers live on the manager, so ``getattr`` returned
+     the default and ``return`` skipped ``voice.connect`` entirely.
 
 Sweeps A-C find *fail-open guards*: an existing check that skips. Sweep D is a
 presence check over every HTTP route and gateway opcode handler, parsed with
@@ -656,6 +663,202 @@ def sweep_client(client_root: Path) -> list[Hit]:
 
 
 # ---------------------------------------------------------------------------
+# Sweep F: private helpers probed off a module-or-manager facade
+# ---------------------------------------------------------------------------
+
+# A probe is ``getattr(<expr>, "_name", <default>)``. When the attribute lives
+# on the manager but the object handed in is the module facade (or vice versa),
+# the probe silently yields the default. If the enclosing function is an
+# authorization guard, that default turns the check into a no-op.
+
+PROBE_AUTHZ_TOKENS = (
+    "permission",
+    "access",
+    "member",
+    "role",
+    "owner",
+    "block",
+    "authoriz",
+    "authoris",
+    "admin",
+)
+
+AUTHZ_FN_RE = re.compile(
+    r"(permission|require|authoriz|authoris|check_access|_can_|^can_)",
+    re.IGNORECASE,
+)
+
+# Facade probes inspected and confirmed non-authoritative. Key: (relative
+# path, probed attribute). Value: why the ``None`` branch is not a bypass.
+REVIEWED_PROBES: dict[tuple[str, str], str] = {
+    ("src/core/voice/manager/calls.py", "_db"): (
+        "auto-transcription feature probe; skipping the scheduling call is "
+        "not an access decision"
+    ),
+    ("src/core/voice/signaling/sfu/base.py", "_quality_mixin"): (
+        "optional quality sink; skipping metric reporting is not an access decision"
+    ),
+}
+
+
+def _fn_is_authz_named(name: str) -> bool:
+    return bool(AUTHZ_FN_RE.search(name))
+
+
+def _probe_name_has_authz_token(name: str) -> bool:
+    lowered = name.lstrip("_").lower()
+    return any(token in lowered for token in PROBE_AUTHZ_TOKENS)
+
+
+def _probe_attr(call: ast.AST) -> str | None:
+    """Return the private attribute name a ``getattr`` probe requests."""
+    if not isinstance(call, ast.Call):
+        return None
+    if not isinstance(call.func, ast.Name) or call.func.id != "getattr":
+        return None
+    if len(call.args) < 2:
+        return None
+    attr = call.args[1]
+    if not isinstance(attr, ast.Constant) or not isinstance(attr.value, str):
+        return None
+    if not attr.value.startswith("_"):
+        return None
+    return attr.value
+
+
+def _probe_locals(fn: ast.AST) -> dict[str, tuple[str, int]]:
+    """Map ``name = getattr(obj, "_helper", ...)`` locals to their probe."""
+    found: dict[str, tuple[str, int]] = {}
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Assign):
+            continue
+        attr = _probe_attr(node.value)
+        if attr is None:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                found[target.id] = (attr, node.lineno)
+    return found
+
+
+def _branch_skips(body: list[ast.stmt]) -> bool:
+    """True when a branch bails out without taking a decision.
+
+    Only a bare ``return`` / ``return None`` / ``continue`` / ``break``
+    counts. ``return True``, ``return False``, ``return []`` and ``raise`` are
+    decisions -- the shape an authorization guard must have.
+    """
+    if any(isinstance(stmt, ast.Raise) for stmt in body):
+        return False
+    for stmt in body:
+        if isinstance(stmt, ast.Return):
+            if stmt.value is None:
+                return True
+        elif isinstance(stmt, (ast.Continue, ast.Break)):
+            return True
+    return False
+
+
+def _test_references_probe(
+    test: ast.AST, probes: dict[str, tuple[str, int]]
+) -> list[str]:
+    """Probed attributes the ``if`` test scrutines (directly or via a local)."""
+    used: list[str] = []
+    for node in ast.walk(test):
+        if isinstance(node, ast.Name) and node.id in probes:
+            used.append(probes[node.id][0])
+        else:
+            attr = _probe_attr(node)
+            if attr is not None:
+                used.append(attr)
+    return used
+
+
+def _probe_is_called(fn: ast.AST, probes: dict[str, tuple[str, int]]) -> bool:
+    """True when the function actually invokes one of the probed helpers."""
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in probes:
+                return True
+    return False
+
+
+def sweep_facades(root: Path) -> list[Hit]:
+    """Sweep F: auth guards that skip when a private helper is unresolvable."""
+    hits: list[Hit] = []
+    for path in sorted((root / "src").rglob("*.py")):
+        source = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        rel = str(path.relative_to(root))
+        skip_ranges = _type_checking_ranges(tree)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(start <= fn.lineno <= end for start, end in skip_ranges):
+                continue
+            probes = _probe_locals(fn)
+            if not probes:
+                continue
+            calls_helper = _probe_is_called(fn, probes)
+            authz_fn = _fn_is_authz_named(fn.name)
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.If) or not _branch_skips(node.body):
+                    continue
+                attrs = _test_references_probe(node.test, probes)
+                if not attrs:
+                    continue
+                for attr in attrs:
+                    key = (rel, attr)
+                    if key in REVIEWED_PROBES:
+                        hits.append(
+                            Hit(
+                                NON_AUTH,
+                                rel,
+                                node.lineno,
+                                attr,
+                                REVIEWED_PROBES[key],
+                            )
+                        )
+                        continue
+                    if authz_fn and calls_helper:
+                        hits.append(
+                            Hit(
+                                GRANT,
+                                rel,
+                                node.lineno,
+                                attr,
+                                f"authorization guard `{fn.name}` skips its check "
+                                "when the private helper cannot be resolved",
+                            )
+                        )
+                    elif _probe_name_has_authz_token(attr):
+                        hits.append(
+                            Hit(
+                                REVIEW,
+                                rel,
+                                node.lineno,
+                                attr,
+                                "private authorization helper resolved with a "
+                                "`None` default; the missing branch skips",
+                            )
+                        )
+                    else:
+                        hits.append(
+                            Hit(
+                                NON_AUTH,
+                                rel,
+                                node.lineno,
+                                attr,
+                                "private attribute probe; not an access decision",
+                            )
+                        )
+    return hits
+
+
+# ---------------------------------------------------------------------------
 # Sweep D: route / websocket-handler authorization inventory
 # ---------------------------------------------------------------------------
 
@@ -1179,6 +1382,11 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     grants = [h for h in hits if h.kind == GRANT]
     reviews = [h for h in hits if h.kind == REVIEW]
     non_auth = [h for h in hits if h.kind == NON_AUTH]
+
+    facade_hits = sweep_facades(root)
+    grants = grants + [h for h in facade_hits if h.kind == GRANT]
+    reviews = reviews + [h for h in facade_hits if h.kind == REVIEW]
+    non_auth = non_auth + [h for h in facade_hits if h.kind == NON_AUTH]
 
     manager_hits = sweep_managers(root)
     unchecked = [h for h in manager_hits if h.kind == UNCHECKED]
