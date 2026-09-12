@@ -107,8 +107,17 @@ class GuildHandler:
         # Membership gate. Denial vs internal failure are distinguished:
         # both not-found and not-a-member collapse into the SAME denial
         # code so existence is never leaked.
+        #
+        # ``ServerManager.get_server`` signals a non-member by RETURNING
+        # ``None`` (it logs a warning, it does not raise), so the return value
+        # must be checked: relying on the exception alone let every genuine
+        # non-member fall through to ``get_members``, which then raised and was
+        # reported as ``internal_error`` with a full traceback instead of the
+        # dedicated, silence-preserving denial.
         try:
-            await run_in_threadpool(self._servers.get_server, guild_id, user_id)
+            server = await run_in_threadpool(
+                self._servers.get_server, guild_id, user_id
+            )
         except (ServerAccessDeniedError, ServerNotFoundError):
             await self._send_error(connection, "guild_members_denied", None, guild_id)
             return None, None, None
@@ -120,6 +129,10 @@ class GuildHandler:
             await self._send_error(
                 connection, "internal_error", "Membership check failed", guild_id
             )
+            return None, None, None
+
+        if server is None:
+            await self._send_error(connection, "guild_members_denied", None, guild_id)
             return None, None, None
 
         # Paginate members truthfully instead of emitting one fake chunk
