@@ -435,8 +435,19 @@ class OpenAIWhisperProvider(TranscriptionProvider):
                 form["language"] = (None, language)
 
             headers = {"Authorization": f"Bearer {self._api_key}"}
+            # Split the timeout: a short connect window stops a dead or
+            # unresponsive endpoint from holding a transcription worker for
+            # the whole read budget, while the read timeout still bounds a
+            # legitimate large upload/response.
+            connect_timeout = float(
+                self._config.get("openai_connect_timeout", 10) or 10
+            )
+            read_timeout = float(self._config.get("openai_read_timeout", 600) or 600)
             response = requests.post(
-                self._api_url, files=form, headers=headers, timeout=600
+                self._api_url,
+                files=form,
+                headers=headers,
+                timeout=(connect_timeout, read_timeout),
             )
 
         if response.status_code != 200:
