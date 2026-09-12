@@ -212,8 +212,22 @@ class StickerManager(StickerUsageDiscoveryMixin):
             raise
 
     def _check_server_permission(self, user_id: int, server_id: int) -> bool:
+        """Enforce ``server.manage`` for server-scoped sticker-pack writes.
+
+        SECURITY: fail CLOSED when the servers module is not wired. The
+        previous ``return True`` skipped the check entirely in that state,
+        so any authenticated caller could create/update/delete a server's
+        sticker packs without authorization. This matches the soundboard,
+        webhooks, threads and reactions managers, which also deny what
+        they cannot verify.
+        """
         if not self._servers:
-            return True
+            logger.error(
+                "Sticker permission check failed CLOSED: servers module is "
+                f"not wired; denying server.manage for user {user_id} in "
+                f"server {server_id}."
+            )
+            return False
         return self._servers.has_permission(user_id, server_id, "server.manage")
 
     def _user_owns_pack(self, user_id: int, pack: "StickerPack") -> bool:
@@ -221,8 +235,21 @@ class StickerManager(StickerUsageDiscoveryMixin):
         return pack.created_by == user_id
 
     def _is_server_member(self, user_id: int, server_id: int) -> bool:
+        """Check server membership for pack visibility/usage.
+
+        SECURITY: fail CLOSED when the servers module is not wired —
+        membership cannot be verified, so server-scoped packs must not be
+        exposed to (or usable by) an unverifiable caller. Previously this
+        returned ``True``, which leaked every server pack's stickers to any
+        authenticated user.
+        """
         if not self._servers:
-            return True
+            logger.error(
+                "Sticker membership check failed CLOSED: servers module is "
+                f"not wired; treating user {user_id} as a non-member of "
+                f"server {server_id}."
+            )
+            return False
         return self._servers.get_member(server_id, user_id) is not None
 
     def create_pack(
