@@ -253,6 +253,26 @@ def test_automod_kick_ban_timeout_refused_without_servers(db):
     assert TimeoutUserAction(db).execute(action, violation) is False
 
 
+def test_notifications_mention_everyone_helper_denied_without_servers(db):
+    """The @everyone helper itself must fail closed, not just its caller.
+
+    ``has_mention_everyone_permission`` returned True when the servers module
+    was unwired, contradicting the documented policy in
+    ``MentionValidationMixin``. The current caller already denies earlier, so
+    this pins the helper's own contract for future callers.
+    """
+    from src.core.notifications.manager.helpers import has_mention_everyone_permission
+
+    assert has_mention_everyone_permission(None, 1, 111, 222) is False
+    assert has_mention_everyone_permission(False, 1, 111) is False
+
+    class _Servers:
+        def has_permission(self, user_id, server_id, permission, channel_id=None):
+            return permission == "messages.mention_everyone"
+
+    assert has_mention_everyone_permission(_Servers(), 1, 111, 222) is True
+
+
 def test_automod_message_delete_refused_without_messaging(db):
     from src.core.automod.actions.delete import DeleteMessageAction
 

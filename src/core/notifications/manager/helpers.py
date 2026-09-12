@@ -159,8 +159,18 @@ def has_mention_everyone_permission(
     server_id: SnowflakeID,
     channel_id: Optional[SnowflakeID] = None,
 ) -> bool:
+    """Whether ``user_id`` may use @everyone/@here in this server/channel.
+
+    Fail closed: an unwired servers module means the permission cannot be
+    evaluated, so it is DENIED. This previously returned ``True``, which
+    contradicted the documented policy in ``MentionValidationMixin`` ("denied
+    by default so a deployment that hasn't fully wired the servers module
+    cannot accidentally spam everyone"). The one current caller already
+    denies before reaching here; fixing the helper keeps it independently
+    safe for future callers.
+    """
     if not servers:
-        return True
+        return False
     return servers.has_permission(
         user_id, server_id, "messages.mention_everyone", channel_id
     )
