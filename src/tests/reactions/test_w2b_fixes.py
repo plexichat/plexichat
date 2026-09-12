@@ -90,6 +90,50 @@ class TestW2BFixes:
                 owner.id, msg.id, ":h2check:"
             )
 
+    def test_f2_unwired_servers_does_not_fan_out_to_unverified_members(
+        self, auth_manager, messaging_manager, server_manager, reaction_manager
+    ):
+        """Agent 21 F2: participant fan-out must fail CLOSED without servers.
+
+        ``_check_server_permission`` already denies actions it cannot verify
+        when the servers module is unwired; the event fan-out must apply the
+        same rule instead of broadcasting reactions to every unverified
+        server member.
+        """
+        unique_id = uuid.uuid4().hex[:8]
+        owner = auth_manager.register(
+            username=f"f2own_{unique_id}",
+            email=f"f2own_{unique_id}@example.com",
+            password="TestPass123!",
+        )
+        member = auth_manager.register(
+            username=f"f2mem_{unique_id}",
+            email=f"f2mem_{unique_id}@example.com",
+            password="TestPass123!",
+        )
+        server = server_manager.create_server(owner.id, f"F2 Server {unique_id}")
+        server_manager.add_member(server.id, member.id)
+        channel = server_manager.create_channel(owner.id, server.id, "general", "text")
+
+        original_servers = reaction_manager._servers
+        try:
+            # Sanity: with servers wired, a server member who can view the
+            # channel is part of the fan-out.
+            reaction_manager._servers = server_manager
+            wired = reaction_manager.get_participant_ids(channel.conversation_id)
+            assert member.id in wired
+
+            # Simulate a deployment that booted WITHOUT the servers module:
+            # membership can no longer be verified, so nobody is added.
+            reaction_manager._servers = None
+            unwired = reaction_manager.get_participant_ids(channel.conversation_id)
+            # The unverified server member is dropped; explicitly stored
+            # conversation participants (the owner) are still included.
+            assert member.id not in unwired
+            assert owner.id in unwired
+        finally:
+            reaction_manager._servers = original_servers
+
     def test_m4_counts_filter_blocked_users(
         self, auth_manager, messaging_manager, reaction_manager, rel_manager
     ):

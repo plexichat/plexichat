@@ -66,18 +66,31 @@ class ReactionPermissionsMixin(ReactionProtocol):
                         "SELECT user_id FROM srv_members WHERE server_id = ?",
                         (server_id,),
                     )
-                    for row in member_rows:
-                        member_id = row["user_id"]
-                        if member_id in participant_ids:
-                            continue
-                        # Only fan out to members who can actually view the
-                        # channel; large servers otherwise broadcast every
-                        # reaction to thousands of invisible recipients.
-                        if self._servers and not self._servers.has_permission(
-                            member_id, server_id, "messages.read", channel_id
-                        ):
-                            continue
-                        participant_ids.append(member_id)
+                    # SECURITY (Agent 21 F2): fail CLOSED when the servers
+                    # module is not wired. Without it we cannot evaluate
+                    # ``messages.read`` for this channel, so unverified
+                    # server members must NOT receive the reaction event.
+                    # This mirrors ``_check_server_permission``, which also
+                    # denies (rather than allows) actions it cannot verify.
+                    if not self._servers:
+                        logger.warning(
+                            "Servers module unavailable; not fanning reaction "
+                            f"events out to unverified members of server {server_id}"
+                        )
+                    else:
+                        for row in member_rows:
+                            member_id = row["user_id"]
+                            if member_id in participant_ids:
+                                continue
+                            # Only fan out to members who can actually view
+                            # the channel; large servers otherwise broadcast
+                            # every reaction to thousands of invisible
+                            # recipients.
+                            if not self._servers.has_permission(
+                                member_id, server_id, "messages.read", channel_id
+                            ):
+                                continue
+                            participant_ids.append(member_id)
             except (json.JSONDecodeError, TypeError, AttributeError) as e:
                 logger.debug(
                     f"Failed to parse conversation metadata for reactions: {e}"
