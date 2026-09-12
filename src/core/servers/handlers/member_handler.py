@@ -154,8 +154,14 @@ class MemberHandler:
         server_id: SnowflakeID,
         user_id: SnowflakeID,
         inviter_id: Optional[SnowflakeID] = None,
+        temporary: bool = False,
     ) -> Member:
-        """Add a user as a member of a server."""
+        """Add a user as a member of a server.
+
+        ``temporary`` marks a membership granted by a temporary invite; it is
+        revoked when the member's last connection closes unless they were
+        granted a role in the meantime (Agent 16 F9).
+        """
         ban = self.db.fetch_one(
             "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
@@ -178,9 +184,17 @@ class MemberHandler:
 
         try:
             self.db.execute(
-                """INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at, inviter_id)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (member_id, server_id, user_id, now, now, inviter_id),
+                """INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at, inviter_id, is_temporary)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    member_id,
+                    server_id,
+                    user_id,
+                    now,
+                    now,
+                    inviter_id,
+                    1 if temporary else 0,
+                ),
             )
         except Exception as e:
             if "UniqueViolation" in type(e).__name__ or "duplicate key" in str(e):
@@ -567,7 +581,12 @@ class MemberHandler:
             )
 
         try:
-            member = self.add_member(invite.server_id, user_id, invite.inviter_id)
+            member = self.add_member(
+                invite.server_id,
+                user_id,
+                invite.inviter_id,
+                temporary=bool(getattr(invite, "temporary", False)),
+            )
         except Exception:
             self.db.execute(
                 "UPDATE srv_invites SET uses = CASE WHEN uses > 0 THEN uses - 1 ELSE 0 END WHERE code = ?",
@@ -581,6 +600,62 @@ class MemberHandler:
         )
 
         return member
+
+    def purge_temporary_members(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Revoke a user's temporary memberships that earned no role.
+
+        A temporary invite grants membership for the session only: when the
+        member's last connection closes, the membership is revoked unless
+        they were granted a role (any role other than the server's default).
+        This is what turns the stored ``temporary`` invite flag into actual
+        behavior instead of a silently ignored value (Agent 16 F9).
+
+        Returns the server IDs the membership was revoked from.
+        """
+        rows = self.db.fetch_all(
+            "SELECT id AS member_id, server_id FROM srv_members "
+            "WHERE user_id = ? AND is_temporary = 1",
+            (user_id,),
+        )
+        revoked: List[SnowflakeID] = []
+        for row in rows or []:
+            member_id = row["member_id"]
+            server_id = row["server_id"]
+
+            # A role other than the server's default makes the membership
+            # permanent (the member contributed/participated).
+            earned = self.db.fetch_one(
+                "SELECT 1 FROM srv_member_roles mr "
+                "JOIN srv_roles r ON r.id = mr.role_id "
+                "WHERE mr.member_id = ? AND r.is_default = 0",
+                (member_id,),
+            )
+            if earned:
+                self.db.execute(
+                    "UPDATE srv_members SET is_temporary = 0 WHERE id = ?",
+                    (member_id,),
+                )
+                continue
+
+            self.db.execute(
+                "DELETE FROM srv_member_roles WHERE member_id = ?", (member_id,)
+            )
+            self.db.execute("DELETE FROM srv_members WHERE id = ?", (member_id,))
+            self.manager._invalidate_member_caches(server_id, user_id)
+            self.manager._log_audit(
+                server_id,
+                user_id,
+                AuditLogAction.MEMBER_LEAVE,
+                "member",
+                user_id,
+            )
+            revoked.append(server_id)
+
+        if revoked:
+            logger.info(
+                f"Revoked {len(revoked)} temporary membership(s) for user {user_id}"
+            )
+        return revoked
 
     def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
         """Revoke an invite (soft-revoke).
