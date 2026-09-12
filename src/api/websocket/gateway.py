@@ -132,6 +132,19 @@ async def _dispatch_offline_presence(
             except Exception as e:
                 logger.debug(f"Valkey presence reconciliation failed: {e}")
 
+        # Temporary-invite enforcement (Agent 16 F9): once the user's LAST
+        # connection drops, revoke any membership granted by a temporary
+        # invite unless the member was granted a role. Best-effort so a
+        # failure here can never break the disconnect path.
+        try:
+            servers_module = api.get_servers()
+            if servers_module and hasattr(servers_module, "purge_temporary_members"):
+                from starlette.concurrency import run_in_threadpool
+
+                await run_in_threadpool(servers_module.purge_temporary_members, user_id)
+        except Exception as e:
+            logger.debug(f"Temporary-member purge failed for {user_id}: {e}")
+
         # Collect all user IDs who should receive this presence update
         target_user_ids = set()
 

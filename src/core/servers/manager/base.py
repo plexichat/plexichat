@@ -647,3 +647,11 @@ class ServerManager(
     def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
         """Delete an invite."""
         return self.member_handler.delete_invite(user_id, code)
+
+    def purge_temporary_members(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Revoke a user's temporary-invite memberships (Agent 16 F9).
+
+        Called on the user's last connection close; memberships granted by a
+        temporary invite are removed unless the member earned a role.
+        """
+        return self.member_handler.purge_temporary_members(user_id)

@@ -254,6 +254,10 @@ class Member:
     inviter_id: Optional[SnowflakeID] = None
     timeout_until: Optional[int] = None
     timeout_reason: Optional[str] = None
+    # True when the membership was granted by a temporary invite and the
+    # member has not (yet) been granted a role. Such memberships are revoked
+    # when the member's last connection closes.
+    is_temporary: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert member to dictionary including properties."""
@@ -270,6 +274,7 @@ class Member:
             "avatar_url": self.avatar_url,
             "timeout_until": self.timeout_until,
             "timeout_reason": self.timeout_reason,
+            "is_temporary": self.is_temporary,
         }
 
 

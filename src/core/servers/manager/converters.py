@@ -236,6 +236,7 @@ def _row_to_member(
         inviter_id=row.get("inviter_id"),
         timeout_until=row.get("timeout_until"),
         timeout_reason=row.get("timeout_reason"),
+        is_temporary=bool(row.get("is_temporary", False)),
         roles=roles or [],
     )
 

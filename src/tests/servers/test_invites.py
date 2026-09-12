@@ -228,10 +228,12 @@ class TestUseInvite:
         invite = servers.create_invite(owner.id, general.id, max_uses=1)
         original_add_member = servers.member_handler.add_member
 
-        def failing_add_member(server_id, user_id, inviter_id=None):
+        def failing_add_member(server_id, user_id, inviter_id=None, temporary=False):
             if user_id == outsider.id:
                 raise RuntimeError("membership insert failed")
-            return original_add_member(server_id, user_id, inviter_id)
+            return original_add_member(
+                server_id, user_id, inviter_id, temporary=temporary
+            )
 
         monkeypatch.setattr(servers.member_handler, "add_member", failing_add_member)
 

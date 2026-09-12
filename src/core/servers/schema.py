@@ -112,6 +112,9 @@ CREATE TABLE IF NOT EXISTS srv_members (
     -- Timeout (013)
     timeout_until BIGINT,
     timeout_reason TEXT,
+    -- Temporary-invite membership (Agent 16 F9): set when the member joined
+    -- via a temporary invite; cleared when they are granted a role.
+    is_temporary INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
 );
@@ -366,5 +369,13 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
+
+    # Additive migration: ``CREATE TABLE IF NOT EXISTS`` does not add columns
+    # to pre-existing tables, so upgrade older databases explicitly. A
+    # duplicate-column error means the column already exists and is harmless.
+    try:
+        db.execute("ALTER TABLE srv_members ADD COLUMN is_temporary INTEGER DEFAULT 0")
+    except Exception as e:
+        logger.debug(f"srv_members.is_temporary migration skipped: {e}")
 
     logger.info("Server tables created successfully")
