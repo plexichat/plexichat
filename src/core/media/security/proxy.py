@@ -36,6 +36,8 @@ class ResponseStreamWrapper(io.RawIOBase):
     def __init__(
         self, response_iterator: Iterator[bytes], max_size: int, initial: bytes = b""
     ):
+        if len(initial) > max_size:
+            raise ValueError(f"Content exceeds maximum size of {max_size} bytes")
         self._iterator = iter(response_iterator)
         self._max_size = max_size
         self._bytes_read = len(initial)
@@ -115,6 +117,12 @@ class ExternalProxy:
     }
 
     SVG_SNIFF_PREFIXES = (b"<svg", b"<?xml", b"<!doctype")
+
+    # SECURITY: number of leading bytes accumulated for content sniffing.
+    # Must be large enough that leading-whitespace/BOM padding cannot push
+    # a "<svg"/"<?xml"/"<!doctype" marker out of the inspected window
+    # (fail-closed: padded SVG polyglots are still rejected).
+    SNIFF_WINDOW_SIZE = 4096
 
     MAX_CONTENT_SIZE = 10 * 1024 * 1024
 
@@ -459,7 +467,7 @@ class ExternalProxy:
         try:
             for chunk in gen:
                 peek += chunk
-                if len(peek) >= 512:
+                if len(peek) >= self.SNIFF_WINDOW_SIZE:
                     break
         except Exception as e:
             raise ProxyFetchError(f"Failed to read content: {e}", url)
@@ -502,6 +510,14 @@ class ExternalProxy:
             # store_stream will consume the wrapper, calculating hash and size
             self._storage.store_stream(stream_wrapper, storage_path, content_type, -1)
         except Exception as e:
+            # SECURITY (fail-closed): a streaming failure part-way through
+            # (e.g. the body exceeding the size cap) may leave a partial
+            # object behind. Remove it best-effort so no attacker-controlled
+            # truncated artifact lingers under the cache path.
+            try:
+                self._storage.delete(storage_path)
+            except Exception:
+                pass
             raise ProxyCacheError(f"Failed to cache content: {e}", url)
 
         checksum = stream_wrapper.hex_digest

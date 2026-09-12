@@ -550,7 +550,14 @@ async def get_proxied_content(
             )
 
         data, content_type = await run_in_threadpool(media_mod.get_proxied_content, url)
-        return Response(content=data, media_type=content_type)
+        # SECURITY: proxied bytes originate from an external host. Serve
+        # with nosniff so a crafted payload can never be MIME-sniffed into
+        # an executable document type by the browser.
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
     except HTTPException:
         raise
     except (ProxyFetchError,) as e:
