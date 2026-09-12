@@ -14,6 +14,7 @@ class ScreenShareMixin:
     if TYPE_CHECKING:
 
         def _get_timestamp(self) -> int: ...
+        def _voice_manager(self) -> Optional[Any]: ...
 
     _voice: Optional[Any]
     _connections: Dict[int, Any]
@@ -26,12 +27,12 @@ class ScreenShareMixin:
         module cannot resolve the channel (deferring to the caller's own
         channel lookup).
         """
-        voice = self._voice
-        if not voice:
+        manager = self._voice_manager()
+        if manager is None:
             return
 
-        get_channel = getattr(voice, "_get_server_channel", None)
-        require_permission = getattr(voice, "_require_permission", None)
+        get_channel = getattr(manager, "_get_server_channel", None)
+        require_permission = getattr(manager, "_require_permission", None)
         if get_channel is None or require_permission is None:
             return
 

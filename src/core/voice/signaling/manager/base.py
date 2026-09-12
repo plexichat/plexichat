@@ -144,6 +144,32 @@ class SignalingManagerBase:
         """Generate a unique session ID."""
         return secrets.token_hex(16)
 
+    def _voice_manager(self) -> Optional[Any]:
+        """Return the voice manager backing ``_voice``, or ``None``.
+
+        ``voice_module`` is the ``src.core.voice`` MODULE in production (see
+        ``server/initializer.py``) and a manager instance in some tests. The
+        permission guards need the private ``_get_server_channel`` /
+        ``_require_permission`` helpers, which exist only on the manager: a
+        plain ``getattr`` on the module returned ``None``, so the guards
+        returned early and silently skipped their check. Resolve the module
+        facade through its manager accessor so the check runs either way.
+        """
+        voice = self._voice
+        if voice is None:
+            return None
+        if hasattr(voice, "_get_server_channel") and hasattr(
+            voice, "_require_permission"
+        ):
+            return voice
+        get_manager = getattr(voice, "_get_manager", None)
+        if callable(get_manager):
+            try:
+                return get_manager()
+            except Exception:
+                return None
+        return None
+
     def _get_room_id(self, channel_id: int) -> str:
         """Get or create room ID for a channel."""
         if channel_id not in self._rooms:
