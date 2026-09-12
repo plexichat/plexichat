@@ -51,9 +51,15 @@ def synthetic(tmp_path: Path) -> Path:
         tmp_path,
         "src/core/example/manager.py",
         """
+from typing import TYPE_CHECKING
+
+
 class ExampleManager:
     def __init__(self):
         self._servers = None
+
+    if TYPE_CHECKING:
+        def update_thing(self, user_id, thing_id) -> None: ...
 
     def can_act(self):
         # Fail open: the guard grants instead of denying.
@@ -66,6 +72,19 @@ class ExampleManager:
         if not self._servers:
             return False
         return self._servers.check()
+
+    def delete_thing(self, user_id, thing_id):
+        # Manager write that never uses the caller identity.
+        self._db.execute("DELETE FROM things WHERE id = ?", (thing_id,))
+
+    def delete_own_thing(self, user_id, thing_id):
+        row = self._db.fetch_one("SELECT * FROM things WHERE id = ?", (thing_id,))
+        if row and row["owner_id"] != user_id:
+            raise PermissionDeniedError("not yours")
+        self._db.execute("DELETE FROM things WHERE id = ?", (thing_id,))
+
+    def delete_thing_via_delegate(self, user_id, thing_id):
+        self._things.remove(user_id, thing_id)
 """,
     )
     _write(
@@ -176,6 +195,21 @@ def test_flags_ws_handler_without_authentication(synthetic: Path) -> None:
     no_auth = {h.symbol for h in hits if h.kind == af.NO_AUTH}
     assert "handle_unauthenticated" in no_auth
     assert "handle_authenticated" not in no_auth
+
+
+def test_flags_manager_write_ignoring_its_caller(synthetic: Path) -> None:
+    hits = af.sweep_managers(synthetic)
+    unchecked = {h.symbol for h in hits if h.kind == af.UNCHECKED}
+    assert "delete_thing" in unchecked
+    # Ownership check, denial, delegation, and a TYPE_CHECKING stub are clear.
+    assert "delete_own_thing" not in unchecked
+    assert "delete_thing_via_delegate" not in unchecked
+    assert "update_thing" not in unchecked
+
+
+def test_real_repository_manager_writes_all_resolve_the_caller() -> None:
+    hits = af.sweep_managers(REPO_ROOT)
+    assert [h.path for h in hits if h.kind == af.UNCHECKED] == []
 
 
 def test_flags_fail_open_client_helper(synthetic: Path) -> None:

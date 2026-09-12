@@ -25,6 +25,10 @@ Four sweeps:
      permission/ownership/role data.
   D. ``src/api`` route + websocket-handler inventory -- the *missing check*
      class, where no guard exists to inspect at all.
+  E. ``src/core`` manager write methods -- a mutating method that takes both a
+     caller id (``user_id``/``admin_id``/...) and a resource id but never uses
+     the caller to resolve access: the manager-layer mirror of D's
+     ``UNAUTHZ``.
 
 Sweeps A-C find *fail-open guards*: an existing check that skips. Sweep D is a
 presence check over every HTTP route and gateway opcode handler, parsed with
@@ -73,6 +77,7 @@ from typing import Iterable, NamedTuple
 GRANT = "GRANT"  # fails open: the guard skips the check when unwired -> bug
 REVIEW = "REVIEW"  # needs human judgement (may be non-authoritative plumbing)
 NON_AUTH = "NON-AUTH"  # bookkeeping / caching / logging, not an authz decision
+UNCHECKED = "UNCHECKED"  # sweep E: write method takes a caller id it never uses
 NO_AUTH = "NO-AUTH"  # sweep D: endpoint with no authentication dependency
 UNAUTHZ = "UNAUTHZ"  # sweep D: authenticated but no visible authorization call
 PUBLIC = "PUBLIC"  # sweep D: verified public/self-scoped by design
@@ -296,6 +301,263 @@ def sweep_api(root: Path) -> list[Hit]:
                     symbol,
                     "authorization helper inside an `if <module>:` guard "
                     "with no denying branch",
+                )
+            )
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Sweep E: manager write methods that take a caller id and never use it
+# ---------------------------------------------------------------------------
+
+# Parameter names that carry the acting caller's identity.
+CALLER_PARAMS = frozenset(
+    {
+        "user_id",
+        "actor_id",
+        "admin_id",
+        "requester_id",
+        "sender_id",
+        "owner_id",
+        "viewer_id",
+        "caller_id",
+        "current_user_id",
+        "reviewer_id",
+        "moderator_id",
+        "approved_by",
+        "inviter_id",
+        "acting_user_id",
+    }
+)
+
+# Any other ``*_id`` parameter is treated as the resource being acted on.
+
+
+def _is_resource_param(name: str) -> bool:
+    return name == "id" or name.endswith("_id")
+
+
+# Method-name tokens that make a method a mutation.
+MANAGER_WRITE_VERBS = frozenset(
+    {
+        "create",
+        "update",
+        "delete",
+        "add",
+        "remove",
+        "set",
+        "edit",
+        "rename",
+        "move",
+        "ban",
+        "unban",
+        "kick",
+        "pin",
+        "unpin",
+        "assign",
+        "grant",
+        "revoke",
+        "approve",
+        "reject",
+        "close",
+        "reopen",
+        "archive",
+        "restore",
+        "purge",
+        "block",
+        "unblock",
+        "send",
+        "post",
+        "invite",
+        "join",
+        "leave",
+        "publish",
+        "cancel",
+        "execute",
+        "trigger",
+        "rotate",
+        "reset",
+        "submit",
+        "apply",
+        "transfer",
+        "mark",
+    }
+)
+
+# Tokens proving the body resolves the caller's access: a permission/
+# membership/ownership check, an explicit denial (raise PermissionDenied...),
+# or a call that passes the caller id on to a layer that will check.
+CORE_ACCESS_SIGNALS = (
+    "has_permission",
+    "get_permissions",
+    "check_permission",
+    "require_permission",
+    "_check",
+    "_require",
+    "_verify",
+    "_ensure",
+    "_assert",
+    "_validate",
+    "is_member",
+    "get_member",
+    "is_participant",
+    "is_owner",
+    "owner_id",
+    "author_id",
+    "created_by",
+    "uploaded_by",
+    "uploader_id",
+    "is_blocked",
+    "can_view",
+    "_can_",
+    "authorize",
+    "permission",
+    "visibility",
+    "visible",
+    "is_admin",
+    "has_role",
+    "allowed",
+    "roles",
+    "_is_",
+    "_may_",
+    "PermissionDenied",
+)
+
+# Data layers that are not authorization boundaries (the caller above them
+# authorizes), and event payload builders that never mutate anything.
+MANAGER_SKIP_DIRS = ("/repositories/", "/events/")
+MANAGER_SKIP_FILES = ("protocol.py",)
+
+# Manager methods already inspected and confirmed safe. Key: (relative path,
+# method name). Value: why the missing caller use is not a bug.
+REVIEWED_METHODS: dict[tuple[str, str], str] = {
+    (
+        "src/core/admin/tickets.py",
+        "update_ticket_status",
+    ): (
+        "data-layer helper reached only from the admin routes, which call "
+        "require_admin_permission('tickets.close') first"
+    ),
+}
+
+
+def _is_stub(node: ast.AST) -> bool:
+    """True for a body that is only a docstring/``...``/``pass``."""
+    for stmt in getattr(node, "body", []):
+        if isinstance(stmt, ast.Pass):
+            continue
+        if (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and (stmt.value.value is Ellipsis or isinstance(stmt.value.value, str))
+        ):
+            continue
+        return False
+    return True
+
+
+def _type_checking_ranges(tree: ast.AST) -> list[tuple[int, int]]:
+    """Line ranges of ``if TYPE_CHECKING:`` blocks (stub declarations)."""
+    ranges: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        name = (
+            test.id
+            if isinstance(test, ast.Name)
+            else test.attr
+            if isinstance(test, ast.Attribute)
+            else ""
+        )
+        if name == "TYPE_CHECKING":
+            ranges.append((node.lineno, getattr(node, "end_lineno", node.lineno)))
+    return ranges
+
+
+def _call_passes_caller(call: ast.Call, callers: frozenset[str]) -> bool:
+    """True when the call forwards the caller id into another layer."""
+    if not isinstance(call.func, (ast.Attribute, ast.Name)):
+        return False
+    for arg in list(call.args) + [kw.value for kw in call.keywords]:
+        for inner in ast.walk(arg):
+            if isinstance(inner, ast.Name) and inner.id in callers:
+                return True
+    return False
+
+
+def sweep_managers(root: Path) -> list[Hit]:
+    """Sweep E: mutating manager methods that ignore the caller identity.
+
+    Sweeps A-C inspect the *guard* around an access check. This sweep covers
+    the manager API surface itself: a method that takes both a caller id
+    (``user_id``/``admin_id``/...) and a resource id but never uses the caller
+    to resolve access -- no permission/membership/ownership read, no explicit
+    denial, and no call that forwards the caller id -- is a candidate missing
+    check (the manager-layer mirror of sweep D's ``UNAUTHZ``).
+    """
+    hits: list[Hit] = []
+    core_dir = root / "src" / "core"
+    if not core_dir.is_dir():
+        return hits
+    for path in sorted(core_dir.rglob("*.py")):
+        posix = path.as_posix()
+        if any(skip in posix for skip in MANAGER_SKIP_DIRS):
+            continue
+        if path.name in MANAGER_SKIP_FILES:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        rel = str(path.relative_to(root))
+        stubs = _type_checking_ranges(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            name = node.name
+            if name.startswith("_") or _is_stub(node):
+                continue
+            if any(start <= node.lineno <= end for start, end in stubs):
+                continue
+            if not (set(name.split("_")) & MANAGER_WRITE_VERBS):
+                continue
+            params = [arg.arg for arg in node.args.args + node.args.kwonlyargs]
+            callers = frozenset(p for p in params if p in CALLER_PARAMS)
+            resources = [
+                p for p in params if _is_resource_param(p) and p not in CALLER_PARAMS
+            ]
+            if not callers or not resources:
+                continue
+            source = ast.get_source_segment(text, node) or ""
+            if any(sig in source for sig in CORE_ACCESS_SIGNALS):
+                continue
+            if any(
+                _call_passes_caller(call, callers)
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+            ):
+                continue
+            if (rel, name) in REVIEWED_METHODS:
+                hits.append(
+                    Hit(
+                        NON_AUTH,
+                        rel,
+                        node.lineno,
+                        name,
+                        REVIEWED_METHODS[(rel, name)],
+                    )
+                )
+                continue
+            hits.append(
+                Hit(
+                    UNCHECKED,
+                    rel,
+                    node.lineno,
+                    name,
+                    "mutating method takes a caller id and a resource id but "
+                    "never uses the caller to resolve access",
                 )
             )
     return hits
@@ -917,6 +1179,10 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     reviews = [h for h in hits if h.kind == REVIEW]
     non_auth = [h for h in hits if h.kind == NON_AUTH]
 
+    manager_hits = sweep_managers(root)
+    unchecked = [h for h in manager_hits if h.kind == UNCHECKED]
+    non_auth = non_auth + [h for h in manager_hits if h.kind == NON_AUTH]
+
     route_hits = sweep_routes(root) + sweep_ws_handlers(root)
     no_auth = [h for h in route_hits if h.kind == NO_AUTH]
     unauthorized = [h for h in route_hits if h.kind == UNAUTHZ]
@@ -939,6 +1205,7 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     out.append(f"- GRANT (fail open, must fix): {len(grants)}")
     out.append(f"- REVIEW (needs a human call): {len(reviews)}")
     out.append(f"- NON-AUTH (verified denying/plumbing): {len(non_auth)}")
+    out.append(f"- UNCHECKED (manager write ignoring its caller id): {len(unchecked)}")
     out.append(f"- NO-AUTH (route/handler with no authentication): {len(no_auth)}")
     out.append(
         f"- UNAUTHZ (authenticated, no visible authorization): {len(unauthorized)}"
@@ -953,6 +1220,10 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
         ("GRANT - fails open", grants),
         ("REVIEW - needs a human call", reviews),
         ("NON-AUTH - verified fine", non_auth),
+        (
+            "UNCHECKED - manager write method that ignores its caller id",
+            unchecked,
+        ),
         (
             "NO-AUTH - route/handler with no authentication dependency",
             no_auth,
@@ -975,7 +1246,7 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
             out.append(f"| `{hit.path}:{hit.line}` | `{hit.symbol}` | {hit.detail} |")
         out.append("")
 
-    return "\n".join(out), len(grants), len(no_auth)
+    return "\n".join(out), len(grants), len(no_auth) + len(unchecked)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1006,7 +1277,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         Path(args.output).write_text(text + "\n", encoding="utf-8")
         print(
-            f"wrote {args.output} ({grant_count} GRANT, {no_auth_count} NO-AUTH hits)"
+            f"wrote {args.output} ({grant_count} GRANT, "
+            f"{no_auth_count} NO-AUTH/UNCHECKED hits)"
         )
     return 1 if (grant_count or no_auth_count) else 0
 
