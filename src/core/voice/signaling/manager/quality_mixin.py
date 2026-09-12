@@ -157,7 +157,22 @@ class QualityMixin:
         pid = int(peer_id) if not isinstance(peer_id, int) else peer_id
 
         # Reject hints for peers with no active connection.
-        if pid not in self._connections:
+        connection = self._connections.get(pid)
+        if not connection:
+            return False
+
+        # SECURITY/correctness: a quality hint is scoped to the channel the
+        # peer's signaling connection is bound to. Without this check a member
+        # of channel A can write ``_quality_data[(B, A)]``, so B's
+        # ``get_quality_stats`` / ``get_connection_quality`` report forged
+        # metrics for a user who is not in that channel. Mirrors the
+        # channel-binding guards on ICE candidates and SDP offers.
+        bound_channel = getattr(connection, "channel_id", None)
+        if bound_channel is None or int(bound_channel) != cid:
+            logger.warning(
+                f"Channel mismatch on quality hint for user {pid}: "
+                f"bound={bound_channel} offered={cid}"
+            )
             return False
 
         now = int(time.time())
@@ -204,10 +219,7 @@ class QualityMixin:
             else:  # bitrate
                 entry[k] = max(0, min(int(num), 100_000_000))
         self._quality_data[(cid, pid)] = entry
-
-        if pid in self._connections:
-            conn = self._connections[pid]
-            conn.last_activity = now
+        connection.last_activity = now
 
         return True
 
