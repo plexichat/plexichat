@@ -42,8 +42,23 @@ def get_default_cert_dir() -> Path:
 
 
 def _normalize_path(path: str) -> str:
-    expanded = os.path.expanduser(str(path))
-    return os.path.abspath(expanded)
+    raw = str(path)
+    expanded = os.path.expanduser(raw)
+    normalized = os.path.abspath(expanded)
+    # A bare relative filename (e.g. "cert.pem") resolves against the
+    # process working directory, which is fragile for a service: systemd and
+    # containers start with a different cwd than an interactive shell, so the
+    # certificate lands somewhere unexpected (Agent 33 F7). This is not a
+    # crash (``abspath`` always yields a non-empty parent), but surfacing the
+    # resolved location lets operators spot a misconfigured path instead of
+    # silently writing key material relative to a moving target.
+    if not os.path.isabs(expanded):
+        logger.warning(
+            f"Relative TLS path '{raw}' resolved against the process working "
+            f"directory to '{normalized}'; prefer an absolute path or the "
+            f"default cert_dir so certificate locations do not depend on cwd."
+        )
+    return normalized
 
 
 def _ensure_parent_dir(path: str) -> None:
