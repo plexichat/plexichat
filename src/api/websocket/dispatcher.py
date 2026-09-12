@@ -277,8 +277,11 @@ class GatewayDispatcher:
         Returns:
             True if sent successfully
         """
-        connection.record_heartbeat_ack()
-        return await self.dispatch_raw(connection, GatewayOpcode.HEARTBEAT_ACK)
+        sent = await self.dispatch_raw(connection, GatewayOpcode.HEARTBEAT_ACK)
+        if sent:
+            # Record only once the ACK was actually written (Agent 38 F7).
+            connection.record_heartbeat_ack()
+        return sent
 
     async def send_invalid_session(
         self,

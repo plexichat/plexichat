@@ -50,9 +50,15 @@ class ConnectionHandler:
         connection: Connection,
         data: Optional[Dict[str, Any]],
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
-        """Handle heartbeat opcode."""
+        """Handle heartbeat opcode.
+
+        Only the RECEIPT is recorded here. The ACK timestamp is recorded by
+        the sender *after* the HEARTBEAT_ACK frame is actually written (see
+        ``gateway`` / ``GatewayDispatcher.send_heartbeat_ack``), so
+        ``latency_ms`` measures a real receive->send interval instead of the
+        near-zero gap between two back-to-back calls (Agent 38 F7).
+        """
         connection.record_heartbeat()
-        connection.record_heartbeat_ack()
 
         # CORRECTNESS FIX: keep last_seen fresh while the user is connected.
         # Without this, last_seen stays frozen at the moment they connected

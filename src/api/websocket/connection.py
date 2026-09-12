@@ -73,7 +73,13 @@ class Connection:
 
     @property
     def latency_ms(self) -> float:
-        """Get connection latency in milliseconds."""
+        """Server-side heartbeat receive->ACK-send interval, in milliseconds.
+
+        This is NOT a client round-trip time (the server has no mirrored
+        clock to measure that); it is how long the server took to answer the
+        last heartbeat, recorded when the ACK is written. Clients that need
+        RTT measure it themselves.
+        """
         return (self.last_heartbeat_ack - self.last_heartbeat) * 1000
 
     def record_heartbeat(self) -> None:

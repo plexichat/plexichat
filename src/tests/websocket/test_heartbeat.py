@@ -75,9 +75,16 @@ class TestHeartbeatHandler:
         assert response_op == GatewayOpcode.HEARTBEAT_ACK
 
     @pytest.mark.asyncio
-    async def test_heartbeat_updates_ack_timestamp(self, opcode_handler, connection):
-        """Test heartbeat updates ACK timestamp."""
-        old_ack = connection.last_heartbeat_ack
+    async def test_heartbeat_updates_receipt_timestamp(
+        self, opcode_handler, connection
+    ):
+        """The handler records the receipt; the sender stamps the ACK.
+
+        Agent 38 F7: stamping the ACK inside the handler made latency_ms the
+        gap between two back-to-back clock reads. See
+        ``TestHeartbeatAckTiming`` for the sender-side contract.
+        """
+        old_receipt = connection.last_heartbeat
         time.sleep(0.01)
 
         await opcode_handler.handle(
@@ -86,7 +93,7 @@ class TestHeartbeatHandler:
             42,
         )
 
-        assert connection.last_heartbeat_ack > old_ack
+        assert connection.last_heartbeat > old_receipt
 
 
 class TestHeartbeatInterval:
@@ -167,3 +174,43 @@ class TestMissedHeartbeats:
         connection.missed_heartbeats = 5
         connection.record_heartbeat()
         assert connection.missed_heartbeats == 0
+
+
+class TestHeartbeatAckTiming:
+    """Agent 38 F7: the ACK timestamp must be recorded by the SENDER.
+
+    Recording it inside the handler made ``latency_ms`` the gap between two
+    back-to-back clock reads (always ~0). It is now written only after the
+    HEARTBEAT_ACK frame is actually sent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_handler_does_not_record_the_ack_timestamp(
+        self, opcode_handler, connection
+    ):
+        before = connection.last_heartbeat_ack
+
+        response_op, _, close_code = await opcode_handler.handle(
+            connection,
+            GatewayOpcode.HEARTBEAT,
+            42,
+        )
+
+        assert response_op == GatewayOpcode.HEARTBEAT_ACK
+        assert close_code is None
+        assert connection.last_heartbeat_ack == before, (
+            "the handler must not stamp the ACK; the sender records it after "
+            "the frame is written"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_records_ack_after_sending(self, dispatcher, connection):
+        before = connection.last_heartbeat_ack
+        time.sleep(0.005)
+
+        sent = await dispatcher.send_heartbeat_ack(connection)
+
+        assert sent is True
+        assert connection.last_heartbeat_ack > before, (
+            "send_heartbeat_ack must stamp the ACK timestamp once sent"
+        )

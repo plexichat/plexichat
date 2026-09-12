@@ -513,6 +513,10 @@ async def _message_loop(
                     await dispatcher.replay_events(connection, replay_seq)
             elif response_op == GatewayOpcode.HEARTBEAT_ACK:
                 await connection.send_json({"op": int(GatewayOpcode.HEARTBEAT_ACK)})
+                # Record the ACK timestamp only after the frame is written, so
+                # ``latency_ms`` reflects the real receive->send interval and
+                # not two back-to-back clock reads (Agent 38 F7).
+                connection.record_heartbeat_ack()
             elif response_op == GatewayOpcode.INVALID_SESSION:
                 resumable: bool = (
                     response_data.get("d", False) if response_data else False
