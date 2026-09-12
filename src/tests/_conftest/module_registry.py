@@ -32,6 +32,21 @@ class ModuleBundle(NamedTuple):
     module: Any
 
 
+class DatabaseAndAuth(NamedTuple):
+    """Named-tuple replacement for the historical ``db_and_auth`` tuple.
+
+    Positional unpacking (``db, auth = db_and_auth``) keeps working
+    exactly as before — NamedTuples iterate like plain tuples — while
+    each element is ALSO addressable by name (``bundle.db``,
+    ``bundle.auth``). This removes the positional-mixup failure mode
+    where adding/reordering elements silently shifts what callers
+    receive.
+    """
+
+    db: Any
+    auth: Any
+
+
 class ModuleRegistry:
     """
 
@@ -232,6 +247,8 @@ def db_and_auth(db, auth_manager):
     """
     Backward compatibility fixture that returns both db and auth manager.
 
-    Returns a tuple: (db, auth_manager)
+    Returns a :class:`DatabaseAndAuth` (named tuple) shaped
+    ``(db, auth)`` — unpack positionally (``db, auth = db_and_auth``)
+    or read by name (``bundle.db``, ``bundle.auth``).
     """
-    return db, auth_manager
+    return DatabaseAndAuth(db=db, auth=auth_manager)
