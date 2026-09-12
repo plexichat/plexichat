@@ -46,6 +46,88 @@ def _invalidate_emoji_cache(server_id: int, emoji_id: Optional[int] = None) -> N
         )
 
 
+def _require_servers_module(servers_module, action: str):
+    """Return the servers module or fail closed with 503.
+
+    The emoji routes delegate membership and permission checks to the servers
+    module. Previously each call site guarded with ``if servers_module:``, so
+    an unwired module silently *skipped* the check and every authenticated
+    caller could read or mutate any server's emojis. A check that cannot be
+    evaluated must deny: report the deployment problem (503) rather than
+    granting access (see the soundboard ``W5`` route gate for the precedent).
+    """
+    if not servers_module:
+        logger.error(f"Servers module not available for {action}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Servers module not available"}},
+        )
+    return servers_module
+
+
+def _require_server_membership(
+    servers_module, user_id: int, server_id: int, action: str
+) -> None:
+    """Fail-closed membership gate for server-scoped emoji reads."""
+    _require_servers_module(servers_module, action)
+    try:
+        member = servers_module.get_member(server_id, user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error checking membership for server {server_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {
+                    "code": 500,
+                    "message": "Failed to verify server membership",
+                }
+            },
+        )
+    if not member:
+        logger.warning(
+            f"User {user_id} attempted to access emojis for server "
+            f"{server_id} they are not in"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Not a member of this server"}},
+        )
+
+
+def _require_manage_emojis(servers_module, user_id: int, server_id: int) -> None:
+    """Fail-closed ``emojis.manage``/``server.manage`` gate for emoji writes."""
+    _require_servers_module(servers_module, "emoji management")
+    from src.core.auth.permissions import has_permission
+
+    try:
+        perms = servers_module.get_permissions(user_id, server_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to load permissions for server {server_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {"code": 403, "message": "Missing emojis.manage permission"}
+            },
+        )
+    if not (
+        has_permission(perms, "emojis.manage") or has_permission(perms, "server.manage")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {"code": 403, "message": "Missing emojis.manage permission"}
+            },
+        )
+
+
 async def _dispatch_emoji_update(server_id: int):
     """Helper to dispatch GUILD_EMOJIS_UPDATE via WebSocket."""
     try:
@@ -95,6 +177,7 @@ async def _dispatch_emoji_update(server_id: int):
         400: {"model": ErrorResponse, "description": "Invalid server ID"},
         403: {"model": ErrorResponse, "description": "Not a member of this server"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 @cached(ttl=300)
@@ -128,38 +211,8 @@ async def get_server_emojis(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        # Check if user is member of server
-        if servers:
-            try:
-                member = servers.get_member(sid, current_user.user_id)
-                if not member:
-                    logger.warning(
-                        f"User {current_user.user_id} attempted to access emojis for server {sid} they are not in"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "Not a member of this server",
-                            }
-                        },
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(
-                    f"Error checking membership for server {sid}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "error": {
-                            "code": 500,
-                            "message": "Failed to verify server membership",
-                        }
-                    },
-                )
+        # Check if user is member of server (fail closed when unavailable)
+        _require_server_membership(servers, current_user.user_id, sid, "emoji listing")
 
         try:
             emojis = reactions.get_server_custom_emojis(sid)
@@ -196,6 +249,7 @@ async def get_server_emojis(
         400: {"model": ErrorResponse, "description": "Invalid server ID"},
         403: {"model": ErrorResponse, "description": "Not a member of this server"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 async def get_emoji_counts(
@@ -228,37 +282,9 @@ async def get_emoji_counts(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        if servers:
-            try:
-                member = servers.get_member(sid, current_user.user_id)
-                if not member:
-                    logger.warning(
-                        f"User {current_user.user_id} attempted to access emoji counts for server {sid} they are not in"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "Not a member of this server",
-                            }
-                        },
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(
-                    f"Error checking membership for server {sid}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "error": {
-                            "code": 500,
-                            "message": "Failed to verify server membership",
-                        }
-                    },
-                )
+        # Fail closed when the servers module cannot answer the membership
+        # question (see _require_server_membership).
+        _require_server_membership(servers, current_user.user_id, sid, "emoji counts")
 
         try:
             counts = reactions.get_emoji_counts(sid)
@@ -297,6 +323,7 @@ async def get_emoji_counts(
         400: {"model": ErrorResponse, "description": "Invalid emoji ID"},
         404: {"model": ErrorResponse, "description": "Emoji not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 @cached(ttl=3600)
@@ -309,6 +336,7 @@ async def get_emoji(
     Returns emoji details if found and user has access.
     """
     reactions = api.get_reactions()
+    servers = api.get_servers()
 
     if not reactions:
         logger.error("Reactions module not available")
@@ -345,6 +373,16 @@ async def get_emoji(
                     detail={"error": {"code": 404, "message": "Emoji not found"}},
                 )
 
+            # Fail closed on membership: this endpoint previously returned any
+            # emoji in any server to any authenticated caller because it never
+            # consulted the servers module at all.
+            _require_server_membership(
+                servers,
+                current_user.user_id,
+                int(server_id),
+                "emoji detail",
+            )
+
             return _emoji_to_response(emoji)
         except HTTPException:
             raise
@@ -380,6 +418,7 @@ async def get_emoji(
         403: {"model": ErrorResponse, "description": "Permission denied"},
         409: {"model": ErrorResponse, "description": "Emoji already exists"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 async def create_emoji(
@@ -418,24 +457,8 @@ async def create_emoji(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
-        # Check permissions
-        if servers_mod:
-            perms = servers_mod.get_permissions(current_user.user_id, sid)
-            from src.core.auth.permissions import has_permission
-
-            if not (
-                has_permission(perms, "emojis.manage")
-                or has_permission(perms, "server.manage")
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "error": {
-                            "code": 403,
-                            "message": "Missing emojis.manage permission",
-                        }
-                    },
-                )
+        # Check permissions (fail closed when the servers module is absent)
+        _require_manage_emojis(servers_mod, current_user.user_id, sid)
 
         # Read image data
         try:
@@ -533,6 +556,7 @@ async def create_emoji(
         404: {"model": ErrorResponse, "description": "Emoji not found"},
         409: {"model": ErrorResponse, "description": "Emoji name already exists"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 async def update_emoji(
@@ -562,24 +586,8 @@ async def update_emoji(
     try:
         sid = int(server_id)
 
-        # Check permissions
-        if servers_mod:
-            perms = servers_mod.get_permissions(current_user.user_id, sid)
-            from src.core.auth.permissions import has_permission
-
-            if not (
-                has_permission(perms, "emojis.manage")
-                or has_permission(perms, "server.manage")
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "error": {
-                            "code": 403,
-                            "message": "Missing emojis.manage permission",
-                        }
-                    },
-                )
+        # Check permissions (fail closed when the servers module is absent)
+        _require_manage_emojis(servers_mod, current_user.user_id, sid)
 
         try:
             emoji = reactions.update_custom_emoji(
@@ -646,6 +654,7 @@ async def update_emoji(
         403: {"model": ErrorResponse, "description": "Permission denied"},
         404: {"model": ErrorResponse, "description": "Emoji not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Servers module not available"},
     },
 )
 async def delete_emoji(
@@ -682,24 +691,8 @@ async def delete_emoji(
                 detail={"error": {"code": 400, "message": "Invalid ID"}},
             )
 
-        # Check permissions
-        if servers_mod:
-            perms = servers_mod.get_permissions(current_user.user_id, sid)
-            from src.core.auth.permissions import has_permission
-
-            if not (
-                has_permission(perms, "emojis.manage")
-                or has_permission(perms, "server.manage")
-            ):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "error": {
-                            "code": 403,
-                            "message": "Missing emojis.manage permission",
-                        }
-                    },
-                )
+        # Check permissions (fail closed when the servers module is absent)
+        _require_manage_emojis(servers_mod, current_user.user_id, sid)
 
         try:
             reactions.delete_custom_emoji(current_user.user_id, eid)
