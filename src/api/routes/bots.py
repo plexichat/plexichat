@@ -11,7 +11,11 @@ from fastapi import APIRouter, HTTPException, Depends, status, Query
 
 from pydantic import BaseModel, BeforeValidator
 
-from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.middleware.authentication import (
+    get_current_user,
+    get_optional_user,
+    TokenInfo,
+)
 from src.api.schemas.common import ErrorResponse
 from src.core import applications
 from src.core.applications.exceptions import (
@@ -537,10 +541,18 @@ async def review_bot_request(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_bot_profile(application_id: int):
-    """Get a bot's public profile."""
+async def get_bot_profile(
+    application_id: int,
+    current_user: Optional[TokenInfo] = Depends(get_optional_user),
+):
+    """Get a bot's public profile.
+
+    A profile marked private resolves only for the application owner; for
+    anyone else it is indistinguishable from a missing profile.
+    """
     try:
-        profile = applications.get_bot_profile(application_id)
+        viewer_id = current_user.user_id if current_user else None
+        profile = applications.get_bot_profile(application_id, viewer_id=viewer_id)
         if not profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

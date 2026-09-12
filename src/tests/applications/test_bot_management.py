@@ -56,6 +56,42 @@ class TestBotManagement:
         with pytest.raises(PermissionDeniedError, match="server.manage"):
             app_manager_with_servers.approve_bot(server.id, app.id, other.id)
 
+    def test_private_bot_profile_only_resolves_for_the_owner(
+        self, app_manager_with_servers, bot_test_users
+    ):
+        """A private profile must not leak to a direct lookup.
+
+        The directory filters private bots, so answering a direct lookup for
+        anyone else would expose the same records anyway.
+        """
+        owner, other = bot_test_users
+        app = app_manager_with_servers.create_application(owner.id, "Private Bot App")
+        app_manager_with_servers.update_bot_profile(
+            application_id=app.id, user_id=owner.id, private=True
+        )
+
+        assert app_manager_with_servers.get_bot_profile(app.id) is None
+        assert (
+            app_manager_with_servers.get_bot_profile(app.id, viewer_id=other.id) is None
+        )
+        owner_view = app_manager_with_servers.get_bot_profile(
+            app.id, viewer_id=owner.id
+        )
+        assert owner_view is not None and owner_view.private is True
+
+    def test_public_bot_profile_resolves_for_every_viewer(
+        self, app_manager_with_servers, bot_test_users
+    ):
+        owner, other = bot_test_users
+        app = app_manager_with_servers.create_application(owner.id, "Public Bot App")
+        app_manager_with_servers.update_bot_profile(
+            application_id=app.id, user_id=owner.id, private=False
+        )
+
+        for viewer in (None, other.id, owner.id):
+            profile = app_manager_with_servers.get_bot_profile(app.id, viewer_id=viewer)
+            assert profile is not None and profile.private is False
+
     def test_remove_approved_bot_requires_server_manage_permission(
         self, app_manager_with_servers, server_manager, bot_test_users
     ):

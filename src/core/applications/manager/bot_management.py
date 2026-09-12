@@ -362,16 +362,34 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         return [row_to_bot_request(row) for row in rows]
 
-    def get_bot_profile(self, application_id: SnowflakeID) -> Optional[BotProfile]:
+    def get_bot_profile(
+        self, application_id: SnowflakeID, viewer_id: Optional[SnowflakeID] = None
+    ) -> Optional[BotProfile]:
+        """Get a bot's profile.
+
+        A profile marked private is only returned to the application owner
+        (``viewer_id``). The directory already filters private entries, so
+        answering a direct lookup without this check would leak them anyway.
+        Returns ``None`` for a hidden profile exactly as for a missing one, so
+        the caller cannot distinguish "private" from "does not exist".
+        """
         row = self._db.fetch_one(
-            """SELECT application_id, description, short_description, avatar_url, banner_url,
-                      website_url, support_url, github_url, tags, nsfw, private, updated_at
-               FROM app_bot_profiles WHERE application_id = ?""",
+            """SELECT bp.application_id, bp.description, bp.short_description,
+                      bp.avatar_url, bp.banner_url, bp.website_url, bp.support_url,
+                      bp.github_url, bp.tags, bp.nsfw, bp.private, bp.updated_at,
+                      a.owner_id
+               FROM app_bot_profiles bp
+               JOIN app_applications a ON a.id = bp.application_id
+               WHERE bp.application_id = ?""",
             (application_id,),
         )
 
         if not row:
             return None
+
+        if row["private"]:
+            if viewer_id is None or int(row["owner_id"]) != int(viewer_id):
+                return None
 
         return row_to_bot_profile(row)
 
@@ -396,7 +414,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if app.owner_id != user_id:
             raise ApplicationAccessDeniedError("You do not own this application")
 
-        existing = self.get_bot_profile(application_id)
+        existing = self.get_bot_profile(application_id, viewer_id=user_id)
         now = self._get_timestamp()
 
         if existing:
@@ -465,7 +483,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         logger.info(f"Bot profile updated for application {application_id}")
 
-        result = self.get_bot_profile(application_id)
+        result = self.get_bot_profile(application_id, viewer_id=user_id)
         if result is None:
             raise ApplicationNotFoundError("Bot profile not found after save")
         return result

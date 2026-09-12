@@ -672,9 +672,11 @@ def get_bot_requests(
     )
 
 
-def get_bot_profile(application_id: int) -> Optional[BotProfile]:
-    """Get a bot's public profile."""
-    return _get_manager().get_bot_profile(application_id)
+def get_bot_profile(
+    application_id: int, viewer_id: Optional[int] = None
+) -> Optional[BotProfile]:
+    """Get a bot's public profile (private profiles only for their owner)."""
+    return _get_manager().get_bot_profile(application_id, viewer_id=viewer_id)
 
 
 def update_bot_profile(
