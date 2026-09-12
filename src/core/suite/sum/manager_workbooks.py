@@ -699,4 +699,8 @@ class SumManagerWorkbooks(SumManagerProtocol):
             subscribers = registry.get_subscribers(int(workbook_id))
             return len(subscribers) <= 1
         except Exception:
-            return True  # If we can't check, treat as solo
+            # Fail closed. This helper only selects the solo read fast-path;
+            # if the subscription state cannot be read we must not assume the
+            # workbook is solo. Routing through the live session instead
+            # preserves correctness in every unknown-state case.
+            return False
