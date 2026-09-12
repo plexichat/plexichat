@@ -356,3 +356,34 @@ class TestIceCandidateStateTransition:
 
         assert result is False
         assert connection.state == SignalingState.CONNECTING
+
+
+class TestFailClosedPermissions:
+    """Servers-module-unwired: voice authorization must fail CLOSED."""
+
+    def test_check_permission_fails_closed_without_servers(self, voice_manager):
+        original = voice_manager._servers
+        try:
+            voice_manager._servers = None
+            assert voice_manager._check_permission(1, 2, "voice.connect") is False
+        finally:
+            voice_manager._servers = original
+
+    def test_require_permission_denies_without_servers(self, voice_manager):
+        from src.core.voice.exceptions import PermissionDeniedError
+
+        original = voice_manager._servers
+        try:
+            voice_manager._servers = None
+            with pytest.raises(PermissionDeniedError):
+                voice_manager._require_permission(1, 2, "voice.connect")
+        finally:
+            voice_manager._servers = original
+
+    def test_list_voice_channels_fails_closed_without_servers(self, voice_manager):
+        original = voice_manager._servers
+        try:
+            voice_manager._servers = None
+            assert voice_manager.get_voice_channels(1, 2) == []
+        finally:
+            voice_manager._servers = original

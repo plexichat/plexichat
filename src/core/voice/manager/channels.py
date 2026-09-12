@@ -177,9 +177,19 @@ class ChannelOpsMixin(VoiceProtocol):
         # database to compute per-channel counts. The bulk COUNT is
         # scoped to the channels we will return, so we don't pay for
         # rows that the permissions filter will drop anyway.
+        # SECURITY: fail CLOSED when the servers module is unwired. Without
+        # it ``channels.view`` cannot be evaluated, so refuse to list any of
+        # the server's voice channels instead of leaking the full roster.
+        if not self._servers:
+            logger.warning(
+                "Servers module unavailable; refusing to list voice channels "
+                f"for server {server_id}"
+            )
+            return []
+
         visible_rows: list = []
         for row in rows:
-            if self._servers and not self._servers.has_permission(
+            if not self._servers.has_permission(
                 user_id, server_id, "channels.view", row["id"]
             ):
                 continue

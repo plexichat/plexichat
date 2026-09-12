@@ -107,11 +107,17 @@ class VoiceManager(
         permission: str,
         channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
-        if self._servers:
-            return self._servers.has_permission(
-                user_id, server_id, permission, channel_id
+        # SECURITY: fail CLOSED when the servers module is unwired. Voice is
+        # a server-scoped surface, so without the permission source nothing
+        # can be authorized; denying matches the reactions/webhooks managers
+        # and ``_get_server_channel``, which already returns None without it.
+        if not self._servers:
+            logger.warning(
+                f"Servers module unavailable; denying permission "
+                f"'{permission}' for user {user_id} in server {server_id}"
             )
-        return True
+            return False
+        return self._servers.has_permission(user_id, server_id, permission, channel_id)
 
     def _require_permission(
         self,
