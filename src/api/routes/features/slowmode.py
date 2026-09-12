@@ -125,22 +125,27 @@ async def get_channel_slowmode(
 
     # M4 FIX: reads are gated behind channel view access so an authenticated
     # user cannot confirm the existence of private cross-server channels.
+    # Fail closed when the servers module is unavailable: without it the gate
+    # cannot be evaluated, and skipping it leaked channel existence/slowmode
+    # for every channel id to any authenticated caller.
     servers_mod = api.get_servers()
-    if servers_mod:
+    if not servers_mod:
+        raise_internal("Servers module not available")
+
+    can_view = False
+    try:
+        can_view = servers_mod.get_channel(cid, current_user.user_id) is not None
+    except Exception:
         can_view = False
+    if not can_view:
+        exists = False
         try:
-            can_view = servers_mod.get_channel(cid, current_user.user_id) is not None
+            exists = bool(servers_mod.channel_exists(cid))
         except Exception:
-            can_view = False
-        if not can_view:
             exists = False
-            try:
-                exists = bool(servers_mod.channel_exists(cid))
-            except Exception:
-                exists = False
-            if not exists:
-                raise_not_found("Channel not found")
-            raise_forbidden("Channel access denied")
+        if not exists:
+            raise_not_found("Channel not found")
+        raise_forbidden("Channel access denied")
 
     slowmode_seconds = row["slowmode_seconds"] if isinstance(row, dict) else row[2]
     return {"channel_id": cid, "slowmode_seconds": slowmode_seconds or 0}
