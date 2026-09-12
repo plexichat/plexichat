@@ -95,12 +95,29 @@ async def login(
         masked_username = mask_string(body.username)
         logger.info(f"2FA challenge issued for user '{masked_username}'")
         return LoginResponse(
-            status="two_factor_required",
+            # Enum-safe: derive the wire value from AuthStatus so a future
+            # enum rename cannot silently reintroduce the C1 drift
+            # ("2fa_required" vs "two_factor_required") that broke the
+            # login -> 2FA -> token flow by falling through to success.
+            status=AuthStatus.TWO_FACTOR_REQUIRED.value,
             token=None,
             user=None,
             challenge_token=result.challenge_token,
             methods=result.methods,
             expires_in=result.expires_in,
+        )
+
+    # Fail closed: any non-success status that is not a 2FA challenge must
+    # never fall through to a "success" body with a null token (the C1
+    # failure mode). The core login only returns SUCCESS here or raises,
+    # so reaching this branch is an internal error.
+    if result.status != AuthStatus.SUCCESS:
+        logger.error(f"Unexpected auth status in login: {result.status!r}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": {"code": 500, "message": "Internal server error during login"}
+            },
         )
 
     masked_username = mask_string(body.username)
@@ -115,7 +132,7 @@ async def login(
     # short-lived single-use wst.* tickets minted via /auth/ws-ticket.
     set_session_cookie(response, result.token)
     return LoginResponse(
-        status="success",
+        status=AuthStatus.SUCCESS.value,
         token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,

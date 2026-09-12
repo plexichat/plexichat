@@ -744,12 +744,21 @@ async def oauth_callback(
 
         if result.status == AuthStatus.TWO_FACTOR_REQUIRED:
             return LoginResponse(
-                status="two_factor_required",
+                # Enum-safe wire value (see login.py C1 hardening).
+                status=AuthStatus.TWO_FACTOR_REQUIRED.value,
                 token=None,
                 user=None,
                 challenge_token=result.challenge_token,
                 methods=result.methods,
                 expires_in=result.expires_in,
+            )
+
+        # Fail closed: never fall through to "success" with a null token.
+        if result.status != AuthStatus.SUCCESS:
+            logger.error(f"Unexpected auth status in OAuth callback: {result.status!r}")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
         logger.info(f"OAuth login successful for {provider}:{external_id}")
@@ -765,7 +774,7 @@ async def oauth_callback(
         if result.token:
             set_session_cookie(response, result.token)
         return LoginResponse(
-            status="success",
+            status=AuthStatus.SUCCESS.value,
             token=session_token_for_response(request, result.token),
             user=_user_to_response(result.user) if result.user else None,
             expires_in=session_cookie_max_age(),

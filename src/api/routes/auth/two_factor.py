@@ -31,6 +31,7 @@ from src.core.auth.exceptions import (
     TwoFactorSetupError,
     UserNotFoundError,
 )
+from src.core.auth.models import AuthStatus
 from src.utils.net import get_client_ip
 
 try:
@@ -138,13 +139,23 @@ async def complete_2fa(
     logger.info(
         f"2FA completed successfully for user ID: {getattr(result.user, 'id', 'unknown')}"
     )
+    # Fail closed (C1): the verify step must only ever emit success when the
+    # core actually returned SUCCESS with a session token. Without this
+    # guard a future non-success AuthResult would be rendered as a
+    # "success" body with a null credential.
+    if result.status != AuthStatus.SUCCESS or not result.token:
+        logger.error(f"Unexpected auth status in 2FA completion: {result.status!r}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
     # M9 (same as login): the full session goes to browsers ONLY via the
     # HttpOnly cookie; the body carries a marker plus the session
     # lifetime, with the raw token echoed back solely for explicit
     # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
     set_session_cookie(response, result.token)
     return LoginResponse(
-        status="success",
+        status=AuthStatus.SUCCESS.value,
         token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,
