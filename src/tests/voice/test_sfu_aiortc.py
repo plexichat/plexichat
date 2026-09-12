@@ -81,11 +81,16 @@ class FakePC:
         ice_gathering_state="complete",
         remote_description=None,
         auto_gather=False,
+        signaling_state="stable",
     ):
         self._handlers = {}
         self.localDescription = None
         self.remoteDescription = remote_description
         self.iceGatheringState = ice_gathering_state
+        # A real pc starts "stable"; ``create_transport`` only builds a local
+        # offer from that state (or "new"), so a pending remote offer can be
+        # reported as a diagnosable error rather than an InvalidStateError.
+        self.signalingState = signaling_state
         self._sdp = sdp
         self.auto_gather = auto_gather
         self.data_channels = []

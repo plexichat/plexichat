@@ -198,9 +198,20 @@ class AiortcAdapter(SFUAdapter):
             processed_track = track
             if track.kind == "audio":
                 if self._acoustic_defense.enabled:
-                    processed_track = AudioProcessingTrack(
-                        track, self._acoustic_defense
-                    )
+                    # Contain the wrap: a processing failure must not stop the
+                    # track from being registered for this peer (the caller
+                    # would otherwise fall back to the unwrapped receiver
+                    # track and lose the acoustic defense silently).
+                    try:
+                        processed_track = AudioProcessingTrack(
+                            track, self._acoustic_defense
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            f"Acoustic defense wrap failed for peer {peer_id} "
+                            f"in room {room_id}, using the raw track: {exc}"
+                        )
+                        processed_track = track
                 # L1 (Agent 34): renegotiation redelivers tracks; appending
                 # unconditionally accumulated duplicate/ghost entries. Dedupe
                 # and prune to a bounded set per kind.
@@ -313,12 +324,22 @@ class AiortcAdapter(SFUAdapter):
         peer_id: str,
         offer_sdp: str,
     ) -> Dict[str, Any]:
-        """Feed the client's offer into the peer's aiortc connection.
+        """Answer the client's offer on the peer's aiortc connection.
 
         SECURITY-correctness (audit finding: SFU/media path dead):
         without setRemoteDescription the aiortc peer never learns the
         remote ICE/DTLS parameters, the handshake cannot complete, and
         no media flows despite the signaling layer reporting success.
+
+        The client's offer also makes THIS peer the **answerer**: nothing
+        creates a local description until an answer is built and installed.
+        Returning early used to leave ``localDescription`` empty, so the
+        caller fell back to ``create_transport()``, whose
+        ``createOffer()``/``setLocalDescription()`` raised
+        ``InvalidStateError`` in the ``have-remote-offer`` state -- the
+        client received synthetic SDP and media could never flow on the
+        in-process backend. The answer is rebuilt on every offer so
+        renegotiation works too.
         """
         peer = self._rooms.get(room_id, {}).get(peer_id)
         if peer is None:
@@ -333,6 +354,14 @@ class AiortcAdapter(SFUAdapter):
             await peer.pc.setRemoteDescription(remote)
         except Exception as e:
             raise SFUConnectionError(f"Failed to apply remote offer: {e}") from e
+
+        if peer.pc.signalingState == "have-remote-offer":
+            try:
+                answer = await peer.pc.createAnswer()
+                await peer.pc.setLocalDescription(answer)
+            except Exception as e:
+                raise SFUConnectionError(f"Failed to build SFU answer: {e}") from e
+
         local = peer.pc.localDescription
         if local is not None and local.sdp:
             return {"sdp": local.sdp, "type": local.type}
@@ -422,6 +451,16 @@ class AiortcAdapter(SFUAdapter):
         pc = peer.pc
 
         if pc.localDescription is None:
+            # The offer dance is only legal from "stable". In a pending remote
+            # offer (the client-offer flow) this peer is the answerer and
+            # ``apply_remote_offer`` must have already installed the answer --
+            # raise a diagnosable error instead of letting aiortc surface an
+            # InvalidStateError from deep inside setLocalDescription.
+            if pc.signalingState != "stable":
+                raise SFUConnectionError(
+                    f"Cannot create a local offer for peer {peer_id} in "
+                    f"signaling state '{pc.signalingState}'"
+                )
             pc.createDataChannel("transport-init-" + transport_id)
             offer = await pc.createOffer()
             await pc.setLocalDescription(offer)
