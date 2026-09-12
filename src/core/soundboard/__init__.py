@@ -72,7 +72,7 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, servers_module=None, media_module=None):
+def setup(db, *, servers_module=None, media_module=None):
     """
     Initialize the soundboard module.
 
@@ -80,6 +80,12 @@ def setup(db, servers_module=None, media_module=None):
         db: Database instance (must be connected)
         servers_module: Optional servers module for permission checks
         media_module: Optional media pipeline for byte uploads
+
+    ``servers_module`` and ``media_module`` are keyword-only: an earlier
+    positional ``(db, auth, config)``-shaped factory signature once let a
+    ``setup(db, config)`` call silently land the config object in the
+    wrong slot. Keyword-only arguments turn that class of mixup into an
+    immediate TypeError.
     """
     global _manager, _setup_complete
 

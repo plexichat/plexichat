@@ -268,7 +268,7 @@ class ModuleRegistry:
             from src.core import soundboard
 
             self._reset_module(soundboard)
-            soundboard.setup(self._db, self.servers)
+            soundboard.setup(self._db, servers_module=self.servers)
             self._cache["soundboard"] = soundboard._manager
         return self._cache["soundboard"]
 
