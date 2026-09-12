@@ -251,6 +251,18 @@ async def request_transcript_export(
             expires_at=result.get("expires_at"),
             error=result.get("error"),
         )
+    except PermissionError as e:
+        # Service-level authorization (defense-in-depth behind the route's
+        # own checks): non-participant exports are forbidden, not errors.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "You do not have permission to export transcripts",
+                }
+            },
+        ) from e
     except Exception as e:
         logger.error(f"Export request failed: {e}", exc_info=True)
         raise HTTPException(

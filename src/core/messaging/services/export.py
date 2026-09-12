@@ -14,6 +14,7 @@ import threading
 import time
 
 from pathlib import Path
+import re
 
 import utils.logger as logger
 import utils.config as config
@@ -21,6 +22,11 @@ from ..repositories.message import MessageRepository
 from ..repositories.participant import ParticipantRepository
 from .base import BaseService
 from src.core.base import SnowflakeID
+
+# Server-generated export IDs are always ``export_`` + base64url entropy.
+# The getters reject anything else so a crafted ``export_id`` can never
+# drive path construction (traversal) or probe bookkeeping.
+_EXPORT_ID_RE = re.compile(r"^export_[A-Za-z0-9_-]{16,}$")
 
 
 class TranscriptExportService(BaseService):
@@ -31,7 +37,10 @@ class TranscriptExportService(BaseService):
     # download requests served by a DIFFERENT worker process still find
     # the export instead of 404-ing (multi-worker amnesia).
     _exports: Dict[str, Dict[str, Any]] = {}
-    _lock = threading.Lock()
+    # RLock: ID allocation re-checks membership while the caller already
+    # holds the lock so generation + rate-check + placeholder reservation
+    # commit atomically in one critical section (no TOCTOU).
+    _lock = threading.RLock()
     _hydrated = False
 
     @staticmethod
@@ -48,14 +57,26 @@ class TranscriptExportService(BaseService):
 
     @classmethod
     def _new_export_id(cls) -> str:
-        """Generate a collision-free unpredictable export id (256-bit)."""
-        for _ in range(5):
+        """Generate a collision-free unpredictable export id (256-bit).
+
+        The membership re-check runs under the lock; callers that already
+        hold ``_lock`` (request_export's atomic reserve) stay correct
+        because the lock is re-entrant, and the placeholder insert below
+        lands before the outer critical section is released.
+        """
+        for _ in range(10):
             candidate = f"export_{secrets.token_urlsafe(32)}"
             with cls._lock:
                 if candidate not in cls._exports:
                     return candidate
-        # Astronomically unlikely; fall back to timestamp-mixed entropy.
-        return f"export_{secrets.token_urlsafe(32)}_{time.time_ns()}"
+        # 10 consecutive 256-bit collisions is effectively impossible;
+        # fail closed rather than falling back to anything predictable.
+        raise RuntimeError("export id allocation failed: repeated collision")
+
+    @staticmethod
+    def _is_valid_export_id(export_id: Any) -> bool:
+        """True only for server-shaped export IDs (traversal-safe)."""
+        return isinstance(export_id, str) and bool(_EXPORT_ID_RE.match(export_id))
 
     @staticmethod
     def _ensure_private_dir(path: Path) -> None:
@@ -73,8 +94,10 @@ class TranscriptExportService(BaseService):
         ``open()`` + ``chmod`` leaves the bytes world-readable under a
         permissive umask until the chmod lands; ``os.open`` with an explicit
         mode applies the restriction at creation time instead.
+        O_EXCL fails closed on collision; O_NOFOLLOW refuses to follow a
+        pre-planted symlink at the target path.
         """
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path, flags, 0o600)
         try:
             if isinstance(content, str):
@@ -118,9 +141,9 @@ class TranscriptExportService(BaseService):
         """Request a transcript export."""
         export_config = config.get("transcript_export", {})
         retention_hours = export_config.get("temporary_storage_hours", 24)
-        export_id = self._new_export_id()
 
         file_path: Optional[str] = None
+        export_id: Optional[str] = None
         now = time.time()
         try:
             # AUTHORIZATION FIRST: a non-participant must never consume
@@ -134,9 +157,11 @@ class TranscriptExportService(BaseService):
 
             # RATE LIMIT next, enforced BEFORE any generation work or file
             # creation so a rate-limited caller never produces an untracked
-            # plaintext file on disk. The pending placeholder is reserved
-            # under the SAME lock hold as the count, so concurrent bursts
-            # cannot each pass the check before the others are recorded.
+            # plaintext file on disk. ID allocation, the count check, and
+            # the pending placeholder reservation all commit under ONE
+            # lock hold, so concurrent bursts cannot each pass the check
+            # before the others are recorded and cannot pick the same ID
+            # between generation and reservation (TOCTOU closed).
             min_interval = export_config.get("rate_limit", {}).get(
                 "requests_per_hour", 5
             )
@@ -150,8 +175,13 @@ class TranscriptExportService(BaseService):
                 )
                 if recent_count >= min_interval:
                     rate_limited = True
+                    # Untracked ID for the response only: never inserted,
+                    # so a limited caller consumes no slot and leaves no
+                    # entry behind.
+                    export_id = self._new_export_id()
                 else:
                     rate_limited = False
+                    export_id = self._new_export_id()
                     self._exports[export_id] = {
                         "export_id": export_id,
                         "user_id": str(user_id),
@@ -233,6 +263,30 @@ class TranscriptExportService(BaseService):
                     os.rmdir(os.path.dirname(file_path))
                 except OSError:
                     pass
+            if isinstance(e, PermissionError):
+                # Authorization failure leaves NOTHING behind: no file
+                # (none was created), no bookkeeping entry, no rate-limit
+                # budget consumed. The response carries an untracked ID so
+                # the caller learns nothing enumerable.
+                return {
+                    "export_id": export_id or f"export_{secrets.token_urlsafe(32)}",
+                    "status": "failed",
+                    "message_count": 0,
+                    "file_url": None,
+                    "expires_at": None,
+                    "error": str(e),
+                }
+            if export_id is None:
+                # Allocation itself failed (collision storm): nothing was
+                # reserved, so report without inserting.
+                return {
+                    "export_id": f"export_{secrets.token_urlsafe(32)}",
+                    "status": "failed",
+                    "message_count": 0,
+                    "file_url": None,
+                    "expires_at": None,
+                    "error": str(e),
+                }
             failed_at = time.time()
             with self._lock:
                 self._exports[export_id] = {
@@ -256,6 +310,8 @@ class TranscriptExportService(BaseService):
 
     def get_export_status(self, export_id: str) -> Optional[Dict[str, Any]]:
         """Get the status of an export."""
+        if not self._is_valid_export_id(export_id):
+            return None
         self._cleanup_expired()
         self._hydrate()
         with self._lock:
@@ -264,6 +320,8 @@ class TranscriptExportService(BaseService):
 
     def get_export_file_path(self, export_id: str, user_id: str = "") -> Optional[str]:
         """Get the file path for a completed export (with optional ownership check)."""
+        if not self._is_valid_export_id(export_id):
+            return None
         self._cleanup_expired()
         self._hydrate()
         with self._lock:
@@ -276,8 +334,16 @@ class TranscriptExportService(BaseService):
 
     @classmethod
     def _persist_record(cls, info: Dict[str, Any]) -> None:
-        """Persist an export record so other worker processes can see it."""
+        """Persist an export record so other worker processes can see it.
+
+        The record is written to a uniquely-named temp file created with
+        O_EXCL 0600 (``tempfile.mkstemp``) in the same directory and then
+        atomically renamed over the target: no predictable ``.tmp`` path,
+        no truncate-follows-symlink window, no world-readable bytes.
+        """
         try:
+            if not cls._is_valid_export_id(info.get("export_id")):
+                return
             records_dir = cls._records_dir()
             cls._ensure_private_dir(records_dir)
             try:
@@ -285,24 +351,27 @@ class TranscriptExportService(BaseService):
             except OSError:
                 pass
             record_path = records_dir / f"{info['export_id']}.json"
-            tmp_path = str(record_path) + ".tmp"
             payload = json.dumps(info)
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-            fd = os.open(tmp_path, flags, 0o600)
+            # mkstemp: O_CREAT|O_EXCL|O_NOFOLLOW, mode 0600 at creation.
+            fd, tmp_path = tempfile.mkstemp(dir=str(records_dir), prefix=".tmp-")
             try:
+                try:
+                    os.chmod(tmp_path, 0o600)
+                except OSError:
+                    pass
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(payload)
+                os.replace(tmp_path, record_path)
+                try:
+                    os.chmod(record_path, 0o600)
+                except OSError:
+                    pass
             except BaseException:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
                 raise
-            os.replace(tmp_path, record_path)
-            try:
-                os.chmod(record_path, 0o600)
-            except OSError:
-                pass
         except Exception as e:
             logger.warning(
                 f"Transcript export: failed to persist record "
@@ -321,6 +390,14 @@ class TranscriptExportService(BaseService):
                 records_dir = cls._records_dir()
                 if records_dir.is_dir():
                     now = time.time()
+                    # Best-effort sweep of stale mkstemp leftovers from
+                    # crashed workers (never matched by the *.json glob).
+                    for stale in records_dir.glob(".tmp-*"):
+                        try:
+                            if now - stale.stat().st_mtime > 3600:
+                                stale.unlink(missing_ok=True)
+                        except OSError:
+                            continue
                     for record_file in records_dir.glob("*.json"):
                         try:
                             with open(record_file, encoding="utf-8") as f:
