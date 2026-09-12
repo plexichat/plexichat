@@ -1009,11 +1009,12 @@ def sweep_routes(root: Path) -> list[Hit]:
             reason = PUBLIC_BY_DESIGN.get(key)
             if reason is None and rel in PUBLIC_FILES:
                 reason = PUBLIC_FILES[rel]
+            symbol = f"{method} {route_path}"
             if reason is not None:
-                hits.append(Hit(PUBLIC, rel, line_no, route_path, reason))
+                hits.append(Hit(PUBLIC, rel, line_no, symbol, reason))
                 continue
             if key in REVIEWED_OK:
-                hits.append(Hit(PUBLIC, rel, line_no, route_path, REVIEWED_OK[key]))
+                hits.append(Hit(PUBLIC, rel, line_no, symbol, REVIEWED_OK[key]))
                 continue
             if not resolved or not source:
                 hits.append(
@@ -1021,7 +1022,7 @@ def sweep_routes(root: Path) -> list[Hit]:
                         REVIEW,
                         rel,
                         line_no,
-                        f"{method} {route_path}",
+                        symbol,
                         "handler source could not be resolved; authorization "
                         "surface unknown",
                     )
@@ -1059,7 +1060,7 @@ def sweep_routes(root: Path) -> list[Hit]:
                         NO_AUTH,
                         rel,
                         line_no,
-                        f"{method} {route_path}",
+                        symbol,
                         "no authentication dependency on this route",
                     )
                 )
@@ -1070,7 +1071,7 @@ def sweep_routes(root: Path) -> list[Hit]:
                         UNAUTHZ,
                         rel,
                         line_no,
-                        f"{method} {route_path}",
+                        symbol,
                         "mutating route resolves the caller but never uses that "
                         "identity or any permission/scope check",
                     )
