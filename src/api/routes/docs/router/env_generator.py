@@ -62,7 +62,7 @@ class EnvGeneratorMixin:
         </div>
 
         <div class="warning-box">
-            <strong>Important:</strong> Save this file as <code>.env.generated</code> in your Plexichat directory. Never commit this file to version control. Keep a backup of your encryption keys.
+            <strong>Important:</strong> Save this file as <code>.env.generated</code> in your Plexichat directory. It holds database, cache, storage, and encryption secrets: create it under <code>umask 077</code> and keep it <code>chmod 600</code> (e.g. save, then run <code>chmod 600 .env.generated</code>). Never commit this file to version control. Keep a backup of your encryption keys.
         </div>
 
         <h2>Deployment Instructions</h2>

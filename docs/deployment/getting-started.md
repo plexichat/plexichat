@@ -212,17 +212,22 @@ To override ports or add host mounts, create `docker-compose.override.yml` next 
 Create `plexichat/.env` from the example:
 
 ```bash
+umask 077
 cp plexichat/.env.example plexichat/.env
+chmod 600 plexichat/.env
 # Set strong values for POSTGRES_PASSWORD, VALKEY_PASSWORD, S3_ACCESS_KEY,
 # S3_SECRET_KEY, and BACKUP_RESTIC_PASSWORD.
 ```
 
-Or generate values:
+Or generate values (under `umask 077` so the secrets file is created `0600`
+even if `chmod` below were skipped):
 
 ```bash
+umask 077
 echo "PLEXICHAT_SYSTEM_KEY=$(openssl rand -hex 32)" >> plexichat/.env
 echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)" >> plexichat/.env
 echo "VALKEY_PASSWORD=$(openssl rand -base64 32)" >> plexichat/.env
+chmod 600 plexichat/.env
 ```
 
 ### Database migrations in Docker

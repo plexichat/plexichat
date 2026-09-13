@@ -1,5 +1,29 @@
 name: plexichat
 
+# Supply-chain policy (Agent 54 hardening, fail-closed by default).
+#
+# Compose ref pinning: this file is the canonical compose source. Operators
+# who fetch it remotely MUST pin a released tag (e.g.
+# BACKEND_VERSION=a.1.0-131) and verify the SHA256 sidecar / out-of-band
+# digest before `docker compose up`. Fetching docker-compose.yml from the
+# unreleased `dev` branch is forbidden unless explicitly opted into with
+# ALLOW_DEV_COMPOSE=1, which the deploy script treats as tracking
+# unverified infrastructure-as-code.
+#
+# Registry trust: first-party images default to the project's private
+# registry (gitlab.plexichat.com, rewritten to registry.plexichat.com by the
+# deploy script). Falling back to Docker Hub (docker.io, a different trust
+# domain with unpinned digests and squattable namespaces) is forbidden
+# unless explicitly opted into with ALLOW_DOCKERHUB_FALLBACK=1. Third-party
+# images below are pinned to stable tags; verify digests out-of-band
+# (`docker pull <image> && docker inspect --format '{{.RepoDigests}}'`)
+# before production deploys.
+#
+# Secrets: every service here (except the static `client` nginx, which
+# deliberately receives no env_file) reads the shared `.env`, which holds
+# Postgres/Valkey/S3/restic secrets. Create it with `umask 077` and keep it
+# `chmod 600` at all times; never commit it to version control.
+
 # Version to deploy (e.g., a.1.0-55)
 # Set via: BACKEND_VERSION=X CLIENT_VERSION=Y docker compose up -d
 # Defaults to latest if not specified
@@ -149,7 +173,9 @@ services:
 
   clamav-unofficial-sigs:
     restart: unless-stopped
-    image: ghcr.io/extremeshok/clamav-unofficial-sigs:latest
+    # Pinned to the 8.0.0 release (never :latest): a floating tag lets
+    # rebuilds drift silently and defeats digest verification.
+    image: ghcr.io/extremeshok/clamav-unofficial-sigs:8.0.0
     environment:
       CUS_MODE: updater
       CUS_UPDATE_HOURS: "2"

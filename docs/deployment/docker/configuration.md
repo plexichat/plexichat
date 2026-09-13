@@ -35,7 +35,9 @@ curl -sSL https://plexichat.com/deploy.sh | bash
 This is the recommended approach for local development.
 
 ```bash
+umask 077
 cp .env.example .env
+chmod 600 .env
 nano .env
 ```
 

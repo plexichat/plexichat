@@ -23,7 +23,9 @@ docker compose version
 Generate a secure `.env` file with the [environment generator](/docs/api/deployment/env-generator), or copy `plexichat/.env.example:1`:
 
 ```bash
+umask 077
 cp plexichat/.env.example plexichat/.env
+chmod 600 plexichat/.env
 # Edit plexichat/.env and set strong values for POSTGRES_PASSWORD, VALKEY_PASSWORD,
 # S3_ACCESS_KEY, S3_SECRET_KEY, and BACKUP_RESTIC_PASSWORD.
 ```
