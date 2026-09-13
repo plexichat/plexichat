@@ -1,4 +1,4 @@
-from typing import Any, Optional, List
+from typing import Any, Dict, Optional, List
 
 from ..models import Thread, ThreadType, ThreadState
 from ..exceptions import (
@@ -15,6 +15,24 @@ from .protocol import ThreadProtocol
 
 
 class ThreadListingMixin(ThreadProtocol):
+    def _channel_view_allowed(
+        self, user_id: int, channel: Dict[str, Any], channel_id: int
+    ) -> bool:
+        """Evaluate ``channels.view`` for a channel, independent of its contents.
+
+        SECURITY: the channel listing used to derive this from the threads it
+        had already fetched, so a channel with no matching threads returned an
+        empty list *before* the permission was ever evaluated -- the check was
+        skipped rather than answered. The permission is a property of the
+        caller and the channel, not of the rows, so it is resolved here, up
+        front, and fails closed when the channel has no owning server or the
+        servers module is not wired (``_check_permission``).
+        """
+        server_id = channel.get("server_id")
+        if server_id is None:
+            return False
+        return self._check_permission(user_id, server_id, "channels.view", channel_id)
+
     def get_thread(self, user_id: int, thread_id: int) -> Optional[Thread]:
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
         if not thread:
@@ -37,6 +55,8 @@ class ThreadListingMixin(ThreadProtocol):
         channel = _get_channel(self._db, channel_id)
         if not channel:
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
+
+        has_server_view = self._channel_view_allowed(user_id, channel, channel_id)
 
         rows = self._db.fetch_all(
             """SELECT * FROM thread_threads 
@@ -79,22 +99,9 @@ class ThreadListingMixin(ThreadProtocol):
             )
             member_thread_ids = {r["thread_id"] for r in rows}
 
-        # SECURITY: default to NO server view; only a positive permission
-        # check (which itself fails closed without a servers module) may
-        # reveal public threads.
-        has_server_view = False
-        public_exists = any(t.thread_type != ThreadType.PRIVATE for t in active_threads)
-        if public_exists and self._servers:
-            first_public = next(
-                t for t in active_threads if t.thread_type != ThreadType.PRIVATE
-            )
-            has_server_view = self._check_permission(
-                user_id,
-                first_public.server_id,
-                "channels.view",
-                first_public.channel_id,
-            )
-
+        # SECURITY: ``has_server_view`` was resolved above from the channel
+        # itself, so an empty listing cannot bypass the check. Public threads
+        # are revealed only by that positive result.
         for thread in active_threads:
             if thread.thread_type == ThreadType.PRIVATE:
                 if thread.id in member_thread_ids:
@@ -114,6 +121,8 @@ class ThreadListingMixin(ThreadProtocol):
         channel = _get_channel(self._db, channel_id)
         if not channel:
             raise ChannelNotFoundError(f"Channel {channel_id} not found")
+
+        has_server_view = self._channel_view_allowed(user_id, channel, channel_id)
 
         if before_timestamp:
             rows = self._db.fetch_all(
@@ -151,22 +160,8 @@ class ThreadListingMixin(ThreadProtocol):
             )
             member_thread_ids = {r["thread_id"] for r in rows}
 
-        # SECURITY: same fail-closed default as get_active_threads.
-        has_server_view = False
-        public_exists = any(
-            t.thread_type != ThreadType.PRIVATE for t in archived_threads
-        )
-        if public_exists and self._servers:
-            first_public = next(
-                t for t in archived_threads if t.thread_type != ThreadType.PRIVATE
-            )
-            has_server_view = self._check_permission(
-                user_id,
-                first_public.server_id,
-                "channels.view",
-                first_public.channel_id,
-            )
-
+        # SECURITY: same up-front, contents-independent check as
+        # get_active_threads (and the same fail-closed default).
         threads = []
         for thread in archived_threads:
             if thread.thread_type == ThreadType.PRIVATE:
