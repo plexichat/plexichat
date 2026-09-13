@@ -41,6 +41,19 @@ Four sweeps:
      never supplied. The same fail-open shape as A-F in the media plane: the
      missing dependency (real transport parameters) is replaced with a value
      that makes the negotiation *appear* to succeed, while no media can flow.
+  H. ``plexichat-client`` <-> ``src/api`` media callbacks -- a field the
+     client sends on a voice opcode that the matching gateway handler never
+     reads. The callback is *recorded* (sent) and never *delivered* (consumed):
+     the peer speaking indicator (``speaking``/``volume``) and the recording
+     consent (``consented``) both sat in this class, the latter while
+     ``VoiceCallManager.add_consent`` -- the only writer of
+     ``consented_participants`` -- had no caller at all. Sweeps A-G ask whether
+     a check runs; H asks whether the thing it guards ever arrives.
+
+Sweep H needs both trees: it is skipped (and reported as skipped, never as a
+pass) when the sibling ``plexichat-client`` checkout is absent. Fields that are
+informational by design carry a recorded verdict in ``REVIEWED_CALLBACK_FIELDS``
+/ ``REVIEWED_CALLBACK_FIELDS_BY_OPCODE`` -- an unreviewed hit gates the run.
 
 Sweeps A-C find *fail-open guards*: an existing check that skips. Sweep D is a
 presence check over every HTTP route and gateway opcode handler, parsed with
@@ -93,6 +106,7 @@ UNCHECKED = "UNCHECKED"  # sweep E: write method takes a caller id it never uses
 NO_AUTH = "NO-AUTH"  # sweep D: endpoint with no authentication dependency
 UNAUTHZ = "UNAUTHZ"  # sweep D: authenticated but no visible authorization call
 PUBLIC = "PUBLIC"  # sweep D: verified public/self-scoped by design
+UNDELIVERED = "UNDELIVERED"  # sweep H: a field the client sends that no handler reads
 
 # Cross-module dependencies: their absence means "cannot authorize".
 DEP_ATTRS = {
@@ -941,6 +955,153 @@ def sweep_sdp_fabrication(root: Path) -> list[Hit]:
 
 
 # ---------------------------------------------------------------------------
+# Sweep H: media callbacks the client sends that no handler ever reads
+# ---------------------------------------------------------------------------
+
+# A field is only "undelivered" if the client sends it on an opcode the server
+# does handle. These are the fields individually verified as informational --
+# the server resolves everything they could influence from the authenticated
+# caller instead, so dropping one is not a gap.
+REVIEWED_CALLBACK_FIELDS: dict[str, str] = {
+    "target_user_id": (
+        "the SFU/media peer is always resolved from the authenticated sender's "
+        "own connection; a client-chosen peer id is never honored"
+    ),
+    "type": (
+        "the SDP role comes from the opcode (offer vs answer); the server sets "
+        "the SDPMessage type itself"
+    ),
+}
+
+# Opcode-specific verdicts: (opcode name, field) -> why the field is unused.
+REVIEWED_CALLBACK_FIELDS_BY_OPCODE: dict[tuple[str, str], str] = {
+    ("VOICE_DISCONNECT", "channel_id"): (
+        "the opcode drops only the caller's own session; the channel is "
+        "resolved from their persisted voice state"
+    ),
+    ("VOICE_SPEAKING", "acoustic_defense"): (
+        "client-local speaking-detection threshold; the server-side acoustic "
+        "defense is deployment config applied when the SFU adapter is built"
+    ),
+}
+
+# ``this._sendVoiceMessage(this.OPCODES.NAME, {k: v, ...})``
+_SEND_VOICE_CALL_RE = re.compile(
+    r"_sendVoiceMessage\(\s*this\.OPCODES\.([A-Z0-9_]+)\s*,\s*\{(?P<body>[^}]*)\}",
+    re.DOTALL,
+)
+_OBJECT_KEY_RE = re.compile(r"([A-Za-z_$][\w$]*)\s*:")
+
+
+def _client_voice_sends(
+    client_root: Path,
+) -> tuple[list[tuple[str, str, str, int]], bool]:
+    """``(opcode, field, client-relative path, line)`` for every send payload.
+
+    Returns ``available=False`` when the client checkout cannot be found, so
+    the caller reports a skip rather than an empty (and falsely clean) pass.
+    """
+    js_root = client_root / "src"
+    if not js_root.is_dir():
+        return [], False
+
+    found: list[tuple[str, str, str, int]] = []
+    for path in sorted(js_root.rglob("*.js")):
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "_sendVoiceMessage" not in source:
+            continue
+        rel = f"{client_root.name}/{path.relative_to(client_root)}"
+        for match in _SEND_VOICE_CALL_RE.finditer(source):
+            line = source.count("\n", 0, match.start()) + 1
+            for key in _OBJECT_KEY_RE.findall(match.group("body")):
+                found.append((match.group(1), key, rel, line))
+    return found, bool(found)
+
+
+def _handler_payload_reads(root: Path) -> dict[str, set[str]]:
+    """Map ``handle_voice_*`` function name -> payload keys it reads."""
+    path = root / "src" / "api" / "websocket" / "handlers" / "voice.py"
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return {}
+
+    reads: dict[str, set[str]] = {}
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not fn.name.startswith("handle_voice_"):
+            continue
+        keys: set[str] = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "get"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "data"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    keys.add(node.args[0].value)
+            elif isinstance(node, ast.Subscript):
+                if (
+                    isinstance(node.value, ast.Name)
+                    and node.value.id == "data"
+                    and isinstance(node.slice, ast.Constant)
+                    and isinstance(node.slice.value, str)
+                ):
+                    keys.add(node.slice.value)
+        reads[fn.name] = keys
+    return reads
+
+
+def sweep_callback_delivery(root: Path, client_root: Path) -> tuple[list[Hit], bool]:
+    """Sweep H: client-sent media fields no server handler consumes."""
+    sends, available = _client_voice_sends(client_root)
+    if not available:
+        return [], False
+
+    reads = _handler_payload_reads(root)
+    if not reads:
+        return [], False
+
+    hits: dict[tuple[str, str], Hit] = {}
+    for opcode, field, rel, line in sends:
+        handler_reads = reads.get(f"handle_{opcode.lower()}")
+        if handler_reads is None:
+            # No server handler for the opcode at all -- a different class,
+            # covered by the route/handler inventory (sweep D).
+            continue
+        if field in handler_reads:
+            continue
+        if field in REVIEWED_CALLBACK_FIELDS:
+            continue
+        if (opcode, field) in REVIEWED_CALLBACK_FIELDS_BY_OPCODE:
+            continue
+        hits.setdefault(
+            (opcode, field),
+            Hit(
+                UNDELIVERED,
+                rel,
+                line,
+                f"{opcode}.{field}",
+                f"the client sends `{field}` on {opcode} and its gateway handler "
+                "never reads it: the callback is sent and never delivered",
+            ),
+        )
+
+    return sorted(hits.values(), key=lambda h: (h.symbol, h.path)), True
+
+
+# ---------------------------------------------------------------------------
 # Sweep D: route / websocket-handler authorization inventory
 # ---------------------------------------------------------------------------
 
@@ -1472,6 +1633,8 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
 
     fabricated = sweep_sdp_fabrication(root)
 
+    undelivered, callbacks_scanned = sweep_callback_delivery(root, client_root)
+
     manager_hits = sweep_managers(root)
     unchecked = [h for h in manager_hits if h.kind == UNCHECKED]
     non_auth = non_auth + [h for h in manager_hits if h.kind == NON_AUTH]
@@ -1500,6 +1663,11 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
         f"- FABRICATED (SDP answer with invented ICE/DTLS credentials): "
         f"{len(fabricated)}"
     )
+    out.append(
+        f"- UNDELIVERED (client media callback no handler reads): "
+        f"{len(undelivered)}"
+        + ("" if callbacks_scanned else " (sweep H skipped: client tree not found)")
+    )
     out.append(f"- REVIEW (needs a human call): {len(reviews)}")
     out.append(f"- NON-AUTH (verified denying/plumbing): {len(non_auth)}")
     out.append(f"- UNCHECKED (manager write ignoring its caller id): {len(unchecked)}")
@@ -1518,6 +1686,10 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
         (
             "FABRICATED - SDP answer with invented ICE/DTLS credentials",
             fabricated,
+        ),
+        (
+            "UNDELIVERED - client media callback that no handler reads",
+            undelivered,
         ),
         ("REVIEW - needs a human call", reviews),
         ("NON-AUTH - verified fine", non_auth),
@@ -1547,16 +1719,21 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
             out.append(f"| `{hit.path}:{hit.line}` | `{hit.symbol}` | {hit.detail} |")
         out.append("")
 
-    return "\n".join(out), len(grants) + len(fabricated), len(no_auth) + len(unchecked)
+    fail_open = len(grants) + len(fabricated)
+    verdict_missing = len(no_auth) + len(unchecked) + len(undelivered)
+    return "\n".join(out), fail_open, verdict_missing
 
 
 def main(argv: list[str] | None = None) -> int:
+    # NOTE: sweep H is reported as skipped (not as a pass) when the sibling
+    # client checkout is absent, so a run without it cannot silently lose the
+    # callback-contract coverage.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="plexichat server root")
     parser.add_argument(
         "--client-root",
         default="../plexichat-client",
-        help="plexichat-client root (for sweep C)",
+        help="plexichat-client root (for sweeps C and H)",
     )
     parser.add_argument(
         "--findings",
@@ -1579,7 +1756,7 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.output).write_text(text + "\n", encoding="utf-8")
         print(
             f"wrote {args.output} ({grant_count} GRANT/FABRICATED, "
-            f"{no_auth_count} NO-AUTH/UNCHECKED hits)"
+            f"{no_auth_count} NO-AUTH/UNCHECKED/UNDELIVERED hits)"
         )
     return 1 if (grant_count or no_auth_count) else 0
 
