@@ -686,10 +686,12 @@ class TestRoomInfo:
 
     @pytest.mark.asyncio
     async def test_set_preferred_layers_reports_not_applied(self):
-        """aiortc negotiates one encoding, so the hint cannot be honoured.
+        """Nothing to change (that peer is not in a room) reports False.
 
-        It must say so instead of returning True: ``BandwidthEstimator`` logs
-        a degradation as applied on a True result, which would be a lie.
+        ``BandwidthEstimator`` logs a degradation as applied on a True result,
+        so a no-op must never claim success. The positive path -- suspending a
+        real video sender -- is covered in
+        ``test_sfu_aiortc_layer_hint_apply.py``.
         """
         adapter = AiortcAdapter()
         assert await adapter.set_preferred_layers("r", "p", "c", 0, 1) is False

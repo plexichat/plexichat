@@ -220,6 +220,9 @@ class AiortcPeer:
     incoming_audio_tracks: List[Any] = field(default_factory=list)
     incoming_video_tracks: List[Any] = field(default_factory=list)
     producer_tracks: Dict[str, Any] = field(default_factory=dict)
+    # Senders whose video track was suspended by a degradation hint, mapped
+    # back to the track that must be re-attached to restore them.
+    suspended_senders: Dict[Any, Any] = field(default_factory=dict)
 
 
 class AiortcAdapter(SFUAdapter):
@@ -415,6 +418,22 @@ class AiortcAdapter(SFUAdapter):
         if len(tracks) > max_len:
             del tracks[: len(tracks) - max_len]
 
+    @staticmethod
+    def _sender_for_track(peer: AiortcPeer, track: Any) -> Any:
+        """Return a sender already forwarding ``track``, including suspended ones.
+
+        A sender suspended by a degradation hint reports ``track is None``, so
+        identity against ``sender.track`` alone is not enough: re-adding the
+        track would create a duplicate sender and trigger a spurious
+        renegotiation.
+        """
+        if track is None:
+            return None
+        for sender in peer.pc.getSenders():
+            if sender.track is track or peer.suspended_senders.get(sender) is track:
+                return sender
+        return None
+
     def _remove_forwarded_senders(self, room_id: str, track: Any) -> None:
         """Remove every sender forwarding ``track`` on other peers' PCs.
 
@@ -431,7 +450,11 @@ class AiortcAdapter(SFUAdapter):
             except Exception:
                 continue
             for sender in senders:
-                if getattr(sender, "track", None) is track:
+                if (
+                    getattr(sender, "track", None) is track
+                    or peer.suspended_senders.get(sender) is track
+                ):
+                    peer.suspended_senders.pop(sender, None)
                     try:
                         peer.pc.removeTrack(sender)
                     except Exception as e:
@@ -596,6 +619,7 @@ class AiortcAdapter(SFUAdapter):
         peer.producer_tracks.clear()
         peer.producers.clear()
         peer.consumers.clear()
+        peer.suspended_senders.clear()
 
         del self._rooms[room_id][peer_id]
         self._last_quality_sample.pop(peer_id, None)
@@ -715,6 +739,9 @@ class AiortcAdapter(SFUAdapter):
         if track is None:
             return
 
+        if self._sender_for_track(target_peer, track) is not None:
+            return
+
         try:
             target_peer.pc.addTrack(track)
             if target_peer.pc.remoteDescription is not None:
@@ -803,11 +830,7 @@ class AiortcAdapter(SFUAdapter):
             raise SFUConnectionError(f"Producer {producer_id} not found")
 
         if producer_track is not None:
-            already_wired = False
-            for sender in peer.pc.getSenders():
-                if sender.track is producer_track:
-                    already_wired = True
-                    break
+            already_wired = self._sender_for_track(peer, producer_track) is not None
             if not already_wired:
                 try:
                     peer.pc.addTrack(producer_track)
@@ -949,6 +972,49 @@ class AiortcAdapter(SFUAdapter):
             "fecMechanisms": [],
         }
 
+    @staticmethod
+    def _suspend_video_senders(peer: AiortcPeer) -> bool:
+        """Detach every outbound video track from ``peer``'s connection.
+
+        The coarse equivalent of dropping to the lowest simulcast layer on a
+        backend with a single encoding: video stops, audio keeps flowing.
+        Returns whether any sender changed state.
+        """
+        changed = False
+        try:
+            senders = list(peer.pc.getSenders())
+        except Exception as exc:
+            logger.debug(f"Could not enumerate senders for {peer.peer_id}: {exc}")
+            return False
+        for sender in senders:
+            track = getattr(sender, "track", None)
+            if track is None or getattr(track, "kind", None) != "video":
+                continue
+            if sender in peer.suspended_senders:
+                continue
+            try:
+                sender.replaceTrack(None)
+            except Exception as exc:
+                logger.debug(f"Could not suspend video sender on {peer.peer_id}: {exc}")
+                continue
+            peer.suspended_senders[sender] = track
+            changed = True
+        return changed
+
+    @staticmethod
+    def _restore_video_senders(peer: AiortcPeer) -> bool:
+        """Re-attach every video track suspended by a degradation hint."""
+        changed = False
+        for sender, track in list(peer.suspended_senders.items()):
+            try:
+                sender.replaceTrack(track)
+            except Exception as exc:
+                logger.debug(f"Could not restore video sender on {peer.peer_id}: {exc}")
+                continue
+            peer.suspended_senders.pop(sender, None)
+            changed = True
+        return changed
+
     async def set_preferred_layers(
         self,
         room_id: str,
@@ -957,20 +1023,46 @@ class AiortcAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Report that the layer hint cannot be applied on this backend.
+        """Apply a degradation hint as far as aiortc allows, or report False.
 
-        aiortc exposes no simulcast API: its peer connections negotiate a
-        single encoding, so there is no layer to switch. Returning ``True``
-        here made ``BandwidthEstimator`` log degradation as applied while
-        nothing changed. The signal a caller needs is honest -- the hint was
-        not applied -- so this returns ``False``.
+        aiortc exposes no simulcast API -- a peer connection negotiates a
+        single video encoding, so there is no layer to switch -- but it does
+        expose ``RTCRtpSender.replaceTrack``. That is the bandwidth lever this
+        backend has: suspending a degraded peer's outbound video (the
+        highest-bitrate stream it receives, and the one the estimator is
+        reacting to) relieves the congestion while leaving audio untouched,
+        and the track is re-attached when the hint is lifted. The hint is
+        reported as applied only when a sender actually changed state, so a
+        peer with no video -- or one already in the requested state -- still
+        gets an honest ``False`` instead of the silent success that made the
+        old implementation a lie.
         """
-        logger.debug(
-            f"Preferred layers not applied for consumer {consumer_id}: "
-            f"spatial={spatial_layer}, temporal={temporal_layer} "
-            f"(aiortc negotiates a single encoding)"
-        )
-        return False
+        peer = self._rooms.get(room_id, {}).get(peer_id)
+        if peer is None:
+            logger.debug(
+                f"Preferred layers not applied for consumer {consumer_id}: "
+                f"peer {peer_id} is not in room {room_id}"
+            )
+            return False
+        if spatial_layer <= 0:
+            applied = self._suspend_video_senders(peer)
+            action = "suspended"
+        else:
+            applied = self._restore_video_senders(peer)
+            action = "restored"
+        if not applied:
+            logger.debug(
+                f"Preferred layers not applied for consumer {consumer_id}: "
+                f"no video sender to change (spatial={spatial_layer}, "
+                f"temporal={temporal_layer})"
+            )
+        else:
+            logger.info(
+                f"Preferred layers applied for consumer {consumer_id}: "
+                f"video {action} (spatial={spatial_layer}, "
+                f"temporal={temporal_layer})"
+            )
+        return applied
 
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""

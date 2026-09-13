@@ -11,7 +11,13 @@ so it passes an empty consumer id. Two backends could not resolve that:
 
 Both now resolve the peer's own consumers (video preferred: layers only mean
 something for simulcast video), and report ``False`` when there is nothing to
-configure. aiortc has no simulcast API at all and now reports that honestly.
+configure.
+
+aiortc has no simulcast API, but it does expose ``RTCRtpSender.replaceTrack``,
+which is the bandwidth lever this backend has: a degraded peer's outbound
+video is suspended and re-attached when the hint is lifted. The application of
+that lever lives in ``test_sfu_aiortc_layer_hint_apply.py``; here we pin that a
+peer with nothing to change still gets an honest ``False``.
 """
 
 from __future__ import annotations
@@ -157,7 +163,8 @@ async def test_ws_reports_false_without_a_connection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aiortc_reports_the_hint_was_not_applied() -> None:
+async def test_aiortc_reports_the_hint_was_not_applied_without_a_peer() -> None:
+    """No peer, no sender changed: the honest answer is False."""
     assert await AiortcAdapter().set_preferred_layers("r", "p", "c", 0, 0) is False
 
 

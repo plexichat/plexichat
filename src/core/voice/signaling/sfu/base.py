@@ -392,9 +392,11 @@ class SFUAdapter(ABC):
         peer's own downlink is what the estimator is reacting to).
 
         Returns True only when at least one layer request was actually issued.
-        A backend that cannot apply the hint -- aiortc exposes no simulcast
-        API, and a peer with no consumers has nothing to configure -- must
-        return False rather than report success it did not achieve.
+        A backend that has no simulcast API should still apply the nearest
+        lever it does have (aiortc, for example, suspends and re-attaches the
+        peer's outbound video) and must return False -- rather than report
+        success it did not achieve -- when there was nothing to change, such
+        as a peer with no video or no consumers.
         """
         pass
 
