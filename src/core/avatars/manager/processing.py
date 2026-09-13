@@ -13,7 +13,16 @@ class AvatarProcessingMixin(AvatarProtocol):
     """Mixin handling image processing, validation, and resizing."""
 
     def _validate_content_type(self, content_type: str) -> bool:
-        """Validate content type is allowed."""
+        """Validate content type is allowed.
+
+        SECURITY (Agent7 L1): :mod:`svg_guard` block-list applies regardless
+        of operator configuration - an operator must not be able to opt into
+        SVG/HTML/JS avatar types via ``allowed_types``.
+        """
+        from .svg_guard import is_blocked_avatar_content_type
+
+        if is_blocked_avatar_content_type(content_type):
+            return False
         allowed = self._get_allowed_types()
         return content_type.lower() in [t.lower() for t in allowed]
 
@@ -45,6 +54,22 @@ class AvatarProcessingMixin(AvatarProtocol):
 
         Returns: (processed_bytes, width, height, is_animated)
         """
+        # SECURITY (Agent7 L1): reject SVG / active markup BEFORE anything
+        # else - including the Pillow-missing verbatim path below, which would
+        # otherwise store the payload unsanitized. This also catches
+        # MIME-spoofed SVG (e.g. "<svg ..." bytes claimed as image/png).
+        from .svg_guard import (
+            is_blocked_avatar_content_type,
+            is_unsafe_upload_payload,
+        )
+
+        if is_blocked_avatar_content_type(content_type) or is_unsafe_upload_payload(
+            content_type, image_data
+        ):
+            raise ValueError(
+                f"Content type '{content_type}' is not allowed for avatars: "
+                "SVG and active markup are never accepted as avatars."
+            )
         try:
             from PIL import Image
         except ImportError:

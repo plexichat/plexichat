@@ -255,6 +255,21 @@ async def get_user_avatar(user_id: int, request: Request):
         # 2. Fetch full data (no threadpool - the module handles caching internally)
         try:
             result = avatars.get_user_avatar_data(uid)
+            if result is not None:
+                # SECURITY (Agent7 L1): defense in depth - even if a poisoned
+                # row bypasses the manager guard, never serve a script-carrying
+                # SVG raw. Fall through to the safe generated default below.
+                from src.core.avatars.manager.svg_guard import (
+                    is_unsafe_serve_payload,
+                )
+
+                _payload, _ctype, _ = result
+                if is_unsafe_serve_payload(_ctype, _payload):
+                    logger.warning(
+                        f"Blocked unsafe stored avatar serve for user {uid} "
+                        f"(type={_ctype})"
+                    )
+                    result = None
             if not result:
                 # Generate a default SVG avatar if none exists
                 from src.core.avatars import generate_default_svg
@@ -299,6 +314,7 @@ async def get_user_avatar(user_id: int, request: Request):
                         "ETag": f'"{svg_etag}"',
                         "Access-Control-Allow-Origin": "*",
                         "Cross-Origin-Resource-Policy": "cross-origin",
+                        "X-Content-Type-Options": "nosniff",
                     },
                 )
         except HTTPException:
@@ -328,6 +344,7 @@ async def get_user_avatar(user_id: int, request: Request):
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Cross-Origin-Resource-Policy": "cross-origin",
+                "X-Content-Type-Options": "nosniff",
             },
         )
     except HTTPException:
@@ -603,6 +620,20 @@ async def get_server_icon(server_id: int, request: Request):
         # 2. Fetch full data
         try:
             result = avatars.get_server_icon_data(sid)
+            if result is not None:
+                # SECURITY (Agent7 L1): defense in depth - even if a poisoned
+                # row bypasses the manager guard, never serve a script-carrying
+                # SVG raw. Fall through to the safe generated default below.
+                from src.core.avatars.manager.svg_guard import (
+                    is_unsafe_serve_payload,
+                )
+
+                _payload, _ctype, _ = result
+                if is_unsafe_serve_payload(_ctype, _payload):
+                    logger.warning(
+                        f"Blocked unsafe stored server icon serve {sid} (type={_ctype})"
+                    )
+                    result = None
             if not result:
                 # Generate a default SVG icon if none exists
                 from src.core.avatars import generate_default_svg
@@ -647,6 +678,7 @@ async def get_server_icon(server_id: int, request: Request):
                             "ETag": f'"{svg_etag}"',
                             "Access-Control-Allow-Origin": "*",
                             "Cross-Origin-Resource-Policy": "cross-origin",
+                            "X-Content-Type-Options": "nosniff",
                         },
                     )
                 except Exception as e:
@@ -681,6 +713,7 @@ async def get_server_icon(server_id: int, request: Request):
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Cross-Origin-Resource-Policy": "cross-origin",
+                "X-Content-Type-Options": "nosniff",
             },
         )
     except HTTPException:
