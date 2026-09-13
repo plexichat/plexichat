@@ -9,7 +9,6 @@ from src.core.voice.signaling.sfu.janus import JanusAdapter  # noqa: E402
 from src.core.voice.signaling.sfu.base import (  # noqa: E402
     TransportDirection,
     MediaKind,
-    SFUTransport,
     SFUProducer,
     SFUConsumer,
     RoomInfo,
@@ -226,21 +225,18 @@ class TestJanusAdapter:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_create_transport(self, mock_aiohttp_session):
-        """Test creating a transport."""
+    async def test_create_transport_fails_closed(self, mock_aiohttp_session):
+        """Janus has no out-of-band transport; it must not fake one."""
         mock_session, mock_response = mock_aiohttp_session
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            transport = await adapter.create_transport(
-                "room_123", "peer_456", TransportDirection.SEND
-            )
-
-            assert transport is not None
-            assert isinstance(transport, SFUTransport)
-            assert transport.direction == TransportDirection.SEND
+            with pytest.raises(SFUConnectionError, match="in-band"):
+                await adapter.create_transport(
+                    "room_123", "peer_456", TransportDirection.SEND
+                )
 
     @pytest.mark.asyncio
     async def test_produce(self, mock_aiohttp_session):

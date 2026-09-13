@@ -404,25 +404,105 @@ class JanusAdapter(SFUAdapter):
         logger.debug(f"Peer {peer_id} left Janus room {room_id}")
         return True
 
+    async def apply_remote_offer(
+        self,
+        room_id: str,
+        peer_id: str,
+        offer_sdp: str,
+    ) -> Dict[str, Any]:
+        """Negotiate the client's offer with the Janus VideoRoom plugin.
+
+        Janus terminates the media session itself. The client's offer must be
+        handed to the peer's publisher handle as a ``publish`` request carrying
+        the ``jsep``, and Janus's own answer returned verbatim. There are no
+        out-of-band transport parameters to hand the client, so an adapter that
+        does not drive this handshake produces nothing usable -- and a manager
+        that invents ICE credentials on its behalf produces a dead call. Raise
+        when Janus does not answer so the offer fails closed.
+        """
+        session_id = self._janus_sessions.get(room_id)
+        handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
+        if not session_id or not handle_id:
+            raise SFUConnectionError(
+                f"Peer {peer_id} not in Janus room {room_id}",
+                backend="janus",
+                url=self._api_url,
+            )
+
+        result = await self._send_message(
+            session_id,
+            handle_id,
+            {"request": "publish", "audio": True, "video": True},
+            jsep={"type": "offer", "sdp": offer_sdp},
+        )
+
+        jsep = result.get("jsep") or {}
+        answer_sdp = jsep.get("sdp")
+        if not answer_sdp:
+            raise SFUConnectionError(
+                "Janus did not return an SDP answer for the publish handshake",
+                backend="janus",
+                url=self._api_url,
+            )
+
+        logger.debug(f"Negotiated Janus media session for peer {peer_id}")
+        return {"sdp": answer_sdp, "type": jsep.get("type", "answer")}
+
+    async def add_ice_candidate(
+        self,
+        room_id: str,
+        peer_id: str,
+        candidate: str,
+        sdp_mid: Optional[str] = None,
+        sdp_mline_index: Optional[int] = None,
+    ) -> bool:
+        """Forward a trickled client candidate to the peer's Janus handle.
+
+        The client talks to THIS gateway, not to Janus directly, so a trickled
+        candidate never reaches the media plane on its own; without a
+        ``trickle`` message Janus only learns what its own peer-reflexive
+        discovery happens to find.
+        """
+        session_id = self._janus_sessions.get(room_id)
+        handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
+        if not session_id or not handle_id:
+            return False
+
+        payload: Dict[str, Any] = {"candidate": candidate}
+        if sdp_mid is not None:
+            payload["sdpMid"] = sdp_mid
+        if sdp_mline_index is not None:
+            payload["sdpMLineIndex"] = sdp_mline_index
+
+        try:
+            await self._request(
+                f"/{session_id}/{handle_id}",
+                {"janus": "trickle", "candidate": payload},
+            )
+        except Exception as exc:
+            logger.debug(f"Failed to forward ICE candidate to Janus: {exc}")
+            return False
+        return True
+
     async def create_transport(
         self,
         room_id: str,
         peer_id: str,
         direction: TransportDirection,
     ) -> SFUTransport:
-        """Create a WebRTC transport for a peer."""
-        # Janus handles transport creation implicitly during publish/subscribe
-        # Return a placeholder transport
-        transport_id = (
-            f"{room_id}_{peer_id}_{direction.value}_{int(time.time() * 1000)}"
-        )
+        """Not applicable: Janus negotiates media in-band.
 
-        return SFUTransport(
-            id=transport_id,
-            direction=direction,
-            ice_parameters={},
-            ice_candidates=[],
-            dtls_parameters={},
+        The VideoRoom plugin terminates the WebRTC session; the client's offer
+        goes to :meth:`apply_remote_offer` and Janus's own answer is returned.
+        There are no transport parameters to hand the client, and returning an
+        empty ``SFUTransport`` would only invite the manager to fabricate ICE
+        credentials. Fail closed with a diagnosable error instead.
+        """
+        raise SFUConnectionError(
+            "Janus negotiates media in-band via the VideoRoom publish "
+            "handshake; create_transport is not applicable",
+            backend="janus",
+            url=self._api_url,
         )
 
     async def connect_transport(
@@ -656,8 +736,43 @@ class JanusAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
-        # Janus VideoRoom handles simulcast differently
+        """Apply a preferred simulcast layer to the peer's subscriber feeds.
+
+        Janus VideoRoom has no mediasoup-style ``setConsumerPreferredLayers``;
+        the equivalent is a ``configure`` on the *subscriber* handle carrying
+        ``substream`` / ``temporal``. The BandwidthEstimator has no per-consumer
+        mapping and calls this with an empty consumer id, so when none is given
+        every subscriber handle owned by the peer is configured. Returns False
+        when there is nothing to configure rather than reporting success.
+        """
+        session_id = self._janus_sessions.get(room_id)
+        if not session_id:
+            return False
+
+        room_handles = self._janus_handles.get(room_id, {})
+        if consumer_id:
+            handles = [room_handles.get(consumer_id)]
+        else:
+            prefix = f"{peer_id}_sub_"
+            handles = [
+                handle
+                for key, handle in room_handles.items()
+                if isinstance(key, str) and key.startswith(prefix)
+            ]
+        handles = [handle for handle in handles if handle]
+        if not handles:
+            return False
+
+        for handle_id in handles:
+            await self._send_message(
+                session_id,
+                handle_id,
+                {
+                    "request": "configure",
+                    "substream": spatial_layer,
+                    "temporal": temporal_layer,
+                },
+            )
         return True
 
     def set_quality_mixin(self, quality_mixin: Any) -> None:
