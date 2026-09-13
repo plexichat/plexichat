@@ -241,6 +241,17 @@ async def get_server_stickers(
             response_packs.append(pack_response)
 
         return response_packs
+    except HTTPException:
+        raise
+    except PermissionDeniedError:
+        # The manager refuses a non-member with PermissionDeniedError; the
+        # blanket 500 made a refusal indistinguishable from an outage (the
+        # route's own responses block documents 403 for exactly this case).
+        # Same mapping the sibling handlers in this module already use.
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
+        )
     except Exception as e:
         logger.error(f"Failed to fetch stickers for server {sid}: {e}")
         raise HTTPException(status_code=500, detail="Failed to load server stickers")
