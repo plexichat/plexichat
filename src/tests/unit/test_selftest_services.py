@@ -7,24 +7,19 @@ import pytest
 
 @pytest.mark.unit
 class TestRateLimitSelfTest:
-    """The self-test must not assume a fixed deployment rate limit."""
+    """The self-test proves the limiter is live from its accounting headers.
 
-    def test_burst_uses_effective_limit_header(self):
-        """The request count follows the advertised limit and stops at 429."""
+    The service deliberately avoids bursting to a 429 (that would poison the
+    shared IP bucket for the rest of the suite). It makes two ordinary 2xx
+    requests and requires ``X-RateLimit-Remaining`` to *decrement* between
+    them. These tests pin that contract, including the fail-closed paths.
+    """
+
+    @staticmethod
+    def _run(responses):
         from src.core.selftest.services.ratelimit import RateLimitTester
 
-        class FakeResponse:
-            def __init__(self, status_code, headers=None):
-                self.status_code = status_code
-                self.headers = headers or {}
-
-        responses = iter(
-            [
-                FakeResponse(200, {"X-RateLimit-Limit": "3"}),
-                FakeResponse(200),
-                FakeResponse(429),
-            ]
-        )
+        outcome = iter(responses)
 
         class FakeSession:
             def __init__(self):
@@ -33,7 +28,7 @@ class TestRateLimitSelfTest:
             def get(self, _target, timeout):
                 assert timeout == 3
                 self.calls += 1
-                return next(responses)
+                return next(outcome)
 
         session = FakeSession()
         ctx = SimpleNamespace(
@@ -44,11 +39,61 @@ class TestRateLimitSelfTest:
         )
 
         RateLimitTester(ctx).test_rate_limits()
+        return session, ctx.results[0]
 
-        assert session.calls == 3
-        assert ctx.results[0]["warning"] is False
-        assert ctx.results[0]["status_code"] == 429
-        assert ctx.results[0]["status_codes"] == [200, 200, 429]
+    def test_decrementing_accounting_headers_pass(self):
+        """Two 2xx responses with a falling token count prove the limiter live."""
+        FakeResponse = self._FakeResponse
+        session, result = self._run(
+            [
+                FakeResponse(200, {"X-RateLimit-Remaining": "5"}),
+                FakeResponse(200, {"X-RateLimit-Remaining": "4"}),
+            ]
+        )
+
+        assert session.calls == 2
+        assert result["success"] is True
+        assert result["status_code"] == 200
+        assert result["status_codes"] == [200, 200]
+
+    def test_equal_headers_fail_the_check(self):
+        """A limiter that never spends tokens is reported as not enforcing."""
+        FakeResponse = self._FakeResponse
+        _, result = self._run(
+            [
+                FakeResponse(200, {"X-RateLimit-Remaining": "7"}),
+                FakeResponse(200, {"X-RateLimit-Remaining": "7"}),
+            ]
+        )
+
+        assert result["success"] is False
+        assert result["status_codes"] == [200, 200]
+
+    def test_missing_header_stops_after_one_request(self):
+        """No accounting header means the check cannot proceed; it fails."""
+        FakeResponse = self._FakeResponse
+        session, result = self._run([FakeResponse(200, {})])
+
+        assert session.calls == 1
+        assert result["success"] is False
+        assert result["status_codes"] == [200]
+
+    def test_non_200_stops_the_probe(self):
+        """A non-2xx first response ends the probe rather than retrying."""
+        FakeResponse = self._FakeResponse
+        session, result = self._run([FakeResponse(429, {"X-RateLimit-Remaining": "0"})])
+
+        assert session.calls == 1
+        assert result["success"] is False
+        assert result["status_code"] == 429
+        assert result["status_codes"] == [429]
+
+    class _FakeResponse:
+        """Minimal requests.Response stand-in (status_code + headers)."""
+
+        def __init__(self, status_code, headers=None):
+            self.status_code = status_code
+            self.headers = headers or {}
 
 
 @pytest.mark.unit
