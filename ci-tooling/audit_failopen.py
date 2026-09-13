@@ -36,6 +36,11 @@ Four sweeps:
      fail-open took: the production wiring passes the ``src.core.voice``
      module, the private helpers live on the manager, so ``getattr`` returned
      the default and ``return`` skipped ``voice.connect`` entirely.
+  G. ``src`` SDP answers -- a function that assembles an SDP answer and mints
+     a fresh random value for an ICE credential or DTLS fingerprint the SFU
+     never supplied. The same fail-open shape as A-F in the media plane: the
+     missing dependency (real transport parameters) is replaced with a value
+     that makes the negotiation *appear* to succeed, while no media can flow.
 
 Sweeps A-C find *fail-open guards*: an existing check that skips. Sweep D is a
 presence check over every HTTP route and gateway opcode handler, parsed with
@@ -859,6 +864,83 @@ def sweep_facades(root: Path) -> list[Hit]:
 
 
 # ---------------------------------------------------------------------------
+# Sweep G: SDP answers whose ICE/DTLS credentials are fabricated
+# ---------------------------------------------------------------------------
+
+# Generators that mint a fresh, uncorrelatable value on every call. When one
+# of these fills an ICE ufrag/pwd or a DTLS fingerprint the SFU never supplied,
+# the answer looks negotiable while no media can ever flow: the client is told
+# the call connected and silently sits on a dead session.
+FABRICATED = "FABRICATED"
+
+RANDOM_CREDENTIAL_CALLS: dict[str, frozenset[str]] = {
+    "secrets": frozenset({"token_hex", "token_bytes", "token_urlsafe", "randbits"}),
+    "os": frozenset({"urandom"}),
+    "uuid": frozenset({"uuid1", "uuid4"}),
+    "random": frozenset(
+        {"random", "randbytes", "getrandbits", "randint", "randrange", "choice"}
+    ),
+}
+
+# Strings that only appear while assembling an SDP answer.
+SDP_MARKERS = ("a=ice-ufrag:", "a=ice-pwd:", "a=fingerprint:")
+
+
+def _random_credential_call(node: ast.AST) -> str | None:
+    """Return ``module.func`` when the node mints a fresh random value."""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None
+    if not isinstance(node.func.value, ast.Name):
+        return None
+    funcs = RANDOM_CREDENTIAL_CALLS.get(node.func.value.id)
+    if funcs and node.func.attr in funcs:
+        return f"{node.func.value.id}.{node.func.attr}"
+    return None
+
+
+def sweep_sdp_fabrication(root: Path) -> list[Hit]:
+    """Sweep G: SDP answers that invent the ICE/DTLS credentials they need.
+
+    Scoped tightly to functions that actually assemble an SDP answer (their
+    source contains an ICE/fingerprint attribute line) AND call a random
+    generator. Randomness elsewhere -- session ids, tokens, nonces -- is not
+    reported.
+    """
+    hits: list[Hit] = []
+    for path in sorted((root / "src").rglob("*.py")):
+        source = path.read_text(encoding="utf-8", errors="replace")
+        if not any(marker in source for marker in SDP_MARKERS):
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        rel = str(path.relative_to(root))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            segment = ast.get_source_segment(source, fn) or ""
+            if not any(marker in segment for marker in SDP_MARKERS):
+                continue
+            for node in ast.walk(fn):
+                call = _random_credential_call(node)
+                if call is None:
+                    continue
+                hits.append(
+                    Hit(
+                        FABRICATED,
+                        rel,
+                        getattr(node, "lineno", fn.lineno),
+                        call,
+                        f"`{fn.name}` fills a missing ICE/DTLS credential with "
+                        "a fresh random value; the client is handed an answer "
+                        "that can never connect",
+                    )
+                )
+    return hits
+
+
+# ---------------------------------------------------------------------------
 # Sweep D: route / websocket-handler authorization inventory
 # ---------------------------------------------------------------------------
 
@@ -1388,6 +1470,8 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     reviews = reviews + [h for h in facade_hits if h.kind == REVIEW]
     non_auth = non_auth + [h for h in facade_hits if h.kind == NON_AUTH]
 
+    fabricated = sweep_sdp_fabrication(root)
+
     manager_hits = sweep_managers(root)
     unchecked = [h for h in manager_hits if h.kind == UNCHECKED]
     non_auth = non_auth + [h for h in manager_hits if h.kind == NON_AUTH]
@@ -1412,6 +1496,10 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     out.append("## Summary")
     out.append("")
     out.append(f"- GRANT (fail open, must fix): {len(grants)}")
+    out.append(
+        f"- FABRICATED (SDP answer with invented ICE/DTLS credentials): "
+        f"{len(fabricated)}"
+    )
     out.append(f"- REVIEW (needs a human call): {len(reviews)}")
     out.append(f"- NON-AUTH (verified denying/plumbing): {len(non_auth)}")
     out.append(f"- UNCHECKED (manager write ignoring its caller id): {len(unchecked)}")
@@ -1427,6 +1515,10 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
 
     for title, group in (
         ("GRANT - fails open", grants),
+        (
+            "FABRICATED - SDP answer with invented ICE/DTLS credentials",
+            fabricated,
+        ),
         ("REVIEW - needs a human call", reviews),
         ("NON-AUTH - verified fine", non_auth),
         (
@@ -1455,7 +1547,7 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
             out.append(f"| `{hit.path}:{hit.line}` | `{hit.symbol}` | {hit.detail} |")
         out.append("")
 
-    return "\n".join(out), len(grants), len(no_auth) + len(unchecked)
+    return "\n".join(out), len(grants) + len(fabricated), len(no_auth) + len(unchecked)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1486,7 +1578,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         Path(args.output).write_text(text + "\n", encoding="utf-8")
         print(
-            f"wrote {args.output} ({grant_count} GRANT, "
+            f"wrote {args.output} ({grant_count} GRANT/FABRICATED, "
             f"{no_auth_count} NO-AUTH/UNCHECKED hits)"
         )
     return 1 if (grant_count or no_auth_count) else 0

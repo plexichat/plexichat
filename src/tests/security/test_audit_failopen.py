@@ -189,6 +189,40 @@ class ProbeGuards:
     )
     _write(
         tmp_path,
+        "src/core/voice/example_sdp.py",
+        """
+import secrets
+
+
+def build_fabricated_answer(transport):
+    ice_ufrag = transport.get("usernameFragment", secrets.token_hex(4))
+    ice_pwd = transport.get("password", secrets.token_hex(12))
+    lines = [
+        "v=0",
+        f"a=ice-ufrag:{ice_ufrag}",
+        f"a=ice-pwd:{ice_pwd}",
+    ]
+    return "\\r\\n".join(lines)
+
+
+def build_answer_from_transport(transport):
+    ice_ufrag = transport.ice_parameters["usernameFragment"]
+    ice_pwd = transport.ice_parameters["password"]
+    lines = [
+        "v=0",
+        f"a=ice-ufrag:{ice_ufrag}",
+        f"a=ice-pwd:{ice_pwd}",
+    ]
+    return "\\r\\n".join(lines)
+
+
+def generate_session_id():
+    # Randomness with no SDP attribute nearby: not a fabricated credential.
+    return secrets.token_hex(16)
+""",
+    )
+    _write(
+        tmp_path,
         "src/js/example.js",
         """
 function canEdit(artifact) {
@@ -283,6 +317,27 @@ def test_flags_fail_open_client_helper(synthetic: Path) -> None:
     hits = af.sweep_client(synthetic)
     grants = {h.symbol for h in hits if h.kind == af.GRANT}
     assert "canEdit" in grants
+
+
+def test_flags_sdp_answer_with_fabricated_ice_credentials(synthetic: Path) -> None:
+    hits = af.sweep_sdp_fabrication(synthetic)
+    flags = {h.kind for h in hits}
+    assert flags == {af.FABRICATED}, hits
+    assert all("build_fabricated_answer" in h.detail for h in hits)
+
+
+def test_does_not_flag_transport_derived_or_unrelated_randomness(
+    synthetic: Path,
+) -> None:
+    hits = af.sweep_sdp_fabrication(synthetic)
+    # An answer built from real transport parameters is the reference shape.
+    assert not any("build_answer_from_transport" in h.detail for h in hits)
+    # A random session id outside an SDP builder is not a fabricated credential.
+    assert not any("generate_session_id" in h.detail for h in hits)
+
+
+def test_real_repository_has_no_sdp_credential_fabrication() -> None:
+    assert af.sweep_sdp_fabrication(REPO_ROOT) == []
 
 
 def test_real_repository_has_no_fail_open_grants() -> None:
