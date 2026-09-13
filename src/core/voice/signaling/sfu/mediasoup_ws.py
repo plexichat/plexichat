@@ -976,21 +976,50 @@ class MediasoupWSAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
+        """Set preferred simulcast layers for the peer's consumers.
+
+        ``BandwidthEstimator`` calls this with an empty ``consumer_id`` -- it
+        has no per-consumer mapping -- and the previous code sent
+        ``consumerId: ""`` verbatim, which mediasoup cannot resolve, so the
+        degradation hint silently never applied. An empty id now means "every
+        consumer this peer receives"; layers are meaningful for video, so
+        video consumers are preferred and audio ones are only used when the
+        peer has no video consumer. Returns False when there is nothing to
+        configure rather than claiming success.
+        """
         key = self._get_connection_key(room_id, peer_id)
         connection = self._connections.get(key)
         if not connection:
             return False
 
-        await self._request(
-            connection,
-            "setConsumerPreferredLayers",
-            {
-                "consumerId": consumer_id,
-                "spatialLayer": spatial_layer,
-                "temporalLayer": temporal_layer,
-            },
-        )
+        if consumer_id:
+            consumer_ids = [consumer_id]
+        else:
+            consumer_ids = [
+                consumer.id
+                for consumer in connection.consumers.values()
+                if consumer.kind is MediaKind.VIDEO
+            ] or [consumer.id for consumer in connection.consumers.values()]
+
+        if not consumer_ids:
+            logger.debug(
+                f"No consumers to configure for peer {peer_id} in room {room_id}"
+            )
+            return False
+
+        # An SFU rejection propagates rather than being swallowed: reporting
+        # success on a failed layer change is the fail-open shape this audit
+        # exists to remove (see test_mediasoup_simulcast_layer_manipulation).
+        for target_id in consumer_ids:
+            await self._request(
+                connection,
+                "setConsumerPreferredLayers",
+                {
+                    "consumerId": target_id,
+                    "spatialLayer": spatial_layer,
+                    "temporalLayer": temporal_layer,
+                },
+            )
 
         return True
 

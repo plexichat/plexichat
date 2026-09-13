@@ -384,7 +384,18 @@ class SFUAdapter(ABC):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
+        """Set preferred simulcast layers for a consumer.
+
+        ``consumer_id`` may be empty, which is how ``BandwidthEstimator``
+        calls this: it keys peers by channel/user and has no consumer mapping,
+        so an empty id means "every consumer this peer receives" (the degraded
+        peer's own downlink is what the estimator is reacting to).
+
+        Returns True only when at least one layer request was actually issued.
+        A backend that cannot apply the hint -- aiortc exposes no simulcast
+        API, and a peer with no consumers has nothing to configure -- must
+        return False rather than report success it did not achieve.
+        """
         pass
 
     @abstractmethod

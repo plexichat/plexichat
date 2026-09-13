@@ -59,6 +59,10 @@ class MediasoupAdapter(SFUAdapter):
         self._recordings: Dict[str, Dict] = {}
         # room_id -> peers currently joined, used to poll per-peer stats.
         self._joined_peers: Dict[str, set] = {}
+        # (room_id, peer_id) -> consumers created for that peer. Needed to
+        # resolve the empty consumer id BandwidthEstimator passes; without it
+        # the layer hint was sent to a path segment that cannot exist.
+        self._consumers: Dict[tuple, List[SFUConsumer]] = {}
         self._quality_reporter: Optional[QualityReporter] = None
         self._acoustic_defense = acoustic_defense
 
@@ -176,6 +180,7 @@ class MediasoupAdapter(SFUAdapter):
             await self.stop_recording(room_id)
         await self._request("DELETE", f"/rooms/{path_segment(room_id, 'room_id')}")
         self._joined_peers.pop(room_id, None)
+        self._forget_consumers(room_id)
         logger.debug(f"Closed mediasoup room: {room_id}")
         return True
 
@@ -210,8 +215,17 @@ class MediasoupAdapter(SFUAdapter):
             peers.discard(peer_id)
             if not peers:
                 self._joined_peers.pop(room_id, None)
+        self._forget_consumers(room_id, peer_id)
         logger.debug(f"Peer {peer_id} left room {room_id}")
         return True
+
+    def _forget_consumers(self, room_id: str, peer_id: Optional[str] = None) -> None:
+        """Drop tracked consumers when a peer or the whole room is torn down."""
+        if peer_id is not None:
+            self._consumers.pop((room_id, peer_id), None)
+            return
+        for key in [key for key in self._consumers if key[0] == room_id]:
+            self._consumers.pop(key, None)
 
     async def create_transport(
         self,
@@ -314,6 +328,8 @@ class MediasoupAdapter(SFUAdapter):
             paused=result.get("paused", False),
         )
 
+        self._consumers.setdefault((room_id, peer_id), []).append(consumer)
+
         logger.debug(f"Created consumer {consumer.id} for producer {producer_id}")
 
         return consumer
@@ -386,15 +402,45 @@ class MediasoupAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
-        await self._request(
-            "POST",
-            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/consumers/{path_segment(consumer_id, 'consumer_id')}/preferredLayers",
-            {
-                "spatialLayer": spatial_layer,
-                "temporalLayer": temporal_layer,
-            },
-        )
+        """Set preferred simulcast layers for the peer's consumers.
+
+        An empty ``consumer_id`` (how ``BandwidthEstimator`` calls this) means
+        "every consumer this peer receives". Previously the empty id went
+        straight into ``path_segment``, which rejects it -- so the request
+        raised ``ValueError`` and the degradation hint never reached the SFU
+        on this backend. Video consumers are preferred because layers are only
+        meaningful for simulcast video. Returns False when no layer request
+        could be issued.
+        """
+        if consumer_id:
+            consumer_ids = [consumer_id]
+        else:
+            consumers = self._consumers.get((room_id, peer_id), [])
+            consumer_ids = [
+                consumer.id
+                for consumer in consumers
+                if consumer.kind is MediaKind.VIDEO
+            ] or [consumer.id for consumer in consumers]
+
+        if not consumer_ids:
+            logger.debug(
+                f"No consumers to configure for peer {peer_id} in room {room_id}"
+            )
+            return False
+
+        # An SFU rejection propagates rather than being swallowed: reporting
+        # success on a failed layer change is the fail-open shape this audit
+        # exists to remove (see test_mediasoup_simulcast_layer_manipulation).
+        for target_id in consumer_ids:
+            await self._request(
+                "POST",
+                f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/consumers/{path_segment(target_id, 'consumer_id')}/preferredLayers",
+                {
+                    "spatialLayer": spatial_layer,
+                    "temporalLayer": temporal_layer,
+                },
+            )
+
         return True
 
     def set_quality_mixin(self, quality_mixin: Any) -> None:

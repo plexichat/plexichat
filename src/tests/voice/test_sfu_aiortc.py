@@ -685,9 +685,14 @@ class TestRoomInfo:
         assert len(info.producers) == 1
 
     @pytest.mark.asyncio
-    async def test_set_preferred_layers_is_supported_noop(self):
+    async def test_set_preferred_layers_reports_not_applied(self):
+        """aiortc negotiates one encoding, so the hint cannot be honoured.
+
+        It must say so instead of returning True: ``BandwidthEstimator`` logs
+        a degradation as applied on a True result, which would be a lie.
+        """
         adapter = AiortcAdapter()
-        assert await adapter.set_preferred_layers("r", "p", "c", 0, 1) is True
+        assert await adapter.set_preferred_layers("r", "p", "c", 0, 1) is False
 
     @pytest.mark.asyncio
     async def test_health_check_reports_aiortc_availability(self):

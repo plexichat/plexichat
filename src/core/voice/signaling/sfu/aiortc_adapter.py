@@ -957,17 +957,20 @@ class AiortcAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer.
+        """Report that the layer hint cannot be applied on this backend.
 
-        aiortc does not expose the same simulcast API as mediasoup.
-        This is a no-op that logs the request.
+        aiortc exposes no simulcast API: its peer connections negotiate a
+        single encoding, so there is no layer to switch. Returning ``True``
+        here made ``BandwidthEstimator`` log degradation as applied while
+        nothing changed. The signal a caller needs is honest -- the hint was
+        not applied -- so this returns ``False``.
         """
         logger.debug(
-            f"Set preferred layers for consumer {consumer_id}: "
+            f"Preferred layers not applied for consumer {consumer_id}: "
             f"spatial={spatial_layer}, temporal={temporal_layer} "
-            f"(not implemented in aiortc adapter)"
+            f"(aiortc negotiates a single encoding)"
         )
-        return True
+        return False
 
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""
