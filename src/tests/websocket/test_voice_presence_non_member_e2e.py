@@ -20,6 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 import src.api as api
+import src.api.websocket as websocket_module
 import src.core.voice as voice
 import src.core.voice.signaling as signaling
 from src.api.websocket.dispatcher import GatewayDispatcher
@@ -44,6 +45,7 @@ def realtime(
     three_users,
     session_manager,
     mock_auth_module,
+    mock_websocket,
     connect_as,
     monkeypatch,
 ):
@@ -80,13 +82,19 @@ def realtime(
     monkeypatch.setattr(api, "get_messaging", lambda: messaging_manager)
     monkeypatch.setattr(api, "get_auth", lambda: auth_manager)
 
+    dispatcher = GatewayDispatcher(session_manager=session_manager)
     handler = OpcodeHandler(
         session_manager=session_manager,
         auth_module=mock_auth_module,
         presence_module=presence_manager,
         servers_module=server_manager,
-        dispatcher=GatewayDispatcher(session_manager=session_manager),
+        dispatcher=dispatcher,
     )
+    # The voice handler resolves its dispatcher through the gateway module
+    # (``src.api.websocket.get_dispatcher``), so wire the same real dispatcher
+    # there -- otherwise ``is_setup()`` is False and no fan-out is exercised.
+    monkeypatch.setattr(websocket_module, "_dispatcher", dispatcher)
+    monkeypatch.setattr(websocket_module, "_setup_complete", True)
     # Fan-out is observed through the handler, not the network.
     handler._presence_handler._dispatch_typing_event = _async_recorder()
 
@@ -99,6 +107,8 @@ def realtime(
             voice_channel=voice_channel,
             text_channel=text_channel,
             handler=handler,
+            dispatcher=dispatcher,
+            conn_ws=mock_websocket,
             server_manager=server_manager,
             presence_manager=presence_manager,
             db=db,
@@ -231,6 +241,95 @@ async def test_view_only_member_is_denied_media_credentials(realtime, server_man
         signaling.get_voice_server_info(
             realtime.member.id, int(realtime.voice_channel.id)
         )
+
+
+# === VOICE_SPEAKING: relayed to the channel, never to a non-member ========
+
+
+def _opcode_frames(conn_ws, opcode: int):
+    """Every frame of ``opcode`` written to the transport so far."""
+    frames = []
+    for call in conn_ws.send_json.await_args_list:
+        frame = call[0][0]
+        if frame.get("op") == opcode:
+            frames.append(frame)
+    return frames
+
+
+def _spy_raw_fanout(monkeypatch, realtime):
+    """Record the recipient sets while still running the real fan-out."""
+    calls = []
+    original = realtime.dispatcher.dispatch_raw_to_users
+
+    async def _spy(user_ids, opcode, data):
+        calls.append((list(user_ids), opcode, data))
+        return await original(user_ids, opcode, data)
+
+    monkeypatch.setattr(realtime.dispatcher, "dispatch_raw_to_users", _spy)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_voice_speaking_reaches_the_other_member(realtime, monkeypatch):
+    """The indicator the client renders comes from the server, once, to peers.
+
+    Regression: the server read only ``channel_id`` from the frame and never
+    emitted opcode 25, so ``handleSpeakingUpdate`` on every client was dead
+    code (findings ANNEX Z callback audit).
+    """
+    await realtime.handler.handle(
+        realtime.owner_conn,
+        GatewayOpcode.VOICE_CONNECT,
+        {"channel_id": int(realtime.voice_channel.id)},
+    )
+    realtime.conn_ws.send_json.reset_mock()
+    calls = _spy_raw_fanout(monkeypatch, realtime)
+
+    result = await realtime.handler.handle(
+        realtime.owner_conn,
+        GatewayOpcode.VOICE_SPEAKING,
+        {
+            "channel_id": int(realtime.voice_channel.id),
+            "speaking": True,
+            "volume": 0.4,
+        },
+    )
+
+    assert result == (None, None, None)
+    # Exactly one target: the other member. Not the speaker, not the outsider.
+    assert [targets for targets, _op, _d in calls] == [[int(realtime.member.id)]]
+    payload = calls[0][2]
+    assert payload == {
+        "user_id": str(realtime.owner.id),
+        "channel_id": str(int(realtime.voice_channel.id)),
+        "speaking": True,
+        "volume": 0.4,
+    }
+
+    # ...and it really went out on the transport, as opcode 25.
+    frames = _opcode_frames(realtime.conn_ws, int(GatewayOpcode.VOICE_SPEAKING))
+    assert len(frames) == 1
+    assert frames[0]["d"] == payload
+
+
+@pytest.mark.asyncio
+async def test_voice_speaking_from_a_non_member_is_not_relayed(realtime, monkeypatch):
+    """A non-member cannot inject a speaking frame into the channel."""
+    calls = _spy_raw_fanout(monkeypatch, realtime)
+
+    result = await realtime.handler.handle(
+        realtime.outsider_conn,
+        GatewayOpcode.VOICE_SPEAKING,
+        {
+            "channel_id": int(realtime.voice_channel.id),
+            "speaking": True,
+            "volume": 1.0,
+        },
+    )
+
+    assert result == (None, None, None)
+    assert calls == []
+    assert _opcode_frames(realtime.conn_ws, int(GatewayOpcode.VOICE_SPEAKING)) == []
 
 
 # === Presence: TYPING_START / TYPING_STOP ==================================

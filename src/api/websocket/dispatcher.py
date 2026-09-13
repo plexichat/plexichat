@@ -251,6 +251,56 @@ class GatewayDispatcher:
 
         return await self._send_to_connection(connection, payload)
 
+    async def dispatch_raw_to_users(
+        self,
+        user_ids: List[int],
+        opcode: GatewayOpcode,
+        data: Optional[Any] = None,
+    ) -> int:
+        """Fan a raw (non-DISPATCH) frame out to every connection of ``user_ids``.
+
+        ``dispatch_raw`` targets a single connection; an opcode frame that is
+        peer-visible state (a voice speaking indicator) has no single target.
+        Mirrors ``dispatch_event``'s connection lookup, rate-limit accounting
+        and gather semantics. Intents are not consulted: they gate *events*
+        (which carry an event type), and a raw frame carries none.
+
+        Args:
+            user_ids: Target user IDs
+            opcode: Gateway opcode to send
+            data: Payload data
+
+        Returns:
+            Number of connections the frame was sent to
+        """
+        target_ids = [int(uid) for uid in user_ids]
+        if not target_ids:
+            return 0
+
+        connections = self._session_manager.get_connections_for_users(target_ids)
+        if not connections:
+            return 0
+
+        tasks = []
+        for connection in connections:
+            if not getattr(
+                connection, "is_selftest", False
+            ) and not connection.check_rate_limit(self._rate_limit_per_minute):
+                with self._lock:
+                    self._rate_limited_events += 1
+                logger.warning(
+                    f"Rate limited connection {connection.connection_id} "
+                    f"(user={connection.user_id}); dropped raw opcode {int(opcode)}"
+                )
+                continue
+            tasks.append(self.dispatch_raw(connection, opcode, data))
+
+        if not tasks:
+            return 0
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return sum(1 for r in results if r is True)
+
     async def send_hello(self, connection: Connection) -> bool:
         """
         Send HELLO opcode to a new connection.

@@ -26,6 +26,42 @@ class CallLifecycleMixin(VoiceProtocol):
         """Attach a ``VoiceCallManager`` (may be ``None`` to disable records)."""
         self._voice_call_manager = voice_call_manager
 
+    def record_call_consent(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
+        """Record a participant's recording consent for the active call.
+
+        This is the delivery half of the client's consent dialog: the client
+        has always sent ``consented: true`` on ``VOICE_STATE_UPDATE`` and the
+        gateway never read it, while ``VoiceCallManager.add_consent`` -- the
+        only writer of ``consented_participants`` -- had no caller at all. A
+        recording requires every live channel member to appear in that list,
+        so without this no recording could ever (legitimately) start.
+
+        Reporting ``True`` means the call manager accepted the consent. Every
+        failure -- no manager, no active call, a caller who is not in the
+        channel (``add_consent`` re-checks membership against the live
+        roster), or a persistence error -- is swallowed and reported as
+        ``False``: consent bookkeeping must never break the voice state
+        update it arrived with, and an unrecorded consent fails closed (the
+        recording simply does not start).
+        """
+        manager = self._voice_call_manager
+        if manager is None:
+            return False
+        try:
+            call = manager.get_active_by_channel(channel_id)
+            if call is None:
+                return False
+            manager.add_consent(call.id, user_id)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to record voice consent for user {user_id} in "
+                f"channel {channel_id}: {exc}"
+            )
+            return False
+        return True
+
     def _resolve_conversation_for_channel(
         self, channel_id: SnowflakeID
     ) -> Optional[SnowflakeID]:

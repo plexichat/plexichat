@@ -14,6 +14,24 @@ if TYPE_CHECKING:
     from src.core.servers.manager import ServerManager
 
 
+def _clamp_volume(raw: Any) -> float:
+    """Coerce a client-reported level into a renderable ``0.0``-``1.0`` float.
+
+    The value is forwarded verbatim to every other member of the channel, so a
+    string, NaN or an out-of-range number must not reach their UI (the client
+    multiplies it into a CSS width). Anything unusable degrades to silence.
+    """
+    try:
+        volume = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if volume != volume:  # NaN
+        return 0.0
+    if volume == float("inf") or volume == float("-inf"):
+        return 0.0
+    return max(0.0, min(volume, 1.0))
+
+
 class VoiceHandler:
     """Handles voice-related opcodes."""
 
@@ -43,6 +61,12 @@ class VoiceHandler:
         self_deaf = data.get("self_deaf", False)
         self_video = data.get("self_video", False)
         self_stream = data.get("self_stream", False)
+        # Recording consent rides on this opcode (the client's consent dialog
+        # answers "yes" with ``consented: true``). It used to be dropped on
+        # the floor while ``VoiceCallManager.add_consent`` -- the only writer
+        # of ``consented_participants`` -- had no caller, so a recording could
+        # never satisfy its every-participant consent gate.
+        consented = data.get("consented") is True or data.get("consented") == "true"
 
         if channel_id is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
@@ -83,6 +107,17 @@ class VoiceHandler:
                 event_channel_id=authoritative_channel_id,
                 voice_state=voice_state,
             )
+
+            if consented:
+                # Delivery must not fail the state update it arrived with:
+                # ``record_call_consent`` reports False instead of raising,
+                # and an unrecorded consent leaves the recording gated shut.
+                try:
+                    record = getattr(voice, "record_call_consent", None)
+                    if callable(record):
+                        record(connection.user_id, authoritative_channel_id)
+                except Exception as e:
+                    logger.warning(f"Voice consent recording failed: {e}")
         except Exception as e:
             logger.warning(f"Voice state update failed: {e}")
             # M1: surface the failure instead of silently reporting success;
@@ -263,8 +298,27 @@ class VoiceHandler:
 
         try:
             answer = data.get("sdp")
+            channel_id = data.get("channel_id")
             if not answer:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+            # SECURITY-correctness (audit: recorded but never delivered): the
+            # client has always sent ``channel_id`` here and the server never
+            # read it, so the answer's session was bound to nothing. Read and
+            # validate it, then require it to match the channel the caller's
+            # signaling connection is bound to (the same binding the ICE and
+            # quality paths enforce).
+            if channel_id is None or channel_id == "":
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            try:
+                channel_id = int(channel_id)
+            except (TypeError, ValueError):
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+            if channel_id <= 0:
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
+
+            if not connection.user_id:
+                return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
             # SECURITY-correctness (audit: SFU/media path dead): apply the
             # client's answer to its SFU peer connection so the aiortc DTLS
@@ -272,13 +326,33 @@ class VoiceHandler:
             from src.core.voice import signaling as signaling_module
 
             mgr = getattr(signaling_module, "_manager", None)
-            if mgr is not None:
-                conn = mgr._connections.get(connection.user_id)
-                room_id = getattr(conn, "sfu_room_id", None)
-                peer_id = getattr(conn, "sfu_peer_id", None)
-                if room_id and peer_id:
-                    sfu = mgr._get_sfu()
-                    await sfu.apply_remote_answer(room_id, peer_id, answer)
+            if mgr is None:
+                # Signaling is not configured in this deployment: there is no
+                # media plane to apply an answer to.
+                return None, None, None
+
+            conn = mgr._connections.get(connection.user_id)
+            if conn is None:
+                # M1: an answer that matches no session must not look applied.
+                logger.warning(
+                    f"SDP answer with no signaling connection for user "
+                    f"{connection.user_id}"
+                )
+                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+
+            bound_channel = getattr(conn, "channel_id", None)
+            if bound_channel is not None and int(bound_channel) != channel_id:
+                logger.warning(
+                    f"Channel mismatch on SDP answer for user "
+                    f"{connection.user_id}: bound={bound_channel} offered={channel_id}"
+                )
+                return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
+
+            room_id = getattr(conn, "sfu_room_id", None)
+            peer_id = getattr(conn, "sfu_peer_id", None)
+            if room_id and peer_id:
+                sfu = mgr._get_sfu()
+                await sfu.apply_remote_answer(room_id, peer_id, answer)
         except Exception as e:
             logger.warning(f"Voice SDP answer failed: {e}")
             return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
@@ -368,6 +442,15 @@ class VoiceHandler:
             if not connection.user_id:
                 return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
+            # SECURITY-correctness (audit: callbacks recorded but never
+            # delivered): the client has always sent ``speaking``/``volume``
+            # and the server read neither, so the peer speaking indicator could
+            # never fire. Both are validated and clamped here -- the frame is
+            # forwarded to other members, so unvalidated floats would be
+            # rendered by their clients.
+            speaking = bool(data.get("speaking", False))
+            volume = _clamp_volume(data.get("volume", 0))
+
             state = voice.get_voice_state(connection.user_id)
             if state and state.channel_id == channel_id:
                 # Speaking indicators are keepalive traffic for the media
@@ -384,6 +467,12 @@ class VoiceHandler:
                     channel_id_for_recipients=channel_id,
                     event_channel_id=channel_id,
                     voice_state=state,
+                )
+                await self._dispatch_voice_speaking(
+                    user_id=connection.user_id,
+                    channel_id=channel_id,
+                    speaking=speaking,
+                    volume=volume,
                 )
         except Exception as e:
             logger.warning(f"Voice speaking failed: {e}")
@@ -426,6 +515,63 @@ class VoiceHandler:
             return None, None, int(GatewayCloseCode.UNKNOWN_ERROR)
 
         return None, None, None
+
+    async def _dispatch_voice_speaking(
+        self,
+        user_id: int,
+        channel_id: int,
+        speaking: bool,
+        volume: float,
+    ) -> None:
+        """Relay a speaking indicator to the channel's other members.
+
+        Recipients are resolved through the servers module (same visibility
+        filter as the voice-state fan-out), so a non-member never receives the
+        frame. The sender is excluded: its own indicator is driven locally by
+        its audio analysis.
+        """
+        try:
+            from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+
+            if not ws_is_setup():
+                return
+
+            server_id = None
+            if self._servers:
+                try:
+                    channel = await run_in_threadpool(
+                        self._servers.get_channel, channel_id, user_id
+                    )
+                    if channel:
+                        server_id = getattr(channel, "server_id", None)
+                except Exception:
+                    pass
+
+            if not server_id:
+                return
+
+            target_user_ids = await run_in_threadpool(
+                self._get_typing_recipient_ids,
+                user_id,
+                channel_id,
+                server_id,
+                False,
+            )
+            if not target_user_ids:
+                return
+
+            await get_dispatcher().dispatch_raw_to_users(
+                target_user_ids,
+                GatewayOpcode.VOICE_SPEAKING,
+                {
+                    "user_id": str(user_id),
+                    "channel_id": str(channel_id),
+                    "speaking": speaking,
+                    "volume": volume,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Failed to dispatch voice speaking: {e}")
 
     async def _dispatch_voice_state_update(
         self,
