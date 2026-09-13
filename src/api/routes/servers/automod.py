@@ -13,6 +13,7 @@ from src.api.schemas.common import SnowflakeID, SuccessResponse
 
 import utils.logger as logger
 from .helpers import _automod_rule_to_response
+from ..exception_mapping import raise_mapped
 
 router = APIRouter()
 
@@ -43,9 +44,11 @@ async def get_server_automod_rules(
         raise
     except Exception as e:
         logger.error(f"Failed to get automod rules for server {server_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+        raise_mapped(
+            e,
+            not_found_message="Server not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
         )
 
 
@@ -116,9 +119,11 @@ async def create_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to create automod rule for server {server_id}: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+        raise_mapped(
+            e,
+            not_found_message="Server not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
         )
 
 
@@ -182,9 +187,11 @@ async def update_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to update automod rule {rule_id}: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+        raise_mapped(
+            e,
+            not_found_message="Rule not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
         )
 
 
@@ -221,9 +228,11 @@ async def delete_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to delete automod rule {rule_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+        raise_mapped(
+            e,
+            not_found_message="Rule not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
         )
 
 
@@ -283,9 +292,11 @@ async def get_server_automod_violations(
         raise
     except Exception as e:
         logger.error(f"Failed to get automod violations for server {server_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+        raise_mapped(
+            e,
+            not_found_message="Server not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
         )
 
 
@@ -341,7 +352,9 @@ async def get_server_automod_violation(
         logger.error(
             f"Failed to get automod violation {violation_id} for server {server_id}: {e}"
         )
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Internal server error"}},
+        raise_mapped(
+            e,
+            not_found_message="Violation not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
         )
