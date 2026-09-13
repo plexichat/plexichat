@@ -321,7 +321,11 @@ class VoiceHandler:
             if channel_id <= 0:
                 return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-            signaling.handle_ice_candidate(
+            # SECURITY-correctness (audit: trickle ICE never reached the media
+            # plane): the async variant both records the candidate AND hands
+            # it to the SFU peer connection, so a NAT'd client's reflexive /
+            # relay candidate actually reaches the media plane.
+            await signaling.handle_ice_candidate_async(
                 connection.user_id, channel_id, candidate, sdp_mid, sdp_mline_index
             )
         except Exception as e:

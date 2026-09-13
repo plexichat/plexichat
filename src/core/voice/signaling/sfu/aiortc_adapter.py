@@ -512,6 +512,58 @@ class AiortcAdapter(SFUAdapter):
             logger.warning(f"Failed to apply remote answer for {peer_id}: {e}")
             return False
 
+    async def add_ice_candidate(
+        self,
+        room_id: str,
+        peer_id: str,
+        candidate: str,
+        sdp_mid: Optional[str] = None,
+        sdp_mline_index: Optional[int] = None,
+    ) -> bool:
+        """Feed a trickled client candidate into the peer connection.
+
+        The signaling layer records candidates but, without this, they never
+        reach the SFU -- on loopback ICE still completes via peer-reflexive
+        discovery, which is why the gap stayed hidden; across a NAT the SFU has
+        no way to initiate a check toward the client. aiortc requires a
+        candidate to be bound to an m-line (``sdpMid`` or ``sdpMLineIndex``),
+        so candidates arriving without one are refused rather than applied to
+        the wrong transceiver.
+        """
+        peer = self._rooms.get(room_id, {}).get(peer_id)
+        if peer is None:
+            return False
+        if sdp_mid is None and sdp_mline_index is None:
+            logger.debug(
+                f"Dropping ICE candidate for peer {peer_id}: no sdpMid/mLineIndex"
+            )
+            return False
+        try:
+            from ..ice import ICECandidateParser
+            from aiortc import RTCIceCandidate
+
+            parsed = ICECandidateParser().parse(candidate)
+            remote = RTCIceCandidate(
+                component=int(parsed["component"]),
+                foundation=str(parsed["foundation"]),
+                ip=str(parsed["address"]),
+                port=int(parsed["port"]),
+                priority=int(parsed["priority"]),
+                protocol=str(parsed["transport"]).lower(),
+                type=str(parsed["type"]),
+                relatedAddress=parsed.get("related_address"),
+                relatedPort=parsed.get("related_port"),
+                sdpMid=sdp_mid,
+                sdpMLineIndex=sdp_mline_index,
+                tcpType=parsed.get("tcp_type"),
+            )
+            await peer.pc.addIceCandidate(remote)
+            return True
+        except Exception as e:
+            # A malformed or out-of-order candidate must not break the session.
+            logger.debug(f"Failed to add ICE candidate for peer {peer_id}: {e}")
+            return False
+
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
         if room_id not in self._rooms:

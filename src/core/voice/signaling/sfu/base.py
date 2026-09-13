@@ -210,6 +210,27 @@ class SFUAdapter(ABC):
         """
         return True
 
+    async def add_ice_candidate(
+        self,
+        room_id: str,
+        peer_id: str,
+        candidate: str,
+        sdp_mid: Optional[str] = None,
+        sdp_mline_index: Optional[int] = None,
+    ) -> bool:
+        """Deliver a remote (client) ICE candidate to the media plane.
+
+        Trickle ICE sends candidates out of band from the offer/answer, so an
+        adapter that terminates the media session itself MUST feed them to its
+        peer connection or it never learns the client's address and can only
+        connect when peer-reflexive discovery happens to succeed. Adapters that
+        negotiate their transport out of band (mediasoup, Janus) have nothing
+        to do here and return ``True`` as a no-op.
+
+        Returns whether the candidate was accepted.
+        """
+        return True
+
     @abstractmethod
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """

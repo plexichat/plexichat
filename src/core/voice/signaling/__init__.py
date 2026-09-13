@@ -84,6 +84,7 @@ __all__ = [
     "handle_sdp_offer",
     "handle_sdp_offer_async",
     "handle_ice_candidate",
+    "handle_ice_candidate_async",
     "disconnect_voice",
     "disconnect_voice_async",
     "get_turn_credentials",
@@ -214,8 +215,21 @@ def handle_ice_candidate(
     sdp_mid: Optional[str] = None,
     sdp_mline_index: Optional[int] = None,
 ) -> bool:
-    """Handle an ICE candidate from a client."""
+    """Handle an ICE candidate from a client (sync version)."""
     return _get_manager().handle_ice_candidate(
+        user_id, channel_id, candidate, sdp_mid, sdp_mline_index
+    )
+
+
+async def handle_ice_candidate_async(
+    user_id: int,
+    channel_id: int,
+    candidate: str,
+    sdp_mid: Optional[str] = None,
+    sdp_mline_index: Optional[int] = None,
+) -> bool:
+    """Handle an ICE candidate and deliver it to the media plane."""
+    return await _get_manager().handle_ice_candidate_async(
         user_id, channel_id, candidate, sdp_mid, sdp_mline_index
     )
 

@@ -417,10 +417,10 @@ async def test_voice_ice_candidate_denied_without_connection(
     """A user with no bound connection cannot inject ICE candidates."""
     import src.core.voice.signaling as signaling
 
-    def _denied(user_id, channel_id, candidate, sdp_mid, sdp_mline_index):
+    async def _denied(user_id, channel_id, candidate, sdp_mid, sdp_mline_index):
         raise RuntimeError("not connected to voice")
 
-    monkeypatch.setattr(signaling, "handle_ice_candidate", _denied)
+    monkeypatch.setattr(signaling, "handle_ice_candidate_async", _denied)
 
     result = await _voice_handler().handle_voice_ice_candidate(
         authenticated_connection,
