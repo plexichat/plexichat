@@ -62,6 +62,35 @@ class CallLifecycleMixin(VoiceProtocol):
             return False
         return True
 
+    def revoke_call_consent(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
+        """Withdraw a participant's recording consent for the active call.
+
+        The delivery half of a *declined* consent dialog (``consented: false``
+        on ``VOICE_STATE_UPDATE``). Without it a participant could never take
+        consent back, and a recording started while they were away would keep
+        running over them. Report-and-do-not-raise for the same reason as
+        :meth:`record_call_consent`; a withdrawal that cannot be persisted
+        fails closed because the call manager refuses to keep recording
+        without every live participant's consent.
+        """
+        manager = self._voice_call_manager
+        if manager is None:
+            return False
+        try:
+            call = manager.get_active_by_channel(channel_id)
+            if call is None:
+                return False
+            manager.remove_consent(call.id, user_id)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to revoke voice consent for user {user_id} in "
+                f"channel {channel_id}: {exc}"
+            )
+            return False
+        return True
+
     def _resolve_conversation_for_channel(
         self, channel_id: SnowflakeID
     ) -> Optional[SnowflakeID]:

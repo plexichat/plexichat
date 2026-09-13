@@ -130,6 +130,73 @@ def test_consent_and_participant_require_live_membership(db):
         manager.add_participant(call.id, 99)
 
 
+def test_revoking_consent_stops_a_live_recording(db):
+    """A participant taking consent back stops the segment immediately.
+
+    The client's dialog can answer "no"; before ``remove_consent`` there was
+    no server path for that, so a recording kept running over a participant
+    who had withdrawn consent -- the one outcome the unanimous-consent gate
+    exists to prevent.
+    """
+    recording = Mock()
+    manager = _voice_manager(db, recording)
+    _seed_voice_state(db, 33, 41)
+    call = manager.start_call(channel_id=41, server_id=22, initiator_id=33)
+    manager.add_consent(call.id, 33)
+    recording.stop_call_recording.reset_mock()
+
+    manager.remove_consent(call.id, 33)
+
+    recording.stop_call_recording.assert_called_once_with(call.id)
+    refreshed = manager.get_active_by_channel(41)
+    assert refreshed is not None
+    assert 33 not in {int(v) for v in refreshed.consented_participants}
+
+
+def test_revoking_consent_requires_live_membership(db):
+    """Only a live participant may withdraw, mirroring the append's check."""
+    recording = Mock()
+    manager = _voice_manager(db, recording)
+    _seed_voice_state(db, 33, 42)
+    call = manager.start_call(channel_id=42, server_id=22, initiator_id=33)
+
+    with pytest.raises(ValueError, match="not currently in voice channel"):
+        manager.remove_consent(call.id, 99)
+
+
+def test_duplicate_revoke_does_not_stop_recording_again(db):
+    """A second revoke leaves an already-incomplete set alone."""
+    recording = Mock()
+    manager = _voice_manager(db, recording)
+    _seed_voice_state(db, 33, 43)
+    call = manager.start_call(channel_id=43, server_id=22, initiator_id=33)
+    manager.add_consent(call.id, 33)
+    manager.remove_consent(call.id, 33)
+    recording.stop_call_recording.reset_mock()
+
+    manager.remove_consent(call.id, 33)
+
+    recording.stop_call_recording.assert_not_called()
+
+
+def test_consent_can_be_regranted_after_a_revoke(db):
+    """Withdrawing is not a permanent ban: a new grant records again."""
+    recording = Mock()
+    manager = _voice_manager(db, recording)
+    _seed_voice_state(db, 33, 44)
+    call = manager.start_call(channel_id=44, server_id=22, initiator_id=33)
+    manager.add_consent(call.id, 33)
+    manager.remove_consent(call.id, 33)
+    recording.start_call_recording.reset_mock()
+
+    manager.add_consent(call.id, 33)
+
+    assert recording.start_call_recording.call_count == 1
+    refreshed = manager.get_active_by_channel(44)
+    assert refreshed is not None
+    assert 33 in {int(v) for v in refreshed.consented_participants}
+
+
 def test_distinct_participant_roster_persisted_and_churn_proof(db, monkeypatch):
     """The artifact payload keeps a DISTINCT participant ID roster.
 

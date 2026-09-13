@@ -526,6 +526,95 @@ class VoiceCallManager(BaseManager):
             )
         return updated
 
+    def remove_consent(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
+        """Withdraw a participant's recording consent (mirror of add_consent).
+
+        The client's dialog can answer "no" (``consented: false``) and there
+        was previously no way to deliver that: only an explicit *true* had a
+        path, so a participant could never revoke. The removal is atomic and
+        retried for the same lost-update reason as the append. A withdrawal
+        that leaves the consent set incomplete stops any live recording
+        segment immediately -- continuing to record after a participant
+        revokes is the one outcome that must never happen.
+        """
+        call = get_voice_call_uncached(self._db, call_id)
+        if call is None:
+            raise ValueError(f"Voice call {call_id} not found")
+
+        normalized_user_id = int(user_id)
+        current_ids = self._current_participant_ids(self._require_channel_id(call))
+        if normalized_user_id not in current_ids:
+            raise ValueError(
+                f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
+            )
+
+        updated: Optional[VoiceCall] = None
+        before_consented_ids: set[int] = set()
+        last_error: Optional[Exception] = None
+        for attempt in range(5):
+            caller_transaction = getattr(self._db, "in_transaction", False)
+            try:
+                if not caller_transaction:
+                    self._db.begin_transaction()
+                fresh = get_voice_call_uncached(self._db, call_id)
+                if fresh is None:
+                    raise ValueError(f"Voice call {call_id} not found")
+                before = [int(value) for value in fresh.consented_participants]
+                before_consented_ids = set(before)
+                consented = [value for value in before if value != normalized_user_id]
+                candidate = update_voice_call(
+                    self._db,
+                    call_id,
+                    consented_participants=consented,
+                    updated_at=self._get_timestamp(),
+                )
+                if candidate is None:
+                    raise ValueError(f"Failed to update voice call {call_id}")
+                if not caller_transaction:
+                    self._db.commit()
+                updated = candidate
+                break
+            except ValueError:
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                raise
+            except Exception as exc:
+                last_error = exc
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                if attempt < 4:
+                    time.sleep(0.005 * (2**attempt) + random.uniform(0, 0.005))
+        if updated is None:
+            if isinstance(last_error, ValueError):
+                raise last_error
+            raise ValueError(
+                f"Failed to remove consent for call {call_id}: {last_error}"
+            )
+
+        # A recording may only continue while every live participant consents.
+        # Stop it only when the withdrawal actually breaks a previously
+        # complete set (a user who never consented is already the reason.
+        # recording is not running); this mirrors the append's transition test
+        # and keeps a duplicate revoke from stopping an unrelated segment.
+        current_ids = self._current_participant_ids(self._require_channel_id(updated))
+        after_consented_ids = {int(value) for value in updated.consented_participants}
+        was_complete = current_ids.issubset(before_consented_ids)
+        is_complete = current_ids.issubset(after_consented_ids)
+        if (
+            updated.recorded
+            and self._recording_manager is not None
+            and was_complete
+            and not is_complete
+        ):
+            self._recording_manager.stop_call_recording(updated.id)
+        return updated
+
     def set_transcript(
         self,
         call_id: SnowflakeID,

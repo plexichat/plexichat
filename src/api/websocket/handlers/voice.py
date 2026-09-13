@@ -61,12 +61,22 @@ class VoiceHandler:
         self_deaf = data.get("self_deaf", False)
         self_video = data.get("self_video", False)
         self_stream = data.get("self_stream", False)
-        # Recording consent rides on this opcode (the client's consent dialog
-        # answers "yes" with ``consented: true``). It used to be dropped on
-        # the floor while ``VoiceCallManager.add_consent`` -- the only writer
-        # of ``consented_participants`` -- had no caller, so a recording could
-        # never satisfy its every-participant consent gate.
-        consented = data.get("consented") is True or data.get("consented") == "true"
+        # Recording consent rides on this opcode: the client's dialog answers
+        # ``consented: true`` for yes and ``consented: false`` for no. The
+        # field used to be dropped on the floor while
+        # ``VoiceCallManager.add_consent`` -- the only writer of
+        # ``consented_participants`` -- had no caller, so a recording could
+        # never satisfy its every-participant consent gate. A false is a real
+        # answer too: it revokes a previously given consent, and a recording
+        # that loses one participant's consent is stopped rather than kept.
+        # Absent/unknown values are not a decision and change nothing.
+        consented_raw = data.get("consented")
+        if consented_raw is True or consented_raw == "true":
+            consented: Optional[bool] = True
+        elif consented_raw is False or consented_raw == "false":
+            consented = False
+        else:
+            consented = None
 
         if channel_id is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
@@ -108,16 +118,22 @@ class VoiceHandler:
                 voice_state=voice_state,
             )
 
-            if consented:
+            if consented is not None:
                 # Delivery must not fail the state update it arrived with:
-                # ``record_call_consent`` reports False instead of raising,
-                # and an unrecorded consent leaves the recording gated shut.
+                # both helpers report False instead of raising, and a consent
+                # that cannot be persisted leaves the recording gated shut
+                # (an unrecorded grant never opens it, an unrecorded revoke
+                # never closes it -- the call manager re-checks membership
+                # and every live participant's consent before recording).
                 try:
-                    record = getattr(voice, "record_call_consent", None)
-                    if callable(record):
-                        record(connection.user_id, authoritative_channel_id)
+                    handler_name = (
+                        "record_call_consent" if consented else "revoke_call_consent"
+                    )
+                    handler = getattr(voice, handler_name, None)
+                    if callable(handler):
+                        handler(connection.user_id, authoritative_channel_id)
                 except Exception as e:
-                    logger.warning(f"Voice consent recording failed: {e}")
+                    logger.warning(f"Voice consent update failed: {e}")
         except Exception as e:
             logger.warning(f"Voice state update failed: {e}")
             # M1: surface the failure instead of silently reporting success;
