@@ -208,6 +208,87 @@ def _parse_dtls_params_from_sdp(sdp: str) -> Dict[str, Any]:
     }
 
 
+# Frame-rate ceiling applied to a peer whose downlink the quality estimator
+# has flagged as congested. aiortc negotiates a single video encoding and
+# exposes no encoder or bitrate API, so the frame rate is the only lever that
+# actually bounds what the sender emits.
+DEGRADED_VIDEO_FPS = 5.0
+
+
+class BoundedVideoTrack:
+    """A frame-rate bounded view of a video track, for a degraded peer.
+
+    aiortc 1.15's ``RTCRtpSender`` exposes no ``getParameters`` /
+    ``setParameters`` and no ``maxBitrate``, so ``replaceTrack`` is the only
+    runtime lever over a live sender. Replacing a peer's outbound video with
+    this wrapper is the nearest thing to dropping to a lower simulcast layer:
+    the peer keeps receiving video -- at the bounded rate, rather than a torn
+    down stream or a black picture -- while the frames the sender has to
+    encode, and therefore the bitrate, fall.
+
+    Frames that are not forwarded are still read from the source and dropped,
+    so the source queue cannot accumulate; aiortc's own disabled-sender path
+    reads and discards for the same reason.
+
+    ``stop()`` deliberately does NOT stop the wrapped source: that same track
+    is forwarded to every other peer in the room, so a sender ending must not
+    end video for the rest of the room.
+    """
+
+    def __init__(self, source: Any, max_fps: float = DEGRADED_VIDEO_FPS) -> None:
+        self._source = source
+        self._min_interval = 1.0 / max(1.0, float(max_fps))
+        self._last_sent = 0.0
+        self._ended = False
+        self._id = str(uuid.uuid4())
+        self._enabled = True
+
+    @property
+    def source(self) -> Any:
+        """The bounded track itself; what a restore re-attaches."""
+        return self._source
+
+    @property
+    def kind(self) -> str:
+        return getattr(self._source, "kind", "video")
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    @property
+    def label(self) -> str:
+        return getattr(self._source, "label", "")
+
+    @property
+    def readyState(self) -> str:
+        return "ended" if self._ended else "live"
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        self._enabled = value
+
+    def stop(self) -> None:
+        """End this view only -- never the shared track underneath it."""
+        self._ended = True
+
+    async def recv(self) -> Any:
+        """Return the next frame the bounded rate allows, dropping the rest."""
+        while not self._ended:
+            frame = await self._source.recv()
+            if frame is None:
+                return None
+            now = time.monotonic()
+            if now - self._last_sent >= self._min_interval:
+                self._last_sent = now
+                return frame
+        return None
+
+
 @dataclass
 class AiortcPeer:
     """A peer in the aiortc SFU."""
@@ -220,9 +301,10 @@ class AiortcPeer:
     incoming_audio_tracks: List[Any] = field(default_factory=list)
     incoming_video_tracks: List[Any] = field(default_factory=list)
     producer_tracks: Dict[str, Any] = field(default_factory=dict)
-    # Senders whose video track was suspended by a degradation hint, mapped
-    # back to the track that must be re-attached to restore them.
-    suspended_senders: Dict[Any, Any] = field(default_factory=dict)
+    # Senders whose outbound video a degradation hint replaced with a
+    # frame-rate bounded view, mapped back to the source track that must be
+    # re-attached to restore full rate.
+    degraded_senders: Dict[Any, Any] = field(default_factory=dict)
 
 
 class AiortcAdapter(SFUAdapter):
@@ -430,7 +512,7 @@ class AiortcAdapter(SFUAdapter):
         if track is None:
             return None
         for sender in peer.pc.getSenders():
-            if sender.track is track or peer.suspended_senders.get(sender) is track:
+            if sender.track is track or peer.degraded_senders.get(sender) is track:
                 return sender
         return None
 
@@ -452,9 +534,9 @@ class AiortcAdapter(SFUAdapter):
             for sender in senders:
                 if (
                     getattr(sender, "track", None) is track
-                    or peer.suspended_senders.get(sender) is track
+                    or peer.degraded_senders.get(sender) is track
                 ):
-                    peer.suspended_senders.pop(sender, None)
+                    peer.degraded_senders.pop(sender, None)
                     try:
                         peer.pc.removeTrack(sender)
                     except Exception as e:
@@ -619,7 +701,7 @@ class AiortcAdapter(SFUAdapter):
         peer.producer_tracks.clear()
         peer.producers.clear()
         peer.consumers.clear()
-        peer.suspended_senders.clear()
+        peer.degraded_senders.clear()
 
         del self._rooms[room_id][peer_id]
         self._last_quality_sample.pop(peer_id, None)
@@ -973,12 +1055,14 @@ class AiortcAdapter(SFUAdapter):
         }
 
     @staticmethod
-    def _suspend_video_senders(peer: AiortcPeer) -> bool:
-        """Detach every outbound video track from ``peer``'s connection.
+    def _bound_video_senders(peer: AiortcPeer) -> bool:
+        """Cap the frame rate of every outbound video track for ``peer``.
 
-        The coarse equivalent of dropping to the lowest simulcast layer on a
-        backend with a single encoding: video stops, audio keeps flowing.
-        Returns whether any sender changed state.
+        The nearest lever to a lower simulcast layer on a backend that
+        negotiates a single encoding and has no bitrate API: the peer keeps
+        its video -- bounded, instead of losing it entirely or being handed a
+        frozen picture. Audio is never touched. Returns whether any sender
+        changed state.
         """
         changed = False
         try:
@@ -990,28 +1074,28 @@ class AiortcAdapter(SFUAdapter):
             track = getattr(sender, "track", None)
             if track is None or getattr(track, "kind", None) != "video":
                 continue
-            if sender in peer.suspended_senders:
+            if sender in peer.degraded_senders or isinstance(track, BoundedVideoTrack):
                 continue
             try:
-                sender.replaceTrack(None)
+                sender.replaceTrack(BoundedVideoTrack(track))
             except Exception as exc:
-                logger.debug(f"Could not suspend video sender on {peer.peer_id}: {exc}")
+                logger.debug(f"Could not bound video sender on {peer.peer_id}: {exc}")
                 continue
-            peer.suspended_senders[sender] = track
+            peer.degraded_senders[sender] = track
             changed = True
         return changed
 
     @staticmethod
     def _restore_video_senders(peer: AiortcPeer) -> bool:
-        """Re-attach every video track suspended by a degradation hint."""
+        """Re-attach full-rate video for every sender a hint degraded."""
         changed = False
-        for sender, track in list(peer.suspended_senders.items()):
+        for sender, track in list(peer.degraded_senders.items()):
             try:
                 sender.replaceTrack(track)
             except Exception as exc:
                 logger.debug(f"Could not restore video sender on {peer.peer_id}: {exc}")
                 continue
-            peer.suspended_senders.pop(sender, None)
+            peer.degraded_senders.pop(sender, None)
             changed = True
         return changed
 
@@ -1025,17 +1109,17 @@ class AiortcAdapter(SFUAdapter):
     ) -> bool:
         """Apply a degradation hint as far as aiortc allows, or report False.
 
-        aiortc exposes no simulcast API -- a peer connection negotiates a
-        single video encoding, so there is no layer to switch -- but it does
-        expose ``RTCRtpSender.replaceTrack``. That is the bandwidth lever this
-        backend has: suspending a degraded peer's outbound video (the
-        highest-bitrate stream it receives, and the one the estimator is
-        reacting to) relieves the congestion while leaving audio untouched,
-        and the track is re-attached when the hint is lifted. The hint is
-        reported as applied only when a sender actually changed state, so a
-        peer with no video -- or one already in the requested state -- still
-        gets an honest ``False`` instead of the silent success that made the
-        old implementation a lie.
+        aiortc exposes no simulcast API and no bitrate control -- a peer
+        connection negotiates a single video encoding and ``RTCRtpSender``
+        has no ``setParameters`` -- so the hint is applied as a *bounded*
+        frame rate rather than an all-or-nothing stop: a degraded peer keeps
+        its video at a low rate (the stream the estimator is reacting to)
+        while the encoded bitrate falls, and full rate is re-attached when
+        the hint is lifted. Audio is never touched. The hint is reported as
+        applied only when a sender actually changed state, so a peer with no
+        video -- or one already in the requested state -- still gets an
+        honest ``False`` instead of the silent success that made the old
+        implementation a lie.
         """
         peer = self._rooms.get(room_id, {}).get(peer_id)
         if peer is None:
@@ -1045,8 +1129,8 @@ class AiortcAdapter(SFUAdapter):
             )
             return False
         if spatial_layer <= 0:
-            applied = self._suspend_video_senders(peer)
-            action = "suspended"
+            applied = self._bound_video_senders(peer)
+            action = "bounded"
         else:
             applied = self._restore_video_senders(peer)
             action = "restored"

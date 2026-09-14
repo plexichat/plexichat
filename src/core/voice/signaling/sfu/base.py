@@ -393,10 +393,11 @@ class SFUAdapter(ABC):
 
         Returns True only when at least one layer request was actually issued.
         A backend that has no simulcast API should still apply the nearest
-        lever it does have (aiortc, for example, suspends and re-attaches the
-        peer's outbound video) and must return False -- rather than report
-        success it did not achieve -- when there was nothing to change, such
-        as a peer with no video or no consumers.
+        lever it does have (aiortc, for example, bounds the peer's outbound
+        video to a low frame rate and re-attaches full rate when the hint is
+        lifted; it exposes no bitrate API) and must return False -- rather
+        than report success it did not achieve -- when there was nothing to
+        change, such as a peer with no video or no consumers.
         """
         pass
 

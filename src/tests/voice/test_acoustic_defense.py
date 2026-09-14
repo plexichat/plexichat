@@ -282,3 +282,45 @@ class TestAudioProcessingTrack:
         source = _FakeSourceTrack([])
         track = AudioProcessingTrack(source, AcousticDefenseConfig(enabled=True))
         assert await track._read() is None
+
+    @pytest.mark.asyncio
+    async def test_wrapper_is_consumable_through_recv(self):
+        """aiortc pulls a track with ``recv()``, never ``_read()``.
+
+        The wrapper only defined the legacy ``_read`` hook, so a sender
+        forwarding a defended track raised ``AttributeError`` inside its RTP
+        task and audio died for every peer the track was forwarded to.
+        """
+        source = _FakeSourceTrack([_speech_frame()])
+        track = AudioProcessingTrack(source, AcousticDefenseConfig(enabled=True))
+
+        out = await track.recv()
+
+        assert out is not None
+        assert len(out.data) == FRAME_SAMPLES
+
+    @pytest.mark.asyncio
+    async def test_recv_reads_a_real_aiortc_style_source(self):
+        """A receiver track exposes ``recv`` only; the wrapper must use it."""
+
+        class _RecvOnlySource:
+            kind = "audio"
+            label = "mock-mic"
+            readyState = "live"
+            onended = None
+
+            def __init__(self):
+                self._frames = [_speech_frame()]
+
+            async def recv(self):
+                return self._frames.pop(0) if self._frames else None
+
+            def stop(self):
+                pass
+
+        track = AudioProcessingTrack(_RecvOnlySource(), AcousticDefenseConfig())
+
+        out = await track.recv()
+
+        assert out is not None
+        assert len(out.data) == FRAME_SAMPLES
