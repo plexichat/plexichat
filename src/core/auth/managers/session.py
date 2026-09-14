@@ -168,6 +168,18 @@ class SessionMixin(AuthManagerProtocol):
             self._handle_failed_login(user_id, ip_address)
             raise InvalidCredentialsError("Invalid credentials")
 
+        # Transparent upgrade for legacy / stale-pepper hashes. The plaintext
+        # is proven correct at this point, so rehash with the current pepper
+        # and Argon2 parameters. Best-effort: never fail a good login.
+        try:
+            if self.crypto.needs_rehash(row["password_hash"]):
+                self._db.execute(
+                    "UPDATE auth_users SET password_hash = ? WHERE id = ?",
+                    (self.crypto.hash_password(password), user_id),
+                )
+        except Exception:
+            pass
+
         deletion_status = row.get("deletion_status", "active")
         if deletion_status == "frozen":
             deletion_at = row.get("deletion_at")

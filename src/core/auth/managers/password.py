@@ -28,7 +28,20 @@ class PasswordMixin(AuthManagerProtocol):
             # Equalize timing with the found-user path.
             self.crypto.verify_password(password, self._dummy_password_hash)
             return False
-        return bool(self.crypto.verify_password(password, row["password_hash"]))
+        stored = row["password_hash"]
+        if not bool(self.crypto.verify_password(password, stored)):
+            return False
+        # Transparent upgrade: legacy or stale-pepper hash -> rehash with the
+        # current pepper/params now that the plaintext is proven correct.
+        try:
+            if self.crypto.needs_rehash(stored):
+                self._db.execute(
+                    "UPDATE auth_users SET password_hash = ? WHERE id = ?",
+                    (self.crypto.hash_password(password), user_id),
+                )
+        except Exception:
+            pass
+        return True
 
     def change_password(self, user_id: int, old: str, new: str) -> bool:
         user = self._db.fetch_one(
