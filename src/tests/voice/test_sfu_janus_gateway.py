@@ -16,6 +16,10 @@ This module closes that gap in the two ways that are actually available:
    publisher join, a genuine Janus SDP answer, trickled candidate, layer
    configure, and teardown. Without that env var the test skips -- loudly, so a
    green run never implies the media plane was exercised.
+
+``docker/janus/run-janus-gateway.sh up`` brings up exactly such a gateway and
+waits until the VideoRoom plugin answers, then prints the environment to run
+these tests with; ``down`` tears it down. See ``docker/janus/README.md``.
 """
 
 from __future__ import annotations
