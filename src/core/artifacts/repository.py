@@ -686,6 +686,25 @@ def get_active_voice_call_by_channel(
     return row_to_voice_call(row)
 
 
+def get_active_voice_calls(db) -> List[VoiceCall]:
+    """Return every active (not ended) voice call.
+
+    The consent paths need this: a participant's withdrawal has to reach the
+    calls and recordings they are actually part of, not only the one the
+    client's dialog happened to name.
+    """
+    rows = db.fetch_all(
+        "SELECT * FROM voice_calls WHERE ended_at IS NULL ORDER BY started_at DESC"
+    )
+    calls: List[VoiceCall] = []
+    for row in rows or []:
+        try:
+            calls.append(row_to_voice_call(row))
+        except Exception:
+            continue
+    return calls
+
+
 # === Server artifact settings (per-server retention overrides) ===
 
 

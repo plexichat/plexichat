@@ -34,6 +34,7 @@ from .repository import (
     get_voice_call_uncached,
     get_channel_voice_user_ids,
     get_active_voice_call_by_channel,
+    get_active_voice_calls,
     update_voice_call,
 )
 
@@ -614,6 +615,67 @@ class VoiceCallManager(BaseManager):
         ):
             self._recording_manager.stop_call_recording(updated.id)
         return updated
+
+    def revoke_consent_everywhere(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Withdraw ``user_id``'s consent from every call they are live in.
+
+        ANNEX AB delivered the client's *declined* consent dialog only to the
+        active call of the channel that dialog named, and recorded the gap. A
+        withdrawal has to reach the recordings the participant is actually
+        part of: the dialog's channel is a hint, while the authorization fact
+        is live participation. Every active call whose live roster contains
+        the user is therefore revoked, each through :meth:`remove_consent` so
+        the atomic removal, the membership re-check and the
+        stop-on-consent-split behaviour all still apply.
+
+        Returns the ids of the calls actually revoked. One call failing never
+        prevents the withdrawal from being applied to the others, and this
+        never raises.
+        """
+        normalized = int(user_id)
+        touched: List[SnowflakeID] = []
+        for call in get_active_voice_calls(self._db):
+            channel_id = call.channel_id
+            if channel_id is None:
+                continue
+            try:
+                if normalized not in self._current_participant_ids(channel_id):
+                    continue
+                self.remove_consent(call.id, normalized)
+            except ValueError:
+                # Not a participant after all, or the call ended between the
+                # listing and the removal: there is nothing to withdraw here.
+                continue
+            except Exception as exc:
+                logger.warning(
+                    f"voice_call consent revoke failed (call {call.id}): {exc}"
+                )
+                continue
+            touched.append(call.id)
+        return touched
+
+    def stop_live_recordings_for_user(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Stop live recording segments that still cover ``user_id``.
+
+        :meth:`remove_consent` stops a segment when a withdrawal breaks a
+        previously complete consent set *on the active call*. That leaves the
+        gap ANNEX AB recorded: a segment that is still finishing, or one keyed
+        to a call that is no longer the active one, would keep recording a
+        participant who has withdrawn. The recorder is asked directly, and
+        the outcome is reported rather than raised -- consent bookkeeping must
+        never break the voice state update the dialog arrived with.
+        """
+        recorder = self._recording_manager
+        if recorder is None:
+            return []
+        try:
+            stopped = recorder.stop_live_recordings_for_user(int(user_id))
+        except Exception as exc:
+            logger.warning(
+                f"voice_call recording stop failed for user {user_id}: {exc}"
+            )
+            return []
+        return [value for value in (stopped or [])]
 
     def set_transcript(
         self,

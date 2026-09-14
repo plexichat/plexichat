@@ -182,13 +182,49 @@ def test_revoke_reports_false_without_a_call_manager() -> None:
     assert _ConsentHarness(None).revoke_call_consent(7, 55) is False
 
 
-def test_revoke_reports_false_when_no_call_is_active() -> None:
+def test_revoke_reports_false_when_nothing_held_the_consent() -> None:
+    """Nothing revoked anywhere -- not merely "no active call in this channel".
+
+    The withdrawal is no longer scoped to the channel the dialog named, so a
+    falsey report now means the user was not live in any recorded call and no
+    live segment covered them.
+    """
     manager = MagicMock()
     manager.get_active_by_channel.return_value = None
+    manager.revoke_consent_everywhere.return_value = []
+    manager.stop_live_recordings_for_user.return_value = []
     harness = _ConsentHarness(manager)
 
     assert harness.revoke_call_consent(7, 55) is False
     manager.remove_consent.assert_not_called()
+
+
+def test_revoke_asks_for_every_call_the_user_is_live_in() -> None:
+    manager = MagicMock()
+    manager.get_active_by_channel.return_value = None
+    manager.revoke_consent_everywhere.return_value = [4242]
+    manager.stop_live_recordings_for_user.return_value = []
+    harness = _ConsentHarness(manager)
+
+    assert harness.revoke_call_consent(7, 55) is True
+    manager.revoke_consent_everywhere.assert_called_once_with(7)
+
+
+def test_revoke_stops_a_live_segment_beyond_the_active_call() -> None:
+    """The ANNEX AB residual: a segment outliving the call it belongs to.
+
+    There is no active call left to withdraw from, but a recording segment
+    still covers the user. A withdrawal scoped to the active call would leave
+    it running over them.
+    """
+    manager = MagicMock()
+    manager.get_active_by_channel.return_value = None
+    manager.revoke_consent_everywhere.return_value = []
+    manager.stop_live_recordings_for_user.return_value = [4242]
+    harness = _ConsentHarness(manager)
+
+    assert harness.revoke_call_consent(7, 55) is True
+    manager.stop_live_recordings_for_user.assert_called_once_with(7)
 
 
 def test_revoke_reports_false_when_the_core_refuses() -> None:
@@ -196,6 +232,8 @@ def test_revoke_reports_false_when_the_core_refuses() -> None:
     manager = MagicMock()
     manager.get_active_by_channel.return_value = SimpleNamespace(id=4242)
     manager.remove_consent.side_effect = ValueError("not currently in voice channel")
+    manager.revoke_consent_everywhere.return_value = []
+    manager.stop_live_recordings_for_user.return_value = []
     harness = _ConsentHarness(manager)
 
     assert harness.revoke_call_consent(7, 55) is False
@@ -252,6 +290,19 @@ def test_revoke_module_helper_delegates(monkeypatch) -> None:
 
     assert voice.revoke_call_consent(7, 55) is True
     manager.revoke_call_consent.assert_called_once_with(7, 55)
+
+
+def test_revoke_keeps_going_when_the_scoped_call_refuses() -> None:
+    """One call refusing must not swallow the rest of the withdrawal."""
+    manager = MagicMock()
+    manager.get_active_by_channel.return_value = SimpleNamespace(id=4242)
+    manager.remove_consent.side_effect = ValueError("not currently in voice channel")
+    manager.revoke_consent_everywhere.return_value = []
+    manager.stop_live_recordings_for_user.return_value = [4343]
+    harness = _ConsentHarness(manager)
+
+    assert harness.revoke_call_consent(7, 55) is True
+    manager.stop_live_recordings_for_user.assert_called_once_with(7)
 
 
 def test_revoke_module_helper_is_a_no_op_when_unset(monkeypatch) -> None:

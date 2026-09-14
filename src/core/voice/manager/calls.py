@@ -65,31 +65,47 @@ class CallLifecycleMixin(VoiceProtocol):
     def revoke_call_consent(
         self, user_id: SnowflakeID, channel_id: SnowflakeID
     ) -> bool:
-        """Withdraw a participant's recording consent for the active call.
+        """Withdraw a participant's recording consent wherever it is held.
 
         The delivery half of a *declined* consent dialog (``consented: false``
         on ``VOICE_STATE_UPDATE``). Without it a participant could never take
         consent back, and a recording started while they were away would keep
-        running over them. Report-and-do-not-raise for the same reason as
+        running over them.
+
+        ANNEX AB delivered the withdrawal only to the active call of the
+        channel the dialog named, and recorded the gap: a withdrawal has to
+        reach the recordings the participant is actually part of. The channel
+        is a hint; live participation is the authorization fact. Consent is
+        therefore removed from every active call whose roster contains the
+        user, and every live recording segment still covering them is stopped
+        -- including a segment whose call is no longer the active one.
+
+        Report-and-do-not-raise for the same reason as
         :meth:`record_call_consent`; a withdrawal that cannot be persisted
         fails closed because the call manager refuses to keep recording
-        without every live participant's consent.
+        without every live participant's consent. ``True`` means the
+        withdrawal took effect somewhere (a consent set changed, or a live
+        segment was stopped).
         """
         manager = self._voice_call_manager
         if manager is None:
             return False
+        revoked = False
         try:
             call = manager.get_active_by_channel(channel_id)
-            if call is None:
-                return False
-            manager.remove_consent(call.id, user_id)
+            if call is not None:
+                manager.remove_consent(call.id, user_id)
+                revoked = True
+            if manager.revoke_consent_everywhere(user_id):
+                revoked = True
         except Exception as exc:
             logger.warning(
                 f"Failed to revoke voice consent for user {user_id} in "
                 f"channel {channel_id}: {exc}"
             )
-            return False
-        return True
+        if manager.stop_live_recordings_for_user(user_id):
+            revoked = True
+        return revoked
 
     def _resolve_conversation_for_channel(
         self, channel_id: SnowflakeID

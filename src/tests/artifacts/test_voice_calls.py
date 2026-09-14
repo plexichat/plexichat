@@ -6,6 +6,7 @@ import pytest
 
 from src.core.artifacts.manager import ArtifactManager
 from src.core.artifacts.recording import RecordingManager
+from src.core.artifacts.repository import get_voice_call_uncached
 from src.core.artifacts.voice_calls import VoiceCallManager
 from src.core.voice.manager.calls import CallLifecycleMixin
 
@@ -382,3 +383,142 @@ def test_concurrent_starts_spawn_single_sfu_session(db, tmp_path):
 
     assert sfu.start_recording.await_count <= 1
     assert int(call.id) in recorder._active
+
+
+# === revoking beyond the active call (ANNEX AC) =============================
+
+
+def test_revoke_everywhere_clears_every_active_call_the_user_is_live_in(db):
+    """A withdrawal reaches every active call, not only the channel's newest.
+
+    A call row whose ``ended_at`` was never written stays "active"; the client
+    only ever names one call, so a withdrawal scoped to
+    ``get_active_by_channel`` would leave consent standing on the others.
+    """
+    manager = _voice_manager(db, Mock())
+    _seed_voice_state(db, 33, 12)
+    older = manager.start_call(channel_id=12, server_id=22, initiator_id=33)
+    newer = manager.start_call(channel_id=12, server_id=22, initiator_id=33)
+    manager.add_consent(older.id, 33)
+    manager.add_consent(newer.id, 33)
+
+    touched = manager.revoke_consent_everywhere(33)
+
+    assert set(touched) == {older.id, newer.id}
+    assert get_voice_call_uncached(db, older.id).consented_participants == []
+    assert get_voice_call_uncached(db, newer.id).consented_participants == []
+
+
+def test_revoke_everywhere_ignores_calls_the_user_is_not_live_in(db):
+    manager = _voice_manager(db, Mock())
+    _seed_voice_state(db, 44, 13)
+    call = manager.start_call(channel_id=13, server_id=22, initiator_id=44)
+    manager.add_consent(call.id, 44)
+
+    assert manager.revoke_consent_everywhere(33) == []
+    assert get_voice_call_uncached(db, call.id).consented_participants == [44]
+
+
+def test_revoke_everywhere_survives_a_call_that_refuses(db, monkeypatch):
+    """One call refusing must not swallow the rest of the withdrawal."""
+    manager = _voice_manager(db, Mock())
+    _seed_voice_state(db, 33, 14)
+    older = manager.start_call(channel_id=14, server_id=22, initiator_id=33)
+    newer = manager.start_call(channel_id=14, server_id=22, initiator_id=33)
+    manager.add_consent(older.id, 33)
+    manager.add_consent(newer.id, 33)
+    real_remove = manager.remove_consent
+
+    def flaky(call_id, user_id):
+        if int(call_id) == int(older.id):
+            raise ValueError("not currently in voice channel")
+        return real_remove(call_id, user_id)
+
+    monkeypatch.setattr(manager, "remove_consent", flaky)
+
+    touched = manager.revoke_consent_everywhere(33)
+
+    assert touched == [newer.id]
+    assert get_voice_call_uncached(db, newer.id).consented_participants == []
+
+
+def _recorder(db, tmp_path):
+    return RecordingManager(
+        db,
+        media_module=Mock(),
+        artifact_manager=None,
+        sfu_adapter=Mock(),
+        recording_config={"output_dir": str(tmp_path)},
+    )
+
+
+def _live_segment(recorder, call_id, channel_id, user_id):
+    recorder._active[int(call_id)] = {
+        "room_id": f"voice_{channel_id}",
+        "artifact_id": None,
+        "recording_id": f"rec-{call_id}",
+        "initiator_id": user_id,
+        "channel_id": channel_id,
+    }
+
+
+def test_stop_live_recordings_reaches_a_segment_beyond_the_active_call(db, tmp_path):
+    """The residual ANNEX AB recorded, closed.
+
+    The segment's call is no longer the active one, so no consent transition
+    on it will ever fire: only a direct sweep of the live segments can stop it
+    recording someone who has withdrawn.
+    """
+    recorder = _recorder(db, tmp_path)
+    _seed_voice_state(db, 33, 11)
+    _seed_voice_state(db, 44, 12)
+    _live_segment(recorder, 4242, 11, 33)
+    _live_segment(recorder, 4343, 12, 44)
+    recorder.stop_call_recording = Mock()
+
+    stopped = recorder.stop_live_recordings_for_user(33)
+
+    assert stopped == [4242]
+    recorder.stop_call_recording.assert_called_once_with(4242)
+
+
+def test_stop_live_recordings_is_a_no_op_when_the_user_is_not_live(db, tmp_path):
+    recorder = _recorder(db, tmp_path)
+    _seed_voice_state(db, 44, 12)
+    _live_segment(recorder, 4343, 12, 44)
+    recorder.stop_call_recording = Mock()
+
+    assert recorder.stop_live_recordings_for_user(33) == []
+    recorder.stop_call_recording.assert_not_called()
+
+
+def test_stop_live_recordings_fails_closed_when_membership_is_unreadable(
+    db, tmp_path, monkeypatch
+):
+    """An unreadable roster cannot prove the user is absent: stop the segment."""
+    recorder = _recorder(db, tmp_path)
+    _seed_voice_state(db, 33, 11)
+    _live_segment(recorder, 4242, 11, 33)
+    recorder.stop_call_recording = Mock()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(
+        "src.core.artifacts.repository.get_channel_voice_user_ids", boom
+    )
+
+    assert recorder.stop_live_recordings_for_user(33) == [4242]
+    recorder.stop_call_recording.assert_called_once_with(4242)
+
+
+def test_stop_live_recordings_skips_a_segment_already_stopping(db, tmp_path):
+    """A segment already stopping is not stopped a second time."""
+    recorder = _recorder(db, tmp_path)
+    _seed_voice_state(db, 33, 11)
+    _live_segment(recorder, 4242, 11, 33)
+    recorder._stopping.add(4242)
+    recorder.stop_call_recording = Mock()
+
+    assert recorder.stop_live_recordings_for_user(33) == []
+    recorder.stop_call_recording.assert_not_called()

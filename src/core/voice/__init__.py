@@ -191,10 +191,13 @@ def record_call_consent(user_id: int, channel_id: int) -> bool:
 
 
 def revoke_call_consent(user_id: int, channel_id: int) -> bool:
-    """Withdraw the caller's consent to be recorded on the active voice call.
+    """Withdraw the caller's consent to be recorded, wherever it is held.
 
     Delivery point for a declined consent dialog (``consented: false`` on
-    ``VOICE_STATE_UPDATE``); returns False when there is nothing to revoke.
+    ``VOICE_STATE_UPDATE``). ``channel_id`` is where the dialog was shown; the
+    withdrawal is applied to every active call the user is live in and to
+    every live recording segment still covering them, including one whose
+    call is no longer active. Returns False when there was nothing to revoke.
     Never raises, and a withdrawal that cannot be persisted leaves the
     recording gated shut.
     """

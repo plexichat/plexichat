@@ -221,6 +221,59 @@ class RecordingManager:
             self._stopping.add(cid)
         self._schedule(self._do_stop_recording(cid))
 
+    def stop_live_recordings_for_user(self, user_id: SnowflakeID) -> List[int]:
+        """Stop every live recording segment that is still recording ``user_id``.
+
+        ``stop_call_recording`` is keyed by call and only fires when a consent
+        transition breaks a complete set on the call that is still active. A
+        participant withdrawing consent has to reach further than that: a
+        segment can be mid-stop, or be the tail of a call the dialog no longer
+        names, and continuing to record someone who has withdrawn is exactly
+        the outcome the unanimous-consent gate exists to prevent (M14).
+
+        Membership comes from ``voice_states``, the live authority. An
+        unreadable roster stops the segment rather than leaving it running: a
+        withdrawal this explicit fails closed. Returns the call ids stopped.
+        """
+        with self._state_lock:
+            live = [
+                (call_id, info.get("channel_id"))
+                for call_id, info in self._active.items()
+                if call_id not in self._stopping
+            ]
+
+        stopped: List[int] = []
+        for call_id, channel_id in live:
+            if channel_id is None:
+                # Fail closed: without a channel the live roster cannot be
+                # resolved, so membership of the segment is unprovable.
+                logger.warning(
+                    "recording: call %s has no channel; stopping on revoke", call_id
+                )
+                self.stop_call_recording(call_id)
+                stopped.append(call_id)
+                continue
+            try:
+                from .repository import get_channel_voice_user_ids
+
+                members = set(get_channel_voice_user_ids(self._db, channel_id))
+            except Exception as exc:
+                logger.warning(
+                    "recording: consent lookup failed for call %s: %s", call_id, exc
+                )
+                self.stop_call_recording(call_id)
+                stopped.append(call_id)
+                continue
+            if int(user_id) in members:
+                logger.info(
+                    "recording: stopping call %s; user %s withdrew consent",
+                    call_id,
+                    user_id,
+                )
+                self.stop_call_recording(call_id)
+                stopped.append(call_id)
+        return stopped
+
     # ------------------------------------------------------------------
     # Internal async implementation
     # ------------------------------------------------------------------
