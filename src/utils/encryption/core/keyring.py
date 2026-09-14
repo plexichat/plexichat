@@ -9,10 +9,12 @@ import base64
 import hashlib
 import json
 import os
+import re
+import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -25,6 +27,11 @@ class KeyringDecryptionError(RuntimeError):
     """Raised when a keyring file cannot be decrypted (KEK mismatch or corruption)."""
 
     pass
+
+
+# Pepper ids double as password-hash envelope labels; keep the charset tight
+# (must match the envelope regex in `src.utils.encryption.pepper`).
+_PEPPER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 
 class Keyring:
@@ -54,6 +61,10 @@ class Keyring:
         self.current_key_source: str = "unknown"
         self.keys: Dict[int, bytes] = {}
         self.blind_index_root_key: Optional[bytes] = None
+        # Versioned password-pepper secrets (pepper_id -> 32 bytes). Stored
+        # alongside the data keys so they are encrypted at rest by this
+        # keyring's KEK; generated once via CSRNG and never derived.
+        self.pepper_keys: Dict[str, bytes] = {}
         self.rotated_at: int = 0
         self._thread_lock = threading.Lock()
         self.load()
@@ -210,88 +221,94 @@ class Keyring:
 
     def load(self):
         """Load encrypted keyring from disk with KEK fallback."""
+        self._with_file_lock(self._load_from_disk)
 
-        def _load_impl():
-            if not self.path.exists():
-                return
+    def _load_from_disk(self):
+        """Decrypt and parse the keyring file (caller must hold the lock)."""
+        if not self.path.exists():
+            return
 
+        try:
+            with open(self.path, "r") as f:
+                encrypted_data = json.load(f)
+
+            # Decrypt the keyring payload
+            payload = base64.b64decode(encrypted_data["payload"])
+            nonce = base64.b64decode(encrypted_data["nonce"])
+
+            # Try dedicated KEK first, then the system KEK for old keyrings
             try:
-                with open(self.path, "r") as f:
-                    encrypted_data = json.load(f)
-
-                # Decrypt the keyring payload
-                payload = base64.b64decode(encrypted_data["payload"])
-                nonce = base64.b64decode(encrypted_data["nonce"])
-
-                # Try dedicated KEK first, then the system KEK for old keyrings
-                try:
-                    kek = self._get_kek(fallback=False)
-                    decrypted = AESGCM(kek).decrypt(nonce, payload, None)
-                except Exception:
-                    if not (
-                        self.fallback_to_system
-                        and self.kek_env_var != "PLEXICHAT_SYSTEM_KEY"
-                    ):
-                        raise
-                    logger.warning(
-                        f"Failed to decrypt {self.path.name} with {self.kek_env_var}, trying PLEXICHAT_SYSTEM_KEY fallback"
-                    )
-                    system_kek = self._get_kek(fallback=True)
-                    decrypted = AESGCM(system_kek).decrypt(nonce, payload, None)
-
-                data = json.loads(decrypted)
-
-                self.current_version = data.get("current_version", 0)
-                self.rotated_at = data.get("rotated_at", 0)
-                self.keys = {
-                    int(v): base64.b64decode(k) for v, k in data.get("keys", {}).items()
-                }
-                self.blind_index_root_key = (
-                    base64.b64decode(data["blind_index_root_key"])
-                    if data.get("blind_index_root_key")
-                    else None
+                kek = self._get_kek(fallback=False)
+                decrypted = AESGCM(kek).decrypt(nonce, payload, None)
+            except Exception:
+                if not (
+                    self.fallback_to_system
+                    and self.kek_env_var != "PLEXICHAT_SYSTEM_KEY"
+                ):
+                    raise
+                logger.warning(
+                    f"Failed to decrypt {self.path.name} with {self.kek_env_var}, trying PLEXICHAT_SYSTEM_KEY fallback"
                 )
-                self.current_key_source = self._detect_current_key_source(
-                    data.get("current_key_source")
+                system_kek = self._get_kek(fallback=True)
+                decrypted = AESGCM(system_kek).decrypt(nonce, payload, None)
+
+            data = json.loads(decrypted)
+
+            self.current_version = data.get("current_version", 0)
+            self.rotated_at = data.get("rotated_at", 0)
+            self.keys = {
+                int(v): base64.b64decode(k) for v, k in data.get("keys", {}).items()
+            }
+            self.blind_index_root_key = (
+                base64.b64decode(data["blind_index_root_key"])
+                if data.get("blind_index_root_key")
+                else None
+            )
+            raw_peppers = data.get("pepper_keys", {}) or {}
+            self.pepper_keys = {
+                str(pid): base64.b64decode(secret)
+                for pid, secret in raw_peppers.items()
+            }
+            self.current_key_source = self._detect_current_key_source(
+                data.get("current_key_source")
+            )
+            logger.info(
+                f"Loaded keyring {self.path.name} with {len(self.keys)} key version(s)"
+            )
+        except Exception as e:
+            logger.critical(
+                f"FATAL: Failed to decrypt keyring at {self.path}: {e}. "
+                f"This usually means the KEK has changed since the keyring was created. "
+                f"Restore the original keyring files and KEK from backup, "
+                f"or set the correct KEK environment variable. "
+                f"Keyring files: ~/.plexichat/data/system_keyring.json, "
+                f"~/.plexichat/data/file_keyring.json, "
+                f"~/.plexichat/data/message_keyring.json."
+            )
+
+            # If keyring decryption fails, the server cannot operate safely.
+            try:
+                from src.core.database import invalidate_pattern
+
+                count = invalidate_pattern("*")
+                logger.warning(
+                    f"KEK change detected or keyring corrupted. Invalidated {count} cache keys."
                 )
-                logger.info(
-                    f"Loaded keyring {self.path.name} with {len(self.keys)} key version(s)"
-                )
-            except Exception as e:
-                logger.critical(
-                    f"FATAL: Failed to decrypt keyring at {self.path}: {e}. "
-                    f"This usually means the KEK has changed since the keyring was created. "
-                    f"Restore the original keyring files and KEK from backup, "
-                    f"or set the correct KEK environment variable. "
-                    f"Keyring files: ~/.plexichat/data/system_keyring.json, "
-                    f"~/.plexichat/data/file_keyring.json, "
-                    f"~/.plexichat/data/message_keyring.json."
-                )
-
-                # If keyring decryption fails, the server cannot operate safely.
-                try:
-                    from src.core.database import invalidate_pattern
-
-                    count = invalidate_pattern("*")
-                    logger.warning(
-                        f"KEK change detected or keyring corrupted. Invalidated {count} cache keys."
-                    )
-                except Exception as ce:
-                    logger.error(
-                        f"Failed to invalidate cache after keyring decryption failure: {ce}"
-                    )
-
-                self.current_version = 0
-                self.current_key_source = "unknown"
-                self.keys = {}
-                self.rotated_at = 0
-
-                raise KeyringDecryptionError(
-                    f"Keyring decryption failed for {self.path}: {e}. "
-                    f"Restore keyring files from backup or set correct KEK."
+            except Exception as ce:
+                logger.error(
+                    f"Failed to invalidate cache after keyring decryption failure: {ce}"
                 )
 
-        self._with_file_lock(_load_impl)
+            self.current_version = 0
+            self.current_key_source = "unknown"
+            self.keys = {}
+            self.rotated_at = 0
+            self.pepper_keys = {}
+
+            raise KeyringDecryptionError(
+                f"Keyring decryption failed for {self.path}: {e}. "
+                f"Restore keyring files from backup or set correct KEK."
+            )
 
     def save(self):
         """Save keyring to disk, encrypted with KEK (acquires file lock)."""
@@ -321,6 +338,13 @@ class Keyring:
             "keys": {
                 str(v): base64.b64encode(k).decode("utf-8")
                 for v, k in self.keys.items()
+            },
+            # Pepper secrets are key material: always persisted (never gated
+            # by the blind-index flag) so they survive blind-index-only
+            # writes and KEK-rotation re-encryption alike.
+            "pepper_keys": {
+                str(pid): base64.b64encode(secret).decode("utf-8")
+                for pid, secret in self.pepper_keys.items()
             },
         }
 
@@ -354,6 +378,49 @@ class Keyring:
 
         # Atomic swap
         os.replace(temp_path, self.path)
+
+    def get_or_create_pepper(self, pepper_id: str) -> bytes:
+        """Return the 32-byte pepper for ``pepper_id``, generating it on first use.
+
+        The secret is generated with a CSRNG, persisted in this keyring
+        (encrypted at rest by the keyring's KEK), and stable afterwards.
+        The file is re-read under the lock first so concurrent processes or
+        workers racing the first use converge on a single value instead of
+        each persisting their own.
+        """
+
+        def _impl():
+            if not _PEPPER_ID_RE.fullmatch(pepper_id):
+                raise ValueError(f"invalid pepper id: {pepper_id!r}")
+            # Refresh under the lock: another worker may have created this
+            # pepper (or any other state) since this instance loaded.
+            self._load_from_disk()
+            existing = self.pepper_keys.get(pepper_id)
+            if existing is not None:
+                if len(existing) != 32:
+                    raise KeyringDecryptionError(
+                        f"pepper '{pepper_id}' in {self.path.name} is corrupt "
+                        f"({len(existing)} bytes, expected 32)"
+                    )
+                return existing
+            new_secret = secrets.token_bytes(32)
+            self.pepper_keys[pepper_id] = new_secret
+            logger.info(
+                f"Generated new password pepper '{pepper_id}' in {self.path.name}"
+            )
+            self._save_without_lock()
+            return new_secret
+
+        return self._with_file_lock(_impl)
+
+    def list_peppers(self) -> List[str]:
+        """Return the sorted ids of stored password peppers."""
+
+        def _impl():
+            self._load_from_disk()
+            return sorted(self.pepper_keys.keys())
+
+        return self._with_file_lock(_impl)
 
     def get_key(self, version: Optional[int] = None) -> Tuple[int, bytes]:
         """Get a specific key version or the current one."""
