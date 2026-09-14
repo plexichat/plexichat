@@ -69,19 +69,62 @@ class HardwareVault:
                     pass  # Logger not configured yet
                 return
 
-            # Check for required HSM configuration
-            required_fields = ["library_path", "slot_id", "pin"]
-            for field in required_fields:
-                if not hsm_config.get(field):
-                    try:
-                        logger.warning(
-                            f"HSM enabled but missing required field: {field}"
-                        )
-                    except RuntimeError:
-                        pass  # Logger not configured yet
-                    return
+            # PIN hygiene: resolve from pin_env / pin_file / ${VAR} expansion
+            # (see pepper.resolve_pin). A literal `pin` is only for SoftHSM
+            # dev setups.
+            try:
+                from .pepper import resolve_pin as _resolve_pin
 
-            # Try to import PyKCS11
+                pin = _resolve_pin(hsm_config)
+            except Exception:
+                pin = str(hsm_config.get("pin", ""))
+            # Check for required HSM configuration
+            if not hsm_config.get("library_path"):
+                try:
+                    logger.warning(
+                        "HSM enabled but missing required field: library_path"
+                    )
+                except RuntimeError:
+                    pass
+                return
+            if hsm_config.get("slot_id") in (None, ""):
+                try:
+                    logger.warning("HSM enabled but missing required field: slot_id")
+                except RuntimeError:
+                    pass
+                return
+            if not pin:
+                try:
+                    logger.warning(
+                        "HSM enabled but no PIN available (set pin_env "
+                        "PLEXICHAT_HSM_PIN or pin_file)"
+                    )
+                except RuntimeError:
+                    pass
+                return
+
+            # Prefer the maintained `pkcs11` package; fall back to PyKCS11.
+            try:
+                pkcs11_mod = importlib.import_module("pkcs11")
+                lib = pkcs11_mod.lib(str(hsm_config["library_path"]))
+                tokens = list(lib.get_tokens())
+                if not tokens:
+                    try:
+                        logger.warning("HSM enabled but no tokens available")
+                    except RuntimeError:
+                        pass
+                    return
+                self._hsm_available = True
+                self._hsm_config = dict(hsm_config)
+                try:
+                    logger.info("HSM (PKCS#11 via pkcs11) available")
+                except RuntimeError:
+                    pass
+                return
+            except ImportError:
+                pass
+
+            # Try to import PyKCS11 (legacy fallback)
             PyKCS11 = cast(Any, importlib.import_module("PyKCS11")).PyKCS11
 
             # Test HSM connection
@@ -234,13 +277,21 @@ class HardwareVault:
         2. Derive a key from a master key stored in HSM
         """
         try:
+            try:
+                from .pepper import resolve_pin as _resolve_pin
+
+                pin = _resolve_pin(self._hsm_config)
+            except Exception:
+                pin = str(self._hsm_config.get("pin", ""))
+            if not pin:
+                logger.error("HSM key retrieval failed: missing PIN")
+                return None
             PyKCS11 = cast(Any, importlib.import_module("PyKCS11")).PyKCS11
 
             pkcs11 = PyKCS11.PyKCS11Lib()
             pkcs11.load(self._hsm_config["library_path"])
 
             slot_id = int(self._hsm_config["slot_id"])
-            pin = self._hsm_config["pin"]
             key_label = self._hsm_config.get("key_label", "plexichat_kek")
 
             # Open session and login
