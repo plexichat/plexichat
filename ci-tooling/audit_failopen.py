@@ -11,7 +11,7 @@ It looks for the single invariant class that caused every one of those bugs:
     A check that cannot be evaluated because its dependency is unwired must
     DENY, not skip.
 
-Four sweeps:
+Sweeps:
 
   A. ``src/core`` manager guards -- ``if not self._<dep>:`` whose block grants
      access (``return True``) instead of denying.
@@ -49,6 +49,14 @@ Four sweeps:
      ``VoiceCallManager.add_consent`` -- the only writer of
      ``consented_participants`` -- had no caller at all. Sweeps A-G ask whether
      a check runs; H asks whether the thing it guards ever arrives.
+  I. ``src/core`` access decisions derived from a listing the function itself
+     fetched: the check runs, but its input is a row of that listing, so the
+     answer describes the data rather than the caller. The threads-listing bug
+     fixed by the fail-open work (``ANNEX AB``) was exactly this -- the guard
+     folded the fetched threads into a flag and the permission consumed the
+     first thread's ``server_id``. A hit needs both halves (a guard over a
+     collection *and* an access call consuming a row of it), so a resource
+     lookup authorizing against the resource it fetched is not reported.
 
 Sweep H needs both trees: it is skipped (and reported as skipped, never as a
 pass) when the sibling ``plexichat-client`` checkout is absent. Fields that are
@@ -82,8 +90,8 @@ many recorded findings are still open versus annotated FIXED.
 Usage:
     python ci-tooling/audit_failopen.py [--findings ../findings.md] [--root .]
 
-Exit code 1 when any GRANT-class (fail-open) or unexplained NO-AUTH hit
-remains, 0 otherwise.
+Exit code 1 when any fail-open class (GRANT, FABRICATED, EMPTY-DECIDED) or
+unexplained NO-AUTH/UNCHECKED/UNDELIVERED hit remains, 0 otherwise.
 """
 
 from __future__ import annotations
@@ -1597,6 +1605,241 @@ def sweep_ws_handlers(root: Path) -> list[Hit]:
     return hits
 
 
+# ---------------------------------------------------------------------------
+# Sweep I: an authorization decision taken from a possibly-empty listing
+# ---------------------------------------------------------------------------
+
+# Sweeps A-H ask whether a check *runs* and whether its result is delivered.
+# This sweep is the threads-listing shape fixed in ANNEX AB: a permission whose
+# input is a collection the function itself fetched, so the decision is derived
+# from the data instead of taken about the caller -- an empty listing answers a
+# question nobody asked, and a listing that happens to hold no public rows can
+# skip the check entirely.
+EMPTY_DECIDED = "EMPTY-DECIDED"
+
+# Readers that return a *collection*. A scalar presence check
+# (``row = fetch_one(...)``; ``if conv_id:``) is deliberately out of scope:
+# gating an access call on "the resource exists" is a normal, fail-closed
+# pattern, and treating it as a bug buries the real shape in noise.
+COLLECTION_READERS = frozenset(
+    {
+        "fetch_all",
+        "fetchall",
+        "fetch_many",
+        "query_all",
+        "query_many",
+        "select",
+        "select_all",
+        "search",
+    }
+)
+
+COLLECTION_PREFIXES = ("list_", "get_all", "get_many", "find_all", "load_all")
+
+# Calls that fold a collection into one flag -- ``any(x for x in rows)`` --
+# which is what a guard over "does the listing hold the relevant rows" looks
+# like in practice.
+FLAG_CALLS = frozenset({"any", "all", "len", "bool", "sum", "count"})
+
+_AUTHZ_NAME = re.compile(
+    r"(permission|is_?member|has_role|has_permission|can_|authoriz|require_)"
+)
+
+# Hits individually verified as *not* the skipped-decision shape. Key:
+# (relative path, function name). Value: why the listing does not decide access.
+REVIEWED_EMPTY_DECIDED: dict[tuple[str, str], str] = {}
+
+
+def _simple_call_name(node: ast.AST) -> str:
+    """The bare name of a call (``self._db.fetch_all`` -> ``fetch_all``)."""
+    if not isinstance(node, ast.Call):
+        return ""
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return ""
+
+
+def _is_collection_reader(node: ast.AST) -> bool:
+    name = _simple_call_name(node)
+    if not name:
+        return False
+    return name in COLLECTION_READERS or name.startswith(COLLECTION_PREFIXES)
+
+
+def _is_authz_call(node: ast.AST) -> bool:
+    """True for a call that looks like an access decision."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if not name:
+        return False
+    if name in AUTHZ_CALLS:
+        return True
+    return bool(_AUTHZ_NAME.search(name))
+
+
+def _loaded_names(node: ast.AST) -> set[str]:
+    """Names read (not assigned) anywhere inside ``node``."""
+    return {
+        sub.id
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load)
+    }
+
+
+def _call_argument_names(call: ast.Call) -> set[str]:
+    names: set[str] = set()
+    for arg in list(call.args) + [kw.value for kw in call.keywords]:
+        names |= _loaded_names(arg)
+    return names
+
+
+def _collection_and_row_names(fn: ast.AST) -> tuple[set[str], set[str]]:
+    """Names in ``fn`` bound to a fetched collection, and to a row of one.
+
+    Collections: ``rows = fetch_all(...)``, a comprehension or accumulator
+    built from one, and the flag a guard folds one into (``any(x for x in
+    rows)``). Rows: the loop target of an iteration over a collection (or the
+    single row pulled out of it with ``rows[0]`` / ``next(...)``), which is
+    the value an access decision must never be derived from.
+    """
+    collections: set[str] = set()
+    rows: set[str] = set()
+    comps = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+    for _ in range(5):  # fixpoint; five hops is past any real derivation
+        changed = False
+        for node in ast.walk(fn):
+            targets: list[str] = []
+            value: ast.AST | None = None
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                value = node.value
+                if isinstance(node.target, ast.Name):
+                    targets = [node.target.id]
+            if value is not None and targets:
+                reads = _loaded_names(value)
+                collection = False
+                if _is_collection_reader(value):
+                    collection = True
+                elif isinstance(value, comps) and (reads & collections):
+                    collection = True
+                elif _simple_call_name(value) in FLAG_CALLS:
+                    collection = bool(reads & collections)
+                elif reads & collections:
+                    # A value rebuilt out of a collection stays a listing; a
+                    # scalar extracted from one is a row, not a collection.
+                    collection = isinstance(value, (comps, ast.List, ast.Set))
+                if collection:
+                    for target in targets:
+                        if target not in collections:
+                            collections.add(target)
+                            changed = True
+                # ``x = rows[0]`` / ``x = next(t for t in rows)``: a single row.
+                is_row = False
+                if isinstance(value, ast.Subscript):
+                    is_row = bool(_loaded_names(value.value) & collections)
+                elif _simple_call_name(value) == "next":
+                    is_row = bool(reads & collections)
+                if is_row:
+                    for target in targets:
+                        if target not in rows:
+                            rows.add(target)
+                            changed = True
+            # ``for row in rows:`` binds a row, and any accumulator it appends
+            # to (``out.append(row)``) is itself a listing built from one.
+            if isinstance(node, ast.For) and (_loaded_names(node.iter) & collections):
+                if isinstance(node.target, ast.Name) and node.target.id not in rows:
+                    rows.add(node.target.id)
+                    changed = True
+                for sub in ast.walk(node):
+                    if not isinstance(sub, ast.Call):
+                        continue
+                    if not isinstance(sub.func, ast.Attribute):
+                        continue
+                    if sub.func.attr not in ("append", "add", "update", "extend"):
+                        continue
+                    base = sub.func.value
+                    if isinstance(base, ast.Name) and base.id not in collections:
+                        collections.add(base.id)
+                        changed = True
+        if not changed:
+            break
+    return collections, rows
+
+
+def sweep_empty_decided(root: Path) -> list[Hit]:
+    """Sweep I: authorization decided from a listing the function fetched.
+
+    The threads-listing shape fixed in ANNEX AB: the access call sat inside a
+    branch guarded by a flag folded over a listing the function had fetched
+    (``if public_exists and self._servers:``), and its argument was a row
+    pulled out of that same listing (``first_public.server_id``). The decision
+    therefore came from the data rather than from the caller, and a listing
+    that happened to hold no relevant rows answered a question nobody asked.
+
+    A hit needs both halves -- the guard folds a *collection* (not a scalar
+    existence check, which is a normal fail-closed pattern) and the access
+    call consumes a *row* of it -- so a resource lookup authorizing against
+    the resource it fetched is not reported.
+    """
+    hits: list[Hit] = []
+    core_dir = root / "src" / "core"
+    if not core_dir.is_dir():
+        return hits
+    for path in sorted(core_dir.rglob("*.py")):
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        rel = str(path.relative_to(root))
+        stubs = _type_checking_ranges(tree)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if _is_stub(fn):
+                continue
+            if any(start <= fn.lineno <= end for start, end in stubs):
+                continue
+            if (rel, fn.name) in REVIEWED_EMPTY_DECIDED:
+                continue
+            collections, rows = _collection_and_row_names(fn)
+            if not collections or not rows:
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.If):
+                    continue
+                guard = _loaded_names(node.test) & collections
+                if not guard:
+                    continue
+                for call in ast.walk(node):
+                    if not _is_authz_call(call):
+                        continue
+                    used = _call_argument_names(call) & rows
+                    if not used:
+                        continue
+                    hits.append(
+                        Hit(
+                            EMPTY_DECIDED,
+                            rel,
+                            call.lineno,
+                            _simple_call_name(call),
+                            f"`{fn.name}`: `{sorted(used)[0]}`, a row of the "
+                            f"fetched listing `{sorted(guard)[0]}`, decides the "
+                            "access check that guards it",
+                        )
+                    )
+    return hits
+
+
 def findings_inventory(findings_path: Path) -> list[str]:
     """Summarise the recorded findings inventory, if present."""
     if not findings_path.is_file():
@@ -1639,6 +1882,8 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
     unchecked = [h for h in manager_hits if h.kind == UNCHECKED]
     non_auth = non_auth + [h for h in manager_hits if h.kind == NON_AUTH]
 
+    empty_decided = sweep_empty_decided(root)
+
     route_hits = sweep_routes(root) + sweep_ws_handlers(root)
     no_auth = [h for h in route_hits if h.kind == NO_AUTH]
     unauthorized = [h for h in route_hits if h.kind == UNAUTHZ]
@@ -1668,6 +1913,9 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
         f"{len(undelivered)}"
         + ("" if callbacks_scanned else " (sweep H skipped: client tree not found)")
     )
+    out.append(
+        f"- EMPTY-DECIDED (access decided from a fetched listing): {len(empty_decided)}"
+    )
     out.append(f"- REVIEW (needs a human call): {len(reviews)}")
     out.append(f"- NON-AUTH (verified denying/plumbing): {len(non_auth)}")
     out.append(f"- UNCHECKED (manager write ignoring its caller id): {len(unchecked)}")
@@ -1690,6 +1938,10 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
         (
             "UNDELIVERED - client media callback that no handler reads",
             undelivered,
+        ),
+        (
+            "EMPTY-DECIDED - access decided from a listing the function fetched",
+            empty_decided,
         ),
         ("REVIEW - needs a human call", reviews),
         ("NON-AUTH - verified fine", non_auth),
@@ -1719,7 +1971,7 @@ def report(root: Path, client_root: Path, findings: Path) -> tuple[str, int, int
             out.append(f"| `{hit.path}:{hit.line}` | `{hit.symbol}` | {hit.detail} |")
         out.append("")
 
-    fail_open = len(grants) + len(fabricated)
+    fail_open = len(grants) + len(fabricated) + len(empty_decided)
     verdict_missing = len(no_auth) + len(unchecked) + len(undelivered)
     return "\n".join(out), fail_open, verdict_missing
 
@@ -1755,7 +2007,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         Path(args.output).write_text(text + "\n", encoding="utf-8")
         print(
-            f"wrote {args.output} ({grant_count} GRANT/FABRICATED, "
+            f"wrote {args.output} ({grant_count} GRANT/FABRICATED/EMPTY-DECIDED, "
             f"{no_auth_count} NO-AUTH/UNCHECKED/UNDELIVERED hits)"
         )
     return 1 if (grant_count or no_auth_count) else 0
