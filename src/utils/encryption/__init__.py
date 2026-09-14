@@ -82,6 +82,14 @@ def setup(
     )
 
     _setup_called = True
+    # Argon2 params changed -> cached pepper store may hold stale dummy
+    # state; refresh lazily on next use.
+    try:
+        from .pepper import reset_pepper_store
+
+        reset_pepper_store()
+    except Exception:
+        pass
 
 
 def _get_manager() -> EncryptionManager:
@@ -222,6 +230,22 @@ def verify_password(password: str, hash_str: str) -> bool:
         bool: True if password matches, False otherwise.
     """
     return _get_manager().verify_password(password, hash_str)
+
+
+def needs_password_rehash(hash_str: str) -> bool:
+    """True when a stored hash should be upgraded (stale pepper/params)."""
+    try:
+        return bool(_get_manager().needs_rehash(hash_str))
+    except Exception:
+        return False
+
+
+def password_pepper_id(hash_str: str) -> Optional[str]:
+    """Pepper id for a peppered hash, else None (legacy)."""
+    try:
+        return _get_manager().get_password_pepper_id(hash_str)
+    except Exception:
+        return None
 
 
 def encrypt_data(
@@ -510,6 +534,8 @@ __all__ = [
     "setup",
     "hash_password",
     "verify_password",
+    "needs_password_rehash",
+    "password_pepper_id",
     "encrypt_data",
     "decrypt_data",
     "generate_key_pair",

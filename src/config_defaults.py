@@ -451,11 +451,32 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "datacenter_id": None,
             },
             "key_rotation_days": 180,
+            "password_pepper": {
+                # Server-side pepper: HMAC-SHA256(pepper, password) before
+                # Argon2id. The pepper secret lives in the system keyring
+                # (KEK-encrypted at rest), so there is nothing for the
+                # operator to provision: it is generated once via CSRNG on
+                # first use. Keep old ids listed for verification after a
+                # rotation; `current_id` is used for new hashes. Logins with
+                # a stale/legacy hash rehash transparently on success.
+                # Each entry: {"source": "keyring"|"hsm"|"env"|"file"|
+                #   "kek-derived", ...}. `env`/`file` exist only for
+                #   migration from externally-managed secrets.
+                "enabled": True,
+                "current_id": "v1",
+                "peppers": {"v1": {"source": "keyring"}},
+            },
             "hsm": {
                 "enabled": False,
                 "library_path": "/usr/lib/softhsm/libsofthsm2.so",
                 "slot_id": 0,
+                "token_label": "",
+                # PIN hygiene: prefer `pin_env` (env var name) or `pin_file`
+                # (path to a file containing the PIN). A literal `pin`
+                # supports ${VAR} expansion but warns — never commit it.
                 "pin": "",
+                "pin_env": "PLEXICHAT_HSM_PIN",
+                "pin_file": "",
                 "key_label": "plexichat_kek",
             },
         },
