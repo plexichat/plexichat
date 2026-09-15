@@ -61,28 +61,20 @@ class TestPepperedHashing:
         assert mgr.verify_password("correcthorse123!", h) is False
         assert mgr.needs_rehash(h) is False
 
-    def test_legacy_hash_needs_rehash_when_pepper_enabled(self, monkeypatch):
-        from src.utils.encryption import pepper as pepper_mod
-
-        pepper_mod.reset_pepper_store()
-        from src.utils.encryption.core import EncryptionManager
-
-        legacy_mgr = EncryptionManager(
-            argon2_time_cost=1, argon2_memory_cost=8192, argon2_parallelism=1
-        )
-        legacy = legacy_mgr.password_hasher.hash("SomePassword123!")
-        assert legacy.startswith("$argon2id$")
-
+    def test_unpeppered_hash_never_verifies(self, monkeypatch):
         key = secrets.token_hex(32)
         monkeypatch.setenv("TEST_PEPPER_V1", key)
         mgr, _ = _make_manager_with_pepper(
             monkeypatch,
             {"v1": {"source": "env", "env_var": "TEST_PEPPER_V1"}},
         )
-        # Legacy hash must NOT verify against peppered manager with a
-        # different prehash... it verifies via the legacy path:
-        assert mgr.verify_password("SomePassword123!", legacy) is True
-        assert mgr.needs_rehash(legacy) is True
+        # A raw Argon2id hash (the pre-pepper format) is rejected even for
+        # the right password, and reports no upgrade path: fail closed.
+        raw = mgr.password_hasher.hash("SomePassword123!")
+        assert not raw.startswith("$plexichat$")
+        assert mgr.verify_password("SomePassword123!", raw) is False
+        assert mgr.needs_rehash(raw) is False
+        assert mgr.get_password_pepper_id(raw) is None
 
     def test_rotation_old_hash_still_verifies_but_rehashes(self, monkeypatch):
         k1, k2 = secrets.token_hex(32), secrets.token_hex(32)

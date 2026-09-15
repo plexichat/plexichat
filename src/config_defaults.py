@@ -458,7 +458,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 # operator to provision: it is generated once via CSRNG on
                 # first use. Keep old ids listed for verification after a
                 # rotation; `current_id` is used for new hashes. Logins with
-                # a stale/legacy hash rehash transparently on success.
+                # a stale-pepper hash rehash transparently on success.
                 # Each entry: {"source": "keyring"|"hsm"|"env"|"file"|
                 #   "kek-derived", ...}. `env`/`file` exist only for
                 #   migration from externally-managed secrets.

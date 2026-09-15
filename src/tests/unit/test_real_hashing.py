@@ -1,11 +1,20 @@
 """
-Tests for password hashing with real Argon2id.
+Tests for password hashing with real peppered Argon2id.
 
-These tests verify that the actual Argon2id implementation works correctly.
-All tests in this project use real hashing - no mocks.
+These tests verify that the actual pepper + Argon2id implementation works
+correctly. All tests in this project use real hashing - no mocks.
 """
 
 import pytest
+
+
+def _inner_argon2_hash(envelope: str) -> str:
+    """Unwrap the pepper envelope to the inner Argon2id PHC hash."""
+    from src.utils.encryption.pepper import parse_envelope
+
+    parsed = parse_envelope(envelope)
+    assert parsed is not None, f"expected pepper envelope, got: {envelope!r}"
+    return parsed[1]
 
 
 @pytest.fixture
@@ -18,7 +27,7 @@ def hasher():
 
 @pytest.mark.unit
 class TestPasswordHashing:
-    """Test actual Argon2id password hashing."""
+    """Test actual peppered Argon2id password hashing."""
 
     def test_hash_password_returns_string(self, hasher):
         """Test that hashing returns a string."""
@@ -26,10 +35,11 @@ class TestPasswordHashing:
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_hash_password_returns_argon2_format(self, hasher):
-        """Test that hash is in Argon2 PHC format."""
+    def test_hash_password_returns_peppered_envelope(self, hasher):
+        """Test that hash is a versioned pepper envelope around Argon2 PHC."""
         result = hasher.hash_password("TestPass123!")
-        assert result.startswith("$argon2id$")
+        assert result.startswith("$plexichat$pepper-v1$pid=")
+        assert _inner_argon2_hash(result).startswith("$argon2id$")
 
     def test_hash_password_different_each_time(self, hasher):
         """Test that same password produces different hashes (due to salt)."""
@@ -95,7 +105,7 @@ class TestArgon2Parameters:
 
     def test_argon2_uses_secure_parameters(self, hasher):
         """Test that Argon2 is configured with secure parameters."""
-        hash_str = hasher.hash_password("test")
+        hash_str = _inner_argon2_hash(hasher.hash_password("test"))
 
         # Parse the hash to check parameters
         parts = hash_str.split("$")

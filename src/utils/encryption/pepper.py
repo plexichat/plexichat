@@ -57,8 +57,8 @@ ENVELOPE_PREFIX = "$plexichat$pepper-v1$pid="
 def parse_envelope(hash_str: str) -> Optional[Tuple[str, str]]:
     """Split ``$plexichat$pepper-v1$pid=<id>$<argon2-phc>``.
 
-    Returns ``(pepper_id, inner_argon2_hash)`` or ``None`` for legacy
-    (unpeppered) hashes.
+    Returns ``(pepper_id, inner_argon2_hash)`` or ``None`` for anything
+    that is not a pepper envelope (such strings fail closed at verify).
     """
     m = _ENVELOPE_RE.match(hash_str or "")
     if not m:

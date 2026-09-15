@@ -25,6 +25,14 @@ from src.utils.encryption import (  # noqa: E402
     setup,
 )
 from src.utils.encryption.core import EncryptionManager  # noqa: E402
+from src.utils.encryption.pepper import parse_envelope  # noqa: E402
+
+
+def _inner_argon2_hash(envelope: str) -> str:
+    """Unwrap the pepper envelope to the inner Argon2id PHC hash."""
+    parsed = parse_envelope(envelope)
+    assert parsed is not None, f"expected pepper envelope, got: {envelope!r}"
+    return parsed[1]
 
 
 @pytest.fixture(scope="module")
@@ -44,12 +52,14 @@ class TestArgon2idCompliance:
     """Test Argon2id password hashing compliance with OWASP recommendations."""
 
     def test_argon2id_output_format(self, setup_encryption):
-        """Test that Argon2id outputs PHC string format."""
+        """Test that peppered Argon2id outputs envelope + PHC string format."""
         password = "test_password"
         hash_str = hash_password(password)
 
-        assert hash_str.startswith("$argon2id$")
-        parts = hash_str.split("$")
+        assert hash_str.startswith("$plexichat$pepper-v1$pid=")
+        inner = _inner_argon2_hash(hash_str)
+        assert inner.startswith("$argon2id$")
+        parts = inner.split("$")
         assert len(parts) >= 5
 
     def test_argon2id_salt_uniqueness(self, setup_encryption):
@@ -59,7 +69,8 @@ class TestArgon2idCompliance:
 
         salts = set()
         for hash_str in hashes:
-            parts = hash_str.split("$")
+            inner = _inner_argon2_hash(hash_str)
+            parts = inner.split("$")
             assert len(parts) >= 5, f"Unexpected PHC format: {hash_str}"
             salt = parts[4].split(",")[0] if "," in parts[4] else parts[4]
             salts.add(salt)
@@ -99,7 +110,7 @@ class TestArgon2idCompliance:
         """Test that output hash is 32 bytes (256 bits)."""
         manager = EncryptionManager(argon2_hash_length=32)
         password = "test_password"
-        hash_str = manager.hash_password(password)
+        hash_str = _inner_argon2_hash(manager.hash_password(password))
 
         parts = hash_str.split("$")
         assert len(parts) >= 6, f"Unexpected PHC format: {hash_str}"
@@ -111,7 +122,7 @@ class TestArgon2idCompliance:
         """Test that salt is at least 16 bytes."""
         manager = EncryptionManager(argon2_salt_length=16)
         password = "test_password"
-        hash_str = manager.hash_password(password)
+        hash_str = _inner_argon2_hash(manager.hash_password(password))
 
         parts = hash_str.split("$")
         assert len(parts) >= 5, f"Unexpected PHC format: {hash_str}"

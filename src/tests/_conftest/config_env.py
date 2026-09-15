@@ -11,6 +11,11 @@ import utils.version as version
 # assert on notifications immediately after send_message returns.
 os.environ.setdefault("PLEXICHAT_SYNC_NOTIFICATION_DISPATCH", "1")
 
+# Throwaway keyring backing the test pepper (referenced by
+# DEFAULT_TEST_CONFIG below). Created up front so the dict literal can use
+# it; the real ~/.plexichat keyring is never touched by tests.
+_test_pepper_dir = tempfile.mkdtemp()
+
 
 DEFAULT_TEST_CONFIG = {
     "authentication": {
@@ -56,8 +61,10 @@ DEFAULT_TEST_CONFIG = {
     # (time_cost=3, memory_cost=64MB) each of those costs ~70ms — thousands
     # of tests paid hundreds of seconds of real Argon2 work. The real-hashing
     # tests construct their own EncryptionManager explicitly and are
-    # unaffected; every generated hash still carries the ``$argon2id$`` PHC
-    # prefix so format assertions hold.
+    # unaffected.
+    # Peppering is enabled here exactly as in production (HMAC pre-hash +
+    # Argon2id envelope), but against a throwaway keyring under the test
+    # temp dir so the real ~/.plexichat keyring is never touched.
     "encryption": {
         "argon2": {
             "time_cost": 1,
@@ -65,6 +72,18 @@ DEFAULT_TEST_CONFIG = {
             "parallelism": 1,
             "hash_length": 32,
             "salt_length": 16,
+        },
+        "password_pepper": {
+            "enabled": True,
+            "current_id": "v1",
+            "peppers": {
+                "v1": {
+                    "source": "keyring",
+                    "keyring_path": os.path.join(
+                        _test_pepper_dir, "system_keyring.json"
+                    ),
+                }
+            },
         },
     },
     "messaging": {

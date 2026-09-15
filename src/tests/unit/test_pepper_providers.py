@@ -19,7 +19,7 @@ class TestPepperEnvelope:
         assert parse_envelope(f"$plexichat$pepper-v1$pid=v1${inner}") == ("v1", inner)
         assert is_peppered(f"$plexichat$pepper-v1$pid=v2${inner}") is True
 
-    def test_legacy_hashes_are_not_peppered(self):
+    def test_non_envelope_hashes_are_not_peppered(self):
         from src.utils.encryption.pepper import parse_envelope, is_peppered
 
         assert parse_envelope("$argon2id$v=19$m=65536,t=3,p=2$cw$dg") is None
