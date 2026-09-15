@@ -29,6 +29,7 @@ from .acoustic_defense import (
     AcousticDefenseConfig,
     AudioProcessingTrack,
 )
+from .fanout import FanoutView, TrackFanout
 from ..exceptions import SFUConnectionError
 
 
@@ -289,27 +290,18 @@ class BoundedVideoTrack:
         return None
 
 
-def _sender_view(track: Any) -> Any:
-    """The instance to hand one sender for ``track``.
-
-    An acoustic-defense wrapper is shared by the whole room, but aiortc stops
-    a sender's track when its RTP task exits. Each sender therefore gets its
-    own view of a wrapped audio track; raw and bounded-video tracks are handed
-    over as-is.
-    """
-    if isinstance(track, AudioProcessingTrack):
-        return track.clone()
-    return track
-
-
 def _same_sender_track(a: Any, b: Any) -> bool:
-    """Whether ``a`` and ``b`` are the same produced track.
+    """Whether ``a`` and ``b`` are views of the same produced track.
 
-    A per-sender audio view carries the ``share_key`` of the producer wrapper
-    it was cloned from, so a ghost view is found even though each sender holds
-    a distinct instance. Unwrapped tracks compare by identity.
+    Each sender holds its own fan-out view, so a ghost sender cannot be found
+    by identity: match a view back through the relay it subscribes to (whose
+    ``source`` is the produced track), or by the shared key an acoustic view
+    carries. Unwrapped tracks compare by identity.
     """
     if a is b:
+        return True
+    relay = getattr(a, "fanout", None)
+    if relay is not None and getattr(relay, "source", None) is b:
         return True
     key = getattr(a, "share_key", None)
     return key is not None and key == getattr(b, "share_key", None)
@@ -362,6 +354,9 @@ class AiortcAdapter(SFUAdapter):
         self._rooms: Dict[str, Dict[str, AiortcPeer]] = {}
         self._ice_servers = ice_servers or []
         self._acoustic_defense = acoustic_defense or AcousticDefenseConfig()
+        # One read-once relay per produced track that is forwarded to several
+        # peers, so every sender receives every frame instead of a fraction.
+        self._fanouts: Dict[Any, TrackFanout] = {}
         self._recordings: Dict[str, Dict[str, Any]] = {}
         # Quality bridge state (see ``collect_quality``).
         self._quality_mixin: Any = None
@@ -401,6 +396,8 @@ class AiortcAdapter(SFUAdapter):
             await self.stop_recording(room_id)
 
         for peer_id, peer in self._rooms[room_id].items():
+            for track in list(peer.producer_tracks.values()):
+                self._close_fanout(track)
             try:
                 await peer.pc.close()
             except Exception as e:
@@ -506,7 +503,7 @@ class AiortcAdapter(SFUAdapter):
                 if track is None:
                     continue
                 try:
-                    peer.pc.addTrack(_sender_view(track))
+                    peer.pc.addTrack(self._sender_view(track))
                 except Exception as e:
                     logger.debug(
                         f"Could not add track {producer_id} from {existing_id} "
@@ -525,6 +522,38 @@ class AiortcAdapter(SFUAdapter):
         """Bound an incoming-track list so renegotiation cannot grow it."""
         if len(tracks) > max_len:
             del tracks[: len(tracks) - max_len]
+
+    def _fanout_for(self, track: Any) -> TrackFanout:
+        """The shared read-once relay for ``track``, created on first use."""
+        relay = self._fanouts.get(track)
+        if relay is None or relay.closed:
+            relay = TrackFanout(track)
+            self._fanouts[track] = relay
+        return relay
+
+    def _sender_view(self, track: Any) -> FanoutView:
+        """A per-sender view of ``track`` that receives every frame.
+
+        Handing the same track to several senders made each ``recv()`` *take* a
+        frame from a shared queue, so peers split the stream; and aiortc stops a
+        sender's track when its RTP task exits, so one peer leaving ended the
+        room's media. A view reads from the relay's private queue and its
+        ``stop()`` detaches that sender alone.
+        """
+        view = self._fanout_for(track).subscribe()
+        key = getattr(track, "share_key", None)
+        if key is not None:
+            view.share_key = key
+        return view
+
+    def _close_fanout(self, track: Any) -> None:
+        """Drop ``track``'s relay once nothing forwards it any more."""
+        relay = self._fanouts.pop(track, None)
+        if relay is None:
+            return
+        task = getattr(relay, "_task", None)
+        if task is not None and not task.done():
+            task.cancel()
 
     @staticmethod
     def _sender_for_track(peer: AiortcPeer, track: Any) -> Any:
@@ -718,6 +747,8 @@ class AiortcAdapter(SFUAdapter):
         ]
         for track in produced_tracks:
             self._remove_forwarded_senders(room_id, track)
+        for track in list(peer.producer_tracks.values()):
+            self._close_fanout(track)
 
         try:
             await peer.pc.close()
@@ -853,7 +884,7 @@ class AiortcAdapter(SFUAdapter):
             return
 
         try:
-            target_peer.pc.addTrack(_sender_view(track))
+            target_peer.pc.addTrack(self._sender_view(track))
             if target_peer.pc.remoteDescription is not None:
                 offer = await target_peer.pc.createOffer()
                 await target_peer.pc.setLocalDescription(offer)
@@ -880,11 +911,14 @@ class AiortcAdapter(SFUAdapter):
 
         track = self._find_track_by_kind(peer, kind)
 
-        # Wrap audio tracks with acoustic defense processing
+        # Wrap audio tracks with acoustic defense processing. The receiver
+        # track was already wrapped on arrival (``on_track``), so only wrap a
+        # track that is not -- otherwise every frame is processed twice.
         if (
             kind == MediaKind.AUDIO
             and track is not None
             and self._acoustic_defense.enabled
+            and not isinstance(track, AudioProcessingTrack)
         ):
             track = AudioProcessingTrack(track, self._acoustic_defense)
 
@@ -943,7 +977,7 @@ class AiortcAdapter(SFUAdapter):
             already_wired = self._sender_for_track(peer, producer_track) is not None
             if not already_wired:
                 try:
-                    peer.pc.addTrack(_sender_view(producer_track))
+                    peer.pc.addTrack(self._sender_view(producer_track))
                     if peer.pc.remoteDescription is not None:
                         offer = await peer.pc.createOffer()
                         await peer.pc.setLocalDescription(offer)
@@ -1032,6 +1066,7 @@ class AiortcAdapter(SFUAdapter):
         # track to every other peer (ghost senders otherwise persist).
         if track is not None:
             self._remove_forwarded_senders(room_id, track)
+            self._close_fanout(track)
         logger.debug(f"Closed producer {producer_id}")
         return True
 
@@ -1350,5 +1385,9 @@ class AiortcAdapter(SFUAdapter):
 
         for room_id in list(self._rooms.keys()):
             await self.close_room(room_id)
+
+        for relay in list(self._fanouts.values()):
+            await relay.aclose()
+        self._fanouts.clear()
 
         logger.info("aiortc SFU adapter closed")

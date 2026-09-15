@@ -1,12 +1,15 @@
-"""Per-sender acoustic-defense views on the aiortc SFU.
+"""Per-sender views on the aiortc SFU.
 
-aiortc calls ``stop()`` on a sender's track when its RTP task exits
-(``pc.close()`` / ``removeTrack``). The acoustic-defense wrapper used to be
-handed to *every* sender as one shared instance, so the first peer to leave
-stopped the wrapper -- which stopped the source underneath it and cut audio
-for every other peer still listening. These tests pin the fix: each sender
-gets its own view, and a view's ``stop()`` detaches only that view.
+Two defects meet here. aiortc calls ``stop()`` on a sender's track when its
+RTP task exits (``pc.close()`` / ``removeTrack``), so handing one shared track
+to every sender let the first peer to leave end the room's media; and a shared
+``RemoteStreamTrack`` is backed by a single queue, so several senders calling
+``recv()`` on it *split* the frames between them instead of each receiving
+them all. Each sender now gets its own fan-out view: it sees every frame, and
+its ``stop()`` detaches that sender alone.
 """
+
+import asyncio
 
 import pytest
 
@@ -20,16 +23,13 @@ from src.core.voice.signaling.sfu.aiortc_adapter import (
     AIORTC_AVAILABLE,
 )
 from src.core.voice.signaling.sfu.base import MediaKind
+from src.core.voice.signaling.sfu.fanout import FanoutView
 
 
 # Referenced through the module so these tests fail on the behaviour they pin
 # rather than on a missing name when run against the pre-fix code.
 def _same_sender_track(a, b):
     return aiortc_adapter._same_sender_track(a, b)
-
-
-def _sender_view(track):
-    return aiortc_adapter._sender_view(track)
 
 
 pytestmark = pytest.mark.skipif(not AIORTC_AVAILABLE, reason="aiortc is not installed")
@@ -137,13 +137,16 @@ class TestAudioProcessingTrackViews:
         assert not _same_sender_track(a, b)
         assert not _same_sender_track(a.clone(), b.clone())
 
-    def test_sender_view_only_wraps_acoustic_tracks(self):
-        raw = _SourceTrack([])
-        assert _sender_view(raw) is raw
+    @pytest.mark.asyncio
+    async def test_sender_view_is_a_fanout_view_carrying_the_producers_key(self):
+        adapter = AiortcAdapter(acoustic_defense=ENABLED)
+        wrapped = AudioProcessingTrack(_SourceTrack([]), ENABLED)
 
-        wrapped = AudioProcessingTrack(raw, ENABLED)
-        view = _sender_view(wrapped)
+        view = adapter._sender_view(wrapped)
+
+        assert isinstance(view, FanoutView)
         assert view is not wrapped
+        assert view.fanout.source is wrapped
         assert view.share_key == wrapped.share_key
 
 
@@ -239,11 +242,13 @@ class TestForwardedAudioViews:
         assert len(p3.pc.added_tracks) == 1
         view2, view3 = p2.pc.added_tracks[0], p3.pc.added_tracks[0]
 
-        assert isinstance(view2, AudioProcessingTrack)
-        assert isinstance(view3, AudioProcessingTrack)
+        assert isinstance(view2, FanoutView)
+        assert isinstance(view3, FanoutView)
         assert view2 is not view3
-        # Neither sender holds the shared producer wrapper.
+        # Neither sender holds the shared producer wrapper; both subscribe to
+        # one relay over it, so both see the whole stream.
         assert view2 is not first.producer_tracks[producer.id]
+        assert view2.fanout is view3.fanout
         assert view2.share_key == view3.share_key
 
     @pytest.mark.asyncio
@@ -251,15 +256,21 @@ class TestForwardedAudioViews:
         adapter = AiortcAdapter(acoustic_defense=ENABLED)
         first, source, producer = await _produced_room(adapter)
         p2 = adapter._rooms["room"]["p2"]
+        p3 = adapter._rooms["room"]["p3"]
+        view2, view3 = p2.pc.added_tracks[0], p3.pc.added_tracks[0]
+
+        assert await asyncio.wait_for(view3.recv(), 2) is not None
 
         # Simulate aiortc's RTP task exiting for the first sender.
-        p2.pc.added_tracks[0].stop()
+        view2.stop()
 
         assert source.stopped is False
-        assert await first.producer_tracks[producer.id]._read() is not None
+        # The other sender's stream is untouched.
+        assert await asyncio.wait_for(view3.recv(), 2) is not None
+        assert first.producer_tracks[producer.id] is not None
 
     @pytest.mark.asyncio
-    async def test_ghost_sender_sweep_finds_cloned_views(self):
+    async def test_ghost_sender_sweep_finds_views_through_the_relay(self):
         adapter = AiortcAdapter(acoustic_defense=ENABLED)
         first, _, producer = await _produced_room(adapter)
         p2 = adapter._rooms["room"]["p2"]
@@ -272,7 +283,7 @@ class TestForwardedAudioViews:
         assert p2.pc.removed == [sender]
 
     @pytest.mark.asyncio
-    async def test_joining_peer_receives_a_cloned_view_not_the_shared_one(self):
+    async def test_joining_peer_receives_a_view_not_the_shared_track(self):
         adapter = AiortcAdapter(acoustic_defense=ENABLED)
         await adapter.join_room("room", "p1")
         first = adapter._rooms["room"]["p1"]
