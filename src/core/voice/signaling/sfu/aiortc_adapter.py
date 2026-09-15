@@ -289,6 +289,32 @@ class BoundedVideoTrack:
         return None
 
 
+def _sender_view(track: Any) -> Any:
+    """The instance to hand one sender for ``track``.
+
+    An acoustic-defense wrapper is shared by the whole room, but aiortc stops
+    a sender's track when its RTP task exits. Each sender therefore gets its
+    own view of a wrapped audio track; raw and bounded-video tracks are handed
+    over as-is.
+    """
+    if isinstance(track, AudioProcessingTrack):
+        return track.clone()
+    return track
+
+
+def _same_sender_track(a: Any, b: Any) -> bool:
+    """Whether ``a`` and ``b`` are the same produced track.
+
+    A per-sender audio view carries the ``share_key`` of the producer wrapper
+    it was cloned from, so a ghost view is found even though each sender holds
+    a distinct instance. Unwrapped tracks compare by identity.
+    """
+    if a is b:
+        return True
+    key = getattr(a, "share_key", None)
+    return key is not None and key == getattr(b, "share_key", None)
+
+
 @dataclass
 class AiortcPeer:
     """A peer in the aiortc SFU."""
@@ -480,7 +506,7 @@ class AiortcAdapter(SFUAdapter):
                 if track is None:
                     continue
                 try:
-                    peer.pc.addTrack(track)
+                    peer.pc.addTrack(_sender_view(track))
                 except Exception as e:
                     logger.debug(
                         f"Could not add track {producer_id} from {existing_id} "
@@ -512,7 +538,9 @@ class AiortcAdapter(SFUAdapter):
         if track is None:
             return None
         for sender in peer.pc.getSenders():
-            if sender.track is track or peer.degraded_senders.get(sender) is track:
+            if _same_sender_track(getattr(sender, "track", None), track):
+                return sender
+            if peer.degraded_senders.get(sender) is track:
                 return sender
         return None
 
@@ -533,7 +561,7 @@ class AiortcAdapter(SFUAdapter):
                 continue
             for sender in senders:
                 if (
-                    getattr(sender, "track", None) is track
+                    _same_sender_track(getattr(sender, "track", None), track)
                     or peer.degraded_senders.get(sender) is track
                 ):
                     peer.degraded_senders.pop(sender, None)
@@ -825,7 +853,7 @@ class AiortcAdapter(SFUAdapter):
             return
 
         try:
-            target_peer.pc.addTrack(track)
+            target_peer.pc.addTrack(_sender_view(track))
             if target_peer.pc.remoteDescription is not None:
                 offer = await target_peer.pc.createOffer()
                 await target_peer.pc.setLocalDescription(offer)
@@ -915,7 +943,7 @@ class AiortcAdapter(SFUAdapter):
             already_wired = self._sender_for_track(peer, producer_track) is not None
             if not already_wired:
                 try:
-                    peer.pc.addTrack(producer_track)
+                    peer.pc.addTrack(_sender_view(producer_track))
                     if peer.pc.remoteDescription is not None:
                         offer = await peer.pc.createOffer()
                         await peer.pc.setLocalDescription(offer)
