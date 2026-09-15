@@ -18,6 +18,7 @@ class SelfTestContext:
         requests_module: Any,
         standalone_mode: bool = True,
         unlicensed: bool = False,
+        status_only: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.config = config
@@ -27,6 +28,8 @@ class SelfTestContext:
         # command. Free-tier detection (no license file on this machine) is
         # handled separately via discovery.plexijoin_expected_statuses().
         self.unlicensed = unlicensed
+        # True when the runner only probes live status (no app config).
+        self.status_only = status_only
 
         self._test_password: Optional[str] = None
         self._setup_other_username: Optional[str] = None

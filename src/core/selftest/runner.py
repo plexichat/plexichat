@@ -62,6 +62,7 @@ class SelfTestRunner:
             requests_module=requests,
             standalone_mode=standalone_mode,
             unlicensed=unlicensed,
+            status_only=status_only,
         )
         self.ctx.journal = ArtifactJournal(selftest_cfg.get("journal_path"))
 
@@ -95,14 +96,13 @@ class SelfTestRunner:
         self.ctx.report = self.report
         self.ctx.ram_monitor = self.ram_monitor
 
-        # Unlicensed mode is EXPLICIT-ONLY: the runner treats PlexiJoin
+        # Unlicensed/status-only modes are EXPLICIT-ONLY and already passed
+        # through SelfTestContext above: the runner treats PlexiJoin
         # endpoints as license-gated only when the operator passes
         # ``--unlicensed``. There is deliberately no auto-detection from
         # the license state of the machine -- a missing license file must
         # surface as self-test failure unless the operator opts in, so
         # CI and operators can rely on the flag being the sole switch.
-        self.ctx.unlicensed = unlicensed
-        self.ctx.status_only = status_only
 
     def _resolve_test_path(self, path: str) -> Optional[str]:
         """Substitute path placeholders with concrete test values.
