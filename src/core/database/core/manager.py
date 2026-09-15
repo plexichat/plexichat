@@ -172,18 +172,16 @@ class Database(
                     except Exception:
                         pass
                 else:
-                    # psycopg2 ThreadedConnectionPool (or mock): close all
-                    # pooled connections properly instead of silently
-                    # dropping them via sqlite-only attribute access.
+                    # PostgreSQL pool (or mock): close every pooled connection
+                    # properly instead of silently dropping them via
+                    # sqlite-only attribute access. ``close()`` is idempotent
+                    # and exception-safe; ``closeall()`` is its alias, kept so
+                    # a psycopg2-style mock pool still works.
                     try:
-                        pool.closeall()
+                        pool.close()
                     except Exception:
                         try:
-                            for conn in list(getattr(pool, "_pool", [])):
-                                try:
-                                    conn.close()
-                                except Exception:
-                                    pass
+                            pool.closeall()
                         except Exception:
                             pass
             local = getattr(inst, "_local", None)

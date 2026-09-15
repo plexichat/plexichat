@@ -260,6 +260,10 @@ security:dependency_scanning:
   script:
     - pip-audit -r requirements.txt --format json > pip-audit-report.json
     - pip-audit -r requirements.txt
+    # License gate: fails on a new copyleft dependency or one whose license
+    # cannot be resolved. Reviewed exceptions live in ALLOWED_COPYLEFT in
+    # ci-tooling/license_audit.py and are documented in THIRD_PARTY_NOTICES.md.
+    - python ci-tooling/license_audit.py
     - mkdir -p ./bin && curl -sfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64.tar.gz | tar -xz -C ./bin osv-scanner || true
     - ./bin/osv-scanner --format json --output osv-report.json . || true
     - ./bin/osv-scanner . || true
@@ -279,6 +283,11 @@ test:pytest:
   stage: test
   timeout: 1h
   script:
+    # pytest and its plugins (asyncio, benchmark, xdist, timeout) are test-only
+    # and live in requirements-dev.in, so the runtime lock no longer carries
+    # them. The dev lock is a superset of the runtime tree, so installing it
+    # here is safe on top of a cached .venv.
+    - pip install --require-hashes -r requirements-dev.txt
     # Full unit + integration suite. ``--maxfail=20`` keeps a broken commit
     # from burning the whole 1h timeout listing failures; the default pytest.ini
     # addopts already deselect slow/performance/postgres tests. The JUnit

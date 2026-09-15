@@ -473,7 +473,7 @@ def test_config_logger_database_integration(db_config):
 def test_postgres_connection_real(db_config):
     """Test PostgreSQL connection with real driver."""
     config_path, temp_dir = db_config
-    pytest.importorskip("psycopg2")
+    pytest.importorskip("pg8000")
 
     pg_config = {
         "type": "postgres",
@@ -1335,20 +1335,21 @@ def test_connection_pool_state_consistency(db_config):
 def test_pool_exhaustion_handling(db_config, caplog):
     """Test that pool exhaustion is logged and raises appropriate error.
 
-    Configures a mock ThreadedConnectionPool with small maxconn,
-    requests more connections than available, verifies:
-    1. PoolError is raised
-    2. Specific pool-exhaustion error is logged
-    3. No connection leak (putconn called for returned connections)
-    """
-    try:
-        import psycopg2
-        import psycopg2.pool
-    except ImportError:
-        pytest.skip("psycopg2 not installed")
+    ``Database`` is a process-wide singleton and ``connect()`` discards its
+    thread-local connection before acquiring a new one, so one instance can
+    never hold two connections at once: exhaustion is unreachable by calling
+    ``connect()`` repeatedly. The pool's answer is therefore injected directly,
+    and the assertions cover what the application actually owns:
 
+    1. The pool's ``TimeoutError`` propagates to the caller.
+    2. It is classified and logged as pool exhaustion rather than as a generic
+       acquisition failure.
+    3. Connections handed out are returned to the pool (no leak).
+    """
     import logging
     from unittest.mock import MagicMock, patch
+
+    from src.core.database.engines.pool import ConnectionPool
 
     # Set logger to capture DEBUG level
     caplog.set_level(logging.DEBUG)
@@ -1373,33 +1374,32 @@ def test_pool_exhaustion_handling(db_config, caplog):
     # Create database instance
     db = Database()
 
-    # Mock the ThreadedConnectionPool to simulate exhaustion
-    mock_pool = MagicMock(spec=psycopg2.pool.ThreadedConnectionPool)
+    # Mock the pool to simulate exhaustion
+    mock_pool = MagicMock(spec=ConnectionPool)
 
     # Track connections handed out and returned
     connections_out = []
 
-    def getconn_side_effect():
-        """Simulate pool behavior: maxconn=2, raise PoolError when exhausted."""
-        if len(connections_out) >= 2:
-            raise psycopg2.pool.PoolError("Connection pool exhausted")
-
+    def get_connection_side_effect(timeout=None):
+        """Hand out a mock connection (unless the side effect is replaced)."""
         # Create mock connection
         mock_conn = MagicMock()
         mock_conn.closed = 0  # Connection is open
         connections_out.append(mock_conn)
         return mock_conn
 
-    def putconn_side_effect(conn):
-        """Simulate returning connection to pool."""
+    def return_connection_side_effect(conn, force_close=False):
+        """Simulate returning a connection to the pool."""
         if conn in connections_out:
             connections_out.remove(conn)
 
-    mock_pool.getconn = MagicMock(side_effect=getconn_side_effect)
-    mock_pool.putconn = MagicMock(side_effect=putconn_side_effect)
+    mock_pool.get_connection = MagicMock(side_effect=get_connection_side_effect)
+    mock_pool.return_connection = MagicMock(side_effect=return_connection_side_effect)
 
-    # Patch the ThreadedConnectionPool instantiation
-    with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+    # Patch the pool instantiation
+    with patch(
+        "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+    ):
         # First call to connect() creates pool and gets connection
         try:
             db.connect()
@@ -1407,22 +1407,13 @@ def test_pool_exhaustion_handling(db_config, caplog):
         except Exception as e:
             pytest.fail(f"First connection should succeed: {e}")
 
-        # Second call should also work (maxconn=2)
-        try:
-            # Need new db instance to avoid thread-local reuse
-            db2 = Database()
-            db2._pool = mock_pool  # Reuse the mock pool
-            db2.connect()
-            assert len(connections_out) == 2, "Second connection should be acquired"
-        except Exception as e:
-            pytest.fail(f"Second connection should succeed: {e}")
+        # Now make the pool answer with the exhaustion signal it really raises.
+        mock_pool.get_connection.side_effect = TimeoutError(
+            "PostgreSQL connection pool exhausted: no available connections"
+        )
 
-        # Third call should exhaust pool
-        db3 = Database()
-        db3._pool = mock_pool  # Reuse the mock pool
-
-        with pytest.raises(psycopg2.pool.PoolError):
-            db3.connect()
+        with pytest.raises(TimeoutError):
+            db.connect()
 
         # Verify pool exhaustion error was logged
         log_messages = [record.message for record in caplog.records]
@@ -1435,30 +1426,31 @@ def test_pool_exhaustion_handling(db_config, caplog):
             f"Expected 'no available connections' in logs, got: {log_messages}"
         )
 
-        # Clean up: return connections to pool to verify putconn was called
-        for conn in list(connections_out):
-            mock_pool.putconn(conn)
-
-        # Verify putconn was called for the connections
-        assert mock_pool.putconn.call_count >= 2, (
-            "putconn should be called to return connections to pool"
+        # Re-acquiring discards the previous thread-local connection, so the
+        # failed attempt must have returned it: no connection may leak.
+        assert mock_pool.return_connection.call_count >= 1, (
+            "return_connection should be called to return connections to the pool"
+        )
+        assert connections_out == [], (
+            f"Connection leaked from the pool: {connections_out}"
         )
 
 
 def test_connect_timeout_handling(db_config, caplog):
     """Test that connection timeout is logged with specific timeout event.
 
-    Mocks getconn() to raise a timeout-flavored OperationalError,
-    asserts the timeout log entry is emitted separately from generic errors.
+    Mocks the pool to raise a timeout-flavored driver error, asserts the
+    timeout log entry is emitted separately from generic errors.
     """
     try:
-        import psycopg2
-        import psycopg2.pool
+        import pg8000.dbapi
     except ImportError:
-        pytest.skip("psycopg2 not installed")
+        pytest.skip("pg8000 not installed")
 
     import logging
     from unittest.mock import MagicMock, patch
+
+    from src.core.database.engines.pool import ConnectionPool
 
     # Set logger to capture DEBUG level
     caplog.set_level(logging.DEBUG)
@@ -1484,18 +1476,22 @@ def test_connect_timeout_handling(db_config, caplog):
     # Create database instance
     db = Database()
 
-    # Mock the ThreadedConnectionPool
-    mock_pool = MagicMock(spec=psycopg2.pool.ThreadedConnectionPool)
+    # Mock the pool
+    mock_pool = MagicMock(spec=ConnectionPool)
 
-    # Create a timeout-flavored OperationalError
-    timeout_error = psycopg2.OperationalError("timeout during connection establishment")
+    # Create a timeout-flavored driver error
+    timeout_error = pg8000.dbapi.InterfaceError(
+        "timeout during connection establishment"
+    )
 
-    mock_pool.getconn = MagicMock(side_effect=timeout_error)
+    mock_pool.get_connection = MagicMock(side_effect=timeout_error)
 
-    # Patch the ThreadedConnectionPool instantiation
-    with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+    # Patch the pool instantiation
+    with patch(
+        "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+    ):
         # Call connect() which should timeout
-        with pytest.raises(psycopg2.OperationalError):
+        with pytest.raises(pg8000.dbapi.InterfaceError):
             db.connect()
 
         # Verify timeout-specific error was logged
@@ -1818,24 +1814,28 @@ class TestPostgresConnectionTimeout:
     def test_connection_timeout_error_handling(self, postgres_timeout_config, caplog):
         """Test that connection timeout raises proper error with logging."""
         try:
-            import psycopg2
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         from unittest.mock import MagicMock, patch
         import logging
+
+        from src.core.database.engines.pool import ConnectionPool
 
         caplog.set_level(logging.DEBUG)
 
         db = Database()
 
         # Create mock pool that raises timeout
-        mock_pool = MagicMock()
-        timeout_error = psycopg2.OperationalError("connection timeout")
-        mock_pool.getconn.side_effect = timeout_error
+        mock_pool = MagicMock(spec=ConnectionPool)
+        timeout_error = pg8000.dbapi.InterfaceError("connection timeout")
+        mock_pool.get_connection.side_effect = timeout_error
 
-        with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
-            with pytest.raises(psycopg2.OperationalError):
+        with patch(
+            "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+        ):
+            with pytest.raises(pg8000.dbapi.InterfaceError):
                 db.connect()
 
     def test_timeout_is_distinct_from_connection_refused(
@@ -1843,26 +1843,30 @@ class TestPostgresConnectionTimeout:
     ):
         """Test distinguishing timeout error from connection refused."""
         try:
-            import psycopg2
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         from unittest.mock import MagicMock, patch
         import logging
+
+        from src.core.database.engines.pool import ConnectionPool
 
         caplog.set_level(logging.DEBUG)
 
         db = Database()
 
         # Create mock pool with timeout error (not connection refused)
-        mock_pool = MagicMock()
-        timeout_error = psycopg2.OperationalError(
+        mock_pool = MagicMock(spec=ConnectionPool)
+        timeout_error = pg8000.dbapi.InterfaceError(
             "timeout during connection establishment"
         )
-        mock_pool.getconn.side_effect = timeout_error
+        mock_pool.get_connection.side_effect = timeout_error
 
-        with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
-            with pytest.raises(psycopg2.OperationalError) as exc_info:
+        with patch(
+            "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+        ):
+            with pytest.raises(pg8000.dbapi.InterfaceError) as exc_info:
                 db.connect()
 
             # Verify it's a timeout error, not connection refused

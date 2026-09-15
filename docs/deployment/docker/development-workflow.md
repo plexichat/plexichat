@@ -91,9 +91,12 @@ docker compose logs -f
 
 ### Unit tests
 
-Run the test suite inside the backend container:
+The runtime image deliberately ships no test framework: `pytest` and its
+plugins live in `requirements-dev.txt`. Install the dev lock into the running
+container once, then run the suite:
 
 ```bash
+docker compose exec backend pip install --require-hashes -r requirements-dev.txt
 docker compose exec backend pytest
 ```
 

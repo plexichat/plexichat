@@ -49,9 +49,12 @@ Start in the background for self-hosted production:
 docker compose up -d
 ```
 
-Run backend tests against an isolated database without the full stack:
+Run backend tests against an isolated database without the full stack. Install
+the dev lock first: the runtime image has no test framework, because `pytest`
+and its plugins are test-only dependencies.
 
 ```bash
+pip install --require-hashes -r requirements-dev.txt
 NO_STRICT_CONFIG=false python -m pytest
 ```
 

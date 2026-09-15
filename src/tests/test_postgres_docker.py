@@ -163,9 +163,9 @@ class TestPostgresDockerConstraintErrors:
     def test_not_null_constraint_recovery_docker(self, postgres_db_with_constraints):
         """Test recovery from NOT NULL constraint with real PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Insert valid data first
         postgres_db_with_constraints.execute(
@@ -176,7 +176,7 @@ class TestPostgresDockerConstraintErrors:
         # Try to insert NULL in NOT NULL column
         postgres_db_with_constraints.begin_transaction()
 
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             postgres_db_with_constraints.execute(
                 "INSERT INTO constrained_data (username, email, age, balance) VALUES (?, ?, ?, ?)",
                 (None, "null@example.com", 30, 50.00),
@@ -195,9 +195,9 @@ class TestPostgresDockerConstraintErrors:
     def test_unique_constraint_recovery_docker(self, postgres_db_with_constraints):
         """Test recovery from UNIQUE constraint with real PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Insert first user
         postgres_db_with_constraints.execute(
@@ -208,7 +208,7 @@ class TestPostgresDockerConstraintErrors:
         # Try to insert duplicate username
         postgres_db_with_constraints.begin_transaction()
 
-        with pytest.raises(psycopg2.errors.UniqueViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             postgres_db_with_constraints.execute(
                 "INSERT INTO constrained_data (username, email, age, balance) VALUES (?, ?, ?, ?)",
                 ("unique_user", "other@example.com", 30, 50.00),
@@ -227,14 +227,14 @@ class TestPostgresDockerConstraintErrors:
     def test_check_constraint_recovery_docker(self, postgres_db_with_constraints):
         """Test recovery from CHECK constraint with real PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Try to insert invalid age (CHECK age >= 0 AND age <= 150)
         postgres_db_with_constraints.begin_transaction()
 
-        with pytest.raises(psycopg2.errors.CheckViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             postgres_db_with_constraints.execute(
                 "INSERT INTO constrained_data (username, email, age, balance) VALUES (?, ?, ?, ?)",
                 ("invalid_age", "invalid@example.com", 200, 100.00),
@@ -408,9 +408,9 @@ class TestPostgresDockerDataIntegrity:
     def test_foreign_key_constraint_docker(self, clean_postgres_db):
         """Test foreign key constraints with Docker PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Create tables with foreign key
         clean_postgres_db.execute("""
@@ -441,7 +441,7 @@ class TestPostgresDockerDataIntegrity:
         )
 
         # Try to insert post with invalid foreign key
-        with pytest.raises(psycopg2.errors.ForeignKeyViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             clean_postgres_db.execute(
                 "INSERT INTO posts (user_id, content) VALUES (?, ?)",
                 (999, "Invalid"),

@@ -27,10 +27,10 @@ The Docker Compose file uses `postgres:18-alpine`. Use the same major version fo
 
 ### 1. Install the PostgreSQL driver
 
-The migration utility requires `psycopg2-binary`:
+The migration utility uses the server's PostgreSQL driver:
 
 ```bash
-pip install psycopg2-binary
+pip install pg8000
 ```
 
 ### 2. Prepare PostgreSQL

@@ -251,6 +251,11 @@ class DatabaseExecutionMixin:
 
         if self.type == "postgres":
             query_conv = apply_pg_type_fixes(query_conv)
+            if not params:
+                # A parameterless statement bypasses the driver's paramstyle
+                # handling entirely, so revert the ``%%`` escaping that only
+                # exists for the parameterised path (see the dialect helper).
+                query_conv = dialect.unescape_postgres_percent(query_conv)
 
         conn: Any = None
         cursor: Any = None

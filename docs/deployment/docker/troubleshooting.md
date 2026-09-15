@@ -250,7 +250,7 @@ docker compose up -d
 **Message:**
 
 ```
-psycopg2.OperationalError: could not connect to server: Connection refused
+pg8000.exceptions.InterfaceError: Can't create a connection to host db and port 5432 (timeout is 10 and source_address is None).
 ```
 
 **Cause:** PostgreSQL crashed or the connection settings are wrong.

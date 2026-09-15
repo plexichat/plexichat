@@ -33,7 +33,7 @@ For gateway opcodes and intents, see `plexichat/src/api/websocket/opcodes.py:40`
 
 ```bash
 pip install PyYAML  # For config through common_utils
-pip install psycopg2-binary  # Only if you use PostgreSQL
+pip install pg8000  # Only if you use PostgreSQL
 ```
 
 ## Configuration
@@ -81,7 +81,7 @@ Global server keys use these paths — see `plexichat/src/config_defaults.py`:
 1.  Install the driver:
 
     ```bash
-    pip install psycopg2-binary
+    pip install pg8000
     ```
 
 2.  Update your config:
@@ -252,9 +252,10 @@ Generated SQL:
 | --- | --- |
 | `ValueError` | Invalid configuration or unsupported database type. |
 | `ConnectionError` | Operation attempted without a connection. |
-| `ImportError` | `psycopg2` not installed when `type` is `postgres`. |
+| `ImportError` | `pg8000` not installed when `type` is `postgres`. |
 | `sqlite3.Error` | SQLite-specific error. |
-| `psycopg2.Error` | PostgreSQL-specific error. |
+| `pg8000.dbapi.DatabaseError` | PostgreSQL-specific error (`IntegrityError`, `OperationalError`, ...). |
+| `TimeoutError` | Pool had no connection available within `connect_timeout`. |
 
 All errors are logged before they are raised.
 
@@ -264,9 +265,10 @@ SQLite connections are not thread-safe by default. For multi-threaded use, creat
 
 ## PostgreSQL notes
 
-*   Uses the `psycopg2-binary` driver (synchronous).
-*   Uses `RealDictCursor` for dict-like rows that match SQLite behavior.
+*   Uses the `pg8000` driver (synchronous, BSD-3-Clause), installed as `pg8000`.
+*   Rows are tuples; the execution layer rebuilds dicts from `cursor.description`, matching SQLite behavior.
 *   Autocommit is disabled to match SQLite transaction semantics.
+*   Connection pooling is in-tree (`engines/pool.py`), shared with the SQLite engine.
 *   `?` placeholders are converted to `%s` automatically.
 *   Supports `sslmode` — default `prefer` — see `plexichat/src/config_defaults.py:79`.
 

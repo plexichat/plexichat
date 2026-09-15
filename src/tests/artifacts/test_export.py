@@ -8,12 +8,16 @@ whiteboard's ``board`` JSON) into readable text/HTML instead of leaking raw
 JSON or blank output.
 """
 
+import io
 import json
+import zipfile
+from xml.etree import ElementTree
 
 from src.api.routes.artifacts import (
     _artifact_board_text,
     _artifact_export_html,
     _artifact_export_markdown,
+    _artifact_export_odt,
     _artifact_export_pdf,
     _artifact_export_text,
     _artifact_native_bytes,
@@ -118,6 +122,76 @@ def test_pdf_export_is_unicode_safe():
 
 def test_strip_html_markup_decodes_entities():
     assert _strip_html_markup("<p>a &amp; b</p>") == "a & b"
+
+
+# --- Document renderers ship with permissive dependencies ------------------
+#
+# PDF uses reportlab (BSD-3-Clause) and ODT is written directly (a zip of XML),
+# because fpdf2 (LGPL-3.0-only) and odfpy (GPL/LGPL-flagged metadata) must not
+# be bundled into a distributed build.
+
+
+def _pdf_page_count(data: bytes) -> int:
+    """Count page objects, excluding the ``/Pages`` tree node."""
+    return data.count(b"/Type /Page") - data.count(b"/Type /Pages")
+
+
+def test_pdf_export_paginates_long_documents():
+    long_text = "\n".join(f"line {i} " + "word " * 20 for i in range(200))
+    data = _artifact_export_pdf(_Artifact(), long_text)
+    assert data.startswith(b"%PDF")
+    assert data.rstrip().endswith(b"%%EOF")
+    # More than one page means the pagination path ran.
+    assert _pdf_page_count(data) > 1
+
+
+def test_pdf_export_keeps_a_single_page_for_short_documents():
+    data = _artifact_export_pdf(_Artifact(), "just one line")
+    assert _pdf_page_count(data) == 1
+
+
+def test_odt_export_is_a_valid_odf_package():
+    data = _artifact_export_odt(_Artifact(), "hello\nworld")
+    assert data.startswith(b"PK")  # ZIP container
+
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = archive.namelist()
+        # ODF requires the mimetype entry to come first, stored uncompressed.
+        assert names[0] == "mimetype"
+        assert archive.getinfo("mimetype").compress_type == zipfile.ZIP_STORED
+        assert archive.read("mimetype") == b"application/vnd.oasis.opendocument.text"
+        assert "META-INF/manifest.xml" in names
+        content = archive.read("content.xml").decode("utf-8")
+
+    root = ElementTree.fromstring(content)
+    assert root.tag.endswith("document-content")
+    assert "Doc" in content
+    assert "hello" in content
+    assert "world" in content
+
+
+def test_odt_export_escapes_hostile_text():
+    hostile = "</text:p><script>alert(1)</script>& <b>bold</b>"
+    data = _artifact_export_odt(_Artifact(), hostile)
+
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        content = archive.read("content.xml").decode("utf-8")
+
+    # The document must still parse, with the markup neutralised as text.
+    ElementTree.fromstring(content)
+    assert "<script" not in content
+    assert "&lt;script&gt;" in content
+    assert "&amp;" in content
+
+
+def test_odt_export_drops_characters_xml_forbids():
+    data = _artifact_export_odt(_Artifact(), "before\x00\x07after")
+
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        content = archive.read("content.xml").decode("utf-8")
+
+    ElementTree.fromstring(content)
+    assert "beforeafter" in content
 
 
 # --- Stored-XSS regression coverage (H-24) ---------------------------------

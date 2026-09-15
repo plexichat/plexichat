@@ -24,7 +24,7 @@ If cloning fails mid-table, the utility rolls back that table so the target is n
 You need:
 
 *   A running PostgreSQL server.
-*   The PostgreSQL driver: `pip install psycopg2-binary`.
+*   The PostgreSQL driver: `pip install pg8000`.
 *   Superuser or table-owner permissions on the target database, so the utility can set `session_replication_role` and reset sequences. If you run without superuser, cloning continues with foreign key checks active.
 
 ## Run the migration

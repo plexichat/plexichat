@@ -126,6 +126,11 @@ jobs:
           pip-audit -r requirements.txt --format json > pip-audit-report.json
           pip-audit -r requirements.txt
 
+      - name: License audit
+        run: |
+          source .venv/bin/activate
+          python ci-tooling/license_audit.py
+
       - name: Dependency audit (osv-scanner + trivy)
         run: |
           source .venv/bin/activate

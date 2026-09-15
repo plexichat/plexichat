@@ -11,6 +11,21 @@ from ..engines.sqlite import MONITOR_IDLE_RECLAIM_SECONDS
 from .types import DbConnection
 
 
+def _is_pool_exhausted(exc: BaseException, err_str: str) -> bool:
+    """Return True when the pool had no connection to hand out.
+
+    Both engines share one pool implementation, which reports exhaustion as
+    ``TimeoutError("<Engine> connection pool exhausted: no available
+    connections")``. The type check is tried first (it survives message
+    rewording) but is gated on the message so an unrelated socket timeout is
+    not misclassified; the textual check still covers mocks and any driver
+    that only exposes a message.
+    """
+    if isinstance(exc, TimeoutError) and "pool" in err_str:
+        return True
+    return "pool" in err_str and ("exhaust" in err_str or "no available" in err_str)
+
+
 class _DatabaseConnectionProtocol(Protocol):
     engine: Any
     _pool: Any
@@ -126,8 +141,8 @@ class DatabaseConnectionMixin:
                 # Python 3.14+ removed the ``.closed`` attribute from
                 # sqlite3.Connection; probe with a side-effect-free attribute
                 # read that raises ProgrammingError once the connection is
-                # closed (``in_transaction`` is available on sqlite3 and
-                # psycopg2 connections).
+                # closed. The PostgreSQL adapter exposes ``closed`` itself, so
+                # only SQLite reaches this branch.
                 try:
                     _ = conn.in_transaction
                 except Exception:
@@ -163,20 +178,13 @@ class DatabaseConnectionMixin:
                 if getattr(conn, "closed", 0) != 0:
                     is_valid = False
 
-                if is_valid and hasattr(conn, "poll"):
-                    PsycopgOperationalError = Exception
-                    try:
-                        from psycopg2 import OperationalError as PsycopgOperationalError
-                    except Exception:
-                        pass
-                    try:
-                        conn.poll()
-                    except PsycopgOperationalError as e:
-                        logger.debug(f"Connection {conn_id} failed poll check: {e}")
-                        is_valid = False
-                    except Exception as e:
-                        logger.debug(f"Connection {conn_id} failed poll check: {e}")
-                        is_valid = False
+                # No driver-level ``poll()``: ``broken`` covers the same case
+                # the old socket poll probe detected. The pg8000 adapter
+                # derives it from the connection's socket state; a PostgreSQL
+                # connection whose socket has gone is unusable.
+                if is_valid and getattr(conn, "broken", False):
+                    logger.debug(f"Connection {conn_id} is broken, reconnecting")
+                    is_valid = False
 
             if is_valid and metadata and self._enable_validation:
                 last_val = metadata.get("last_validation", 0)
@@ -259,9 +267,7 @@ class DatabaseConnectionMixin:
                     conn = self.engine.connect(self._pool)
                 except Exception as e:
                     err_str = str(e).lower()
-                    if "pool" in err_str and (
-                        "exhaust" in err_str or "no available" in err_str
-                    ):
+                    if _is_pool_exhausted(e, err_str):
                         logger.error(
                             "Connection pool exhausted: no available connections"
                         )
@@ -288,9 +294,7 @@ class DatabaseConnectionMixin:
                     conn = self.engine.connect(self._pool)
                 except Exception as e:
                     err_str = str(e).lower()
-                    if "pool" in err_str and (
-                        "exhaust" in err_str or "no available" in err_str
-                    ):
+                    if _is_pool_exhausted(e, err_str):
                         logger.error(
                             "SQLite connection pool exhausted: no available connections"
                         )

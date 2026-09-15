@@ -219,17 +219,17 @@ class PostgresDockerManager:
             True if PostgreSQL is reachable, False otherwise
         """
         try:
-            import psycopg2
+            import pg8000.dbapi
 
             logger.info(f"Checking local PostgreSQL at {self.host}:{self.port}")
 
-            conn = psycopg2.connect(
+            conn = pg8000.dbapi.connect(
                 host=self.host,
                 port=self.port,
                 user=self.user,
                 password=self.password,
                 database="postgres",
-                connect_timeout=5,
+                timeout=5,
             )
             conn.close()
 
@@ -248,20 +248,20 @@ class PostgresDockerManager:
         Raises:
             TimeoutError if PostgreSQL doesn't become available
         """
-        import psycopg2
+        import pg8000.dbapi
 
         start_time = time.time()
         last_error = None
 
         while time.time() - start_time < timeout:
             try:
-                conn = psycopg2.connect(
+                conn = pg8000.dbapi.connect(
                     host=self.host,
                     port=self.port,
                     user=self.user,
                     password=self.password,
                     database="postgres",
-                    connect_timeout=5,
+                    timeout=5,
                 )
                 conn.close()
                 logger.info("PostgreSQL is ready for connections")

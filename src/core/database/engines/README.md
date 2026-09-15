@@ -44,15 +44,17 @@ Relevant PRAGMAs are configurable through `connection_pool` in your config file.
 
 ### PostgresEngine
 
-Implementation in `postgres.py:14` using `psycopg2` and `ThreadedConnectionPool`.
+Implementation in `postgres.py` using `pg8000` (BSD-3-Clause, DB-API 2.0) and the shared `pool.ConnectionPool`.
 
-* Uses `RealDictCursor` so rows are returned as dictionaries.
-* Builds connection parameters from `config.postgres` without exposing passwords in logs.
-* Enables TCP keepalives (`keepalives_idle`, `keepalives_interval`, `keepalives_count`, `tcp_user_timeout`).
-* Supports `sslmode` configuration (`prefer` by default).
-* Honors `connection_pool.connect_timeout` for pool creation and connection checkout.
+* Rows arrive as tuples; `Database.fetch_one`/`fetch_all` rebuild dicts from `cursor.description`, exactly as they do for SQLite.
+* Builds connection parameters from `config.postgres` as a mapping, never a DSN, so passwords cannot leak into logs.
+* Enables TCP keepalives (`tcp_keepalive`; pg8000 does not expose libpq's per-knob timings).
+* Supports `sslmode` configuration (`prefer` by default), projected onto pg8000's single `ssl_context` knob. `prefer` retries in the clear when the server refuses TLS.
+* Honors `connection_pool.connect_timeout`: it is both the socket connect timeout and the pool-checkout wait budget (a checkout that waits past it raises `TimeoutError`, which `connection.py` reports as pool exhaustion).
+* The pool's idle/max-age reaping is driven by `monitoring.py`, which owns connection lifecycle.
+* `_Pg8000Connection` adapts pg8000 to the shared connection layer by exposing `closed`/`broken` (pg8000 has neither) from the driver's socket state.
 
-If `psycopg2` is not installed, the engine raises `ImportError` with installation instructions. See `postgres.py:24`.
+If `pg8000` is not installed, the engine raises `ImportError` with installation instructions. See `postgres.py`.
 
 ## Usage
 

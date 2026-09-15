@@ -47,7 +47,7 @@ def convert_placeholders(query: str, db_type: str) -> str:
 
     def replace(match):
         if match.group(1):  # It's a quoted string literal in the SQL
-            # Escape literal % inside the SQL string itself for psycopg2
+            # Escape literal % inside the SQL string itself for the postgres driver
             content = match.group(1)
             return content.replace("%", "%%")
         elif match.group(2):  # It's a ? placeholder
@@ -67,6 +67,24 @@ def convert_placeholders(query: str, db_type: str) -> str:
             _QUERY_CONVERSION_CACHE[cache_key] = converted_query
 
     return converted_query
+
+
+def unescape_postgres_percent(query: str) -> str:
+    """Undo ``convert_placeholders``' ``%%`` escaping for a query with no params.
+
+    ``convert_placeholders`` doubles every literal ``%`` for PostgreSQL, which
+    is what a paramstyle-aware driver expects: psycopg parses the statement
+    client-side and collapses ``%%`` back to ``%``, and pg8000's
+    ``convert_paramstyle`` does the same when parameters are bound.
+
+    A *parameterless* statement takes neither path. pg8000 sends it through
+    the simple query protocol (``execute_simple``), which performs no
+    paramstyle processing at all, so the escapes would reach the server
+    verbatim. With no placeholders to substitute the escaping has no purpose,
+    so it is reverted; ``%`` is only ever doubled by the converter, which
+    makes this an exact inverse.
+    """
+    return query.replace("%%", "%")
 
 
 def sanitize_identifier(identifier: str, db_type: str) -> str:

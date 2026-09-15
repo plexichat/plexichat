@@ -10,6 +10,8 @@ import secrets
 import time
 from typing import Dict, List, Optional, Any
 
+import httpx
+
 import utils.config as config
 import utils.logger as logger
 
@@ -54,7 +56,7 @@ class JanusAdapter(SFUAdapter):
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
         self._api_secret = api_secret
-        self._session = None
+        self._session: Optional[httpx.AsyncClient] = None
         self._session_id = None  # Latest created session id (fixation tracking)
         self._janus_sessions: Dict[str, int] = {}  # room_id -> session_id
         self._janus_handles: Dict[
@@ -89,21 +91,10 @@ class JanusAdapter(SFUAdapter):
             "transient_ratio": self._acoustic_defense.transient_ratio,
         }
 
-    async def _get_session(self):
-        """Get or create aiohttp session."""
+    async def _get_session(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client used for the Janus REST API."""
         if self._session is None:
-            try:
-                import aiohttp
-
-                self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=self._timeout)
-                )
-            except ImportError:
-                raise SFUConnectionError(
-                    "aiohttp is required for Janus adapter",
-                    backend="janus",
-                    url=self._api_url,
-                )
+            self._session = httpx.AsyncClient(timeout=self._timeout)
         return self._session
 
     def _generate_transaction(self) -> str:
@@ -136,24 +127,24 @@ class JanusAdapter(SFUAdapter):
             data["apisecret"] = self._api_secret
 
         try:
-            async with session.post(
+            response = await session.post(
                 url,
                 json=data,
                 headers={"Content-Type": "application/json"},
-            ) as response:
-                result = await response.json()
+            )
+            result = response.json()
 
-                if result.get("janus") == "error":
-                    error = result.get("error", {})
-                    raise SFUConnectionError(
-                        f"Janus error: {error.get('reason', 'Unknown')}",
-                        backend="janus",
-                        url=url,
-                    )
+            if result.get("janus") == "error":
+                error = result.get("error", {})
+                raise SFUConnectionError(
+                    f"Janus error: {error.get('reason', 'Unknown')}",
+                    backend="janus",
+                    url=url,
+                )
 
-                return result
+            return result
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             raise SFUTimeoutError(
                 "Janus request timed out",
                 operation=endpoint,
@@ -933,5 +924,5 @@ class JanusAdapter(SFUAdapter):
         self._janus_recording_roots.clear()
 
         if self._session:
-            await self._session.close()
+            await self._session.aclose()
             self._session = None

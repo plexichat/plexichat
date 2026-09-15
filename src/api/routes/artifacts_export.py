@@ -13,13 +13,14 @@ export document, and every other branch escapes its content explicitly.
 import html as _html
 import json
 import re
+import zipfile
 from html.parser import HTMLParser
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
-from fpdf import FPDF
-from odf.opendocument import OpenDocumentText
-from odf.text import P
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfgen import canvas
 
 
 def _json_loads(value: Any) -> Any:
@@ -334,34 +335,208 @@ def _artifact_export_markdown(artifact: Any, text: str) -> str:
 
 
 def _latin1_safe(value: str) -> str:
-    """Force text into latin-1 so FPDF core fonts never raise on non-ASCII."""
+    """Force text into latin-1 so PDF core fonts never raise on non-ASCII."""
     return value.encode("latin-1", "replace").decode("latin-1")
+
+
+# PDF layout constants (points). ``reportlab`` is used rather than fpdf2: fpdf2
+# is LGPL-3.0-only and these renderers ship inside distributed builds.
+_PDF_MARGIN = 40.0
+_PDF_TITLE_SIZE = 15.0
+_PDF_BODY_SIZE = 10.0
+_PDF_FONT = "Helvetica"
+
+
+def _pdf_wrap(text: str, size: float, max_width: float) -> List[str]:
+    """Greedy word wrap at the right margin, preserving blank lines.
+
+    A word wider than the text area (a long URL or an unbroken token) is
+    hard-split, so no line can run off the page.
+    """
+    lines: List[str] = []
+    for paragraph in (text or "").split("\n"):
+        current = ""
+        for word in paragraph.split(" "):
+            candidate = word if not current else f"{current} {word}"
+            if stringWidth(candidate, _PDF_FONT, size) <= max_width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+                current = ""
+            while stringWidth(word, _PDF_FONT, size) > max_width and len(word) > 1:
+                cut = len(word)
+                while cut > 1 and stringWidth(word[:cut], _PDF_FONT, size) > max_width:
+                    cut -= 1
+                lines.append(word[:cut])
+                word = word[cut:]
+            current = word
+        lines.append(current)
+    return lines
+
+
+def _pdf_draw_lines(pdf: Any, lines: List[str], y: float, size: float) -> float:
+    """Draw wrapped lines, paginating when the bottom margin is reached.
+
+    Returns the cursor position after the last line so a following block (the
+    body, after a wrapped title) continues underneath it instead of overlapping.
+    """
+    page_height = A4[1]
+    line_height = size + 3.0
+
+    for line in lines:
+        if y <= _PDF_MARGIN:
+            pdf.showPage()
+            pdf.setFont(_PDF_FONT, size)
+            y = page_height - _PDF_MARGIN
+        if line:
+            pdf.drawString(_PDF_MARGIN, y, line[:4096])
+        y -= line_height
+    return y
 
 
 def _artifact_export_pdf(artifact: Any, text: str) -> bytes:
     """Render a PDF export using extracted text (latin-1 safe)."""
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=2.0)
-    pdf.add_page()
-    pdf.set_font("Helvetica", "", 11)
-    title = _latin1_safe(artifact.title or "Document")
-    pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-    pdf.set_font("Helvetica", "", 10)
-    for line in _latin1_safe(text or "").splitlines():
-        pdf.multi_cell(0, 6, line, new_x="LMARGIN", new_y="NEXT")
-    pdf_bytes = pdf.output()
-    return bytes(pdf_bytes) if pdf_bytes else b""
+    page_width, page_height = A4
+    max_width = page_width - (2 * _PDF_MARGIN)
+
+    buf = BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    pdf.setTitle(_latin1_safe(artifact.title or "Document")[:200])
+
+    y = page_height - _PDF_MARGIN
+    pdf.setFont(_PDF_FONT, _PDF_TITLE_SIZE)
+    y = _pdf_draw_lines(
+        pdf,
+        _pdf_wrap(
+            _latin1_safe(artifact.title or "Document"), _PDF_TITLE_SIZE, max_width
+        ),
+        y,
+        _PDF_TITLE_SIZE,
+    )
+
+    pdf.setFont(_PDF_FONT, _PDF_BODY_SIZE)
+    _pdf_draw_lines(
+        pdf,
+        _pdf_wrap(_latin1_safe(text or ""), _PDF_BODY_SIZE, max_width),
+        y - 6.0,
+        _PDF_BODY_SIZE,
+    )
+
+    pdf.save()
+    return buf.getvalue()
+
+
+# === ODT rendering (hand-rolled: odfpy is GPL/LGPL-flagged) ================
+#
+# An ODF text document is a ZIP containing a stored ``mimetype`` entry, a
+# manifest, and XML parts. The export only emits paragraphs, so a dependency
+# that ships GPL/LGPL metadata buys nothing here.
+
+_ODF_MIMETYPE = "application/vnd.oasis.opendocument.text"
+
+# Fixed timestamp: keeps exported bytes reproducible instead of embedding the
+# export time into the archive headers.
+_ODF_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+
+# XML 1.0 forbids these control characters outright, even escaped.
+_ODF_INVALID_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+_ODF_MANIFEST = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<manifest:manifest "
+    'xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" '
+    'manifest:version="1.2">'
+    '<manifest:file-entry manifest:full-path="/" '
+    f'manifest:media-type="{_ODF_MIMETYPE}"/>'
+    '<manifest:file-entry manifest:full-path="content.xml" '
+    'manifest:media-type="text/xml"/>'
+    '<manifest:file-entry manifest:full-path="styles.xml" '
+    'manifest:media-type="text/xml"/>'
+    '<manifest:file-entry manifest:full-path="meta.xml" '
+    'manifest:media-type="text/xml"/>'
+    "</manifest:manifest>"
+)
+
+_ODF_STYLES = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<office:document-styles "
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+    'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" '
+    'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" '
+    'office:version="1.2">'
+    "<office:styles>"
+    '<style:default-style style:family="paragraph">'
+    '<style:paragraph-properties fo:orphans="2" fo:widows="2"/>'
+    "</style:default-style>"
+    "</office:styles>"
+    "</office:document-styles>"
+)
+
+
+def _odf_text(value: str) -> str:
+    """Escape text for XML and drop characters XML 1.0 cannot represent."""
+    return _html.escape(_ODF_INVALID_CHARS.sub("", value or ""), quote=False)
+
+
+def _odf_content_xml(title: str, lines: List[str]) -> str:
+    """Build the document body: a bold title paragraph, then the text."""
+    paragraphs = [
+        '<text:p text:style-name="ExportTitle">'
+        f"{_odf_text(title) or 'Document'}</text:p>",
+        "<text:p/>",
+    ]
+    paragraphs.extend(f"<text:p>{_odf_text(line)}</text:p>" for line in lines)
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<office:document-content "
+        'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+        'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
+        'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" '
+        'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" '
+        'office:version="1.2">'
+        "<office:automatic-styles>"
+        '<style:style style:name="ExportTitle" style:family="paragraph">'
+        '<style:text-properties fo:font-size="16pt" fo:font-weight="bold"/>'
+        "</style:style>"
+        "</office:automatic-styles>"
+        "<office:body><office:text>"
+        + "".join(paragraphs)
+        + "</office:text></office:body>"
+        "</office:document-content>"
+    )
+
+
+def _odf_meta_xml(title: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<office:document-meta "
+        'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'office:version="1.2">'
+        "<office:meta>"
+        f"<dc:title>{_odf_text(title) or 'Document'}</dc:title>"
+        '<meta:generator xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0">'
+        "Plexichat</meta:generator>"
+        "</office:meta>"
+        "</office:document-meta>"
+    )
 
 
 def _artifact_export_odt(artifact: Any, text: str) -> bytes:
     """Render an ODT export using extracted text."""
-    doc = OpenDocumentText()
-    doc_text = getattr(doc, "text")
-    doc_text.addElement(P(text=artifact.title or "Document"))
-    doc_text.addElement(P(text=""))
-    for line in (text or "").splitlines():
-        doc_text.addElement(P(text=line))
+    title = artifact.title or "Document"
+    lines = (text or "").split("\n")
+
     buf = BytesIO()
-    doc.save(buf)
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        # ODF requires ``mimetype`` to be the first entry and stored uncompressed
+        # so consumers can identify the file without reading the whole archive.
+        mimetype = zipfile.ZipInfo("mimetype", date_time=_ODF_ZIP_EPOCH)
+        archive.writestr(mimetype, _ODF_MIMETYPE, compress_type=zipfile.ZIP_STORED)
+        archive.writestr("META-INF/manifest.xml", _ODF_MANIFEST)
+        archive.writestr("content.xml", _odf_content_xml(title, lines))
+        archive.writestr("styles.xml", _ODF_STYLES)
+        archive.writestr("meta.xml", _odf_meta_xml(title))
     return buf.getvalue()

@@ -160,9 +160,9 @@ def test_concurrent_operations(auth_manager):
 
 ## Requirements
 
-Install test dependencies:
+Install test dependencies (the dev lock; `pytest-benchmark` is test-only):
 ```bash
-pip install --require-hashes -r requirements.txt
+pip install --require-hashes -r requirements-dev.txt
 ```
 
 Required packages:

@@ -498,7 +498,8 @@ class SFUAdapter(ABC):
     async def close(self) -> None:
         """Release resources held by the adapter.
 
-        Subclasses that own network sessions (e.g. aiohttp) should override
-        this to close them explicitly, preventing ResourceWarning on GC.
+        Subclasses that own network sessions (e.g. an httpx.AsyncClient)
+        should override this to close them explicitly, preventing
+        ResourceWarning on GC.
         """
         pass

@@ -1,141 +1,347 @@
+import ssl
 from typing import Any, Optional, Dict, List, Tuple
 import time
 from .base import BaseEngine
+from .pool import ConnectionPool
 import utils.logger as logger
 
-try:
-    import psycopg2
-    import psycopg2.extras
-    import psycopg2.pool
-except ImportError:
-    psycopg2 = None
+
+_DRIVER_HINT = "pg8000"
+_MISSING_DRIVER = (
+    f"{_DRIVER_HINT} not installed. Please install with: pip install {_DRIVER_HINT}"
+)
+
+
+class DictRow(list):
+    """A result row that behaves as both a sequence and a mapping.
+
+    The rest of the codebase reads rows through *raw* cursors as well as
+    through ``fetch_one``/``fetch_all``, and it relies on the row shape both
+    previous drivers provided: ``sqlite3.Row`` and psycopg's ``DictRow``
+    support positional access (``row[0]``), column access (``row["name"]``),
+    ``row.keys()`` and ``dict(row)``.
+
+    pg8000 returns bare tuples, which support none of the mapping forms, so
+    the cursor adapter below wraps them in this type instead of teaching a
+    dozen call sites (``dict(row)`` in voice/push/servers/profiles/antispam)
+    about a driver detail.
+    """
+
+    __slots__ = ("_index",)
+
+    def __init__(self, values: Any, columns: List[str]) -> None:
+        super().__init__(values)
+        # Last duplicate wins, matching how ``dict(zip(...))`` and the drivers
+        # collapse repeated column names.
+        object.__setattr__(self, "_index", {name: i for i, name in enumerate(columns)})
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, str):
+            return super().__getitem__(self._index[key])
+        return super().__getitem__(key)
+
+    def keys(self) -> List[str]:
+        return list(self._index.keys())
+
+    def values(self) -> List[Any]:
+        return list(self)
+
+    def items(self) -> List[Tuple[str, Any]]:
+        return list(zip(self.keys(), self))
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except (KeyError, IndexError):
+            return default
+
+
+def _column_names(cursor: Any) -> List[str]:
+    """Column names from a DB-API cursor, or [] when it returned no rows."""
+    description = getattr(cursor, "description", None)
+    if not description:
+        return []
+    return [column[0] for column in description]
+
+
+class _Pg8000Cursor:
+    """DB-API cursor adapter that yields :class:`DictRow` instead of tuples.
+
+    Everything except the fetch methods is delegated to the real cursor, so
+    ``execute``/``executemany``/``rowcount``/``description`` behave normally.
+    """
+
+    __slots__ = ("_cursor",)
+
+    def __init__(self, cursor: Any) -> None:
+        object.__setattr__(self, "_cursor", cursor)
+
+    def _wrap(self, row: Any) -> Any:
+        if row is None or hasattr(row, "keys"):
+            return row
+        columns = _column_names(self._cursor)
+        if not columns:
+            return row
+        return DictRow(row, columns)
+
+    def fetchone(self) -> Any:
+        return self._wrap(self._cursor.fetchone())
+
+    def fetchall(self) -> List[Any]:
+        columns = _column_names(self._cursor)
+        return [
+            row if row is None or hasattr(row, "keys") else DictRow(row, columns)
+            for row in self._cursor.fetchall()
+        ]
+
+    def fetchmany(self, size: Any = None) -> List[Any]:
+        rows = (
+            self._cursor.fetchmany() if size is None else self._cursor.fetchmany(size)
+        )
+        columns = _column_names(self._cursor)
+        return [
+            row if row is None or hasattr(row, "keys") else DictRow(row, columns)
+            for row in rows
+        ]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cursor, name)
+
+    def __iter__(self) -> Any:
+        return (self._wrap(row) for row in iter(self._cursor))
+
+
+class _Pg8000Connection:
+    """DB-API adapter over a pg8000 connection.
+
+    pg8000 exposes neither ``closed`` nor ``broken``, but the shared
+    connection layer reads both when revalidating a pooled connection. They
+    are derived here from the driver's own socket state instead of teaching
+    the shared layer about a specific driver. ``cursor()`` returns the
+    row-wrapping adapter above; everything else is delegated unchanged.
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn: Any) -> None:
+        object.__setattr__(self, "_conn", conn)
+
+    def cursor(self) -> _Pg8000Cursor:
+        return _Pg8000Cursor(self._conn.cursor())
+
+    @property
+    def closed(self) -> bool:
+        """True once pg8000 has torn the socket down (its ``close()`` path)."""
+        usock = getattr(self._conn, "_usock", None)
+        if usock is None:
+            return True
+        try:
+            return usock.fileno() < 0
+        except OSError:
+            # Socket already closed underneath us.
+            return True
+        except Exception:
+            return False
+
+    @property
+    def broken(self) -> bool:
+        """True when the connection can no longer be used.
+
+        pg8000 keeps no broken flag: a transport failure surfaces as
+        ``InterfaceError("network error")`` and is retried by the execution
+        layer, which closes the connection on the way out. A connection whose
+        socket is gone is unusable, which is the case this probe covers.
+        """
+        return self.closed
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+
+def _build_ssl_context(sslmode: str) -> Optional["ssl.SSLContext"]:
+    """Map a libpq ``sslmode`` onto an :class:`ssl.SSLContext`.
+
+    pg8000 takes a single ``ssl_context`` knob, so the libpq modes are
+    projected onto it::
+
+        disable / allow   -> plaintext
+        prefer / require  -> TLS, certificate not verified
+        verify-ca         -> TLS, CA verified, hostname not checked
+        verify-full       -> TLS, full verification
+
+    ``prefer`` matches libpq's historical behaviour (encrypt when the server
+    supports it, without verifying the certificate unless a root CA
+    is supplied externally); the plaintext fallback is handled by the caller.
+    """
+    mode = (sslmode or "prefer").lower()
+    if mode in ("disable", "allow"):
+        return None
+
+    context = ssl.create_default_context()
+    if mode in ("prefer", "require"):
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    elif mode == "verify-ca":
+        context.check_hostname = False
+    # "verify-full" keeps create_default_context()'s CA + hostname checks.
+    return context
+
+
+class PostgresPool(ConnectionPool):
+    """Connection pool for PostgreSQL (the shared driver-agnostic pool)."""
+
+    def __init__(
+        self,
+        create_conn,
+        min_size: int,
+        max_size: int,
+        idle_reclaim_seconds: float = 5.0,
+    ):
+        super().__init__(
+            create_conn=create_conn,
+            min_size=min_size,
+            max_size=max_size,
+            idle_reclaim_seconds=idle_reclaim_seconds,
+            label="PostgreSQL",
+        )
 
 
 class PostgresEngine(BaseEngine):
-    """PostgreSQL database engine implementation."""
+    """PostgreSQL database engine implementation (pg8000).
+
+    pg8000 is a pure-Python DB-API 2.0 driver under BSD-3-Clause; it replaces
+    psycopg, whose wheels are LGPL-3.0-only. The app speaks the DB-API cursor
+    interface (``execute``/``fetchone``/``fetchall``/``rowcount``) and emits
+    ``%s`` placeholders, both of which pg8000 supports natively, so the rest
+    of the data layer is unchanged.
+
+    pg8000 has no ``dict_row`` factory (psycopg's did), so the cursor adapter
+    above wraps rows in :class:`DictRow`, which reproduces the shape both
+    previous drivers returned: positional access, column access, ``keys()``
+    and ``dict(row)``.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self._pool: Optional[PostgresPool] = None
+        self._pool_config = config.get("connection_pool", {})
+
+    def _sslmode(self) -> str:
+        return str(self.config.get("postgres", {}).get("sslmode", "prefer"))
+
+    def _connect_kwargs(self) -> Dict[str, Any]:
+        """Build the pg8000 connection parameters.
+
+        Passed as a mapping (never a DSN) so the password cannot leak into a
+        log line. ``timeout`` is pg8000's socket connect timeout.
+
+        Note pg8000 exposes only an on/off ``tcp_keepalive`` rather than
+        libpq's fine-grained ``keepalives*``/``tcp_user_timeout`` knobs.
+        """
+        pg_config = self.config.get("postgres", {})
+        return {
+            "host": pg_config.get("host", "localhost"),
+            "port": pg_config.get("port", 5432),
+            "user": pg_config.get("user", "postgres"),
+            "password": pg_config.get("password", ""),
+            "database": pg_config.get("dbname", "plexichat"),
+            "timeout": self._pool_config.get("connect_timeout", 10),
+            "tcp_keepalive": True,
+            "application_name": "plexichat",
+        }
+
+    def _create_single_connection(self) -> _Pg8000Connection:
+        try:
+            import pg8000.dbapi
+        except ImportError:
+            logger.error(_MISSING_DRIVER)
+            raise ImportError(_MISSING_DRIVER)
+
+        kwargs = self._connect_kwargs()
+        ssl_context = _build_ssl_context(self._sslmode())
+        if ssl_context is not None:
+            kwargs["ssl_context"] = ssl_context
+
+        try:
+            return _Pg8000Connection(pg8000.dbapi.connect(**kwargs))
+        except Exception as e:
+            # sslmode=prefer means "encrypt if the server can, otherwise
+            # connect in the clear" — pg8000 never falls back on its own, so
+            # a server without TLS (or an unusable certificate) is retried
+            # without the SSL context rather than failing the pool.
+            if "ssl" in str(e).lower() and ssl_context is not None:
+                logger.warning(
+                    f"PostgreSQL TLS handshake failed ({e}); retrying without "
+                    "encryption because sslmode=prefer"
+                )
+                kwargs.pop("ssl_context", None)
+                return _Pg8000Connection(pg8000.dbapi.connect(**kwargs))
+            raise
 
     def connect(self, pool: Optional[Any] = None) -> Any:
-        if pool:
-            return pool.getconn()
-
-        try:
-            import psycopg2
-            from psycopg2.extras import RealDictCursor
-        except ImportError:
-            logger.error(
-                "psycopg2 not installed. Please install with: pip install psycopg2-binary"
-            )
-            raise ImportError("psycopg2 not installed")
-
-        pg_config = self.config.get("postgres", {})
-        pool_config = self.config.get("connection_pool", {})
-        connect_timeout = pool_config.get("connect_timeout", 10)
-
-        # Use connection parameter dict instead of DSN string to prevent password exposure in logs
-        conn_params = {
-            "host": pg_config.get("host", "localhost"),
-            "port": pg_config.get("port", 5432),
-            "user": pg_config.get("user", "postgres"),
-            "password": pg_config.get("password", ""),
-            "dbname": pg_config.get("dbname", "plexichat"),
-            "sslmode": pg_config.get("sslmode", "prefer"),
-            "keepalives": 1,
-            "keepalives_idle": 60,
-            "keepalives_interval": 10,
-            "keepalives_count": 5,
-            "tcp_user_timeout": 30000,
-            "cursor_factory": RealDictCursor,
-            "connect_timeout": connect_timeout,
-        }
-
-        return psycopg2.connect(**conn_params)
+        if isinstance(pool, ConnectionPool):
+            # Honor the configured ``connect_timeout`` so pool exhaustion
+            # surfaces fast instead of blocking the caller.
+            timeout = self._pool_config.get("connect_timeout", 30.0)
+            return pool.get_connection(timeout=timeout)
+        return self._create_single_connection()
 
     def create_pool(self, min_conn: int, max_conn: int) -> Any:
-        try:
-            from psycopg2.pool import ThreadedConnectionPool
-            from psycopg2.extras import RealDictCursor
-        except ImportError:
-            raise ImportError("psycopg2 not installed")
-
-        pg_config = self.config.get("postgres", {})
-        pool_config = self.config.get("connection_pool", {})
-        connect_timeout = pool_config.get("connect_timeout", 10)
-
-        # Use connection parameter dict instead of DSN string to prevent password exposure in logs
-        conn_params = {
-            "host": pg_config.get("host", "localhost"),
-            "port": pg_config.get("port", 5432),
-            "user": pg_config.get("user", "postgres"),
-            "password": pg_config.get("password", ""),
-            "dbname": pg_config.get("dbname", "plexichat"),
-            "sslmode": pg_config.get("sslmode", "prefer"),
-            "keepalives": 1,
-            "keepalives_idle": 60,
-            "keepalives_interval": 10,
-            "keepalives_count": 5,
-            "tcp_user_timeout": 30000,
-            "cursor_factory": RealDictCursor,
-            "connect_timeout": connect_timeout,
-        }
-
+        connect_timeout = self._pool_config.get("connect_timeout", 10)
         logger.info(
-            f"Creating ThreadedConnectionPool ({min_conn}-{max_conn}) with timeout {connect_timeout}s"
+            f"Creating PostgreSQL connection pool ({min_conn}-{max_conn}) "
+            f"with timeout {connect_timeout}s"
         )
         start_time = time.time()
         try:
-            pool = ThreadedConnectionPool(
-                min_conn,
-                max_conn,
-                **conn_params,
+            # ``min_conn`` connections are opened eagerly by the pool, so an
+            # unreachable database still fails pool creation here (as the
+            # psycopg pool's synchronous open did) instead of surfacing later
+            # on the first query.
+            pool = PostgresPool(
+                create_conn=self._create_single_connection,
+                min_size=min_conn,
+                max_size=max_conn,
+                idle_reclaim_seconds=float(
+                    self._pool_config.get("idle_reclaim_seconds", 5.0)
+                ),
             )
-            elapsed = time.time() - start_time
-            logger.info(
-                f"ThreadedConnectionPool created successfully in {elapsed:.2f}s"
-            )
-            return pool
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(
-                f"ThreadedConnectionPool creation FAILED after {elapsed:.2f}s: {e}"
+                f"PostgreSQL connection pool creation FAILED after {elapsed:.2f}s: {e}"
             )
             raise
 
+        elapsed = time.time() - start_time
+        logger.info(
+            f"PostgreSQL connection pool created successfully in {elapsed:.2f}s"
+        )
+        self._pool = pool
+        return pool
+
     def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
-        stats: Dict[str, Any] = {
-            "active_connections": 0,
-            "idle_connections": 0,
-            "total_connections": 0,
-            "max_connections": 0,
-            "min_connections": 0,
-            "utilization_percent": 0,
-        }
-        if not pool:
-            return stats
+        stats: Dict[str, Any]
+        if isinstance(pool, ConnectionPool):
+            stats = pool.get_stats()
+        else:
+            stats = {
+                "active_connections": 0,
+                "idle_connections": 0,
+                "total_connections": 0,
+                "max_connections": 0,
+                "min_connections": 0,
+                "utilization_percent": 0,
+            }
 
         try:
-            stats["min_connections"] = getattr(pool, "minconn", 0)
-            stats["max_connections"] = getattr(pool, "maxconn", 0)
-
-            idle_list = getattr(pool, "_pool", [])
-            stats["idle_connections"] = (
-                len(idle_list) if isinstance(idle_list, list) else 0
-            )
-
-            used_list = getattr(pool, "_used", {})
-            stats["active_connections"] = (
-                len(used_list) if isinstance(used_list, (list, dict)) else 0
-            )
-
-            stats["total_connections"] = (
-                stats["idle_connections"] + stats["active_connections"]
-            )
-
-            if stats["max_connections"] > 0:
-                stats["utilization_percent"] = (
-                    stats["active_connections"] / stats["max_connections"]
-                ) * 100
+            pg_config = self.config.get("postgres", {})
+            stats["database_type"] = "postgres"
+            stats["database_host"] = pg_config.get("host", "localhost")
+            stats["database_port"] = pg_config.get("port", 5432)
+            stats["database_name"] = pg_config.get("dbname", "plexichat")
         except Exception as e:
-            logger.warning(f"Could not retrieve detailed pool stats: {e}")
+            logger.debug(f"Could not retrieve PostgreSQL stats: {e}")
 
         return stats
 
@@ -148,12 +354,9 @@ class PostgresEngine(BaseEngine):
         if not conn:
             return
 
-        if pool:
+        if isinstance(pool, ConnectionPool):
             should_close = close_params.get("close", False) if close_params else False
-            try:
-                pool.putconn(conn, close=should_close)
-            except Exception as e:
-                logger.debug(f"Could not return connection to pool: {e}")
+            pool.return_connection(conn, force_close=should_close)
         else:
             try:
                 conn.close()

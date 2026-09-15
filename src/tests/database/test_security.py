@@ -14,7 +14,7 @@ import concurrent.futures
 
 # Check if PostgreSQL is available
 try:
-    import psycopg2  # noqa: F401
+    import pg8000.dbapi  # noqa: F401
 
     HAS_POSTGRES = True
 except ImportError:
@@ -659,9 +659,9 @@ class TestConnectionPooling:
         assert len(errors) == 0
 
 
-@pytest.mark.skipif(not HAS_POSTGRES, reason="psycopg2 not installed")
+@pytest.mark.skipif(not HAS_POSTGRES, reason="pg8000 not installed")
 class TestPostgreSQLConnectionPooling:
-    """Test PostgreSQL-specific connection pooling (requires psycopg2)."""
+    """Test PostgreSQL-specific connection pooling (requires pg8000)."""
 
     @pytest.fixture
     def pg_config_setup(self, setup_module):

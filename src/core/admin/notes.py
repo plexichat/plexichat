@@ -12,7 +12,7 @@ import html
 import logging
 import time
 from dataclasses import dataclass
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING, cast
 
 import utils.config as config
 
@@ -430,6 +430,12 @@ class AdminNotesManager:
         """
         Render markdown content to HTML.
 
+        Uses mistune, the same parser as the docs renderer, so admin notes and
+        published docs cannot drift apart in rendering behaviour. Raw HTML is
+        left intact for the sanitizer below (``escape=False``) and
+        ``hard_wrap`` reproduces the ``nl2br`` extension the previous
+        ``markdown``-based implementation relied on.
+
         Args:
             content: Markdown content to render
 
@@ -437,9 +443,19 @@ class AdminNotesManager:
             HTML rendered content
         """
         try:
-            import markdown
+            import mistune
 
-            rendered = markdown.markdown(content, extensions=["extra", "nl2br"])
+            renderer = mistune.create_markdown(
+                escape=False,
+                hard_wrap=True,
+                plugins=[
+                    "strikethrough",
+                    "footnotes",
+                    "table",
+                    "task_lists",
+                ],
+            )
+            rendered = cast(str, renderer(content))
             # Reuse the server's allowlist sanitizer; markdown output is still
             # user-authored HTML and must not be trusted merely because it was
             # produced by the markdown renderer.

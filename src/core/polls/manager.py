@@ -39,10 +39,13 @@ def _is_unique_violation(exc: BaseException) -> bool:
     """Return True if ``exc`` is a UNIQUE-violation error from the driver.
 
     Both ``sqlite3.IntegrityError`` (covers SQLite's
-    ``UNIQUE constraint failed`` text) and
-    ``psycopg2.errors.UniqueViolation`` (postgres) qualify. Falls
-    back to textual sniffing (``"unique" / "duplicate"``) so drivers
-    that wrap the underlying error still match.
+    ``UNIQUE constraint failed`` text) and pg8000's ``IntegrityError``
+    (postgres) qualify. pg8000 maps every integrity failure — UNIQUE, NOT
+    NULL, CHECK, FOREIGN KEY — onto the single DB-API ``IntegrityError``
+    class, so the postgres branch still inspects the message rather than
+    returning True outright. Falls back to textual sniffing
+    (``"unique" / "duplicate"``) so drivers that wrap the underlying error
+    still match.
     """
     try:
         import sqlite3
@@ -53,10 +56,11 @@ def _is_unique_violation(exc: BaseException) -> bool:
     except Exception:
         pass
     try:
-        import psycopg2
+        import pg8000.dbapi
 
-        if isinstance(exc, psycopg2.errors.UniqueViolation):
-            return True
+        if isinstance(exc, pg8000.dbapi.IntegrityError):
+            txt = str(exc).lower()
+            return "unique" in txt or "duplicate" in txt or "already exists" in txt
     except Exception:
         pass
     txt = str(exc).lower()

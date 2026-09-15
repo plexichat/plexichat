@@ -746,15 +746,15 @@ class TestPostgresFailedTransactionRecovery:
         if not pg_config:
             pytest.skip("PostgreSQL configuration not available")
 
-        # Check if we can import psycopg2
-        pytest.importorskip("psycopg2")
+        # Check if we can import pg8000
+        pytest.importorskip("pg8000")
 
         return pg_config
 
     @pytest.fixture
     def postgres_db_with_table(self, postgres_config, setup_module):
         """Create a PostgreSQL test database with a sample table."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         # Use test database configuration
         temp_dir = setup_module
@@ -811,7 +811,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_detection(self, postgres_db_with_table):
         """Test detection of InFailedSqlTransaction error by exception type."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -849,7 +849,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_recovery_resets_state(self, postgres_db_with_table):
         """Test that recovery properly resets transaction_depth and in_transaction."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -889,7 +889,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test that _recover_from_failed_transaction properly rolls back."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -927,7 +927,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test detection of failed transaction by message fragments."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -975,7 +975,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test that after recovery, we can start a new transaction."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1020,7 +1020,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_pgcode_detection(self, postgres_db_with_table):
         """Test detection of failed transaction by pgcode (PostgreSQL error code 25P02)."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1056,7 +1056,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_nested_recovery(self, postgres_db_with_table):
         """Test recovery in nested transactions."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1139,7 +1139,7 @@ class TestPostgresErrorRecoveryReal:
     @pytest.fixture
     def postgres_recovery_db_with_constraints(self, postgres_recovery_config):
         """Create PostgreSQL test database with various constraints."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         try:
@@ -1183,7 +1183,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test recovery from NOT NULL constraint violation."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1199,7 +1199,7 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Try to insert NULL in NOT NULL column
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "user2@example.com", 30),
@@ -1222,7 +1222,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test recovery from UNIQUE constraint violation."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1238,7 +1238,7 @@ class TestPostgresErrorRecoveryReal:
         assert db._local.transaction_depth == 1
 
         # Try to insert duplicate username (violates UNIQUE constraint)
-        with pytest.raises(psycopg2.errors.UniqueViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("unique_user", "user2@example.com", 30),
@@ -1262,7 +1262,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test recovery from CHECK constraint violation."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1277,7 +1277,7 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Try to insert invalid age (violates CHECK constraint)
-        with pytest.raises(psycopg2.errors.CheckViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("invalid_age_user", "user@example.com", 200),  # Age > 150
@@ -1297,7 +1297,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test that recovery allows retrying transaction after error."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1309,7 +1309,7 @@ class TestPostgresErrorRecoveryReal:
             ("first_attempt", "first@example.com", 25),
         )
 
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "null@example.com", 30),
@@ -1337,7 +1337,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test error recovery in nested transaction scenarios."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1357,7 +1357,7 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Trigger error in inner transaction
-        with pytest.raises(psycopg2.errors.UniqueViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("outer", "duplicate@example.com", 50),  # Duplicate username
@@ -1379,7 +1379,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test that recovery properly resets connection state."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1395,7 +1395,7 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Trigger error
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "error@example.com", 55),
@@ -1446,7 +1446,7 @@ class TestPostgresMultipleConstraintViolations:
     @pytest.fixture
     def constraint_test_table(self, multi_constraint_config):
         """Create test table with multiple constraints."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         try:
@@ -1477,7 +1477,7 @@ class TestPostgresMultipleConstraintViolations:
 
     def test_recovery_sequence_not_null_then_unique(self, constraint_test_table):
         """Test recovery from sequence of constraint violations."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1490,7 +1490,7 @@ class TestPostgresMultipleConstraintViolations:
 
         # First error - NOT NULL violation
         db.begin_transaction()
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
                 (None, "user2@example.com", 50),
@@ -1500,7 +1500,7 @@ class TestPostgresMultipleConstraintViolations:
 
         # Second error - UNIQUE violation
         db.begin_transaction()
-        with pytest.raises(psycopg2.errors.UniqueViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
                 ("User1", "user1@example.com", 75),  # Duplicate email
@@ -1524,14 +1524,14 @@ class TestPostgresMultipleConstraintViolations:
 
     def test_recovery_with_check_constraint_and_retry(self, constraint_test_table):
         """Test recovery from CHECK constraint with successful retry."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
 
         # Try with invalid balance (negative)
         db.begin_transaction()
-        with pytest.raises(psycopg2.errors.CheckViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
                 ("NegativeBalance", "negative@example.com", -50),
@@ -1561,7 +1561,7 @@ class TestPostgresConnectionPoolFailureRecovery:
 
     def test_pool_connection_after_transaction_error(self):
         """Test that pool connection is properly managed after transaction error."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         pg_config = {
             "type": "postgres",
@@ -1591,7 +1591,7 @@ class TestPostgresConnectionPoolFailureRecovery:
 
     def test_pool_size_after_error_recovery(self):
         """Test that pool maintains correct size after errors."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         pg_config = {
             "type": "postgres",

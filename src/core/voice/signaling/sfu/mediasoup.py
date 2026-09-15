@@ -9,6 +9,8 @@ import os
 import time
 from typing import Dict, List, Optional, Any
 
+import httpx
+
 import utils.logger as logger
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
@@ -55,7 +57,7 @@ class MediasoupAdapter(SFUAdapter):
         """
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
-        self._session = None
+        self._session: Optional[httpx.AsyncClient] = None
         self._recordings: Dict[str, Dict] = {}
         # room_id -> peers currently joined, used to poll per-peer stats.
         self._joined_peers: Dict[str, set] = {}
@@ -86,21 +88,10 @@ class MediasoupAdapter(SFUAdapter):
             "transient_ratio": self._acoustic_defense.transient_ratio,
         }
 
-    async def _get_session(self):
-        """Get or create aiohttp session."""
+    async def _get_session(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client used for the mediasoup REST API."""
         if self._session is None:
-            try:
-                import aiohttp
-
-                self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=self._timeout)
-                )
-            except ImportError:
-                raise SFUConnectionError(
-                    "aiohttp is required for mediasoup adapter",
-                    backend="mediasoup",
-                    url=self._api_url,
-                )
+            self._session = httpx.AsyncClient(timeout=self._timeout)
         return self._session
 
     async def _request(
@@ -124,25 +115,28 @@ class MediasoupAdapter(SFUAdapter):
         url = f"{self._api_url}{endpoint}"
 
         try:
-            async with session.request(
+            response = await session.request(
                 method,
                 url,
                 json=data,
                 headers={"Content-Type": "application/json"},
-            ) as response:
-                if response.status >= 400:
-                    text = await response.text()
-                    raise SFUConnectionError(
-                        f"Mediasoup API error: {response.status} - {text}",
-                        backend="mediasoup",
-                        url=url,
-                    )
+            )
+            if response.status_code >= 400:
+                text = response.text
+                raise SFUConnectionError(
+                    f"Mediasoup API error: {response.status_code} - {text}",
+                    backend="mediasoup",
+                    url=url,
+                )
 
-                if response.content_type == "application/json":
-                    return await response.json()
-                return {}
+            # Match the media type only, so a server sending
+            # ``application/json; charset=utf-8`` still takes the JSON path.
+            content_type = response.headers.get("content-type", "")
+            if content_type.split(";")[0].strip() == "application/json":
+                return response.json()
+            return {}
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             raise SFUTimeoutError(
                 "Mediasoup request timed out",
                 operation=endpoint,
@@ -575,5 +569,5 @@ class MediasoupAdapter(SFUAdapter):
             self._quality_reporter = None
         self._recordings.clear()
         if self._session:
-            await self._session.close()
+            await self._session.aclose()
             self._session = None

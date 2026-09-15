@@ -220,8 +220,11 @@ For production, set `PLEXICHAT_SYSTEM_KEY` instead of relying on `.machine_key`.
 
 ## Test
 
+Test frameworks are test-only dependencies, so install the dev lock (it
+includes the runtime tree):
+
 ```bash
-pip install --require-hashes -r requirements.txt
+pip install --require-hashes -r requirements-dev.txt
 pytest src/tests
 pytest src/tests -m "slow"          # Timing-sensitive suites
 pytest src/tests -m "postgres"      # Requires Postgres
