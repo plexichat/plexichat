@@ -47,9 +47,6 @@ class FanoutView(_MediaStreamTrack):  # type: ignore[misc,valid-type]
         self._id = str(uuid.uuid4())
         self._closed = False
         self._enabled = True
-        # Set by the adapter to the producer track's key so sender-hygiene
-        # sweeps can match a view back to the track that produced it.
-        self.share_key: Optional[str] = None
 
     @property
     def kind(self) -> str:

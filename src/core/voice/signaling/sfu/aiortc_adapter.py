@@ -292,20 +292,17 @@ class BoundedVideoTrack:
 
 
 def _same_sender_track(a: Any, b: Any) -> bool:
-    """Whether ``a`` and ``b`` are views of the same produced track.
+    """Whether ``a`` is a view of the produced track ``b``.
 
     Each sender holds its own fan-out view, so a ghost sender cannot be found
-    by identity: match a view back through the relay it subscribes to (whose
-    ``source`` is the produced track), or by the shared key an acoustic view
-    carries. Unwrapped tracks compare by identity.
+    by identity: a view is matched back through the relay it subscribes to,
+    whose ``source`` is the produced track. Unwrapped tracks compare by
+    identity.
     """
     if a is b:
         return True
     relay = getattr(a, "fanout", None)
-    if relay is not None and getattr(relay, "source", None) is b:
-        return True
-    key = getattr(a, "share_key", None)
-    return key is not None and key == getattr(b, "share_key", None)
+    return relay is not None and getattr(relay, "source", None) is b
 
 
 @dataclass
@@ -546,11 +543,7 @@ class AiortcAdapter(SFUAdapter):
         room's media. A view reads from the relay's private queue and its
         ``stop()`` detaches that sender alone.
         """
-        view = self._fanout_for(track).subscribe()
-        key = getattr(track, "share_key", None)
-        if key is not None:
-            view.share_key = key
-        return view
+        return self._fanout_for(track).subscribe()
 
     async def _request_renegotiation(
         self, room_id: str, peer_id: str, peer: AiortcPeer

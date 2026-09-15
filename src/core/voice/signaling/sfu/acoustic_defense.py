@@ -161,9 +161,6 @@ class AudioProcessingTrack:
         self,
         source_track: Any,
         config: AcousticDefenseConfig,
-        *,
-        share_key: str | None = None,
-        owns_source: bool = True,
     ):
         self._source = source_track
         self._config = config
@@ -179,11 +176,6 @@ class AudioProcessingTrack:
             self._sample_rate * self._frame_duration_ms / 1000.0
         )
         self._stopped = False
-        # The producer wrapper owns the source it was built around; a per-sender
-        # view (see :meth:`clone`) does not, because it does not own the room's
-        # shared audio either.
-        self._owns_source = owns_source
-        self._share_key = share_key if share_key is not None else self._id
 
     @property
     def kind(self) -> str:
@@ -217,40 +209,16 @@ class AudioProcessingTrack:
     def onended(self, handler: Any) -> None:
         self._source.onended = handler
 
-    @property
-    def share_key(self) -> str:
-        """Identity shared by this wrapper and every per-sender view of it.
-
-        Sender-hygiene sweeps match a forward on this key so a ghost view can
-        be found even though each sender holds a distinct wrapper instance.
-        """
-        return self._share_key
-
-    def clone(self) -> "AudioProcessingTrack":
-        """A separate view of the same source, for one sender.
-
-        aiortc calls ``stop()`` on a sender's track when its RTP task exits
-        (``pc.close()`` / ``removeTrack``). Handing every sender the *same*
-        wrapper would let the first peer to leave end it, ending the audio for
-        every other peer still listening. Each sender gets its own view;
-        stopping one detaches that sender only.
-        """
-        return AudioProcessingTrack(
-            self._source,
-            self._config,
-            share_key=self._share_key,
-            owns_source=False,
-        )
-
     def stop(self) -> None:
-        """End this view; stop the source only if this view owns it.
+        """Stop this wrapper and the track it wraps.
 
-        A per-sender view must not end the shared track underneath it, which is
-        still being forwarded to the rest of the room.
+        Per-sender views are :class:`~.fanout.FanoutView` objects, so this
+        wrapper is only ever the *source* the relay reads; aiortc never stops
+        it on a sender's behalf. Stopping it here therefore ends the shared
+        source deliberately, not as a side effect of one peer leaving.
         """
         self._stopped = True
-        if self._owns_source:
-            self._source.stop()
+        self._source.stop()
 
     async def _read_source(self) -> Any:
         """Read the next frame from the wrapped track.
@@ -274,8 +242,6 @@ class AudioProcessingTrack:
     async def _read(self) -> Any:
         """Read and process the next audio frame from the source track."""
         if self._stopped:
-            # This sender's view was stopped (its RTP task exited). Signal
-            # end-of-stream for this view without touching the source.
             return None
 
         if not self._enabled:
