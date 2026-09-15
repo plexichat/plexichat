@@ -97,10 +97,30 @@ __all__ = [
     "revoke_media_token",
     "record_activity",
     "sweep_stale_connections",
+    "set_offer_sender",
 ]
 
 _manager = None
 _setup_complete = False
+
+# Delivery hook for a server-initiated SDP offer. Core must not import the API
+# layer, so the websocket layer registers the callable that pushes the offer to
+# the user; see ``SignalingManager.on_renegotiation_needed``.
+_offer_sender: Optional[Any] = None
+
+
+def set_offer_sender(sender: Optional[Any]) -> None:
+    """Register the callable that delivers an SFU-initiated SDP offer.
+
+    ``sender`` is called ``(user_id, channel_id, offer_sdp)`` and may be async.
+    """
+    global _offer_sender
+    _offer_sender = sender
+
+
+def _get_offer_sender() -> Optional[Any]:
+    """The registered offer deliverer, or ``None`` when unconfigured."""
+    return _offer_sender
 
 
 def setup(

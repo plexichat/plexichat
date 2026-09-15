@@ -195,6 +195,13 @@ class SignalingManagerBase:
                         self._sfu.set_quality_mixin(self)
             except Exception:
                 pass
+            try:
+                if hasattr(self._sfu, "set_renegotiation_sink"):
+                    sink = getattr(self, "on_renegotiation_needed", None)
+                    if callable(sink):
+                        self._sfu.set_renegotiation_sink(sink)
+            except Exception:
+                pass
         return self._sfu
 
     async def close(self) -> None:

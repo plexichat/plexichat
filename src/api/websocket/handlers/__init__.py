@@ -110,6 +110,80 @@ class OpcodeHandler:
         self._artifact_handler = ArtifactHandler()
         self._sum_handler = SumHandler()
 
+        self._register_voice_offer_sender()
+
+    def _register_voice_offer_sender(self) -> None:
+        """Let the signaling manager deliver an SFU-initiated SDP offer.
+
+        aiortc never emits ``negotiationneeded``, so a producer forwarded to a
+        peer that has already connected produces an offer that nothing else
+        would deliver. Core cannot import this layer, so the manager is handed
+        the deliverer here and calls it when an offer needs a client.
+        """
+        try:
+            from src.core.voice import signaling
+
+            signaling.set_offer_sender(self._send_voice_renegotiation_offer)
+        except Exception as exc:  # never block gateway construction on this
+            logger.debug(f"Could not register the voice offer sender: {exc}")
+
+    async def _send_voice_renegotiation_offer(
+        self, user_id: int, channel_id: int, offer_sdp: str
+    ) -> bool:
+        """Push a server-initiated SDP offer to a user's gateway connections.
+
+        The target is re-checked here against the authoritative voice state:
+        the manager already required a connection bound to the channel, but
+        the offer must not reach a user who has since left the call.
+        """
+        try:
+            from src.core import voice
+
+            state = voice.get_voice_state(user_id)
+            if not state or getattr(state, "channel_id", None) != channel_id:
+                logger.debug(
+                    f"Dropping renegotiation offer for user {user_id}: not in "
+                    f"channel {channel_id}"
+                )
+                return False
+        except Exception as exc:
+            logger.warning(
+                f"Could not verify voice state for user {user_id} before "
+                f"sending a renegotiation offer: {exc}"
+            )
+            return False
+
+        dispatcher = self._dispatcher
+        if dispatcher is None:
+            try:
+                from src.api.websocket import get_dispatcher
+
+                dispatcher = get_dispatcher()
+            except Exception:
+                dispatcher = None
+        if dispatcher is None:
+            logger.debug("No gateway dispatcher: renegotiation offer not sent")
+            return False
+
+        try:
+            sent = await dispatcher.dispatch_raw_to_users(
+                [user_id],
+                GatewayOpcode.VOICE_SDP_OFFER,
+                {
+                    "from_user_id": str(user_id),
+                    "channel_id": str(channel_id),
+                    "type": "offer",
+                    "sdp": offer_sdp,
+                    "renegotiation": True,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Failed to send renegotiation offer to user {user_id}: {exc}"
+            )
+            return False
+        return sent > 0
+
     def _get_typing_recipient_ids(
         self,
         user_id: int,

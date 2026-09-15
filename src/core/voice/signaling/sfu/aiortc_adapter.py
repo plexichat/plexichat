@@ -7,6 +7,7 @@ It runs in-process with the FastAPI application for maximum integration.
 """
 
 import asyncio
+import inspect
 import os
 import re
 import time
@@ -319,6 +320,9 @@ class AiortcPeer:
     incoming_audio_tracks: List[Any] = field(default_factory=list)
     incoming_video_tracks: List[Any] = field(default_factory=list)
     producer_tracks: Dict[str, Any] = field(default_factory=dict)
+    # The room this peer belongs to, so a forwarded track can name its target
+    # when an offer has to be delivered back to the client.
+    room_id: str = ""
     # Senders whose outbound video a degradation hint replaced with a
     # frame-rate bounded view, mapped back to the source track that must be
     # re-attached to restore full rate.
@@ -354,6 +358,8 @@ class AiortcAdapter(SFUAdapter):
         self._rooms: Dict[str, Dict[str, AiortcPeer]] = {}
         self._ice_servers = ice_servers or []
         self._acoustic_defense = acoustic_defense or AcousticDefenseConfig()
+        # Deliverer of an SFU-initiated offer (see set_renegotiation_sink).
+        self._renegotiation_sink: Any = None
         # One read-once relay per produced track that is forwarded to several
         # peers, so every sender receives every frame instead of a fraction.
         self._fanouts: Dict[Any, TrackFanout] = {}
@@ -419,7 +425,7 @@ class AiortcAdapter(SFUAdapter):
 
         pc = RTCPeerConnection()
 
-        peer = AiortcPeer(peer_id=peer_id, pc=pc)
+        peer = AiortcPeer(peer_id=peer_id, pc=pc, room_id=room_id)
         self._rooms[room_id][peer_id] = peer
 
         @pc.on("track")
@@ -545,6 +551,50 @@ class AiortcAdapter(SFUAdapter):
         if key is not None:
             view.share_key = key
         return view
+
+    async def _request_renegotiation(
+        self, room_id: str, peer_id: str, peer: AiortcPeer
+    ) -> bool:
+        """Offer to a peer that has already negotiated, and deliver it.
+
+        aiortc never emits ``negotiationneeded``, so the SFU can never start an
+        offer by itself: a track forwarded to a peer that has already finished
+        its handshake would be added to a transceiver the client never learns
+        about. The offer is built here and handed to the renegotiation sink;
+        without a sink there is no signaling path, so this reports ``False``
+        rather than pretending the track was delivered.
+        """
+        if peer.pc is None or peer.pc.remoteDescription is None:
+            # Nothing to renegotiate with yet: the peer's first offer is still
+            # to come, and the track will be bound when it arrives.
+            return False
+        try:
+            offer = await peer.pc.createOffer()
+            await peer.pc.setLocalDescription(offer)
+        except Exception as exc:
+            logger.debug(f"Renegotiation offer failed for peer {peer_id}: {exc}")
+            return False
+        local = peer.pc.localDescription
+        if local is None or not local.sdp:
+            return False
+
+        sink = self._renegotiation_sink
+        if sink is None:
+            logger.debug(
+                f"Offer for peer {peer_id} in room {room_id} has no "
+                "renegotiation sink and no signaling path to the client"
+            )
+            return False
+        try:
+            result = sink(room_id, peer_id, local.sdp)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning(
+                f"Failed to deliver renegotiation offer for {peer_id}: {exc}"
+            )
+            return False
+        return True
 
     def _close_fanout(self, track: Any) -> None:
         """Drop ``track``'s relay once nothing forwards it any more."""
@@ -885,9 +935,9 @@ class AiortcAdapter(SFUAdapter):
 
         try:
             target_peer.pc.addTrack(self._sender_view(track))
-            if target_peer.pc.remoteDescription is not None:
-                offer = await target_peer.pc.createOffer()
-                await target_peer.pc.setLocalDescription(offer)
+            await self._request_renegotiation(
+                target_peer.room_id, target_peer.peer_id, target_peer
+            )
         except Exception as e:
             logger.debug(
                 f"Could not forward track {producer_id} to peer "
@@ -978,9 +1028,7 @@ class AiortcAdapter(SFUAdapter):
             if not already_wired:
                 try:
                     peer.pc.addTrack(self._sender_view(producer_track))
-                    if peer.pc.remoteDescription is not None:
-                        offer = await peer.pc.createOffer()
-                        await peer.pc.setLocalDescription(offer)
+                    await self._request_renegotiation(room_id, peer_id, peer)
                 except Exception as e:
                     logger.debug(
                         f"Could not wire consumer {consumer_id} for producer "

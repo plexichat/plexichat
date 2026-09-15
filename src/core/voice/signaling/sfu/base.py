@@ -440,6 +440,19 @@ class SFUAdapter(ABC):
         """
         self._quality_mixin = quality_mixin
 
+    def set_renegotiation_sink(self, sink: Any) -> None:
+        """Retain a sink to deliver an SFU-initiated SDP offer.
+
+        Some backends can only answer: aiortc never emits
+        ``negotiationneeded``, so nothing makes it produce an offer on its own.
+        When the SFU adds a track to a peer that has *already* negotiated --
+        forwarding a producer to a peer that has joined -- the offer it builds
+        has to reach that peer's client or the track never arrives. The sink is
+        called ``(room_id, peer_id, offer_sdp)`` and may be async; adapters
+        that cannot initiate an offer leave this unused.
+        """
+        self._renegotiation_sink = sink
+
     def report_quality(
         self, room_id: Any, peer_id: Any, metrics: Dict[str, Any]
     ) -> None:

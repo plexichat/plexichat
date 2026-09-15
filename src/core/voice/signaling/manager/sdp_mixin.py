@@ -1,6 +1,7 @@
 """SDP handling mixin for SignalingManager."""
 
 import asyncio
+import inspect
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import utils.logger as logger
@@ -277,6 +278,71 @@ class SDPMixin:
         answer_sdp = pc_local["sdp"]
 
         return answer_sdp
+
+    async def on_renegotiation_needed(
+        self, room_id: str, peer_id: str, offer_sdp: str
+    ) -> bool:
+        """Deliver an SFU-initiated SDP offer to the peer's client.
+
+        This is the adapter's renegotiation sink. aiortc never emits
+        ``negotiationneeded``, so when a producer is forwarded to a peer that
+        has already negotiated, the offer the SFU builds has no built-in way
+        to reach the client; without this the forwarded track never arrives.
+
+        The SFU peer is mapped back to a user and channel, and the offer is
+        delivered ONLY when that user has a live signaling connection bound to
+        that same channel -- a peer room must never leak media signaling to a
+        user who is not in the call. Returns whether the offer was handed off.
+        """
+        from ..sfu.quality import canonical_channel_id, canonical_user_id
+
+        user_id = canonical_user_id(peer_id)
+        channel_id = canonical_channel_id(room_id)
+        if user_id is None or channel_id is None:
+            logger.debug(
+                f"Ignoring SFU renegotiation for unmappable ids: "
+                f"room={room_id!r} peer={peer_id!r}"
+            )
+            return False
+
+        connection = self._connections.get(user_id)
+        if connection is None or getattr(connection, "channel_id", None) != channel_id:
+            # No live session in this channel: do not hand media signaling to a
+            # user who is not (or is no longer) in the call.
+            logger.debug(
+                f"Refusing SFU renegotiation for user {user_id}: no connection "
+                f"bound to channel {channel_id}"
+            )
+            return False
+
+        try:
+            from .. import _get_offer_sender
+
+            sender = _get_offer_sender()
+        except Exception:
+            sender = None
+        if sender is None:
+            logger.debug(
+                "No offer sender registered: server-initiated offer for user "
+                f"{user_id} was not delivered"
+            )
+            return False
+
+        try:
+            result = sender(user_id, channel_id, offer_sdp)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning(
+                f"Failed to deliver server-initiated offer to user {user_id}: {exc}"
+            )
+            return False
+
+        logger.info(
+            f"Delivered server-initiated SDP offer to user {user_id} "
+            f"in channel {channel_id}"
+        )
+        return True
 
     def _build_sdp_from_transport(
         self, offer_sdp: str, transport, session_id: str
