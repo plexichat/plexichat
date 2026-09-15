@@ -27,9 +27,17 @@ import utils.logger as logger
 # *kind string* and the sender silently ends up with ``track is None``, so the
 # media is never sent and nothing raises.
 try:  # pragma: no cover - exercised wherever aiortc is installed
-    from aiortc.mediastreams import MediaStreamTrack as _MediaStreamTrack
-except Exception:  # pragma: no cover - aiortc absent
-    _MediaStreamTrack = object  # type: ignore[assignment,misc]
+    from aiortc.mediastreams import MediaStreamTrack as _AiortcTrack
+
+    _TRACK_BASE: Any = _AiortcTrack
+except ImportError:  # pragma: no cover - aiortc absent
+    # Fallback when the optional aiortc backend is absent. The relay is
+    # only wired to that backend, so this never carries media; Any
+    # preserves the subclass relationship so module import succeeds.
+    _TRACK_BASE = object
+
+_MediaStreamTrack = _TRACK_BASE
+
 
 # Frames buffered per view before the oldest is dropped. A sender that stalls
 # must not grow its buffer without bound -- a real SFU sheds rather than
@@ -37,7 +45,7 @@ except Exception:  # pragma: no cover - aiortc absent
 DEFAULT_MAX_LAG = 8
 
 
-class FanoutView(_MediaStreamTrack):  # type: ignore[misc,valid-type]
+class FanoutView(_MediaStreamTrack):
     """One sender's private view of a shared :class:`TrackFanout`."""
 
     def __init__(self, fanout: "TrackFanout", queue: asyncio.Queue) -> None:
