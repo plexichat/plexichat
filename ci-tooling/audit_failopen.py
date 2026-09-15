@@ -49,14 +49,15 @@ Sweeps:
      ``VoiceCallManager.add_consent`` -- the only writer of
      ``consented_participants`` -- had no caller at all. Sweeps A-G ask whether
      a check runs; H asks whether the thing it guards ever arrives.
-  I. ``src/core`` access decisions derived from a listing the function itself
-     fetched: the check runs, but its input is a row of that listing, so the
-     answer describes the data rather than the caller. The threads-listing bug
-     fixed by the fail-open work (``ANNEX AB``) was exactly this -- the guard
-     folded the fetched threads into a flag and the permission consumed the
-     first thread's ``server_id``. A hit needs both halves (a guard over a
-     collection *and* an access call consuming a row of it), so a resource
-     lookup authorizing against the resource it fetched is not reported.
+  I. ``src`` (core managers + API handlers) access decisions derived from a
+     listing the function itself fetched: the check runs, but its input is a
+     row of that listing, so the answer describes the data rather than the
+     caller. The threads-listing bug fixed by the fail-open work
+     (``ANNEX AB``) was exactly this -- the guard folded the fetched threads
+     into a flag and the permission consumed the first thread's
+     ``server_id``. A hit needs both halves (a guard over a collection *and*
+     an access call consuming a row of it), so a resource lookup authorizing
+     against the resource it fetched is not reported.
 
 Sweep H needs both trees: it is skipped (and reported as skipped, never as a
 pass) when the sibling ``plexichat-client`` checkout is absent. Fields that are
@@ -1650,8 +1651,23 @@ _AUTHZ_NAME = re.compile(
 REVIEWED_EMPTY_DECIDED: dict[tuple[str, str], str] = {}
 
 
+def _unwrap_await(node: ast.AST) -> ast.AST:
+    """Strip ``await`` so an async fetch classifies as the call it wraps.
+
+    API handlers are ``async def`` and bind their listings with
+    ``rows = await self._db.fetch_all(...)``, whose value is an ``ast.Await``.
+    Without unwrapping, the core-layer sweep sees the collection but the API
+    layer never does, so the shape it exists to catch would be invisible in the
+    very layer the extension targets.
+    """
+    while isinstance(node, ast.Await):
+        node = node.value
+    return node
+
+
 def _simple_call_name(node: ast.AST) -> str:
     """The bare name of a call (``self._db.fetch_all`` -> ``fetch_all``)."""
+    node = _unwrap_await(node)
     if not isinstance(node, ast.Call):
         return ""
     func = node.func
@@ -1716,10 +1732,10 @@ def _collection_and_row_names(fn: ast.AST) -> tuple[set[str], set[str]]:
             targets: list[str] = []
             value: ast.AST | None = None
             if isinstance(node, ast.Assign):
-                value = node.value
+                value = _unwrap_await(node.value)
                 targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
             elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                value = node.value
+                value = _unwrap_await(node.value)
                 if isinstance(node.target, ast.Name):
                     targets = [node.target.id]
             if value is not None and targets:
@@ -1783,60 +1799,65 @@ def sweep_empty_decided(root: Path) -> list[Hit]:
     therefore came from the data rather than from the caller, and a listing
     that happened to hold no relevant rows answered a question nobody asked.
 
+    The sweep covers the manager layer (``src/core``) *and* the API layer
+    (``src/api``): a route handler that fetches rows and then authorizes from
+    one of them carries the same skipped-decision hazard as the manager that
+    did it -- the answer describes the listing, not the caller.
+
     A hit needs both halves -- the guard folds a *collection* (not a scalar
     existence check, which is a normal fail-closed pattern) and the access
     call consumes a *row* of it -- so a resource lookup authorizing against
     the resource it fetched is not reported.
     """
     hits: list[Hit] = []
-    core_dir = root / "src" / "core"
-    if not core_dir.is_dir():
-        return hits
-    for path in sorted(core_dir.rglob("*.py")):
-        if "tests" in path.parts:
+    for scan_dir in (root / "src" / "core", root / "src" / "api"):
+        if not scan_dir.is_dir():
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            continue
-        rel = str(path.relative_to(root))
-        stubs = _type_checking_ranges(tree)
-        for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for path in sorted(scan_dir.rglob("*.py")):
+            if "tests" in path.parts:
                 continue
-            if _is_stub(fn):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
                 continue
-            if any(start <= fn.lineno <= end for start, end in stubs):
-                continue
-            if (rel, fn.name) in REVIEWED_EMPTY_DECIDED:
-                continue
-            collections, rows = _collection_and_row_names(fn)
-            if not collections or not rows:
-                continue
-            for node in ast.walk(fn):
-                if not isinstance(node, ast.If):
+            rel = str(path.relative_to(root))
+            stubs = _type_checking_ranges(tree)
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                guard = _loaded_names(node.test) & collections
-                if not guard:
+                if _is_stub(fn):
                     continue
-                for call in ast.walk(node):
-                    if not _is_authz_call(call):
+                if any(start <= fn.lineno <= end for start, end in stubs):
+                    continue
+                if (rel, fn.name) in REVIEWED_EMPTY_DECIDED:
+                    continue
+                collections, rows = _collection_and_row_names(fn)
+                if not collections or not rows:
+                    continue
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.If):
                         continue
-                    used = _call_argument_names(call) & rows
-                    if not used:
+                    guard = _loaded_names(node.test) & collections
+                    if not guard:
                         continue
-                    hits.append(
-                        Hit(
-                            EMPTY_DECIDED,
-                            rel,
-                            call.lineno,
-                            _simple_call_name(call),
-                            f"`{fn.name}`: `{sorted(used)[0]}`, a row of the "
-                            f"fetched listing `{sorted(guard)[0]}`, decides the "
-                            "access check that guards it",
+                    for call in ast.walk(node):
+                        if not _is_authz_call(call):
+                            continue
+                        used = _call_argument_names(call) & rows
+                        if not used:
+                            continue
+                        hits.append(
+                            Hit(
+                                EMPTY_DECIDED,
+                                rel,
+                                call.lineno,
+                                _simple_call_name(call),
+                                f"`{fn.name}`: `{sorted(used)[0]}`, a row of the "
+                                f"fetched listing `{sorted(guard)[0]}`, decides the "
+                                "access check that guards it",
+                            )
                         )
-                    )
     return hits
 
 

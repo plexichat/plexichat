@@ -97,6 +97,25 @@ class BroadcastService:
         return [dict(row) for row in rows]
 """
 
+# The same hazard in the API layer: a route handler fetches a listing, folds
+# it into a flag, and authorizes from a row pulled out of it -- the decision
+# describes the threads, not the caller, and an empty listing skips it.
+_API_PREFIX_SHAPE = """
+class ThreadRoutes:
+    async def list_threads(self, user_id, channel_id):
+        rows = await self.db.fetch_all("SELECT * FROM thread_threads", (channel_id,))
+        threads = []
+        for row in rows:
+            threads.append(row)
+
+        public_exists = any(t["kind"] != "private" for t in threads)
+        if public_exists:
+            first_public = next(t for t in threads if t["kind"] != "private")
+            await require_permission(user_id, first_public["server_id"], "threads.read")
+            return [dict(t) for t in threads]
+        return []
+"""
+
 _UP_FRONT_DECISION = """
 class ThreadListingMixin:
     def get_active_threads(self, user_id, channel_id):
@@ -138,6 +157,26 @@ def test_ignores_a_scalar_presence_check(tmp_path: Path) -> None:
     _write(
         tmp_path, "src/core/messaging/services/message/retrieval.py", _SCALAR_PRESENCE
     )
+
+    assert af.sweep_empty_decided(tmp_path) == []
+
+
+def test_flags_the_api_route_shape(tmp_path: Path) -> None:
+    """Sweep I covers the API layer, not just the core managers."""
+    _write(tmp_path, "src/api/routes/threads.py", _API_PREFIX_SHAPE)
+
+    hits = af.sweep_empty_decided(tmp_path)
+
+    assert len(hits) == 1, [h.detail for h in hits]
+    assert hits[0].kind == af.EMPTY_DECIDED
+    assert hits[0].symbol == "require_permission"
+    assert "first_public" in hits[0].detail
+    assert hits[0].path == "src/api/routes/threads.py"
+
+
+def test_api_scalar_presence_is_not_reported(tmp_path: Path) -> None:
+    """The fail-closed resource-existence shape stays silent in the API layer."""
+    _write(tmp_path, "src/api/routes/messages.py", _SCALAR_PRESENCE)
 
     assert af.sweep_empty_decided(tmp_path) == []
 
@@ -187,7 +226,14 @@ def test_the_class_is_reported_and_gates_the_exit_code(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "shape", [_PREFIX_SHAPE, _ARCHIVED_SHAPE, _SCALAR_PRESENCE, _GUARD_WITHOUT_A_ROW]
+    "shape",
+    [
+        _PREFIX_SHAPE,
+        _ARCHIVED_SHAPE,
+        _SCALAR_PRESENCE,
+        _GUARD_WITHOUT_A_ROW,
+        _API_PREFIX_SHAPE,
+    ],
 )
 def test_snippets_are_valid_python(shape: str) -> None:
     """Guard the fixtures themselves: an unparsable tree reports nothing."""
