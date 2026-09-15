@@ -6,7 +6,7 @@ Part of the EncryptionManager composite class.
 
 import hashlib
 import os
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from .protocol import EncryptionCoreProtocol
 
@@ -52,10 +52,13 @@ class PasswordMixin(EncryptionCoreProtocol):
         """
         if not password:
             raise ValueError("Empty password")
+        get_pepper_store: Optional[Callable[[], Any]] = None
         try:
-            from ..pepper import get_pepper_store
-        except Exception:
-            get_pepper_store = None  # type: ignore[assignment]
+            from ..pepper import get_pepper_store as _get_pepper_store
+
+            get_pepper_store = _get_pepper_store
+        except ImportError:
+            pass
         store = None
         if get_pepper_store is not None:
             try:

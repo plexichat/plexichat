@@ -266,7 +266,7 @@ async def relay_artifact_op(
                 allowed = access_checker._has_artifact_access(
                     conn, artifact, "artifact.view"
                 )
-            except Exception:  # noqa: BLE001 - a bad check must deny, not crash the relay
+            except Exception:  # a bad check must deny, not crash the relay
                 allowed = False
             access_cache[uid] = allowed
         if not allowed:

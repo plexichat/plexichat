@@ -20,16 +20,16 @@ import sys
 import os
 from pathlib import Path
 
-import argparse  # noqa: E402
-import logging  # noqa: E402
+import argparse
+import logging
 
 # Import utilities from common_utils subpackage
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database import Database  # noqa: E402
-from . import run_migrations, rollback, get_status  # noqa: E402
-from .manager import MigrationManager, RETIRED_MIGRATIONS  # noqa: E402
-from .cloner import DataCloner  # noqa: E402
+import utils.config as config
+import utils.logger as logger
+from src.core.database import Database
+from . import run_migrations, rollback, get_status
+from .manager import MigrationManager, RETIRED_MIGRATIONS
+from .cloner import DataCloner
 
 
 logging.basicConfig(

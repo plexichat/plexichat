@@ -31,7 +31,7 @@ async def _run_loop(manager: StaticClientManager, stop_event: asyncio.Event) -> 
     while not stop_event.is_set():
         try:
             result = await asyncio.to_thread(manager.maybe_check)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(f"static_client: background check raised: {exc}")
         else:
             if result.error and not result.already_current:
@@ -94,7 +94,7 @@ def run_static_client_initial_install() -> None:
         return
     try:
         result = mgr.ensure_active()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(f"static_client: initial install raised: {exc}")
         return
     if result.error and not result.already_current:
@@ -102,7 +102,7 @@ def run_static_client_initial_install() -> None:
     try:
         if mgr.reissue_runtime_config():
             logger.info("static_client: re-issued runtime config.js for active install")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(f"static_client: reissue config raised: {exc}")
 
 

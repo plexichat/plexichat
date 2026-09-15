@@ -27,19 +27,16 @@ import utils.logger as logger
 import utils.config as config
 import utils.validator as validator
 
-validator.setup(auto_sanitize_html=True)
-
-
-from src.server.lifecycle import PlexichatServer, VERSION  # noqa: E402
-from src.server.config_loader import setup_config  # noqa: E402
-from src.server.security_checks import _check_security_keys  # noqa: E402
-from src.server.initializer import initialize_modules  # noqa: E402
-from src.bootstrap.logging_setup import setup_logging  # noqa: E402
-from src.bootstrap.utilities import setup_utilities  # noqa: E402
-from src.bootstrap.app import create_application  # noqa: E402
-from src.cli.migrate_db import handle_migrate_db  # noqa: E402
-from src.cli.migrate_kek import handle_migrate_kek  # noqa: E402
-from src.cli.selftest import handle_selftest  # noqa: E402
+from src.server.lifecycle import PlexichatServer, VERSION
+from src.server.config_loader import setup_config
+from src.server.security_checks import _check_security_keys
+from src.server.initializer import initialize_modules
+from src.bootstrap.logging_setup import setup_logging
+from src.bootstrap.utilities import setup_utilities
+from src.bootstrap.app import create_application
+from src.cli.migrate_db import handle_migrate_db
+from src.cli.migrate_kek import handle_migrate_kek
+from src.cli.selftest import handle_selftest
 
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -654,6 +651,7 @@ def main(argv: Optional[list] = None) -> None:
     Args:
         argv: Argument list (defaults to sys.argv[1:]).
     """
+    validator.setup(auto_sanitize_html=True)
     args = parse_args(argv)
     handler = _HANDLERS.get(args.handler)
     if handler is None:

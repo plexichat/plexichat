@@ -38,7 +38,7 @@ def main() -> int:
             dtf.timestamp.merge(cal_stamp)
             print(f"Submitted to {cal_url}")
             break
-        except Exception as e:  # noqa: BLE001 - try the next calendar
+        except Exception as e:  # try the next calendar
             print(f"Calendar {cal_url} failed: {e}", file=sys.stderr)
             continue
 

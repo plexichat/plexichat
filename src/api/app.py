@@ -2,6 +2,21 @@
 FastAPI application factory - Creates and configures the API application.
 """
 
+import sys
+
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+import utils.config as global_config
+import utils.logger as logger
+from .config import get_api_config
+from .routes import create_api_router, create_docs_router, is_docs_enabled
+from .routes.docs import get_docs_config
+from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page
+
 
 class _BodyTooLarge(Exception):
     """Raised by the MaxBodySize inner receive wrapper when the cap is hit."""
@@ -14,28 +29,10 @@ class _BodyTooLarge(Exception):
 # Register a JSON 413 mapping so any code path that escapes the
 # middleware (downstream body reader, async generator, etc.) still
 # surfaces a clean 413 rather than a 500.
-try:
-    # The exception handler is wired up via FastAPI below once
-    # ``app`` exists. This module-level sentinel is here so the
-    # import-order is deterministic for unit tests.
-    _BODY_TOO_LARGE_HANDLER_REGISTERED = False
-except Exception:  # pragma: no cover
-    _BODY_TOO_LARGE_HANDLER_REGISTERED = False
-
-
-from fastapi import FastAPI, Request, HTTPException, Response  # noqa: E402
-from fastapi.openapi.docs import get_swagger_ui_oauth2_redirect_html  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import HTMLResponse  # noqa: E402
-from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
-import sys  # noqa: E402
-
-import utils.config as global_config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from .config import get_api_config  # noqa: E402
-from .routes import create_api_router, create_docs_router, is_docs_enabled  # noqa: E402
-from .routes.docs import get_docs_config  # noqa: E402
-from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page  # noqa: E402
+# The exception handler is wired up via FastAPI below once
+# ``app`` exists. This module-level sentinel is here so the
+# import-order is deterministic for unit tests.
+_BODY_TOO_LARGE_HANDLER_REGISTERED = False
 
 
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:

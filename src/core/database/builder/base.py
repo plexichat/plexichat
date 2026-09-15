@@ -19,7 +19,11 @@ from .protocol import QueryBuilderProtocol
 T = TypeVar("T", bound=BaseModel)
 
 if TYPE_CHECKING:
+    from .delete import DeleteQuery
+    from .insert import InsertQuery
     from .schema_registry import SchemaRegistry
+    from .select import SelectQuery
+    from .update import UpdateQuery
 
 
 class QueryBuilderException(Exception):
@@ -124,6 +128,10 @@ class Query(ABC, QueryBuilderProtocol):
 
     def execute(self) -> Any:
         """Execute the query and return results."""
+        # Imported here (not at module level) to avoid a circular import:
+        # select.py imports from this module.
+        from .select import SelectQuery
+
         sql, params = self.build()
 
         # Sanitize params for logging
@@ -256,10 +264,3 @@ class TableQuery(Query):
         raise NotImplementedError(
             "TableQuery cannot be executed directly. Use insert(), select(), update(), or delete()."
         )
-
-
-# Late imports to avoid circular dependencies
-from .insert import InsertQuery  # noqa: E402, F811
-from .select import SelectQuery  # noqa: E402, F811
-from .update import UpdateQuery  # noqa: E402, F811
-from .delete import DeleteQuery  # noqa: E402, F811

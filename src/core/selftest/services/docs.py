@@ -105,7 +105,7 @@ class DocsTester:
                     logger.warning(
                         f"docs GET {path} -> {resp.status_code} (expected 200)"
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(f"docs GET {path} failed: {exc}")
                 self.ctx.results.append(
                     {

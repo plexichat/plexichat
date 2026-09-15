@@ -99,19 +99,19 @@ async def health_check() -> HealthResponse:
 
             try:
                 events_metrics = event_manager.get_loss_metrics()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(
                     "Health check: event_manager.get_loss_metrics() failed: %s",
                     exc,
                 )
             try:
                 recreate_pending = event_manager.is_queue_recreate_pending()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(
                     "Health check: event_manager.is_queue_recreate_pending() failed: %s",
                     exc,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug(
                 "Health check: event_manager import failed: %s",
                 exc,
@@ -124,7 +124,7 @@ async def health_check() -> HealthResponse:
             from src.api.websocket import cross_worker_listener_status
 
             listener_status = cross_worker_listener_status()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug(
                 "Health check: cross_worker_listener_status() failed: %s",
                 exc,

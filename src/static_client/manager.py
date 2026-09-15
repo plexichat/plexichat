@@ -250,7 +250,7 @@ class StaticClientManager:
         if current is not None:
             try:
                 current_parsed = parse_version(current)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 current_parsed = None
 
         logger.info(
@@ -264,7 +264,7 @@ class StaticClientManager:
             if current_parsed is not None:
                 try:
                     cmp = compare_version_objects(parsed, current_parsed)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     cmp = 1
                 if cmp < 0:
                     continue
@@ -442,7 +442,7 @@ class StaticClientManager:
                     logger.info(
                         f"static_client: wrote manifest for {tag} ({len(files)} files)"
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     f"static_client: failed to write manifest for {tag}: {exc}"
                 )
@@ -453,7 +453,7 @@ class StaticClientManager:
                 already_current=True,
                 error=str(exc),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(
                 f"static_client: unexpected error installing {tag}: {exc}",
                 exc_info=True,

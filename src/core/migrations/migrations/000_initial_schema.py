@@ -12,45 +12,45 @@ below. Keep this initial migration authoritative for new installations; the
 import logging
 import os
 
-logger = logging.getLogger(__name__)
-
-from src.core.auth.schema import create_tables as create_auth_tables  # noqa: E402
-from src.core.servers.schema import create_tables as create_servers_tables  # noqa: E402
-from src.core.messaging.schema import create_tables as create_messaging_tables  # noqa: E402
-from src.core.relationships.schema import create_tables as create_relationships_tables  # noqa: E402
-from src.core.reactions.schema import create_tables as create_reactions_tables  # noqa: E402
-from src.core.webhooks.schema import create_tables as create_webhooks_tables  # noqa: E402
-from src.core.embeds.schema import create_tables as create_embeds_tables  # noqa: E402
-from src.core.notifications.schema import create_tables as create_notifications_tables  # noqa: E402
-from src.core.threads.schema import create_tables as create_threads_tables  # noqa: E402
-from src.core.presence.schema import create_tables as create_presence_tables  # noqa: E402
-from src.core.settings.schema import create_tables as create_settings_tables  # noqa: E402
-from src.core.features.schema import create_tables as create_features_tables  # noqa: E402
-from src.core.polls.schema import create_tables as create_polls_tables  # noqa: E402
-from src.core.voice.schema import create_tables as create_voice_tables  # noqa: E402
-from src.core.applications.schema import create_tables as create_applications_tables  # noqa: E402
-from src.core.stickers.schema import create_tables as create_stickers_tables  # noqa: E402
-from src.core.soundboard.schema import create_tables as create_soundboard_tables  # noqa: E402
-from src.core.media.schema import (  # noqa: E402
+from src.core.auth.schema import create_tables as create_auth_tables
+from src.core.servers.schema import create_tables as create_servers_tables
+from src.core.messaging.schema import create_tables as create_messaging_tables
+from src.core.relationships.schema import create_tables as create_relationships_tables
+from src.core.reactions.schema import create_tables as create_reactions_tables
+from src.core.webhooks.schema import create_tables as create_webhooks_tables
+from src.core.embeds.schema import create_tables as create_embeds_tables
+from src.core.notifications.schema import create_tables as create_notifications_tables
+from src.core.threads.schema import create_tables as create_threads_tables
+from src.core.presence.schema import create_tables as create_presence_tables
+from src.core.settings.schema import create_tables as create_settings_tables
+from src.core.features.schema import create_tables as create_features_tables
+from src.core.polls.schema import create_tables as create_polls_tables
+from src.core.voice.schema import create_tables as create_voice_tables
+from src.core.applications.schema import create_tables as create_applications_tables
+from src.core.stickers.schema import create_tables as create_stickers_tables
+from src.core.soundboard.schema import create_tables as create_soundboard_tables
+from src.core.media.schema import (
     create_reference_guards as create_media_reference_guards,
     create_tables as create_media_tables,
 )
-from src.core.media.deduplication import create_tables as create_media_dedup_tables  # noqa: E402
-from src.core.media.chunked import create_tables as create_media_chunked_tables  # noqa: E402
-from src.core.reports.schema import create_tables as create_reports_tables  # noqa: E402
-from src.core.feedback import create_tables as create_feedback_tables  # noqa: E402
-from src.core.avatars import create_tables as create_avatars_tables  # noqa: E402
-from src.core.telemetry import create_tables as create_telemetry_tables  # noqa: E402
-from src.core.search.schema import create_tables as create_search_tables  # noqa: E402
-from src.core.automod.schema import create_tables as create_automod_tables  # noqa: E402
-from src.core.plexijoin.schema import create_tables as create_plexijoin_tables  # noqa: E402
-from src.core.dsar.schema import create_tables as create_dsar_tables  # noqa: E402
-from src.core.artifacts.schema import create_tables as create_artifacts_tables  # noqa: E402
-from src.core.admin.schema import create_admin_tables  # noqa: E402
-from src.core.dmspam.schema import create_dmspam_tables  # noqa: E402
-from src.core.suite.stash.schema import create_tables as create_stash_tables  # noqa: E402
-from src.core.suite.sum.schema import create_tables as create_sum_tables  # noqa: E402
-from src.core.chat_tracking.schema import create_chat_tracking_tables  # noqa: E402
+from src.core.media.deduplication import create_tables as create_media_dedup_tables
+from src.core.media.chunked import create_tables as create_media_chunked_tables
+from src.core.reports.schema import create_tables as create_reports_tables
+from src.core.feedback import create_tables as create_feedback_tables
+from src.core.avatars import create_tables as create_avatars_tables
+from src.core.telemetry import create_tables as create_telemetry_tables
+from src.core.search.schema import create_tables as create_search_tables
+from src.core.automod.schema import create_tables as create_automod_tables
+from src.core.plexijoin.schema import create_tables as create_plexijoin_tables
+from src.core.dsar.schema import create_tables as create_dsar_tables
+from src.core.artifacts.schema import create_tables as create_artifacts_tables
+from src.core.admin.schema import create_admin_tables
+from src.core.dmspam.schema import create_dmspam_tables
+from src.core.suite.stash.schema import create_tables as create_stash_tables
+from src.core.suite.sum.schema import create_tables as create_sum_tables
+from src.core.chat_tracking.schema import create_chat_tracking_tables
+
+logger = logging.getLogger(__name__)
 
 # Interaction responses are part of the initial application schema for new
 # installations; existing databases are upgraded by the normal schema creator.

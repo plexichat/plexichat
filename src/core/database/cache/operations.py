@@ -119,7 +119,7 @@ def cache_get_many(keys):
                 if v is not None:
                     out[k] = reconstruct_object(v)
             return out
-        except ValkeyOperationError as exc:  # noqa: BLE001
+        except ValkeyOperationError as exc:
             logger.warning(f"Cache GET_MANY failed (falling back): {exc}")
     # Fallback path: loop through cache_get (uses mem tier or
     # individual Valkey GETs).  Acceptable because callers using

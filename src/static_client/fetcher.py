@@ -261,7 +261,7 @@ class GitLabReleaseClient:
                 continue
             try:
                 ver = parse_version(tag)
-            except Exception:  # noqa: BLE001 - defensive against malformed tags
+            except Exception:  # defensive against malformed tags
                 continue
             assets = release.get("assets", {}) or {}
             links = assets.get("links", []) if isinstance(assets, dict) else []
@@ -411,7 +411,7 @@ def list_installed_versions(install_dir: Path) -> List[InstalledVersion]:
             continue
         try:
             parse_version(entry.name)
-        except Exception:  # noqa: BLE001 - skip non-version directories
+        except Exception:  # skip non-version directories
             continue
         out.append(InstalledVersion(version=entry.name, install_path=entry))
     out.sort(key=lambda iv: iv.version)

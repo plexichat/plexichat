@@ -86,14 +86,14 @@ class _BoundedChecksumCache:
             self._data.move_to_end(key)
             return value
 
-    def __getitem__(self, key: int) -> str:
+    def __getitem__(self, key: int) -> Optional[str]:
         result = self.get(key)
         if result is None:
             # Distinguish missing from stored None (we never store None).
             with self._lock:
                 if key not in self._data:
                     raise KeyError(key)
-            return result  # type: ignore[return-value]
+            return result
         return result
 
     def __setitem__(self, key: int, value: str) -> None:
@@ -108,14 +108,16 @@ class _BoundedChecksumCache:
                     self._data.popitem(last=False)
 
     def __contains__(self, key: object) -> bool:
+        if not isinstance(key, int):
+            return False
         now = time.monotonic()
         with self._lock:
             try:
-                _, ts = self._data[key]  # type: ignore[index]
+                _, ts = self._data[key]
             except KeyError:
                 return False
             if self._expired(ts, now):
-                self._data.pop(key, None)  # type: ignore[arg-type]
+                self._data.pop(key, None)
                 return False
             return True
 

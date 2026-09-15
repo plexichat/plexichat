@@ -79,7 +79,7 @@ class StaticClientTester:
             url = f"{self.ctx.base_url}{path}"
             try:
                 resp = session.get(url, timeout=3, allow_redirects=False)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(f"static_client GET {path} failed: {exc}")
                 self.ctx.results.append(
                     {
@@ -128,7 +128,7 @@ class StaticClientTester:
         if ok and path == "/config.js" and resp is not None and resp.status_code == 200:
             try:
                 self._verify_config_js(session, resp.text)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(f"static_client config.js verification failed: {exc}")
 
         # Fetch asset files to verify the client bundle is complete.
@@ -212,7 +212,7 @@ class StaticClientTester:
                     logger.warning(
                         f"static_client GET {path} -> {resp.status_code} (expected 200)"
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(f"static_client GET {path} failed: {exc}")
 
     def _verify_config_js(self, session, config_js_text: str) -> None:

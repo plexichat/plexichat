@@ -374,7 +374,7 @@ class EventManager:
             for cb in critical_snapshot:
                 try:
                     cb(event, recipients)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.error(f"Critical event subscriber error: {exc}")
 
         # BACKPRESSURE: enqueue onto the async queue instead of
@@ -475,7 +475,7 @@ class EventManager:
         for callback, _ts in subscribers:
             try:
                 callback(event, recipients)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error(f"Event subscriber error: {exc}")
 
     async def drain(self) -> None:

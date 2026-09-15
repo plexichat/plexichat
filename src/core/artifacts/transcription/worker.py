@@ -783,7 +783,7 @@ async def _drain_queue() -> None:
             job = _get_queue().get_nowait()
             try:
                 await transcribe_call(job["call_id"], job["db"], job["config"])
-            except Exception as exc:  # noqa: BLE001 - never crash the drainer
+            except Exception as exc:  # never crash the drainer
                 logger.error(f"transcription: queued job failed: {exc}")
             finally:
                 _get_queue().task_done()

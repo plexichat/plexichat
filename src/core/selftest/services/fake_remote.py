@@ -185,7 +185,7 @@ class _FakeRemoteHandler(BaseHTTPRequestHandler):
         with server.records_lock:
             server.records.append(record)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         body = self._read_body()
         path = self.path.split("?", 1)[0]
         self._record(body)
@@ -211,7 +211,7 @@ class _FakeRemoteHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(404, {"success": False, "error": "unknown federation path"})
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path in ("/api/v1/health", "/health"):
             self._send_json(

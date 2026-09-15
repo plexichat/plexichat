@@ -200,13 +200,14 @@ class RegistrationMixin(AuthManagerProtocol):
         # shapes so a driver change cannot turn into a KeyError/500.
         if isinstance(rec, dict):
             return rec.get(name)
+        if isinstance(rec, (tuple, list)):
+            try:
+                return rec[pos]
+            except IndexError:
+                return None
         try:
-            return rec[name]  # type: ignore[index]
-        except Exception:
-            pass
-        try:
-            return rec[pos]  # type: ignore[index]
-        except Exception:
+            return rec[name]
+        except (KeyError, IndexError, TypeError):
             return None
 
     def verify_email(self, token: str) -> bool:

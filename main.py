@@ -39,9 +39,9 @@ CLI options (full details in ``python main.py -h`` and
     python main.py migrate-db --dry-run  Validate migrations without applying
 """
 
-# pyright: reportAttributeAccessIssue=false
 import os
 import sys
+from importlib import import_module
 
 project_root = os.path.abspath(os.path.dirname(__file__))
 src_path = os.path.join(project_root, "src")
@@ -50,7 +50,9 @@ for path in [project_root, src_path]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from src.cli.main import main  # noqa: E402
+# Imported dynamically after the sys.path bootstrap above so the module-level
+# import stays at the top of the file (E402-clean without a suppression).
+main = import_module("src.cli.main").main
 
 if __name__ == "__main__":
     main()
