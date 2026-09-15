@@ -5,15 +5,15 @@ Tests for Janus SFU adapter.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.core.voice.signaling.sfu.janus import JanusAdapter  # noqa: E402
-from src.core.voice.signaling.sfu.base import (  # noqa: E402
+from src.core.voice.signaling.sfu.janus import JanusAdapter
+from src.core.voice.signaling.sfu.base import (
     TransportDirection,
     MediaKind,
     SFUProducer,
     SFUConsumer,
     RoomInfo,
 )
-from src.core.voice.signaling.exceptions import SFUConnectionError  # noqa: E402
+from src.core.voice.signaling.exceptions import SFUConnectionError
 
 
 @pytest.fixture

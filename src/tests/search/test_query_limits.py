@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.integration
-
-from src.core.search.exceptions import InvalidQuerySyntaxError, SearchQueryError
+from src.core.search.exceptions import SearchQueryError
 from src.core.search.manager.message_search import (
     MAX_QUERY_LENGTH,
     MAX_QUERY_TERMS,
     validate_search_query,
 )
+
+pytestmark = pytest.mark.integration
 
 
 class TestValidateSearchQuery:

@@ -11,9 +11,9 @@ import threading
 import time
 import concurrent.futures
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import utils.config as config
+import utils.logger as logger
+from src.core.database.core import Database
 
 # common_utils is now a native package.
 

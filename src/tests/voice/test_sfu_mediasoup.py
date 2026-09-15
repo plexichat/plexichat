@@ -5,8 +5,8 @@ Tests for mediasoup SFU adapter.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter  # noqa: E402
-from src.core.voice.signaling.sfu.base import (  # noqa: E402
+from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter
+from src.core.voice.signaling.sfu.base import (
     TransportDirection,
     MediaKind,
     SFUTransport,
@@ -14,7 +14,7 @@ from src.core.voice.signaling.sfu.base import (  # noqa: E402
     SFUConsumer,
     RoomInfo,
 )
-from src.core.voice.signaling.exceptions import SFUConnectionError  # noqa: E402
+from src.core.voice.signaling.exceptions import SFUConnectionError
 
 
 @pytest.fixture

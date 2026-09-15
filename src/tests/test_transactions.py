@@ -15,9 +15,9 @@ import os
 # common_utils is now a native package.
 
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import utils.config as config
+import utils.logger as logger
+from src.core.database.core import Database
 
 
 # Fixture for setup/teardown

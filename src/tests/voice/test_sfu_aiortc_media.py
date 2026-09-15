@@ -18,15 +18,16 @@ import asyncio
 
 import pytest
 
-aiortc = pytest.importorskip("aiortc")
+try:
+    from aiortc import (
+        RTCPeerConnection,
+        RTCSessionDescription,
+        MediaStreamTrack,
+    )
+except ImportError:
+    pytest.skip("aiortc not installed", allow_module_level=True)
 
-from aiortc import (  # noqa: E402
-    RTCPeerConnection,
-    RTCSessionDescription,
-    MediaStreamTrack,
-)
-
-from src.core.voice.signaling.sfu.aiortc_adapter import AiortcAdapter  # noqa: E402
+from src.core.voice.signaling.sfu.aiortc_adapter import AiortcAdapter
 
 # ICE on loopback completes in well under a second; these are generous so a
 # loaded CI box does not turn a working media path into a flake.

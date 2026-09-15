@@ -23,17 +23,18 @@ import asyncio
 
 import pytest
 
-aiortc = pytest.importorskip("aiortc")
+try:
+    from aiortc import MediaStreamTrack
+except ImportError:
+    pytest.skip("aiortc not installed", allow_module_level=True)
 
-from aiortc import MediaStreamTrack  # noqa: E402
-
-from src.core.voice.signaling.sfu import aiortc_adapter as adapter_mod  # noqa: E402
-from src.core.voice.signaling.sfu.aiortc_adapter import (  # noqa: E402
+from src.core.voice.signaling.sfu import aiortc_adapter as adapter_mod
+from src.core.voice.signaling.sfu.aiortc_adapter import (
     AiortcAdapter,
     BoundedVideoTrack,
     DEGRADED_VIDEO_FPS,
 )
-from src.core.voice.signaling.sfu.base import MediaKind  # noqa: E402
+from src.core.voice.signaling.sfu.base import MediaKind
 
 
 class _StubVideoTrack(MediaStreamTrack):

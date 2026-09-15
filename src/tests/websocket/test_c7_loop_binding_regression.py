@@ -14,6 +14,7 @@ semantics) with lazy fallback to the explicitly bound loop, and never touches
 import asyncio
 import threading
 import warnings
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -175,7 +176,7 @@ def test_on_event_from_foreign_thread_uses_bound_loop(
             return False
 
     fake = FakeLoop()
-    dispatcher.set_event_loop(fake)  # type: ignore[arg-type]
+    dispatcher.set_event_loop(cast(asyncio.AbstractEventLoop, fake))
 
     def fake_submit(coro, loop):
         captured["loop"] = loop
@@ -192,7 +193,7 @@ def test_on_event_from_foreign_thread_uses_bound_loop(
                 warnings.simplefilter("error", DeprecationWarning)
                 with patch("asyncio.run_coroutine_threadsafe", side_effect=fake_submit):
                     dispatcher.on_event(_sample_event(), [12345])
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             errors.append(e)
 
     t = threading.Thread(target=worker)

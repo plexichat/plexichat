@@ -12,6 +12,8 @@ pin both halves:
   slot reorder cannot silently swap servers/media either.
 """
 
+from typing import Any
+
 import pytest
 
 from src.core import soundboard
@@ -31,8 +33,11 @@ def _preserve_soundboard_globals():
 
 def test_setup_rejects_positional_modules(db):
     """A positional second argument must raise, never silently mis-slot."""
+    # Any-typed on purpose: the test proves a *runtime* positional is
+    # rejected even though static typing cannot see the bad value.
+    bad_positional: Any = object()
     with pytest.raises(TypeError):
-        soundboard.setup(db, object())  # type: ignore[call-arg]
+        soundboard.setup(db, bad_positional)
 
 
 def test_setup_wires_each_module_into_its_own_slot(db):

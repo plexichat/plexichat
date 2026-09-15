@@ -11,8 +11,6 @@ tests pin that contract by intercepting ``invalidate_pattern`` in the
 service module namespace.
 """
 
-import pytest
-
 import src.core.messaging.services.conversation as conv_module
 from src.core.messaging.services.conversation import ConversationService
 

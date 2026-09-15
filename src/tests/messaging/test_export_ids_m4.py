@@ -7,7 +7,6 @@ artifact creation.
 
 import os
 import stat
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest

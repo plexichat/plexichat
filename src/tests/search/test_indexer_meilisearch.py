@@ -12,8 +12,8 @@ import pytest
 
 # common_utils is now a native package.
 
-from src.core.search.indexer.meilisearch import MeilisearchIndexer  # noqa: E402
-from src.core.search.models import IndexedMessage  # noqa: E402
+from src.core.search.indexer.meilisearch import MeilisearchIndexer
+from src.core.search.models import IndexedMessage
 
 
 @pytest.fixture(scope="module", autouse=True)

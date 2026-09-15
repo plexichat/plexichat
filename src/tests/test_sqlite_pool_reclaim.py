@@ -19,10 +19,10 @@ import time
 
 import pytest
 
-import src.utils.config as config  # noqa: E402
-import src.utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
-from src.core.database.engines.sqlite import SqliteEngine  # noqa: E402
+import src.utils.config as config
+import src.utils.logger as logger
+from src.core.database.core import Database
+from src.core.database.engines.sqlite import SqliteEngine
 
 
 @pytest.fixture(scope="module")

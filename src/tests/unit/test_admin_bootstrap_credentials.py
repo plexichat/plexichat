@@ -34,8 +34,6 @@ class TestBootstrapCredentialHandling:
         assert any("super-secret-password" in p for p in printed)
 
     def test_opt_in_writes_mode_0600_file(self, tmp_path, monkeypatch):
-        import os
-
         import src.core.admin.auth.helpers as helpers
 
         monkeypatch.setenv("PLEXICHAT_SAVE_ADMIN_CREDENTIALS", "1")

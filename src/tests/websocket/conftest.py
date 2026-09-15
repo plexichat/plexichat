@@ -12,11 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 # Config is already setup in the main conftest.py at import time
 # No need to setup again here
 
-from src.api.websocket.connection import Connection  # noqa: E402
-from src.api.websocket.dispatcher import GatewayDispatcher  # noqa: E402
-from src.api.websocket.handlers import OpcodeHandler  # noqa: E402
-from src.api.websocket.session import SessionManager  # noqa: E402
-from src.core.auth.models import AccountType, TokenInfo  # noqa: E402
+from src.api.websocket.connection import Connection
+from src.api.websocket.dispatcher import GatewayDispatcher
+from src.api.websocket.handlers import OpcodeHandler
+from src.api.websocket.session import SessionManager
+from src.core.auth.models import AccountType, TokenInfo
 
 
 @pytest.fixture

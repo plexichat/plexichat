@@ -5,19 +5,17 @@ Tests cover SQLite connectivity, CRUD operations, error handling,
 logging integration, and the new helper methods.
 """
 
+import os
+import shutil
+import sqlite3
+
 import pytest
 
+import utils.config as config
+import utils.logger as logger
+from src.core.database.core import Database
+
 pytestmark = pytest.mark.database_integration
-import os  # noqa: E402
-import shutil  # noqa: E402
-import sqlite3  # noqa: E402
-
-# common_utils is now a native package.
-
-
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
 
 
 # Fixture for setup/teardown

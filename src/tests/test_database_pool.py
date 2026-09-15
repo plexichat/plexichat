@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 # common_utils is now a native package.
 
 
-import src.utils.config as config  # noqa: E402
-import src.utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import src.utils.config as config
+import src.utils.logger as logger
+from src.core.database.core import Database
 
 
 @pytest.fixture(scope="module")

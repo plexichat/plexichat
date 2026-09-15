@@ -8,7 +8,7 @@ import tempfile
 from unittest.mock import patch
 
 
-from src.static_client.config import (  # noqa: E402
+from src.static_client.config import (
     CacheControlConfig,
     ConfigInjectionConfig,
     GitLabConfig,
@@ -16,12 +16,12 @@ from src.static_client.config import (  # noqa: E402
     StaticClientConfig,
     StaticRateLimitConfig,
 )
-from src.static_client.fetcher import ReleaseAsset  # noqa: E402
-from src.static_client.manager import (  # noqa: E402
+from src.static_client.fetcher import ReleaseAsset
+from src.static_client.manager import (
     InstallResult,
     StaticClientManager,
 )
-from src.utils.common_utils.utils.version.core import parse_version  # noqa: E402
+from src.utils.common_utils.utils.version.core import parse_version
 
 
 def _make_cfg(tmp_path: str, min_age: int) -> StaticClientConfig:

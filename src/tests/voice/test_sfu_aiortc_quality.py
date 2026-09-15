@@ -19,8 +19,8 @@ import pytest
 
 pytest.importorskip("aiortc")
 
-from src.core.voice.signaling.sfu import aiortc_adapter as mod  # noqa: E402
-from src.core.voice.signaling.sfu.aiortc_adapter import (  # noqa: E402
+from src.core.voice.signaling.sfu import aiortc_adapter as mod
+from src.core.voice.signaling.sfu.aiortc_adapter import (
     AiortcAdapter,
     _quality_metrics_from_stats,
     _total_bytes_sent,

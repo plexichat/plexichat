@@ -4,7 +4,10 @@ import os
 import tempfile
 
 import utils.config as config
+import utils.logger as logger
 import utils.version as version
+from src.core.auth import passwords as _auth_passwords
+from src.core.database import Database
 
 # Notification fan-out (send-path mention notifications) runs on a background
 # consumer in production. Under pytest it must complete inline so tests can
@@ -153,17 +156,13 @@ config.setup(config_path=_test_config_path, default_config=DEFAULT_TEST_CONFIG)
 version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
 
 # Initialize logger for tests
-import utils.logger as logger  # noqa: E402
-
 _test_log_dir = tempfile.mkdtemp()
 try:
     logger.setup(log_dir=_test_log_dir, level="WARNING", zip_logs=False)
-except Exception:
+except OSError:
     pass
 
 # Patch Database to add missing fetch_last_insert_id method for migration tracker
-from src.core.database import Database  # noqa: E402
-
 if not hasattr(Database, "fetch_last_insert_id"):
 
     def fetch_last_insert_id(self):
@@ -191,8 +190,6 @@ if not hasattr(Database, "fetch_last_insert_id"):
 # production regex validator, so no suite depends on a global bypass;
 # the bare ``@test`` host has no TLD and MUST stay rejected by the
 # strict validator (the security suite asserts this).
-from src.core.auth import passwords as _auth_passwords  # noqa: E402
-
 _TEST_TLD_WHITELIST = (
     ".test",
     ".local",

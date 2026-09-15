@@ -19,14 +19,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-aiortc = pytest.importorskip("aiortc")
-
-from src.core.voice.signaling.manager.ice_mixin import ICEMixin  # noqa: E402
-from src.core.voice.signaling.models import SignalingState  # noqa: E402
-from src.core.voice.signaling.sfu.aiortc_adapter import (  # noqa: E402
-    AiortcAdapter,
-    AiortcPeer,
-)
+try:
+    # aiortc_adapter imports the aiortc backend itself, so a missing
+    # backend surfaces here as ImportError and skips the module.
+    from src.core.voice.signaling.manager.ice_mixin import ICEMixin
+    from src.core.voice.signaling.models import SignalingState
+    from src.core.voice.signaling.sfu.aiortc_adapter import (
+        AiortcAdapter,
+        AiortcPeer,
+    )
+except ImportError:
+    pytest.skip("aiortc not installed", allow_module_level=True)
 
 HOST_CANDIDATE = "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
 SRFLX_CANDIDATE = (

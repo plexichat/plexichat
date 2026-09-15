@@ -20,17 +20,18 @@ import fractions
 
 import pytest
 
-aiortc = pytest.importorskip("aiortc")
-av = pytest.importorskip("av")
-np = pytest.importorskip("numpy")
+try:
+    import av
+    import numpy as np
+    from aiortc import (
+        MediaStreamTrack,
+        RTCPeerConnection,
+        RTCSessionDescription,
+    )
+except ImportError:
+    pytest.skip("aiortc/av/numpy not installed", allow_module_level=True)
 
-from aiortc import (  # noqa: E402
-    MediaStreamTrack,
-    RTCPeerConnection,
-    RTCSessionDescription,
-)
-
-from src.core.voice.signaling.sfu.aiortc_adapter import (  # noqa: E402
+from src.core.voice.signaling.sfu.aiortc_adapter import (
     AiortcAdapter,
     BoundedVideoTrack,
 )

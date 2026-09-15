@@ -11,8 +11,6 @@ counter/event side effects on its rowcount, so a repeated call is a
 no-op that still returns True.
 """
 
-import pytest
-
 
 def _create_mention(notification_manager, messaging_manager, two_users, content):
     """Create an unread mention notification via the direct fan-out API."""

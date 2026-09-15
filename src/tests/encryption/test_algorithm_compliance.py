@@ -15,7 +15,7 @@ import hashlib
 
 # common_utils is now a native package.
 
-from src.utils.encryption import (  # noqa: E402
+from src.utils.encryption import (
     hash_password,
     encrypt_data,
     decrypt_data,
@@ -24,8 +24,8 @@ from src.utils.encryption import (  # noqa: E402
     verify_signature,
     setup,
 )
-from src.utils.encryption.core import EncryptionManager  # noqa: E402
-from src.utils.encryption.pepper import parse_envelope  # noqa: E402
+from src.utils.encryption.core import EncryptionManager
+from src.utils.encryption.pepper import parse_envelope
 
 
 def _inner_argon2_hash(envelope: str) -> str:

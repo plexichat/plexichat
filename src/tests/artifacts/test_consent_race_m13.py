@@ -53,7 +53,7 @@ def _run_threads(targets):
         try:
             start.wait(timeout=10)
             fn()
-        except Exception as exc:  # noqa: BLE001 - collected and re-raised
+        except Exception as exc:  # collected and re-raised
             errors.append(exc)
 
     for fn in targets:

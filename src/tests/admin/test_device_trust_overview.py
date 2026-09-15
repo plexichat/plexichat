@@ -6,8 +6,6 @@ override), per-user aggregation (device trust, session policy kinds), totals,
 and that the admin router exposes the endpoint behind the right scope.
 """
 
-import pytest
-
 from src.api.routes.admin.device_overview import (
     _sessions_policy,
     get_device_trust_overview,
@@ -139,6 +137,7 @@ class TestDeviceTrustOverview:
         import json
 
         user = _register_and_login(auth_manager, "ov_sec", "ov_secret_fp_123")
+        assert user.id is not None
         mgr = _mgr(auth_manager)
         overview = get_device_trust_overview(mgr, mgr._config)
         # The raw fingerprint must never appear anywhere in the payload.

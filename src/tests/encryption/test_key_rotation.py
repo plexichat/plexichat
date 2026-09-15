@@ -12,7 +12,7 @@ import threading
 
 # common_utils is now a native package.
 
-from src.utils.encryption.core import (  # noqa: E402
+from src.utils.encryption.core import (
     EncryptionManager,
     MessageEncryptor,
     Keyring,

@@ -10,8 +10,6 @@ worker using the same database sees the replay even when Valkey is absent.
 import time
 from unittest.mock import patch
 
-import pytest
-
 from src.core.auth.totp import TOTPReplayCache, set_replay_cache_db
 
 

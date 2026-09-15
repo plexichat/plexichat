@@ -20,31 +20,23 @@ from __future__ import annotations
 
 import base64
 import os
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
-# Make the project root importable when running pytest from the
-# src directory.
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
-
-from src.utils.encryption.hkdf import derive_key  # noqa: E402
-from src.utils.encryption.channel_ratchet import (  # noqa: E402
+from src.utils.encryption.hkdf import derive_key
+from src.utils.encryption.channel_ratchet import (
     ChannelRatchetManager,
     ChannelRatchetStore,
     EncryptedMessageV3,
     RatchetInterval,
     WIRE_PREFIX,
 )
-from src.utils.encryption.channel_ratchet.exceptions import (  # noqa: E402
+from src.utils.encryption.channel_ratchet.exceptions import (
     RatchetIntervalNotFoundError,
 )
-from src.utils.encryption.core.keyring import Keyring  # noqa: E402
+from src.utils.encryption.core.keyring import Keyring
 
 
 # ---------------------------------------------------------------------------

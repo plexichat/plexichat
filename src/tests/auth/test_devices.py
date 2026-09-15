@@ -436,6 +436,7 @@ class TestTrustedDeviceSessionDurations:
         user = self._register_and_login_with_device(
             auth_manager, "dur_untrust", "dur_untrusted_fp"
         )
+        assert user.id is not None
         mgr = self._mgr(auth_manager)
         self._set_session_config(
             auth_manager, expire_hours=24, trusted_expire_hours=720
@@ -531,6 +532,7 @@ class TestTrustedDeviceSessionDurations:
         user = self._register_and_login_with_device(
             auth_manager, "dur_ext_un", "dur_ext_un_fp"
         )
+        assert user.id is not None
         mgr = self._mgr(auth_manager)
         self._set_session_config(
             auth_manager,

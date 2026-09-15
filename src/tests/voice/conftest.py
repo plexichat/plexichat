@@ -9,9 +9,9 @@ import pytest
 # common_utils is now a native package.
 
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-import utils.version as version  # noqa: E402
+import utils.config as config
+import utils.logger as logger
+import utils.version as version
 
 # Setup config before importing voice modules
 DEFAULT_TEST_CONFIG = {

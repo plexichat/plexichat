@@ -109,11 +109,11 @@ class PostgresDockerManager:
         try:
             # Try testcontainers first
             return self._start_with_testcontainers()
-        except Exception as e:  # noqa: BLE001 — any startup failure degrades to the next backend
+        except Exception as e:  # any startup failure degrades to the next backend
             logger.debug(f"testcontainers unavailable ({e}), trying docker SDK")
             try:
                 return self._start_with_docker_sdk()
-            except Exception as e2:  # noqa: BLE001
+            except Exception as e2:
                 logger.warning(
                     f"Neither testcontainers nor docker SDK usable "
                     f"({e2}); falling back to local PostgreSQL"

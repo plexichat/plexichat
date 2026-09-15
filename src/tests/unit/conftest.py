@@ -7,8 +7,8 @@ import pytest
 # common_utils is now a native package.
 
 
-import utils.config as config  # noqa: E402
-import utils.version as version  # noqa: E402
+import utils.config as config
+import utils.version as version
 
 # Setup config before importing modules
 DEFAULT_TEST_CONFIG = {

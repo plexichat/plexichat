@@ -8,8 +8,6 @@ progress reporting, and unchanged incremental/deleted-purge semantics.
 
 import pytest
 
-import src.core.search as search
-
 
 @pytest.fixture
 def paged_manager(modules, user_pool):

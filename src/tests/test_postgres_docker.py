@@ -17,7 +17,14 @@ Environment Configuration:
     USE_DOCKER: Enable Docker (default: true)
 """
 
+import os
+import threading
+
 import pytest
+
+import utils.config as config
+import utils.logger as logger
+from src.core.database.core import Database
 
 pytestmark = [
     pytest.mark.postgres,
@@ -27,15 +34,6 @@ pytestmark = [
     # SKIPS in the default run instead of being silently deselected — and
     # they actually run wherever a PostgreSQL backend is available.
 ]
-import os  # noqa: E402
-import threading  # noqa: E402
-
-# common_utils is now a native package.
-
-
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
 
 
 # Fixture for setup/teardown

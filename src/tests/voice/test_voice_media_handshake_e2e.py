@@ -20,16 +20,17 @@ import asyncio
 
 import pytest
 
-aiortc = pytest.importorskip("aiortc")
+try:
+    from aiortc import (
+        RTCPeerConnection,
+        RTCSessionDescription,
+        MediaStreamTrack,
+    )
+except ImportError:
+    pytest.skip("aiortc not installed", allow_module_level=True)
 
-from aiortc import (  # noqa: E402
-    RTCPeerConnection,
-    RTCSessionDescription,
-    MediaStreamTrack,
-)
-
-import src.core.voice as voice  # noqa: E402
-import src.core.voice.signaling as signaling  # noqa: E402
+import src.core.voice as voice
+import src.core.voice.signaling as signaling
 
 CONNECT_TIMEOUT_S = 15.0
 

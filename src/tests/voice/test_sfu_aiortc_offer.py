@@ -19,17 +19,18 @@ from types import SimpleNamespace
 
 import pytest
 
-aiortc = pytest.importorskip("aiortc")
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription
+except ImportError:
+    pytest.skip("aiortc not installed", allow_module_level=True)
 
-from aiortc import RTCPeerConnection, RTCSessionDescription  # noqa: E402
-
-from src.core.voice.signaling.sfu import aiortc_adapter as mod  # noqa: E402
-from src.core.voice.signaling.sfu.aiortc_adapter import AiortcAdapter  # noqa: E402
-from src.core.voice.signaling.sfu.acoustic_defense import (  # noqa: E402
+from src.core.voice.signaling.sfu import aiortc_adapter as mod
+from src.core.voice.signaling.sfu.aiortc_adapter import AiortcAdapter
+from src.core.voice.signaling.sfu.acoustic_defense import (
     AcousticDefenseConfig,
 )
-from src.core.voice.signaling.sfu.base import TransportDirection  # noqa: E402
-from src.core.voice.signaling.exceptions import SFUConnectionError  # noqa: E402
+from src.core.voice.signaling.sfu.base import TransportDirection
+from src.core.voice.signaling.exceptions import SFUConnectionError
 
 
 async def _client_offer() -> tuple[RTCPeerConnection, RTCSessionDescription]:

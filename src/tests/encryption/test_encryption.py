@@ -15,7 +15,7 @@ import json
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from src.utils.encryption import (  # noqa: E402
+from src.utils.encryption import (
     hash_password,
     verify_password,
     encrypt_data,
@@ -27,13 +27,13 @@ from src.utils.encryption import (  # noqa: E402
     parse_snowflake_id,
     setup,
 )
-from src.utils.encryption.core import (  # noqa: E402
+from src.utils.encryption.core import (
     EncryptionManager,
     SnowflakeGenerator,
     MessageEncryptor,
     Keyring,
 )
-from src.core.auth.tokens import (  # noqa: E402
+from src.core.auth.tokens import (
     generate_token_secret,
     hash_token,
     verify_token_hash,
@@ -186,8 +186,15 @@ class TestPasswordHashingTimingAttacks:
     def test_hasher_called_with_same_arguments_for_both_outcomes(
         self, setup_encryption
     ):
-        """The wrong-password path runs the identical hasher call as the
-        correct path -- no pre-comparison of the raw password string."""
+        """The wrong-password path runs the identical hasher call shape as
+        the correct path -- no pre-comparison of the raw password string.
+
+        Since peppering, ``verify_password`` parses the envelope and passes
+        the hasher the stored inner hash plus a pepper prehash of the
+        candidate password (never the raw password, never the envelope).
+        Both outcomes must do exactly that: same inner hash, one hasher
+        call each, with password-derived (hence distinct) secrets.
+        """
         password = "correct_password_123"
         wrong_password = "wrong_password_123"
         hash_str = hash_password(password)
@@ -197,7 +204,18 @@ class TestPasswordHashingTimingAttacks:
             verify_password(wrong_password, hash_str)
 
         calls = [call.args for call in verify.call_args_list]
-        assert calls == [(hash_str, password), (hash_str, wrong_password)]
+        assert len(calls) == 2
+        (inner_ok, secret_ok), (inner_bad, secret_bad) = calls
+        # Same stored inner hash for both outcomes (envelope is parsed,
+        # not passed through).
+        assert inner_ok == inner_bad
+        assert inner_ok != hash_str
+        assert hash_str.endswith(inner_ok)
+        # Password-derived prehashes: distinct per password and never the
+        # raw password string (no raw pre-comparison to leak timing).
+        assert secret_ok != password
+        assert secret_bad != wrong_password
+        assert secret_ok != secret_bad
 
 
 class TestDataEncryption:
