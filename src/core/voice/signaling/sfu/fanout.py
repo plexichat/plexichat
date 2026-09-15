@@ -96,6 +96,8 @@ class FanoutView(_MediaStreamTrack):  # type: ignore[misc,valid-type]
         if self._closed:
             return None
         frame = await self._queue.get()
+        # Tell the read loop this view is ready for more.
+        self.fanout._signal_space()
         if frame is None:
             # End-of-stream sentinel: the relay is done.
             self._closed = True
@@ -115,6 +117,10 @@ class TrackFanout:
         self._closed = False
         self._ended = False
         self._dropped = 0
+        # Signalled by a view whenever it takes a frame, so the read loop can
+        # pace itself to the subscribers instead of to the source.
+        self._space = asyncio.Event()
+        self._space.set()
 
     @property
     def subscriber_count(self) -> int:
@@ -143,16 +149,48 @@ class TrackFanout:
 
     def unsubscribe(self, view: FanoutView) -> None:
         self._queues.pop(view, None)
+        # Wake a paced read loop so it re-evaluates its (now smaller) view set.
+        self._space.set()
         # With no subscribers left there is no reason to keep pulling (and
         # discarding) the source's frames; a later subscriber restarts it.
         if not self._queues and self._task is not None and not self._task.done():
             self._task.cancel()
             self._task = None
 
+    def _has_space(self) -> bool:
+        """Whether any view can accept another frame right now."""
+        return any(queue.qsize() < queue.maxsize for queue in self._queues.values())
+
+    def _signal_space(self) -> None:
+        """A view took a frame; let a paced read loop continue."""
+        self._space.set()
+
+    async def _wait_for_space(self) -> None:
+        """Block until at least one view can accept another frame.
+
+        Pacing the read to the *fastest* subscriber is what stops a consumer
+        that keeps up from losing frames. Reading as fast as the source
+        produces only overruns the queues of views whose encoders have not
+        drained them yet, so a view that is perfectly able to keep up sheds
+        frames purely because the loop ran ahead of it.
+        """
+        if not self._queues or self._has_space():
+            return
+        self._space.clear()
+        if self._has_space():
+            # A view drained while we were clearing; do not wait on a flagged
+            # event that was already consumed.
+            self._space.set()
+            return
+        await self._space.wait()
+
     async def _run(self) -> None:
         cancelled = False
         try:
             while True:
+                await self._wait_for_space()
+                if self._closed:
+                    break
                 frame = await self.source.recv()
                 if frame is None:
                     break
