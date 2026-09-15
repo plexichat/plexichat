@@ -816,6 +816,11 @@ def sweep_facades(root: Path) -> list[Hit]:
     hits: list[Hit] = []
     for path in sorted((root / "src").rglob("*.py")):
         source = path.read_text(encoding="utf-8", errors="replace")
+        # Fast path: facade probes are always `getattr(obj, "_name", ...)`
+        # calls, so a file without `getattr` cannot contain one. This
+        # skips the parse plus several AST walks for ~85% of the tree.
+        if "getattr" not in source:
+            continue
         try:
             tree = ast.parse(source)
         except SyntaxError:
