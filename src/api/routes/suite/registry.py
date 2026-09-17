@@ -182,6 +182,25 @@ def _sort_and_bound(
     )[:limit]
 
 
+def _dedupe_items(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop repeat sightings of the same item, keeping first-seen order.
+
+    Universal search fans out to a personal listing (all visible items,
+    which already includes server-scoped rows) plus the shared/server
+    listing, so a server-scoped Stash/Sum row or an author's own server
+    artifact arrives twice. Key on the launcher identity (appId + id).
+    """
+    seen = set()
+    unique: List[Dict[str, Any]] = []
+    for item in items:
+        key = (str(item.get("appId")), str(item.get("id")))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
 def _domain_available(capability: str) -> bool:
     """Fail closed when a licensed suite domain is unavailable or unlicensed."""
     return is_usable(get_capability(capability).state)
@@ -542,7 +561,10 @@ async def search_suite(
         items.extend(_sum_home_item(item) for item in sum_items)
     # Universal search must also cover server-scoped (shared) items, matching
     # the scope of ``/suite/home/shared``, rather than personal scope only.
+    # The personal listings above already include server-scoped rows visible
+    # to the caller, so dedupe before bounding to avoid double cards.
     items.extend(_shared_items(current_user.user_id, int(limit), search=query))
+    items = _dedupe_items(items)
     bounded_items = _sort_and_bound(items, int(limit))
     return {
         "schemaVersion": 1,
