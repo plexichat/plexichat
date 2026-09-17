@@ -128,40 +128,42 @@ class TestCreateRateLimitAtomic:
         monkeypatch.setattr(ratelimit, "is_setup", lambda: True)
         monkeypatch.setattr(ratelimit, "get_manager", lambda: manager)
 
-    def test_over_budget_rejects_with_single_increment(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_over_budget_rejects_with_single_increment(self, monkeypatch):
         """The (max+1)th request in the window is rejected."""
         from src.api.routes.stickers import _check_sticker_create_rate_limit
 
         calls = []
 
         class _FakeManager:
-            def increment_custom_usage(self, key, field, amount, ttl=86400):
+            async def aincrement_custom_usage(self, key, field, amount, ttl=86400):
                 calls.append((key, field, amount, ttl))
                 return 21  # one past the 20/min budget
 
         self._install_ratelimit(monkeypatch, _FakeManager())
 
         with pytest.raises(HTTPException) as excinfo:
-            _check_sticker_create_rate_limit(user_id=7)
+            await _check_sticker_create_rate_limit(user_id=7)
         assert excinfo.value.status_code == 429
         # Atomic: exactly one +1 increment, never a separate read call.
         assert len(calls) == 1
         assert calls[0][2] == 1
 
-    def test_at_budget_passes_with_single_increment(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_at_budget_passes_with_single_increment(self, monkeypatch):
         """Requests 1..max pass; only the (max+1)th is cut off."""
         from src.api.routes.stickers import _check_sticker_create_rate_limit
 
         calls = []
 
         class _FakeManager:
-            def increment_custom_usage(self, key, field, amount, ttl=86400):
+            async def aincrement_custom_usage(self, key, field, amount, ttl=86400):
                 calls.append((key, field, amount, ttl))
                 return 20  # exactly at budget
 
         self._install_ratelimit(monkeypatch, _FakeManager())
 
-        _check_sticker_create_rate_limit(user_id=7)
+        await _check_sticker_create_rate_limit(user_id=7)
         assert len(calls) == 1
         assert calls[0][2] == 1
 
@@ -171,11 +173,11 @@ class TestUsageRateLimit:
     async def test_send_usage_429_when_limited(self, stub_api, monkeypatch):
         """M3: a disallowed rate-limit result must 429 with Retry-After."""
         stub_api(_StubStickers())
-        monkeypatch.setattr(
-            ratelimit,
-            "check_rate_limit",
-            lambda **kwargs: _RLResult(allowed=False, retry_after=9),
-        )
+
+        async def _deny(**kwargs):
+            return _RLResult(allowed=False, retry_after=9)
+
+        monkeypatch.setattr(ratelimit, "acheck_rate_limit", _deny)
 
         with pytest.raises(HTTPException) as excinfo:
             await send_sticker_usage(
@@ -188,11 +190,11 @@ class TestUsageRateLimit:
     async def test_send_usage_records_when_allowed(self, stub_api, monkeypatch):
         stub = _StubStickers()
         stub_api(stub)
-        monkeypatch.setattr(
-            ratelimit,
-            "check_rate_limit",
-            lambda **kwargs: _RLResult(allowed=True, retry_after=0),
-        )
+
+        async def _allow(**kwargs):
+            return _RLResult(allowed=True, retry_after=0)
+
+        monkeypatch.setattr(ratelimit, "acheck_rate_limit", _allow)
 
         result = await send_sticker_usage(
             sticker_id="42", message_id="99", request=None, current_user=_User(7)

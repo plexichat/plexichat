@@ -106,7 +106,7 @@ def rate_limit(
             original_config = manager._route_configs.get(route)
             manager._route_configs[route] = config
             try:
-                result = ratelimit.check_rate_limit(
+                result = await ratelimit.acheck_rate_limit(
                     user_id=user_id,
                     route=route,
                     resource_id=resource_id,
@@ -198,7 +198,7 @@ def custom_rate_limit(
             manager = ratelimit.get_manager()
             manager._route_configs[route] = config
             try:
-                result = ratelimit.check_rate_limit(
+                result = await ratelimit.acheck_rate_limit(
                     user_id=user_id,
                     route=route,
                     resource_id=resource_id,

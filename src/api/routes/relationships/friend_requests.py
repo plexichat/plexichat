@@ -65,7 +65,7 @@ def _recipient_accepts_friend_requests(recipient_id: int) -> bool:
     return str(raw).strip().lower() not in _FRIEND_REQUESTS_DISABLED_VALUES
 
 
-def _check_friend_request_rate_limit(user_id: int) -> None:
+async def _check_friend_request_rate_limit(user_id: int) -> None:
     """Throttle friend-request submission per user (best-effort).
 
     Reuses the shared rate-limit manager used elsewhere (reports, feedback).
@@ -87,7 +87,7 @@ def _check_friend_request_rate_limit(user_id: int) -> None:
     minute_window = now_seconds - (now_seconds % 60)
     key = f"friend_requests:send:minute:{user_id}:{minute_window}"
     try:
-        count = manager.increment_custom_usage(key, "count", 0, ttl=120)
+        count = await manager.aincrement_custom_usage(key, "count", 0, ttl=120)
         if count >= FRIEND_REQUEST_RATE_LIMIT:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -98,7 +98,7 @@ def _check_friend_request_rate_limit(user_id: int) -> None:
                     }
                 },
             )
-        manager.increment_custom_usage(key, "count", 1, ttl=120)
+        await manager.aincrement_custom_usage(key, "count", 1, ttl=120)
     except HTTPException:
         raise
     except Exception as e:  # pragma: no cover - defensive
@@ -142,7 +142,7 @@ class FriendRequestMixin:
                     detail={"error": {"code": 400, "message": "Invalid user ID"}},
                 )
 
-            _check_friend_request_rate_limit(current_user.user_id)
+            await _check_friend_request_rate_limit(current_user.user_id)
 
             if not _recipient_accepts_friend_requests(target_id):
                 # M2: recipient disabled incoming friend requests. Denied

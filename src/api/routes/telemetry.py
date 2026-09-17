@@ -61,7 +61,7 @@ async def submit_response_times(
     """
     client_ip = request.client.host if request.client else "unknown"
 
-    rl_result = ratelimit.check_rate_limit(
+    rl_result = await ratelimit.acheck_rate_limit(
         ip_address=client_ip,
         route="POST /telemetry",
         is_internal=getattr(request.state, "is_internal", False),

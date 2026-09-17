@@ -557,7 +557,7 @@ class AuthenticationMiddleware:
 
             if not ratelimit.is_setup():
                 return None
-            result = ratelimit.check_rate_limit(
+            result = await ratelimit.acheck_rate_limit(
                 user_id=None,
                 ip_address=get_client_ip(request) or "unknown",
                 route=f"{request.method} {request.url.path}",

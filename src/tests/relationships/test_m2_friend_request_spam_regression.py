@@ -73,12 +73,13 @@ def _pending_request(target_id: int):
 class TestFriendRequestRateLimitM2:
     """M2: per-sender burst over the limit is rejected with 429."""
 
-    def test_helper_allows_budget_then_rejects_burst(self):
+    @pytest.mark.asyncio
+    async def test_helper_allows_budget_then_rejects_burst(self):
         sender = _unique_sender()
         for _ in range(FRIEND_REQUEST_RATE_LIMIT):
-            _check_friend_request_rate_limit(sender)  # must not raise
+            await _check_friend_request_rate_limit(sender)  # must not raise
         with pytest.raises(HTTPException) as exc_info:
-            _check_friend_request_rate_limit(sender)
+            await _check_friend_request_rate_limit(sender)
         assert exc_info.value.status_code == 429
 
     def test_route_burst_over_limit_rejected(self):

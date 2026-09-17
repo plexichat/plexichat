@@ -101,7 +101,8 @@ def _reset_ratelimit():
         ratelimit._setup_complete = prev_complete
 
 
-def test_lazy_setup_uses_shared_storage_with_global_limit(
+@pytest.mark.asyncio
+async def test_lazy_setup_uses_shared_storage_with_global_limit(
     monkeypatch, _reset_ratelimit
 ):
     """Fallback setup must use shared storage + global limit enabled."""
@@ -124,7 +125,7 @@ def test_lazy_setup_uses_shared_storage_with_global_limit(
     monkeypatch.setattr(ratelimit, "setup", _spy_setup)
 
     # Must not raise: shared backend is available in this test.
-    stickers_route._check_sticker_create_rate_limit(user_id=12345)
+    await stickers_route._check_sticker_create_rate_limit(user_id=12345)
 
     assert "kwargs" in calls, "expected lazy ratelimit.setup() call"
     assert calls["kwargs"].get("enable_global_limit") is True, (
@@ -137,7 +138,8 @@ def test_lazy_setup_uses_shared_storage_with_global_limit(
     )
 
 
-def test_budget_shape_unchanged_20_per_minute(monkeypatch, _reset_ratelimit):
+@pytest.mark.asyncio
+async def test_budget_shape_unchanged_20_per_minute(monkeypatch, _reset_ratelimit):
     """Budget stays 20/min: first 20 pass, 21st gets 429 (never 503)."""
     monkeypatch.setattr(
         stickers_route,
@@ -146,13 +148,14 @@ def test_budget_shape_unchanged_20_per_minute(monkeypatch, _reset_ratelimit):
     )
     uid = 777001
     for _ in range(20):
-        stickers_route._check_sticker_create_rate_limit(user_id=uid)
+        await stickers_route._check_sticker_create_rate_limit(user_id=uid)
     with pytest.raises(HTTPException) as excinfo:
-        stickers_route._check_sticker_create_rate_limit(user_id=uid)
+        await stickers_route._check_sticker_create_rate_limit(user_id=uid)
     assert excinfo.value.status_code == 429
 
 
-def test_fail_closed_503_when_no_shared_backend(monkeypatch, _reset_ratelimit):
+@pytest.mark.asyncio
+async def test_fail_closed_503_when_no_shared_backend(monkeypatch, _reset_ratelimit):
     """With no shared backend available, fail closed with 503 + Retry-After."""
     assert ratelimit.is_setup() is False
 
@@ -164,7 +167,7 @@ def test_fail_closed_503_when_no_shared_backend(monkeypatch, _reset_ratelimit):
     monkeypatch.setattr(ratelimit, "setup", _no_setup)
 
     with pytest.raises(HTTPException) as excinfo:
-        stickers_route._check_sticker_create_rate_limit(user_id=999)
+        await stickers_route._check_sticker_create_rate_limit(user_id=999)
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.headers is not None

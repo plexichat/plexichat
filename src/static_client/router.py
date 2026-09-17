@@ -252,7 +252,7 @@ class _RateLimitOutcome:
     headers: Tuple[Tuple[bytes, bytes], ...]
 
 
-def _check_static_client_rate_limit(
+async def _check_static_client_rate_limit(
     scope: Scope, route_key: str, enabled: bool = True
 ) -> _RateLimitOutcome:
     """Run a rate limit check via the shared rate limiter.
@@ -307,7 +307,7 @@ def _check_static_client_rate_limit(
         return _RateLimitOutcome(True, None, ())
 
     try:
-        result = ratelimit.check_rate_limit(
+        result = await ratelimit.acheck_rate_limit(
             ip_address=ip,
             route=route_key,
             is_internal=False,
@@ -533,7 +533,7 @@ class StaticClientMiddleware:
                 return
 
         route_key = _ROUTE_HTML if self._is_html_request(path) else _ROUTE_ASSETS
-        outcome = _check_static_client_rate_limit(
+        outcome = await _check_static_client_rate_limit(
             scope, route_key, self._rate_limit_enabled
         )
         if not outcome.allowed:

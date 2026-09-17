@@ -62,7 +62,7 @@ async def submit_feedback(
             )
 
         # Check rate limit
-        rl_result = ratelimit.check_rate_limit(
+        rl_result = await ratelimit.acheck_rate_limit(
             user_id=user_id,
             route="POST /feedback",
             is_internal=getattr(request.state, "is_internal", False),
@@ -164,7 +164,7 @@ async def get_feedback_status(
         bucket_key = manager._generate_bucket_key(
             BucketType.ROUTE, user_id=user_id, route="POST /feedback"
         )
-        bucket_info = ratelimit.get_bucket_info(bucket_key)
+        bucket_info = await ratelimit.aget_bucket_info(bucket_key)
 
         max_per_hour = config.get("feedback.rate_limit.max_per_hour", 5)
         max_per_day = config.get("feedback.rate_limit.max_per_day", 20)

@@ -89,7 +89,7 @@ def _rate_limit_unavailable() -> NoReturn:
     )
 
 
-def _check_sticker_create_rate_limit(user_id: int) -> None:
+async def _check_sticker_create_rate_limit(user_id: int) -> None:
     """Throttle sticker creation per user (fail-closed).
 
     Reuses the shared rate-limit manager configured at startup. If the
@@ -132,7 +132,7 @@ def _check_sticker_create_rate_limit(user_id: int) -> None:
     # returned counter as authoritative: requests 1..max pass, the (max+1)th
     # is rejected.
     try:
-        count = manager.increment_custom_usage(key, "count", 1, ttl=120)
+        count = await manager.aincrement_custom_usage(key, "count", 1, ttl=120)
     except Exception as e:
         logger.warning(f"Sticker rate-limit increment failed, failing closed: {e}")
         _rate_limit_unavailable()
@@ -278,7 +278,7 @@ async def create_sticker(
         raise HTTPException(status_code=500, detail="Stickers module not available")
 
     # Throttle abusive sticker creation.
-    _check_sticker_create_rate_limit(current_user.user_id)
+    await _check_sticker_create_rate_limit(current_user.user_id)
 
     try:
         sid = int(server_id)
@@ -426,7 +426,7 @@ async def send_sticker_usage(
     # M3: usage tracking performs a DB write per call and was unlimited —
     # a tight loop amplified writes (plus the notification fan-out). Cap it
     # with the shared limiter, mirroring the reactions route's budget.
-    rl_result = ratelimit.check_rate_limit(
+    rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="POST /stickers/send",
         is_internal=getattr(request.state, "is_internal", False) if request else False,

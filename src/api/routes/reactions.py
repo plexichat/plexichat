@@ -138,7 +138,7 @@ async def add_reaction(
     Adds the specified emoji reaction to the message.
     """
     # Rate limit reactions: 10 per second per user
-    rl_result = ratelimit.check_rate_limit(
+    rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="PUT /reactions",
         is_internal=getattr(request.state, "is_internal", False),
@@ -326,7 +326,7 @@ async def clear_reactions_for_emoji(
     declaration would swallow ``.../reactions/<emoji>/all`` as emoji
     "<emoji>/all" and the moderator wipe would be unreachable.
     """
-    rl_result = ratelimit.check_rate_limit(
+    rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="DELETE /reactions/emoji/all",
         is_internal=getattr(request.state, "is_internal", False),
@@ -443,7 +443,7 @@ async def remove_reaction(
     Removes the specified emoji reaction from the message.
     """
     # Rate limit reaction removal: 15 per second per user
-    rl_result = ratelimit.check_rate_limit(
+    rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="DELETE /reactions",
         is_internal=getattr(request.state, "is_internal", False),
@@ -604,7 +604,7 @@ async def clear_reactions(
     Emits MESSAGE_REACTION_REMOVE_ALL to connected clients so reaction
     pills update live without a refresh.
     """
-    rl_result = ratelimit.check_rate_limit(
+    rl_result = await ratelimit.acheck_rate_limit(
         user_id=current_user.user_id,
         route="DELETE /reactions/all",
         is_internal=getattr(request.state, "is_internal", False),

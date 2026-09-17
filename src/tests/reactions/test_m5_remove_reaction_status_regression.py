@@ -7,7 +7,7 @@ src/tests/reactions/test_reaction_regressions.py).
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -34,8 +34,8 @@ class TestM5RemoveReactionStatus:
         with (
             patch("src.api.get_reactions", return_value=fake),
             patch(
-                "src.api.routes.reactions.ratelimit.check_rate_limit",
-                return_value=SimpleNamespace(allowed=True),
+                "src.api.routes.reactions.ratelimit.acheck_rate_limit",
+                new=AsyncMock(return_value=SimpleNamespace(allowed=True)),
             ),
             patch(
                 "src.api.routes.reactions._validate_message_in_channel",
@@ -58,8 +58,8 @@ class TestM5RemoveReactionStatus:
         with (
             patch("src.api.get_reactions", return_value=fake),
             patch(
-                "src.api.routes.reactions.ratelimit.check_rate_limit",
-                return_value=SimpleNamespace(allowed=True),
+                "src.api.routes.reactions.ratelimit.acheck_rate_limit",
+                new=AsyncMock(return_value=SimpleNamespace(allowed=True)),
             ),
             patch(
                 "src.api.routes.reactions._validate_message_in_channel",
