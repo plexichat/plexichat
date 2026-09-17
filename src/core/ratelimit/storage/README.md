@@ -10,15 +10,66 @@ The storage module defines the `RateLimitStorage` abstract base class and its im
 
 | File | Description |
 |------|-------------|
-| `base.py` | Abstract base class `RateLimitStorage`. Defines the interface all backends must implement. |
+| `base.py` | Abstract base class `RateLimitStorage`. Defines both interfaces all backends must satisfy. |
 | `memory.py` | Thread-safe in-memory backend for single-instance deployments. |
+| `valkey.py` | Distributed backend over the Valkey client, with native async. |
+| `database.py` | Relational backend (`DatabaseStorage`) over SQLite or PostgreSQL. |
 
 ## Before you begin
 
 Choose a backend based on your deployment:
 
 * Use `MemoryStorage` for single-instance or development deployments.
-* Implement `RateLimitStorage` on top of Valkey, Redis, or a database for multi-worker deployments.
+* Use `ValkeyStorage` or `DatabaseStorage` for multi-worker deployments — both ship with the module.
+* Implement `RateLimitStorage` yourself only for a backend none of those cover.
+
+## Two interfaces, one backend
+
+`RateLimitStorage` is dual: subclasses implement the **blocking** methods, and
+the **awaitable** `a*` methods are the interface the event loop uses (the ASGI
+middleware, the route decorators, and any async handler).
+
+| Blocking | Awaitable |
+|----------|-----------|
+| `get_bucket` | `aget_bucket` |
+| `set_bucket` | `aset_bucket` |
+| `delete_bucket` | `adelete_bucket` |
+| `get_keys_by_prefix` | `aget_keys_by_prefix` |
+| `delete_by_prefix` | `adelete_by_prefix` |
+| `clear_all` | `aclear_all` |
+| `increment` | `aincrement` |
+| `get_and_set` | `aget_and_set` |
+| `add_to_list` | `aadd_to_list` |
+| `trim_list` | `atrim_list` |
+| `acquire_lock` | `aacquire_lock` |
+| `release_lock` | `arelease_lock` |
+| `eval_token_bucket` | `aeval_token_bucket` |
+| `update_bucket` | `aupdate_bucket` |
+| `close` | `aclose` |
+
+The default `a*` implementation offloads the matching blocking method with
+`asyncio.to_thread`, which is correct for any backend without extra code.
+Backends override it when they can do better:
+
+* `MemoryStorage` calls straight through. Its state is an in-process dict, so
+there is no I/O to get out of the way and a thread hop would be pure
+overhead on the per-request hot path. Calling through also keeps
+`acquire_lock` / `release_lock` on one thread, which matters because a
+`threading.Lock` must be released by the thread that took it.
+* `ValkeyStorage` drives its native async client (`aget_json`,
+`aeval_lua`, ...), so a check never parks a pool thread on a network round
+trip.
+* `DatabaseStorage` keeps the `to_thread` default, since its backend is
+blocking SQL.
+
+### Composite operations must stay whole
+
+`update_bucket` is a read-modify-write whose lock lives *inside* the blocking
+call. An override must therefore offload the whole operation, never re-express
+it as separate `aget_bucket` → mutate → `aset_bucket` awaits: splitting it
+reintroduces exactly the lost-update race the method exists to prevent, and a
+limit of 5 can admit every parallel request. `src/tests/ratelimit/test_async_path.py`
+proves this holds under concurrent load.
 
 ## Implement the interface
 
@@ -43,6 +94,12 @@ All backends must implement `RateLimitStorage`:
 | `close()` | Close the backend connection. Optional override. |
 
 The default `update_bucket` implementation holds the distributed lock across `get_bucket` → `mutate` → `set_bucket`. `MemoryStorage` overrides it with a per-key lock for better concurrency.
+
+### Lock contention fails closed
+
+A backend that cannot take the distributed lock must not write anyway. `ValkeyStorage` returns the method's default (for `aincrement`, `0`) instead of
+mutating an unlocked bucket, matching its blocking `increment`. Treat a
+returned default as "not counted" rather than "counted as zero".
 
 ## Use `MemoryStorage`
 
@@ -82,35 +139,48 @@ allowed, remaining, reset_after = storage.eval_token_bucket(
 
 This method is atomic under the per-key lock and uses copy-on-write semantics so concurrent `increment` calls do not clobber fields.
 
-## Create a distributed backend
+## Use a shipped distributed backend
 
-Extend `RateLimitStorage` and implement the abstract methods. The simplest path is to wrap a Valkey or Redis client:
+```python
+from src.core import ratelimit
+from src.core.ratelimit.storage import DatabaseStorage, ValkeyStorage
+
+ratelimit.setup(storage_backend=ValkeyStorage())   # Valkey / Redis
+ratelimit.setup(storage_backend=DatabaseStorage())  # SQLite or PostgreSQL
+```
+
+Both implement the abstract methods plus an internal lock so composite
+operations are atomic across workers, and both bound their bucket table so
+crafted distinct keys cannot grow it without limit.
+
+## Create your own backend
+
+Extend `RateLimitStorage` and implement the abstract methods. The blocking
+methods are the ones you must write; the `a*` forms come for free via the
+`asyncio.to_thread` default unless you have a native async client worth
+driving directly.
 
 ```python
 import json
 from src.core.ratelimit.storage import RateLimitStorage
 
-class ValkeyStorage(RateLimitStorage):
-    def __init__(self, valkey_client):
-        self.valkey = valkey_client
-
+class MyStorage(RateLimitStorage):
     def get_bucket(self, key):
-        data = self.valkey.get(f"ratelimit:{key}")
+        data = self.client.get(f"ratelimit:{key}")
         return json.loads(data) if data else None
 
     def set_bucket(self, key, state, ttl=None):
-        data = json.dumps(state)
-        if ttl is not None:
-            self.valkey.setex(f"ratelimit:{key}", int(ttl), data)
-        else:
-            self.valkey.set(f"ratelimit:{key}", data)
+        self.client.set(f"ratelimit:{key}", json.dumps(state))
 
     # Implement remaining methods: delete_bucket, get_keys_by_prefix,
     # delete_by_prefix, clear_all, increment, get_and_set, add_to_list,
     # trim_list, acquire_lock, release_lock, eval_token_bucket
 ```
 
-For atomic operations such as `increment` and `eval_token_bucket`, use Lua scripts or transactions on the backing store.
+For atomic operations such as `increment` and `eval_token_bucket`, use Lua
+scripts, transactions, or a lock on the backing store. Keep every composite
+read-modify-write inside one method call — see "Composite operations must
+stay whole" above.
 
 ## Pass a backend to the rate limiter
 
@@ -121,8 +191,9 @@ from src.core.ratelimit.storage import MemoryStorage
 storage = MemoryStorage(cleanup_interval=60.0, max_buckets=100000)
 ratelimit.setup(storage_backend=storage)
 
-# For a distributed backend, pass your ValkeyStorage instance instead
-# ratelimit.setup(storage_backend=ValkeyStorage(valkey_client))
+# For a distributed backend, pass a shipped backend instead
+# ratelimit.setup(storage_backend=ValkeyStorage())
+# ratelimit.setup(storage_backend=DatabaseStorage())
 ```
 
 ## Inspect storage

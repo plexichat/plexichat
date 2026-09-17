@@ -16,12 +16,13 @@ You configure the module once at startup with `ratelimit.setup()` and then check
 * Hourly and daily limits with bot and webhook multipliers
 * Admin and internal bypass
 * Standard `X-RateLimit-*` and `Retry-After` headers
-* Thread-safe in-memory storage and Valkey adapter interface
-* Route decorators and FastAPI middleware
+* Dual sync/async interfaces over one backend (blocking for off-loop callers, `a*` for the event loop)
+* Three storage backends: in-memory, Valkey, and relational database
+* Route decorators and FastAPI middleware, both on the async path
 
 ## Before you begin
 
-Decide whether you need single-instance or distributed limiting. The default `MemoryStorage` is per-process; for multi-worker deployments, provide a distributed `RateLimitStorage` implementation.
+Decide whether you need single-instance or distributed limiting. The default `MemoryStorage` is per-process; for multi-worker deployments, pass a shipped distributed backend (`ValkeyStorage` or `DatabaseStorage`) to `setup()`.
 
 ## Set up the module
 
@@ -88,6 +89,51 @@ if not result.allowed:
 ```
 
 `check_rate_limit` also accepts `ip_address`, `is_webhook`, `is_admin`, `is_internal`, `webhook_id`, and `cost`.
+
+## Check a rate limit from the event loop
+
+Every blocking entry point has an awaitable counterpart, prefixed with `a`.
+On the event loop, use those:
+
+```python
+from src.core import ratelimit
+
+result = await ratelimit.acheck_rate_limit(
+    user_id=12345,
+    route="POST /channels/{id}/messages",
+    resource_id=channel_id,
+    is_bot=False,
+)
+
+if not result.allowed:
+    return JSONResponse(
+        status_code=429,
+        content=result.response_body,
+        headers=ratelimit.get_headers(result),
+    )
+```
+
+| Blocking | Awaitable |
+|----------|-----------|
+| `check_rate_limit` | `acheck_rate_limit` |
+| `increment_custom_usage` | `aincrement_custom_usage` |
+| `get_bucket_info` | `aget_bucket_info` |
+| `reset_bucket` | `areset_bucket` |
+| `reset_user` | `areset_user` |
+| `reset_all` | `areset_all` |
+
+The two paths share one implementation of the algorithms, key generation,
+secondary limits, and result assembly, so they cannot report different
+answers; only the storage round trips differ. Both interfaces are atomic
+under parallel requests: a composite read-modify-write is sent to the
+backend as a single locked operation, never as separate awaits that would
+let two callers read the same snapshot and both be admitted.
+
+**Which to call.** Anything running on the event loop — ASGI routes and
+middleware, WebSocket handlers, gateway tasks — must use the `a*` forms. The
+ASGI middleware and the `@rate_limit` decorator already do this for you;
+the blocking forms are for callers already off the loop (threadpool workers,
+CLI commands, migrations).
 
 ## Use FastAPI middleware
 
@@ -248,27 +294,29 @@ ratelimit.setup(storage_backend=storage)
 
 ### Valkey (distributed)
 
-Implement the `RateLimitStorage` interface for distributed deployments:
+A Valkey-backed backend ships with the module — you do not need to write one:
 
 ```python
-from src.core.ratelimit.storage import RateLimitStorage
-import json
+from src.core import ratelimit
+from src.core.ratelimit.storage import ValkeyStorage
 
-class ValkeyStorage(RateLimitStorage):
-    def __init__(self, valkey_client):
-        self.valkey = valkey_client
-
-    def get_bucket(self, key):
-        data = self.valkey.get(f"ratelimit:{key}")
-        return json.loads(data) if data else None
-
-    # Implement remaining abstract methods: set_bucket, delete_bucket,
-    # get_keys_by_prefix, delete_by_prefix, clear_all, increment,
-    # get_and_set, add_to_list, trim_list, acquire_lock, release_lock,
-    # eval_token_bucket
+ratelimit.setup(storage_backend=ValkeyStorage())
 ```
 
-See `storage/README.md` for the full interface.
+`ValkeyStorage` drives the async GLIDE client for its `a*` methods and the
+blocking client for the sync ones, so an event-loop check costs no thread
+offload. Two properties matter in production:
+
+* **Atomicity.** Buckets are mutated through a single Lua script or under a
+distributed lock held across the whole get → mutate → set, so two workers
+cannot lose each other's update.
+* **Fail closed.** If Valkey is unreachable, checks deny (`allowed=False`)
+rather than silently admitting every request. Deployments that intentionally
+run without Valkey should select `MemoryStorage` explicitly in `setup()`.
+
+When `setup()` already has a distributed backend, passing `MemoryStorage` is
+refused with a warning instead of downgrading it. See `storage/README.md`
+for the storage interface.
 
 ## Manage buckets
 
@@ -292,6 +340,10 @@ print(f"Remaining: {bucket.tokens}")
 ```bash
 pytest src/tests/ratelimit/ -v
 ```
+
+`src/tests/ratelimit/test_async_path.py` covers the async interface: parity
+with the blocking path for all four algorithms, the module-level `a*` API,
+the native async storages, and atomicity under parallel requests.
 
 ## Error response
 

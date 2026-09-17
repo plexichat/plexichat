@@ -402,7 +402,40 @@ with ValkeyClient() as client:
     client.set("key", "value")
     value = client.get("key")
 # Connection is closed automatically.
+
+async with ValkeyClient() as client:
+    await client.aset("key", "value")
+    value = await client.aget("key")
 ```
+
+### Async client (event loop)
+
+The client holds two handles, and each has its own interface: the blocking
+methods (`set`, `get`, `eval_lua`) run off the event loop, and the `a*`
+methods (`aset`, `aget`, `aeval_lua`) are awaited on it. Use the `a*` forms
+from anything running on the loop — routes, middleware, WebSocket handlers —
+otherwise a blocking call stalls every other request on that worker.
+
+```python
+from src.core.database import get_valkey_client
+from src.core.database.valkey_client import asetup
+
+# Inside the serving loop; returns None when Valkey is disabled/unreachable
+await asetup()
+
+client = get_valkey_client()
+if client is not None:
+    await client.aset_json("user:1", {"name": "Alice"})
+    user = await client.aget_json("user:1")
+```
+
+The app opens and closes the async handle in its lifespan, so application
+code only needs to await the operations. An `a*` call made before the handle
+is open raises `ValkeyConnectionError` rather than returning a silent miss,
+which keeps a missing cache from turning into a bypass.
+
+See `valkey_client/README.md` for the full dual-handle design and the
+complete async command surface.
 
 ### Module-level setup
 
