@@ -391,3 +391,79 @@ class MemoryStorage(RateLimitStorage):
                 "lock_count": len(self._locks),
                 "max_buckets": self._max_buckets,
             }
+
+    # ------------------------------------------------------------------
+    # Async API
+    # ------------------------------------------------------------------
+    # These deliberately call straight through instead of inheriting the
+    # ``asyncio.to_thread`` defaults, for two reasons:
+    #
+    # 1. CORRECTNESS. acquire_lock/release_lock wrap a ``threading.Lock``,
+    #    and a Lock must be released by the thread that acquired it. Under
+    #    the default offload, the acquire could run on one pool thread and
+    #    the release on another, so ``release`` would raise RuntimeError --
+    #    which acquire_lock's caller swallows -- and the lock would stay
+    #    held forever, deadlocking that key. Pinning both to the caller's
+    #    thread keeps lock ownership intact.
+    #
+    # 2. COST. Everything here is an in-process dict operation. There is no
+    #    I/O to get out of the way, so a thread hop per operation is pure
+    #    overhead on the per-request hot path.
+
+    async def aget_bucket(self, key: str) -> Optional[Dict[str, Any]]:
+        return self.get_bucket(key)
+
+    async def aset_bucket(
+        self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
+    ) -> None:
+        self.set_bucket(key, state, ttl)
+
+    async def adelete_bucket(self, key: str) -> bool:
+        return self.delete_bucket(key)
+
+    async def aget_keys_by_prefix(self, prefix: str) -> List[str]:
+        return self.get_keys_by_prefix(prefix)
+
+    async def adelete_by_prefix(self, prefix: str) -> int:
+        return self.delete_by_prefix(prefix)
+
+    async def aclear_all(self) -> None:
+        self.clear_all()
+
+    async def aincrement(self, key: str, field: str, amount: int = 1) -> int:
+        return self.increment(key, field, amount)
+
+    async def aget_and_set(
+        self, key: str, field: str, value: Any, default: Any = None
+    ) -> Any:
+        return self.get_and_set(key, field, value, default)
+
+    async def aadd_to_list(
+        self, key: str, field: str, value: Any, max_size: int = 1000
+    ) -> int:
+        return self.add_to_list(key, field, value, max_size)
+
+    async def atrim_list(self, key: str, field: str, min_value: Any) -> int:
+        return self.trim_list(key, field, min_value)
+
+    async def aacquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
+        return self.acquire_lock(key, timeout)
+
+    async def arelease_lock(self, key: str, token: Optional[str] = None) -> None:
+        self.release_lock(key, token)
+
+    async def aeval_token_bucket(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
+    ) -> tuple:
+        return self.eval_token_bucket(key, capacity, refill_rate, cost, ttl)
+
+    async def aupdate_bucket(
+        self,
+        key: str,
+        mutate_fn: Callable[[Dict[str, Any]], None],
+        ttl: Optional[float] = None,
+    ) -> None:
+        self.update_bucket(key, mutate_fn, ttl)
+
+    async def aclose(self) -> None:
+        self.close()

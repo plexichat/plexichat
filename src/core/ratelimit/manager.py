@@ -138,6 +138,128 @@ class RateLimitManager:
         """Generate a short bucket ID for headers."""
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
+    def _build_result(
+        self,
+        key: str,
+        bucket_type: BucketType,
+        rl_config: RateLimitConfig,
+        allowed: bool,
+        remaining: int,
+        reset_after: float,
+        unix_now: float,
+        cost: int,
+    ) -> RateLimitResult:
+        """Assemble a :class:`RateLimitResult` from a raw bucket outcome.
+
+        Shared by the blocking and awaitable evaluation paths so the two
+        can never report different headers for the same bucket state.
+        """
+        return RateLimitResult(
+            allowed=allowed,
+            headers=RateLimitHeaders(
+                limit=rl_config.effective_limit,
+                remaining=remaining,
+                reset=unix_now + reset_after,
+                reset_after=reset_after,
+                bucket=self._generate_bucket_id(key),
+                is_global=(bucket_type == BucketType.GLOBAL),
+                retry_after=reset_after if not allowed else None,
+                scope=bucket_type.value,
+            ),
+            bucket_key=key,
+            bucket_type=bucket_type,
+            remaining=remaining,
+            reset_at=unix_now + reset_after,
+            retry_after=reset_after if not allowed else None,
+            is_global=(bucket_type == BucketType.GLOBAL),
+            limited_by=bucket_type.value if not allowed else None,
+            cost=cost,
+        )
+
+    def _apply_secondary_limits(
+        self,
+        state: Dict[str, Any],
+        rl_config: RateLimitConfig,
+        cost: int,
+        unix_now: float,
+        outcome: Dict[str, Any],
+    ) -> None:
+        """Apply the hourly/daily limits to a bucket under the backend lock.
+
+        Shared by the blocking and awaitable token-bucket paths. When a
+        secondary limit denies the request we ROLL BACK the already-consumed
+        primary token: near-cap traffic must not burn primary quota without
+        any successful request.
+        """
+        secondary_reset_after: Optional[float] = None
+
+        if rl_config.hourly_limit:
+            h_allowed, _, h_reset = self._check_hourly_limit(
+                state, rl_config, cost, unix_now
+            )
+            if not h_allowed:
+                secondary_reset_after = h_reset
+
+        if secondary_reset_after is None and rl_config.daily_limit:
+            d_allowed, _, d_reset = self._check_daily_limit(
+                state, rl_config, cost, unix_now
+            )
+            if not d_allowed:
+                secondary_reset_after = d_reset
+
+        if secondary_reset_after is not None:
+            # Roll back the consumed primary token (best effort, capped at
+            # the bucket capacity).
+            tokens = float(state.get("tokens", 0.0))
+            state["tokens"] = min(float(rl_config.effective_limit), tokens + cost)
+
+        outcome["denied"] = secondary_reset_after
+
+    def _apply_legacy_check(
+        self,
+        state: Dict[str, Any],
+        rl_config: RateLimitConfig,
+        cost: int,
+        unix_now: float,
+        outcome: Dict[str, Any],
+    ) -> None:
+        """Apply a non-token-bucket algorithm plus secondary limits.
+
+        Shared by the blocking and awaitable legacy paths.
+        """
+        if rl_config.algorithm == RateLimitAlgorithm.FIXED_WINDOW:
+            l_allowed, l_remaining, l_reset = self._legacy_fixed_window(
+                state, rl_config, cost, unix_now
+            )
+        elif rl_config.algorithm == RateLimitAlgorithm.LEAKY_BUCKET:
+            l_allowed, l_remaining, l_reset = self._legacy_leaky_bucket(
+                state, rl_config, cost, unix_now
+            )
+        else:
+            # Default to sliding window logic if not specified
+            l_allowed, l_remaining, l_reset = self._legacy_sliding_window(
+                state, rl_config, cost, unix_now
+            )
+
+        # Check secondary limits for legacy path too
+        if l_allowed and (rl_config.hourly_limit or rl_config.daily_limit):
+            if rl_config.hourly_limit:
+                h_allowed, _, h_reset = self._check_hourly_limit(
+                    state, rl_config, cost, unix_now
+                )
+                if not h_allowed:
+                    l_allowed = False
+                    l_reset = h_reset
+            if l_allowed and rl_config.daily_limit:
+                d_allowed, _, d_reset = self._check_daily_limit(
+                    state, rl_config, cost, unix_now
+                )
+                if not d_allowed:
+                    l_allowed = False
+                    l_reset = d_reset
+
+        outcome.update(allowed=l_allowed, remaining=l_remaining, reset_after=l_reset)
+
     def _get_config_for_request(
         self,
         route: Optional[str],
@@ -207,60 +329,28 @@ class RateLimitManager:
             if allowed and (rl_config.hourly_limit or rl_config.daily_limit):
                 outcome: Dict[str, Any] = {}
 
-                def _apply_secondary(state: Dict[str, Any]) -> None:
-                    secondary_reset_after: Optional[float] = None
-
-                    if rl_config.hourly_limit:
-                        h_allowed, _, h_reset = self._check_hourly_limit(
-                            state, rl_config, cost, unix_now
-                        )
-                        if not h_allowed:
-                            secondary_reset_after = h_reset
-
-                    if secondary_reset_after is None and rl_config.daily_limit:
-                        d_allowed, _, d_reset = self._check_daily_limit(
-                            state, rl_config, cost, unix_now
-                        )
-                        if not d_allowed:
-                            secondary_reset_after = d_reset
-
-                    if secondary_reset_after is not None:
-                        # Roll back the consumed primary token (best
-                        # effort, capped at the bucket capacity).
-                        tokens = float(state.get("tokens", 0.0))
-                        state["tokens"] = min(
-                            float(rl_config.effective_limit), tokens + cost
-                        )
-
-                    outcome["denied"] = secondary_reset_after
-
-                self._storage.update_bucket(key, _apply_secondary, ttl=86400)
+                self._storage.update_bucket(
+                    key,
+                    lambda state: self._apply_secondary_limits(
+                        state, rl_config, cost, unix_now, outcome
+                    ),
+                    ttl=86400,
+                )
 
                 denied_reset = outcome.get("denied")
                 if denied_reset is not None:
                     allowed = False
                     reset_after = denied_reset
 
-            return RateLimitResult(
-                allowed=allowed,
-                headers=RateLimitHeaders(
-                    limit=rl_config.effective_limit,
-                    remaining=remaining,
-                    reset=unix_now + reset_after,
-                    reset_after=reset_after,
-                    bucket=self._generate_bucket_id(key),
-                    is_global=(bucket_type == BucketType.GLOBAL),
-                    retry_after=reset_after if not allowed else None,
-                    scope=bucket_type.value,
-                ),
-                bucket_key=key,
-                bucket_type=bucket_type,
-                remaining=remaining,
-                reset_at=unix_now + reset_after,
-                retry_after=reset_after if not allowed else None,
-                is_global=(bucket_type == BucketType.GLOBAL),
-                limited_by=bucket_type.value if not allowed else None,
-                cost=cost,
+            return self._build_result(
+                key,
+                bucket_type,
+                rl_config,
+                allowed,
+                remaining,
+                reset_after,
+                unix_now,
+                cost,
             )
 
         # Legacy check for non-token-bucket algorithms.
@@ -272,71 +362,27 @@ class RateLimitManager:
         # per-key storage lock across the whole check+update.
         outcome: Dict[str, Any] = {}
 
-        def _legacy_check(state: Dict[str, Any]) -> None:
-            # Manually apply algorithm
-            if rl_config.algorithm == RateLimitAlgorithm.FIXED_WINDOW:
-                l_allowed, l_remaining, l_reset = self._legacy_fixed_window(
-                    state, rl_config, cost, unix_now
-                )
-            elif rl_config.algorithm == RateLimitAlgorithm.LEAKY_BUCKET:
-                l_allowed, l_remaining, l_reset = self._legacy_leaky_bucket(
-                    state, rl_config, cost, unix_now
-                )
-            else:
-                # Default to sliding window logic if not specified
-                l_allowed, l_remaining, l_reset = self._legacy_sliding_window(
-                    state, rl_config, cost, unix_now
-                )
-
-            # Check secondary limits for legacy path too
-            if l_allowed and (rl_config.hourly_limit or rl_config.daily_limit):
-                if rl_config.hourly_limit:
-                    h_allowed, _, h_reset = self._check_hourly_limit(
-                        state, rl_config, cost, unix_now
-                    )
-                    if not h_allowed:
-                        l_allowed = False
-                        l_reset = h_reset
-                if l_allowed and rl_config.daily_limit:
-                    d_allowed, _, d_reset = self._check_daily_limit(
-                        state, rl_config, cost, unix_now
-                    )
-                    if not d_allowed:
-                        l_allowed = False
-                        l_reset = d_reset
-
-            outcome.update(
-                allowed=l_allowed, remaining=l_remaining, reset_after=l_reset
-            )
-
         self._storage.update_bucket(
-            key, _legacy_check, ttl=max(rl_config.window_seconds * 2, 86400)
+            key,
+            lambda state: self._apply_legacy_check(
+                state, rl_config, cost, unix_now, outcome
+            ),
+            ttl=max(rl_config.window_seconds * 2, 86400),
         )
 
         allowed = outcome["allowed"]
         remaining = outcome["remaining"]
         reset_after = outcome["reset_after"]
 
-        return RateLimitResult(
-            allowed=allowed,
-            headers=RateLimitHeaders(
-                limit=rl_config.effective_limit,
-                remaining=remaining,
-                reset=unix_now + reset_after,
-                reset_after=reset_after,
-                bucket=self._generate_bucket_id(key),
-                is_global=(bucket_type == BucketType.GLOBAL),
-                retry_after=reset_after if not allowed else None,
-                scope=bucket_type.value,
-            ),
-            bucket_key=key,
-            bucket_type=bucket_type,
-            remaining=remaining,
-            reset_at=unix_now + reset_after,
-            retry_after=reset_after if not allowed else None,
-            is_global=(bucket_type == BucketType.GLOBAL),
-            limited_by=bucket_type.value if not allowed else None,
-            cost=cost,
+        return self._build_result(
+            key,
+            bucket_type,
+            rl_config,
+            allowed,
+            remaining,
+            reset_after,
+            unix_now,
+            cost,
         )
 
     def _legacy_fixed_window(self, state, config, cost, unix_now):
@@ -452,16 +498,17 @@ class RateLimitManager:
         reset_after = daily_reset - unix_now
         return allowed, remaining, reset_after
 
-    def get_bucket_info(self, bucket_key: str) -> Optional[RateLimitBucket]:
-        """Get bucket information."""
-        state = self._storage.get_bucket(bucket_key)
-        if state is None:
-            return None
-        config = get_default_config()
+    def _bucket_from_state(
+        self, state: Dict[str, Any], bucket_key: str
+    ) -> RateLimitBucket:
+        """Build a :class:`RateLimitBucket` from a raw state dict.
+
+        Shared by the blocking and awaitable ``get_bucket_info`` paths.
+        """
         return RateLimitBucket(
             key=state.get("key", bucket_key),
             bucket_type=BucketType(state.get("bucket_type", "route")),
-            config=config,
+            config=get_default_config(),
             tokens=state.get("tokens", 0.0),
             last_update=state.get("last_update", 0.0),
             window_start=state.get("window_start", 0.0),
@@ -472,6 +519,13 @@ class RateLimitManager:
             daily_reset=state.get("daily_reset", 0.0),
             request_timestamps=state.get("timestamps", []),
         )
+
+    def get_bucket_info(self, bucket_key: str) -> Optional[RateLimitBucket]:
+        """Get bucket information."""
+        state = self._storage.get_bucket(bucket_key)
+        if state is None:
+            return None
+        return self._bucket_from_state(state, bucket_key)
 
     def check_rate_limit(
         self,
@@ -556,22 +610,36 @@ class RateLimitManager:
         """
         outcome: Dict[str, int] = {}
 
-        def _mutate(state: Dict[str, Any]) -> None:
-            current = state.get(field, 0)
-            try:
-                current = int(current)
-            except (TypeError, ValueError):
-                current = 0
-            new_value = current + amount
-            state[field] = new_value
-            outcome["value"] = new_value
-
         # Keep the counter and its expiry under the same backend lock. This
         # matters for shared report/abuse counters: a read-then-increment
         # sequence permits concurrent requests to lose updates, and the old
         # implementation ignored ``ttl`` entirely.
-        self._storage.update_bucket(key, _mutate, ttl=ttl)
+        self._storage.update_bucket(
+            key,
+            lambda state: self._apply_custom_increment(state, field, amount, outcome),
+            ttl=ttl,
+        )
         return outcome.get("value", amount)
+
+    def _apply_custom_increment(
+        self,
+        state: Dict[str, Any],
+        field: str,
+        amount: int,
+        outcome: Dict[str, int],
+    ) -> None:
+        """Add ``amount`` to ``state[field]`` and record the new value.
+
+        Shared by the blocking and awaitable custom-counter paths.
+        """
+        current = state.get(field, 0)
+        try:
+            current = int(current)
+        except (TypeError, ValueError):
+            current = 0
+        new_value = current + amount
+        state[field] = new_value
+        outcome["value"] = new_value
 
     def _check_global_limit(
         self,
@@ -727,3 +795,290 @@ class RateLimitManager:
     def reset_all(self) -> None:
         """Reset all buckets."""
         self._storage.clear_all()
+
+    # ------------------------------------------------------------------
+    # Async API
+    # ------------------------------------------------------------------
+    # Every blocking method above has an awaitable counterpart below. The
+    # pure computation -- algorithms, key generation, secondary limits,
+    # result assembly -- is shared through ``_apply_*``/``_build_result``,
+    # so the two paths cannot diverge; only the storage round trips differ.
+
+    async def acheck_rate_limit(
+        self,
+        user_id: Optional[int] = None,
+        ip_address: Optional[str] = None,
+        route: Optional[str] = None,
+        resource_id: Optional[int] = None,
+        is_bot: bool = False,
+        is_webhook: bool = False,
+        is_admin: bool = False,
+        is_internal: bool = False,
+        webhook_id: Optional[int] = None,
+        cost: int = 1,
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`check_rate_limit`.
+
+        Runs the same global -> user/IP -> route/resource/webhook sequence
+        without blocking the event loop on the storage backend.
+        """
+        unix_now = time.time()
+        if self._check_bypass(user_id, is_admin, is_internal):
+            return self._create_bypass_result(route, unix_now)
+
+        checks: List[RateLimitResult] = []
+
+        # 1. Global limit (User OR IP)
+        if self._enable_global_limit:
+            if user_id is not None:
+                checks.append(await self._acheck_global_limit(user_id, cost, unix_now))
+            elif ip_address is not None:
+                key = self._generate_bucket_key(
+                    BucketType.GLOBAL, ip_address=ip_address
+                )
+                checks.append(
+                    await self._acheck_atomic(
+                        key, BucketType.GLOBAL, self._global_config, cost, unix_now
+                    )
+                )
+
+        # 2. User or IP limit
+        if user_id is not None and not is_webhook:
+            checks.append(await self._acheck_user_limit(user_id, cost, unix_now))
+        elif ip_address is not None and not is_webhook:
+            checks.append(await self._acheck_ip_limit(ip_address, cost, unix_now))
+
+        # 3. Route/Resource/Webhook limit
+        if route:
+            config = self._get_config_for_request(route, is_bot, is_webhook)
+            if config.scope == BucketType.RESOURCE and resource_id is not None:
+                checks.append(
+                    await self._acheck_resource_limit(
+                        user_id, route, resource_id, config, cost, unix_now
+                    )
+                )
+            elif config.scope == BucketType.WEBHOOK and webhook_id is not None:
+                checks.append(
+                    await self._acheck_webhook_limit(
+                        webhook_id, route, resource_id, config, cost, unix_now
+                    )
+                )
+            else:
+                checks.append(
+                    await self._acheck_route_limit(
+                        user_id, ip_address, route, config, cost, unix_now
+                    )
+                )
+
+        for result in checks:
+            if not result.allowed:
+                return result
+
+        return checks[-1] if checks else self._create_bypass_result(route, unix_now)
+
+    async def _acheck_atomic(
+        self,
+        key: str,
+        bucket_type: BucketType,
+        rl_config: RateLimitConfig,
+        cost: int,
+        unix_now: float,
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_atomic`."""
+        if rl_config.algorithm == RateLimitAlgorithm.TOKEN_BUCKET:
+            refill_rate = rl_config.requests / rl_config.window_seconds
+            allowed, remaining, reset_after = await self._storage.aeval_token_bucket(
+                key, rl_config.effective_limit, refill_rate, cost
+            )
+
+            if allowed and (rl_config.hourly_limit or rl_config.daily_limit):
+                outcome: Dict[str, Any] = {}
+
+                await self._storage.aupdate_bucket(
+                    key,
+                    lambda state: self._apply_secondary_limits(
+                        state, rl_config, cost, unix_now, outcome
+                    ),
+                    ttl=86400,
+                )
+
+                denied_reset = outcome.get("denied")
+                if denied_reset is not None:
+                    allowed = False
+                    reset_after = denied_reset
+
+            return self._build_result(
+                key,
+                bucket_type,
+                rl_config,
+                allowed,
+                remaining,
+                reset_after,
+                unix_now,
+                cost,
+            )
+
+        outcome: Dict[str, Any] = {}
+
+        await self._storage.aupdate_bucket(
+            key,
+            lambda state: self._apply_legacy_check(
+                state, rl_config, cost, unix_now, outcome
+            ),
+            ttl=max(rl_config.window_seconds * 2, 86400),
+        )
+
+        allowed = outcome["allowed"]
+        remaining = outcome["remaining"]
+        reset_after = outcome["reset_after"]
+
+        return self._build_result(
+            key,
+            bucket_type,
+            rl_config,
+            allowed,
+            remaining,
+            reset_after,
+            unix_now,
+            cost,
+        )
+
+    async def _acheck_global_limit(
+        self, user_id: int, cost: int, unix_now: float
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_global_limit`."""
+        key = self._generate_bucket_key(BucketType.GLOBAL, user_id=user_id)
+        return await self._acheck_atomic(
+            key, BucketType.GLOBAL, self._global_config, cost, unix_now
+        )
+
+    async def _acheck_user_limit(
+        self, user_id: int, cost: int, unix_now: float
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_user_limit`."""
+        key = self._generate_bucket_key(BucketType.USER, user_id=user_id)
+        return await self._acheck_atomic(
+            key, BucketType.USER, self._user_config, cost, unix_now
+        )
+
+    async def _acheck_ip_limit(
+        self, ip_address: str, cost: int, unix_now: float
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_ip_limit`."""
+        key = self._generate_bucket_key(BucketType.IP, ip_address=ip_address)
+        return await self._acheck_atomic(
+            key, BucketType.IP, self._ip_config, cost, unix_now
+        )
+
+    async def _acheck_route_limit(
+        self,
+        user_id: Optional[int],
+        ip_address: Optional[str],
+        route: str,
+        config: RateLimitConfig,
+        cost: int,
+        unix_now: float,
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_route_limit`."""
+        key = self._generate_bucket_key(
+            BucketType.ROUTE, user_id=user_id, ip_address=ip_address, route=route
+        )
+        return await self._acheck_atomic(key, BucketType.ROUTE, config, cost, unix_now)
+
+    async def _acheck_resource_limit(
+        self,
+        user_id: Optional[int],
+        route: str,
+        resource_id: int,
+        config: RateLimitConfig,
+        cost: int,
+        unix_now: float,
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_resource_limit`."""
+        key = self._generate_bucket_key(
+            BucketType.RESOURCE,
+            user_id=user_id,
+            route=route,
+            resource_id=resource_id,
+        )
+        return await self._acheck_atomic(
+            key, BucketType.RESOURCE, config, cost, unix_now
+        )
+
+    async def _acheck_webhook_limit(
+        self,
+        webhook_id: int,
+        route: str,
+        resource_id: Optional[int],
+        config: RateLimitConfig,
+        cost: int,
+        unix_now: float,
+    ) -> RateLimitResult:
+        """Awaitable counterpart of :meth:`_check_webhook_limit`."""
+        key = self._generate_bucket_key(
+            BucketType.WEBHOOK,
+            webhook_id=webhook_id,
+            route=route,
+        )
+
+        result = await self._acheck_atomic(
+            key, BucketType.WEBHOOK, config, cost, unix_now
+        )
+        if not result.allowed:
+            return result
+
+        if resource_id is not None:
+            channel_key = self._generate_bucket_key(
+                BucketType.CHANNEL_WEBHOOK,
+                resource_id=resource_id,
+            )
+            channel_result = await self._acheck_atomic(
+                channel_key,
+                BucketType.CHANNEL_WEBHOOK,
+                DEFAULT_WEBHOOK_CHANNEL_LIMIT,
+                cost,
+                unix_now,
+            )
+            if not channel_result.allowed:
+                return channel_result
+
+        return result
+
+    async def aget_bucket_info(self, bucket_key: str) -> Optional[RateLimitBucket]:
+        """Awaitable counterpart of :meth:`get_bucket_info`."""
+        state = await self._storage.aget_bucket(bucket_key)
+        if state is None:
+            return None
+        return self._bucket_from_state(state, bucket_key)
+
+    async def aincrement_custom_usage(
+        self, key: str, field: str, amount: int, ttl: int = 86400
+    ) -> int:
+        """Awaitable counterpart of :meth:`increment_custom_usage`."""
+        outcome: Dict[str, int] = {}
+
+        await self._storage.aupdate_bucket(
+            key,
+            lambda state: self._apply_custom_increment(state, field, amount, outcome),
+            ttl=ttl,
+        )
+        return outcome.get("value", amount)
+
+    async def areset_bucket(self, bucket_key: str) -> None:
+        """Awaitable counterpart of :meth:`reset_bucket`."""
+        await self._storage.adelete_bucket(bucket_key)
+
+    async def areset_user(self, user_id: int) -> None:
+        """Awaitable counterpart of :meth:`reset_user`.
+
+        Uses the same EXACT-segment ``u:{id}`` match as the blocking form.
+        """
+        pattern = re.compile(rf"(?:^|:)u:{re.escape(str(user_id))}(?=$|:)")
+        keys = await self._storage.aget_keys_by_prefix("")
+        for key in keys:
+            if pattern.search(key):
+                await self._storage.adelete_bucket(key)
+
+    async def areset_all(self) -> None:
+        """Awaitable counterpart of :meth:`reset_all`."""
+        await self._storage.aclear_all()
