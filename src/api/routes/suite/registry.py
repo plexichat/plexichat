@@ -389,7 +389,7 @@ async def list_recent_suite_items(
     return {
         "schemaVersion": 1,
         "items": bounded_items,
-        "total": len(bounded_items),
+        "total": len(items),
         "hasMore": len(items) > len(bounded_items),
     }
 
@@ -569,7 +569,7 @@ async def search_suite(
     return {
         "schemaVersion": 1,
         "items": bounded_items,
-        "total": len(bounded_items),
+        "total": len(items),
         "hasMore": len(items) > len(bounded_items),
     }
 

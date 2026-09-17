@@ -78,3 +78,97 @@ def test_search_suite_dedupes_server_item_seen_in_both_feeds(monkeypatch):
     ]
     assert len(matching) == 1
     assert result["total"] == len(result["items"])
+
+
+def _stash_row(item_id, updated_at):
+    return {
+        "id": item_id,
+        "title": f"Plan {item_id}",
+        "description": "shared",
+        "pinned": False,
+        "server_id": None,
+        "created_at": 100,
+        "updated_at": updated_at,
+    }
+
+
+def test_search_suite_total_counts_gathered_items_not_page(monkeypatch):
+    """``total`` must count gathered matches, not the returned page.
+
+    With two distinct matches and ``limit=1`` the page holds one card, so
+    ``total`` must be 2 with ``hasMore`` set -- reporting ``total == 1``
+    alongside ``hasMore == True`` is self-contradictory and disagrees with
+    ``list_pinned_suite_items``, which reports the full count.
+    """
+    rows = [_stash_row(7, 200), _stash_row(9, 100)]
+
+    class FakeArtifactManager:
+        def list_with_filters(self, filters=None, author_id=None, server_id=None):
+            return []
+
+    class FakeStashManager:
+        def list_items(self, user_id, limit=50, search=None, **kwargs):
+            return [dict(r) for r in rows], len(rows)
+
+    class FakeSumManager:
+        def list_workbooks(self, user_id, limit=50, offset=0, search=None, **kwargs):
+            return [], 0
+
+    monkeypatch.setattr(registry_routes, "_get_manager", lambda: FakeArtifactManager())
+    monkeypatch.setattr(
+        registry_routes,
+        "_suite_managers",
+        lambda: (FakeStashManager(), FakeSumManager()),
+    )
+    monkeypatch.setattr(registry_routes, "_domain_available", lambda capability: True)
+    monkeypatch.setattr(
+        registry_routes, "_shared_items", lambda user_id, limit, search=None: []
+    )
+
+    result = asyncio.run(
+        registry_routes.search_suite(
+            q="plan",
+            limit=1,
+            current_user=types.SimpleNamespace(user_id=42),
+        )
+    )
+    assert len(result["items"]) == 1
+    assert result["total"] == 2
+    assert result["hasMore"] is True
+    # Newest first: the row with updated_at=200 wins the single slot.
+    assert result["items"][0]["id"] == "7"
+
+
+def test_list_recent_total_counts_gathered_items_not_page(monkeypatch):
+    """Same ``total`` contract for ``GET /suite/home/recent``."""
+    rows = [_stash_row(7, 200), _stash_row(9, 100)]
+
+    class FakeArtifactManager:
+        def list_with_filters(self, filters=None, author_id=None, server_id=None):
+            return []
+
+    class FakeStashManager:
+        def list_items(self, user_id, limit=50, search=None, **kwargs):
+            return [dict(r) for r in rows], len(rows)
+
+    class FakeSumManager:
+        def list_workbooks(self, user_id, limit=50, offset=0, search=None, **kwargs):
+            return [], 0
+
+    monkeypatch.setattr(registry_routes, "_get_manager", lambda: FakeArtifactManager())
+    monkeypatch.setattr(
+        registry_routes,
+        "_suite_managers",
+        lambda: (FakeStashManager(), FakeSumManager()),
+    )
+    monkeypatch.setattr(registry_routes, "_domain_available", lambda capability: True)
+
+    result = asyncio.run(
+        registry_routes.list_recent_suite_items(
+            limit=1,
+            current_user=types.SimpleNamespace(user_id=42),
+        )
+    )
+    assert len(result["items"]) == 1
+    assert result["total"] == 2
+    assert result["hasMore"] is True
