@@ -4,6 +4,7 @@ include:
 stages:
   - lint
   - security
+  - pip-licenses
   - test
   - performance
   - metrics
@@ -267,6 +268,34 @@ security:dependency_scanning:
     paths:
       - pip-audit-report.json
       - osv-report.json
+    expire_in: 30 days
+
+# =========================================================
+# PIP-LICENSES STAGE (permissive-only license gate, round 2)
+# =========================================================
+
+# Independent second opinion on top of the license_audit.py step inside
+# security:dependency_scanning: the `pip-licenses` tool dumps every installed
+# distribution's license, and ci-tooling/check_pip_licenses.py gates the
+# pinned runtime tree in requirements.txt against the same permissive-only
+# policy (PERMISSIVE / ALLOWED_* in license_audit.py — shared, not duplicated).
+# Anything installed but not pinned there (pip-audit, safety, pip-licenses
+# itself, …) is tooling, not shipped code, and is out of scope.
+# Fails closed on any non-permissive or unresolvable license.
+pip-licenses:
+  extends: .python_base
+  stage: pip-licenses
+  script:
+    # Floor-pinned (not hashed): audit tooling follows the same precedent as
+    # `pip install pip-audit safety` in .python_base — latest 4.x+ keeps the
+    # stable --format=json schema (Name/Version/License) this gate parses.
+    - pip install "pip-licenses>=4.3"
+    - pip-licenses --format=json --output-file=pip-licenses.json
+    - pip-licenses --format=plain-vertical
+    - python ci-tooling/check_pip_licenses.py pip-licenses.json
+  artifacts:
+    paths:
+      - pip-licenses.json
     expire_in: 30 days
 
 # =========================================================
