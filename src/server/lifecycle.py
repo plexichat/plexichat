@@ -146,6 +146,18 @@ class PlexichatServer:
             except Exception as e:
                 logger.error(f"Error closing database: {e}")
 
+        # Close the blocking Valkey handle off the loop (the async handle was
+        # already closed by the app lifespan while its loop was still alive).
+        try:
+            from src.core.database.valkey_client import get_client
+
+            valkey_client = get_client()
+            if valkey_client is not None:
+                valkey_client.close()
+                logger.info("Valkey connection closed")
+        except Exception as e:
+            logger.error(f"Error closing Valkey connection: {e}")
+
         logger.info("Cleanup complete")
 
     def run(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:

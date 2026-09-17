@@ -35,6 +35,40 @@ class _BodyTooLarge(Exception):
 _BODY_TOO_LARGE_HANDLER_REGISTERED = False
 
 
+async def _start_async_valkey() -> None:
+    """Open the event-loop (``glide``) Valkey handle.
+
+    The blocking handle is opened during module initialization, off the
+    loop. A coroutine handle belongs to the loop that created it, so the
+    async surface (``aget``/``aset``/``apublish``, ...) only becomes usable
+    here, in the serving loop. Degrades quietly: ``asetup`` returns ``None``
+    when Valkey is disabled or unreachable, mirroring the blocking ``setup``.
+    """
+    try:
+        from src.core.database.valkey_client import asetup
+
+        await asetup()
+    except Exception as e:
+        logger.warning(f"Valkey async setup skipped: {e}")
+
+
+async def _stop_async_valkey() -> None:
+    """Close the event-loop Valkey handle while the loop is still alive.
+
+    Only the async handle: the blocking handle is closed later, off-loop,
+    by ``PlexichatServer.cleanup``. A coroutine handle cannot be closed from
+    there because the loop that owns it is already gone.
+    """
+    try:
+        from src.core.database.valkey_client import get_client
+
+        client = get_client()
+        if client is not None:
+            await client.aclose()
+    except Exception as e:
+        logger.debug(f"Valkey async close error: {e}")
+
+
 def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -177,6 +211,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         except Exception as e:
             logger.debug(f"Telemetry route template registration skipped: {e}")
 
+        # Open the loop-bound Valkey handle before anything on the loop
+        # (the cross-worker listener below included) can touch the async
+        # surface.
+        await _start_async_valkey()
+
         # Start the cross-worker WebSocket event listener so this
         # worker receives events published by sibling workers via
         # Valkey pub/sub.
@@ -224,6 +263,8 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                 await stop_cross_worker_listener()
             except Exception as e:
                 logger.debug(f"Cross-worker listener stop error: {e}")
+
+            await _stop_async_valkey()
 
             await stop_static_client_service()
 
