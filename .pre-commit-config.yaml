@@ -67,9 +67,17 @@ repos:
       #  online; if you are offline, `git commit --no-verify` is not needed --
       #  `SKIP=pip-audit git commit` keeps the tripwire out of your way. GitLab
       #  CI runs pip-audit per-commit as the authoritative gate.
+      #
+      #  The index defaults to the public HTTPS PyPI unless PIP_INDEX_URL is
+      #  already set, mirroring .gitlab-ci.yml ("No repository-wide
+      #  PIP_INDEX_URL / PIP_TRUSTED_HOST here on purpose"). pip-audit resolves
+      #  the lock inside a throwaway venv of its own, and that venv inherits
+      #  environment variables but not this repo's pip configuration -- so on a
+      #  host whose pip points at an unreachable mirror the hook fails while
+      #  bootstrapping, before it audits anything.
       - id: pip-audit
         name: pip-audit (dependency vulnerabilities)
-        entry: pip-audit -r requirements-dev.txt --require-hashes --progress-spinner=off
+        entry: 'bash -c ''PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}" pip-audit -r requirements-dev.txt --require-hashes --progress-spinner=off'''
         language: system
         pass_filenames: false
 
