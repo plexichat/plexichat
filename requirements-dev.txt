@@ -153,6 +153,7 @@ anyio==4.14.2 \
     # via
     #   httpx
     #   starlette
+    #   valkey-glide
     #   watchfiles
 argon2-cffi==25.1.0 \
     --hash=sha256:694ae5cc8a42f4c4e2bf2ca0e64e51e23a040c6a517a85074683d3959e1346c1 \
@@ -193,7 +194,10 @@ asn1crypto==1.5.1 \
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309 \
     --hash=sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32
-    # via aiohttp
+    # via
+    #   aiohttp
+    #   outcome
+    #   trio
 authlib==1.6.12 \
     --hash=sha256:0656d8482f28fc8221929d5f35b2bde5d13e10555ebc06b4561b0d622e83b1bd \
     --hash=sha256:e9229ad7fde610b139dd12f5edbe97eab9ee78bfb85691247e767727850b99ab
@@ -415,6 +419,7 @@ cffi==2.1.1 \
     #   argon2-cffi-bindings
     #   cryptography
     #   pylibsrtp
+    #   valkey-glide
     #   valkey-glide-sync
 cfgv==3.5.0 \
     --hash=sha256:a8dc6b26ad22ff227d2634a65cb388215ce6cc96bbcc5cfde7641ae87e8dacc0 \
@@ -1295,6 +1300,7 @@ idna==3.15 \
     #   email-validator
     #   httpx
     #   requests
+    #   trio
     #   yarl
 ifaddr==0.2.0 \
     --hash=sha256:085e0305cfe6f16ab12d72e2024030f5d52674afad6911bb1eee207177b8a748 \
@@ -1631,6 +1637,10 @@ openpyxl==3.1.5 \
     --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 \
     --hash=sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050
     # via -r requirements.in
+outcome==1.3.0.post0 \
+    --hash=sha256:9dcf02e65f2971b80047b377468e72a268e15c0af3cf1238e6ff14f7f91143b8 \
+    --hash=sha256:e771c5ce06d1415e356078d3bdd68523f284b4ce5419828922b6871e65eda82b
+    # via trio
 packageurl-python==0.17.6 \
     --hash=sha256:1252ce3a102372ca6f86eb968e16f9014c4ba511c5c37d95a7f023e2ca6e5c25 \
     --hash=sha256:31a85c2717bc41dd818f3c62908685ff9eebcb68588213745b14a6ee9e7df7c9
@@ -1905,7 +1915,9 @@ protobuf==7.35.1 \
     --hash=sha256:74758715c53d7158fb76caf4f0cfdacc5329a4b1bb994f865d6cf302d413a1c4 \
     --hash=sha256:b73f9489a4b8b1c9cb1f8ed951c736392592edb24b9d6819f36d2e10b171d5b4 \
     --hash=sha256:ce115a26fe0c39a2c29973d914d327e516a6455464489fe3cd1e51a1b354f81a
-    # via valkey-glide-sync
+    # via
+    #   valkey-glide
+    #   valkey-glide-sync
 psutil==7.2.2 \
     --hash=sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372 \
     --hash=sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9 \
@@ -2411,12 +2423,19 @@ six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
     # via python-dateutil
+sniffio==1.3.1 \
+    --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
+    --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
+    # via
+    #   trio
+    #   valkey-glide
 sortedcontainers==2.4.0 \
     --hash=sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88 \
     --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
     # via
     #   cyclonedx-python-lib
     #   hypothesis
+    #   trio
 sqlalchemy==2.0.51 \
     --hash=sha256:0378d055e9e8cd6ce4d8dff683bdd3d7d413533c4ee51d67a2b1e0f9eacc0f23 \
     --hash=sha256:0592bdadf86ddcabfd72d9ab66ea8a5d8d2cc6be1cc51fa7e66c03868ac5eac1 \
@@ -2540,6 +2559,10 @@ tomli-w==1.2.0 \
     --hash=sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90 \
     --hash=sha256:2dd14fac5a47c27be9cd4c976af5a12d87fb1f0b4512f81d69cce3b35ae25021
     # via pip-audit
+trio==0.34.0 \
+    --hash=sha256:63b9485408bdfdde544fced107045a8c0086cdc4bd0ef2f797b9e0dd111b964b \
+    --hash=sha256:6c7c9f49917694dcdcd5f67abd168df5599eca480d61f29854d17a61a75c2f05
+    # via anyio
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
@@ -2619,6 +2642,37 @@ uvloop==0.22.1 \
     --hash=sha256:ef6f0d4cc8a9fa1f6a910230cd53545d9a14479311e87e3cb225495952eb672c \
     --hash=sha256:fe94b4564e865d968414598eea1a6de60adba0c040ba4ed05ac1300de402cd42
     # via uvicorn
+valkey-glide==2.5.2 \
+    --hash=sha256:010ee966afe7197323d6316d5eea2739c52abeb95fa4ae3b823562bc7f50424e \
+    --hash=sha256:03c62efb5bc6180f6da828802973fda3431df42b9edf68874b3c34bf185aa01f \
+    --hash=sha256:107debef54362124c5cbcd1bd8b16647fd565c397714b121374928894c79d645 \
+    --hash=sha256:1193cd6b7f31c5bbee69645fecd69c540f0b43f127f72392726eb3518b7e0a9f \
+    --hash=sha256:1655f28687414594956b5d211bffd9b5ad925152f968dd545cce753a54e2a3b5 \
+    --hash=sha256:17b386327ab37f9a916c9b51a0c9b8aa5e7e08441a2e33c0b6bf6a312394ae1b \
+    --hash=sha256:1fd431161641f00fe0153c55f771089ba1797c3acba6e0e04c0440f8c3f06c1c \
+    --hash=sha256:21ad4148cb05c5d453ab1a0e89511e9473cc7fde7224d01dee4476747c538a81 \
+    --hash=sha256:307c96a54af8d7e68ec3f47b545ec15ebf9b8589d67921c653f0d1cfcb9400df \
+    --hash=sha256:30dae8574c0d19477646c4ca2f32864f6883f3c2f17ac6ae9617436fcf5614ee \
+    --hash=sha256:5f175b5b3ccfdeaf090fb061c7f3f62f3aa9db23b460107d5fff289369eda6b1 \
+    --hash=sha256:65425b602445c0fdfba453cbea5f5a7e1adeda914c9597d87c92e2855c911b7b \
+    --hash=sha256:71dc532fd2c371b3712b5def45d2773047bf5a3d7f5de9405e068c769777b7e8 \
+    --hash=sha256:8a7b7e11de350242398c600ef9dc21949b9d22a9dc71e43d6301fd548634f3d5 \
+    --hash=sha256:8dce2d6709fb2bb659ffc1711680ccec0ae4b08364bbd608d7495208d96da714 \
+    --hash=sha256:925d28916fd7465b8af9b5b5c356b4cb77969f97f95bf2639031446add8eb8d5 \
+    --hash=sha256:9491914d05427cebe93b5e9551af6d2b53448068b801604ccbd8115447188f3d \
+    --hash=sha256:955a6031c588f1af7a99c322afe6e6b4504d382b2668905cdac4e2427f54a27e \
+    --hash=sha256:a02345e3de2f66b13a38fd1392f49427d0ca6134b0e10afe4af6c03f27f9259a \
+    --hash=sha256:a081f370c7ad9e93e91439a6dfe058b9055b605bb97380d0a688d10befc143fd \
+    --hash=sha256:adbc76382e88d13fe5bea43c49918fd64ca59fe56340164a8c52c296f1889841 \
+    --hash=sha256:b556a04b6bdb426bed6a14580a3ee1ccb941ab7d9d6bc57876f8cb63e266efc3 \
+    --hash=sha256:b9aa56ff9c9ad3e2ccd5c0840dbfd18bbdfe072e2e6695327e45028d7abb88d8 \
+    --hash=sha256:c1d7f24726f50e7c6cbfe1a387f5d8cb1a2741497635d8ad9d5db1d1ffffa0eb \
+    --hash=sha256:ca792a4b008f3dcf0047cdf5246f92596b7e2c1abac418fac674ca22751e8e33 \
+    --hash=sha256:d25148e2874673ed94860339f8311fb64cdbdaffbc751023e5cf610aa2860b42 \
+    --hash=sha256:d8aa77a254dcc0bb2c253511a8307f5664cd2f41d814eb306bfdf6993ad647a3 \
+    --hash=sha256:ec16f809d958ec881b9fa84e9e4133d0cf133785b610cfd8f91518e5ecf5013a \
+    --hash=sha256:fe2b7a54ef88ed89ef06e83438476664e1e842fe0fac38eb0a1c8a6280c735a0
+    # via -r requirements.in
 valkey-glide-sync==2.5.0 \
     --hash=sha256:0871e3ff1e39afd96f20a3b167005a57ed7f62ae08653854b3d035e0224dbc40 \
     --hash=sha256:0c0c479865ae34cdb78649f1a22fbb8a3b55bb4b197df495cdcee51d60aeca06 \

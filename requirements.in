@@ -45,6 +45,11 @@ sqlalchemy==2.0.51
 # which is what the data layer already emits, and connection pooling is handled
 # in-tree by the shared engines/pool.py (no SQLAlchemy pool at runtime).
 pg8000==1.31.5
+# Two GLIDE packages on purpose, not redundancy: the blocking client
+# (glide_sync) is used off the event loop and the async client (glide)
+# is used on it. A single handle cannot serve both -- see
+# src/core/database/valkey_client/base.py.
+valkey-glide==2.5.2
 valkey-glide-sync==2.5.0
 
 # Authentication & Security
