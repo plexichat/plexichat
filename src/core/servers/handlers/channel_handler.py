@@ -391,15 +391,29 @@ class ChannelHandler:
             changes["category_id"] = {"old": channel.category_id, "new": category_id}
 
         if updates:
+            allowed_columns = {
+                "name",
+                "topic_encrypted",
+                "nsfw",
+                "slowmode_seconds",
+                "read_receipts_enabled",
+                "category_id",
+            }
+            # Validate all column names in updates
+            for update in updates:
+                col_name = update.split(" = ")[0]
+                if col_name not in allowed_columns:
+                    raise ValueError(f"Invalid column name: {col_name}")
+
             # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
             now = self.manager._get_timestamp()
             for i, update in enumerate(updates):
                 col_name = update.split(" = ")[0]
                 value = params[i]
                 query = (
-                    "UPDATE srv_channels SET "  # nosec: B608
+                    "UPDATE srv_channels SET "
                     + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"  # nosec: B608
+                    + " = ?, updated_at = ? WHERE id = ?"
                 )
                 self.db.execute(query, (value, now, channel_id))
 

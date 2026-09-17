@@ -369,15 +369,28 @@ class MemberHandler:
             }
 
         if updates:
+            allowed_columns = {
+                "nickname",
+                "muted",
+                "deafened",
+                "timeout_until",
+                "timeout_reason",
+            }
+            # Validate all column names in updates
+            for update in updates:
+                col_name = update.split(" = ")[0]
+                if col_name not in allowed_columns:
+                    raise ValueError(f"Invalid column name: {col_name}")
+
             # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
             now = self.manager._get_timestamp()
             for i, update in enumerate(updates):
                 col_name = update.split(" = ")[0]
                 value = params[i]
                 query = (
-                    "UPDATE srv_members SET "  # nosec: B608
+                    "UPDATE srv_members SET "
                     + col_name
-                    + " = ?, updated_at = ? WHERE server_id = ? AND user_id = ?"  # nosec: B608
+                    + " = ?, updated_at = ? WHERE server_id = ? AND user_id = ?"
                 )
                 self.db.execute(query, (value, now, server_id, member_user_id))
             if user_id != member_user_id:

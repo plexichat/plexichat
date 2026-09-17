@@ -453,7 +453,7 @@ class ScheduledEventManager:
         if updates:
             # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
             for update in updates:
-                query = "UPDATE srv_scheduled_events SET " + update + " WHERE id = ?"  # nosec: B608
+                query = "UPDATE srv_scheduled_events SET " + update + " WHERE id = ?"
                 self._db.execute(query, (event_id,))
 
     def generate_recurring_instances(

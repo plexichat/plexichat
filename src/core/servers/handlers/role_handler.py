@@ -253,9 +253,9 @@ class RoleHandler:
                 col_name = update.split(" = ")[0]
                 value = params[i]
                 query = (
-                    "UPDATE srv_roles SET "  # nosec: B608
+                    "UPDATE srv_roles SET "
                     + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"  # nosec: B608
+                    + " = ?, updated_at = ? WHERE id = ?"
                 )
                 self.db.execute(query, (value, now, role_id))
 

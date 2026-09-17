@@ -501,7 +501,7 @@ class PlexiJoinManager:
             UPDATE plexijoin_inbound_requests
             SET status = ?, reviewed_at = ?, reviewed_by = ?
             WHERE id = ? AND status = 'pending'
-            """,  # nosec: B608 - fully parameterized
+            """,
             (new_status, now_ms, admin_id, request_id),
         )
         if getattr(cursor, "rowcount", 0) <= 0:
