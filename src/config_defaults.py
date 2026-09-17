@@ -478,6 +478,30 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "pin_env": "PLEXICHAT_HSM_PIN",
                 "pin_file": "",
                 "key_label": "plexichat_kek",
+                # KEK extraction policy. The legacy vault path returns the
+                # raw KEK bytes (software AES-GCM), which requires an
+                # extractable key. Set to False once callers migrate to
+                # hsm_encrypt()/hsm_decrypt() below — the vault then refuses
+                # to export CKA_VALUE and only does crypto inside the token.
+                "key_extractable": True,
+                "allow_generate": True,
+            },
+            "tpm": {
+                "enabled": True,
+                "hierarchy": "owner",
+                "key_template": "aes256",
+                # KDF label/salt version the TPM-bound KEK. Bump `label`
+                # to rotate TPM-derived KEKs (old keyrings then need the
+                # previous label via kek_migration).
+                "label": "PLEXICHAT_KEK_V2",
+                "salt": "plexichat:tpm-kek:v2",
+                # Optional persistent handle (e.g. 0x81000001). When set,
+                # the primary is persisted with EvictControl so later boots
+                # skip create_primary. Empty means transient (default).
+                "persistent_handle": "",
+                # Optional PCR selection for sealing (e.g. [0, 1, 7]).
+                # Empty means no PCR policy (portable across updates).
+                "pcr_selection": [],
             },
         },
         "monitoring": {
