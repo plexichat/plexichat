@@ -16,12 +16,18 @@ from src.api.routes.artifacts import _get_manager, _require_server_permission
 from src.api.schemas.common import ErrorResponse
 from src.core.artifacts.capabilities import (
     capability_allows_artifact,
-    capability_to_dict,
     get_capability,
     is_usable,
 )
 from src.core.artifacts.models import Artifact
-from src.core.suite.registry.schema import AppManifest
+from src.core.suite.registry.schema import AppManifest, CapabilityProjection
+from src.core.suite.registry.service import (
+    SUITE_MANIFESTS,
+    get_registry,
+    manifest_to_dict,
+    project_capability,
+    scrub_details,
+)
 from src.core.suite.stash import StashManager
 from src.core.suite.sum.manager import SumManager
 
@@ -36,72 +42,9 @@ router = APIRouter(
 )
 
 
-_SUITE_MANIFESTS = (
-    AppManifest(
-        app_id="plexichat",
-        label="Plexichat",
-        icon="ph-chat-circle",
-        color_token="chat",
-        scopes=["personal", "conversation", "server"],
-        supports_embedded=False,
-        supports_offline=True,
-    ),
-    AppManifest(
-        app_id="plexiscribe",
-        label="PlexiScribe",
-        icon="ph-notebook",
-        color_token="scribe",
-        artifact_types=["plexiscribe"],
-        capability="plexiscribe",
-        scopes=["personal", "conversation", "server"],
-        supports_embedded=True,
-        supports_offline=True,
-    ),
-    AppManifest(
-        app_id="plexiscript",
-        label="PlexiScript",
-        icon="ph-code",
-        color_token="script",
-        artifact_types=["plexiscript"],
-        capability="plexiscript",
-        scopes=["personal", "conversation", "server"],
-        supports_embedded=True,
-        supports_offline=True,
-    ),
-    AppManifest(
-        app_id="plexiboard",
-        label="PlexiBoard",
-        icon="ph-chalkboard",
-        color_token="board",
-        artifact_types=["whiteboard"],
-        capability="artifacts_whiteboard",
-        scopes=["conversation", "server"],
-        supports_embedded=True,
-        supports_offline=False,
-    ),
-    AppManifest(
-        app_id="plexistash",
-        label="PlexiStash",
-        icon="ph-vault",
-        color_token="stash",
-        artifact_types=["stash"],
-        capability="plexistash",
-        scopes=["personal", "server"],
-        supports_embedded=True,
-        supports_offline=True,
-    ),
-    AppManifest(
-        app_id="plexisum",
-        label="PlexiSum",
-        icon="ph-table",
-        color_token="sum",
-        artifact_types=["sum"],
-        capability="plexisum",
-        scopes=["personal", "server"],
-        supports_embedded=False,
-        supports_offline=True,
-    ),
-)
+# Canonical manifests live in the server-authoritative registry service;
+# this alias is kept for backward compatibility with existing imports.
+_SUITE_MANIFESTS = SUITE_MANIFESTS
 
 _ARTIFACT_APP_IDS = {
     "plexiscribe": "plexiscribe",
@@ -135,24 +78,37 @@ def _suite_artifacts(artifacts: Iterable[Artifact]) -> List[Artifact]:
 def _manifest_dict(
     manifest: AppManifest, capabilities: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Serialize a manifest without leaking implementation-only state."""
-    capability = capabilities.get(manifest.capability) if manifest.capability else None
-    result = {
-        "id": manifest.app_id,
-        "label": manifest.label,
-        "icon": manifest.icon,
-        "color": manifest.color_token,
-        "artifactTypes": list(manifest.artifact_types),
-        "capability": manifest.capability,
-        "scopes": list(manifest.scopes),
-        "supportsEmbedded": manifest.supports_embedded,
-        "supportsOffline": manifest.supports_offline,
-        "availability": "available",
-    }
-    if capability is not None:
-        result["capabilityState"] = capability_to_dict(capability)
-        result["availability"] = capability.state.value
-    return result
+    """Serialize a manifest without leaking implementation-only state.
+
+    Backward-compatibility wrapper around the registry service serializer.
+    ``capabilities`` maps capability names to scrubbed
+    :class:`CapabilityProjection` objects. Raw ``CapabilityInfo`` values are
+    still accepted defensively and scrubbed before serialization so older
+    callers cannot reintroduce unsanitized ``details``.
+    """
+    from src.core.artifacts.capabilities import CapabilityInfo
+
+    projection = capabilities.get(manifest.capability) if manifest.capability else None
+    if isinstance(projection, CapabilityInfo):
+        state = getattr(projection.state, "value", str(projection.state))
+        projection = CapabilityProjection(
+            feature=str(projection.feature),
+            state=state,
+            message=str(projection.message),
+            details=scrub_details(projection.details),
+        )
+    elif isinstance(projection, CapabilityProjection):
+        pass
+    elif projection is None:
+        pass
+    else:
+        # Unknown shape: fail closed rather than leak.
+        projection = (
+            project_capability(str(manifest.capability))
+            if manifest.capability
+            else None
+        )
+    return manifest_to_dict(manifest, projection)
 
 
 def _artifact_home_item(artifact: Artifact) -> Dict[str, Any]:
@@ -351,19 +307,20 @@ async def list_suite_apps(
 ) -> Dict[str, Any]:
     """Return the capability-aware app catalog for the authenticated user."""
     del current_user  # Authentication is the visibility boundary for this catalog.
-    # Evaluate only the capabilities the Suite manifests reference. The full
-    # catalog includes voice transcription/recording, whose evaluators import
-    # the transcription provider on every call — wasted work on this hot path.
+    registry = get_registry()
+    manifests = registry.list_apps()
+    # Evaluate only the capabilities the Suite manifests reference, through
+    # the registry service so projections are scrubbed and fail closed. The
+    # full catalog includes voice transcription/recording, whose evaluators
+    # import the transcription provider on every call — wasted work here.
     capabilities = {
-        manifest.capability: get_capability(manifest.capability)
-        for manifest in _SUITE_MANIFESTS
+        manifest.capability: registry.get_capability(manifest.capability)
+        for manifest in manifests
         if manifest.capability
     }
     return {
         "schemaVersion": 1,
-        "apps": [
-            _manifest_dict(manifest, capabilities) for manifest in _SUITE_MANIFESTS
-        ],
+        "apps": [_manifest_dict(manifest, capabilities) for manifest in manifests],
     }
 
 

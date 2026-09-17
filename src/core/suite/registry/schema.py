@@ -1,8 +1,8 @@
-"""Contract-only types for the PlexiSuite app registry.
+"""Contract types for the PlexiSuite app registry.
 
-These dataclasses are intentionally not connected to the current capability
-routes. They establish the shape that a future registry endpoint can expose to
-the client universal home.
+These dataclasses are the shape exposed to the client universal home via
+``GET /suite/apps`` (see ``src/api/routes/suite/registry.py``) and produced
+by the server-authoritative ``SuiteRegistryService``.
 """
 
 from dataclasses import dataclass, field
@@ -38,7 +38,7 @@ class CapabilityProjection:
 
 @dataclass(frozen=True)
 class SuiteRegistryResponse:
-    """Future response shape for a capability-aware app catalog."""
+    """Capability-aware app catalog served at ``GET /suite/apps``."""
 
     apps: List[AppManifest] = field(default_factory=list)
     capabilities: List[CapabilityProjection] = field(default_factory=list)

@@ -1,23 +1,26 @@
 # Suite Registry
 
-Contract-only module defining the PlexiSuite app registry interfaces and schema types for a future launcher-capable app catalog.
+Server-authoritative module defining the PlexiSuite app registry: the canonical app-manifest catalog, the read-only registry service, and the schema types exposed to the launcher-capable app catalog.
 
 ## Overview
 
-The registry module establishes the data shapes and protocol contracts that a future API endpoint will expose to the PlexiSuite universal home launcher. It is intentionally decoupled from existing capability routes and does not perform authorization decisions or replace the capability service. The server controls app visibility; the client only renders.
+The registry module owns the data shapes, the protocol contract, and the concrete read-only service behind the capability-aware app catalog at `GET /suite/apps` (`src/api/routes/suite/registry.py`). `SUITE_MANIFESTS` in `service.py` is the single source of truth for the launcher-order app catalog; the route serves those manifests verbatim. The registry is intentionally decoupled from mutation domains and does not perform authorization decisions or replace the capability service. The server controls app visibility; the client only renders.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────┐
-│         Future API Route            │
+│   Suite API Route (`/suite/apps`)   │
 │    (capability-aware catalog)       │
 ├─────────────────────────────────────┤
-│        SuiteRegistry Protocol       │
+│     SuiteRegistryService            │
 │  ┌───────────────────────────────┐  │
 │  │ list_apps() → AppManifest[]  │  │
+│  │ get_app(id) → AppManifest?   │  │
 │  │ get_capability(f) → CapProj  │  │
+│  │ catalog() → RegistryResponse │  │
 │  └───────────────────────────────┘  │
+│     implements SuiteRegistry        │
 ├─────────────────────────────────────┤
 │           Schema Types              │
 │  AppManifest | CapabilityProjection │
@@ -30,6 +33,7 @@ The registry module establishes the data shapes and protocol contracts that a fu
 | File | Purpose |
 |------|---------|
 | `interfaces.py` | `SuiteRegistry` protocol — read-only contract for app listing and capability projection |
+| `service.py` | `SuiteRegistryService` — canonical `SUITE_MANIFESTS`, `get_app` rejection of unknown IDs, scrubbed capability projections, `get_registry()` singleton |
 | `schema.py` | Frozen dataclasses: `AppManifest`, `CapabilityProjection`, `SuiteRegistryResponse` |
 
 ## Schema
