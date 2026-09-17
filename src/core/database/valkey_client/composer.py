@@ -1,6 +1,10 @@
 """ValkeyClient composition class.
 
-Combines all mixins into a single ValkeyClient class.
+Combines all mixins into a single ValkeyClient class, which exposes
+both the blocking commands (``get``, ``set``, ...) and their awaitable
+counterparts (``aget``, ``aset``, ...). See
+:class:`~.base.ValkeyClientBase` for why one client holds two GLIDE
+handles.
 """
 
 from .base import ValkeyClientBase

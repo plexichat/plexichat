@@ -37,6 +37,28 @@ ValkeyValue = Union[str, bytes, int, float]
 
 
 class ValkeyClientBase:
+    """Valkey connection manager with dual sync/async connections.
+
+    GLIDE ships two packages with the same symbol surface:
+
+    * ``glide_sync`` -- every command is a blocking call, held in
+      ``self._client``.
+    * ``glide`` -- every command is a coroutine, held in ``self._aclient``.
+
+    The client keeps **both** because the underlying handles are bound to
+    the event loop (``glide``) or the calling thread (``glide_sync``) that
+    created them: a single handle cannot serve the serving loop and a
+    worker thread at once, and running a coroutine on a second loop to
+    share one async handle raises on cross-loop use. Two handles keeps
+    each caller on the client it can actually use.
+
+    Sync methods (``get``, ``set``, ``eval_lua``, ...) use ``_client`` and
+    are only safe off the event loop. Async methods (``aget``, ``aset``,
+    ``aeval_lua``, ...) use ``_aclient`` and must be awaited. The async
+    handle is opened lazily by :meth:`aconnect` so deployments that never
+    touch an async path pay for only one connection.
+    """
+
     def __init__(self):
         # The config block is canonically named "valkey" (see
         # src/config_defaults.py). "redis" is accepted as a backward-compatible
@@ -45,8 +67,10 @@ class ValkeyClientBase:
         self.config = config.get("valkey") or config.get("redis") or {}
         self.enabled = self.config.get("enabled", False)
         self._client: Any = None
+        self._aclient: Any = None
         self._pubsub_handle: Any = None
         self._connected = False
+        self._aconnected = False
 
         self.host = self.config.get("host", "localhost")
         try:
@@ -122,6 +146,50 @@ class ValkeyClientBase:
                 result.append(str(v))
         return result
 
+    def _config_kwargs(self, glide_mod: Any) -> dict:
+        """Build the GlideClientConfiguration kwargs for a GLIDE module.
+
+        ``glide`` and ``glide_sync`` expose identically-named configuration
+        symbols, so the same keyword arguments build either handle; only the
+        module they are read from differs.
+        """
+        pool_config = self.config.get("connection_pool", {}) or {}
+        try:
+            timeout = int(pool_config.get("timeout", 5))
+        except (TypeError, ValueError):
+            timeout = 5
+
+        kwargs: dict = {
+            "addresses": [glide_mod.NodeAddress(self.host, self.port)],
+            "use_tls": self.ssl,
+            "lazy_connect": True,
+            "request_timeout": timeout * 1000,
+            "reconnect_strategy": glide_mod.BackoffStrategy(
+                num_of_retries=3, factor=timeout * 1000, exponent_base=2
+            ),
+            "database_id": self.db,
+        }
+
+        if self.password:
+            kwargs["credentials"] = glide_mod.ServerCredentials(self.password)
+
+        return kwargs
+
+    def _record_connection_failure(self, exc: Exception) -> None:
+        """Record a connection failure as a system alert."""
+        try:
+            from src.utils.system_alerts import record_system_alert
+
+            record_system_alert(
+                "connection_failure",
+                {"host": self.host, "port": self.port, "error": str(exc)},
+                source="valkey",
+                severity="error",
+                target_path="#alerts",
+            )
+        except Exception:
+            pass
+
     def connect(self) -> bool:
         if not self.enabled:
             logger.debug("GLIDE is disabled, skipping connection")
@@ -129,11 +197,6 @@ class ValkeyClientBase:
 
         try:
             glide_sync = cast(Any, importlib.import_module("glide_sync"))
-            GlideClient = glide_sync.GlideClient
-            GlideClientConfiguration = glide_sync.GlideClientConfiguration
-            NodeAddress = glide_sync.NodeAddress
-            ServerCredentials = glide_sync.ServerCredentials
-            BackoffStrategy = glide_sync.BackoffStrategy
         except ImportError:
             logger.error(
                 "valkey-glide-sync package not installed. Install with: pip install valkey-glide-sync"
@@ -144,32 +207,10 @@ class ValkeyClientBase:
             )
 
         try:
-            addresses = [NodeAddress(self.host, self.port)]
-
-            kwargs: dict = {
-                "addresses": addresses,
-                "use_tls": self.ssl,
-                "lazy_connect": True,
-            }
-
-            if self.password:
-                kwargs["credentials"] = ServerCredentials(self.password)
-
-            pool_config = self.config.get("connection_pool", {}) or {}
-            try:
-                timeout = int(pool_config.get("timeout", 5))
-            except (TypeError, ValueError):
-                timeout = 5
-            kwargs["request_timeout"] = timeout * 1000
-
-            kwargs["reconnect_strategy"] = BackoffStrategy(
-                num_of_retries=3, factor=timeout * 1000, exponent_base=2
+            glide_config = glide_sync.GlideClientConfiguration(
+                **self._config_kwargs(glide_sync)
             )
-
-            kwargs["database_id"] = self.db
-
-            glide_config = GlideClientConfiguration(**kwargs)
-            self._client = GlideClient.create(glide_config)
+            self._client = glide_sync.GlideClient.create(glide_config)
 
             self._client.ping()
             self._connected = True
@@ -179,19 +220,44 @@ class ValkeyClientBase:
         except Exception as e:
             logger.error(f"Failed to connect to Valkey: {e}")
             self._connected = False
-            # Record the connection failure as a system alert.
-            try:
-                from src.utils.system_alerts import record_system_alert
+            self._record_connection_failure(e)
+            raise ValkeyConnectionError(f"Failed to connect to Valkey: {e}")
 
-                record_system_alert(
-                    "connection_failure",
-                    {"host": self.host, "port": self.port, "error": str(e)},
-                    source="valkey",
-                    severity="error",
-                    target_path="#alerts",
-                )
-            except Exception:
-                pass
+    async def aconnect(self) -> bool:
+        """Open the async (``glide``) handle used by the ``a*`` methods.
+
+        Separate from :meth:`connect` on purpose -- see the class docstring.
+        A coroutine handle is bound to the running loop, so this must be
+        awaited from the loop that will issue the commands.
+        """
+        if not self.enabled:
+            logger.debug("GLIDE is disabled, skipping async connection")
+            return False
+
+        try:
+            glide = cast(Any, importlib.import_module("glide"))
+        except ImportError:
+            logger.error(
+                "valkey-glide package not installed. Install with: pip install valkey-glide"
+            )
+            raise ImportError(
+                "valkey-glide is required for the async Valkey API. "
+                "Install with: pip install valkey-glide"
+            )
+
+        try:
+            glide_config = glide.GlideClientConfiguration(**self._config_kwargs(glide))
+            self._aclient = await glide.GlideClient.create(glide_config)
+
+            await self._aclient.ping()
+            self._aconnected = True
+            logger.info(f"Connected to Valkey (async) at {self.host}:{self.port}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to connect to Valkey (async): {e}")
+            self._aconnected = False
+            self._record_connection_failure(e)
             raise ValkeyConnectionError(f"Failed to connect to Valkey: {e}")
 
     def set_worker_id(self, worker_id: str) -> None:
@@ -203,6 +269,16 @@ class ValkeyClientBase:
             raise ValkeyOperationError("GLIDE is disabled in configuration")
         if not self._connected or not self._client:
             raise ValkeyConnectionError("GLIDE not connected. Call connect() first.")
+
+    def _ensure_aconnected(self) -> Any:
+        """Return the async handle, or raise if it was never opened."""
+        if not self.enabled:
+            raise ValkeyOperationError("GLIDE is disabled in configuration")
+        if not self._aconnected or not self._aclient:
+            raise ValkeyConnectionError(
+                "GLIDE async client not connected. Call aconnect() first."
+            )
+        return self._aclient
 
     def _prefixed_key(self, key: str) -> str:
         if key.startswith(self.key_prefix):
@@ -238,6 +314,30 @@ class ValkeyClientBase:
             logger.error(f"GLIDE EVAL failed: {e}")
             raise ValkeyOperationError(f"EVAL failed: {e}")
 
+    async def aeval_lua(
+        self,
+        script: str,
+        keys: Optional[List[str]] = None,
+        args: Optional[List[Any]] = None,
+    ) -> Any:
+        """Async counterpart of :meth:`eval_lua`."""
+        Script = cast(Any, importlib.import_module("glide")).Script
+
+        aclient = self._ensure_aconnected()
+
+        resolved_keys: List[str] = keys or []
+        resolved_args: List[Any] = args or []
+        prefixed_keys = [self._prefixed_key(k) for k in resolved_keys]
+
+        try:
+            script_obj = Script(script)
+            return await aclient.invoke_script(
+                script_obj, keys=prefixed_keys, args=resolved_args
+            )
+        except Exception as e:
+            logger.error(f"GLIDE EVAL (async) failed: {e}")
+            raise ValkeyOperationError(f"EVAL failed: {e}")
+
     def close(self) -> None:
         if self._pubsub_handle:
             try:
@@ -255,6 +355,22 @@ class ValkeyClientBase:
         self._connected = False
         logger.info("GLIDE connection closed")
 
+    async def aclose(self) -> None:
+        """Async counterpart of :meth:`close`.
+
+        Closes only the async handle; the sync handle (if open) is left
+        untouched so a mixed caller does not lose its connection.
+        """
+        if self._aclient:
+            try:
+                await self._aclient.close()
+            except Exception:
+                pass
+
+        self._aclient = None
+        self._aconnected = False
+        logger.info("GLIDE async connection closed")
+
     def __enter__(self) -> "ValkeyClientBase":
         self.connect()
         return self
@@ -263,8 +379,26 @@ class ValkeyClientBase:
         self.close()
         return False
 
+    async def __aenter__(self) -> "ValkeyClientBase":
+        await self.aconnect()
+        return self
+
+    async def __aexit__(
+        self, exc_type: object, exc_val: object, exc_tb: object
+    ) -> object:
+        await self.aclose()
+        return False
+
     def set(self, key: str, value: ValkeyValue, ttl: Optional[int] = None) -> bool:
         raise NotImplementedError
 
     def get(self, key: str) -> Optional[str]:
+        raise NotImplementedError
+
+    async def aset(
+        self, key: str, value: ValkeyValue, ttl: Optional[int] = None
+    ) -> bool:
+        raise NotImplementedError
+
+    async def aget(self, key: str) -> Optional[str]:
         raise NotImplementedError
