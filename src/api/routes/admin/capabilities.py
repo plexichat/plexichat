@@ -3,6 +3,11 @@ Admin capabilities routes - expose per-feature availability state to admins.
 
 Adds a top-level summary (counts of available vs. unavailable features) on top
 of the per-feature capability breakdown used by the client endpoints.
+
+Unlike the public ``GET /capabilities/artifacts`` route (which scrubs
+``details`` to launcher-safe scalars), this admin route intentionally returns
+raw evaluator details such as the transcription ``provider``: it is
+host-restricted + admin-authenticated and admins need full diagnostics.
 """
 
 from typing import Any, Dict

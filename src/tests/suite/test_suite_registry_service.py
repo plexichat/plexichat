@@ -219,3 +219,106 @@ def test_manifest_to_dict_matches_route_serializer():
             manifest,
             {manifest.capability: projection} if manifest.capability else {},
         ) == manifest_to_dict(manifest, projection)
+
+
+def test_scrub_keeps_transcription_flag_but_drops_provider():
+    """Voice booleans stay launcher-safe; backend names do not."""
+    assert scrub_details(
+        {"artifacts_enabled": True, "transcription_enabled": False}
+    ) == {"artifacts_enabled": True, "transcription_enabled": False}
+    assert scrub_details({"provider": "openai"}) == {}
+
+
+def test_client_capabilities_route_scrubs_details():
+    """``GET /capabilities/artifacts`` must not leak evaluator internals."""
+    import src.api.routes.capabilities as caps_routes
+    import src.core.artifacts.capabilities as caps_mod
+
+    real_evaluators = caps_mod._evaluators
+
+    class _Prov:
+        def is_available(self):
+            return True
+
+    import src.core.artifacts.transcription.provider as provider_mod
+
+    orig_load = caps_mod._load_config
+    orig_has = caps_mod._has_feature
+    orig_provider = provider_mod.get_transcription_provider
+    caps_mod._load_config = lambda config=None: (
+        config
+        if config is not None
+        else {"voice": {"transcription": {"enabled": True, "provider": "openai"}}}
+    )
+    caps_mod._has_feature = lambda feature, default=False: True
+    provider_mod.get_transcription_provider = lambda cfg: _Prov()
+    try:
+        result = asyncio.run(
+            caps_routes.get_capabilities(current_user=types.SimpleNamespace(user_id=42))
+        )
+    finally:
+        caps_mod._load_config = orig_load
+        caps_mod._has_feature = orig_has
+        provider_mod.get_transcription_provider = orig_provider
+    assert set(result) == set(real_evaluators())
+    voice_details = result["voice_transcription"]["details"]
+    assert "provider" not in voice_details
+    for feature, payload in result.items():
+        for value in payload["details"].values():
+            assert value is None or isinstance(value, (bool, int, str))
+
+
+def test_admin_capabilities_route_stays_raw_for_diagnostics(monkeypatch):
+    """Admins keep full details (e.g. provider); the client route does not."""
+    from fastapi import Request
+
+    import src.api.routes.admin.capabilities as admin_caps_routes
+    import src.api.routes.admin.utils as admin_utils
+    import src.api.routes.capabilities as caps_routes
+    import src.core.artifacts.capabilities as caps_mod
+    import src.core.artifacts.transcription.provider as provider_mod
+
+    real_has_feature = caps_mod._has_feature
+    orig_provider = provider_mod.get_transcription_provider
+    orig_load = caps_mod._load_config
+
+    class _Prov:
+        def is_available(self):
+            return True
+
+    monkeypatch.setattr(caps_mod, "_has_feature", lambda feature, default=False: True)
+    monkeypatch.setattr(
+        caps_mod,
+        "_load_config",
+        lambda config=None: (
+            config
+            if config is not None
+            else {"voice": {"transcription": {"enabled": True, "provider": "openai"}}}
+        ),
+    )
+    monkeypatch.setattr(provider_mod, "get_transcription_provider", lambda cfg: _Prov())
+    monkeypatch.setattr(admin_utils, "check_host_restriction", lambda request: None)
+    monkeypatch.setattr(admin_utils, "get_admin_from_token", lambda request: 1)
+    monkeypatch.setattr(
+        admin_caps_routes, "check_host_restriction", lambda request: None
+    )
+    monkeypatch.setattr(admin_caps_routes, "get_admin_from_token", lambda request: 1)
+    try:
+        client_result = asyncio.run(
+            caps_routes.get_capabilities(current_user=types.SimpleNamespace(user_id=42))
+        )
+        scope = {"type": "http", "headers": [], "client": ("127.0.0.1", 0)}
+        admin_result = asyncio.run(
+            admin_caps_routes.get_admin_capabilities(Request(scope))
+        )
+    finally:
+        caps_mod._has_feature = real_has_feature
+        caps_mod._load_config = orig_load
+        provider_mod.get_transcription_provider = orig_provider
+    # The licensed+available voice evaluator emits the backend name; admins
+    # see it, clients do not.
+    assert (
+        admin_result["capabilities"]["voice_transcription"]["details"].get("provider")
+        == "openai"
+    )
+    assert "provider" not in client_result["voice_transcription"]["details"]

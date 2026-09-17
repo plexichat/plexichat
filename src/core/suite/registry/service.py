@@ -99,7 +99,10 @@ _BY_APP_ID: Dict[str, AppManifest] = {m.app_id: m for m in SUITE_MANIFESTS}
 # Detail keys the capability evaluators are known to emit (see
 # ``src/core/artifacts/capabilities.py``). Anything else is dropped so a
 # future evaluator cannot leak a path, token, or resource name into the
-# launcher payload.
+# launcher payload. ``provider`` is intentionally excluded: the human-readable
+# ``message`` already names the backend for UX, and the raw provider value is
+# deployment fingerprinting with no launcher use (the client only reads
+# ``state``/``message``).
 _SAFE_DETAIL_KEYS = frozenset(
     {
         "evaluation",
@@ -111,6 +114,7 @@ _SAFE_DETAIL_KEYS = frozenset(
         "plexiscript_enabled",
         "whiteboard_enabled",
         "feature_enabled",
+        "transcription_enabled",
         "allow_recording",
     }
 )
