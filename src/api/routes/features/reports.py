@@ -344,26 +344,27 @@ async def update_report_status(
     # metadata — otherwise a report set back to "open" still displays as
     # reviewed/resolved by the previous admin. "open" is the only status that
     # resets the lifecycle fields; every other transition keeps them.
+    # Escalation is lifecycle state too: a reopened report is no longer
+    # escalated, so ``escalated_at`` is cleared exactly like the
+    # resolution/review fields. Assignment, priority and admin notes are
+    # report attributes (not lifecycle metadata) and are intentionally
+    # retained across a reopen so the same admin can keep working it.
     is_reopen = body.status == "open"
 
-    params = [
-        body.status,
-        now,
-        body.priority,  # None -> keep existing
-        int(body.assigned_to) if body.assigned_to else None,
-        body.admin_notes,  # None -> keep existing
-        None if is_reopen else body.resolution,  # resolution cleared on reopen
-        None if is_reopen else (now if body.resolution else None),  # resolved_at
-        (
-            None if is_reopen else (current_user.user_id if body.resolution else None)
-        ),  # resolved_by
-        now if body.status == "escalated" else None,  # escalated_at
-        None if is_reopen else (now if is_review else None),  # reviewed_at
-        (
-            None if is_reopen else (current_user.user_id if is_review else None)
-        ),  # reviewed_by
-        rid,
-    ]
+    # Lifecycle values resolved BEFORE the UPDATE so the statement stays a
+    # static, fully-parameterized string (bandit B608): each name below maps
+    # to exactly one placeholder, in order. (A previous revision built a
+    # ``params`` list and then referenced it positionally from the inline
+    # tuple — a divergence trap; keep every value named from here on.)
+    assigned_to = int(body.assigned_to) if body.assigned_to else None
+    resolution = None if is_reopen else body.resolution
+    resolved_at = None if is_reopen else (now if body.resolution else None)
+    resolved_by = (
+        None if is_reopen else (current_user.user_id if body.resolution else None)
+    )
+    escalated_at = None if is_reopen else (now if body.status == "escalated" else None)
+    reviewed_at = None if is_reopen else (now if is_review else None)
+    reviewed_by = None if is_reopen else (current_user.user_id if is_review else None)
 
     try:
         reopen_flag = 1 if is_reopen else 0
@@ -377,7 +378,7 @@ async def update_report_status(
                    resolution = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, resolution) END,
                    resolved_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, resolved_at) END,
                    resolved_by = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, resolved_by) END,
-                   escalated_at = COALESCE(?, escalated_at),
+                   escalated_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, escalated_at) END,
                    reviewed_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, reviewed_at) END,
                    reviewed_by = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, reviewed_by) END
                WHERE id = ?""",
@@ -385,19 +386,20 @@ async def update_report_status(
                 body.status,
                 now,
                 body.priority,
-                int(body.assigned_to) if body.assigned_to else None,
+                assigned_to,
                 body.admin_notes,
                 reopen_flag,
-                params[5],
+                resolution,
                 reopen_flag,
-                params[6],
+                resolved_at,
                 reopen_flag,
-                params[7],
-                params[8],
+                resolved_by,
                 reopen_flag,
-                params[9],
+                escalated_at,
                 reopen_flag,
-                params[10],
+                reviewed_at,
+                reopen_flag,
+                reviewed_by,
                 rid,
             ),
         )
