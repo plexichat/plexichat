@@ -119,8 +119,8 @@ class ValkeyDockerManager:
     def start(self) -> bool:
         """Make a Valkey server available, preferring a container."""
         if not self.use_docker:
-            logger.info("Docker disabled - assuming local Valkey is available")
-            return self._wait_for_valkey_or_false()
+            logger.info("Docker disabled - expecting an already-running Valkey")
+            return self._wait_for_valkey_or_false(wait=True)
 
         try:
             return self._start_with_testcontainers()
@@ -191,20 +191,20 @@ class ValkeyDockerManager:
             time.sleep(0.5)
         raise TimeoutError(f"Valkey not ready after {timeout}s")
 
-    def _wait_for_valkey_or_false(self, timeout: Optional[int] = None) -> bool:
-        """Wait for an externally-provided server, reporting absence.
+    def _wait_for_valkey_or_false(self, wait: bool = False) -> bool:
+        """Look for an externally-provided server, reporting absence.
 
-        Used for the non-Docker paths. A single probe would race a CI
-        *service* container that is still starting, which reported "not
-        available" and let the Valkey suites skip -- green without testing
-        anything.
+        ``wait`` is set only when the caller explicitly asked to attach to a
+        server instead of spawning one (``USE_DOCKER=false``). That is the CI
+        case, where the *service* container is still starting when the job
+        begins: a one-shot probe would report "not available" and let the
+        Valkey suite skip -- green without testing anything. The default path
+        probes once so a developer without Docker is not delayed.
         """
+        if not wait:
+            return _ping(self.host, self.port, self.password)
         try:
-            self._wait_for_valkey(
-                timeout
-                if timeout is not None
-                else int(os.getenv("VALKEY_WAIT_TIMEOUT", "30"))
-            )
+            self._wait_for_valkey(timeout=int(os.getenv("VALKEY_WAIT_TIMEOUT", "30")))
             return True
         except TimeoutError:
             return False
