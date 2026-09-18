@@ -213,26 +213,23 @@ class PostgresDockerManager:
             raise
 
     def _check_local_postgres(self) -> bool:
-        """Check if local PostgreSQL is available.
+        """Check if local PostgreSQL is available, waiting for it to start.
+
+        A single probe is not enough when the backend is a CI *service*
+        container: the job starts as soon as the container is created, while
+        ``initdb`` is still running, so a one-shot check intermittently
+        reported "not available" and the Postgres suites skipped -- going
+        green without testing anything. Retry for the same window the Docker
+        paths use.
 
         Returns:
             True if PostgreSQL is reachable, False otherwise
         """
+        logger.info(f"Checking local PostgreSQL at {self.host}:{self.port}")
         try:
-            import pg8000.dbapi
-
-            logger.info(f"Checking local PostgreSQL at {self.host}:{self.port}")
-
-            conn = pg8000.dbapi.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database="postgres",
-                timeout=5,
+            self._wait_for_postgres(
+                timeout=int(os.getenv("POSTGRES_WAIT_TIMEOUT", "30"))
             )
-            conn.close()
-
             logger.info("Local PostgreSQL is available")
             return True
         except Exception as e:

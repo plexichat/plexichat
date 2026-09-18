@@ -739,75 +739,32 @@ class TestPostgresFailedTransactionRecovery:
     """
 
     @pytest.fixture
-    def postgres_config(self):
-        """Setup PostgreSQL configuration if available."""
-        # Check if PostgreSQL configuration is available
-        pg_config = config.get("postgres")
-        if not pg_config:
-            pytest.skip("PostgreSQL configuration not available")
+    def postgres_db_with_table(self, postgres_db):
+        """A live PostgreSQL database with this class's table.
 
-        # Check if we can import pg8000
-        pytest.importorskip("pg8000")
-
-        return pg_config
-
-    @pytest.fixture
-    def postgres_db_with_table(self, postgres_config, setup_module):
-        """Create a PostgreSQL test database with a sample table."""
-        pytest.importorskip("pg8000")
-
-        # Use test database configuration
-        temp_dir = setup_module
-        config_path = str(temp_dir / "postgres_config.yaml")
-
-        # Setup config with PostgreSQL
-        default_config = {
-            "database": {
-                "type": "postgres",
-                "postgres": postgres_config,
-                "connection_pool": {
-                    "min_connections": 2,
-                    "max_connections": 10,
-                    "connect_timeout": 10,
-                },
-            }
-        }
-        config.setup(config_path=config_path, default_config=default_config)
-
-        db = Database()
-        try:
-            db.connect()
-        except Exception as e:
-            pytest.skip(f"Could not connect to PostgreSQL: {e}")
-
-        # Drop test table if exists (cleanup from previous runs)
-        db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
-
-        # Create test table
-        create_table_query = """
+        This class used to define its own ``postgres_config`` fixture, which
+        read a top-level ``config["postgres"]`` key. The shared fixture sets
+        the whole block under ``config["database"]["postgres"]`` instead, so
+        that read always came back empty and **all seven tests below skipped
+        forever** -- even against a live backend. Delegate to the shared
+        ``postgres_db`` (which connects and rebinds the ``Database``
+        singleton) and create only the table this class needs.
+        """
+        postgres_db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
+        postgres_db.execute("""
             CREATE TABLE test_transactions_postgres (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 value INTEGER DEFAULT 0
             )
-        """
-        db.execute(create_table_query)
-        db.close()
+        """)
 
-        yield config_path
+        yield postgres_db
 
-        # Cleanup after test
-        db = Database()
-        db.connect()
-        db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
-        db.close()
-
-        # Clean up config file
-        if os.path.exists(config_path):
-            try:
-                os.remove(config_path)
-            except OSError:
-                pass
+        try:
+            postgres_db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
+        except Exception:
+            pass
 
     def test_infailedsqltransaction_detection(self, postgres_db_with_table):
         """Test detection of InFailedSqlTransaction error by exception type."""
@@ -888,7 +845,13 @@ class TestPostgresFailedTransactionRecovery:
     def test_infailedsqltransaction_recover_from_failed_transaction_rollback(
         self, postgres_db_with_table
     ):
-        """Test that _recover_from_failed_transaction properly rolls back."""
+        """A failed outermost statement aborts AND resets the transaction.
+
+        The previous body called ``db._recover_from_failed_transaction()``,
+        a method that does not exist on ``Database`` -- this test had never
+        run, so the ``AttributeError`` went unnoticed. ``_validate_transaction_state``
+        is the real recovery entry point.
+        """
         pytest.importorskip("pg8000")
 
         db = Database()
@@ -910,10 +873,15 @@ class TestPostgresFailedTransactionRecovery:
                 (1, None, 100),
             )
 
-        # Call recovery directly
-        db._recover_from_failed_transaction()
+        # ``begin_transaction`` only issues a SAVEPOINT from depth 2, so the
+        # failure at depth 1 aborts the whole transaction. The depth must
+        # come back to 0: leaving it set would let the caller's next
+        # ``commit()`` silently no-op and lose the rows it wrote.
+        assert db._local.transaction_depth == 0
+        assert not db._local.in_transaction
 
-        # Verify state is reset
+        # Recovery is idempotent on an already-clean connection.
+        db._validate_transaction_state()
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
 
@@ -1082,17 +1050,26 @@ class TestPostgresFailedTransactionRecovery:
                 (1, None, 100),
             )
 
-        # Transaction is now failed
-        # Validate should trigger recovery
-        db._validate_transaction_state()
+        # The failure is contained: error cleanup rolls back to the savepoint
+        # the inner ``begin_transaction`` took, rather than aborting the whole
+        # chain, so the outer unit of work is still open. (The previous
+        # expectation here -- depth 0 -- described a full-chain rollback the
+        # implementation deliberately does not do; the assertion had never
+        # run.)
+        assert db._local.transaction_depth == 2
+        assert db._local.in_transaction
 
-        # After recovery, all nesting should be cleared
+        # Discarding the failed inner unit of work and committing then leaves
+        # exactly the outer row.
+        db.rollback()
+        assert db._local.transaction_depth == 1
+
+        db.commit()
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
 
-        # Data should be rolled back
         results = db.fetch_all("SELECT * FROM test_transactions_postgres")
-        assert len(results) == 0
+        assert [row["name"] for row in results] == ["outer"]
 
         db.close()
 
