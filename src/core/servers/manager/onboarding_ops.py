@@ -328,8 +328,10 @@ class OnboardingManager:
             params.append(position)
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
+            # Every statement below writes ``updated_at`` itself, so it must not
+            # also be a member of ``updates``: doing so emitted
+            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
+            # with "multiple assignments to same column".
             params.append(step_id)
 
             # Whitelist of allowed column names for UPDATE
@@ -339,7 +341,6 @@ class OnboardingManager:
                 "required",
                 "options",
                 "position",
-                "updated_at",
             }
             # Validate all column names in updates
             for update in updates:

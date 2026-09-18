@@ -436,8 +436,10 @@ class TemplateManager:
             params.append(1 if is_public else 0)
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
+            # Every statement below writes ``updated_at`` itself, so it must not
+            # also be a member of ``updates``: doing so emitted
+            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
+            # with "multiple assignments to same column".
             params.append(template.id)
 
             # Whitelist of allowed column names for UPDATE
@@ -448,7 +450,6 @@ class TemplateManager:
                 "server_id",
                 "category_id",
                 "enabled",
-                "updated_at",
             }
             # Validate all column names in updates
             for update in updates:

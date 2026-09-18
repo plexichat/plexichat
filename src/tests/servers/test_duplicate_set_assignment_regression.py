@@ -10,65 +10,34 @@ duplicate (the last assignment wins), but PostgreSQL rejects it with
 update failed outright on a Postgres deployment.
 
 The fix drops the redundant ``updated_at`` entry; the timestamp is already
-written by every statement. These tests capture the SQL actually executed and
-assert no statement assigns a column more than once, so the regression is
-caught on any backend (including the SQLite-only test run).
+written by every statement. The SQL-level assertion lives in
+``_conftest/sql_guard.py`` and is applied to every per-column builder by
+``test_update_builder_sql_guard.py``; these tests pin the two builders that
+actually carried the defect.
 """
 
-import re
 import time
 
-_SET_CLAUSE = re.compile(r"\bSET\b(.*?)(?:\bWHERE\b|$)", re.IGNORECASE | re.DOTALL)
-
-
-def _duplicate_set_columns(sql: str) -> list:
-    """Return columns assigned more than once in an UPDATE's SET clause."""
-    match = _SET_CLAUSE.search(sql)
-    if not match:
-        return []
-    seen = set()
-    duplicates = []
-    for assignment in match.group(1).split(","):
-        column = assignment.split("=", 1)[0].strip().lower()
-        if not column:
-            continue
-        if column in seen and column not in duplicates:
-            duplicates.append(column)
-        seen.add(column)
-    return duplicates
-
-
-def _capture_update_statements(executor, action) -> list:
-    """Run ``action`` and return the UPDATE statements it executed."""
-    statements = []
-    original = executor.execute
-
-    def _record(sql, params=None, *args, **kwargs):
-        statements.append(str(sql))
-        return original(sql, params, *args, **kwargs)
-
-    executor.execute = _record
-    try:
-        action()
-    finally:
-        executor.execute = original
-    return [sql for sql in statements if sql.lstrip().upper().startswith("UPDATE")]
+from src.tests._conftest.sql_guard import (
+    assert_no_duplicate_assignments,
+    capture_executed_sql,
+    update_statements,
+)
 
 
 def test_update_role_never_assigns_a_column_twice(server_with_members):
     """A rename must emit only single-assignment UPDATEs."""
     server, owner, _, _, _, admin_role, servers = server_with_members
 
-    statements = _capture_update_statements(
+    statements = capture_executed_sql(
         servers._db,
         lambda: servers.update_role(
             user_id=owner.id, role_id=admin_role.id, name="Super Admin"
         ),
     )
 
-    assert statements, "expected update_role to issue UPDATE statements"
-    for sql in statements:
-        assert _duplicate_set_columns(sql) == [], sql
+    assert update_statements(statements), "expected update_role to issue UPDATEs"
+    assert_no_duplicate_assignments(statements)
 
 
 def test_update_scheduled_event_never_assigns_a_column_twice(server_with_members):
@@ -84,13 +53,12 @@ def test_update_scheduled_event_never_assigns_a_column_twice(server_with_members
         location="Central Park",
     )
 
-    statements = _capture_update_statements(
+    statements = capture_executed_sql(
         servers._db,
         lambda: servers.update_scheduled_event(
             user_id=owner.id, event_id=event.id, name="Meetup 2"
         ),
     )
 
-    assert statements, "expected update_scheduled_event to issue UPDATE statements"
-    for sql in statements:
-        assert _duplicate_set_columns(sql) == [], sql
+    assert update_statements(statements), "expected update_scheduled_event UPDATEs"
+    assert_no_duplicate_assignments(statements)

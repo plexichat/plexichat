@@ -417,8 +417,10 @@ class ServerOpsMixin(ServerProtocol):
             }
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
+            # Every statement below writes ``updated_at`` itself, so it must not
+            # also be a member of ``updates``: doing so emitted
+            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
+            # with "multiple assignments to same column".
             params.append(server_id)
 
             allowed_columns = {
@@ -453,8 +455,6 @@ class ServerOpsMixin(ServerProtocol):
             }
             for update in updates:
                 col_name = update.split(" = ")[0]
-                if col_name == "updated_at":
-                    continue
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
 
