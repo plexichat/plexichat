@@ -63,6 +63,28 @@ _TOKEN_BUCKET_LUA = """
         """
 
 
+def _decode_script_scalar(value: Any) -> Any:
+    """Decode a value returned from a Lua script.
+
+    GLIDE hands Lua bulk strings back as ``bytes``, while the fake client
+    the unit suite uses returns ``str``. Comparing the raw result against
+    a string literal therefore read as ``False`` on a real server -- every
+    request was denied by a limiter that was working correctly -- and
+    ``float(b"1.5")`` raised instead. Normalise before interpreting.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8")
+    return value
+
+
+def _script_truth(value: Any) -> bool:
+    """Interpret a Lua boolean as the script serialised it (``tostring``)."""
+    decoded = _decode_script_scalar(value)
+    if isinstance(decoded, bool):
+        return decoded
+    return str(decoded).strip().lower() in {"true", "1"}
+
+
 class ValkeyStorage(RateLimitStorage):
     """Distributed Valkey storage for rate limit buckets."""
 
@@ -341,9 +363,9 @@ class ValkeyStorage(RateLimitStorage):
                 args=[capacity, refill_rate, cost, ttl, now],
             )
 
-            allowed = result[0] == "true"
-            remaining = int(float(result[1]))
-            reset_after = float(result[2])
+            allowed = _script_truth(result[0])
+            remaining = int(float(_decode_script_scalar(result[1])))
+            reset_after = float(_decode_script_scalar(result[2]))
 
             return allowed, remaining, reset_after
         except Exception as exc:
@@ -523,9 +545,9 @@ class ValkeyStorage(RateLimitStorage):
             result = await client.aeval_lua(
                 script, keys=[full_key], args=[capacity, refill_rate, cost, ttl, now]
             )
-            allowed = result[0] == "true"
-            remaining = int(float(result[1]))
-            reset_after = float(result[2])
+            allowed = _script_truth(result[0])
+            remaining = int(float(_decode_script_scalar(result[1])))
+            reset_after = float(_decode_script_scalar(result[2]))
             return allowed, remaining, reset_after
         except Exception as exc:
             return self._backend_error_outcome(exc, capacity)
