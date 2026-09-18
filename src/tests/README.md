@@ -215,6 +215,33 @@ pytest -m "not slow"
 pytest -m "auth and not slow"
 ```
 
+### Running the Database-Backed Suites
+
+Most of the suite runs against SQLite and an in-memory Valkey double, so
+backend-specific behaviour -- dialect SQL, Lua scripts, driver type coercion
+-- only ever shows up against the real thing. Two throwaway containers cover
+it:
+
+```bash
+docker run -d --name plexichat-test-pg -p 5432:5432 \
+    -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=test_db postgres:15-alpine
+docker run -d --name plexichat-test-valkey -p 6379:6379 \
+    valkey/valkey:8-alpine
+
+USE_DOCKER=false POSTGRES_HOST=localhost VALKEY_HOST=localhost \
+    pytest -m "not slow and not performance" \
+    src/tests/test_postgres_docker.py src/tests/test_transactions.py \
+    src/tests/test_database.py src/tests/test_production_simulation.py \
+    src/tests/test_valkey_docker.py
+```
+
+`USE_DOCKER=false` tells the fixtures (`fixtures/postgres_docker.py`,
+`fixtures/valkey_docker.py`) to attach to those servers rather than start
+their own. With no reachable backend the tests **skip visibly** -- and the
+`test:database_backends` CI job fails the pipeline if any of them skipped,
+so a missing service can never masquerade as a green run.
+
 ### Parallel Execution
 
 ```bash

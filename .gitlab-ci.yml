@@ -325,6 +325,66 @@ test:pytest:
       - test-results.xml
     expire_in: 1 week
 
+# Dedicated run of the database-backed suites against real services.
+#
+# ``test:pytest`` runs everything else, but with no backend reachable the
+# Postgres/Valkey fixtures skip and the job still goes green -- which is how
+# the SQL bugs these suites exist to catch rotted unnoticed. Here the
+# services are real, ``USE_DOCKER=false`` tells the fixtures to attach to
+# them instead of spawning containers, and a failure fails the pipeline.
+test:database_backends:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  services:
+    - name: postgres:15-alpine
+      alias: postgres
+      variables:
+        POSTGRES_USER: postgres
+        # Throwaway service container credentials, not a real secret.
+        POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        POSTGRES_DB: test_db
+    - name: valkey/valkey:8-alpine
+      alias: valkey
+  variables:
+    USE_DOCKER: "false"
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+    POSTGRES_DB: test_db
+    VALKEY_HOST: valkey
+    VALKEY_PORT: "6379"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    # ``-m`` overrides pytest.ini's addopts deselect so the
+    # ``production_simulation`` cases (which are exactly the multi-worker
+    # ones) run here. ``slow``/``performance`` stay out: they are duration
+    # tests, not correctness ones, and have their own gate.
+    - >
+      python -m pytest -q -m "not slow and not performance"
+      --durations=25 --junitxml=test-results-db.xml
+      src/tests/test_postgres_docker.py
+      src/tests/test_transactions.py
+      src/tests/test_database.py
+      src/tests/test_production_simulation.py
+      src/tests/test_valkey_docker.py
+    # These suites skip silently when a backend is missing. A skip here
+    # means the services above did not come up, which must be a failure
+    # rather than a green pipeline with no coverage.
+    - |
+      if grep -qE 'skipped="[1-9]' test-results-db.xml; then
+        echo "FATAL: database-backed tests skipped -- the postgres/valkey services were not reachable" >&2
+        exit 1
+      fi
+  artifacts:
+    when: always
+    reports:
+      junit: test-results-db.xml
+    paths:
+      - test-results-db.xml
+    expire_in: 1 week
+
 # =========================================================
 # PERFORMANCE STAGE (test-duration gate)
 # =========================================================
