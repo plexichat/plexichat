@@ -1,3 +1,11 @@
+# Single source of truth for bandit: the pre-commit hook runs
+# ``bandit -c pyproject.toml``. A second config (``.bandit``) used to sit
+# beside this one and the two drifted -- different skips (B101 was skipped
+# there but not here), a different ``severity`` spelling, and different
+# ``targets`` -- so which rules actually ran depended on how bandit was
+# invoked. Keep bandit settings here and nowhere else; src/tests/security/
+# test_bandit_config.py fails if a second file reappears or the hook stops
+# pointing at this one.
 [tool.bandit]
 skips = ["B601"]
 confidence = "HIGH"
@@ -7,10 +15,10 @@ severity = "MEDIUM"
 # previous spelling left src/tests in scope and surfaced test-only findings
 # (e.g. the SHA1 helpers in test_valkey.py).
 exclude_dirs = [".venv", "venv", ".pytest_cache", "test_artifacts", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
-# Targets limited to src/; test dirs excluded above.
+# The entry point is scanned alongside src/; test dirs are excluded above.
 # B101 (assert) is intentionally NOT globally skipped — assert in production
 # code is a security concern. Use `# nosec B101` for legitimate uses.
-targets = ["src"]
+targets = ["src", "main.py"]
 
 # Keep test-run caches/artifacts out of the repo root.
 [tool.coverage.run]

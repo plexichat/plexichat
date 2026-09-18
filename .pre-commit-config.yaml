@@ -36,7 +36,7 @@ repos:
         name: bandit
         entry: bandit
         language: system
-        args: ["-c", ".bandit", "--severity-level", "medium", "--confidence-level", "high", "--baseline", ".bandit-baseline.json"]
+        args: ["-c", "pyproject.toml", "--severity-level", "medium", "--confidence-level", "high", "--baseline", ".bandit-baseline.json"]
         types: [python]
         exclude: ^src/tests/
 
