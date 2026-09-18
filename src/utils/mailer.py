@@ -1,5 +1,13 @@
 """
 Email utilities for Plexichat.
+
+Deliberately NOT named ``email.py``: ``src/utils`` is an import root (it is
+on ``pytest.ini``'s ``pythonpath``), so a module called ``email`` there
+shadows the standard-library ``email`` *package*. Any interpreter that
+imports ``smtplib`` before the stdlib package does -- a freshly spawned
+``multiprocessing`` child, for one -- then resolves ``email.utils`` back to
+this file and dies with ``ModuleNotFoundError: No module named
+'email.utils'``, because this module is not a package.
 """
 
 import smtplib

@@ -214,7 +214,7 @@ def initialize_modules(
     email_sender = None
     smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
     if email_config.get("smtp_host") and smtp_password:
-        from src.utils.email import SMTPEmailSender
+        from src.utils.mailer import SMTPEmailSender
 
         email_sender = SMTPEmailSender(
             host=email_config["smtp_host"],

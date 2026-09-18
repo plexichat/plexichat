@@ -1,10 +1,10 @@
-"""Targeted tests for ``src.utils.email.SMTPEmailSender``."""
+"""Targeted tests for ``src.utils.mailer.SMTPEmailSender``."""
 
 import smtplib
 
 import pytest
 
-from src.utils.email import SMTPEmailSender
+from src.utils.mailer import SMTPEmailSender
 
 
 class FakeSMTP:
@@ -115,7 +115,7 @@ def test_smtp_connection_error_returns_false(fake_smtp, monkeypatch):
 
 @pytest.mark.parametrize("fail_stage", ["starttls", "login", "send"])
 def test_smtp_stage_failures_return_false(fake_smtp, monkeypatch, fail_stage):
-    import src.utils.email as _email
+    import src.utils.mailer as _email
 
     class TlsFail(FakeSMTP):
         def starttls(self, context=None):

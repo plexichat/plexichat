@@ -4,7 +4,7 @@ import smtplib
 
 import pytest
 
-from src.utils.email import SMTPEmailSender
+from src.utils.mailer import SMTPEmailSender
 
 
 class FakeSMTP:
