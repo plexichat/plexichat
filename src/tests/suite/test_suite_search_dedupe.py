@@ -172,3 +172,39 @@ def test_list_recent_total_counts_gathered_items_not_page(monkeypatch):
     assert len(result["items"]) == 1
     assert result["total"] == 2
     assert result["hasMore"] is True
+
+
+def test_list_shared_total_counts_gathered_items_not_page(monkeypatch):
+    """Same ``total`` contract for ``GET /suite/home/shared``."""
+    rows = [_stash_row(7, 200), _stash_row(9, 100)]
+
+    class FakeStashManager:
+        def list_items(self, user_id, limit=50, search=None, **kwargs):
+            return [dict(r) for r in rows], len(rows)
+
+    class FakeSumManager:
+        def list_workbooks(self, user_id, limit=50, offset=0, search=None, **kwargs):
+            return [], 0
+
+    monkeypatch.setattr(
+        registry_routes,
+        "_suite_managers",
+        lambda: (FakeStashManager(), FakeSumManager()),
+    )
+    monkeypatch.setattr(registry_routes, "_domain_available", lambda capability: True)
+    monkeypatch.setattr(registry_routes, "_member_server_ids", lambda user_id: [])
+    monkeypatch.setattr(
+        registry_routes, "_shared_artifacts", lambda *args, **kwargs: []
+    )
+
+    result = asyncio.run(
+        registry_routes.list_shared_suite_items(
+            limit=1,
+            current_user=types.SimpleNamespace(user_id=42),
+        )
+    )
+    assert len(result["items"]) == 1
+    assert result["total"] == 2
+    assert result["hasMore"] is True
+    # Newest first: the row with updated_at=200 wins the single slot.
+    assert result["items"][0]["id"] == "7"

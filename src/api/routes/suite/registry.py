@@ -293,7 +293,14 @@ def _shared_artifacts(
 def _shared_items(
     user_id: int, limit: int, search: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Gather server-scoped Stash, Sum, and authorized artifact items."""
+    """Gather server-scoped Stash, Sum, and authorized artifact items.
+
+    Returns the gathered matches newest-first without truncating to ``limit``.
+    Callers bound to the page and report ``total``/``hasMore`` from the
+    gathered count, matching the ``/suite/home/recent`` and ``/suite/search``
+    contract. Truncating here would silently drop overflow and force callers
+    to report ``hasMore=False`` alongside a truncated ``total``.
+    """
     stash_manager, sum_manager = _suite_managers()
     server_ids = _member_server_ids(user_id)
     items: List[Dict[str, Any]] = []
@@ -309,7 +316,11 @@ def _shared_items(
         )
         items.extend(_sum_home_item(item) for item in sum_items)
     items.extend(_shared_artifacts(user_id, server_ids, limit, search=search))
-    return _sort_and_bound(items, limit)
+    return sorted(
+        items,
+        key=lambda item: int(item.get("updatedAt") or item.get("createdAt") or 0),
+        reverse=True,
+    )
 
 
 @router.get(
@@ -438,7 +449,13 @@ async def list_shared_suite_items(
 ) -> Dict[str, Any]:
     """Return server-scoped items after each domain's authorization checks."""
     items = _shared_items(current_user.user_id, int(limit))
-    return {"schemaVersion": 1, "items": items, "total": len(items), "hasMore": False}
+    bounded_items = _sort_and_bound(items, int(limit))
+    return {
+        "schemaVersion": 1,
+        "items": bounded_items,
+        "total": len(items),
+        "hasMore": len(items) > len(bounded_items),
+    }
 
 
 def _activity_summary(
