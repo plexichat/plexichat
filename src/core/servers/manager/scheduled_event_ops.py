@@ -295,10 +295,10 @@ class ScheduledEventManager:
             changes["status"] = {"old": event.status.value, "new": status.value}
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
-            params.append(event_id)
-
+            # Every statement below already writes ``updated_at``, so it must
+            # not also be a member of ``updates``: doing so emitted
+            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
+            # with "multiple assignments to same column".
             now = self._get_timestamp()
             for i, update in enumerate(updates):
                 col_name = update.split(" = ")[0]

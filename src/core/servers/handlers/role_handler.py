@@ -227,11 +227,11 @@ class RoleHandler:
             changes["position"] = {"old": role.position, "new": position}
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self.manager._get_timestamp())
-            params.append(role_id)
-
-            # Whitelist of allowed column names for UPDATE
+            # Whitelist of allowed column names for UPDATE. ``updated_at`` is
+            # deliberately absent: every statement below already writes it, so
+            # keeping an ``updated_at = ?`` entry here would emit
+            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
+            # with "multiple assignments to same column".
             allowed_columns = {
                 "name",
                 "color",
@@ -239,7 +239,6 @@ class RoleHandler:
                 "mentionable",
                 "permissions",
                 "position",
-                "updated_at",
             }
             # Validate all column names in updates
             for update in updates:
