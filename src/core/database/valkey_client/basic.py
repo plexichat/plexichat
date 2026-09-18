@@ -3,7 +3,7 @@ from typing import Any, Optional, cast
 
 import utils.logger as logger
 
-from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue
+from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue, encode_scalar
 
 
 class BasicMixin(ValkeyClientBase):
@@ -14,11 +14,6 @@ class BasicMixin(ValkeyClientBase):
     uses the ``glide`` handle. The ``a``-prefixed methods are the ones
     safe to call from the event loop.
     """
-
-    @staticmethod
-    def _encode_scalar(value: ValkeyValue) -> object:
-        """GLIDE takes bytes for text values; leave binary/numeric as-is."""
-        return value.encode("utf-8") if isinstance(value, str) else value
 
     @staticmethod
     def _expiry_kwargs(glide_mod: Any, ttl: Optional[int]) -> dict:
@@ -34,7 +29,7 @@ class BasicMixin(ValkeyClientBase):
 
         try:
             kwargs = self._expiry_kwargs(glide_sync, ttl)
-            self._client.set(full_key, self._encode_scalar(value), **kwargs)
+            self._client.set(full_key, encode_scalar(value), **kwargs)
             logger.debug(f"GLIDE SET: {key}")
             return True
         except Exception as e:
@@ -51,7 +46,7 @@ class BasicMixin(ValkeyClientBase):
 
         try:
             kwargs = self._expiry_kwargs(glide, ttl)
-            await aclient.set(full_key, self._encode_scalar(value), **kwargs)
+            await aclient.set(full_key, encode_scalar(value), **kwargs)
             logger.debug(f"GLIDE SET (async): {key}")
             return True
         except Exception as e:

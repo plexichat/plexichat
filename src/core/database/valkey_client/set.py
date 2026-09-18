@@ -2,7 +2,7 @@ from typing import Any, List, Set
 
 import utils.logger as logger
 
-from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue
+from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue, encode_scalar
 
 
 class SetMixin(ValkeyClientBase):
@@ -10,7 +10,7 @@ class SetMixin(ValkeyClientBase):
 
     @staticmethod
     def _encode_set_values(values: Any) -> List[Any]:
-        return [v.encode("utf-8") if isinstance(v, str) else v for v in values]
+        return [encode_scalar(v) for v in values]
 
     def sadd(self, key: str, *values: ValkeyValue) -> int:
         self._ensure_connected()
@@ -85,7 +85,7 @@ class SetMixin(ValkeyClientBase):
         client = self._client
         assert client is not None
         full_key = self._prefixed_key(self._sanitize_key(key))
-        val: object = value.encode("utf-8") if isinstance(value, str) else value
+        val = encode_scalar(value)
 
         try:
             return bool(client.sismember(full_key, val))
@@ -96,7 +96,7 @@ class SetMixin(ValkeyClientBase):
     async def asismember(self, key: str, value: ValkeyValue) -> bool:
         aclient = self._ensure_aconnected()
         full_key = self._prefixed_key(self._sanitize_key(key))
-        val: object = value.encode("utf-8") if isinstance(value, str) else value
+        val = encode_scalar(value)
 
         try:
             return bool(await aclient.sismember(full_key, val))

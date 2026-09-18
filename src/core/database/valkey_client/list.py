@@ -2,7 +2,7 @@ from typing import Any, List, Optional
 
 import utils.logger as logger
 
-from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue
+from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue, encode_scalar
 
 
 class ListMixin(ValkeyClientBase):
@@ -10,7 +10,7 @@ class ListMixin(ValkeyClientBase):
 
     @staticmethod
     def _encode_list_values(values: Any) -> List[Any]:
-        return [v.encode("utf-8") if isinstance(v, str) else v for v in values]
+        return [encode_scalar(v) for v in values]
 
     def lpush(self, key: str, *values: ValkeyValue) -> int:
         self._ensure_connected()

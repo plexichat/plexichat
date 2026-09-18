@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 import utils.logger as logger
 
-from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue
+from .base import ValkeyClientBase, ValkeyOperationError, ValkeyValue, encode_scalar
 
 
 class HashMixin(ValkeyClientBase):
@@ -10,15 +10,12 @@ class HashMixin(ValkeyClientBase):
 
     @staticmethod
     def _encode_mapping(mapping: Dict[str, ValkeyValue]) -> Dict[str, Any]:
-        return {
-            k: v.encode("utf-8") if isinstance(v, str) else v
-            for k, v in mapping.items()
-        }
+        return {k: encode_scalar(v) for k, v in mapping.items()}
 
     def hset(self, name: str, key: str, value: ValkeyValue) -> int:
         self._ensure_connected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        val: object = value.encode("utf-8") if isinstance(value, str) else value
+        val = encode_scalar(value)
 
         try:
             result = self._client.hset(full_name, {key: val})
@@ -31,7 +28,7 @@ class HashMixin(ValkeyClientBase):
     async def ahset(self, name: str, key: str, value: ValkeyValue) -> int:
         aclient = self._ensure_aconnected()
         full_name = self._prefixed_key(self._sanitize_key(name))
-        val: object = value.encode("utf-8") if isinstance(value, str) else value
+        val = encode_scalar(value)
 
         try:
             result = await aclient.hset(full_name, {key: val})

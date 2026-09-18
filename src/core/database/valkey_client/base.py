@@ -21,6 +21,30 @@ class EnhancedJSONEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def encode_scalar(value: Any) -> Any:
+    """Coerce a value into something GLIDE can actually send.
+
+    GLIDE's FFI layer accepts only ``str``/``bytes`` as bulk-string
+    arguments; anything else raises ``TypeError: Unsupported argument
+    type: <class 'int'>``. ``ValkeyValue`` is declared as
+    ``Union[str, bytes, int, float]`` and ``eval_lua`` takes arbitrary
+    arguments, so ints and floats reach the driver in normal use.
+
+    The in-memory double used by the unit suite accepts any type (it
+    stringifies what it is given), which is why this only ever blew up
+    against a real server. Normalising here keeps every call site on one
+    code path: bytes pass through untouched, str/int/float/bool/str-like
+    values become UTF-8 bytes.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value)
+    if isinstance(value, (str, int, float, bool)):
+        return str(value).encode("utf-8")
+    # Unknown types are left alone so the driver reports them as it always
+    # did, rather than this helper inventing a string representation.
+    return value
+
+
 class ValkeyError(Exception):
     pass
 
@@ -302,7 +326,7 @@ class ValkeyClientBase:
         assert client is not None
 
         resolved_keys: List[str] = keys or []
-        resolved_args: List[Any] = args or []
+        resolved_args: List[Any] = [encode_scalar(a) for a in (args or [])]
         prefixed_keys = [self._prefixed_key(k) for k in resolved_keys]
 
         try:
@@ -326,7 +350,7 @@ class ValkeyClientBase:
         aclient = self._ensure_aconnected()
 
         resolved_keys: List[str] = keys or []
-        resolved_args: List[Any] = args or []
+        resolved_args: List[Any] = [encode_scalar(a) for a in (args or [])]
         prefixed_keys = [self._prefixed_key(k) for k in resolved_keys]
 
         try:
