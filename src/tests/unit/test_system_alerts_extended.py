@@ -75,16 +75,20 @@ def test_details_serialized(monkeypatch, details):
         assert json.loads(params[3]) == details
 
 
-def test_db_execute_error_swallowed(monkeypatch):
+def test_db_execute_error_swallowed(monkeypatch, caplog):
     class ExplodingDb:
         def execute(self, sql, params):
             raise RuntimeError("db down")
 
     monkeypatch.setattr("src.api.get_db", lambda: ExplodingDb())
-    assert record_system_alert("x") is None  # must not raise
+    with caplog.at_level("WARNING", logger="src.utils.system_alerts"):
+        assert record_system_alert("x") is None  # must not raise
+    assert any("failed to record" in record.message for record in caplog.records), (
+        "lost alert must be logged instead of silently dropped"
+    )
 
 
-def test_non_serializable_details_swallowed(monkeypatch):
+def test_non_serializable_details_swallowed(monkeypatch, caplog):
     db = FakeDb()
     monkeypatch.setattr("src.api.get_db", lambda: db)
 
@@ -95,6 +99,9 @@ def test_non_serializable_details_swallowed(monkeypatch):
         "x", {"bad": NotSerializable()}
     )  # json.dumps fails -> swallowed
     assert db.calls == []
+    assert any("failed to record" in record.message for record in caplog.records), (
+        "serialization failure must be logged instead of silently dropped"
+    )
 
 
 def test_default_source_and_severity(monkeypatch):
@@ -104,3 +111,11 @@ def test_default_source_and_severity(monkeypatch):
     _, params = db.calls[0]
     assert params[0] == "cross_worker"
     assert params[2] == "info"
+
+
+def test_success_path_logs_no_warning(monkeypatch, caplog):
+    db = FakeDb()
+    monkeypatch.setattr("src.api.get_db", lambda: db)
+    with caplog.at_level("WARNING", logger="src.utils.system_alerts"):
+        record_system_alert("heartbeat", {"poll_count": 1})
+    assert caplog.records == []
