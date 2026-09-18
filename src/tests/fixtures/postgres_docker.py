@@ -383,8 +383,20 @@ def postgres_db(postgres_config):
     # Apply configuration
     config.set("database", postgres_config)
 
-    # Create and connect database
+    # ``Database`` is a process-wide singleton whose engine is bound to
+    # whatever configuration the first construction saw. A test that ran
+    # earlier and used the SQLite ``db`` fixture has already bound it to
+    # SQLite, and that stale instance then rejects the PostgreSQL-only DDL
+    # below ("near \"CASCADE\": syntax error", "no such table: pg_tables")
+    # because it is still talking to the wrong backend. Rebuild the singleton
+    # whenever it is not already PostgreSQL-bound -- the mirror image of what
+    # the ``db`` fixture does when it finds a postgres-bound instance.
     db = Database()
+    if getattr(db, "type", "sqlite") != "postgres":
+        Database.reset()
+        db = Database()
+
+    # Create and connect database
     try:
         db.connect()
     except Exception as e:

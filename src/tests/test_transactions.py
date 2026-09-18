@@ -1363,15 +1363,37 @@ class TestPostgresErrorRecoveryReal:
                 ("outer", "duplicate@example.com", 50),  # Duplicate username
             )
 
-        # Recovery should reset all nesting
+        # Recovery unwinds the *inner* level only. The statement failed inside
+        # a savepoint, so the connection is usable again without losing the
+        # enclosing transaction -- and a healthy connection must not be torn
+        # down by the state probe.
         db._validate_transaction_state()
+        assert db._local.transaction_depth == 2, "outer transaction + savepoint"
+        assert db._local.in_transaction
 
+        usernames = {
+            row["username"]
+            for row in db.fetch_all("SELECT username FROM test_constraints")
+        }
+        # Everything written since the savepoint (the inner row) is undone...
+        assert "inner" not in usernames
+        # ...while the outer transaction's row is still uncommitted but alive.
+        assert "outer" in usernames
+
+        # Releasing the savepoint returns to the outer transaction; committing
+        # it closes the whole chain.
+        db.commit()
+        assert db._local.transaction_depth == 1
+        db.commit()
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
 
-        # Verify no data was committed
-        results = db.fetch_all("SELECT * FROM test_constraints")
-        assert len(results) == 0
+        usernames = {
+            row["username"]
+            for row in db.fetch_all("SELECT username FROM test_constraints")
+        }
+        # The duplicate insert that triggered the error never took effect.
+        assert usernames == {"outer"}
 
         db.close()
 
