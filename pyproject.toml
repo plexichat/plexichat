@@ -2,7 +2,11 @@
 skips = ["B601"]
 confidence = "HIGH"
 severity = "MEDIUM"
-exclude = [".venv", "venv", ".pytest_cache", "test_artifacts", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
+# Bandit reads this key as ``exclude_dirs`` (the ``exclude`` spelling is only
+# honoured by the ``--exclude`` CLI flag / a ``.bandit`` INI key), so the
+# previous spelling left src/tests in scope and surfaced test-only findings
+# (e.g. the SHA1 helpers in test_valkey.py).
+exclude_dirs = [".venv", "venv", ".pytest_cache", "test_artifacts", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
 # Targets limited to src/; test dirs excluded above.
 # B101 (assert) is intentionally NOT globally skipped — assert in production
 # code is a security concern. Use `# nosec B101` for legitimate uses.
