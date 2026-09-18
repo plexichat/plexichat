@@ -295,20 +295,38 @@ class ScheduledEventManager:
             changes["status"] = {"old": event.status.value, "new": status.value}
 
         if updates:
-            # Every statement below already writes ``updated_at``, so it must
-            # not also be a member of ``updates``: doing so emitted
-            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
-            # with "multiple assignments to same column".
-            now = self._get_timestamp()
-            for i, update in enumerate(updates):
+            # Only these columns are ever appended to ``updates`` above, so
+            # the allow-list stays in sync with the builder by construction.
+            allowed_columns = {
+                "name",
+                "description",
+                "start_time",
+                "end_time",
+                "channel_id",
+                "location",
+                "image_url",
+                "status",
+            }
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
-                value = params[i]
-                query = (
-                    "UPDATE srv_scheduled_events SET "
-                    + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"
-                )
-                self._db.execute(query, (value, now, event_id))
+                if col_name not in allowed_columns:
+                    raise ValueError(f"Invalid column name: {col_name}")
+                set_columns.append(col_name)
+                set_params.append(value)
+            now = self._get_timestamp()
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_scheduled_events SET " + set_clause + " WHERE id = ?"
+            self._db.execute(query, (*set_params, event_id))
 
             self._log_audit(
                 event.server_id,
@@ -451,10 +469,11 @@ class ScheduledEventManager:
             updates.append("going_count = going_count + 1")
 
         if updates:
-            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
-            for update in updates:
-                query = "UPDATE srv_scheduled_events SET " + update + " WHERE id = ?"
-                self._db.execute(query, (event_id,))
+            # One atomic statement: the decrement and the increment land
+            # together, so a failure between them cannot skew the counts.
+            set_clause = ", ".join(updates)
+            query = "UPDATE srv_scheduled_events SET " + set_clause + " WHERE id = ?"
+            self._db.execute(query, (event_id,))
 
     def generate_recurring_instances(
         self, event_id: int, user_id: int, count: int = 10

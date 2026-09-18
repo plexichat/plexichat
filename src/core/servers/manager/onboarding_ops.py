@@ -328,13 +328,8 @@ class OnboardingManager:
             params.append(position)
 
         if updates:
-            # Every statement below writes ``updated_at`` itself, so it must not
-            # also be a member of ``updates``: doing so emitted
-            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
-            # with "multiple assignments to same column".
-            params.append(step_id)
-
-            # Whitelist of allowed column names for UPDATE
+            # Only these columns are ever appended to ``updates`` above, so
+            # the allow-list stays in sync with the builder by construction.
             allowed_columns = {
                 "title",
                 "description",
@@ -342,45 +337,26 @@ class OnboardingManager:
                 "options",
                 "position",
             }
-            # Validate all column names in updates
-            for update in updates:
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
-
-            # Avoid dynamic UPDATE to satisfy bandit - use if-else for each possible column
+                set_columns.append(col_name)
+                set_params.append(value)
             now = self._get_timestamp()
-            for update in updates:
-                if "title = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_onboarding_steps SET title = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, step_id),
-                    )
-                elif "description = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_onboarding_steps SET description = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, step_id),
-                    )
-                elif "required = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_onboarding_steps SET required = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, step_id),
-                    )
-                elif "options = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_onboarding_steps SET options = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, step_id),
-                    )
-                elif "position = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_onboarding_steps SET position = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, step_id),
-                    )
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_onboarding_steps SET " + set_clause + " WHERE id = ?"
+            self._db.execute(query, (*set_params, step_id))
 
         result = self.get_onboarding_step(step_id, user_id)
         assert result is not None  # Should exist since we just updated it

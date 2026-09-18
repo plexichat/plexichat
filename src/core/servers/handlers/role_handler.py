@@ -240,23 +240,27 @@ class RoleHandler:
                 "permissions",
                 "position",
             }
-            # Validate all column names in updates
-            for update in updates:
+
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
-
-            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
+                set_columns.append(col_name)
+                set_params.append(value)
             now = self.manager._get_timestamp()
-            for i, update in enumerate(updates):
-                col_name = update.split(" = ")[0]
-                value = params[i]
-                query = (
-                    "UPDATE srv_roles SET "
-                    + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"
-                )
-                self.db.execute(query, (value, now, role_id))
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_roles SET " + set_clause + " WHERE id = ?"
+            self.db.execute(query, (*set_params, role_id))
 
             self.manager._log_audit(
                 role.server_id,
