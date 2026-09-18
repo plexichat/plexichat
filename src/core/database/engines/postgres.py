@@ -64,6 +64,47 @@ def _column_names(cursor: Any) -> List[str]:
     return [column[0] for column in description]
 
 
+def _is_integrity_violation(exc: BaseException) -> bool:
+    """True when ``exc`` is a PostgreSQL integrity-constraint violation.
+
+    SQLSTATE class 23 covers UNIQUE, NOT NULL, CHECK, FOREIGN KEY and
+    exclusion violations. pg8000 attaches the server's structured error
+    fields to the exception's first argument, so the code is read from there;
+    the class-name check covers an already-normalised error.
+    """
+    args = getattr(exc, "args", None)
+    payload = args[0] if args else None
+    if isinstance(payload, dict):
+        code = payload.get("C")
+        if isinstance(code, str):
+            return code.startswith("23")
+    return type(exc).__name__ in ("IntegrityError", "UniqueViolation")
+
+
+def _normalize_driver_error(exc: BaseException) -> None:
+    """Re-raise a constraint violation as the DB-API ``IntegrityError``.
+
+    pg8000's own ``IntegrityError`` docstring states the class is "not
+    currently raised by pg8000": every SQL error — integrity violations
+    included — surfaces as the base ``DatabaseError``. Callers written
+    against DB-API 2.0, and against psycopg (the driver this adapter
+    replaced), catch ``IntegrityError`` for UNIQUE/NOT NULL/CHECK/FOREIGN
+    KEY failures; without normalisation that handling silently misses on
+    PostgreSQL while working on SQLite. ``IntegrityError`` subclasses
+    ``DatabaseError``, so handlers catching the base class are unaffected.
+
+    Returns normally when ``exc`` is not an integrity violation, so callers
+    can use it as a guard immediately before re-raising.
+    """
+    if not _is_integrity_violation(exc):
+        return
+    try:
+        import pg8000.dbapi
+    except ImportError:  # pragma: no cover - the connection needs the driver
+        return
+    raise pg8000.dbapi.IntegrityError(*exc.args) from exc
+
+
 class _Pg8000Cursor:
     """DB-API cursor adapter that yields :class:`DictRow` instead of tuples.
 
@@ -83,6 +124,22 @@ class _Pg8000Cursor:
         if not columns:
             return row
         return DictRow(row, columns)
+
+    def execute(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        """Delegate, normalising constraint violations (see module helper)."""
+        try:
+            return self._cursor.execute(operation, *args, **kwargs)
+        except Exception as e:
+            _normalize_driver_error(e)
+            raise
+
+    def executemany(self, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        """Delegate, normalising constraint violations (see module helper)."""
+        try:
+            return self._cursor.executemany(operation, *args, **kwargs)
+        except Exception as e:
+            _normalize_driver_error(e)
+            raise
 
     def fetchone(self) -> Any:
         return self._wrap(self._cursor.fetchone())
