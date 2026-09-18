@@ -51,6 +51,16 @@ from src.tests.fixtures.postgres_docker import (  # noqa: F401
     postgres_manager,
 )
 
+# Valkey Docker fixtures, re-exported for the same reason: without a live
+# server the Valkey-backed tests skip visibly ("Valkey not available") and
+# run wherever one exists (CI service container, local Docker, ...).
+from src.tests.fixtures.valkey_docker import (  # noqa: F401
+    async_valkey_client,
+    valkey_client,
+    valkey_config,
+    valkey_manager,
+)
+
 __all__ = [
     "config_env",
     "DEFAULT_TEST_CONFIG",
