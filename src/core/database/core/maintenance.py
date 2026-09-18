@@ -94,7 +94,7 @@ class DatabaseMaintenanceMixin:
                 if conn and getattr(conn, "closed", 0) > 0:
                     self.transaction_depth = 0
                     self.in_transaction = False
-                elif conn and self.transaction_depth > 0:
+                elif conn and self.transaction_depth > 1:
                     try:
                         if cursor is not None:
                             cursor.execute(
@@ -125,6 +125,27 @@ class DatabaseMaintenanceMixin:
                             "Savepoint rollback failed; the outer transaction "
                             f"was fully rolled back: {rb_e}"
                         )
+                elif conn and self.transaction_depth == 1:
+                    # Outermost transaction: ``begin_transaction`` only issues
+                    # a SAVEPOINT for depth >= 2, so ``ROLLBACK TO SAVEPOINT
+                    # sp_1`` does not exist and itself fails with 3B001 -- the
+                    # recovery below then masked the ORIGINAL error with a
+                    # RuntimeError, so callers never saw the failure they
+                    # caused. PostgreSQL also refuses to serve further
+                    # statements (25P02) until the aborted transaction is
+                    # closed, so a full rollback is the only recovery. Reset
+                    # the depth so the caller's next ``commit()`` cannot
+                    # silently no-op (partial-commit data loss), and let the
+                    # original error propagate unchanged.
+                    try:
+                        conn.rollback()
+                    except Exception as full_rb_e:
+                        logger.error(
+                            f"Full rollback also failed during cleanup: {full_rb_e}"
+                        )
+                    finally:
+                        self.transaction_depth = 0
+                        self.in_transaction = False
                 elif conn:
                     conn.rollback()
                     self.in_transaction = False
