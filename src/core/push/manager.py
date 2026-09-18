@@ -8,6 +8,7 @@ and Apple Push Notification service.
 
 import importlib
 import json
+import threading
 import time
 from typing import Optional, List, Dict, Any, cast
 
@@ -55,8 +56,8 @@ class PushManager:
                 "vapid_subject"
             ):
                 self._vapid_available = True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Push service availability probe failed: {e}")
 
     def _ensure_push_token_columns(self) -> None:
         """Add p256dh/auth/token_index columns for Web Push / encryption
@@ -73,10 +74,10 @@ class PushManager:
                 continue
             try:
                 self._db.execute(f"ALTER TABLE push_tokens ADD COLUMN {column} TEXT")
-            except Exception:
+            except Exception as e:
                 # Another process may have added it concurrently, or the
                 # table does not exist yet — either way it is safe to ignore.
-                pass
+                logger.debug(f"Push token column {column!r} not added: {e}")
 
     def _migrate_legacy_token_rows(self) -> None:
         """Re-envelope legacy plaintext token rows (H3 hardening).
@@ -364,8 +365,8 @@ class PushManager:
                 settings = self._notifications.get_notification_settings(user_id)
                 if not settings.mobile_push:
                     return 0
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Push settings lookup failed, delivering anyway: {e}")
 
         sent_count = 0
         invalid_tokens = []
@@ -651,33 +652,38 @@ class PushManager:
                 return None
 
             # The user-supplied P8 may have either literal newlines or
-            # ``\n`` escape sequences (YAML supports both). Normalise.
+            # ``\n`` escape sequences (env/YAML sources differ). Normalise
+            # with a plain replacement: ``unicode_escape`` would also mangle
+            # backslashes and non-ASCII bytes elsewhere in the key material.
             assert isinstance(p8_key, str)
             if "\\n" in p8_key and "\n" not in p8_key:
-                p8_key = p8_key.encode().decode("unicode_escape")
+                p8_key = p8_key.replace("\\n", "\n")
 
             # ---- JWT cache (1-hour lifetime) ----
+            # Guarded by a lock: delivery runs on worker threads and the
+            # check-then-refresh below must be atomic, otherwise concurrent
+            # sends regenerate (and resign) the JWT redundantly.
             cache_key = (team_id, key_id)
-            cached = self._apns_jwt_cache.get(cache_key)
             now_ts = int(_time.time())
-            if not cached or cached[1] <= now_ts:
-                payload = {"iss": team_id, "iat": now_ts}
-                token_jwt = jwt.encode(
-                    payload,
-                    p8_key,
-                    algorithm="ES256",
-                    headers={
-                        "kid": key_id
-                    },  # cryptography strict-types p8_key but dict[str|None] is validated at runtime
-                )
-                # Refresh 5 minutes before expiry to keep clock-skew safe.
-                self._apns_jwt_cache[cache_key] = (
-                    token_jwt,
-                    now_ts + max(60, ttl_seconds - 300),
-                )
-                token_jwt = self._apns_jwt_cache[cache_key][0]
-            else:
-                token_jwt = cached[0]
+            with PushManager._apns_jwt_lock:
+                cached = self._apns_jwt_cache.get(cache_key)
+                if not cached or cached[1] <= now_ts:
+                    payload = {"iss": team_id, "iat": now_ts}
+                    token_jwt = jwt.encode(
+                        payload,
+                        p8_key,
+                        algorithm="ES256",
+                        headers={
+                            "kid": key_id
+                        },  # cryptography strict-types p8_key but dict[str|None] is validated at runtime
+                    )
+                    # Refresh 5 minutes before expiry to keep clock-skew safe.
+                    self._apns_jwt_cache[cache_key] = (
+                        token_jwt,
+                        now_ts + max(60, ttl_seconds - 300),
+                    )
+                else:
+                    token_jwt = cached[0]
 
             # ---- APNs payload (the ``aps`` dict is mandatory) ----
             aps_payload: Dict[str, Any] = {
@@ -689,12 +695,20 @@ class PushManager:
             payload_dict: Dict[str, Any] = {"aps": aps_payload}
             if data:
                 # APNs custom keys MUST be strings, ≤4KB, no nested dict
-                # beyond one level — coerce innocent types here.
+                # beyond one level — coerce innocent types here. Mappings
+                # and sequences are JSON-encoded (parseable by the app);
+                # anything that cannot be coerced is dropped with a debug
+                # log rather than silently, so missing keys are traceable.
                 for k, v in data.items():
                     try:
-                        payload_dict[str(k)] = v if isinstance(v, str) else str(v)
-                    except Exception:
-                        continue
+                        if isinstance(v, str):
+                            payload_dict[str(k)] = v
+                        elif isinstance(v, (dict, list)):
+                            payload_dict[str(k)] = json.dumps(v)
+                        else:
+                            payload_dict[str(k)] = str(v)
+                    except Exception as e:
+                        logger.debug(f"APNs payload key {k!r} dropped: {e}")
 
             url = (
                 "https://api.development.push.apple.com/3/device/"
@@ -729,8 +743,8 @@ class PushManager:
             reason = ""
             try:
                 reason = (response.json().get("reason", "") or "").lower()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"APNs reason parse failed: {e}")
             permanent_reasons = (
                 "baddevicetoken",
                 "unregistered",
@@ -767,6 +781,8 @@ class PushManager:
     # cache (Apple lets us cache for an hour, after which the token is
     # rejected with ``InvalidProviderToken``).
     _apns_jwt_cache: Dict[tuple, tuple] = {}
+    # Serialises the check-then-refresh above across delivery threads.
+    _apns_jwt_lock = threading.Lock()
 
     def send_bulk_push(
         self,
