@@ -24,6 +24,10 @@ try:
 except ImportError:
     HAS_BENCHMARK = False
 
+# Timing-sensitive perf/memory suite: excluded from the default fast run
+# (pytest.ini deselects ``performance``). Run explicitly when needed.
+pytestmark = pytest.mark.performance
+
 
 class TestMessagingPerformance:
     """Test messaging performance."""

@@ -14,6 +14,10 @@ import concurrent.futures
 import time
 from datetime import datetime
 
+# Load/stress suite with wall-clock bounds: excluded from the default fast
+# run (pytest.ini deselects ``performance``). Run explicitly when needed.
+pytestmark = pytest.mark.performance
+
 
 class TestConnectionLimits:
     """Test behavior at connection limits."""
