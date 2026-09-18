@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 import os
-import sys
 import time
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -116,10 +115,9 @@ def get_api_config() -> APIConfig:
 
     import utils.logger as logger
 
-    if "pytest" in sys.modules:
-        print(f"[DEBUG] Raw api_conf: {api_conf}")
-        print(f"[DEBUG] cors_origins from conf: {cors_origins}")
-        print(f"[DEBUG] allow_wildcard from conf: {allow_wildcard}")
+    logger.debug(f"Raw api_conf: {api_conf}")
+    logger.debug(f"cors_origins from conf: {cors_origins}")
+    logger.debug(f"allow_wildcard from conf: {allow_wildcard}")
 
     if (cors_origins == ["*"] or "*" in cors_origins) and not allow_wildcard:
         logger.error(

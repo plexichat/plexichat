@@ -55,7 +55,12 @@ def test_on_event_no_running_loop_creates_no_detached_loop(
     dispatcher: GatewayDispatcher, session_manager
 ):
     """The no-loop path must not install a stray current loop for this thread."""
-    policy = asyncio.get_event_loop_policy()
+    # asyncio.get_event_loop_policy() is deprecated on 3.14+ (slated for
+    # removal in 3.16). The policy object is only used here to observe --
+    # never manufacture -- the thread-local current loop.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        policy = asyncio.get_event_loop_policy()
 
     def _current_or_none():
         with warnings.catch_warnings():
