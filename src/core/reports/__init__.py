@@ -104,6 +104,58 @@ _messaging = None
 _setup_complete = False
 
 
+# Canonical ``SELECT *`` column order for the report tables, mirroring the
+# CREATE TABLE statements in ``schema.py``. Tuple rows are zipped against
+# these names and funneled through the dict branch of the mappers below, so
+# a schema reorder/add can only break in ONE place (pinned by
+# test_schema_column_order) instead of silently mis-mapping positional
+# indexes across two mappers.
+MESSAGE_REPORT_COLUMNS = (
+    "id",
+    "message_id",
+    "channel_id",
+    "server_id",
+    "reporter_id",
+    "reported_user_id",
+    "reason",
+    "category",
+    "details",
+    "message_content",
+    "evidence_urls",
+    "priority",
+    "status",
+    "reported_at",
+    "reviewed_at",
+    "reviewed_by",
+    "admin_notes",
+    "action_taken",
+    "assigned_to",
+    "escalated_at",
+    "resolution",
+)
+
+USER_REPORT_COLUMNS = (
+    "id",
+    "reported_user_id",
+    "reporter_id",
+    "reason",
+    "category",
+    "details",
+    "evidence_message_ids",
+    "evidence_urls",
+    "priority",
+    "status",
+    "reported_at",
+    "reviewed_at",
+    "reviewed_by",
+    "admin_notes",
+    "action_taken",
+    "assigned_to",
+    "escalated_at",
+    "resolution",
+)
+
+
 def setup(db, messaging_module=None) -> None:
     """Initialize the reports module."""
     global _db, _messaging, _setup_complete
@@ -384,69 +436,40 @@ def review_message_report(
 
 
 def _row_to_message_report(row) -> MessageReport:
-    """Convert database row to MessageReport."""
-    if isinstance(row, dict):
-        return MessageReport(
-            id=row["id"],
-            message_id=row["message_id"],
-            channel_id=row["channel_id"],
-            server_id=row.get("server_id"),
-            reporter_id=row["reporter_id"],
-            reported_user_id=row["reported_user_id"],
-            reason=row["reason"],
-            category=row.get("category", "other"),
-            details=row.get("details"),
-            message_content=row.get("message_content"),
-            evidence_urls=row.get("evidence_urls"),
-            priority=row.get("priority", "medium"),
-            status=ReportStatus(row["status"]),
-            reported_at=row["reported_at"],
-            reviewed_at=row.get("reviewed_at"),
-            reviewed_by=row.get("reviewed_by"),
-            admin_notes=row.get("admin_notes"),
-            action_taken=row.get("action_taken"),
-            assigned_to=row.get("assigned_to"),
-            escalated_at=row.get("escalated_at"),
-            resolution=row.get("resolution"),
-        )
-    else:
-        # Column order: id(0), message_id(1), channel_id(2), server_id(3), reporter_id(4),
-        # reported_user_id(5), reason(6), category(7), details(8), message_content(9),
-        # evidence_urls(10), priority(11), status(12), reported_at(13), reviewed_at(14),
-        # reviewed_by(15), admin_notes(16), action_taken(17), assigned_to(18),
-        # escalated_at(19), resolution(20)
-        def _safe_get(idx, default=None):
-            try:
-                return row[idx]
-            except IndexError:
-                return default
+    """Convert database row to MessageReport.
 
-        return MessageReport(
-            id=row[0],
-            message_id=row[1],
-            channel_id=row[2],
-            server_id=row[3],
-            reporter_id=row[4],
-            reported_user_id=row[5],
-            reason=row[6],
-            category=_safe_get(7, "other"),
-            details=_safe_get(8),
-            message_content=_safe_get(9),
-            evidence_urls=_safe_get(10),
-            priority=_safe_get(11, "medium"),
-            status=ReportStatus(_safe_get(12, "pending")),
-            # F-BUG-1: the short-row fallback used index 11, which is PRIORITY
-            # (not a timestamp) — short rows yielded garbage reported_at values.
-            # A missing timestamp is now None/0 rather than a misread column.
-            reported_at=row[13] if len(row) > 13 else 0,
-            reviewed_at=_safe_get(14),
-            reviewed_by=_safe_get(15),
-            admin_notes=_safe_get(16),
-            action_taken=_safe_get(17),
-            assigned_to=_safe_get(18),
-            escalated_at=_safe_get(19),
-            resolution=_safe_get(20),
-        )
+    Accepts mapping rows (what the DB layer always returns) and positional
+    tuple rows (raw cursors, legacy callers). Tuples are zipped against
+    :data:`MESSAGE_REPORT_COLUMNS`; short rows simply lack trailing keys
+    and fall back to the defaults below instead of misreading columns
+    (F-BUG-1: a missing timestamp is ``0``/``"pending"``, never garbage
+    from a neighbouring column).
+    """
+    if not isinstance(row, dict):
+        row = dict(zip(MESSAGE_REPORT_COLUMNS, row))
+    return MessageReport(
+        id=row["id"],
+        message_id=row["message_id"],
+        channel_id=row["channel_id"],
+        server_id=row.get("server_id"),
+        reporter_id=row["reporter_id"],
+        reported_user_id=row["reported_user_id"],
+        reason=row["reason"],
+        category=row.get("category", "other"),
+        details=row.get("details"),
+        message_content=row.get("message_content"),
+        evidence_urls=row.get("evidence_urls"),
+        priority=row.get("priority", "medium"),
+        status=ReportStatus(row.get("status", "pending")),
+        reported_at=row.get("reported_at", 0),
+        reviewed_at=row.get("reviewed_at"),
+        reviewed_by=row.get("reviewed_by"),
+        admin_notes=row.get("admin_notes"),
+        action_taken=row.get("action_taken"),
+        assigned_to=row.get("assigned_to"),
+        escalated_at=row.get("escalated_at"),
+        resolution=row.get("resolution"),
+    )
 
 
 # === User Reports ===
@@ -619,68 +642,37 @@ def review_user_report(
 
 
 def _row_to_user_report(row) -> UserReport:
-    """Convert database row to UserReport."""
+    """Convert database row to UserReport.
+
+    Accepts mapping rows and positional tuple rows (zipped against
+    :data:`USER_REPORT_COLUMNS`); short rows fall back to defaults instead
+    of misreading columns — see :func:`_row_to_message_report`.
+    """
+    if not isinstance(row, dict):
+        row = dict(zip(USER_REPORT_COLUMNS, row))
+
     evidence_ids = None
+    evidence_str = row.get("evidence_message_ids")
+    if evidence_str:
+        evidence_ids = [int(x) for x in evidence_str.split(",") if x]
 
-    if isinstance(row, dict):
-        evidence_str = row.get("evidence_message_ids")
-        if evidence_str:
-            evidence_ids = [int(x) for x in evidence_str.split(",") if x]
-
-        return UserReport(
-            id=row["id"],
-            reported_user_id=row["reported_user_id"],
-            reporter_id=row["reporter_id"],
-            reason=row["reason"],
-            category=row.get("category", "other"),
-            details=row.get("details"),
-            evidence_message_ids=evidence_ids,
-            evidence_urls=row.get("evidence_urls"),
-            priority=row.get("priority", "medium"),
-            status=ReportStatus(row["status"]),
-            reported_at=row["reported_at"],
-            reviewed_at=row.get("reviewed_at"),
-            reviewed_by=row.get("reviewed_by"),
-            admin_notes=row.get("admin_notes"),
-            action_taken=row.get("action_taken"),
-            assigned_to=row.get("assigned_to"),
-            escalated_at=row.get("escalated_at"),
-            resolution=row.get("resolution"),
-        )
-    else:
-        # Column order: id(0), reported_user_id(1), reporter_id(2), reason(3), category(4),
-        # details(5), evidence_message_ids(6), evidence_urls(7), priority(8), status(9),
-        # reported_at(10), reviewed_at(11), reviewed_by(12), admin_notes(13),
-        # action_taken(14), assigned_to(15), escalated_at(16), resolution(17)
-        def _safe_get(idx, default=None):
-            try:
-                return row[idx]
-            except IndexError:
-                return default
-
-        evidence_str = row[6]
-        if evidence_str:
-            evidence_ids = [int(x) for x in evidence_str.split(",") if x]
-
-        return UserReport(
-            id=row[0],
-            reported_user_id=row[1],
-            reporter_id=row[2],
-            reason=row[3],
-            category=_safe_get(4, "other"),
-            details=_safe_get(5),
-            evidence_message_ids=evidence_ids,
-            evidence_urls=_safe_get(7),
-            priority=_safe_get(8, "medium"),
-            status=ReportStatus(_safe_get(9, "pending")),
-            # F-BUG-1: short-row fallback used index 8, which is PRIORITY (not
-            # a timestamp); a missing reported_at is now 0 instead of garbage.
-            reported_at=row[10] if len(row) > 10 else 0,
-            reviewed_at=_safe_get(11),
-            reviewed_by=_safe_get(12),
-            admin_notes=_safe_get(13),
-            action_taken=_safe_get(14),
-            assigned_to=_safe_get(15),
-            escalated_at=_safe_get(16),
-            resolution=_safe_get(17),
-        )
+    return UserReport(
+        id=row["id"],
+        reported_user_id=row["reported_user_id"],
+        reporter_id=row["reporter_id"],
+        reason=row["reason"],
+        category=row.get("category", "other"),
+        details=row.get("details"),
+        evidence_message_ids=evidence_ids,
+        evidence_urls=row.get("evidence_urls"),
+        priority=row.get("priority", "medium"),
+        status=ReportStatus(row.get("status", "pending")),
+        reported_at=row.get("reported_at", 0),
+        reviewed_at=row.get("reviewed_at"),
+        reviewed_by=row.get("reviewed_by"),
+        admin_notes=row.get("admin_notes"),
+        action_taken=row.get("action_taken"),
+        assigned_to=row.get("assigned_to"),
+        escalated_at=row.get("escalated_at"),
+        resolution=row.get("resolution"),
+    )
