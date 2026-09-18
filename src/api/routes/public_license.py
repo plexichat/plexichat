@@ -127,11 +127,23 @@ class NonceStore:
         return nonce, self._ttl_seconds
 
     def consume(self, nonce: str) -> bool:
-        """Atomically validate-and-remove a nonce. Returns True on success."""
+        """Atomically validate-and-remove a nonce. Returns True on success.
+
+        Fails closed like :meth:`issue`: when Valkey is the active backend
+        but the atomic consume errors, an ``HTTPException`` (503) is raised
+        instead of returning ``False``. Returning ``False`` would make the
+        export endpoint report ``401 Invalid nonce`` for an infrastructure
+        outage, misleading the operator and forcing needless re-issues for
+        a nonce that was never actually consumed.
+        """
         if not nonce:
             return False
         valkey_client = self._get_valkey()
         if valkey_client is not None:
+            # Fail closed on Valkey errors: do NOT report the nonce as
+            # invalid. A split-brain answer here would either burn a valid
+            # nonce's retry (if the DEL landed) or blame the client for a
+            # server-side outage (if it did not).
             try:
                 result = valkey_client.eval_lua(
                     _CONSUME_LUA, keys=[self._valkey_key(nonce)], args=[]
@@ -139,7 +151,10 @@ class NonceStore:
                 return bool(int(result))
             except Exception as e:
                 logger.error(f"Valkey EVAL failed for license nonce: {e}")
-                return False
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="License challenge store is unavailable",
+                )
         with self._lock:
             entry = self._nonces.pop(nonce, None)
             if entry is None:
@@ -155,6 +170,25 @@ class NonceStore:
             del self._nonces[k]
 
     def __len__(self) -> int:
+        """Return the number of outstanding (unconsumed) nonces.
+
+        When Valkey is the active backend the authoritative count lives
+        there, so it is read via ``KEYS`` on the nonce prefix (the nonce
+        keyspace is tiny: one key per issued challenge with a short TTL).
+        Any Valkey error falls back to the in-process count rather than
+        raising, since ``__len__`` is a monitoring/debugging helper and
+        must never break request handling.
+        """
+        valkey_client = self._get_valkey()
+        if valkey_client is not None:
+            try:
+                keys_fn = getattr(valkey_client, "keys", None)
+                if callable(keys_fn):
+                    found = keys_fn(f"{self.NONCE_KEY_PREFIX}*")
+                    if isinstance(found, (list, tuple, set)):
+                        return len(found)
+            except Exception as e:
+                logger.debug(f"Valkey KEYS failed for license nonce count: {e}")
         with self._lock:
             return len(self._nonces)
 
@@ -239,7 +273,10 @@ async def get_license_challenge() -> dict:
         401: {"description": "Missing, unknown, expired, or already-used nonce."},
         403: {"description": "Signature did not verify against the public key."},
         404: {"description": "No license is loaded on this instance (free tier)."},
-        503: {"description": "License public key is not configured on this instance."},
+        503: {
+            "description": "License public key is not configured on this instance, "
+            "or the challenge store is unavailable."
+        },
     },
 )
 async def export_license(
