@@ -113,17 +113,35 @@ class EventManager:
         receive the event before (or at the same time as) remote
         workers.
 
-        If Valkey is unavailable this is a silent no-op — the event
-        simply stays local (current single-instance behaviour).
+        Backend state is classified, not probed-then-assumed: "Valkey
+        unavailable" is a silent local-only no-op (current
+        single-instance behaviour, no drop counted), while an error
+        *during* publish bumps ``_cross_worker_drops`` (surfaced via
+        :meth:`get_loss_metrics`). A serialization failure is neither —
+        it is a deterministic caller bug, so it warns loudly instead of
+        blaming the backend.
         """
         try:
             from src.core.database import get_valkey_client, valkey_available
+        except Exception as e:
+            # No Valkey package / import failure: single-instance mode,
+            # the event simply stays local.
+            logger.debug(f"Cross-worker publish unavailable (import): {e}")
+            return
 
-            if not valkey_available():
-                return
-            client = get_valkey_client()
-            if client is None:
-                return
+        try:
+            available = valkey_available()
+        except Exception as e:
+            # The probe itself must never break local delivery.
+            logger.debug(f"Cross-worker availability probe failed: {e}")
+            return
+        if not available:
+            return
+        client = get_valkey_client()
+        if client is None:
+            return
+
+        try:
             payload = json.dumps(
                 {
                     "t": event.event_type.value,
@@ -132,19 +150,25 @@ class EventManager:
                     "sw": self._worker_id,
                 }
             )
-            try:
-                client.publish(_CROSS_WORKER_CHANNEL, payload)
-            except Exception:
-                with self._lock:
-                    self._cross_worker_drops += 1
-                logger.debug(
-                    "Cross-worker publish failed for %s (drops: %d)",
-                    event.event_type.value,
-                    self._cross_worker_drops,
-                )
-        except Exception:
-            # Catch-all: import errors (no Valkey package), etc.
-            pass
+        except (TypeError, ValueError) as e:
+            logger.warning(
+                "Cross-worker publish skipped for %s: payload not serializable (%s)",
+                event.event_type.value,
+                e,
+            )
+            return
+        try:
+            client.publish(_CROSS_WORKER_CHANNEL, payload)
+        except Exception as e:
+            with self._lock:
+                self._cross_worker_drops += 1
+                drops = self._cross_worker_drops
+            logger.debug(
+                "Cross-worker publish failed for %s (drops: %d): %s",
+                event.event_type.value,
+                drops,
+                e,
+            )
 
     # === Subscriber lifecycle ===
 
@@ -563,10 +587,10 @@ class EventManager:
         """Expose dispatch saturation metrics for observability.
 
         Returns a dict with the cumulative dropped-event count, the
-        current subscriber count, and (when the async queue has been
-        initialised) the current ``qsize`` and ``maxsize``. Callers
-        (e.g. /api/v1/health) can expose these so operators can
-        detect backpressure.
+        current subscriber count, the cumulative cross-worker publish
+        drops, and (when the async queue has been initialised) the
+        current ``qsize`` and ``maxsize``. Callers (e.g. /api/v1/health)
+        can expose these so operators can detect backpressure.
         """
         with self._lock:
             critical_count = len(self._critical_subscribers)
@@ -577,6 +601,7 @@ class EventManager:
                 return {
                     "dropped_events": self._dropped_events,
                     "evicted_subscribers": self._evicted_subscribers,
+                    "cross_worker_drops": self._cross_worker_drops,
                     "subscribers": len(self._subscribers),
                     "critical_subscribers": critical_count,
                     "queue": None,
@@ -584,6 +609,7 @@ class EventManager:
             return {
                 "dropped_events": self._dropped_events,
                 "evicted_subscribers": self._evicted_subscribers,
+                "cross_worker_drops": self._cross_worker_drops,
                 "subscribers": len(self._subscribers),
                 "critical_subscribers": critical_count,
                 "queue": {
