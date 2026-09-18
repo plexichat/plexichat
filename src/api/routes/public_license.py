@@ -67,19 +67,37 @@ class NonceStore:
     def _get_valkey(self):
         """Return the configured Valkey client, or ``None`` if unavailable.
 
-        Result is memoized after the first call.
-        """
-        if self._valkey_checked:
-            return self._valkey
-        self._valkey_checked = True
-        try:
-            from src.core.database.valkey_client import get_client
+        A client is only returned when it is actually usable (enabled and
+        connected on at least one handle). ``get_client()`` returns the
+        process-wide instance even when Valkey is disabled or never
+        connected, so a bare ``is not None`` check would route the
+        single-worker (in-process dict) deployment into the Valkey path
+        and fail every ``issue()`` with 503. Callers follow the same
+        ``get_client()`` + ``is_available()`` pattern used by the cache
+        and rate-limit tiers.
 
-            self._valkey = get_client()
+        The lookup is intentionally live (not memoized): the async handle
+        may open after this store is created, and a memoized ``None`` or
+        disabled handle would pin the wrong backend for the process
+        lifetime.
+        """
+        try:
+            from src.core.database.valkey_client import get_client, is_available
+
+            client = get_client()
+            if client is None:
+                return None
+            try:
+                if not is_available():
+                    return None
+            except Exception:
+                # Availability probe must never break the in-process
+                # fallback; treat probe failure as unavailable.
+                return None
+            return client
         except Exception as e:
             logger.debug(f"Valkey client unavailable for nonce store: {e}")
-            self._valkey = None
-        return self._valkey
+            return None
 
     def _valkey_key(self, nonce: str) -> str:
         return f"{self.NONCE_KEY_PREFIX}{nonce}"
