@@ -91,7 +91,11 @@ def register_attachment_route(app: FastAPI) -> None:
                     if token_info:
                         current_user_id = token_info.user_id
 
-                sig_valid, _ = await media.verify_signed_url(
+                # ``media.verify_signed_url`` is synchronous (it returns
+                # ``Tuple[bool, int]``); awaiting it raises TypeError on the
+                # tuple, which the broad handler below swallows — silently
+                # disabling signed URLs. Do not add ``await`` here.
+                sig_valid, _ = media.verify_signed_url(
                     url_to_verify, current_user_id=current_user_id
                 )
                 if sig_valid:
