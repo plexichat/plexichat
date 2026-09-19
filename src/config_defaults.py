@@ -5,7 +5,7 @@ Provides the baseline settings used when no configuration file is found.
 
 import secrets
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 try:
     from .config_defaults_artifacts import get_artifacts_defaults
@@ -17,7 +17,6 @@ except ImportError:  # pragma: no cover - direct/script import fallback
 _artifacts_defaults = get_artifacts_defaults
 _authentication_defaults = get_authentication_defaults
 
-DEFAULT_VERSION = "a.1.0-131"
 
 ARTIFACTS_LICENSE_FEATURES = {
     "artifacts": "Master artifacts feature (any artifact type).",
@@ -30,15 +29,36 @@ ARTIFACTS_LICENSE_FEATURES = {
 }
 
 
-def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
+def default_version() -> str:
+    """Return the application version to stamp into a fresh configuration.
+
+    ``src.server.lifecycle`` owns the ``VERSION`` constant that releases bump,
+    so it is the single source of truth here. The import is deliberately lazy:
+    this module is loaded during early bootstrap, and pulling the server package
+    in at module scope would initialize it too early.
+
+    Returns:
+        The current application version string (e.g. "a.1.0-132").
+    """
+    from src.server.lifecycle import VERSION
+
+    return VERSION
+
+
+def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
     """Return the default configuration dictionary for Plexichat.
 
     Args:
-        version: The current application version string.
+        version: The current application version string. Defaults to the
+            version the server itself runs, so generated configs never
+            advertise a different build than the running process.
 
     Returns:
         A dictionary containing all default configuration keys and values.
     """
+    if version is None:
+        version = default_version()
+
     home_dir = Path.home() / ".plexichat"
 
     return {
