@@ -135,7 +135,7 @@ Direct backend access:
    To deploy a pinned version:
 
    ```bash
-   BACKEND_VERSION=a.1.0-131 CLIENT_VERSION=a.1.0-117 docker compose up -d
+   BACKEND_VERSION=a.1.0-132 CLIENT_VERSION=a.1.0-117 docker compose up -d
    ```
 
 3. Wait until `docker compose ps` shows `healthy` for `db`, `valkey`, `rustfs`, `clamav`, `backend`, and `client`.
