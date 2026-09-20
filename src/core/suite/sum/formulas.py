@@ -17,13 +17,15 @@ helpers live in ``_formula_shared.py`` and the evaluator methods are split
 across ``_formula_core.py`` / ``_formula_advanced.py`` mixin modules.
 
 Semantics follow Excel, and are shared with the PlexiSum client engine: the
-same case table (``src/tests/suite/data/formula_parity_cases.json``) is
+same case table (``src/tests/suite/formula_parity_cases.json``) is
 evaluated against both engines so neither can drift unnoticed. In short, an
 error operand propagates out of a function (``SUM(1, 1/0)`` is ``#DIV/0!``)
 except for ``COUNT``/``COUNTA``/``COUNTBLANK`` and the ``IS*`` family, which
-classify it; and a text *argument* is coerced to a number (``SUM("2")`` is 2)
+classify it; a text *argument* is coerced to a number (``SUM("2")`` is 2)
 while a value read from a reference is not (``SUM(A1)`` is 0 when A1 holds the
-text ``"2"``). The README lists the deliberate divergences from Excel.
+text ``"2"``); and criteria comparisons rank types (number < text < ``FALSE`` <
+``TRUE``) with text compared case-insensitively. The README lists the
+deliberate divergences from Excel.
 """
 
 from typing import Any, Dict, Optional

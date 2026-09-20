@@ -165,7 +165,7 @@ result = compute_value(
 
 This engine and the PlexiSum client engine (`plexichat-client`, see its
 `formula-engine/README.md`) implement the same formula language and are held to
-the same answers. `src/tests/suite/data/formula_parity_cases.json` is the
+the same answers. `src/tests/suite/formula_parity_cases.json` is the
 machine-checked statement of that: every case is evaluated against both engines
 from the identical file, so a semantic change in one engine and not the other
 fails a test instead of drifting silently until someone notices a different
@@ -190,6 +190,17 @@ cell or range (`SUM(A1)` is 0 when A1 holds the text `"2"`), which is why a
 text-formatted number column does not silently add up. `AVERAGE`, `MIN`, `MAX`,
 `PRODUCT` and `COUNT` follow the same rule, and the whole argument has to read
 as a number rather than a prefix of one (`SUM("2abc")` is 0).
+
+**Criteria rank types.** `SUMIF`, `COUNTIF`, `AVERAGEIF` and their
+multi-criteria forms compare each cell against the criteria through Excel's
+sort order — number, then text, then `FALSE`, then `TRUE` — with text compared
+case-insensitively, and the operators `<`, `<=`, `>`, `>=`, `<>` and `=` all
+work on text as well as numbers. So `COUNTIF(range, "<>2")` counts the text
+cells and `COUNTIF(range, ">2")` ignores them. A single cell is a 1×1 range to
+these functions (`COUNTIF(A1, ">=1")`). A row that matches the criteria but
+holds no number in the summed range contributes 0 to `SUMIF`/`SUMIFS`, while
+`AVERAGEIF`/`AVERAGEIFS` skip it entirely — Excel ignores text and blanks in an
+average range, so a match with no number at all is `#DIV/0!`.
 
 ### Known divergences from Excel
 
