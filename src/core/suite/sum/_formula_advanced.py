@@ -717,14 +717,14 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(args) < 3 or len(args) % 2 != 1:
                 return VALUE_ERROR
             sum_range_node = args[0]
-            sum_matrix = self._range_matrix(sum_range_node, sheet, seen, depth)
+            sum_matrix = self._criteria_range(sum_range_node, sheet, seen, depth)
             if not sum_matrix:
                 return 0.0
             num_criteria = (len(args) - 1) // 2
             criteria_matrices = []
             criteria_list = []
             for i in range(num_criteria):
-                cr_matrix = self._range_matrix(args[1 + i * 2], sheet, seen, depth)
+                cr_matrix = self._criteria_range(args[1 + i * 2], sheet, seen, depth)
                 criteria_matrices.append(cr_matrix)
                 crit_node = args[2 + i * 2]
                 if crit_node[0] == "str":
@@ -761,7 +761,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             criteria_matrices = []
             criteria_list = []
             for i in range(num_criteria):
-                cr_matrix = self._range_matrix(args[i * 2], sheet, seen, depth)
+                cr_matrix = self._criteria_range(args[i * 2], sheet, seen, depth)
                 criteria_matrices.append(cr_matrix)
                 crit_node = args[i * 2 + 1]
                 if crit_node[0] == "str":
@@ -799,14 +799,16 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(args) < 3 or len(args) % 2 != 1:
                 return VALUE_ERROR
             average_range_node = args[0]
-            average_matrix = self._range_matrix(average_range_node, sheet, seen, depth)
+            average_matrix = self._criteria_range(
+                average_range_node, sheet, seen, depth
+            )
             if not average_matrix:
                 return DIV_ZERO
             num_criteria = (len(args) - 1) // 2
             criteria_matrices = []
             criteria_list = []
             for i in range(num_criteria):
-                cr_matrix = self._range_matrix(args[1 + i * 2], sheet, seen, depth)
+                cr_matrix = self._criteria_range(args[1 + i * 2], sheet, seen, depth)
                 criteria_matrices.append(cr_matrix)
                 crit_node = args[2 + i * 2]
                 if crit_node[0] == "str":
@@ -834,7 +836,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                         else:
                             all_match = False
                             break
-                    if all_match:
+                    if all_match and _numeric(average_matrix[r][c]):
+                        # As in AVERAGEIF: only the numeric entries of the
+                        # average range are averaged; text and blanks are
+                        # ignored rather than counted as zero.
                         total += _to_number_or_zero(average_matrix[r][c])
                         count += 1
             if count == 0:

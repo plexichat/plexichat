@@ -384,3 +384,65 @@ def _to_number_or_zero(value: Any) -> float:
         return _to_number(value)
     except ValueError:
         return 0.0
+
+
+def _parse_criteria_target(text: str) -> Any:
+    """Read the operand of an operator-prefixed criteria.
+
+    A numeric operand compares as a number (``">=2"``) and anything else as
+    text (``"<>x"``). The whole string has to read as a number, matching how
+    the aggregates read a text argument, so ``">=2abc"`` is a text test rather
+    than a prefix match on 2.
+    """
+    if NUMERIC_TEXT_RE.match(text):
+        return float(text)
+    return text
+
+
+def _criteria_rank(value: Any) -> int:
+    """Excel's cross-type ordering: numbers, then text, then logicals."""
+    if isinstance(value, bool):
+        return 2
+    if isinstance(value, str):
+        return 1
+    return 0
+
+
+def _compare_values(left: Any, right: Any) -> int:
+    """Order two values the way Excel sorts them (``-1``, ``0`` or ``1``).
+
+    Excel's criteria comparisons are not plain numeric coercions: every value is
+    ranked (number < text < FALSE < TRUE) and compared inside its rank, with
+    text compared case-insensitively. So ``COUNTIF(range, "<>2")`` counts the
+    text cells and ``COUNTIF(range, ">1")`` ignores them, where coercing both
+    sides with ``_to_number`` would report #VALUE! instead.
+    """
+    left_rank, right_rank = _criteria_rank(left), _criteria_rank(right)
+    if left_rank != right_rank:
+        return -1 if left_rank < right_rank else 1
+    if left_rank == 2:
+        left_key: Any = int(bool(left))
+        right_key: Any = int(bool(right))
+    elif left_rank == 1:
+        left_key, right_key = _to_text(left).casefold(), _to_text(right).casefold()
+    else:
+        left_key, right_key = _to_number(left), _to_number(right)
+    if left_key == right_key:
+        return 0
+    return -1 if left_key < right_key else 1
+
+
+def _criteria_operator(op: str, value: Any, target: str) -> bool:
+    """Apply one operator-prefixed criteria (``">=2"``, ``"<>x"``) to a value."""
+    order = _compare_values(value, _parse_criteria_target(target))
+    if op == ">":
+        return order > 0
+    if op == "<":
+        return order < 0
+    if op == ">=":
+        return order >= 0
+    if op == "<=":
+        return order <= 0
+    if op == "<>":
+        return order != 0
+    return order == 0

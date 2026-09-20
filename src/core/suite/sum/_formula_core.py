@@ -18,6 +18,7 @@ from ._formula_shared import (
     VALUE_ERROR,
     CellResolver,
     _coerce_number_text,
+    _criteria_operator,
     _numeric,
     _to_number,
     _to_number_or_zero,
@@ -798,6 +799,25 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             matrix.append(row_values)
         return matrix
 
+    def _criteria_range(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> List[List[Any]]:
+        """Resolve a criteria/sum range, accepting a single cell as 1×1.
+
+        ``_range_matrix`` only describes ``A1:B2`` refs, so ``COUNTIF(B6, x)``
+        and ``SUMIFS(..., B6, x)`` used to see an empty range and answer 0
+        (or #DIV/0!) instead of testing B6.
+        """
+        matrix = self._range_matrix(node, sheet, seen, depth)
+        if matrix or node[0] != "ref":
+            return matrix
+        ref_sheet, row, column = parse_cell_ref(node[1], self._named_ranges)
+        self._used += 1
+        if self._used > self._dependencies:
+            raise ValueError(NUM_ERROR)
+        target = ref_sheet or sheet
+        return [[self._resolve(target, row, column, seen, depth + 1)]]
+
     @staticmethod
     def _lookup_eq(a: Any, b: Any) -> bool:
         """Equality used by V/HLOOKUP: numeric cells compare numerically,
@@ -899,7 +919,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         """SUMIF / COUNTIF / AVERAGEIF with operator-prefixed criteria."""
         if len(args) < 2 or len(args) > 3:
             return VALUE_ERROR
-        matrix = self._range_matrix(args[0], sheet, seen, depth)
+        matrix = self._criteria_range(args[0], sheet, seen, depth)
         if not matrix:
             return DIV_ZERO if name == "AVERAGEIF" else 0.0
         first = args[1]
@@ -915,7 +935,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return criteria
         sum_matrix = matrix
         if len(args) == 3:
-            sum_matrix = self._range_matrix(args[2], sheet, seen, depth)
+            sum_matrix = self._criteria_range(args[2], sheet, seen, depth)
         total = 0.0
         count = 0
         for r in range(min(len(matrix), len(sum_matrix))):
@@ -923,7 +943,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             sum_row = sum_matrix[r]
             for c in range(min(len(row), len(sum_row))):
                 if self._criteria_test(criteria, row[c]):
-                    total += _to_number_or_zero(sum_row[c])
+                    value = sum_row[c]
+                    if name == "AVERAGEIF" and not _numeric(value):
+                        # Excel averages only the numeric entries of the
+                        # average range: text and blanks are ignored, so a
+                        # match with no number at all yields #DIV/0!.
+                        continue
+                    total += _to_number_or_zero(value)
                     count += 1
         if name == "SUMIF":
             return float(total)
@@ -935,33 +961,23 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
 
     @staticmethod
     def _criteria_test(criteria: Any, value: Any) -> bool:
-        """Match ``value`` against an Excel-style criteria (e.g. ``">2"``)."""
+        """Match ``value`` against an Excel-style criteria (e.g. ``">2"``).
+
+        An operator-prefixed criteria compares through ``_compare_values``, so
+        the cross-type ordering and case-insensitive text matching are Excel's;
+        the plain form is an exact (case-insensitive) text match.
+        """
+        if is_error(value):
+            # An error *cell* inside a criteria range only fails to match; an
+            # error *criteria* argument is what propagates (handled by _criteria).
+            return False
         if criteria is None:
             return value is None or value == ""
         if isinstance(criteria, str):
             for op in (">=", "<=", "<>", ">", "<", "="):
                 if criteria.startswith(op) and len(criteria) > len(op):
-                    rest = criteria[len(op) :].strip()
-                    try:
-                        target = float(rest)
-                    except ValueError:
-                        return op == "=" and _to_text(value) == rest
-                    try:
-                        number = _to_number(value)
-                    except ValueError:
-                        return False
-                    if op == ">":
-                        return number > target
-                    if op == "<":
-                        return number < target
-                    if op == ">=":
-                        return number >= target
-                    if op == "<=":
-                        return number <= target
-                    if op == "<>":
-                        return number != target
-                    return number == target
-            return _to_text(value) == criteria
+                    return _criteria_operator(op, value, criteria[len(op) :].strip())
+            return _to_text(value).casefold() == criteria.casefold()
         if isinstance(value, str) or isinstance(value, bool):
             return value == criteria
         try:
