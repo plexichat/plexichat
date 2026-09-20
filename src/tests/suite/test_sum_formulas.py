@@ -541,6 +541,19 @@ def test_countblank_does_not_count_zero_cells():
     assert _eval("COUNTBLANK(A1:B2)", resolver) == 2.0
 
 
+def test_find_and_search_report_value_error_when_text_is_missing():
+    """A failed FIND/SEARCH is #VALUE! in Excel, not #N/A.
+
+    #N/A is reserved for a lookup that found nothing, so returning it here made
+    ``IFNA`` swallow a plain "not found" and hid the mistake from callers.
+    """
+    assert _eval('FIND("b", "abcb")') == 2.0
+    assert _eval('FIND("B", "abcb")') == VALUE_ERROR
+    assert _eval('FIND("x", "abc")') == VALUE_ERROR
+    assert _eval('SEARCH("B", "abcb")') == 2.0
+    assert _eval('SEARCH("x", "abc")') == VALUE_ERROR
+
+
 def test_rept_is_bounded_against_multi_gb_allocations():
     """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
 

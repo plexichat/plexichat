@@ -438,7 +438,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             pos = within_text.find(find_text, start_num - 1)
             if pos == -1:
-                return N_A_ERROR
+                # Excel reports a failed FIND/SEARCH as #VALUE!, not #N/A.
+                return VALUE_ERROR
             return float(pos + 1)
         elif name == "SEARCH":
             # SEARCH(find_text, within_text, [start_num])
@@ -454,7 +455,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             pos = within_text.find(find_text, start_num - 1)
             if pos == -1:
-                return N_A_ERROR
+                # Excel reports a failed FIND/SEARCH as #VALUE!, not #N/A.
+                return VALUE_ERROR
             return float(pos + 1)
         elif name == "REPLACE":
             # REPLACE(old_text, start_num, num_chars, new_text)
