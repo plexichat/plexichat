@@ -721,7 +721,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 elif crit_node[0] == "num":
                     criteria_list.append(crit_node[1])
                 else:
-                    criteria_list.append(self._eval(crit_node, sheet, seen, depth))
+                    criteria = self._eval(crit_node, sheet, seen, depth)
+                    if is_error(criteria):
+                        # An error criteria operand propagates; an error cell
+                        # inside a criteria range only fails to match.
+                        return criteria
+                    criteria_list.append(criteria)
             total = 0.0
             for r in range(len(sum_matrix)):
                 for c in range(len(sum_matrix[r])):
@@ -753,7 +758,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 elif crit_node[0] == "num":
                     criteria_list.append(crit_node[1])
                 else:
-                    criteria_list.append(self._eval(crit_node, sheet, seen, depth))
+                    criteria = self._eval(crit_node, sheet, seen, depth)
+                    if is_error(criteria):
+                        # An error criteria operand propagates; an error cell
+                        # inside a criteria range only fails to match.
+                        return criteria
+                    criteria_list.append(criteria)
             if not criteria_matrices:
                 return 0.0
             max_rows = max(len(m) for m in criteria_matrices)
@@ -793,7 +803,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 elif crit_node[0] == "num":
                     criteria_list.append(crit_node[1])
                 else:
-                    criteria_list.append(self._eval(crit_node, sheet, seen, depth))
+                    criteria = self._eval(crit_node, sheet, seen, depth)
+                    if is_error(criteria):
+                        # An error criteria operand propagates; an error cell
+                        # inside a criteria range only fails to match.
+                        return criteria
+                    criteria_list.append(criteria)
             total = 0.0
             count = 0
             for r in range(len(average_matrix)):

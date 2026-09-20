@@ -7,6 +7,7 @@ from src.core.suite.sum.formulas import (
     FormulaEvaluator,
     MAX_CALL_DEPTH,
     MAX_DEPENDENCIES,
+    N_A_ERROR,
     NUM_ERROR,
     VALUE_ERROR,
 )
@@ -656,3 +657,81 @@ def test_networkdays_and_workday_honor_holidays_and_negative_days():
     assert _eval(f"WORKDAY({jan15 - 1}, 1, {jan15})", resolver) == float(jan15 + 1)
     assert _eval(f"WORKDAY({jan15}, -1)", resolver) == float(jan15 - 3)
     assert _eval(f"WORKDAY({jan15}, 0)", resolver) == float(jan15)
+
+
+def test_if_and_boolean_functions_propagate_an_error_condition():
+    """An error *condition* is an error, not a true branch.
+
+    ``_truthy`` returns a plain bool, so the old ``is_error(condition)`` guard
+    was dead code: IF(1/0, 1, 2) took the true branch -- a non-empty error
+    string is truthy -- instead of returning #DIV/0!, and AND/OR/NOT answered
+    from the same misreading.
+    """
+    assert _eval("IF(1/0, 1, 2)") == DIV_ZERO
+    assert _eval("AND(1/0)") == DIV_ZERO
+    assert _eval("AND(1/0, TRUE)") == DIV_ZERO
+    assert _eval("OR(1/0)") == DIV_ZERO
+    assert _eval("OR(1/0, FALSE)") == DIV_ZERO
+    assert _eval("NOT(1/0)") == DIV_ZERO
+    # Empty text is falsy, so an empty string and a blank cell both take the
+    # else branch.
+    assert _eval('IF("", 1, 2)') == 2.0
+    assert _eval("IF(B9, 1, 2)") == 2.0
+
+
+def test_error_operands_propagate_through_the_function_table():
+    """Every value-based function surfaces an error operand.
+
+    The coercion helpers used to swallow it instead, which is how the server
+    and client engines drifted apart and away from Excel: PROPER(1/0) re-cased
+    the error text into "#Div/0!", REPLACE(1/0, 1, 1, "x") concatenated it into
+    "xDIV/0!", ROUND(1, 1/0) blamed the wrong operand with #VALUE!, and
+    MATCH(1/0, ...) reported a lookup miss as #N/A.
+    """
+    assert _eval("PROPER(1/0)") == DIV_ZERO
+    assert _eval('REPLACE(1/0, 1, 1, "x")') == DIV_ZERO
+    assert _eval("REPT(1/0, 2)") == DIV_ZERO
+    assert _eval("CONCAT(1/0)") == DIV_ZERO
+    assert _eval('EXACT(1/0, "a")') == DIV_ZERO
+    assert _eval('FIND("a", 1/0)') == DIV_ZERO
+    assert _eval('SEARCH("a", 1/0)') == DIV_ZERO
+    assert _eval("VALUE(1/0)") == DIV_ZERO
+    assert _eval("ROUND(1, 1/0)") == DIV_ZERO
+    assert _eval("MOD(1, 1/0)") == DIV_ZERO
+    assert _eval("POWER(2, 1/0)") == DIV_ZERO
+    assert _eval("FLOOR(1, 1/0)") == DIV_ZERO
+    assert _eval("DATE(1/0, 1, 1)") == DIV_ZERO
+    assert _eval("YEAR(1/0)") == DIV_ZERO
+    assert _eval("DAYS(1/0, 1)") == DIV_ZERO
+    assert _eval("EOMONTH(1/0, 1)") == DIV_ZERO
+    assert _eval("EDATE(1/0, 1)") == DIV_ZERO
+    assert _eval("WEEKNUM(1/0)") == DIV_ZERO
+    assert _eval("SIN(1/0)") == DIV_ZERO
+    assert _eval("INDEX(A1:B2, 1/0, 1)") == DIV_ZERO
+    assert _eval("MATCH(1/0, A1:A3, 0)") == DIV_ZERO
+    assert _eval("SUMPRODUCT(A1:B2, 1/0)") == DIV_ZERO
+    # An error *criteria* propagates too, while an error cell inside a
+    # criteria range only fails to match.
+    assert _eval("SUMIF(A1:A3, 1/0)") == DIV_ZERO
+    assert _eval("COUNTIF(A1:A3, 1/0)") == DIV_ZERO
+
+
+def test_is_family_and_type_inspect_an_error_operand():
+    """The IS* family and TYPE answer a question *about* the error value.
+
+    They propagate nothing: ISNUMBER(#DIV/0!) is FALSE, and TYPE reports Excel's
+    error code 16 -- checked before the text branch, because an error value is a
+    string.
+    """
+    assert _eval("ISNUMBER(1/0)") is False
+    assert _eval("ISTEXT(1/0)") is False
+    assert _eval("ISBLANK(1/0)") is False
+    assert _eval("ISERROR(1/0)") is True
+    assert _eval("ISERROR(1)") is False
+    assert _eval("ISNA(NA())") is True
+    assert _eval("ISNA(1/0)") is False
+    assert _eval("NA()") == N_A_ERROR
+    assert _eval("TYPE(1)") == 1
+    assert _eval('TYPE("a")') == 2
+    assert _eval("TYPE(TRUE)") == 4
+    assert _eval("TYPE(1/0)") == 16

@@ -26,6 +26,89 @@ from ._formula_shared import (
     parse_formula,
 )
 
+# Functions whose arguments are flattened into a ``values`` list by ``_call``.
+# Kept beside the dispatch below so the two stay in step: an unknown name must
+# still report #NAME? rather than surface an error that happened to sit in its
+# arguments.
+_VALUE_FUNCTIONS = frozenset(
+    {
+        "SUM",
+        "AVERAGE",
+        "COUNT",
+        "COUNTA",
+        "MIN",
+        "MAX",
+        "PRODUCT",
+        "ABS",
+        "SQRT",
+        "INT",
+        "LEN",
+        "UPPER",
+        "LOWER",
+        "TRIM",
+        "LEFT",
+        "RIGHT",
+        "MID",
+        "ROUND",
+        "ROUNDUP",
+        "ROUNDDOWN",
+        "MOD",
+        "POWER",
+        "CEILING",
+        "FLOOR",
+        "CONCAT",
+        "CONCATENATE",
+        "EXACT",
+        "PROPER",
+        "SUBSTITUTE",
+        "DATE",
+        "YEAR",
+        "MONTH",
+        "DAY",
+        "DAYS",
+        "INDEX",
+        "MATCH",
+        "INDIRECT",
+        "OFFSET",
+        "LOOKUP",
+        "COUNTBLANK",
+        "SUMPRODUCT",
+        "TEXT",
+        "VALUE",
+        "NUMBERVALUE",
+        "FIND",
+        "SEARCH",
+        "REPLACE",
+        "REPT",
+        "EOMONTH",
+        "EDATE",
+        "WEEKDAY",
+        "WEEKNUM",
+        "NETWORKDAYS",
+        "WORKDAY",
+        "PI",
+        "RADIANS",
+        "DEGREES",
+        "SIN",
+        "COS",
+        "TAN",
+        "ASIN",
+        "ACOS",
+        "ATAN",
+        "AVERAGEIFS",
+        "SUMIFS",
+        "COUNTIFS",
+    }
+)
+
+# Functions that classify an error operand instead of propagating it. COUNT
+# counts numbers only, COUNTA counts anything non-empty (an error is data), and
+# COUNTBLANK counts an error cell as non-blank. The *IFS family matches an
+# error cell as "no match" rather than failing the whole formula.
+_ERROR_TOLERANT_FUNCTIONS = frozenset(
+    {"COUNT", "COUNTA", "COUNTBLANK", "SUMIFS", "COUNTIFS", "AVERAGEIFS"}
+)
+
 
 class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     def __init__(
@@ -232,28 +315,34 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "IF":
             if len(args) != 3:
                 return VALUE_ERROR
-            condition = self._truthy(self._eval(args[0], sheet, seen, depth))
-            if (
-                is_error(condition)
-                and isinstance(condition, str)
-                and condition in ERROR_CODES
-            ):
+            # The condition is inspected for an error *before* it is coerced to
+            # a boolean. ``_truthy`` returns a plain bool, so the old guard
+            # could never fire and IF(1/0, 1, 2) took the true branch -- a
+            # non-empty error string is truthy -- instead of returning
+            # #DIV/0!.
+            condition = self._eval(args[0], sheet, seen, depth)
+            if is_error(condition):
                 return condition
-            branch = args[1] if condition else args[2]
+            branch = args[1] if self._truthy(condition) else args[2]
             return self._eval(branch, sheet, seen, depth)
         if name in ("AND", "OR"):
             if not args:
                 return VALUE_ERROR
-            results = [
-                self._truthy(self._eval(arg, sheet, seen, depth)) for arg in args
-            ]
-            if any(is_error(r) for r in results):
-                return VALUE_ERROR
+            evaluated = [self._eval(arg, sheet, seen, depth) for arg in args]
+            # An error operand propagates, as it does from every other
+            # value-based function: AND(1/0) is #DIV/0!, not TRUE.
+            for value in evaluated:
+                if is_error(value):
+                    return value
+            results = [self._truthy(value) for value in evaluated]
             return all(results) if name == "AND" else any(results)
         if name == "NOT":
             if len(args) != 1:
                 return VALUE_ERROR
-            return not self._truthy(self._eval(args[0], sheet, seen, depth))
+            value = self._eval(args[0], sheet, seen, depth)
+            if is_error(value):
+                return value
+            return not self._truthy(value)
         if name in ("VLOOKUP", "HLOOKUP"):
             return self._lookup(name, args, sheet, seen, depth)
         if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):
@@ -271,6 +360,19 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         values: List[Any] = []
         for arg in args:
             values.extend(self._expand_arg(arg, sheet, seen, depth))
+        # An error operand propagates out of the value-based functions. Excel
+        # treats it as data the caller has to see rather than a value to
+        # coerce, and without this the coercion helpers mangled it instead of
+        # reporting it: PROPER(1/0) re-cased the error text into "#Div/0!",
+        # REPLACE(1/0, 1, 1, "x") concatenated it into "xDIV/0!", and
+        # ROUND(1, 1/0) blamed the wrong operand with #VALUE!. COUNT/COUNTA/
+        # COUNTBLANK and the *IFS family classify an error themselves (see
+        # _ERROR_TOLERANT_FUNCTIONS), and the IS* family answers a question
+        # *about* the error rather than failing on it.
+        if name in _VALUE_FUNCTIONS and name not in _ERROR_TOLERANT_FUNCTIONS:
+            for value in values:
+                if is_error(value):
+                    return value
         if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
             return self._aggregate(name, values)
         if name in (
@@ -286,6 +388,8 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             "ISTEXT",
         ):
             return self._single(name, values)
+        if name in ("ISERROR", "ISNA", "NA", "TYPE"):
+            return self._information(name, values)
         if name in ("LEFT", "RIGHT", "MID"):
             return self._text_slice(name, values)
         if name in (
@@ -376,7 +480,9 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if _numeric(value):
             return value != 0
         if isinstance(value, str) and value not in ERROR_CODES:
-            return True
+            # Empty text is falsy, as in Excel (IF("", 1, 2) takes the else
+            # branch) and in the client engine.
+            return len(value) > 0
         return bool(value)
 
     def _aggregate(self, name: str, values: List[Any]) -> Any:
@@ -416,6 +522,18 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if not values:
             return VALUE_ERROR
         value = values[0]
+        # The IS* family answers a question *about* its operand, so an error
+        # value is ordinary input: ISNUMBER(#DIV/0!) is FALSE rather than the
+        # error itself. Every function below propagates it instead.
+        if name == "ISBLANK":
+            # TRUE only for a genuinely empty cell. A cell holding the empty
+            # string (the result of something like =IF(1=2,"","x")) contains
+            # text, so ISBLANK("") is FALSE as in Excel.
+            return value is None
+        if name == "ISNUMBER":
+            return _numeric(value)
+        if name == "ISTEXT":
+            return isinstance(value, str) and value not in ERROR_CODES
         if is_error(value):
             return value
         if name == "ABS":
@@ -440,15 +558,38 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # tabs, which Excel's TRIM leaves alone because it only knows
             # about spaces.
             return re.sub(r" +", " ", _to_text(value)).strip(" ")
-        if name == "ISBLANK":
-            # TRUE only for a genuinely empty cell. A cell holding the empty
-            # string (the result of something like =IF(1=2,"","x")) contains
-            # text, so ISBLANK("") is FALSE as in Excel.
-            return value is None
-        if name == "ISNUMBER":
-            return _numeric(value)
-        if name == "ISTEXT":
-            return isinstance(value, str) and value not in ERROR_CODES
+        return VALUE_ERROR
+
+    def _information(self, name: str, values: List[Any]) -> Any:
+        """ISERROR, ISNA, NA and TYPE.
+
+        These inspect an error operand instead of propagating it: the IS*
+        family answers a question *about* the value, so ``ISERROR(1/0)`` is
+        TRUE. That is what makes ``IF(ISERROR(x), ...)`` usable as a guard.
+        """
+        if name == "NA":
+            # NA() takes no arguments and *is* the #N/A error value.
+            return VALUE_ERROR if values else N_A_ERROR
+        if len(values) != 1:
+            return VALUE_ERROR
+        value = values[0]
+        if name == "ISERROR":
+            return is_error(value)
+        if name == "ISNA":
+            return value == N_A_ERROR
+        if name == "TYPE":
+            # Excel's type codes: 1 number, 2 text, 4 logical, 16 error.
+            # ``is_error`` has to be tested before the text branch because an
+            # error value is a string.
+            if isinstance(value, bool):
+                return 4
+            if _numeric(value):
+                return 1
+            if is_error(value):
+                return 16
+            if isinstance(value, str):
+                return 2
+            return 1
         return VALUE_ERROR
 
     def _double(self, name: str, values: List[Any]) -> Any:
@@ -719,6 +860,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             criteria = first[1]
         else:
             criteria = self._eval(first, sheet, seen, depth)
+        if is_error(criteria):
+            # An error *criteria* argument propagates; an error cell inside the
+            # criteria range only fails to match.
+            return criteria
         sum_matrix = matrix
         if len(args) == 3:
             sum_matrix = self._range_matrix(args[2], sheet, seen, depth)
