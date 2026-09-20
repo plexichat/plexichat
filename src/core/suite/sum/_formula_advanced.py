@@ -20,8 +20,28 @@ from ._formula_shared import (
     _to_number,
     _to_number_or_zero,
     _to_text,
+    is_error,
     parse_cell_ref,
 )
+
+
+def _holiday_serials(values: List[Any]) -> set:
+    """Collect the day-serials of an optional ``holidays`` argument.
+
+    ``_expand_arg`` flattens a range into ``values``, so blanks and non-date
+    cells (a stray label beside the real dates) can sit alongside them. Excel
+    ignores those rather than failing the whole formula, so a value that does
+    not coerce to a number is skipped instead of poisoning the result.
+    """
+    serials = set()
+    for value in values:
+        if value is None or is_error(value):
+            continue
+        try:
+            serials.add(int(_to_number(value)))
+        except (TypeError, ValueError):
+            continue
+    return serials
 
 
 class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
@@ -505,7 +525,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             return float(date_val.isocalendar()[1])
         elif name == "NETWORKDAYS":
             # NETWORKDAYS(start_date, end_date, [holidays])
-            if len(values) < 2 or len(values) > 3:
+            # A holiday range is flattened into ``values`` after the two
+            # required arguments, so only the lower bound is fixed here.
+            if len(values) < 2:
                 return VALUE_ERROR
             try:
                 start_serial = int(_to_number(values[0]))
@@ -514,6 +536,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             if max(abs(start_serial), abs(end_serial)) > MAX_DATE_SERIAL:
                 return NUM_ERROR
+            holidays = _holiday_serials(values[2:])
             start_date = _DATE_EPOCH + datetime.timedelta(days=start_serial)
             end_date = _DATE_EPOCH + datetime.timedelta(days=end_serial)
             # Bound the day-by-day loop: NETWORKDAYS(1, 10**9) would otherwise
@@ -523,33 +546,44 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             count = 0
             current = start_date
             while current <= end_date:
-                if current.isoweekday() <= 5:  # Monday-Friday
+                # Monday-Friday, excluding listed holidays. A holiday that
+                # lands on a weekend is already excluded, so it cannot
+                # subtract twice.
+                if (
+                    current.isoweekday() <= 5
+                    and (current - _DATE_EPOCH).days not in holidays
+                ):
                     count += 1
                 current += datetime.timedelta(days=1)
             return float(count)
         elif name == "WORKDAY":
             # WORKDAY(start_date, days, [holidays])
-            if len(values) < 2 or len(values) > 3:
+            if len(values) < 2:
                 return VALUE_ERROR
             try:
                 start_serial = int(_to_number(values[0]))
                 work_days = int(_to_number(values[1]))
             except ValueError:
                 return VALUE_ERROR
-            if (
-                abs(start_serial) > MAX_DATE_SERIAL
-                or abs(work_days) > MAX_WORKDAY_OFFSET_DAYS
-            ):
+            if abs(start_serial) > MAX_DATE_SERIAL:
                 return NUM_ERROR
+            holidays = _holiday_serials(values[2:])
             current = _DATE_EPOCH + datetime.timedelta(days=start_serial)
-            remaining = work_days
+            # A negative day count walks backwards, as every other
+            # spreadsheet does; zero days is the start date itself.
+            remaining = abs(work_days)
+            step = 1 if work_days >= 0 else -1
             # Bound the walk: WORKDAY(1, 10**9) would otherwise loop
             # unbounded on a read path.
-            if abs(remaining) > MAX_WORKDAY_OFFSET_DAYS:
+            if remaining > MAX_WORKDAY_OFFSET_DAYS:
                 return NUM_ERROR
             while remaining > 0:
-                current += datetime.timedelta(days=1)
-                if current.isoweekday() <= 5:  # Monday-Friday
+                current += datetime.timedelta(days=step)
+                # Monday-Friday, excluding listed holidays.
+                if (
+                    current.isoweekday() <= 5
+                    and (current - _DATE_EPOCH).days not in holidays
+                ):
                     remaining -= 1
             return float((current - _DATE_EPOCH).days)
         return VALUE_ERROR

@@ -379,3 +379,45 @@ def test_networkdays_and_workday_span_is_bounded():
     assert _eval("NETWORKDAYS(1, 1000000000)") == NUM_ERROR
     assert _eval(f"WORKDAY({serial}, 5)") == float(serial + 7)
     assert _eval("WORKDAY(1, 1000000000)") == NUM_ERROR
+
+
+def test_networkdays_and_workday_honor_holidays_and_negative_days():
+    """Both functions accepted a ``holidays`` argument but ignored it.
+
+    A holiday must drop a weekday from NETWORKDAYS (but not twice when it
+    lands on a weekend), WORKDAY must skip it while walking, a holiday range
+    mixing a date, a blank, and a label must not poison the result, and a
+    negative ``days`` must walk backwards instead of returning the start
+    date.
+    """
+    epoch = datetime.date(1899, 12, 30)
+
+    def serial(day):
+        return (day - epoch).days
+
+    jan1 = serial(datetime.date(2024, 1, 1))  # Monday
+    jan3 = serial(datetime.date(2024, 1, 3))  # Wednesday
+    jan6 = serial(datetime.date(2024, 1, 6))  # Saturday
+    jan15 = serial(datetime.date(2024, 1, 15))  # Monday
+
+    cells = {
+        # A1:A3 = a real holiday, a blank, and a stray text label.
+        ("1", 0, 0): {"value_type": "number", "value": jan3, "formula": None},
+        ("1", 1, 0): {"value_type": "blank", "value": None, "formula": None},
+        ("1", 2, 0): {"value_type": "text", "value": "note", "formula": None},
+    }
+    resolver = _resolver(cells)
+
+    # Jan 1-7 2024 has five weekdays; the Jan 3 holiday drops one.
+    assert _eval(f"NETWORKDAYS({jan1}, {jan1 + 6})", resolver) == 5.0
+    assert _eval(f"NETWORKDAYS({jan1}, {jan1 + 6}, {jan3})", resolver) == 4.0
+    # A holiday that lands on a weekend is already excluded.
+    assert _eval(f"NETWORKDAYS({jan1}, {jan1 + 6}, {jan6})", resolver) == 5.0
+    # A mixed holiday range still counts the one real date.
+    assert _eval(f"NETWORKDAYS({jan1}, {jan1 + 6}, A1:A3)", resolver) == 4.0
+
+    # WORKDAY: holidays push the result past them, negative days walk back
+    # (Mon Jan 15 - 1 workday = Fri Jan 12), and zero is the start date.
+    assert _eval(f"WORKDAY({jan15 - 1}, 1, {jan15})", resolver) == float(jan15 + 1)
+    assert _eval(f"WORKDAY({jan15}, -1)", resolver) == float(jan15 - 3)
+    assert _eval(f"WORKDAY({jan15}, 0)", resolver) == float(jan15)
