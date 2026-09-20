@@ -286,6 +286,8 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             "ROUNDDOWN",
             "MOD",
             "POWER",
+            "CEILING",
+            "FLOOR",
         ):
             return self._double(name, values)
         if name in ("CONCAT", "CONCATENATE"):
@@ -473,6 +475,38 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             else:
                 rounded = math.floor(magnitude + epsilon)
             return math.copysign(rounded, scaled) / factor
+        if name in ("CEILING", "FLOOR"):
+            try:
+                number = _to_number(a)
+                significance = _to_number(b)
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            if significance == 0:
+                return DIV_ZERO
+            # Excel rejects a positive number with a negative significance
+            # instead of silently returning a multiple of it.
+            if number > 0 and significance < 0:
+                return NUM_ERROR
+            if number == 0:
+                return 0.0
+            # When the signs match the magnitude rounds away from zero. When
+            # the number is negative and the significance positive it is the
+            # mirror image: CEILING moves toward zero and FLOOR away from it.
+            same_sign = (number < 0) == (significance < 0)
+            away_from_zero = same_sign == (name == "CEILING")
+            magnitude = abs(number) / abs(significance)
+            epsilon = min(magnitude * 1e-12, 1e-9)
+            if away_from_zero:
+                multiple = math.ceil(magnitude - epsilon)
+            else:
+                multiple = math.floor(magnitude + epsilon)
+            result = multiple * abs(significance)
+            if number < 0:
+                result = -result
+            # Snap to the 15 significant digits a spreadsheet keeps so the
+            # multiply cannot leak binary noise (FLOOR(1.58, 0.1) was
+            # 1.5000000000000002).
+            return float(f"{result:.15g}")
         return VALUE_ERROR
 
     def _text_slice(self, name: str, values: List[Any]) -> Any:

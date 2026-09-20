@@ -466,6 +466,31 @@ def test_round_family_breaks_ties_away_from_zero():
     assert _eval("ROUNDDOWN(-2.55, 1)") == -2.5
 
 
+def test_ceiling_and_floor_follow_excel_sign_rules():
+    """CEILING/FLOOR match Excel's sign table, including its #NUM! case.
+
+    These engines had no implementation at all, and the client's plain
+    ceil/floor of the quotient returned a value for a positive number with a
+    negative significance (``FLOOR(2.5, -2)`` gave 4) where Excel raises
+    #NUM!, and leaked binary noise into the result.
+    """
+    # Signs matching: the magnitude rounds away from zero.
+    assert _eval("CEILING(2.5, 1)") == 3.0
+    assert _eval("CEILING(-2.5, -2)") == -4.0
+    assert _eval("FLOOR(3.7, 2)") == 2.0
+    assert _eval("FLOOR(-2.5, -2)") == -2.0
+    # Negative number with a positive significance: CEILING toward zero,
+    # FLOOR away from it.
+    assert _eval("CEILING(-1.5, 1)") == -1.0
+    assert _eval("FLOOR(-2.5, 1)") == -3.0
+    # A positive number with a negative significance is #NUM!.
+    assert _eval("CEILING(3.1, -3)") == NUM_ERROR
+    assert _eval("FLOOR(2.5, -2)") == NUM_ERROR
+    # The multiply is snapped to spreadsheet precision.
+    assert _eval("FLOOR(1.58, 0.1)") == 1.5
+    assert _eval("CEILING(8.26, 0.05)") == 8.3
+
+
 def test_rept_is_bounded_against_multi_gb_allocations():
     """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
 
