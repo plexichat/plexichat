@@ -1,0 +1,1378 @@
+{
+  "_comment": [
+    "Shared Excel-semantics case table for the PlexiSum formula engines.",
+    "Committed to plexichat as src/tests/suite/formula_parity_cases.json and to",
+    "plexichat-client as tests/unit/data/formula-parity-cases.json. The two",
+    "copies must stay byte-identical: each engine is tested against the copy it",
+    "ships, and every expected value is what Excel returns, so either engine",
+    "drifting from Excel (or from the other engine) fails a test.",
+    "Types are explicit (number:/text:/boolean:/error:/blank) so a text \"12\" is",
+    "never mistaken for the number 12.",
+    "Cells A1:C6 hold the fixture data below; an unlisted cell is blank."
+  ],
+  "sheet": "1",
+  "grid": {
+    "A1": 1,
+    "A2": 2,
+    "A3": 3,
+    "A4": "x",
+    "A5": {
+      "formula": "1/0"
+    },
+    "A6": "7",
+    "B1": "one",
+    "B2": "two",
+    "B3": "three",
+    "B4": "",
+    "B6": true,
+    "C1": 10,
+    "C2": 20,
+    "C3": 30
+  },
+  "cases": [
+    {
+      "formula": "1+2*3",
+      "expected": "number:7"
+    },
+    {
+      "formula": "(1+2)*3",
+      "expected": "number:9"
+    },
+    {
+      "formula": "2^3",
+      "expected": "number:8"
+    },
+    {
+      "formula": "-2^2",
+      "expected": "number:4"
+    },
+    {
+      "formula": "2^-1",
+      "expected": "number:0.5"
+    },
+    {
+      "formula": "0^-1",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "(-8)^0.5",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "1/0",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "\"x\"^2",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "1&2",
+      "expected": "text:12"
+    },
+    {
+      "formula": "\"a\"&\"b\"",
+      "expected": "text:ab"
+    },
+    {
+      "formula": "3%",
+      "expected": "number:0.03"
+    },
+    {
+      "formula": "-3%",
+      "expected": "number:-0.03"
+    },
+    {
+      "formula": "1=1",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "\"1\"=1",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "\"a\"<>\"b\"",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "TRUE+1",
+      "expected": "number:2"
+    },
+    {
+      "formula": "1<2",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "\"2\"+3",
+      "expected": "number:5"
+    },
+    {
+      "formula": "\"\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\" \"&1",
+      "expected": "text: 1"
+    },
+    {
+      "formula": "1/0 & \"x\"",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "\"2\"*3",
+      "expected": "number:6"
+    },
+    {
+      "formula": "\"2\"-1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "\"2\"/2",
+      "expected": "number:1"
+    },
+    {
+      "formula": "\"2\"^2",
+      "expected": "number:4"
+    },
+    {
+      "formula": "-\"2\"",
+      "expected": "number:-2"
+    },
+    {
+      "formula": "\"2.5\"+0",
+      "expected": "number:2.5"
+    },
+    {
+      "formula": "\"abc\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "TRUE*2",
+      "expected": "number:2"
+    },
+    {
+      "formula": "FALSE+1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "\"a\"<\"b\"",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"b\">\"a\"",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"abc\"<\"abd\"",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUM(1,2,3)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "SUM(1,\"x\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUM(\"2\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "SUM(TRUE,1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUM(TRUE)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUM(A1:A3)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "SUM(A1:C4)",
+      "expected": "number:66"
+    },
+    {
+      "formula": "SUM(A1:A3,C1:C3)",
+      "expected": "number:66"
+    },
+    {
+      "formula": "SUM(A6:A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUM(B6:B6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "AVERAGE(1,2,3)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "AVERAGE()",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AVERAGE(\"2\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "AVERAGE(A6:A6)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MIN(3,1,2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MIN()",
+      "expected": "number:0"
+    },
+    {
+      "formula": "MIN(\"2\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MIN(A6:A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "MAX(3,1,2)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "MAX()",
+      "expected": "number:0"
+    },
+    {
+      "formula": "MAX(\"2\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "PRODUCT(2,3,4)",
+      "expected": "number:24"
+    },
+    {
+      "formula": "PRODUCT()",
+      "expected": "number:0"
+    },
+    {
+      "formula": "PRODUCT(2,\"x\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "PRODUCT(\"2\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "PRODUCT(A6:A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(A1:C4)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "COUNTA(A1:C4)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "COUNT(\"\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTA(\"\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(1,1/0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTA(1,1/0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "SUM(1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MIN(1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PRODUCT(1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUM(A4:A4)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(A4:A4)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTA(A4:A4)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUM(E1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(E1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTA(E1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "AVERAGE(E1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MIN(E1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "PRODUCT(E1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTBLANK(B1:B4)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTBLANK(E1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMPRODUCT(A1:A3,C1:C3)",
+      "expected": "number:140"
+    },
+    {
+      "formula": "SUMPRODUCT(A1:A3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(A1:A3,\">1\")",
+      "expected": "number:5"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,\">1\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "AVERAGEIF(A1:A3,\">1\")",
+      "expected": "number:2.5"
+    },
+    {
+      "formula": "SUMIF(A1:A3,\">1\",C1:C3)",
+      "expected": "number:50"
+    },
+    {
+      "formula": "SUMIF(A1:A3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(E1,\">0\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "AVERAGEIF(A1:A3,\">100\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIFS(A1:A3,\">1\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "SUMIFS(C1:C3,A1:A3,\">1\")",
+      "expected": "number:50"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"tw*\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,\"\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,\"=3\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "ABS(-5)",
+      "expected": "number:5"
+    },
+    {
+      "formula": "ABS(\"-5\")",
+      "expected": "number:5"
+    },
+    {
+      "formula": "ABS(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ABS(E1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SQRT(16)",
+      "expected": "number:4"
+    },
+    {
+      "formula": "SQRT(-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SQRT(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "INT(-2.5)",
+      "expected": "number:-3"
+    },
+    {
+      "formula": "INT(2.9)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "INT(\"2.9\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "INT(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LEN(\"abc\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "LEN(123)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "LEN(TRUE)",
+      "expected": "number:4"
+    },
+    {
+      "formula": "LEN(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "UPPER(\"aB\")",
+      "expected": "text:AB"
+    },
+    {
+      "formula": "UPPER(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LOWER(\"Ab\")",
+      "expected": "text:ab"
+    },
+    {
+      "formula": "TRIM(\"  a  \")",
+      "expected": "text:a"
+    },
+    {
+      "formula": "TRIM(\"  a    b  \")",
+      "expected": "text:a b"
+    },
+    {
+      "formula": "ISBLANK(\"\")",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISBLANK(E1)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISBLANK(1/0)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNUMBER(\"5\")",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNUMBER(5)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISNUMBER(1/0)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISTEXT(\"a\")",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISTEXT(1)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISTEXT(1/0)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "LEFT(\"hello\")",
+      "expected": "text:h"
+    },
+    {
+      "formula": "LEFT(\"hello\",2)",
+      "expected": "text:he"
+    },
+    {
+      "formula": "LEFT(\"hello\",0)",
+      "expected": "text:"
+    },
+    {
+      "formula": "LEFT(\"hello\",-1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LEFT(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LEFT(123,2)",
+      "expected": "text:12"
+    },
+    {
+      "formula": "RIGHT(\"hello\")",
+      "expected": "text:o"
+    },
+    {
+      "formula": "RIGHT(\"hello\",0)",
+      "expected": "text:"
+    },
+    {
+      "formula": "MID(\"hello\",2,3)",
+      "expected": "text:ell"
+    },
+    {
+      "formula": "MID(\"hello\",0,2)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MID(\"hello\",4,99)",
+      "expected": "text:lo"
+    },
+    {
+      "formula": "MID(1/0,1,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ROUND(2.5,0)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "ROUND(-2.5,0)",
+      "expected": "number:-3"
+    },
+    {
+      "formula": "ROUND(2.675,2)",
+      "expected": "number:2.68"
+    },
+    {
+      "formula": "ROUND(123.456,-2)",
+      "expected": "number:100"
+    },
+    {
+      "formula": "ROUND(\"2.5\",0)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "ROUND(1/0,0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ROUND(1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ROUNDUP(-2.1,0)",
+      "expected": "number:-3"
+    },
+    {
+      "formula": "ROUNDDOWN(-2.5,0)",
+      "expected": "number:-2"
+    },
+    {
+      "formula": "MOD(7,3)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MOD(-7,2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MOD(7,-2)",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "MOD(7,0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MOD(1/0,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MOD(1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "POWER(2,10)",
+      "expected": "number:1024"
+    },
+    {
+      "formula": "POWER(-7,0.5)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "POWER(0,-3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "POWER(1/0,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "POWER(2,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CEILING(2.5,1)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "CEILING(-2.5,-2)",
+      "expected": "number:-4"
+    },
+    {
+      "formula": "CEILING(-1.5,1)",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "CEILING(3.1,-3)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "CEILING(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FLOOR(3.7,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "FLOOR(-2.5,-2)",
+      "expected": "number:-2"
+    },
+    {
+      "formula": "FLOOR(2.5,-2)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "FLOOR(1.58,0.1)",
+      "expected": "number:1.5"
+    },
+    {
+      "formula": "FLOOR(1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CEILING(8.26,0.05)",
+      "expected": "number:8.3"
+    },
+    {
+      "formula": "CONCAT(1,2)",
+      "expected": "text:12"
+    },
+    {
+      "formula": "CONCAT(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CONCATENATE(\"a\",1)",
+      "expected": "text:a1"
+    },
+    {
+      "formula": "EXACT(\"a\",\"a\")",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "EXACT(\"a\",\"A\")",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "EXACT(1/0,\"a\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PROPER(\"hello wORLD\")",
+      "expected": "text:Hello World"
+    },
+    {
+      "formula": "PROPER(\"o'neil\")",
+      "expected": "text:O'Neil"
+    },
+    {
+      "formula": "PROPER(\"2-cent\")",
+      "expected": "text:2-Cent"
+    },
+    {
+      "formula": "PROPER(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUBSTITUTE(\"hello world\",\"l\",\"L\")",
+      "expected": "text:heLLo worLd"
+    },
+    {
+      "formula": "SUBSTITUTE(\"hello world\",\"l\",\"L\",2)",
+      "expected": "text:helLo world"
+    },
+    {
+      "formula": "SUBSTITUTE(\"hello world\",\"l\",\"L\",9)",
+      "expected": "text:hello world"
+    },
+    {
+      "formula": "SUBSTITUTE(\"abc\",\"\",\"x\")",
+      "expected": "text:abc"
+    },
+    {
+      "formula": "SUBSTITUTE(1/0,\"a\",\"b\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "DATE(2024,1,1)",
+      "expected": "number:45292"
+    },
+    {
+      "formula": "DATE(2024,13,1)",
+      "expected": "number:45658"
+    },
+    {
+      "formula": "DATE(2024,1,0)",
+      "expected": "number:45291"
+    },
+    {
+      "formula": "DATE(1900,1,1)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "DATE(1/0,1,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "YEAR(0)",
+      "expected": "number:1899"
+    },
+    {
+      "formula": "MONTH(0)",
+      "expected": "number:12"
+    },
+    {
+      "formula": "DAY(0)",
+      "expected": "number:30"
+    },
+    {
+      "formula": "YEAR(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "DAYS(DATE(2024,1,10),DATE(2024,1,1))",
+      "expected": "number:9"
+    },
+    {
+      "formula": "DAYS(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "EOMONTH(DATE(2024,1,15),1)",
+      "expected": "number:45351"
+    },
+    {
+      "formula": "EOMONTH(DATE(2024,1,15),0)",
+      "expected": "number:45322"
+    },
+    {
+      "formula": "EOMONTH(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "EDATE(DATE(2024,1,31),1)",
+      "expected": "number:45351"
+    },
+    {
+      "formula": "EDATE(DATE(2024,3,31),-1)",
+      "expected": "number:45351"
+    },
+    {
+      "formula": "EDATE(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7))",
+      "expected": "number:1"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),2)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),3)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "WEEKDAY(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "WEEKNUM(DATE(2024,1,1))",
+      "expected": "number:1"
+    },
+    {
+      "formula": "WEEKNUM(DATE(2024,1,7),1)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "WEEKNUM(DATE(2024,1,7),2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "WEEKNUM(DATE(2024,1,7),21)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "WEEKNUM(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7))",
+      "expected": "number:5"
+    },
+    {
+      "formula": "NETWORKDAYS(1/0,DATE(2024,1,7))",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "WORKDAY(DATE(2024,1,1),5)",
+      "expected": "number:45299"
+    },
+    {
+      "formula": "TEXT(1234.5,\"0\")",
+      "expected": "text:1235"
+    },
+    {
+      "formula": "TEXT(-0.5,\"0\")",
+      "expected": "text:-1"
+    },
+    {
+      "formula": "TEXT(-0.4,\"0\")",
+      "expected": "text:0"
+    },
+    {
+      "formula": "TEXT(-2.5,\"0\")",
+      "expected": "text:-3"
+    },
+    {
+      "formula": "TEXT(2.5,\"0\")",
+      "expected": "text:3"
+    },
+    {
+      "formula": "TEXT(1234.5,\"0.0\")",
+      "expected": "text:1234.5"
+    },
+    {
+      "formula": "TEXT(1234567,\",\")",
+      "expected": "text:1,234,567"
+    },
+    {
+      "formula": "TEXT(0.5,\"$\")",
+      "expected": "text:$0.50"
+    },
+    {
+      "formula": "TEXT(0.5,\"%\")",
+      "expected": "text:50.0%"
+    },
+    {
+      "formula": "TEXT(\"abc\",\"0\")",
+      "expected": "text:abc"
+    },
+    {
+      "formula": "TEXT(1/0,\"0\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "VALUE(\"1,234.5\")",
+      "expected": "number:1234.5"
+    },
+    {
+      "formula": "VALUE(\"$1,000\")",
+      "expected": "number:1000"
+    },
+    {
+      "formula": "VALUE(\"12%\")",
+      "expected": "number:0.12"
+    },
+    {
+      "formula": "VALUE(\"1.5abc\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VALUE(\"ABC\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VALUE(\" 12 \")",
+      "expected": "number:12"
+    },
+    {
+      "formula": "VALUE(\"(100)\")",
+      "expected": "number:-100"
+    },
+    {
+      "formula": "VALUE(\"1_000\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VALUE(\"1e3\")",
+      "expected": "number:1000"
+    },
+    {
+      "formula": "VALUE(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "NUMBERVALUE(\"2.500,27\",\",\",\".\")",
+      "expected": "number:2500.27"
+    },
+    {
+      "formula": "NUMBERVALUE(\"3.5%\")",
+      "expected": "number:0.035"
+    },
+    {
+      "formula": "NUMBERVALUE(\"1.5abc\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "FIND(\"b\",\"abcb\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "FIND(\"B\",\"abcb\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "FIND(\"x\",\"abc\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "FIND(1/0,\"abc\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FIND(\"a\",1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SEARCH(\"B\",\"abcb\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "SEARCH(\"x\",\"abc\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SEARCH(\"a\",1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "REPLACE(\"hello\",2,3,\"XY\")",
+      "expected": "text:hXYo"
+    },
+    {
+      "formula": "REPLACE(1/0,1,1,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "REPT(\"ab\",3)",
+      "expected": "text:ababab"
+    },
+    {
+      "formula": "REPT(1/0,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "REPT(\"x\",999999999)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ISERROR(1/0)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISERROR(1)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNA(NA())",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "TYPE(1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "IF(TRUE,1,2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "IF(FALSE,1,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "IF(1/0,1,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IF(E1,1,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "IF(TRUE,1/0,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IF(FALSE,1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IF(\"x\",1,2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "IF(0,1,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "AND(TRUE,FALSE)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "AND(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AND(1/0,TRUE)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OR(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OR(1/0,FALSE)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OR(TRUE,FALSE)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "NOT(FALSE)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "NOT(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IFERROR(1/0,42)",
+      "expected": "number:42"
+    },
+    {
+      "formula": "IFERROR(2*3,0)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "IFNA(1/0,7)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IFNA(NA(),7)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "VLOOKUP(2,A1:C3,2,FALSE)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "VLOOKUP(2,A1:C3,3,FALSE)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "VLOOKUP(99,A1:C3,2,FALSE)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "VLOOKUP(1/0,A1:C3,2,FALSE)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "INDEX(A1:C3,2,3)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "INDEX(A1:C3,1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(2,A1:A3,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(99,A1:A3,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(1/0,A1:A3,0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LOOKUP(2,A1:A3,C1:C3)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "PI()",
+      "expected": "number:3.141592654"
+    },
+    {
+      "formula": "RADIANS(180)",
+      "expected": "number:3.141592654"
+    },
+    {
+      "formula": "DEGREES(3.14159265358979)",
+      "expected": "number:180"
+    },
+    {
+      "formula": "SIN(0)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COS(0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "TAN(0)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "ASIN(1)",
+      "expected": "number:1.570796327"
+    },
+    {
+      "formula": "ASIN(2)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "ACOS(1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "ATAN(1)",
+      "expected": "number:0.785398163"
+    },
+    {
+      "formula": "SIN(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "RADIANS(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FOO(1)",
+      "expected": "error:#NAME?"
+    },
+    {
+      "formula": "FOO(1/0)",
+      "expected": "error:#NAME?"
+    },
+    {
+      "formula": "1+FOO(1)",
+      "expected": "error:#NAME?"
+    },
+    {
+      "formula": "A1+1/0",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUM(A1:A3,FOO())",
+      "expected": "error:#NAME?"
+    },
+    {
+      "formula": "IF(\"\",1,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "IF(B4,1,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "IF(A5,1,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUM(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AVERAGE(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNT(A5)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTA(A5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MIN(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PRODUCT(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTBLANK(A5)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTBLANK(A1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTBLANK(A9)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "ABS(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ROUND(A5,0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ISERROR(A5)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISERROR(\"x\")",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNA(A5)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "NA()",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(A1:A3,1/0,C1:C3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMPRODUCT(A1:A3,5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "OFFSET(A1,0,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUM(OFFSET(A1:B2,0,0))",
+      "expected": "number:3"
+    },
+    {
+      "formula": "SUM(OFFSET(A1,1,1))",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUM(A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "AVERAGE(A6)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MIN(A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "MAX(A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "PRODUCT(A6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUM(B6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(B6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "AVERAGE(B6)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUM(A4)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNT(A4)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTA(A4)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUM(A3)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "SUM(A1:A3,A6)",
+      "expected": "number:6"
+    }
+  ]
+}
