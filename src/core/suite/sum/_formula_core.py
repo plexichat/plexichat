@@ -212,7 +212,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return _to_number(left) / rn
         if op == "^":
             try:
-                return math.pow(_to_number(left), _to_number(right))
+                base = _to_number(left)
+                exponent = _to_number(right)
+            except ValueError as exc:
+                return str(exc)
+            if base == 0 and exponent < 0:
+                # 0 ** -n is 1 / 0**n, a division by zero in Excel.
+                return DIV_ZERO
+            try:
+                return math.pow(base, exponent)
             except (ValueError, OverflowError):
                 return NUM_ERROR
         return VALUE_ERROR
@@ -450,7 +458,16 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return number - divisor * math.floor(number / divisor)
         if name == "POWER":
             try:
-                return math.pow(_to_number(a), _to_number(b))
+                base = _to_number(a)
+                exponent = _to_number(b)
+            except ValueError as exc:
+                return str(exc)
+            # A negative base with a fractional exponent and any overflow are
+            # #NUM!; zero to a negative power is 1 / 0**n, i.e. #DIV/0!.
+            if base == 0 and exponent < 0:
+                return DIV_ZERO
+            try:
+                return math.pow(base, exponent)
             except (ValueError, OverflowError):
                 return NUM_ERROR
         if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):

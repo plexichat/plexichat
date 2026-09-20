@@ -3,6 +3,7 @@
 import datetime
 
 from src.core.suite.sum.formulas import (
+    DIV_ZERO,
     FormulaEvaluator,
     MAX_CALL_DEPTH,
     MAX_DEPENDENCIES,
@@ -501,6 +502,25 @@ def test_mod_carries_the_sign_of_the_divisor():
     assert _eval("MOD(7, -2)") == -1.0
     assert _eval("MOD(-2.5, 2)") == 1.5
     assert _eval("MOD(7, 3)") == 1.0
+
+
+def test_power_and_caret_reject_non_finite_results():
+    """POWER and ^ report Excel's errors instead of returning non-finite data.
+
+    A negative base with a fractional exponent and any overflow are #NUM!.
+    Zero raised to a negative power is the division by zero in 1 / 0**n, so it
+    is #DIV/0! rather than #NUM!, and a text operand is #VALUE!.
+    """
+    assert _eval("POWER(-7, 0.5)") == NUM_ERROR
+    assert _eval("(-8)^0.5") == NUM_ERROR
+    assert _eval("POWER(0, -3)") == DIV_ZERO
+    assert _eval("0^-1") == DIV_ZERO
+    assert _eval('"x"^2') == VALUE_ERROR
+    assert _eval('POWER("x", 2)') == VALUE_ERROR
+    # The ordinary cases are untouched.
+    assert _eval("0^0") == 1.0
+    assert _eval("(-8)^3") == -512.0
+    assert _eval("POWER(2, 10)") == 1024.0
 
 
 def test_rept_is_bounded_against_multi_gb_allocations():
