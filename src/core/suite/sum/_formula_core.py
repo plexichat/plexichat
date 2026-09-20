@@ -411,7 +411,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "LOWER":
             return _to_text(value).lower()
         if name == "TRIM":
-            return _to_text(value).strip()
+            # Excel deletes leading/trailing spaces and collapses every
+            # internal run down to one space. ``str.strip()`` only handled the
+            # ends, so "a   b" came back unchanged -- and it also stripped
+            # tabs, which Excel's TRIM leaves alone because it only knows
+            # about spaces.
+            return re.sub(r" +", " ", _to_text(value)).strip(" ")
         if name == "ISBLANK":
             return value is None or value == ""
         if name == "ISNUMBER":

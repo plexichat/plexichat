@@ -76,6 +76,8 @@ def test_single_and_double_functions():
     assert _eval("POWER(2,10)") == 1024.0
     assert _eval("LEFT(B2,1)") == "h"
     assert _eval('TRIM("  x  ")') == "x"
+    # Excel collapses internal runs of spaces, not just the ends.
+    assert _eval('TRIM("  a    b  ")') == "a b"
     assert _eval("ISNUMBER(A1)") is True
     assert _eval("ISTEXT(B2)") is True
     assert _eval("ISBLANK(B1)") is False
