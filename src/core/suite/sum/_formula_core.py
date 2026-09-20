@@ -418,7 +418,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # about spaces.
             return re.sub(r" +", " ", _to_text(value)).strip(" ")
         if name == "ISBLANK":
-            return value is None or value == ""
+            # TRUE only for a genuinely empty cell. A cell holding the empty
+            # string (the result of something like =IF(1=2,"","x")) contains
+            # text, so ISBLANK("") is FALSE as in Excel.
+            return value is None
         if name == "ISNUMBER":
             return _numeric(value)
         if name == "ISTEXT":

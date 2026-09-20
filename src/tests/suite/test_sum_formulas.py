@@ -83,6 +83,17 @@ def test_single_and_double_functions():
     assert _eval("ISBLANK(B1)") is False
 
 
+def test_isblank_is_true_only_for_a_genuinely_empty_cell():
+    """ISBLANK("") is FALSE: empty text is a value, not a blank cell.
+
+    Treating ``""`` as blank made a cell holding the result of
+    ``=IF(1=2,"","x")`` indistinguishable from an untouched one.
+    """
+    assert _eval('ISBLANK("")') is False
+    assert _eval("ISBLANK(B1)") is False
+    assert _eval("ISBLANK(A9)") is True
+
+
 def test_value_and_numbervalue_parse_a_whole_numeric_string():
     """VALUE/NUMBERVALUE must read the whole string, not just a prefix.
 
