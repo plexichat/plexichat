@@ -408,6 +408,27 @@ def test_round_exponent_is_clamped_to_spreadsheet_precision():
     assert _eval("ROUND(123.456, -2)") == 100.0
 
 
+def test_round_family_breaks_ties_away_from_zero():
+    """ROUND/ROUNDUP/ROUNDDOWN follow Excel's sign rules.
+
+    Python's ``round`` breaks ties to even and ``ceil``/``floor`` always move
+    toward +Infinity, so every negative input came out a step late:
+    ``ROUND(-2.5)`` gave -2 and ``ROUNDUP(-2.1)`` gave -2. Excel rounds halves
+    away from zero and makes ROUNDUP/ROUNDDOWN move away from or toward zero.
+    """
+    assert _eval("ROUND(2.5, 0)") == 3.0
+    assert _eval("ROUND(7.5, 0)") == 8.0
+    assert _eval("ROUND(8.5, 0)") == 9.0
+    assert _eval("ROUND(-2.5, 0)") == -3.0
+    assert _eval("ROUND(-2.25, 1)") == -2.3
+    # Binary-float noise must not tip a true half the wrong way.
+    assert _eval("ROUND(2.675, 2)") == 2.68
+    assert _eval("ROUNDUP(-2.1, 0)") == -3.0
+    assert _eval("ROUNDUP(-2, 0)") == -2.0
+    assert _eval("ROUNDDOWN(-2.5, 0)") == -2.0
+    assert _eval("ROUNDDOWN(-2.55, 1)") == -2.5
+
+
 def test_rept_is_bounded_against_multi_gb_allocations():
     """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
 

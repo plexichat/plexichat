@@ -449,12 +449,22 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # multi-gigabyte big integer and stalls/OOMs the viewport read.
             digits = max(-15, min(digits, 15))
             factor = 10**digits
-            number = _to_number(a)
+            scaled = _to_number(a) * factor
+            magnitude = abs(scaled)
+            # Excel breaks ties away from zero, so ``round()`` (which breaks
+            # them to even) and a raw ``ceil``/``floor`` were both wrong for
+            # negative numbers: ROUND(-2.5) gave -2 and ROUNDUP(-2.1) gave -2.
+            # A relative epsilon absorbs binary-float noise (2.675 * 100 lands
+            # just below 267.5) without moving a genuinely sub-half value; it
+            # is capped so it can never shift a large magnitude by a step.
+            epsilon = min(magnitude * 1e-12, 1e-9)
             if name == "ROUND":
-                return round(number * factor) / factor
-            if name == "ROUNDUP":
-                return math.ceil(number * factor - 1e-12) / factor
-            return math.floor(number * factor + 1e-12) / factor
+                rounded = math.floor(magnitude + 0.5 + epsilon)
+            elif name == "ROUNDUP":
+                rounded = math.ceil(magnitude - epsilon)
+            else:
+                rounded = math.floor(magnitude + epsilon)
+            return math.copysign(rounded, scaled) / factor
         return VALUE_ERROR
 
     def _text_slice(self, name: str, values: List[Any]) -> Any:
