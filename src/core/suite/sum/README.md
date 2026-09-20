@@ -217,6 +217,47 @@ Deliberate, and shared with the client engine unless noted:
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
 | `ISEVEN`, `ISREF`, `T`, `CLEAN`, most statistical/financial/engineering functions | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
+### Functions the client engine has that this one does not
+
+This engine implements 84 functions (`TRUE`/`FALSE` are literals, not
+functions, so `TRUE()` is `#VALUE!`); the client engine implements 249. The gap
+is by design — a viewport read, a CSV export and a sort need a compact,
+cheap-to-verify subset — but it has never been written down, so it is listed
+here, with what to adopt next and what to leave alone. Every function named
+below is callable in the client engine today.
+
+**Adopt next.** Cheap to implement on the machinery that is already here, and
+common enough in real sheets to be worth the surface area:
+
+| Family | Functions | Note |
+|---|---|---|
+| Lookup | `CHOOSE`, `IFS`, `SWITCH` | the `IF`/`IFNA` short-circuit path already exists |
+| Information | `ISLOGICAL`, `ISNONTEXT`, `ISEVEN`, `ISODD`, `ERROR.TYPE` | `_information` and the `ERROR_CODES` table are already here; `N`, `T`, `CLEAN` are one-liners on `_to_number`/`_to_text` |
+| Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | pure arithmetic over the existing aggregate walk |
+| Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | `math.atan2`/`math.sinh`… |
+| Date | `HOUR`, `MINUTE`, `SECOND`, `TIME`, `DATEVALUE`, `TODAY`, `NOW` | the serial-number helpers already exist for `DATE`/`DAYS` |
+| Statistics | `MEDIAN`, `LARGE`, `SMALL`, `RANK`, `STDEV`, `VAR`, `MODE`, `PERCENTILE`, `QUARTILE`, `AVERAGEA`, `MAXA`, `MINA` | sort/sum over the numbers the aggregates already collect |
+
+**Adopt when a feature asks for it.** The rest of the statistical
+`*DIST`/`*INV` family, `FORECAST`/`SLOPE`/`INTERCEPT`/`LINEST`/`TREND`, the
+financial set (`NPV`, `IRR`, `PMT`, `FV`, …), `XLOOKUP`, and the dynamic-array
+family (`SORT`, `FILTER`, `HSTACK`, `TAKE`, `WRAPROWS`, …). Each needs design
+decisions this engine has not made yet — array results, iteration, numeric
+methods — so they should arrive with the feature that wants them rather than as
+speculative surface.
+
+**Leave out.** Engineering conversions and complex arithmetic (`BIN2HEX`,
+`IMSUM`, `CONVERT`, `BESSELJ`, …) are a large surface with narrow use, and the
+client engine covers them where a formula needs one.
+
+One inconsistency worth knowing: the client registers `TRUE` and `FALSE` as
+functions (`TRUE()`), which Excel also accepts; here they are literals only.
+
+The lexer accepts a name that is shaped like a cell reference (`ATAN2`, which is
+both) and resolves it as a call when a parenthesis follows, and it accepts a dot
+in a name, so adopting a name from the list above does not need a lexer change
+first.
+
 The engine is also bounded where Excel is not: `REPT`, `NETWORKDAYS` and
 `WORKDAY` refuse to materialise a huge string or iterate for hours
 (`MAX_REPT_CHARS`, `MAX_NETWORKDAYS_SPAN_DAYS`, `MAX_WORKDAY_OFFSET_DAYS`), and
