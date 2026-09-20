@@ -220,4 +220,38 @@ jobs:
           mkdir -p .plexichat
           python main.py self-test
 
+  server-formula-parity:
+    name: "Server: PlexiSum formula parity"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install --require-hashes -r requirements-dev.txt
+
+      - name: Run the shared formula case table
+        run: |
+          source .venv/bin/activate
+          # The table is the contract both PlexiSum engines are held to, and
+          # the parity test pins its digest so an edit to either repository's
+          # copy that is not mirrored in the other fails the PR. This is a
+          # blocking check on its own rather than one line of a larger suite.
+          python -m pytest -q src/tests/suite/test_sum_formula_parity.py src/tests/suite/test_sum_formulas.py
+
   # Client CI is managed separately in the plexichat-client GitLab repo.

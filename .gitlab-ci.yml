@@ -325,6 +325,27 @@ test:pytest:
       - test-results.xml
     expire_in: 1 week
 
+# The PlexiSum engine's cross-engine contract gets its own job.
+#
+# The shared case table (src/tests/suite/formula_parity_cases.json) is the
+# statement of the formula semantics this engine and the PlexiSum client engine
+# must both satisfy, and the parity test also pins the table's digest so an
+# edit to either repository's copy that is not mirrored in the other fails
+# here. Running it as a named job keeps a broken contract a blocking, visible
+# check instead of one red line buried in test:pytest.
+test:formula_parity:
+  extends: .python_base
+  stage: test
+  timeout: 15m
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q
+      src/tests/suite/test_sum_formula_parity.py
+      src/tests/suite/test_sum_formulas.py
+  needs: []
+  allow_failure: false
+
 # Dedicated run of the database-backed suites against real services.
 #
 # ``test:pytest`` runs everything else, but with no backend reachable the
