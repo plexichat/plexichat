@@ -388,6 +388,11 @@ def test_text_functions_expanded():
     assert _eval('EXACT("abc", "abc")') is True
     assert _eval('EXACT("abc", "ABC")') is False
     assert _eval('PROPER("hello world")') == "Hello World"
+    # Excel starts a new word after any non-letter and lower-cases the rest of
+    # each one, so "hello wORLD" is not "Hello WORLD".
+    assert _eval('PROPER("hello wORLD")') == "Hello World"
+    assert _eval('PROPER("o\'neil")') == "O'Neil"
+    assert _eval('PROPER("2-cent")') == "2-Cent"
 
 
 def test_left_right_mid_reject_negative_num_chars():

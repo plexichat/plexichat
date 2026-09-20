@@ -307,9 +307,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "PROPER":
             if len(values) != 1:
                 return VALUE_ERROR
-            text = _to_text(values[0])
-            return "".join(
-                part[:1].upper() + part[1:].lower() for part in re.split(r"(\s+)", text)
+            # Excel capitalises the first letter of every run of letters and
+            # lower-cases the rest, so "hello wORLD" is "Hello World".
+            # Splitting on whitespace left "o'neil" and "2-cent" untouched
+            # after the separator, which Excel capitalises.
+            return re.sub(
+                r"[a-zA-Z]+",
+                lambda match: match.group(0)[:1].upper() + match.group(0)[1:].lower(),
+                _to_text(values[0]),
             )
         if name == "SUBSTITUTE":
             return self._substitute(values)
