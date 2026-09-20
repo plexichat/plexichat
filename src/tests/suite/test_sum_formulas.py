@@ -523,6 +523,24 @@ def test_power_and_caret_reject_non_finite_results():
     assert _eval("POWER(2, 10)") == 1024.0
 
 
+def test_countblank_does_not_count_zero_cells():
+    """A zero cell is not blank, so COUNTBLANK must skip it.
+
+    Counting ``val == 0`` inflated the total: a 0 in the range was reported as
+    an empty cell, which Excel does not do.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 0, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 0, 1): {"value_type": "text", "value": "", "formula": None},
+    }
+    resolver = _resolver(cells)
+    # A1 = 0 (not blank) and A2 = 5, so that range has nothing to count.
+    assert _eval("COUNTBLANK(A1:A2)", resolver) == 0.0
+    # A1:B2 adds B1 = "" and the untouched B2, which are both blank.
+    assert _eval("COUNTBLANK(A1:B2)", resolver) == 2.0
+
+
 def test_rept_is_bounded_against_multi_gb_allocations():
     """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
 

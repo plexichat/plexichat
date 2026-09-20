@@ -331,7 +331,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             count = 0
             for row in matrix:
                 for val in row:
-                    if val is None or val == "" or val == 0:
+                    # A zero cell is not blank: Excel's COUNTBLANK counts only
+                    # genuinely empty cells and cells holding "".
+                    if val is None or val == "":
                         count += 1
             return float(count)
         elif name == "SUMPRODUCT":
