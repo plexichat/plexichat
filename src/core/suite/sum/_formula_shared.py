@@ -84,7 +84,7 @@ _TOKEN_RE = re.compile(
   | (?P<lparen>\()
   | (?P<rparen>\))
   | (?P<comma>,)
-  | (?P<id>[A-Za-z_][A-Za-z0-9_]*)
+  | (?P<id>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)
     """,
     re.VERBOSE,
 )
