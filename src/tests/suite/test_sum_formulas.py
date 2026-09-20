@@ -316,6 +316,33 @@ def test_date_functions():
     assert _eval("YEAR(0)") == 1899.0
 
 
+def test_weeknum_honors_return_type():
+    """WEEKNUM must not discard its optional ``return_type``.
+
+    Every return type except 21 numbers from the week containing January 1 of
+    the date's own year, so only the first day of the week changes between
+    them. Accepting the argument and then ignoring it made the Sunday-first
+    default behave like ISO-8601. A serial outside the calendar range must
+    also surface as #NUM! like its neighbours DATE/YEAR, rather than raising
+    an OverflowError out of the evaluator and past its error-string contract.
+    """
+    assert _eval("WEEKNUM(DATE(2024, 1, 1))") == 1.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 7))") == 2.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 7), 1)") == 2.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 8), 1)") == 2.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 17))") == 3.0
+    assert _eval("WEEKNUM(DATE(2023, 12, 31), 1)") == 53.0
+    # Type 2 (and its synonym 11) begins the week on Monday, type 12 on Tuesday.
+    assert _eval("WEEKNUM(DATE(2024, 1, 7), 2)") == 1.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 7), 11)") == 1.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 7), 12)") == 2.0
+    # Type 21 is ISO-8601: week 1 holds the year's first Thursday.
+    assert _eval("WEEKNUM(DATE(2024, 1, 7), 21)") == 1.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 15), 21)") == 3.0
+    assert _eval("WEEKNUM(DATE(2024, 1, 15), 4)") == NUM_ERROR
+    assert _eval("WEEKNUM(1000000000)") == NUM_ERROR
+
+
 def test_text_functions_expanded():
     assert _eval('SUBSTITUTE("hello world", "l", "L")') == "heLLo worLd"
     assert _eval('SUBSTITUTE("hello world", "l", "L", 2)') == "helLo world"

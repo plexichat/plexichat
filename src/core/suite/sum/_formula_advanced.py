@@ -7,6 +7,7 @@ from typing import Any, List, Optional
 from ._formula_core import FormulaEvaluatorCore
 from ._formula_shared import (
     DIV_ZERO,
+    ERROR_CODES,
     MAX_DATE_SERIAL,
     MAX_NETWORKDAYS_SPAN_DAYS,
     MAX_REPT_CHARS,
@@ -42,6 +43,21 @@ def _holiday_serials(values: List[Any]) -> set:
         except (TypeError, ValueError):
             continue
     return serials
+
+
+# First day of the week (0 = Sunday) for Excel's WEEKNUM return types. Type 21
+# is ISO-8601 and uses its own algorithm, so it is absent here on purpose.
+_WEEK_START_DAYS = {
+    1: 0,  # week begins Sunday (the default)
+    2: 1,  # week begins Monday
+    11: 1,
+    12: 2,
+    13: 3,
+    14: 4,
+    15: 5,
+    16: 6,
+    17: 0,
+}
 
 
 class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
@@ -519,10 +535,33 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             try:
                 serial = int(_to_number(values[0]))
-            except ValueError:
-                return VALUE_ERROR
-            date_val = _DATE_EPOCH + datetime.timedelta(days=serial)
-            return float(date_val.isocalendar()[1])
+                return_type = int(_to_number(values[1])) if len(values) == 2 else 1
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            if abs(serial) > MAX_DATE_SERIAL:
+                return NUM_ERROR
+            try:
+                date_val = _DATE_EPOCH + datetime.timedelta(days=serial)
+            except (ValueError, OverflowError):
+                return NUM_ERROR
+            # Type 21 is ISO-8601: week 1 holds the year's first Thursday.
+            if return_type == 21:
+                return float(date_val.isocalendar()[1])
+            start_day = _WEEK_START_DAYS.get(return_type)
+            if start_day is None:
+                return NUM_ERROR
+            # Every other type numbers from the week containing January 1 of
+            # the date's own year, differing only in the first day of the
+            # week. ``isoweekday() % 7`` re-indexes Monday..Sunday onto
+            # Sunday-first 0..6 to match ``start_day``.
+            week_start = date_val - datetime.timedelta(
+                days=(date_val.isoweekday() % 7 - start_day) % 7
+            )
+            jan1 = datetime.date(date_val.year, 1, 1)
+            first_week_start = jan1 - datetime.timedelta(
+                days=(jan1.isoweekday() % 7 - start_day) % 7
+            )
+            return float((week_start - first_week_start).days // 7 + 1)
         elif name == "NETWORKDAYS":
             # NETWORKDAYS(start_date, end_date, [holidays])
             # A holiday range is flattened into ``values`` after the two
