@@ -11,6 +11,7 @@ semantics that the other does not share fails here rather than drifting silently
 until someone notices a different answer on screen.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -19,7 +20,24 @@ import pytest
 
 from src.core.suite.sum.formulas import FormulaEvaluator
 
-TABLE = json.loads((Path(__file__).parent / "formula_parity_cases.json").read_text())
+TABLE_PATH = Path(__file__).parent / "formula_parity_cases.json"
+TABLE = json.loads(TABLE_PATH.read_text())
+
+# The two repositories each commit a copy of this file, and each engine tests
+# itself against the copy it ships. Pinning the digest turns "the copies must
+# stay byte-identical" from a comment into a test: edit either copy without
+# mirroring it and the digest below stops matching, which fails *here* rather
+# than leaving the two engines silently asserting different contracts.
+TABLE_SHA256 = "a4b49db67e4298b0cdaf01548268532ce030d819d4abf805e0591762dadd9e82"
+
+
+def test_case_table_matches_the_shared_digest():
+    digest = hashlib.sha256(TABLE_PATH.read_bytes()).hexdigest()
+    assert digest == TABLE_SHA256, (
+        "formula_parity_cases.json changed. Copy it byte-for-byte to "
+        "plexichat-client/tests/unit/data/formula-parity-cases.json "
+        f"and update TABLE_SHA256 to {digest} in both parity tests."
+    )
 
 
 def _parse_ref(ref: str) -> Tuple[int, int]:
