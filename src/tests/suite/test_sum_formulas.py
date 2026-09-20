@@ -7,6 +7,7 @@ from src.core.suite.sum.formulas import (
     FormulaEvaluator,
     MAX_CALL_DEPTH,
     MAX_DEPENDENCIES,
+    NAME_ERROR,
     N_A_ERROR,
     NUM_ERROR,
     VALUE_ERROR,
@@ -873,3 +874,34 @@ def test_criteria_functions_accept_a_single_cell_range():
     assert _eval('SUMIFS(B1, A1, ">=1")', resolver) == 50.0
     assert _eval('COUNTIFS(A1, ">=1")', resolver) == 1.0
     assert _eval('AVERAGEIFS(B1, A1, ">=1")', resolver) == 50.0
+
+
+def test_a_name_shaped_like_a_cell_reference_can_still_be_called():
+    """``ATAN2`` is both a legal cell reference and a function name.
+
+    The lexer matched the reference form first, so every name shaped like
+    ``ATAN2`` -- ``BIN2DEC``, ``SUMX2MY2`` -- was split into a reference plus a
+    stray identifier and could never be called, reporting #VALUE! (a parse
+    error) where Excel reports #NAME? for a name it does not implement.
+    A name followed by "(" is now the call, which is how Excel resolves it.
+    """
+    assert _eval("ATAN2(1, 2)") == NAME_ERROR
+    assert _eval("BIN2DEC(1010)") == NAME_ERROR
+    assert (
+        _eval("SUMX2MY2(A1:A3, C1:C3)") == NAME_ERROR
+    )  # A name that reads as a reference is still one when it is not being called:
+    # "ATAN2" is column ATAN (31135 zero-based), row 2.
+    cells = {("1", 1, 31135): {"value_type": "number", "value": 99, "formula": None}}
+    assert _eval("ATAN2", _resolver(cells)) == 99.0
+
+
+def test_an_unknown_name_is_a_name_error():
+    """An unrecognised name is #NAME?, and only a malformed one is #VALUE!.
+
+    A dot in a name used to stop the lexer, so ``FOO.BAR(1)`` raised inside the
+    tokenizer and surfaced as #VALUE! -- the engine's code for a formula it
+    cannot parse -- while the client engine answered #NAME?.
+    """
+    assert _eval("FOO.BAR(1)") == NAME_ERROR
+    assert _eval("ZZZ(1)") == NAME_ERROR
+    assert _eval("A1.B2") == VALUE_ERROR
