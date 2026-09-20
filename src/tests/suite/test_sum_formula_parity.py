@@ -28,7 +28,7 @@ TABLE = json.loads(TABLE_PATH.read_text())
 # stay byte-identical" from a comment into a test: edit either copy without
 # mirroring it and the digest below stops matching, which fails *here* rather
 # than leaving the two engines silently asserting different contracts.
-TABLE_SHA256 = "a4b49db67e4298b0cdaf01548268532ce030d819d4abf805e0591762dadd9e82"
+TABLE_SHA256 = "e4c74fbdd32b5005eb55da6ccc27e7442b0bd0f5a9d9e8f2299a1f1e2360a75c"
 
 
 def test_case_table_matches_the_shared_digest():

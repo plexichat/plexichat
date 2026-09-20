@@ -1513,6 +1513,14 @@
     {
       "formula": "AVERAGEIFS(B1:B3,A1:A3,\">1\")",
       "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FOO.BAR(1)",
+      "expected": "error:#NAME?"
+    },
+    {
+      "formula": "A1.B2",
+      "expected": "error:#VALUE!"
     }
   ]
 }
