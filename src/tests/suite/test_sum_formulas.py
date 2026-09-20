@@ -825,3 +825,51 @@ def test_offset_collapses_a_single_cell_block():
     """
     assert _eval("OFFSET(A1, 0, 0)") == 10.0
     assert _eval("SUM(OFFSET(A1:B2, 0, 0))") == 35.0
+
+
+def test_criteria_compare_across_types_like_excel():
+    """Criteria comparisons rank types instead of coercing to a number.
+
+    Excel ranks every value (number < text < FALSE < TRUE) and compares inside
+    its rank, so a text criterion carrying an operator matches the text cells
+    (``COUNTIF(range, "<>x")``) while a numeric one ignores them
+    (``COUNTIF(range, ">2")``). Coercing both sides with ``_to_number`` made
+    every operator-prefixed text criterion match nothing.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "one", "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "two", "formula": None},
+        ("1", 2, 0): {"value_type": "text", "value": "three", "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('COUNTIF(A1:A3, "<>x")', resolver) == 3.0
+    assert _eval('COUNTIF(A1:A3, "<>two")', resolver) == 2.0
+    assert _eval('COUNTIF(A1:A3, "<two")', resolver) == 2.0
+    assert _eval('COUNTIF(A1:A3, ">one")', resolver) == 2.0
+    # Text comparison is case-insensitive, as in Excel.
+    assert _eval('COUNTIF(A1:A3, "TWO")', resolver) == 1.0
+    # Every number sorts below every text value, so a numeric criterion that
+    # only excludes one number still matches all three text cells.
+    assert _eval('COUNTIF(A1:A3, "<>2")', resolver) == 3.0
+    # ... and one that asks for a number above them matches none.
+    assert _eval('SUMIF(A1:A3, ">2")', resolver) == 0.0
+
+
+def test_criteria_functions_accept_a_single_cell_range():
+    """COUNTIF(A1, ...) tests that one cell; a ``:`` range is not required.
+
+    Only ``A1:B2`` refs reached ``_range_matrix``, so a single-cell criteria or
+    sum range looked empty and the function answered 0 (or #DIV/0!) instead of
+    testing the cell.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 50, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('COUNTIF(A1, ">=1")', resolver) == 1.0
+    assert _eval('COUNTIF(A1, ">9")', resolver) == 0.0
+    assert _eval('SUMIF(A1, ">=1", B1)', resolver) == 50.0
+    assert _eval('SUMIFS(B1, A1, ">=1")', resolver) == 50.0
+    assert _eval('COUNTIFS(A1, ">=1")', resolver) == 1.0
+    assert _eval('AVERAGEIFS(B1, A1, ">=1")', resolver) == 50.0

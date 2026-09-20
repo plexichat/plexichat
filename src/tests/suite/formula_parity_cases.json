@@ -1373,6 +1373,146 @@
     {
       "formula": "SUM(A1:A3,A6)",
       "expected": "number:6"
+    },
+    {
+      "formula": "HLOOKUP(1,A1:C3,2,FALSE)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "HLOOKUP(10,A1:C3,3,FALSE)",
+      "expected": "number:30"
+    },
+    {
+      "formula": "HLOOKUP(\"one\",A1:C3,3,FALSE)",
+      "expected": "text:three"
+    },
+    {
+      "formula": "HLOOKUP(99,A1:C3,2,FALSE)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "HLOOKUP(1,A1:C3,4,FALSE)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "HLOOKUP(1,A1:C3,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "HLOOKUP(1/0,A1:C3,2,FALSE)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "INDIRECT(\"A1\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "INDIRECT(\"C3\")",
+      "expected": "number:30"
+    },
+    {
+      "formula": "INDIRECT(\"B6\")",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "INDIRECT(\"A5\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "INDIRECT(\"ZZ99\")",
+      "expected": "blank:"
+    },
+    {
+      "formula": "AVERAGEIFS(C1:C3,A1:A3,\">=2\")",
+      "expected": "number:25"
+    },
+    {
+      "formula": "AVERAGEIFS(C1:C3,A1:A3,\">=2\",B1:B3,\"<>x\")",
+      "expected": "number:25"
+    },
+    {
+      "formula": "AVERAGEIFS(C1:C3,A1:A3,\">100\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AVERAGEIFS(C1:C3,A1:A3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"<>x\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"<>2\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"<>three\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"<two\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\">one\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\">=one\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"ONE\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\">2\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "SUMIF(B1:B3,\"<>two\",C1:C3)",
+      "expected": "number:40"
+    },
+    {
+      "formula": "COUNTIF(B6,\"TRUE\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,\">\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUMIF(A1,\">=1\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIFS(A1,\">=1\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIFS(C1,A1,\">=1\")",
+      "expected": "number:10"
+    },
+    {
+      "formula": "AVERAGEIFS(C1,A1,\">=1\")",
+      "expected": "number:10"
+    },
+    {
+      "formula": "SUMIF(A1:A3,\">1\",B1:B3)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUMIFS(B1:B3,A1:A3,\">1\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "AVERAGEIF(A1:A3,\">1\",B1:B3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AVERAGEIFS(B1:B3,A1:A3,\">1\")",
+      "expected": "error:#DIV/0!"
     }
   ]
 }
