@@ -68,6 +68,37 @@ def test_aggregate_functions():
     assert _eval("PRODUCT(A1,A2)") == 50.0
 
 
+def test_aggregates_propagate_an_error_operand():
+    """SUM/AVERAGE/MIN/MAX/PRODUCT must surface an error operand.
+
+    These aggregates filtered out anything that was not a number, so an error
+    value was dropped and the function returned a plausible but wrong total:
+    ``SUM(1, 1/0)`` gave 1 instead of ``#DIV/0!``. Excel propagates the error.
+    COUNT is the exception -- it counts numbers only, so an error operand is
+    simply not counted -- and COUNTA counts every non-empty value, error or
+    not.
+    """
+    assert _eval("SUM(1, 1/0)") == DIV_ZERO
+    assert _eval("AVERAGE(1, 1/0)") == DIV_ZERO
+    assert _eval("MIN(1, 1/0)") == DIV_ZERO
+    assert _eval("MAX(1, 1/0)") == DIV_ZERO
+    assert _eval("PRODUCT(1, 1/0)") == DIV_ZERO
+    assert _eval("COUNT(1, 1/0)") == 1
+    assert _eval("COUNTA(1, 1/0)") == 2
+    # An error cell inside a referenced range propagates just the same.
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 4, "formula": None},
+        ("1", 1, 0): {
+            "value_type": "formula",
+            "value": None,
+            "formula": "1/0",
+        },
+    }
+    assert _eval("SUM(A1:A2)", _resolver(cells)) == DIV_ZERO
+    # IFERROR can still catch the propagated error.
+    assert _eval("IFERROR(SUM(1, 1/0), 7)") == 7.0
+
+
 def test_single_and_double_functions():
     assert _eval("ROUND(AVERAGE(A1,A2),0)") == 8.0
     assert _eval("LEN(B2)") == 2.0

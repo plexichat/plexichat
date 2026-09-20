@@ -383,7 +383,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "COUNTA":
             return sum(1 for value in values if value is not None and value != "")
         if name == "COUNT":
+            # Excel's COUNT counts numbers only; error values and non-numeric
+            # text in the arguments are ignored rather than counted.
             return sum(1 for value in values if _numeric(value))
+        # SUM/AVERAGE/MIN/MAX/PRODUCT propagate an error operand. Filtering it
+        # out with the non-numeric cells silently returned a plausible but
+        # wrong total (``SUM(1, 1/0)`` was 1, not ``#DIV/0!``).
+        for value in values:
+            if is_error(value):
+                return value
         numbers = [value for value in values if _numeric(value)]
         if name == "SUM":
             return float(sum(numbers))
