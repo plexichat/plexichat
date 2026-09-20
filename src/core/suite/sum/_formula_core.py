@@ -443,7 +443,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return str(exc)
             if divisor == 0:
                 return DIV_ZERO
-            return math.fmod(_to_number(a), divisor)
+            # Excel's MOD is n - d*INT(n/d), so the result carries the sign of
+            # the divisor. math.fmod truncates toward zero instead and returned
+            # the dividend's sign, so MOD(-7, 2) was -1 where Excel says 1.
+            number = _to_number(a)
+            return number - divisor * math.floor(number / divisor)
         if name == "POWER":
             try:
                 return math.pow(_to_number(a), _to_number(b))

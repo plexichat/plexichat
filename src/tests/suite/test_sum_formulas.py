@@ -491,6 +491,18 @@ def test_ceiling_and_floor_follow_excel_sign_rules():
     assert _eval("CEILING(8.26, 0.05)") == 8.3
 
 
+def test_mod_carries_the_sign_of_the_divisor():
+    """MOD is n - d*INT(n/d), so the result takes the divisor's sign.
+
+    ``math.fmod`` truncates toward zero instead, which made MOD return the
+    dividend's sign: ``MOD(-7, 2)`` was -1 where Excel says 1.
+    """
+    assert _eval("MOD(-7, 2)") == 1.0
+    assert _eval("MOD(7, -2)") == -1.0
+    assert _eval("MOD(-2.5, 2)") == 1.5
+    assert _eval("MOD(7, 3)") == 1.0
+
+
 def test_rept_is_bounded_against_multi_gb_allocations():
     """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
 
