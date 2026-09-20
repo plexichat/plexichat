@@ -161,6 +161,58 @@ result = compute_value(
 )
 ```
 
+## Formula semantics
+
+This engine and the PlexiSum client engine (`plexichat-client`, see its
+`formula-engine/README.md`) implement the same formula language and are held to
+the same answers. `src/tests/suite/data/formula_parity_cases.json` is the
+machine-checked statement of that: every case is evaluated against both engines
+from the identical file, so a semantic change in one engine and not the other
+fails a test instead of drifting silently until someone notices a different
+answer on screen. The client repository carries a byte-identical copy of the
+same file.
+
+Two rules explain most of the behaviour:
+
+**An error operand propagates.** Pass an error into a function and it comes
+back out: `SUM(1, 1/0)`, `PROPER(1/0)`, `ROUND(1, 1/0)`, `DATE(1/0, 1, 1)` and
+`SUMIF(A1:A3, 1/0)` are all `#DIV/0!`. Three groups classify an error instead,
+because they answer a question *about* the value rather than computing with it:
+
+- `COUNT` counts numbers only, so an error is simply not counted;
+- `COUNTA` counts anything non-empty, and an error is data;
+- `COUNTBLANK` counts an error cell as non-blank;
+- the `IS*` family and `TYPE` report `FALSE` and `16`.
+
+**A text argument is coerced, a referenced value is not.** Excel translates a
+text argument into a number (`SUM("2")` is 2) but never a value read from a
+cell or range (`SUM(A1)` is 0 when A1 holds the text `"2"`), which is why a
+text-formatted number column does not silently add up. `AVERAGE`, `MIN`, `MAX`,
+`PRODUCT` and `COUNT` follow the same rule, and the whole argument has to read
+as a number rather than a prefix of one (`SUM("2abc")` is 0).
+
+### Known divergences from Excel
+
+Deliberate, and shared with the client engine unless noted:
+
+| Case | Excel | Here |
+|---|---|---|
+| `"a" < "b"` | `TRUE` | `#VALUE!` — comparisons coerce to a number |
+| `SUM(TRUE, 1)` | `2` | `1` — logical *arguments* are not coerced |
+| `COUNTA("")` | `1` | `0` — an empty-text argument counts as empty |
+| `IF("x", 1, 2)` | `#VALUE!` | `1` — non-boolean text is truthy |
+| `"" + 1` | `1` | `#VALUE!` — empty text does not coerce to 0 |
+| `COUNTIF(A1:A3, "tw*")` | wildcard match | `0` — criteria wildcards are not implemented |
+| `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
+| `ISEVEN`, `ISREF`, `T`, `CLEAN`, most statistical/financial/engineering functions | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+
+The engine is also bounded where Excel is not: `REPT`, `NETWORKDAYS` and
+`WORKDAY` refuse to materialise a huge string or iterate for hours
+(`MAX_REPT_CHARS`, `MAX_NETWORKDAYS_SPAN_DAYS`, `MAX_WORKDAY_OFFSET_DAYS`), and
+return `#VALUE!`/`#NUM!` so a single formula cannot stall a viewport read.
+A multi-cell `OFFSET` is one reference in Excel; here it is a flat value list
+(the client engine represents it as a row-major matrix).
+
 ## Configuration
 
 Key constants in `_shared.py`:
