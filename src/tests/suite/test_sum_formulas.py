@@ -773,3 +773,55 @@ def test_numeric_text_is_coerced_only_as_an_argument():
     assert _eval("AVERAGE(A1:A1)", resolver) == DIV_ZERO
     # A logical value in a range is skipped; see the README divergence list.
     assert _eval("SUM(B1:B1)", resolver) == 0.0
+
+
+def test_product_of_no_numeric_values_is_zero():
+    """The empty product is 1 mathematically but 0 in a spreadsheet.
+
+    Excel returns 0 for PRODUCT() and for a range that holds no numbers, and the
+    client engine agrees.
+    """
+    assert _eval("PRODUCT()") == 0.0
+    assert _eval('PRODUCT("x")') == 0.0
+
+
+def test_countblank_accepts_a_single_cell_reference():
+    """COUNTBLANK(A1) reports whether that one cell is blank.
+
+    Only ``:`` ranges reached ``_range_matrix``, so a single-cell argument
+    silently returned 0 for a blank cell and for an error cell alike.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 0, "formula": None},
+        ("1", 1, 0): {"value_type": "formula", "value": None, "formula": "1/0"},
+    }
+    resolver = _resolver(cells)
+    # A zero cell holds a value, an error cell is not blank, and an untouched
+    # cell is.
+    assert _eval("COUNTBLANK(A1)", resolver) == 0.0
+    assert _eval("COUNTBLANK(A2)", resolver) == 0.0
+    assert _eval("COUNTBLANK(A3)", resolver) == 1.0
+
+
+def test_text_rounds_half_away_from_zero():
+    """TEXT rounds to the requested precision, exactly as ROUND does.
+
+    ``int(value)`` truncated, so TEXT(1234.5, "0") was "1234", and rounding with
+    ``floor(v + 0.5)`` mishandled a negative half, answering "0" for -0.5 where
+    Excel says "-1".
+    """
+    assert _eval('TEXT(1234.5, "0")') == "1235"
+    assert _eval('TEXT(2.5, "0")') == "3"
+    assert _eval('TEXT(-0.5, "0")') == "-1"
+    assert _eval('TEXT(-0.4, "0")') == "0"
+    assert _eval('TEXT(-2.5, "0")') == "-3"
+
+
+def test_offset_collapses_a_single_cell_block():
+    """OFFSET(A1, 0, 0) is the value in A1, not a one-item list.
+
+    Excel and the client engine both return the referenced value; only a larger
+    block stays a list of values.
+    """
+    assert _eval("OFFSET(A1, 0, 0)") == 10.0
+    assert _eval("SUM(OFFSET(A1:B2, 0, 0))") == 35.0

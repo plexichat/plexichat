@@ -285,6 +285,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             for r in range(r1 + rows, r1 + rows + height):
                 for c in range(c1 + cols, c1 + cols + width):
                     result.append(self._resolve(target, r, c, seen, depth + 1))
+            # A single-cell block collapses to its value, as Excel returns the
+            # referenced value itself; anything larger stays a flat value list.
+            if len(result) == 1:
+                return result[0]
             return result
         elif name == "LOOKUP":
             # LOOKUP(lookup_value, lookup_vector, [result_vector])
@@ -323,6 +327,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             matrix = self._range_matrix(args[0], sheet, seen, depth)
             if not matrix:
+                # A single cell (COUNTBLANK(A1)) is not a ":" range, so
+                # _range_matrix cannot describe it; Excel still reports
+                # whether that one cell is blank. An error cell is not blank.
+                if args[0][0] == "ref":
+                    value = self._eval(args[0], sheet, seen, depth)
+                    return 1.0 if value is None or value == "" else 0.0
                 return 0.0
             count = 0
             for row in matrix:
@@ -380,7 +390,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if _numeric(value):
                 # Simple numeric formatting
                 if fmt == "0":
-                    return str(int(value))
+                    # Excel rounds half away from zero to the requested
+                    # precision -- the same rule ROUND follows. int() truncated
+                    # instead, so TEXT(1234.5, "0") was "1234" and TEXT(2.5,
+                    # "0") was "2".
+                    magnitude = int(math.floor(abs(value) + 0.5))
+                    return str(magnitude if value >= 0 else -magnitude)
                 elif fmt == "0.0":
                     return f"{value:.1f}"
                 elif fmt == "0.00":

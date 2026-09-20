@@ -494,6 +494,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 )
             return [self._eval(node, sheet, seen, depth)], True
         value = self._eval(node, sheet, seen, depth)
+        if isinstance(value, list):
+            # A function returning a block of values (OFFSET) contributes each of
+            # them, exactly the way a range argument does.
+            return list(value), True
         return [value], False
 
     def _truthy(self, value: Any) -> bool:
@@ -542,6 +546,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "SUM":
             return float(sum(numbers))
         if name == "PRODUCT":
+            # PRODUCT of no numeric values is 0, not the mathematical empty
+            # product of 1: Excel returns 0 for PRODUCT() and for a range that
+            # holds no numbers, and the client engine agrees.
+            if not numbers:
+                return 0.0
             product = 1.0
             for value in numbers:
                 product *= value
