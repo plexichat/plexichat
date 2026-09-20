@@ -83,6 +83,30 @@ def test_single_and_double_functions():
     assert _eval("ISBLANK(B1)") is False
 
 
+def test_value_and_numbervalue_parse_a_whole_numeric_string():
+    """VALUE/NUMBERVALUE must read the whole string, not just a prefix.
+
+    They used to hand the text straight to ``float``, which understood no
+    thousands separators, currency symbol, percent sign or parenthesised
+    negative (``VALUE("1,234")`` was #VALUE!), and which quietly accepts
+    underscore separators (``float("1_0") == 10.0``).
+    """
+    assert _eval('VALUE("1,234.5")') == 1234.5
+    assert _eval('VALUE("1.5")') == 1.5
+    assert _eval('VALUE("1.5abc")') == VALUE_ERROR
+    assert _eval('VALUE("1_000")') == VALUE_ERROR
+    assert _eval('VALUE("")') == VALUE_ERROR
+    # Excel also reads a leading currency symbol, a trailing percent sign and
+    # a parenthesised negative.
+    assert _eval('VALUE("$1,000")') == 1000.0
+    assert _eval('VALUE("12%")') == 0.12
+    assert _eval('VALUE("(100)")') == -100.0
+    # NUMBERVALUE keeps its locale separators but is just as strict.
+    assert _eval('NUMBERVALUE("2.500,27", ",", ".")') == 2500.27
+    assert _eval('NUMBERVALUE("3.5%")') == 0.035
+    assert _eval('NUMBERVALUE("1.5abc")') == VALUE_ERROR
+
+
 def test_if_and_boolean_functions():
     assert _eval("IF(A1>15,1,2)") == 2.0
     assert _eval("IF(TRUE,1,2)") == 1.0

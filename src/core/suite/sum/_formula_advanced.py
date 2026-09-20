@@ -2,6 +2,7 @@
 
 import datetime
 import math
+import re
 from typing import Any, List, Optional
 
 from ._formula_core import FormulaEvaluatorCore
@@ -24,6 +25,41 @@ from ._formula_shared import (
     is_error,
     parse_cell_ref,
 )
+
+
+# A complete signed decimal, optionally in scientific notation.
+_NUMERIC_TEXT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+
+
+def _parse_numeric_text(raw: str, group_separator: str = ",") -> Optional[float]:
+    """Read a numeric string the way Excel's VALUE does.
+
+    ``float`` rejects trailing garbage but still accepts underscores
+    (``float("1_0") == 10.0``), and neither path understood thousands
+    separators, a leading currency symbol, a trailing percent sign or a
+    parenthesised negative, so ``VALUE("1,234")`` returned #VALUE!.
+
+    Returns ``None`` when the text is not a number, which the callers turn
+    into ``#VALUE!``.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    sign = 1.0
+    if text.startswith("(") and text.endswith(")"):
+        sign = -1.0
+        text = text[1:-1].strip()
+    scale = 1.0
+    if text.endswith("%"):
+        scale = 100.0
+        text = text[:-1].strip()
+    if text.startswith("$"):
+        text = text[1:]
+    if group_separator:
+        text = text.replace(group_separator, "")
+    if not _NUMERIC_TEXT_RE.match(text):
+        return None
+    return sign * float(text) / scale
 
 
 def _holiday_serials(values: List[Any]) -> set:
@@ -368,29 +404,25 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         elif name == "VALUE":
             if len(values) != 1:
                 return VALUE_ERROR
-            text = _to_text(values[0])
-            try:
-                return float(text.strip())
-            except ValueError:
-                return VALUE_ERROR
+            number = _parse_numeric_text(_to_text(values[0]))
+            return VALUE_ERROR if number is None else number
         elif name == "NUMBERVALUE":
             # NUMBERVALUE(text, [decimal_separator], [group_separator])
             if len(values) < 1 or len(values) > 3:
                 return VALUE_ERROR
-            text = _to_text(values[0])
             decimal_sep = "."
             group_sep = ","
             if len(values) >= 2:
                 decimal_sep = _to_text(values[1])
             if len(values) == 3:
                 group_sep = _to_text(values[2])
-            # Remove group separators and replace decimal separator
-            text = text.replace(group_sep, "")
-            text = text.replace(decimal_sep, ".")
-            try:
-                return float(text.strip())
-            except ValueError:
+            if not decimal_sep:
                 return VALUE_ERROR
+            # Remove group separators and replace the decimal separator, then
+            # validate the whole string rather than parsing a prefix.
+            text = _to_text(values[0]).replace(group_sep, "").replace(decimal_sep, ".")
+            number = _parse_numeric_text(text, "")
+            return VALUE_ERROR if number is None else number
         elif name == "FIND":
             # FIND(find_text, within_text, [start_num])
             if len(values) < 2 or len(values) > 3:
