@@ -325,6 +325,32 @@ def test_text_functions_expanded():
     assert _eval('PROPER("hello world")') == "Hello World"
 
 
+def test_left_right_mid_reject_negative_num_chars():
+    """LEFT/RIGHT/MID must not silently clamp a negative ``num_chars``.
+
+    Excel treats a negative count as #VALUE!. Clamping it to zero sliced
+    from the wrong end (``LEFT("hello", -1)`` returned ``"hell"``) and hid
+    the caller's mistake behind a plausible-looking result. ``num_chars`` is
+    also optional for LEFT/RIGHT, where Excel defaults it to 1.
+    """
+    assert _eval('LEFT("hello", 2)') == "he"
+    assert _eval('RIGHT("hello", 2)') == "lo"
+    assert _eval('MID("hello", 2, 3)') == "ell"
+    # num_chars omitted -> Excel's default of a single character.
+    assert _eval('LEFT("hello")') == "h"
+    assert _eval('RIGHT("hello")') == "o"
+    # Zero is legal and yields the empty string. RIGHT needs its own branch:
+    # ``text[-0:]`` is the whole string.
+    assert _eval('LEFT("hello", 0)') == ""
+    assert _eval('RIGHT("hello", 0)') == ""
+    assert _eval('LEFT("hello", -1)') == VALUE_ERROR
+    assert _eval('RIGHT("hello", -1)') == VALUE_ERROR
+    assert _eval('MID("hello", 2, -1)') == VALUE_ERROR
+    # MID's start_num is 1-based, and reading past the end is not an error.
+    assert _eval('MID("hello", 0, 2)') == VALUE_ERROR
+    assert _eval('MID("hello", 4, 99)') == "lo"
+
+
 def test_compute_value_cache_key_uses_formula_text():
     from src.core.suite.sum.formulas import compute_value
 

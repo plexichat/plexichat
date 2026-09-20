@@ -278,15 +278,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             "ISTEXT",
         ):
             return self._single(name, values)
+        if name in ("LEFT", "RIGHT", "MID"):
+            return self._text_slice(name, values)
         if name in (
             "ROUND",
             "ROUNDUP",
             "ROUNDDOWN",
             "MOD",
             "POWER",
-            "LEFT",
-            "RIGHT",
-            "MID",
         ):
             return self._double(name, values)
         if name in ("CONCAT", "CONCATENATE"):
@@ -456,20 +455,45 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             if name == "ROUNDUP":
                 return math.ceil(number * factor - 1e-12) / factor
             return math.floor(number * factor + 1e-12) / factor
-        if name == "LEFT":
-            return _to_text(a)[: max(0, int(_to_number(b)))]
-        if name == "RIGHT":
-            count = max(0, int(_to_number(b)))
-            text = _to_text(a)
-            return text[-count:] if count else ""
-        if name == "MID":
-            if len(values) < 3:
-                return VALUE_ERROR
-            start = int(_to_number(b)) - 1
-            length = max(0, int(_to_number(values[2])))
-            text = _to_text(a)
-            return text[start : start + length]
         return VALUE_ERROR
+
+    def _text_slice(self, name: str, values: List[Any]) -> Any:
+        """LEFT, RIGHT, MID with Excel's argument contract.
+
+        ``num_chars`` is optional for LEFT/RIGHT (Excel defaults it to 1) and
+        must not be negative; MID additionally requires a 1-based
+        ``start_num``. Clamping a negative count to zero instead of failing
+        sliced from the wrong end and returned a plausible-looking result
+        (``LEFT("hello", -1)`` gave ``"hell"``), hiding the caller's
+        mistake instead of surfacing #VALUE!.
+        """
+        if name == "MID":
+            if len(values) != 3:
+                return VALUE_ERROR
+        elif len(values) < 1 or len(values) > 2:
+            return VALUE_ERROR
+        if is_error(values[0]):
+            return values[0]
+        try:
+            text = _to_text(values[0])
+            if name == "MID":
+                start = int(_to_number(values[1]))
+                num_chars = int(_to_number(values[2]))
+            else:
+                start = 1
+                num_chars = int(_to_number(values[1])) if len(values) == 2 else 1
+        except (ValueError, OverflowError) as exc:
+            return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+        if start < 1 or num_chars < 0:
+            return VALUE_ERROR
+        if name == "LEFT":
+            return text[:num_chars]
+        if name == "RIGHT":
+            # Python's text[-0:] is the whole string, so zero needs its own
+            # branch to match the empty result Excel returns.
+            return text[-num_chars:] if num_chars else ""
+        offset = start - 1
+        return text[offset : offset + num_chars]
 
     def _range_matrix(
         self, node: Any, sheet: Optional[str], seen: set, depth: int
