@@ -2,7 +2,6 @@
 
 import datetime
 import math
-import re
 from typing import Any, List, Optional
 
 from ._formula_core import FormulaEvaluatorCore
@@ -14,6 +13,7 @@ from ._formula_shared import (
     MAX_REPT_CHARS,
     MAX_WORKDAY_OFFSET_DAYS,
     N_A_ERROR,
+    NUMERIC_TEXT_RE,
     NUM_ERROR,
     REF_ERROR,
     VALUE_ERROR,
@@ -25,10 +25,6 @@ from ._formula_shared import (
     is_error,
     parse_cell_ref,
 )
-
-
-# A complete signed decimal, optionally in scientific notation.
-_NUMERIC_TEXT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 def _parse_numeric_text(raw: str, group_separator: str = ",") -> Optional[float]:
@@ -57,7 +53,7 @@ def _parse_numeric_text(raw: str, group_separator: str = ",") -> Optional[float]
         text = text[1:]
     if group_separator:
         text = text.replace(group_separator, "")
-    if not _NUMERIC_TEXT_RE.match(text):
+    if not NUMERIC_TEXT_RE.match(text):
         return None
     return sign * float(text) / scale
 

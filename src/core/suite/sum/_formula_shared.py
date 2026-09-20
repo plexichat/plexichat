@@ -58,6 +58,11 @@ MAX_DATE_SERIAL = 2_958_465
 # Dates are stored and evaluated as serial numbers.
 _DATE_EPOCH = datetime.date(1899, 12, 30)
 
+# A complete signed decimal, optionally in scientific notation. Used both by
+# VALUE/NUMBERVALUE and by the aggregates, which coerce a text *argument* that
+# reads as a whole number rather than parsing a prefix of it.
+NUMERIC_TEXT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+
 # A resolver returns the raw cell as a dict with at least
 # ``value_type`` and ``value`` (and optionally ``formula``), or ``None``.
 CellResolver = Callable[[Optional[str], int, int], Optional[Dict[str, Any]]]
@@ -342,6 +347,29 @@ def _to_text(value: Any) -> str:
 
 def _numeric(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _coerce_number_text(value: Any) -> Optional[float]:
+    """Read a text *argument* the way Excel reads a text number.
+
+    A literal text argument is coerced (``SUM("2")`` is 2) while a value read
+    out of a referenced range is not (``SUM(A1)`` is 0 when A1 holds the text
+    "2"), so callers pass an argument's provenance in and only the literal case
+    reaches here. The whole string has to read as a number: Excel translates a
+    text argument into a number rather than parsing a prefix of it.
+
+    Returns ``None`` when the text is not a complete number, which every caller
+    treats as "not a number to include" rather than as an error.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not NUMERIC_TEXT_RE.match(text):
+        return None
+    try:
+        return float(text)
+    except ValueError:  # pragma: no cover - the pattern above already gates this
+        return None
 
 
 def _to_number_or_zero(value: Any) -> float:

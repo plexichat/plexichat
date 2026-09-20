@@ -735,3 +735,41 @@ def test_is_family_and_type_inspect_an_error_operand():
     assert _eval('TYPE("a")') == 2
     assert _eval("TYPE(TRUE)") == 4
     assert _eval("TYPE(1/0)") == 16
+
+
+def test_numeric_text_is_coerced_only_as_an_argument():
+    """A text *argument* is coerced; a value read from a range is not.
+
+    Excel translates a text argument into a number (``SUM("2")`` is 2) but
+    never a value that came out of a referenced range (``SUM(A1)`` is 0 when A1
+    holds the text "2"). Without the distinction a text-formatted number column
+    either summed to a plausible-looking total it should not have (the client)
+    or dropped its literal arguments on the floor (the server).
+    """
+    assert _eval('SUM("2")') == 2.0
+    assert _eval('AVERAGE("2")') == 2.0
+    assert _eval('MIN("2")') == 2.0
+    assert _eval('MAX("2")') == 2.0
+    assert _eval('PRODUCT("2")') == 2.0
+    assert _eval('COUNT("2")') == 1.0
+    # The arithmetic operators coerce it the same way.
+    assert _eval('"2" + 3') == 5.0
+    assert _eval('"2.5" + 0') == 2.5
+    # The whole argument has to read as a number, not merely a prefix of it.
+    assert _eval('SUM("2abc")') == 0.0
+    assert _eval('"2abc" + 1') == VALUE_ERROR
+
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "7", "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 5, "formula": None},
+        ("1", 0, 1): {"value_type": "boolean", "value": True, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval("SUM(A1:A2)", resolver) == 5.0
+    assert _eval("SUM(A1)", resolver) == 0.0
+    assert _eval("COUNT(A1:A2)", resolver) == 1.0
+    assert _eval("PRODUCT(A1:A2)", resolver) == 5.0
+    # A range holding no numbers averages to #DIV/0!.
+    assert _eval("AVERAGE(A1:A1)", resolver) == DIV_ZERO
+    # A logical value in a range is skipped; see the README divergence list.
+    assert _eval("SUM(B1:B1)", resolver) == 0.0

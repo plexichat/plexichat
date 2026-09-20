@@ -17,6 +17,7 @@ from ._formula_shared import (
     REF_ERROR,
     VALUE_ERROR,
     CellResolver,
+    _coerce_number_text,
     _numeric,
     _to_number,
     _to_number_or_zero,
@@ -269,8 +270,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return ln <= rn
             return ln >= rn
         if op == "+":
-            if isinstance(left, str) or isinstance(right, str):
-                return VALUE_ERROR
+            # Text that reads as a number is coerced ("2"+3 is 5) and anything
+            # else is #VALUE!. The old guard rejected *every* text operand, so a
+            # numeric string was refused even though "2"*3 and "2"/2 both
+            # coerced it.
             try:
                 return _to_number(left) + _to_number(right)
             except ValueError as exc:
@@ -358,8 +361,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return value
 
         values: List[Any] = []
+        # Which entries were read out of a reference, running parallel to
+        # ``values``. Excel coerces a text *argument* (SUM("2") is 2) but never
+        # a value that came from a reference, so the aggregates need the
+        # provenance and not just the flattened values.
+        from_reference: List[bool] = []
         for arg in args:
-            values.extend(self._expand_arg(arg, sheet, seen, depth))
+            expanded, is_reference = self._expand_arg(arg, sheet, seen, depth)
+            values.extend(expanded)
+            from_reference.extend([is_reference] * len(expanded))
         # An error operand propagates out of the value-based functions. Excel
         # treats it as data the caller has to see rather than a value to
         # coerce, and without this the coercion helpers mangled it instead of
@@ -374,7 +384,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 if is_error(value):
                     return value
         if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
-            return self._aggregate(name, values)
+            return self._aggregate(name, values, from_reference)
         if name in (
             "ABS",
             "SQRT",
@@ -461,7 +471,16 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
 
     def _expand_arg(
         self, node: Any, sheet: Optional[str], seen: set, depth: int
-    ) -> List[Any]:
+    ) -> Tuple[List[Any], bool]:
+        """Flatten one argument node into values plus a provenance flag.
+
+        The flag is True when the values were read out of a *reference* -- a
+        cell, a ``:`` range, or a block returned by OFFSET -- rather than typed
+        into the formula. Excel coerces a text argument into a number but never
+        a value that came from a reference (``SUM("2")`` is 2 while
+        ``SUM(A1)`` is 0 when A1 holds the text "2"), so the aggregates have to
+        be able to tell the two apart.
+        """
         kind = node[0]
         if kind == "ref":
             text = node[1]
@@ -469,10 +488,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 first, second = text.split(":", 1)
                 s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
                 s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
-                return self._range_values(s1 or sheet, r1, c1, r2, c2, seen, depth)
-            return [self._eval(node, sheet, seen, depth)]
+                return (
+                    self._range_values(s1 or sheet, r1, c1, r2, c2, seen, depth),
+                    True,
+                )
+            return [self._eval(node, sheet, seen, depth)], True
         value = self._eval(node, sheet, seen, depth)
-        return [value]
+        return [value], False
 
     def _truthy(self, value: Any) -> bool:
         if isinstance(value, bool):
@@ -485,20 +507,38 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return len(value) > 0
         return bool(value)
 
-    def _aggregate(self, name: str, values: List[Any]) -> Any:
+    def _aggregate(
+        self, name: str, values: List[Any], from_reference: List[bool]
+    ) -> Any:
+        """SUM/AVERAGE/COUNT/COUNTA/MIN/MAX/PRODUCT over flattened arguments.
+
+        ``from_reference`` runs parallel to *values* and marks the entries that
+        came out of a reference, because Excel treats the two differently: a
+        text *argument* that reads as a number is coerced (``SUM("2")`` is 2)
+        while a value read from a reference is not (``SUM(A1)`` is 0 when A1
+        holds the text "2").
+        """
         if name == "COUNTA":
             return sum(1 for value in values if value is not None and value != "")
+        numbers: List[Any] = []
+        for value, ranged in zip(values, from_reference):
+            if _numeric(value):
+                numbers.append(value)
+            elif not ranged:
+                coerced = _coerce_number_text(value)
+                if coerced is not None:
+                    numbers.append(coerced)
         if name == "COUNT":
-            # Excel's COUNT counts numbers only; error values and non-numeric
-            # text in the arguments are ignored rather than counted.
-            return sum(1 for value in values if _numeric(value))
+            # Excel's COUNT counts numbers only: an error value or non-numeric
+            # text in the arguments is ignored rather than counted, and a text
+            # argument counts only when it reads as a number.
+            return len(numbers)
         # SUM/AVERAGE/MIN/MAX/PRODUCT propagate an error operand. Filtering it
         # out with the non-numeric cells silently returned a plausible but
         # wrong total (``SUM(1, 1/0)`` was 1, not ``#DIV/0!``).
         for value in values:
             if is_error(value):
                 return value
-        numbers = [value for value in values if _numeric(value)]
         if name == "SUM":
             return float(sum(numbers))
         if name == "PRODUCT":
