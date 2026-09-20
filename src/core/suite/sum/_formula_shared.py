@@ -79,7 +79,11 @@ _TOKEN_RE = re.compile(
     (?P<ws>\s+)
   | (?P<num>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)
   | (?P<str>"(?:[^"]|"")*")
-  |    (?P<ref>(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+)?)
+    # The trailing boundary matters: without it a function name containing a
+    # digit (BIN2DEC, ATAN2, SUMX2MY2) matched as the cell reference "BIN2"
+    # followed by an identifier, so those names could never be called and
+    # reported #VALUE! (a parse error) instead of #NAME?.
+  |    (?P<ref>(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+)?)(?![A-Za-z0-9_])
   | (?P<op><=|>=|<>|=|<|>|\+|-|\*|/|\^|&|%)
   | (?P<lparen>\()
   | (?P<rparen>\))
@@ -88,6 +92,12 @@ _TOKEN_RE = re.compile(
     """,
     re.VERBOSE,
 )
+
+
+# A bare ``ATAN2``-shaped token is both a legal cell reference and, in Excel, a
+# function name. Which one it is depends on what follows it, so the tokenizer
+# keeps this pattern to hand and lets the caller decide.
+_SIMPLE_REF_RE = re.compile(r"[A-Za-z]+\d+")
 
 
 class _Token:
@@ -121,7 +131,16 @@ def _tokenize(text: str) -> List[_Token]:
         elif kind == "str":
             tokens.append(_Token("str", raw[1:-1].replace('""', '"')))
         elif kind == "ref":
-            tokens.append(_Token("ref", raw))
+            # A token that could be either -- ``ATAN2`` is a valid cell reference
+            # *and* a function -- is a call when an opening parenthesis follows
+            # it, exactly as Excel resolves it. Without this a digit-bearing
+            # function name could never be called: it parsed as a reference and
+            # the stray parenthesis made the formula a parse error.
+            following = text[match.end() :].lstrip()
+            if following.startswith("(") and _SIMPLE_REF_RE.fullmatch(raw):
+                tokens.append(_Token("id", raw.upper()))
+            else:
+                tokens.append(_Token("ref", raw))
         elif kind == "id":
             upper = raw.upper()
             if upper == "TRUE":
