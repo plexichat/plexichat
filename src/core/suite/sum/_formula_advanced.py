@@ -569,13 +569,18 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return_type = int(_to_number(values[1]))
             date_val = _DATE_EPOCH + datetime.timedelta(days=serial)
             weekday = date_val.isoweekday()  # 1=Monday, 7=Sunday
-            if return_type == 1:  # 1=Sunday, 7=Saturday
-                return float((weekday % 7) + 1)
-            elif return_type == 2:  # 1=Monday, 7=Sunday
-                return float(weekday)
-            elif return_type == 3:  # 0=Monday, 6=Sunday
+            if return_type == 3:  # 0=Monday, 6=Sunday
                 return float(weekday - 1)
-            return float(weekday)
+            # Types 1 and 17 are Sunday-first, 2 and 11 Monday-first, 12
+            # Tuesday-first, ... 16 Saturday-first. _WEEK_START_DAYS holds the
+            # Sunday-based index of each type's first day (WEEKNUM uses the
+            # same table). An unknown type was previously accepted and answered
+            # the raw isoweekday() instead of #NUM!.
+            start_day = _WEEK_START_DAYS.get(return_type)
+            if start_day is None:
+                return NUM_ERROR
+            dow0 = weekday % 7  # 0=Sunday .. 6=Saturday
+            return float((dow0 - start_day) % 7 + 1)
         elif name == "WEEKNUM":
             # WEEKNUM(serial_number, [return_type])
             if len(values) < 1 or len(values) > 2:

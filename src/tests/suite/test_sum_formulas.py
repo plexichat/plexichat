@@ -414,6 +414,32 @@ def test_weeknum_honors_return_type():
     assert _eval("WEEKNUM(1000000000)") == NUM_ERROR
 
 
+def test_weekday_honors_every_return_type():
+    """WEEKDAY must implement Excel's return types 11-17, not just 1-3.
+
+    Types 1 and 17 are Sunday-first, 2 and 11 Monday-first, 12 Tuesday-first,
+    ... 16 Saturday-first. The old switch knew only 1/2/3 and fell through to
+    the raw isoweekday() (1..7 from Monday) for everything else, so type 12..16
+    answered the wrong day and an unknown type was silently accepted instead of
+    #NUM!.
+    """
+    monday = "DATE(2024, 1, 15)"
+    tuesday = "DATE(2024, 1, 16)"
+    sunday = "DATE(2024, 1, 21)"
+    assert _eval(f"WEEKDAY({monday}, 11)") == 1.0
+    assert _eval(f"WEEKDAY({sunday}, 11)") == 7.0
+    assert _eval(f"WEEKDAY({monday}, 12)") == 7.0
+    assert _eval(f"WEEKDAY({tuesday}, 12)") == 1.0
+    assert _eval(f"WEEKDAY({monday}, 13)") == 6.0
+    assert _eval(f"WEEKDAY({monday}, 16)") == 3.0
+    assert _eval(f"WEEKDAY({monday}, 17)") == 2.0
+    # Type 3 alone numbers 0..6 from Monday.
+    assert _eval(f"WEEKDAY({monday}, 3)") == 0.0
+    assert _eval(f"WEEKDAY({sunday}, 3)") == 6.0
+    assert _eval(f"WEEKDAY({monday}, 0)") == NUM_ERROR
+    assert _eval(f"WEEKDAY({monday}, 99)") == NUM_ERROR
+
+
 def test_text_functions_expanded():
     assert _eval('SUBSTITUTE("hello world", "l", "L")') == "heLLo worLd"
     assert _eval('SUBSTITUTE("hello world", "l", "L", 2)') == "helLo world"
