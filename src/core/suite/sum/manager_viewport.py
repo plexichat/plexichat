@@ -191,12 +191,15 @@ class SumManagerViewport(SumManagerProtocol):
             return value is None or value == ""
         if op == "is_not_empty":
             return not (value is None or value == "")
+        # ``str(target or "")`` turned a legitimate 0 or False search term into
+        # the empty string, so ``contains 0`` matched every non-empty cell and
+        # ``not_contains 0`` matched none of them. Only a missing target is
+        # empty text (the client engine compares with the same rule).
+        needle = "" if target is None else str(target).lower()
         if op == "contains":
-            return value is not None and str(target or "").lower() in str(value).lower()
+            return value is not None and needle in str(value).lower()
         if op == "not_contains":
-            return not (
-                value is not None and str(target or "").lower() in str(value).lower()
-            )
+            return not (value is not None and needle in str(value).lower())
         if value is None:
             return False
         if op == "eq":
@@ -207,6 +210,11 @@ class SumManagerViewport(SumManagerProtocol):
             if isinstance(value, (int, float)) and isinstance(target, (int, float)):
                 return float(value) != float(target)
             return str(value).lower() != str(target).lower()
+        if target is None:
+            # The four ordering operators need a number on both sides, and
+            # float(None) is a TypeError. (eq/neq above compare text when
+            # either side is not numeric, so they do not come this way.)
+            return False
         try:
             number = float(value)
             target_number = float(target)
@@ -220,7 +228,10 @@ class SumManagerViewport(SumManagerProtocol):
             return number < target_number
         if op == "lte":
             return number <= target_number
-        return True
+        # Fail closed: read_viewport validates the operator before it calls
+        # here, so an unknown one means "no match" rather than "matches
+        # everything" (the client engine behaves the same way).
+        return False
 
     def _read_viewport_metadata(
         self,

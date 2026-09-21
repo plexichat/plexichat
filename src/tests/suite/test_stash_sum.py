@@ -1281,6 +1281,28 @@ def test_sum_viewport_filter_hides_rows(db, two_users, server_manager):
     assert viewport2["hidden_rows"] == [2]
 
 
+def test_sum_filter_contains_keeps_a_zero_target():
+    """A 0 (or False) search term is not the empty string.
+
+    ``str(target or "")`` turned a legitimate zero into "", so
+    ``contains 0`` matched every non-empty cell and ``not_contains 0``
+    matched none of them. Only a missing target is empty text.
+    """
+    from src.core.suite.sum.manager_viewport import SumManagerViewport
+
+    matches = SumManagerViewport._matches_filter
+    assert matches(105, "contains", 0) is True
+    assert matches(15, "contains", 0) is False
+    assert matches(15, "not_contains", 0) is True
+    assert matches(105, "not_contains", 0) is False
+    # A missing target still means "contains the empty string".
+    assert matches("abc", "contains", None) is True
+    # An ordering operator with no target has nothing to compare against.
+    assert matches(1, "gte", None) is False
+    # An operator read_viewport would have dropped is not a match.
+    assert matches(1, "text", 1) is False
+
+
 def test_sum_xlsx_export_and_import(db, two_users, server_manager):
     pytest.importorskip("openpyxl")
     owner, _ = two_users
