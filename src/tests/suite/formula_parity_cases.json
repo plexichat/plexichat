@@ -1521,6 +1521,66 @@
     {
       "formula": "A1.B2",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),11)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),12)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),13)",
+      "expected": "number:5"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),14)",
+      "expected": "number:4"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),15)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),16)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),17)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "WEEKDAY(DATE(2024,1,7),9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "CONCAT(A1:A3)",
+      "expected": "text:123"
+    },
+    {
+      "formula": "CONCATENATE(A1:A3)",
+      "expected": "text:123"
+    },
+    {
+      "formula": "CONCAT(A1:A3,C1:C3)",
+      "expected": "text:123102030"
+    },
+    {
+      "formula": "CONCAT(B1:B4)",
+      "expected": "text:onetwothree"
+    },
+    {
+      "formula": "SUMPRODUCT(A5:A5,C1:C1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTBLANK(A5:A5)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "MATCH(2,A1:A3,2)",
+      "expected": "error:#N/A"
     }
   ]
 }
