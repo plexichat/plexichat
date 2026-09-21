@@ -1303,6 +1303,39 @@ def test_sum_filter_contains_keeps_a_zero_target():
     assert matches(1, "text", 1) is False
 
 
+def test_sum_filter_reads_a_number_the_way_the_client_engine_does():
+    """A numeric operand is compared as its number, not as Python prints it.
+
+    The filter panel hands the value back as text for ``eq``/``neq``, and
+    ``str(2.0)`` is "2.0", so "equals 2" missed every computed cell -- a
+    formula result is a float -- while the client engine's ``String(2)`` is
+    "2" and matched. Both sides now read the shared decimal rule and compare
+    two numeric operands numerically, even when one arrived as text.
+    """
+    from src.core.suite.sum.manager_viewport import SumManagerViewport
+
+    matches = SumManagerViewport._matches_filter
+    assert matches(2.0, "eq", "2") is True
+    assert matches(2.0, "neq", "2") is False
+    assert matches(2.0, "contains", "2") is True
+    assert matches(20.0, "contains", 0) is True
+    # Text that reads as a number compares numerically on both sides.
+    assert matches("2.50", "eq", 2.5) is True
+    assert matches("2.50", "neq", 2.5) is False
+    # A boolean is 1/0 numerically and "TRUE" as text.
+    assert matches(True, "eq", 1) is True
+    assert matches(True, "eq", "true") is True
+    assert matches(True, "gt", 0) is True
+    # Ordering needs a number on both sides. float() read "inf" as a number
+    # (so it was greater than everything) and Number() reads "0x10" as one;
+    # neither is a number in a filter.
+    assert matches("inf", "gt", 1) is False
+    assert matches("0x10", "gt", 1) is False
+    assert matches("", "gt", -5) is False
+    assert matches("abc", "gte", 1) is False
+    assert matches(5, "gt", "abc") is False
+
+
 def test_sum_xlsx_export_and_import(db, two_users, server_manager):
     pytest.importorskip("openpyxl")
     owner, _ = two_users

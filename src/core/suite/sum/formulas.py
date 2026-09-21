@@ -45,6 +45,8 @@ from ._formula_shared import (  # noqa: F401  (facade re-exports)
     VALUE_ERROR,
     CellResolver,
     _Parser,
+    _coerce_number_text,
+    _to_text,
     _tokenize,
     is_error,
     parse_cell_ref,

@@ -4,7 +4,7 @@ import sqlite3
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from .formulas import FormulaEvaluator, is_error
+from .formulas import FormulaEvaluator, _coerce_number_text, _to_text, is_error
 from .segments import SegmentEncoder
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
@@ -184,7 +184,25 @@ class SumManagerViewport(SumManagerProtocol):
         return cell.get("value")
 
     @staticmethod
-    def _matches_filter(value: Any, operator: str, target: Any = None) -> bool:
+    def _filter_number(value: Any) -> Optional[float]:
+        """The number a filter comparison uses, or ``None`` when there is none.
+
+        A boolean is 1/0, the way Excel compares it numerically everywhere else.
+        A string has to read as a whole number: ``float()`` also accepts
+        "inf", "nan" and digit underscores, none of which a filter should treat
+        as a number, and the client engine reads the same decimal rule rather
+        than reaching for ``Number()``, which accepts "0x10" instead.
+        """
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            return _coerce_number_text(value)
+        return None
+
+    @classmethod
+    def _matches_filter(cls, value: Any, operator: str, target: Any = None) -> bool:
         """Evaluate one filter criterion against a cell's comparable value."""
         op = str(operator or "").strip()
         if op == "is_empty":
@@ -195,30 +213,35 @@ class SumManagerViewport(SumManagerProtocol):
         # the empty string, so ``contains 0`` matched every non-empty cell and
         # ``not_contains 0`` matched none of them. Only a missing target is
         # empty text (the client engine compares with the same rule).
-        needle = "" if target is None else str(target).lower()
+        #
+        # ``_to_text`` rather than ``str``: str(2.0) is "2.0", so a filter for
+        # "2" missed every computed cell, while the client engine's String(2)
+        # is "2". Booleans print as TRUE/FALSE here and true/false there, so
+        # both sides fold case.
+        needle = "" if target is None else _to_text(target).casefold()
+        haystack = "" if value is None else _to_text(value).casefold()
         if op == "contains":
-            return value is not None and needle in str(value).lower()
+            return value is not None and needle in haystack
         if op == "not_contains":
-            return not (value is not None and needle in str(value).lower())
+            return not (value is not None and needle in haystack)
         if value is None:
             return False
-        if op == "eq":
-            if isinstance(value, (int, float)) and isinstance(target, (int, float)):
-                return float(value) == float(target)
-            return str(value).lower() == str(target).lower()
-        if op == "neq":
-            if isinstance(value, (int, float)) and isinstance(target, (int, float)):
-                return float(value) != float(target)
-            return str(value).lower() != str(target).lower()
-        if target is None:
-            # The four ordering operators need a number on both sides, and
-            # float(None) is a TypeError. (eq/neq above compare text when
-            # either side is not numeric, so they do not come this way.)
-            return False
-        try:
-            number = float(value)
-            target_number = float(target)
-        except (TypeError, ValueError):
+        if op in ("eq", "neq"):
+            # Two operands that both read as numbers are compared as numbers,
+            # even when one of them arrived as text: the filter panel sends the
+            # value it was given, so "equals 2" has to match 2.0.
+            number = cls._filter_number(value)
+            target_number = cls._filter_number(target)
+            if number is not None and target_number is not None:
+                equal = number == target_number
+            else:
+                equal = _to_text(value).casefold() == _to_text(target).casefold()
+            return equal if op == "eq" else not equal
+        # The four ordering operators need a number on both sides; anything
+        # else (a blank, "abc", "inf", "0x10") has nothing to compare.
+        number = cls._filter_number(value)
+        target_number = cls._filter_number(target)
+        if number is None or target_number is None:
             return False
         if op == "gt":
             return number > target_number
