@@ -198,18 +198,35 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # INDEX(array, row_num, [col_num])
             if len(args) < 2 or len(args) > 3:
                 return VALUE_ERROR
-            matrix = self._range_matrix(args[0], sheet, seen, depth)
+            # A single cell is a 1x1 block, and a nested call (OFFSET) that
+            # resolved to a block of values is a one-row block. Both used to
+            # reach _range_matrix, which only describes "A1:B2" refs, so a
+            # formula naming one cell came back #REF!.
+            matrix = self._criteria_range(args[0], sheet, seen, depth)
             if not matrix:
-                return REF_ERROR
-            row_idx = int(_to_number(self._eval(args[1], sheet, seen, depth))) - 1
-            col_idx = 0
+                value = self._eval(args[0], sheet, seen, depth)
+                if is_error(value):
+                    return value
+                matrix = [list(value)] if isinstance(value, list) else [[value]]
+            # Excel truncates a fractional offset, rejects a negative one with
+            # #VALUE!, and reads a 0 as "every row" / "every column" -- so
+            # INDEX(A1:C3, 0, 2) is the whole second column, which SUM can add
+            # up, rather than the #REF! this used to answer.
+            row_num = int(_to_number(self._eval(args[1], sheet, seen, depth)))
+            col_num = 1
             if len(args) == 3:
-                col_idx = int(_to_number(self._eval(args[2], sheet, seen, depth))) - 1
-            if row_idx < 0 or row_idx >= len(matrix):
+                col_num = int(_to_number(self._eval(args[2], sheet, seen, depth)))
+            if row_num < 0 or col_num < 0:
+                return VALUE_ERROR
+            width = max((len(row) for row in matrix), default=0)
+            if row_num > len(matrix) or col_num > width:
                 return REF_ERROR
-            if col_idx < 0 or col_idx >= len(matrix[row_idx]):
-                return REF_ERROR
-            return matrix[row_idx][col_idx]
+            rows = matrix if row_num == 0 else [matrix[row_num - 1]]
+            block = [row if col_num == 0 else [row[col_num - 1]] for row in rows]
+            # A block collapses to a flat value list, the shape OFFSET returns
+            # here, and a 1x1 block to the value itself.
+            cells = [cell for row in block for cell in row]
+            return cells[0] if len(cells) == 1 else cells
         elif name == "MATCH":
             # MATCH(lookup_value, lookup_array, [match_type])
             if len(args) < 2 or len(args) > 3:

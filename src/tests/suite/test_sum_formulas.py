@@ -391,6 +391,45 @@ def test_lookup_reports_a_miss_when_nothing_is_at_or_below_the_target():
     assert _eval('LOOKUP("bbb", A1:A3, B1:B3)', resolver) == 20
 
 
+def test_index_truncates_its_offsets_and_accepts_a_zero():
+    """0 means "every row"/"every column", and a fractional offset truncates.
+
+    INDEX answered #REF! for a 0 offset, so INDEX(A1:C3, 0, 2) -- the idiom for
+    handing a whole column to SUM -- was an error, and 2.7 columns read as
+    out-of-range rather than as column 2.
+    """
+    values = {
+        (0, 0): 1,
+        (0, 1): 10,
+        (0, 2): 100,
+        (1, 0): 2,
+        (1, 1): 20,
+        (1, 2): 200,
+        (2, 0): 3,
+        (2, 1): 30,
+        (2, 2): 300,
+    }
+    cells = {
+        ("1", row, col): {"value_type": "number", "value": value, "formula": None}
+        for (row, col), value in values.items()
+    }
+    resolver = _resolver(cells)
+    assert _eval("INDEX(A1:C3, 2, 3)", resolver) == 200
+    assert _eval("INDEX(A1:C3, 1.9, 2.7)", resolver) == 10
+    # The whole second column, as a block SUM can add up.
+    assert _eval("INDEX(A1:C3, 0, 2)", resolver) == [10, 20, 30]
+    assert _eval("INDEX(A1:C3, 2, 0)", resolver) == [2, 20, 200]
+    assert _eval("SUM(INDEX(A1:C3, 0, 2))", resolver) == 60.0
+    assert _eval("SUM(INDEX(A1:C3, 2, 0))", resolver) == 222.0
+    # A negative offset is #VALUE!, one past the block is #REF!.
+    assert _eval("INDEX(A1:C3, -1, 1)", resolver) == VALUE_ERROR
+    assert _eval("INDEX(A1:C3, 4, 1)", resolver) == "#REF!"
+    assert _eval("INDEX(A1:C3, 1, 4)", resolver) == "#REF!"
+    # A single cell is a 1x1 block, and an error offset still propagates.
+    assert _eval("INDEX(B1, 1)", resolver) == 10
+    assert _eval("INDEX(A1:C3, 1/0, 1)", resolver) == DIV_ZERO
+
+
 def test_sumif_countif_averageif():
     cells = {
         ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},

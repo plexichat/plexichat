@@ -263,7 +263,9 @@ The engine is also bounded where Excel is not: `REPT`, `NETWORKDAYS` and
 (`MAX_REPT_CHARS`, `MAX_NETWORKDAYS_SPAN_DAYS`, `MAX_WORKDAY_OFFSET_DAYS`), and
 return `#VALUE!`/`#NUM!` so a single formula cannot stall a viewport read.
 A multi-cell `OFFSET` is one reference in Excel; here it is a flat value list
-(the client engine represents it as a row-major matrix).
+(the client engine represents it as a row-major matrix). `INDEX`'s "whole
+column"/"whole row" forms (`INDEX(A1:C3, 0, 2)`) arrive the same way, so the
+two shapes still add up identically under `SUM`.
 
 ## Configuration
 
