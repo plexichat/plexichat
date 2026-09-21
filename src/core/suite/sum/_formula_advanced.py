@@ -18,6 +18,7 @@ from ._formula_shared import (
     REF_ERROR,
     VALUE_ERROR,
     _DATE_EPOCH,
+    _compare_values,
     _numeric,
     _to_number,
     _to_number_or_zero,
@@ -227,20 +228,19 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                     if self._lookup_eq(val, lookup_value):
                         return float(i + 1)
             elif match_type == 1:  # Less than (sorted ascending)
+                # Sorted ascending, so the answer is the last entry <= the
+                # lookup value. Entries are ranked the way Excel orders types
+                # rather than coerced with _to_number, which raised ValueError
+                # on the first text entry and left the scan reporting the
+                # length of the vector for every text lookup.
                 for i, val in enumerate(flat):
-                    try:
-                        if _to_number(val) > _to_number(lookup_value):
-                            return float(i) if i > 0 else N_A_ERROR
-                    except ValueError:
-                        continue
+                    if _compare_values(val, lookup_value) > 0:
+                        return float(i) if i > 0 else N_A_ERROR
                 return float(len(flat))
             elif match_type == -1:  # Greater than (sorted descending)
                 for i, val in enumerate(flat):
-                    try:
-                        if _to_number(val) < _to_number(lookup_value):
-                            return float(i) if i > 0 else N_A_ERROR
-                    except ValueError:
-                        continue
+                    if _compare_values(val, lookup_value) < 0:
+                        return float(i) if i > 0 else N_A_ERROR
                 return float(len(flat))
             return N_A_ERROR
         elif name == "INDIRECT":
@@ -303,14 +303,18 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(args) == 3:
                 result_matrix = self._range_matrix(args[2], sheet, seen, depth)
                 result_flat = [row[0] if row else None for row in result_matrix]
-            # LOOKUP assumes sorted ascending, finds last value <= lookup_value
+            # LOOKUP assumes sorted ascending, finds last value <= lookup_value.
+            # The comparison ranks types the way Excel orders them, because
+            # _to_number raised ValueError on the first text entry and the scan
+            # then reported #N/A for a vector of text entirely.
             best_idx = -1
             for i, val in enumerate(flat):
-                try:
-                    if _to_number(val) <= _to_number(lookup_value):
-                        best_idx = i
-                except ValueError:
-                    continue
+                if _compare_values(val, lookup_value) <= 0:
+                    best_idx = i
+                else:
+                    # Sorted ascending: once the vector passes the lookup value
+                    # every later entry does too, so the scan can stop.
+                    break
             if best_idx >= 0 and best_idx < len(result_flat):
                 return result_flat[best_idx]
             return N_A_ERROR

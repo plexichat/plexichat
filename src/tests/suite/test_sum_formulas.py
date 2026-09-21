@@ -327,6 +327,70 @@ def test_hlookup():
     assert _eval('HLOOKUP("Q1", A1:B2, 5, FALSE)', resolver) == "#REF!"
 
 
+def test_match_and_lookup_search_the_first_column_of_a_block():
+    """A block is searched by its first column, the way VLOOKUP keys on one.
+
+    Flattening the whole rectangle row-major let a value in column B match at
+    a position that is not a row at all: with A1="one" and B1=10,
+    MATCH(10, A1:B2, 0) answered 2, the row below the cell that holds it.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "one", "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "two", "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 20, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('MATCH("one", A1:B2, 0)', resolver) == 1.0
+    assert _eval('MATCH("two", A1:B2, 0)', resolver) == 2.0
+    assert _eval("MATCH(10, A1:B2, 0)", resolver) == N_A_ERROR
+    assert _eval("MATCH(20, A1:B2, 0)", resolver) == N_A_ERROR
+
+
+def test_match_and_lookup_rank_types_instead_of_coercing_them():
+    """The sorted match types used to treat text as unorderable.
+
+    ``_to_number`` raised ValueError on the first text entry and the scan
+    swallowed it, so every lookup in a text column answered the length of the
+    vector and LOOKUP reported #N/A for all of them. Entries are ranked the way
+    Excel orders types instead -- number, then text, then logicals.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "aaa", "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "bbb", "formula": None},
+        ("1", 2, 0): {"value_type": "text", "value": "ccc", "formula": None},
+    }
+    resolver = _resolver(cells)
+    # Sorted ascending, so the answer is the last entry <= the lookup value.
+    assert _eval('MATCH("aaa", A1:A3)', resolver) == 1.0
+    assert _eval('MATCH("bbb", A1:A3)', resolver) == 2.0
+    assert _eval('MATCH("ccc", A1:A3)', resolver) == 3.0
+    assert _eval('MATCH("zzz", A1:A3)', resolver) == 3.0
+    # match_type -1 walks a descending vector, so ascending data misses it.
+    assert _eval('MATCH("ccc", A1:A3, -1)', resolver) == N_A_ERROR
+    assert _eval('LOOKUP("bbb", A1:A3)', resolver) == "bbb"
+    assert _eval('LOOKUP("bb", A1:A3)', resolver) == "aaa"
+    assert _eval('LOOKUP("zzz", A1:A3)', resolver) == "ccc"
+
+
+def test_lookup_reports_a_miss_when_nothing_is_at_or_below_the_target():
+    """LOOKUP(0, B1:B3) over 10,20,30 is #N/A, not the last result entry."""
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "aaa", "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "bbb", "formula": None},
+        ("1", 2, 0): {"value_type": "text", "value": "ccc", "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 20, "formula": None},
+        ("1", 2, 1): {"value_type": "number", "value": 30, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval("LOOKUP(25, B1:B3)", resolver) == 20
+    assert _eval("LOOKUP(9, B1:B3)", resolver) == N_A_ERROR
+    # The match position indexes the result vector, not the lookup vector.
+    assert _eval("LOOKUP(20, B1:B3, A1:A3)", resolver) == "bbb"
+    assert _eval('LOOKUP("bbb", A1:A3, B1:B3)', resolver) == 20
+
+
 def test_sumif_countif_averageif():
     cells = {
         ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
