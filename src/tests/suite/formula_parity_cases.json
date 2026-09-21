@@ -8,7 +8,7 @@
     "drifting from Excel (or from the other engine) fails a test.",
     "Types are explicit (number:/text:/boolean:/error:/blank) so a text \"12\" is",
     "never mistaken for the number 12.",
-    "Cells A1:C6 hold the fixture data below; an unlisted cell is blank."
+    "Cells A1:D6 hold the fixture data below; an unlisted cell is blank."
   ],
   "sheet": "1",
   "grid": {
@@ -27,7 +27,10 @@
     "B6": true,
     "C1": 10,
     "C2": 20,
-    "C3": 30
+    "C3": 30,
+    "D1": "apple",
+    "D2": "banana",
+    "D3": "cherry"
   },
   "cases": [
     {
@@ -1581,6 +1584,82 @@
     {
       "formula": "MATCH(2,A1:A3,2)",
       "expected": "error:#N/A"
+    },
+    {
+      "formula": "INDEX(A1:C3,1.9,2.7)",
+      "expected": "text:one"
+    },
+    {
+      "formula": "INDEX(A1:C3,-1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "INDEX(A1:C3,4,1)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "INDEX(B6,1)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "SUM(INDEX(A1:C3,0,3))",
+      "expected": "number:60"
+    },
+    {
+      "formula": "SUM(INDEX(A1:C3,3,0))",
+      "expected": "number:33"
+    },
+    {
+      "formula": "MATCH(1,A1:B3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"two\",A1:B3,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(\"banana\",D1:D3,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(\"banana\",D1:D3)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(\"cat\",D1:D3)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(\"zzz\",D1:D3)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "MATCH(\"cherry\",D1:D3,-1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "LOOKUP(\"ban\",D1:D3)",
+      "expected": "text:apple"
+    },
+    {
+      "formula": "LOOKUP(\"banana\",D1:D3)",
+      "expected": "text:banana"
+    },
+    {
+      "formula": "LOOKUP(\"zzz\",D1:D3)",
+      "expected": "text:cherry"
+    },
+    {
+      "formula": "LOOKUP(\"banana\",D1:D3,C1:C3)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "LOOKUP(0,C1:C3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "LOOKUP(15,C1:C3)",
+      "expected": "number:10"
     }
   ]
 }
