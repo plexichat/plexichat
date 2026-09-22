@@ -317,7 +317,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     ) -> Any:
         # Evaluate the arguments lazily where the function is short-circuiting.
         if name == "IF":
-            if len(args) != 3:
+            # Excel's third argument is optional: IF(test, value_if_true) is
+            # legal and a false test yields FALSE. Requiring exactly three
+            # arguments made that form -- and any arithmetic on it -- #VALUE!.
+            if len(args) not in (2, 3):
                 return VALUE_ERROR
             # The condition is inspected for an error *before* it is coerced to
             # a boolean. ``_truthy`` returns a plain bool, so the old guard
@@ -327,8 +330,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             condition = self._eval(args[0], sheet, seen, depth)
             if is_error(condition):
                 return condition
-            branch = args[1] if self._truthy(condition) else args[2]
-            return self._eval(branch, sheet, seen, depth)
+            if self._truthy(condition):
+                return self._eval(args[1], sheet, seen, depth)
+            if len(args) == 3:
+                return self._eval(args[2], sheet, seen, depth)
+            return False
         if name in ("AND", "OR"):
             if not args:
                 return VALUE_ERROR

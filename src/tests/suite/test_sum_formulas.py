@@ -41,6 +41,9 @@ def test_arithmetic_precedence_and_parens():
     assert _eval("(1+2)*3") == 9.0
     assert _eval("(A1+A2)*2") == 30.0
     assert _eval("2^3") == 8.0
+    # Excel's ^ is left-associative: 2^3^2 is (2^3)^2, not 2^(3^2).
+    assert _eval("2^3^2") == 64.0
+    assert _eval("2^(3^2)") == 512.0
     assert _eval("ABS(-5)") == 5.0
     assert _eval("A1/0") == "#DIV/0!"
 

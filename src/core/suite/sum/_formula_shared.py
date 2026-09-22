@@ -274,10 +274,15 @@ class _Parser:
         return node
 
     def _power(self) -> Any:
+        # ``^`` is left-associative in Excel: ``2^3^2`` is ``(2^3)^2`` (64),
+        # not ``2^(3^2)`` (512). A recursive call on the right-hand side made
+        # the server right-associative while the client engine -- and Excel --
+        # evaluate left to right, so the same formula answered differently
+        # depending on which engine saw it.
         node = self._unary()
-        if self._peek().kind == "op" and self._peek().value == "^":
+        while self._peek().kind == "op" and self._peek().value == "^":
             self._advance()
-            right = self._power()
+            right = self._unary()
             node = ("^", node, right)
         return node
 
