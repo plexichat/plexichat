@@ -54,3 +54,31 @@ def test_admin_template_errors_do_not_include_exception(monkeypatch):
     result = utils.load_admin_template("login.html")
     assert "secret path" not in result
     assert result == "<h1>Template Error</h1>"
+
+
+def test_admin_template_allows_the_migrations_page():
+    """The migrations route serves migrations.html; the loader must allow it."""
+    from src.api.routes.admin import utils
+
+    result = utils.load_admin_template("migrations.html", csp_nonce="n")
+    assert result != "<h1>Access Denied</h1>"
+    assert "<title>Plexichat Admin - Migrations</title>" in result
+    assert '<script nonce="n">' in result
+
+
+def test_admin_template_rejects_an_unknown_template():
+    from src.api.routes.admin import utils
+
+    assert utils.load_admin_template("../secrets.html") == "<h1>Access Denied</h1>"
+    assert utils.load_admin_template("nope.html") == "<h1>Access Denied</h1>"
+
+
+def test_dashboard_version_is_stamped_from_the_build():
+    """The sidebar version is the running build, not a hardcoded placeholder."""
+    from src.api.routes.admin import utils
+    from src.server.lifecycle import VERSION
+
+    result = utils.load_admin_template("dashboard.html", csp_nonce="n")
+    assert f"API {VERSION}" in result
+    assert "{{ version }}" not in result
+    assert "a.1.0-73" not in result

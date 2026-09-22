@@ -308,7 +308,9 @@ def require_approved_request(action_type: str) -> Optional[int]:
 
 def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> str:
     """Load an admin UI template."""
-    allowed_templates = ["login.html", "dashboard.html"]
+    # ``migrations.html`` is served by ``admin_migrations_page``; without it in
+    # this list the route answered every request with "Access Denied".
+    allowed_templates = ["login.html", "dashboard.html", "migrations.html"]
     if template_name not in allowed_templates:
         return "<h1>Access Denied</h1>"
 
@@ -323,6 +325,13 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
 
     try:
         content = template_path.read_text(encoding="utf-8")
+        # Stamp the running build's version into the page so the sidebar never
+        # shows a stale hardcoded placeholder when dashboard.js is slow to load
+        # or fails; the JS still overwrites it from /api/v1/version afterwards.
+        if "{{ version }}" in content:
+            from src.server.lifecycle import VERSION
+
+            content = content.replace("{{ version }}", VERSION)
         if csp_nonce:
             import re
 
