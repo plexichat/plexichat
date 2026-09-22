@@ -1,6 +1,7 @@
 """Unit tests for the bounded PlexiSum formula engine."""
 
 import datetime
+import math
 
 from src.core.suite.sum.formulas import (
     DIV_ZERO,
@@ -161,6 +162,92 @@ def test_if_and_boolean_functions():
     assert _eval("AND(TRUE,FALSE)") is False
     assert _eval("OR(TRUE,FALSE)") is True
     assert _eval("NOT(FALSE)") is True
+
+
+def test_if_accepts_an_optional_third_argument():
+    """Excel's value_if_false is optional; a false test yields FALSE.
+
+    Requiring exactly three arguments made ``IF(1,2)`` -- and any arithmetic
+    on its result -- ``#VALUE!``.
+    """
+    assert _eval("IF(1,2)") == 2.0
+    assert _eval("IF(0,2)") is False
+    assert _eval("IF(TRUE,1)") == 1.0
+    assert _eval("IF(FALSE,1)") is False
+    assert _eval("IF(1,2)+2") == 4.0
+    # The arity guard still rejects too few and too many arguments.
+    assert _eval("IF(1)") == VALUE_ERROR
+    assert _eval("IF(1,2,3,4)") == VALUE_ERROR
+
+
+def test_an_omitted_argument_is_a_blank_value():
+    """An empty slot between commas is Excel's "missing" operand.
+
+    It used to be a parse error, so ``SUM(1,)`` -- which the client engine
+    answered -- failed outright here. A missing argument now behaves exactly
+    like a blank cell: skipped by the aggregates, 0 as a number and "" as text.
+    """
+    assert _eval("SUM(1,)") == 1.0
+    assert _eval("SUM(,1)") == 1.0
+    assert _eval("SUM(1,,2)") == 3.0
+    assert _eval("SUM(,)") == 0.0
+    assert _eval('LEFT("abc",)') == ""
+    assert _eval("ROUND(1.5,)") == 2.0
+    assert _eval("IF(FALSE,1,)") is None
+    assert _eval('CONCATENATE("a",)') == "a"
+    assert _eval("AND(TRUE,)") is False
+    assert _eval("MAX(,5)") == 5.0
+
+
+def test_the_functions_adopted_from_the_client_engine():
+    """The functions copied from the client surface answer the same way.
+
+    The README's "adopt next" list, implemented here so a sheet that uses one
+    reads identically whichever engine evaluates it.
+    """
+    assert _eval('CHOOSE(2,"a","b")') == "b"
+    assert _eval("CHOOSE(0,1,2)") == VALUE_ERROR
+    assert _eval("IFS(FALSE,1,TRUE,2)") == 2.0
+    assert _eval("IFS(FALSE,1,FALSE,2)") == N_A_ERROR
+    assert _eval('SWITCH(2,1,"a",2,"b")') == "b"
+    assert _eval('SWITCH(9,1,"a",2,"b")') == N_A_ERROR
+    assert _eval("ISEVEN(2)") is True
+    assert _eval("ISEVEN(-1.5)") is False
+    assert _eval("ISODD(3)") is True
+    assert _eval("ISLOGICAL(TRUE)") is True
+    assert _eval("ISNONTEXT(5)") is True
+    assert _eval("ERROR.TYPE(1/0)") == 2
+    assert _eval("ERROR.TYPE(5)") == N_A_ERROR
+    assert _eval("N(TRUE)") == 1
+    assert _eval('N("x")') == 0
+    assert _eval("T(5)") == ""
+    assert _eval('T("x")') == "x"
+    assert _eval('CLEAN("ab")') == "ab"
+    assert _eval("SIGN(-3)") == -1
+    assert _eval("GCD(12,18)") == 6.0
+    assert _eval("GCD(-1,2)") == NUM_ERROR
+    assert _eval("LCM(4,6)") == 12.0
+    assert _eval("SUMSQ(3,4)") == 25.0
+    assert _eval("SUMXY(A1:A2,A1:A2)") == 125.0
+    assert _eval("ATAN2(1,1)") == math.atan2(1.0, 1.0)
+    assert _eval("TANH(0)") == 0.0
+    # A hyperbolic sine or cosine past ~710 overflows a double.
+    assert _eval("SINH(1000)") == NUM_ERROR
+    assert _eval("COSH(1000)") == NUM_ERROR
+    assert _eval("HOUR(0.5)") == 12.0
+    assert _eval("TIME(27,0,0)") == 0.125
+    assert _eval("TIME(-1,0,0)") == NUM_ERROR
+    assert _eval('DATEVALUE("2024-01-15")') == 45306.0
+    assert _eval('DATEVALUE("nope")') == VALUE_ERROR
+    assert _eval("MEDIAN(A1:A2)") == 7.5
+    assert _eval("LARGE(A1:A2,1)") == 10.0
+    assert _eval("RANK(5,A1:A2)") == 2.0
+    assert _eval("PERCENTILE(A1:A2,0.5)") == 7.5
+    assert _eval("QUARTILE(A1:A2,2)") == 7.5
+    assert _eval("MODE(A1:A2)") == NUM_ERROR
+    assert _eval("AVERAGEA(A1:A2)") == 7.5
+    assert _eval("MAXA(A1:A2)") == 10.0
+    assert _eval('MINA(1,"x")') == 0.0
 
 
 def test_cross_sheet_quoted_sheet_name():
@@ -1017,11 +1104,15 @@ def test_a_name_shaped_like_a_cell_reference_can_still_be_called():
     error) where Excel reports #NAME? for a name it does not implement.
     A name followed by "(" is now the call, which is how Excel resolves it.
     """
-    assert _eval("ATAN2(1, 2)") == NAME_ERROR
+    # ATAN2 and SUMX2MY2 are implemented now, so the call reaches the function
+    # instead of a parse error.
+    assert _eval("ATAN2(1, 2)") == math.atan2(1.0, 2.0)
+    assert _eval("SUMXY(A1:A2, A1:A2)") == 125.0
+    # A name that is still unimplemented (the engineering set is deliberately
+    # left out) reports #NAME? rather than a parse error.
     assert _eval("BIN2DEC(1010)") == NAME_ERROR
-    assert (
-        _eval("SUMX2MY2(A1:A3, C1:C3)") == NAME_ERROR
-    )  # A name that reads as a reference is still one when it is not being called:
+    assert _eval('HEX2DEC("FF")') == NAME_ERROR
+    # A name that reads as a reference is still one when it is not being called:
     # "ATAN2" is column ATAN (31135 zero-based), row 2.
     cells = {("1", 1, 31135): {"value_type": "number", "value": 99, "formula": None}}
     assert _eval("ATAN2", _resolver(cells)) == 99.0

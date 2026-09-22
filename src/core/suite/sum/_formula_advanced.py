@@ -81,6 +81,133 @@ def _holiday_serials(values: List[Any]) -> set:
     return serials
 
 
+# The largest value Excel still treats as an exact integer. GCD and LCM
+# reject anything above it, and LCM rejects a result above it, rather than
+# returning a number double-precision arithmetic can no longer represent
+# exactly. Mirrors the client engine's MAX_EXACT_INTEGER.
+MAX_EXACT_INTEGER = 2**53
+
+# Excel's upper bound for each TIME() component; anything above it is #NUM!.
+MAX_TIME_COMPONENT = 32767
+
+# Formats DATEVALUE reads. Excel is locale-dependent here and the client
+# engine leans on the host JavaScript date parser, so this covers the
+# unambiguous shapes (ISO first, then the common US and day-month-name
+# spellings) rather than pretending to be a full locale calendar.
+_DATEVALUE_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%m/%d/%Y",
+    "%m-%d-%Y",
+    "%d-%b-%Y",
+    "%d-%B-%Y",
+    "%b %d, %Y",
+    "%B %d, %Y",
+    "%m/%d/%y",
+    "%d-%b-%y",
+)
+
+
+def _parse_date_text(text: str) -> Optional[datetime.date]:
+    for pattern in _DATEVALUE_FORMATS:
+        try:
+            return datetime.datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _time_of_day(serial: float) -> int:
+    """The seconds past midnight the serial's fractional part names."""
+    fraction = serial - math.floor(serial)
+    return int(round(fraction * 86400.0)) % 86400
+
+
+def _read_number(value: Any) -> tuple:
+    """Coerce one value, returning ``(error, number)``.
+
+    A function that cannot skip a value (SUMSQ, the cross-product sums, a
+    rank or a percentile) reports the coercion failure instead of treating the
+    value as absent, which is what the client engine's ``toNumber`` does.
+    """
+    try:
+        return None, _to_number(value)
+    except ValueError as exc:
+        return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR, None
+
+
+def _number_values(values: List[Any]) -> List[float]:
+    """The numeric entries of a flattened argument list.
+
+    Excel ignores text and blanks inside a statistical range, so a value that
+    does not read as a number is skipped rather than failing the whole call.
+    """
+    numbers: List[float] = []
+    for value in values:
+        if value is None or is_error(value):
+            continue
+        if isinstance(value, bool):
+            numbers.append(1.0 if value else 0.0)
+            continue
+        try:
+            numbers.append(_to_number(value))
+        except ValueError:
+            continue
+    return numbers
+
+
+def _number_or_zero(value: Any) -> float:
+    """Coerce a value the way Excel's "A" functions (AVERAGEA/MAXA/MINA) do.
+
+    A number is itself, a logical is 1/0, text counts as its value only when
+    the whole string reads as a number, and anything else counts as zero. A
+    value is never dropped: the A variants count a text entry as zero, which
+    is what makes them the A variants.
+    """
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    try:
+        return _to_number(value)
+    except ValueError:
+        return 0.0
+
+
+def _literal_error(values: List[Any], reference: Any) -> Optional[str]:
+    """The error a value-based function has to propagate.
+
+    An error *written into* the formula propagates, while an error stored in a
+    referenced cell is skipped the way text is -- that is how the client
+    engine's statistical helpers already read a range, and the shared parity
+    table pins the two engines to the same answer.
+
+    ``reference`` is either the per-value provenance list ``_call`` builds (one
+    flag per entry in *values*) or the single flag ``_expand_arg`` returns for
+    one whole argument.
+    """
+    if isinstance(reference, bool):
+        if reference:
+            return None
+        return next((value for value in values if is_error(value)), None)
+    for value, ranged in zip(values, reference):
+        if is_error(value) and not ranged:
+            return value
+    return None
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    """Whether SWITCH's expression matches a case, comparing types too.
+
+    A bare ``==`` would match SWITCH(TRUE, 1, "x") because Python regards
+    ``True`` and ``1`` as equal, where the client engine does not.
+    """
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    if isinstance(left, str) != isinstance(right, str):
+        return False
+    return left == right
+
+
 # First day of the week (0 = Sunday) for Excel's WEEKNUM return types. Type 21
 # is ISO-8601 and uses its own algorithm, so it is absent here on purpose.
 _WEEK_START_DAYS = {
@@ -902,4 +1029,427 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if count == 0:
                 return DIV_ZERO
             return float(total) / count
+        return VALUE_ERROR
+
+    # ── Functions adopted from the client engine ────────────────────────────
+    #
+    # The client engine implements 249 functions and this one a deliberately
+    # compact subset. The block below is the README's "adopt next" list --
+    # cheap functions over machinery that is already here, added so a sheet
+    # that uses them reads the same on both engines.
+
+    def _branched(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """CHOOSE, IFS and SWITCH, which evaluate only the branch they take.
+
+        Excel leaves the untaken branches unevaluated, so ``IFS(TRUE, 1, TRUE,
+        1/0)`` is 1 rather than #DIV/0!; evaluating every argument up front
+        would fail the whole call instead.
+        """
+        if name == "CHOOSE":
+            if len(args) < 2:
+                return VALUE_ERROR
+            index = self._eval(args[0], sheet, seen, depth)
+            if is_error(index):
+                return index
+            error, number = _read_number(index)
+            if error is not None:
+                return error
+            position = math.floor(number)
+            if position < 1 or position > len(args) - 1:
+                return VALUE_ERROR
+            return self._eval(args[position], sheet, seen, depth)
+        if name == "IFS":
+            if len(args) < 2 or len(args) % 2 != 0:
+                return VALUE_ERROR
+            for index in range(0, len(args), 2):
+                condition = self._eval(args[index], sheet, seen, depth)
+                if is_error(condition):
+                    return condition
+                if self._truthy(condition):
+                    return self._eval(args[index + 1], sheet, seen, depth)
+            return N_A_ERROR
+        # SWITCH(expression, search1, result1, ..., [default])
+        if len(args) < 3:
+            return VALUE_ERROR
+        expression = self._eval(args[0], sheet, seen, depth)
+        pairs = args[1:]
+        for index in range(0, len(pairs) - 1, 2):
+            search = self._eval(pairs[index], sheet, seen, depth)
+            if _same_value(expression, search):
+                return self._eval(pairs[index + 1], sheet, seen, depth)
+        if len(pairs) % 2 == 1:
+            return self._eval(pairs[-1], sheet, seen, depth)
+        return N_A_ERROR
+
+    def _scalar_argument(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> tuple:
+        """Evaluate one argument that must be a single value.
+
+        Returns ``(error, value)``. A whole range where a scalar belongs is
+        #VALUE!, which is what the client engine's ``toNumber`` reports for an
+        array.
+        """
+        values, _ = self._expand_arg(node, sheet, seen, depth)
+        if len(values) != 1:
+            return VALUE_ERROR, None
+        if is_error(values[0]):
+            return values[0], None
+        return None, values[0]
+
+    def _percentile(self, numbers: List[float], percent: float) -> Any:
+        """PERCENTILE.INC: linear interpolation between order statistics."""
+        if not numbers or percent < 0 or percent > 1:
+            return NUM_ERROR
+        numbers.sort()
+        rank = percent * (len(numbers) - 1)
+        low = math.floor(rank)
+        high = math.ceil(rank)
+        if low == high:
+            return float(numbers[low])
+        return float(numbers[low] + (numbers[high] - numbers[low]) * (rank - low))
+
+    def _structured(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """LARGE, SMALL, RANK, PERCENTILE, QUARTILE and the SUMX2* cross-sums.
+
+        These need their arguments kept apart -- the second is a rank, a
+        percentile or a parallel array rather than more data to pool -- so
+        they read the raw argument nodes instead of one flattened list.
+        """
+        if name in ("LARGE", "SMALL"):
+            if len(args) != 2:
+                return VALUE_ERROR
+            data, provided = self._expand_arg(args[0], sheet, seen, depth)
+            error = _literal_error(data, provided)
+            if error is not None:
+                return error
+            numbers = _number_values(data)
+            error, rank_value = self._scalar_argument(args[1], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, rank_number = _read_number(rank_value)
+            if error is not None:
+                return error
+            rank = math.floor(rank_number)
+            if rank < 1 or rank > len(numbers):
+                return NUM_ERROR
+            numbers.sort()
+            # The k-th largest is the (n-k)-th smallest.
+            return float(numbers[-rank] if name == "LARGE" else numbers[rank - 1])
+        if name == "RANK":
+            if len(args) < 2 or len(args) > 3:
+                return VALUE_ERROR
+            error, target_value = self._scalar_argument(args[0], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, target = _read_number(target_value)
+            if error is not None:
+                return error
+            ascending = 0.0
+            if len(args) == 3:
+                error, order_value = self._scalar_argument(args[2], sheet, seen, depth)
+                if error is not None:
+                    return error
+                error, ascending = _read_number(order_value)
+                if error is not None:
+                    return error
+            data, provided = self._expand_arg(args[1], sheet, seen, depth)
+            error = _literal_error(data, provided)
+            if error is not None:
+                return error
+            # Competition ranking with no sort and no intermediate array: the
+            # rank is 1 plus the count of values strictly greater (descending)
+            # or strictly less (ascending) than the target. Ties share the top
+            # rank of their set, matching Excel.
+            count = 0
+            found = False
+            for value in data:
+                if value is None or is_error(value):
+                    continue
+                error, number = _read_number(value)
+                if error is not None:
+                    continue
+                if number == target:
+                    found = True
+                elif (number < target) if ascending else (number > target):
+                    count += 1
+            if not found:
+                return N_A_ERROR
+            return float(count + 1)
+        if name in ("PERCENTILE", "QUARTILE"):
+            if len(args) != 2:
+                return VALUE_ERROR
+            data, provided = self._expand_arg(args[0], sheet, seen, depth)
+            error = _literal_error(data, provided)
+            if error is not None:
+                return error
+            numbers = _number_values(data)
+            error, percent_value = self._scalar_argument(args[1], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, percent = _read_number(percent_value)
+            if error is not None:
+                return error
+            if name == "QUARTILE":
+                quartile = math.floor(percent)
+                if quartile < 0 or quartile > 4:
+                    return NUM_ERROR
+                percent = quartile / 4
+            return self._percentile(numbers, percent)
+        if name in ("SUMX2MY2", "SUMX2PY2", "SUMXY"):
+            if len(args) != 2:
+                return VALUE_ERROR
+            left, left_ref = self._expand_arg(args[0], sheet, seen, depth)
+            right, right_ref = self._expand_arg(args[1], sheet, seen, depth)
+            error = _literal_error(left, left_ref) or _literal_error(right, right_ref)
+            if error is not None:
+                return error
+            if len(left) != len(right):
+                return VALUE_ERROR
+            total = 0.0
+            for first, second in zip(left, right):
+                error, x = _read_number(first)
+                if error is not None:
+                    return error
+                error, y = _read_number(second)
+                if error is not None:
+                    return error
+                if name == "SUMXY":
+                    total += x * y
+                elif name == "SUMX2MY2":
+                    total += x * x - y * y
+                else:
+                    total += x * x + y * y
+            return total
+        return VALUE_ERROR
+
+    def _adopted_statistical(
+        self, name: str, values: List[Any], from_reference: List[bool]
+    ) -> Any:
+        """MEDIAN, MODE, STDEV, VAR, AVERAGEA, MAXA, MINA.
+
+        These pool every argument into one set of numbers, so they read the
+        flattened values but decide themselves how to treat an error operand:
+        one written into the formula propagates while one stored in a cell is
+        skipped, exactly as the client engine reads it.
+        """
+        error = _literal_error(values, from_reference)
+        if error is not None:
+            return error
+        if name in ("AVERAGEA", "MAXA", "MINA"):
+            # The A variants count a present value that is not a number (text)
+            # as zero rather than dropping it, but a blank is still skipped.
+            numbers = [
+                _number_or_zero(value)
+                for value in values
+                if value is not None and not is_error(value)
+            ]
+            if name == "AVERAGEA":
+                if not numbers:
+                    return DIV_ZERO
+                return float(sum(numbers)) / len(numbers)
+            if not numbers:
+                return 0
+            return float(max(numbers) if name == "MAXA" else min(numbers))
+        numbers = _number_values(values)
+        if name == "MEDIAN":
+            if not numbers:
+                return NUM_ERROR
+            numbers.sort()
+            middle = len(numbers) // 2
+            if len(numbers) % 2 == 1:
+                return float(numbers[middle])
+            return (numbers[middle - 1] + numbers[middle]) / 2
+        if name == "MODE":
+            if not numbers:
+                return NUM_ERROR
+            counts: dict = {}
+            best: Any = None
+            best_count = 0
+            for number in numbers:
+                count = counts.get(number, 0) + 1
+                counts[number] = count
+                if count > best_count:
+                    best_count = count
+                    best = number
+            # A set where every value appears once has no mode at all.
+            if best_count == 1:
+                return NUM_ERROR
+            return float(best)
+        if name in ("STDEV", "VAR"):
+            if len(numbers) < 2:
+                return DIV_ZERO
+            mean = sum(numbers) / len(numbers)
+            total = sum((value - mean) ** 2 for value in numbers)
+            variance = total / (len(numbers) - 1)
+            return math.sqrt(variance) if name == "STDEV" else variance
+        return VALUE_ERROR
+
+    def _adopted_single(self, name: str, values: List[Any]) -> Any:
+        """The adopted functions that take one scalar (or none).
+
+        SIGN, GCD, LCM, SUMSQ, the hyperbolic and two-argument trig, the
+        time-of-day readers, TODAY/NOW and the CLEAN/T/N/IS* additions.
+        """
+        if name in ("TODAY", "NOW"):
+            if values:
+                return VALUE_ERROR
+            now = datetime.datetime.now()
+            if name == "TODAY":
+                return float((now.date() - _DATE_EPOCH).days)
+            return (now - datetime.datetime(1899, 12, 30)).total_seconds() / 86400.0
+        if name == "ERROR.TYPE":
+            if len(values) != 1:
+                return VALUE_ERROR
+            return {
+                DIV_ZERO: 2,
+                VALUE_ERROR: 3,
+                REF_ERROR: 4,
+                "#NAME?": 5,
+                NUM_ERROR: 6,
+                N_A_ERROR: 7,
+                "#CYCLE!": 8,
+            }.get(values[0], N_A_ERROR)
+        if not values:
+            return VALUE_ERROR
+        if name in ("ISLOGICAL", "ISNONTEXT"):
+            if len(values) != 1:
+                return VALUE_ERROR
+            value = values[0]
+            if name == "ISLOGICAL":
+                return isinstance(value, bool)
+            return not (isinstance(value, str) and not is_error(value))
+        if name == "T":
+            if len(values) != 1:
+                return VALUE_ERROR
+            return values[0] if isinstance(values[0], str) else ""
+        if name == "CLEAN":
+            if len(values) != 1:
+                return VALUE_ERROR
+            # Excel strips the non-printing control characters, which are the
+            # C0 range and the C1 range.
+            return "".join(
+                character
+                for character in _to_text(values[0])
+                if not (0x00 <= ord(character) <= 0x1F)
+                and not (0x7F <= ord(character) <= 0x9F)
+            )
+        if name in ("N", "ISEVEN", "ISODD"):
+            if len(values) != 1:
+                return VALUE_ERROR
+            value = values[0]
+            if name == "N":
+                if isinstance(value, bool):
+                    return 1 if value else 0
+                return value if _numeric(value) else 0
+            error, number = _read_number(value)
+            if error is not None:
+                return error
+            # Excel truncates the argument toward zero, the way TRUNC does,
+            # and reports on that integer: ISEVEN(-1.5) is ISEVEN(-1).
+            return abs(math.trunc(number)) % 2 == (0 if name == "ISEVEN" else 1)
+        if name in ("GCD", "LCM"):
+            integers: List[int] = []
+            for value in values:
+                error, number = _read_number(value)
+                if error is not None:
+                    return error
+                truncated = math.trunc(number)
+                if truncated < 0 or truncated > MAX_EXACT_INTEGER:
+                    return NUM_ERROR
+                integers.append(truncated)
+            if name == "GCD":
+                result = 0
+                for value in integers:
+                    result = math.gcd(result, value)
+                return float(result)
+            result = 1
+            for value in integers:
+                if result == 0 or value == 0:
+                    result = 0
+                else:
+                    # Divide before multiplying so the product stays exactly
+                    # representable for as long as possible, as the client does.
+                    result = result // math.gcd(result, value) * value
+            if result > MAX_EXACT_INTEGER:
+                return NUM_ERROR
+            return float(result)
+        if name == "SUMSQ":
+            total = 0.0
+            for value in values:
+                error, number = _read_number(value)
+                if error is not None:
+                    return error
+                total += number * number
+            return total
+        if name == "ATAN2":
+            if len(values) != 2:
+                return VALUE_ERROR
+            error, x = _read_number(values[0])
+            if error is not None:
+                return error
+            error, y = _read_number(values[1])
+            if error is not None:
+                return error
+            return math.atan2(x, y)
+        if name in ("SINH", "COSH", "TANH"):
+            if len(values) != 1:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            try:
+                return {
+                    "SINH": math.sinh,
+                    "COSH": math.cosh,
+                    "TANH": math.tanh,
+                }[name](number)
+            except OverflowError:
+                # A hyperbolic sine or cosine past ~710 overflows a double;
+                # the raw infinity is not a spreadsheet value.
+                return NUM_ERROR
+        if name == "TIME":
+            if len(values) != 3:
+                return VALUE_ERROR
+            parts: List[float] = []
+            for value in values:
+                error, number = _read_number(value)
+                if error is not None:
+                    return error
+                if number < 0 or number > MAX_TIME_COMPONENT:
+                    return NUM_ERROR
+                parts.append(number)
+            # Excel folds the result into a single day, so TIME(27, 0, 0) is
+            # 03:00 rather than 27 hours.
+            seconds = (parts[0] * 3600 + parts[1] * 60 + parts[2]) % 86400
+            return seconds / 86400
+        if name == "DATEVALUE":
+            if len(values) != 1:
+                return VALUE_ERROR
+            parsed = _parse_date_text(_to_text(values[0]).strip())
+            if parsed is None:
+                return VALUE_ERROR
+            return float((parsed - _DATE_EPOCH).days)
+        if name in ("HOUR", "MINUTE", "SECOND", "SIGN"):
+            if len(values) != 1:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            if name == "SIGN":
+                if number > 0:
+                    return 1
+                if number < 0:
+                    return -1
+                return 0
+            seconds = _time_of_day(number)
+            if name == "HOUR":
+                return float(seconds // 3600)
+            if name == "MINUTE":
+                return float((seconds % 3600) // 60)
+            return float(seconds % 60)
         return VALUE_ERROR

@@ -44,5 +44,23 @@ class FormulaEvaluatorProtocol:
     ) -> Any:
         raise NotImplementedError
 
+    def _branched(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        raise NotImplementedError
+
+    def _structured(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        raise NotImplementedError
+
+    def _adopted_statistical(
+        self, name: str, values: List[Any], from_reference: List[bool]
+    ) -> Any:
+        raise NotImplementedError
+
+    def _adopted_single(self, name: str, values: List[Any]) -> Any:
+        raise NotImplementedError
+
 
 __all__ = ["FormulaEvaluatorProtocol"]

@@ -100,6 +100,84 @@ _VALUE_FUNCTIONS = frozenset(
         "AVERAGEIFS",
         "SUMIFS",
         "COUNTIFS",
+        # Adopted from the client engine (see the README's "adopt next" list).
+        # Every one of these propagates an error operand; the IS*/ERROR.TYPE
+        # additions classify it instead and are handled separately.
+        "SIGN",
+        "GCD",
+        "LCM",
+        "SUMSQ",
+        "ATAN2",
+        "SINH",
+        "COSH",
+        "TANH",
+        "HOUR",
+        "MINUTE",
+        "SECOND",
+        "TIME",
+        "DATEVALUE",
+        "TODAY",
+        "NOW",
+        "CLEAN",
+        "T",
+        "N",
+        "ISEVEN",
+        "ISODD",
+    }
+)
+
+# Short-circuiting calls: only the branch that is taken is evaluated.
+_BRANCHING_FUNCTIONS = frozenset({"CHOOSE", "IFS", "SWITCH"})
+
+# Functions whose arguments cannot be pooled into one value list, because the
+# second argument is a rank, a percentile or a parallel array rather than more
+# data to pool.
+_STRUCTURED_FUNCTIONS = frozenset(
+    {
+        "LARGE",
+        "SMALL",
+        "RANK",
+        "PERCENTILE",
+        "QUARTILE",
+        "SUMX2MY2",
+        "SUMX2PY2",
+        "SUMXY",
+    }
+)
+
+# Functions that pool every argument but decide for themselves how to treat an
+# error operand: one written into the formula propagates, one stored in a
+# referenced cell is skipped like text.
+_ADOPTED_STATISTICAL_FUNCTIONS = frozenset(
+    {"MEDIAN", "MODE", "STDEV", "VAR", "AVERAGEA", "MAXA", "MINA"}
+)
+
+# The adopted functions that take a single scalar, or no argument at all.
+_ADOPTED_SINGLE_FUNCTIONS = frozenset(
+    {
+        "SIGN",
+        "GCD",
+        "LCM",
+        "SUMSQ",
+        "ATAN2",
+        "SINH",
+        "COSH",
+        "TANH",
+        "HOUR",
+        "MINUTE",
+        "SECOND",
+        "TIME",
+        "DATEVALUE",
+        "TODAY",
+        "NOW",
+        "CLEAN",
+        "T",
+        "N",
+        "ISEVEN",
+        "ISODD",
+        "ISLOGICAL",
+        "ISNONTEXT",
+        "ERROR.TYPE",
     }
 )
 
@@ -370,6 +448,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                     return value
                 return self._eval(args[1], sheet, seen, depth)
             return value
+        if name in _BRANCHING_FUNCTIONS:
+            return self._branched(name, args, sheet, seen, depth)
+        if name in _STRUCTURED_FUNCTIONS:
+            return self._structured(name, args, sheet, seen, depth)
 
         values: List[Any] = []
         # Which entries were read out of a reference, running parallel to
@@ -394,6 +476,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             for value in values:
                 if is_error(value):
                     return value
+        if name in _ADOPTED_STATISTICAL_FUNCTIONS:
+            return self._adopted_statistical(name, values, from_reference)
+        if name in _ADOPTED_SINGLE_FUNCTIONS:
+            return self._adopted_single(name, values)
         if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
             return self._aggregate(name, values, from_reference)
         if name in (
