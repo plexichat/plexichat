@@ -150,6 +150,42 @@
       "expected": "error:#VALUE!"
     },
     {
+      "formula": "\"2abc\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"2abc\"*2",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"1e\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"0x10\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"1_0\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"2.5.5\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "-\"2abc\"",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"2abc\"%",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ABS(\"2abc\")",
+      "expected": "error:#VALUE!"
+    },
+    {
       "formula": "TRUE*2",
       "expected": "number:2"
     },
@@ -1660,6 +1696,42 @@
     {
       "formula": "LOOKUP(15,C1:C3)",
       "expected": "number:10"
+    },
+    {
+      "formula": "VLOOKUP(\"one\",A1:C3,3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "VLOOKUP(\"1\",A1:C3,3,FALSE)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "VLOOKUP(\"1\",A1:C3,3,TRUE)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "HLOOKUP(\"1\",A1:C3,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "HLOOKUP(2.5,A1:C3,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "HLOOKUP(2,A1:C3,4)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "AND()",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "OR()",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NA(1)",
+      "expected": "error:#VALUE!"
     }
   ]
 }
