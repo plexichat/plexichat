@@ -5,6 +5,7 @@ Provides CacheError exception and in-memory cache dictionary
 used as fallback when Valkey is unavailable.
 """
 
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,6 +14,14 @@ import utils.config as config
 # Cache storage
 _mem_cache: Dict[str, Tuple[float, Any]] = {}
 _MEM_CACHE_MAX_SIZE = 1000
+
+# Guards every read-modify-write on _mem_cache. The cached decorator and
+# cache invalidation run on unrelated threads (request handlers, SFU/event
+# callbacks, background reapers); without this lock two threads racing in
+# mem_cache_clear_pattern / the eviction loop snapshot the same key list
+# and the second ``del`` raises KeyError (seen as
+# ``KeyError: 'has_perm:...'`` under parallel test load).
+_mem_cache_lock = threading.Lock()
 
 # Default TTLs used by the in-memory fallback tier. Mirror valkey's
 # ``ttl.*`` so both tiers behave identically.
@@ -46,44 +55,53 @@ class CacheError(Exception):
 def mem_cache_get(key: str) -> Optional[Any]:
     """Get a value from the in-memory cache, handling expiry."""
     global _mem_cache
-    if key in _mem_cache:
-        expiry, value = _mem_cache[key]
+    with _mem_cache_lock:
+        try:
+            expiry, value = _mem_cache[key]
+        except KeyError:
+            return None
         if expiry > time.time():
             return value
-        del _mem_cache[key]
+        _mem_cache.pop(key, None)
     return None
 
 
 def mem_cache_set(key: str, value: Any, ttl: int) -> None:
     """Set a value in the in-memory cache with TTL."""
     global _mem_cache
-    if len(_mem_cache) >= _MEM_CACHE_MAX_SIZE:
-        keys = list(_mem_cache.keys())
-        for k in keys[: _MEM_CACHE_MAX_SIZE // 2]:
-            del _mem_cache[k]
-    _mem_cache[key] = (time.time() + ttl, value)
+    with _mem_cache_lock:
+        if len(_mem_cache) >= _MEM_CACHE_MAX_SIZE:
+            keys = list(_mem_cache.keys())
+            for k in keys[: _MEM_CACHE_MAX_SIZE // 2]:
+                _mem_cache.pop(k, None)
+        _mem_cache[key] = (time.time() + ttl, value)
 
 
 def mem_cache_delete(key: str) -> bool:
     """Delete a key from the in-memory cache."""
     global _mem_cache
-    if key in _mem_cache:
-        del _mem_cache[key]
-        return True
-    return False
+    with _mem_cache_lock:
+        if key in _mem_cache:
+            del _mem_cache[key]
+            return True
+        return False
 
 
 def mem_cache_clear_pattern(pattern: str) -> int:
     """Clear in-memory cache entries matching a pattern."""
     global _mem_cache
-    keys = mem_cache_matching_keys(pattern)
-    for k in keys:
-        del _mem_cache[k]
-    return len(keys)
+    import fnmatch
+
+    with _mem_cache_lock:
+        keys = [k for k in _mem_cache.keys() if fnmatch.fnmatch(str(k), pattern)]
+        for k in keys:
+            _mem_cache.pop(k, None)
+        return len(keys)
 
 
 def mem_cache_matching_keys(pattern: str) -> List[str]:
     """Return in-memory cache keys matching a glob ``pattern``."""
     import fnmatch
 
-    return [k for k in list(_mem_cache.keys()) if fnmatch.fnmatch(str(k), pattern)]
+    with _mem_cache_lock:
+        return [k for k in list(_mem_cache.keys()) if fnmatch.fnmatch(str(k), pattern)]
