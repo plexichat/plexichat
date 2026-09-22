@@ -189,7 +189,10 @@ text argument into a number (`SUM("2")` is 2) but never a value read from a
 cell or range (`SUM(A1)` is 0 when A1 holds the text `"2"`), which is why a
 text-formatted number column does not silently add up. `AVERAGE`, `MIN`, `MAX`,
 `PRODUCT` and `COUNT` follow the same rule, and the whole argument has to read
-as a number rather than a prefix of one (`SUM("2abc")` is 0).
+as a number rather than a prefix of one (`SUM("2abc")` is 0). The arithmetic
+operators and the numeric functions apply the same whole-string rule, so
+`"2abc"+1` is `#VALUE!` while `"2"+1` is 3, and a decimal that overflows a
+double (`"1e999"+1`) is `#NUM!` rather than infinity.
 
 **Criteria rank types.** `SUMIF`, `COUNTIF`, `AVERAGEIF` and their
 multi-criteria forms compare each cell against the criteria through Excel's
@@ -201,6 +204,11 @@ these functions (`COUNTIF(A1, ">=1")`). A row that matches the criteria but
 holds no number in the summed range contributes 0 to `SUMIF`/`SUMIFS`, while
 `AVERAGEIF`/`AVERAGEIFS` skip it entirely — Excel ignores text and blanks in an
 average range, so a match with no number at all is `#DIV/0!`.
+
+**A lookup key compares the way `=` does.** `VLOOKUP` and `HLOOKUP` match the
+text `"1"` against the number 1, as Excel's `=` does, and an approximate match
+whose lookup value does not read as a number is a miss (`#N/A`) rather than an
+error; a `row_index_num` past the bottom of the table is `#REF!`.
 
 ### Known divergences from Excel
 
@@ -215,6 +223,7 @@ Deliberate, and shared with the client engine unless noted:
 | `"" + 1` | `1` | `#VALUE!` — empty text does not coerce to 0 |
 | `COUNTIF(A1:A3, "tw*")` | wildcard match | `0` — criteria wildcards are not implemented |
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
+| single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `ISEVEN`, `ISREF`, `T`, `CLEAN`, most statistical/financial/engineering functions | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 ### Functions the client engine has that this one does not
@@ -261,7 +270,9 @@ first.
 The engine is also bounded where Excel is not: `REPT`, `NETWORKDAYS` and
 `WORKDAY` refuse to materialise a huge string or iterate for hours
 (`MAX_REPT_CHARS`, `MAX_NETWORKDAYS_SPAN_DAYS`, `MAX_WORKDAY_OFFSET_DAYS`), and
-return `#VALUE!`/`#NUM!` so a single formula cannot stall a viewport read.
+return `#VALUE!`/`#NUM!` so a single formula cannot stall a viewport read. A
+date serial outside the range a date can name, or a `DATE` year outside
+0..9999, is `#NUM!` as well.
 A multi-cell `OFFSET` is one reference in Excel; here it is a flat value list
 (the client engine represents it as a row-major matrix). `INDEX`'s "whole
 column"/"whole row" forms (`INDEX(A1:C3, 0, 2)`) arrive the same way, so the
