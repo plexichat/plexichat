@@ -250,6 +250,110 @@ def test_the_functions_adopted_from_the_client_engine():
     assert _eval('MINA(1,"x")') == 0.0
 
 
+def _close(actual, expected, tolerance=1e-9):
+    return isinstance(actual, (int, float)) and abs(actual - expected) < tolerance
+
+
+def _finance_grid():
+    """G1:G6 is a cash-flow series, H1:H6 the matching date serials, I1:I2 bins."""
+    cells = {}
+    for index, value in enumerate([-1000, 200, 300, 400, 500, 600]):
+        cells[("1", index, 6)] = {
+            "value_type": "number",
+            "value": value,
+            "formula": None,
+        }
+    for index, value in enumerate([39448, 39508, 39569, 39630, 39691, 39752]):
+        cells[("1", index, 7)] = {
+            "value_type": "number",
+            "value": value,
+            "formula": None,
+        }
+    for index, value in enumerate([0, 300]):
+        cells[("1", index, 8)] = {
+            "value_type": "number",
+            "value": value,
+            "formula": None,
+        }
+    return _resolver(cells)
+
+
+def test_the_financial_functions_adopted_from_the_client_engine():
+    """The financial set: annuities, cash-flow series and depreciation."""
+    r = _finance_grid()
+    assert _close(_eval("PMT(0.01,12,1000)"), -88.8487886783417)
+    assert _close(_eval("PMT(0,12,1000)"), -83.33333333333333)
+    assert _close(_eval("FV(0.05,10,-100)"), 1257.789253554884)
+    assert _close(_eval("PV(0.08/12,120,-1000)"), 82421.48089338101)
+    assert _close(_eval("NPER(0.06/12,-500,20000)"), 44.74018929372803)
+    assert _close(_eval("RATE(12,-88.85,1000)"), 0.010002157784894408)
+    assert _close(_eval("IPMT(0.08/12,1,120,100000)"), 666.6666666666667)
+    assert _close(_eval("PPMT(0.08/12,1,120,100000)"), -1879.9426102202444)
+    assert _close(_eval("IRR(G1:G6)", r), 0.23291940737673406)
+    assert _close(_eval("MIRR(G1:G6,0.1,0.12)", r), 0.19115353719309525)
+    assert _close(_eval("XNPV(0.09,G1:G6,H1:H6)", r), 902.4780048323316)
+    assert _close(_eval("SLN(10000,1000,5)"), 1800)
+    assert _close(_eval("SYD(30000,7500,10,1)"), 4090.909090909091)
+    assert _close(_eval("DB(1000000,100000,6,1)"), 318707.93094203866)
+    # A range argument is a series: NPV reads its numbers, the same as the
+    # scalar form it always accepted.
+    assert _close(_eval("NPV(0.1,G1:G6)", r), 403.94318908578333)
+    assert _close(_eval("NPV(0.1,100,100,100)"), 248.68519909842223)
+    # Excel reports #NUM! where the arithmetic leaves the real line.
+    assert _eval("PMT(-2,1.5,1000)") == NUM_ERROR
+    assert _eval("NPER(-2,-500,20000)") == NUM_ERROR
+    assert _eval("SLN(30000,7500,0)") == NUM_ERROR
+    # A cash-flow and a date range of different lengths is #VALUE!.
+    assert _eval("XNPV(0.09,G1:G3,H1:H6)", r) == VALUE_ERROR
+
+
+def test_the_distributions_adopted_from_the_client_engine():
+    """The probability distributions and their inverses."""
+    r = _finance_grid()
+    assert _close(_eval("NORMDIST(42,40,1.5,TRUE)"), 0.9087887152305422)
+    assert _close(_eval("NORMDIST(42,40,1.5,FALSE)"), 0.10934004978399575)
+    assert _close(_eval("NORMSDIST(1.333333)"), 0.9087886605604685)
+    assert _close(_eval("NORMINV(0.908789,40,1.5)"), 42.000002008415805)
+    assert _close(_eval("NORMSINV(0.908789)"), 1.3333346722772028)
+    assert _close(_eval("NORMINVS(0.908789)"), 1.3333346722772028)
+    assert _close(_eval("BINOMDIST(6,10,0.5,FALSE)"), 0.205078125)
+    assert _close(_eval("BINOMDIST(6,10,0.5,TRUE)"), 0.828125)
+    assert _close(_eval("POISSON(2,5,FALSE)"), 0.08422433748856833)
+    assert _close(_eval("EXPONDIST(0.2,10,TRUE)"), 0.8646647167633873)
+    assert _close(_eval("WEIBULL(105,20,100,TRUE)"), 0.9295813900692769)
+    assert _close(_eval("GAMMALN(4)"), 1.791759469228055)
+    assert _close(_eval("GAMMADIST(10,9,2,TRUE)"), 0.06809363472182793)
+    assert _close(_eval("GAMMAINV(0.068094,9,2)"), 10.000011191266822)
+    assert _close(_eval("BETADIST(2,8,10,1,3)"), 0.685470581052571)
+    assert _close(_eval("BETAINV(0.6854706,8,10,1,3)"), 2.000000012770215)
+    assert _close(_eval("NEGBINOMDIST(10,5,0.25)"), 0.05504866037517786)
+    # FREQUENCY returns a column of counts; SUM reads the buckets.
+    assert _close(_eval("SUM(FREQUENCY(G1:G6,I1:I2))", r), 6)
+    # A domain outside the distribution is #NUM!.
+    assert _eval("GAMMALN(0)") == NUM_ERROR
+    assert _eval("NORMDIST(42,40,0,TRUE)") == NUM_ERROR
+    # The successes cannot exceed the trials (this used to answer 0).
+    assert _eval("BINOMDIST(11,10,0.5,FALSE)") == NUM_ERROR
+
+
+def test_the_combinatorics_adopted_from_the_client_engine():
+    """The counting functions."""
+    assert _eval("COMBIN(8,2)") == 28
+    assert _eval("COMBINA(4,3)") == 20
+    assert _eval("PERMUT(100,3)") == 970200
+    assert _eval("FACT(0)") == 1
+    assert _eval("FACT(5)") == 120
+    assert _eval("FACTDOUBLE(6)") == 48
+    assert _eval("FACTDOUBLE(1)") == 1
+    assert _eval("MULTINOMIAL(2,3,4)") == 1260
+    assert _eval("COMBIN(2,5)") == NUM_ERROR
+    assert _eval("FACTDOUBLE(-1)") == NUM_ERROR
+    # A factorial past 170 leaves the doubles: Excel answers #NUM!, and the
+    # integer helpers have to stop at the overflow rather than crash on it.
+    assert _eval("FACT(171)") == NUM_ERROR
+    assert _eval("MULTINOMIAL(170,1)") == NUM_ERROR
+
+
 def test_cross_sheet_quoted_sheet_name():
     """The default sheet is 'Sheet 1' (with a space), so quoted refs must work."""
     cells = {
