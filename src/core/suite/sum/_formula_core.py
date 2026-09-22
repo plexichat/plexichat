@@ -483,6 +483,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             if is_error(value):
                 return value
             return not self._truthy(value)
+        if name in ("TRUE", "FALSE"):
+            # Excel accepts TRUE()/FALSE() as zero-argument calls alongside
+            # the bare literals; the client engine registers them as
+            # functions too. The arity is checked before evaluating, the way
+            # NOT/IFERROR do, so a stray argument is #VALUE!.
+            if args:
+                return VALUE_ERROR
+            return name == "TRUE"
         if name in ("VLOOKUP", "HLOOKUP"):
             return self._lookup(name, args, sheet, seen, depth)
         if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):

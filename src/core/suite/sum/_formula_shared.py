@@ -145,10 +145,19 @@ def _tokenize(text: str) -> List[_Token]:
                 tokens.append(_Token("ref", raw))
         elif kind == "id":
             upper = raw.upper()
-            if upper == "TRUE":
-                tokens.append(_Token("bool", True))
-            elif upper == "FALSE":
-                tokens.append(_Token("bool", False))
+            if upper in ("TRUE", "FALSE"):
+                # ``TRUE``/``FALSE`` are literals when bare but zero-argument
+                # functions when called (``TRUE()``), exactly as Excel and the
+                # client engine resolve them. Without the lookahead the call
+                # form tokenized as a boolean followed by a stray parenthesis
+                # and failed the whole formula with a parse error.
+                following = text[match.end() :].lstrip()
+                if following.startswith("("):
+                    tokens.append(_Token("id", upper))
+                elif upper == "TRUE":
+                    tokens.append(_Token("bool", True))
+                else:
+                    tokens.append(_Token("bool", False))
             else:
                 tokens.append(_Token("id", upper))
         elif kind == "lparen":
