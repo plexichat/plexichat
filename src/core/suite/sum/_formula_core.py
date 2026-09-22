@@ -152,6 +152,54 @@ _ADOPTED_STATISTICAL_FUNCTIONS = frozenset(
     {"MEDIAN", "MODE", "STDEV", "VAR", "AVERAGEA", "MAXA", "MINA"}
 )
 
+# The client engine's financial, distribution and combinatorics families,
+# adopted wholesale. Like _STRUCTURED_FUNCTIONS they read their arguments as
+# separate slots -- a rate, a period, a parallel range -- rather than one
+# pooled value list, so they take the raw argument nodes.
+_FINANCIAL_FUNCTIONS = frozenset(
+    {
+        "PMT",
+        "FV",
+        "PV",
+        "NPV",
+        "NPER",
+        "RATE",
+        "IPMT",
+        "PPMT",
+        "IRR",
+        "MIRR",
+        "XNPV",
+        "SLN",
+        "SYD",
+        "DB",
+    }
+)
+
+_DISTRIBUTION_FUNCTIONS = frozenset(
+    {
+        "NORMDIST",
+        "NORMSDIST",
+        "NORMINV",
+        "NORMSINV",
+        "NORMINVS",
+        "BINOMDIST",
+        "POISSON",
+        "EXPONDIST",
+        "WEIBULL",
+        "GAMMALN",
+        "GAMMADIST",
+        "GAMMAINV",
+        "BETADIST",
+        "BETAINV",
+        "NEGBINOMDIST",
+        "FREQUENCY",
+    }
+)
+
+_COMBINATORICS_FUNCTIONS = frozenset(
+    {"COMBIN", "COMBINA", "PERMUT", "FACT", "FACTDOUBLE", "MULTINOMIAL"}
+)
+
 # The adopted functions that take a single scalar, or no argument at all.
 _ADOPTED_SINGLE_FUNCTIONS = frozenset(
     {
@@ -452,6 +500,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._branched(name, args, sheet, seen, depth)
         if name in _STRUCTURED_FUNCTIONS:
             return self._structured(name, args, sheet, seen, depth)
+        if name in _FINANCIAL_FUNCTIONS:
+            return self._financial(name, args, sheet, seen, depth)
+        if name in _DISTRIBUTION_FUNCTIONS:
+            return self._distribution(name, args, sheet, seen, depth)
+        if name in _COMBINATORICS_FUNCTIONS:
+            return self._combinatorics(name, args, sheet, seen, depth)
 
         values: List[Any] = []
         # Which entries were read out of a reference, running parallel to

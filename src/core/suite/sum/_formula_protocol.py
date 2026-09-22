@@ -62,5 +62,20 @@ class FormulaEvaluatorProtocol:
     def _adopted_single(self, name: str, values: List[Any]) -> Any:
         raise NotImplementedError
 
+    def _financial(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        raise NotImplementedError
+
+    def _distribution(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        raise NotImplementedError
+
+    def _combinatorics(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        raise NotImplementedError
+
 
 __all__ = ["FormulaEvaluatorProtocol"]
