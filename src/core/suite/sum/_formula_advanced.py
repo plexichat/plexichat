@@ -56,7 +56,10 @@ def _parse_numeric_text(raw: str, group_separator: str = ",") -> Optional[float]
         text = text.replace(group_separator, "")
     if not NUMERIC_TEXT_RE.match(text):
         return None
-    return sign * float(text) / scale
+    number = sign * float(text) / scale
+    # A decimal that overflows a double ("1e999") reads as no number at all,
+    # so VALUE reports #VALUE! rather than returning infinity.
+    return number if math.isfinite(number) else None
 
 
 def _holiday_serials(values: List[Any]) -> set:
@@ -146,6 +149,14 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 day = int(_to_number(values[2]))
             except ValueError as exc:
                 return str(exc)
+            # Excel rejects a year outside 0..9999, and adds 1900 to a year in
+            # 0..1899 (DATE(108,1,2) is 2008-01-02). Without the second rule a
+            # small year built a date in the year itself instead of in the
+            # 1900s, which is what the client engine (and Excel) report.
+            if year < 0 or year > 9999:
+                return NUM_ERROR
+            if year < 1900:
+                year += 1900
             # Excel normalizes out-of-range months (13 -> January next year)
             # and day overflow via date arithmetic.
             total_months = year * 12 + (month - 1)
@@ -528,20 +539,28 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             try:
                 start_serial = int(_to_number(values[0]))
                 months = int(_to_number(values[1]))
-            except ValueError:
-                return VALUE_ERROR
-            start_date = _DATE_EPOCH + datetime.timedelta(days=start_serial)
-            # Add months
-            month = start_date.month + months
-            year = start_date.year + (month - 1) // 12
-            month = (month - 1) % 12 + 1
-            # Get last day of month
-            if month == 12:
-                end_date = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
-            else:
-                end_date = datetime.date(year, month + 1, 1) - datetime.timedelta(
-                    days=1
-                )
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            try:
+                start_date = _DATE_EPOCH + datetime.timedelta(days=start_serial)
+                # Add months
+                month = start_date.month + months
+                year = start_date.year + (month - 1) // 12
+                month = (month - 1) % 12 + 1
+                # Get last day of month
+                if month == 12:
+                    end_date = datetime.date(year + 1, 1, 1) - datetime.timedelta(
+                        days=1
+                    )
+                else:
+                    end_date = datetime.date(year, month + 1, 1) - datetime.timedelta(
+                        days=1
+                    )
+            except (ValueError, OverflowError):
+                # A serial (or month offset) that names no representable date
+                # is #NUM!, the way Excel reports it -- and the way the rest of
+                # this module already handles a missing date.
+                return NUM_ERROR
             return float((end_date - _DATE_EPOCH).days)
         elif name == "EDATE":
             # EDATE(start_date, months)
@@ -550,32 +569,37 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             try:
                 start_serial = int(_to_number(values[0]))
                 months = int(_to_number(values[1]))
-            except ValueError:
-                return VALUE_ERROR
-            start_date = _DATE_EPOCH + datetime.timedelta(days=start_serial)
-            month = start_date.month + months
-            year = start_date.year + (month - 1) // 12
-            month = (month - 1) % 12 + 1
-            day = min(
-                start_date.day,
-                [
-                    31,
-                    29
-                    if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
-                    else 28,
-                    31,
-                    30,
-                    31,
-                    30,
-                    31,
-                    31,
-                    30,
-                    31,
-                    30,
-                    31,
-                ][month - 1],
-            )
-            end_date = datetime.date(year, month, day)
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            try:
+                start_date = _DATE_EPOCH + datetime.timedelta(days=start_serial)
+                month = start_date.month + months
+                year = start_date.year + (month - 1) // 12
+                month = (month - 1) % 12 + 1
+                day = min(
+                    start_date.day,
+                    [
+                        31,
+                        29
+                        if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+                        else 28,
+                        31,
+                        30,
+                        31,
+                        30,
+                        31,
+                        31,
+                        30,
+                        31,
+                        30,
+                        31,
+                    ][month - 1],
+                )
+                end_date = datetime.date(year, month, day)
+            except (ValueError, OverflowError):
+                # A serial (or month offset) that names no representable date
+                # is #NUM!, not an OverflowError escaping the engine.
+                return NUM_ERROR
             return float((end_date - _DATE_EPOCH).days)
         elif name == "WEEKDAY":
             # WEEKDAY(serial_number, [return_type])
@@ -583,12 +607,19 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             try:
                 serial = int(_to_number(values[0]))
-            except ValueError:
-                return VALUE_ERROR
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
             return_type = 1
             if len(values) == 2:
-                return_type = int(_to_number(values[1]))
-            date_val = _DATE_EPOCH + datetime.timedelta(days=serial)
+                try:
+                    return_type = int(_to_number(values[1]))
+                except (ValueError, OverflowError) as exc:
+                    return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            try:
+                date_val = _DATE_EPOCH + datetime.timedelta(days=serial)
+            except (ValueError, OverflowError):
+                # A serial outside the representable date range is #NUM!.
+                return NUM_ERROR
             weekday = date_val.isoweekday()  # 1=Monday, 7=Sunday
             if return_type == 3:  # 0=Monday, 6=Sunday
                 return float(weekday - 1)
@@ -644,8 +675,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             try:
                 start_serial = int(_to_number(values[0]))
                 end_serial = int(_to_number(values[1]))
-            except ValueError:
-                return VALUE_ERROR
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
             if max(abs(start_serial), abs(end_serial)) > MAX_DATE_SERIAL:
                 return NUM_ERROR
             holidays = _holiday_serials(values[2:])
@@ -675,8 +706,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             try:
                 start_serial = int(_to_number(values[0]))
                 work_days = int(_to_number(values[1]))
-            except ValueError:
-                return VALUE_ERROR
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
             if abs(start_serial) > MAX_DATE_SERIAL:
                 return NUM_ERROR
             holidays = _holiday_serials(values[2:])
