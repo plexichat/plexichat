@@ -1495,7 +1495,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
     def _structured(
         self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
     ) -> Any:
-        """LARGE, SMALL, RANK, PERCENTILE, QUARTILE and the SUMX2* cross-sums.
+        """LARGE, SMALL, RANK, PERCENTILE, QUARTILE, the SUMX2* cross-sums,
+        the scalar descriptives with extra parameters and the bivariate regressions.
 
         These need their arguments kept apart -- the second is a rank, a
         percentile or a parallel array rather than more data to pool -- so
@@ -1606,12 +1607,154 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 else:
                     total += x * x + y * y
             return total
+        if name == "TRIMMEAN":
+            if len(args) != 2:
+                return VALUE_ERROR
+            data, provided = self._expand_arg(args[0], sheet, seen, depth)
+            error = _literal_error(data, provided)
+            if error is not None:
+                return error
+            numbers = _number_values(data)
+            error, percent_value = self._scalar_argument(args[1], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, percent = _read_number(percent_value)
+            if error is not None:
+                return error
+            if not numbers or percent < 0 or percent >= 1:
+                return NUM_ERROR
+            numbers.sort()
+            trim = math.floor(len(numbers) * percent / 2)
+            trimmed = numbers[trim : len(numbers) - trim]
+            return sum(trimmed) / len(trimmed)
+        if name == "STANDARDIZE":
+            if len(args) != 3:
+                return VALUE_ERROR
+            scalars = []
+            for node in args:
+                error, scalar_value = self._scalar_argument(node, sheet, seen, depth)
+                if error is not None:
+                    return error
+                error, number = _read_number(scalar_value)
+                if error is not None:
+                    return error
+                scalars.append(number)
+            x, mean_value, deviation = scalars
+            if deviation <= 0:
+                return NUM_ERROR
+            return (x - mean_value) / deviation
+        if name == "PERCENTRANK":
+            if len(args) < 2 or len(args) > 3:
+                return VALUE_ERROR
+            data, provided = self._expand_arg(args[0], sheet, seen, depth)
+            error = _literal_error(data, provided)
+            if error is not None:
+                return error
+            error, target_value = self._scalar_argument(args[1], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, target = _read_number(target_value)
+            if error is not None:
+                return error
+            significance = 3.0
+            if len(args) == 3:
+                error, sig_value = self._scalar_argument(args[2], sheet, seen, depth)
+                if error is not None:
+                    return error
+                error, significance = _read_number(sig_value)
+                if error is not None:
+                    return error
+            numbers = _number_values(data)
+            if not numbers:
+                return NUM_ERROR
+            if target < min(numbers) or target > max(numbers):
+                return N_A_ERROR
+            less_than = sum(1 for value in numbers if value < target)
+            equal = sum(1 for value in numbers if value == target)
+            rank = (less_than + 0.5 * equal) / len(numbers)
+            factor = 10.0 ** math.floor(significance)
+            return round(rank * factor) / factor
+        if name in ("CORREL", "RSQ", "SLOPE", "INTERCEPT", "FORECAST", "STEYX"):
+            return self._bivariate(name, args, sheet, seen, depth)
         return VALUE_ERROR
+
+    def _bivariate(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """CORREL, RSQ, SLOPE, INTERCEPT, FORECAST and STEYX.
+
+        The paired-range regressions: two parallel numeric streams with the
+        client engine's pairing rule (text and blanks are dropped per side, so
+        mismatched lengths are #N/A) and its zero-variance guards.
+        """
+        if name == "FORECAST":
+            if len(args) != 3:
+                return VALUE_ERROR
+            error, x_value = self._scalar_argument(args[0], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, x_target = _read_number(x_value)
+            if error is not None:
+                return error
+            slope = self._bivariate("SLOPE", [args[1], args[2]], sheet, seen, depth)
+            if is_error(slope):
+                return slope
+            known_y, y_ref = self._expand_arg(args[1], sheet, seen, depth)
+            known_x, x_ref = self._expand_arg(args[2], sheet, seen, depth)
+            y_numbers = _number_values(known_y)
+            x_numbers = _number_values(known_x)
+            mean_y = sum(y_numbers) / len(y_numbers)
+            mean_x = sum(x_numbers) / len(x_numbers)
+            return slope * x_target + mean_y - slope * mean_x
+        if len(args) != 2:
+            return VALUE_ERROR
+        first, first_ref = self._expand_arg(args[0], sheet, seen, depth)
+        second, second_ref = self._expand_arg(args[1], sheet, seen, depth)
+        error = _literal_error(first, first_ref) or _literal_error(second, second_ref)
+        if error is not None:
+            return error
+        # Excel drops text and blanks per side before pairing; mismatched
+        # survivors are #N/A rather than a truncated pairing.
+        if name in ("CORREL", "RSQ"):
+            x_numbers = _number_values(first)
+            y_numbers = _number_values(second)
+        else:
+            # SLOPE/INTERCEPT/STEYX read known_y first, known_x second.
+            y_numbers = _number_values(first)
+            x_numbers = _number_values(second)
+        if not x_numbers or len(x_numbers) != len(y_numbers):
+            return N_A_ERROR
+        mean_x = sum(x_numbers) / len(x_numbers)
+        mean_y = sum(y_numbers) / len(y_numbers)
+        cross = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_numbers, y_numbers))
+        if name in ("CORREL", "RSQ"):
+            var_x = sum((x - mean_x) ** 2 for x in x_numbers)
+            var_y = sum((y - mean_y) ** 2 for y in y_numbers)
+            if var_x == 0 or var_y == 0:
+                return DIV_ZERO
+            correlation = cross / math.sqrt(var_x * var_y)
+            return correlation * correlation if name == "RSQ" else correlation
+        var_x = sum((x - mean_x) ** 2 for x in x_numbers)
+        if var_x == 0:
+            return DIV_ZERO
+        slope = cross / var_x
+        if name == "SLOPE":
+            return slope
+        intercept = mean_y - slope * mean_x
+        if name == "INTERCEPT":
+            return intercept
+        # STEYX: the standard error of the predicted y for each x.
+        if len(x_numbers) < 3:
+            return DIV_ZERO
+        residual = sum(
+            (y - (slope * x + intercept)) ** 2 for x, y in zip(x_numbers, y_numbers)
+        )
+        return math.sqrt(residual / (len(x_numbers) - 2))
 
     def _adopted_statistical(
         self, name: str, values: List[Any], from_reference: List[bool]
     ) -> Any:
-        """MEDIAN, MODE, STDEV, VAR, AVERAGEA, MAXA, MINA.
+        """MEDIAN, MODE, STDEV, VAR, AVERAGEA, MAXA, MINA and the pooled descriptives.
 
         These pool every argument into one set of numbers, so they read the
         flattened values but decide themselves how to treat an error operand:
@@ -1668,6 +1811,43 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             total = sum((value - mean) ** 2 for value in numbers)
             variance = total / (len(numbers) - 1)
             return math.sqrt(variance) if name == "STDEV" else variance
+        if name in ("STDEVP", "VARP"):
+            if not numbers:
+                return DIV_ZERO
+            mean = sum(numbers) / len(numbers)
+            total = sum((value - mean) ** 2 for value in numbers)
+            variance = total / len(numbers)
+            return math.sqrt(variance) if name == "STDEVP" else variance
+        if name == "AVEDEV":
+            if not numbers:
+                return DIV_ZERO
+            mean = sum(numbers) / len(numbers)
+            return sum(abs(value - mean) for value in numbers) / len(numbers)
+        if name == "DEVSQ":
+            if not numbers:
+                return DIV_ZERO
+            mean = sum(numbers) / len(numbers)
+            return sum((value - mean) ** 2 for value in numbers)
+        if name == "GEOMEAN":
+            if not numbers or any(value < 0 for value in numbers):
+                return NUM_ERROR
+            if any(value == 0 for value in numbers):
+                return 0.0
+            log_sum = 0.0
+            for value in numbers:
+                log_sum += math.log(value)
+            try:
+                result = math.exp(log_sum / len(numbers))
+            except OverflowError:
+                return NUM_ERROR
+            if not math.isfinite(result):
+                return NUM_ERROR
+            return result
+        if name == "HARMEAN":
+            if not numbers or any(value <= 0 for value in numbers):
+                return NUM_ERROR
+            reciprocal = sum(1.0 / value for value in numbers)
+            return len(numbers) / reciprocal
         return VALUE_ERROR
 
     def _adopted_single(self, name: str, values: List[Any]) -> Any:

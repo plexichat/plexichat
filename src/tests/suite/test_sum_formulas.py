@@ -1275,3 +1275,68 @@ def test_an_unknown_name_is_a_name_error():
     assert _eval("FOO.BAR(1)") == NAME_ERROR
     assert _eval("ZZZ(1)") == NAME_ERROR
     assert _eval("A1.B2") == VALUE_ERROR
+
+
+def test_pooled_descriptive_statistics():
+    """AVEDEV/DEVSQ/GEOMEAN/HARMEAN/VARP/STDEVP pool like the other aggregates."""
+    assert _eval("AVEDEV(1,2,3,4)") == 1.0
+    assert _eval("AVEDEV(A1:A2,5)") == 20 / 9
+    assert _eval("DEVSQ(1,2,3)") == 2.0
+    assert _eval("GEOMEAN(1,2,3,4)") == math.exp(
+        (math.log(1) + math.log(2) + math.log(3) + math.log(4)) / 4
+    )
+    assert _eval("GEOMEAN(1,0)") == 0.0
+    assert _eval("GEOMEAN(-1,2)") == NUM_ERROR
+    assert _eval("HARMEAN(1,2,4)") == 3 / (1 + 1 / 2 + 1 / 4)
+    assert _eval("HARMEAN(1,0)") == NUM_ERROR
+    assert _eval("VARP(1,2,3)") == 2 / 3
+    assert _eval("STDEVP(1,2,3)") == math.sqrt(2 / 3)
+    assert _eval("STDEVP(5)") == 0.0
+    # No numbers at all is #DIV/0!, matching the client engine.
+    assert _eval('VARP("x")') == DIV_ZERO
+    # An error written into the formula propagates; one stored in a cell is skipped.
+    assert _eval("AVEDEV(1,1/0)") == DIV_ZERO
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "#DIV/0!", "formula": None},
+    }
+    assert _eval("AVEDEV(A1:A2)", _resolver(cells)) == 0.0
+
+
+def test_structured_descriptive_statistics():
+    """TRIMMEAN/STANDARDIZE/PERCENTRANK keep their scalar arguments apart."""
+    assert _eval("TRIMMEAN(1,2,3,4,0.2)") == VALUE_ERROR
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 20, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 30, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval("TRIMMEAN(A1:A3,0.2)", resolver) == 20.0
+    assert _eval("TRIMMEAN(A1:A3,1.5)", resolver) == NUM_ERROR
+    assert _eval("STANDARDIZE(15,10,5)") == 1.0
+    assert _eval("STANDARDIZE(1,0,0)") == NUM_ERROR
+    assert _eval("PERCENTRANK(A1:A3,20)", resolver) == 0.5
+    assert _eval("PERCENTRANK(A1:A3,5)", resolver) == N_A_ERROR
+
+
+def test_bivariate_regressions():
+    """CORREL/RSQ/SLOPE/INTERCEPT/FORECAST/STEYX pair two numeric streams."""
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 20, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 30, "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 200, "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 300, "formula": None},
+        ("1", 2, 1): {"value_type": "number", "value": 400, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval("CORREL(A1:A3,B1:B3)", resolver) == 1.0
+    assert _eval("RSQ(A1:A3,B1:B3)", resolver) == 1.0
+    assert _eval("SLOPE(B1:B3,A1:A3)", resolver) == 10.0
+    assert _eval("INTERCEPT(B1:B3,A1:A3)", resolver) == 100.0
+    assert _eval("FORECAST(40,B1:B3,A1:A3)", resolver) == 500.0
+    assert _eval("STEYX(B1:B3,A1:A3)", resolver) == 0.0
+    # Mismatched survivors are #N/A; a constant predictor is #DIV/0!.
+    assert _eval("CORREL(A1:A3,B1:B2)", resolver) == N_A_ERROR
+    assert _eval("SLOPE(1,1)") == DIV_ZERO

@@ -250,7 +250,7 @@ cells can match a pattern; the relational operators compare literally.
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
 | an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
-| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the regression family, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the engineering conversions (`BIN2HEX`, `CONVERT`, `BESSELJ`, …) | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the `LINEST`/`LOGEST`/`TREND`/`GROWTH` regression machinery, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the engineering conversions (`BIN2HEX`, `CONVERT`, `BESSELJ`, …) | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 An explicitly empty argument is read as a blank value rather than as the
 parameter's default — `LEFT("abc",)` is `""`, not `"a"`. Whether Excel applies
@@ -259,7 +259,7 @@ here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 189 functions (`TRUE`/`FALSE` work both as bare
+This engine implements 204 functions (`TRUE`/`FALSE` work both as bare
 literals and as zero-argument calls, matching Excel and the client engine);
 the client engine implements 262. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
@@ -268,7 +268,7 @@ here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
 **Adopted.** The first version of this list was a plan; these have now been
-implemented, taking the engine from 84 to 189 functions:
+implemented, taking the engine from 84 to 204 functions:
 
 | Family | Functions | Note |
 |---|---|---|
@@ -279,6 +279,8 @@ implemented, taking the engine from 84 to 189 functions:
 | Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | an overflowing `SINH`/`COSH` is `#NUM!`, not infinity |
 | Date | `HOUR`, `MINUTE`, `SECOND`, `TIME`, `DATEVALUE`, `TODAY`, `NOW` | see the clock note below |
 | Statistics | `MEDIAN`, `LARGE`, `SMALL`, `RANK`, `STDEV`, `VAR`, `MODE`, `PERCENTILE`, `QUARTILE`, `AVERAGEA`, `MAXA`, `MINA` | pooled over the numbers the aggregates already collect; `LARGE`/`SMALL`/`RANK`/`PERCENTILE`/`QUARTILE` read their arguments separately |
+| Descriptive | `AVEDEV`, `DEVSQ`, `GEOMEAN`, `HARMEAN`, `VARP`, `STDEVP`, `TRIMMEAN`, `STANDARDIZE`, `PERCENTRANK` | pooled like the statistics above, except `TRIMMEAN`/`STANDARDIZE`/`PERCENTRANK` keep their scalar arguments apart; `GEOMEAN`/`HARMEAN` reject a non-positive domain with `#NUM!` |
+| Regression | `CORREL`, `RSQ`, `SLOPE`, `INTERCEPT`, `FORECAST`, `STEYX` | paired numeric streams with the client engine's pairing rule (text dropped per side, mismatched lengths are `#N/A`); a constant predictor is `#DIV/0!` |
 | Financial | `PMT`, `FV`, `PV`, `NPV`, `NPER`, `RATE`, `IPMT`, `PPMT`, `IRR`, `MIRR`, `XNPV`, `SLN`, `SYD`, `DB` | `RATE` is a Newton iteration with a bisection fallback; `IRR`/`MIRR`/`XNPV` flatten a cash-flow range, and a result off the real line is `#NUM!` |
 | Distributions | `NORMDIST`, `NORMSDIST`, `NORMINV`, `NORMSINV`, `NORMINVS`, `BINOMDIST`, `POISSON`, `EXPONDIST`, `WEIBULL`, `GAMMALN`, `GAMMADIST`, `GAMMAINV`, `BETADIST`, `BETAINV`, `NEGBINOMDIST`, `FREQUENCY` | the incomplete gamma/beta integrals are ported from the client engine and kept numerically identical; `FREQUENCY` returns a column of counts |
 | Combinatorics | `COMBIN`, `COMBINA`, `PERMUT`, `FACT`, `FACTDOUBLE`, `MULTINOMIAL` | the integer helpers stop at the double overflow and report `#NUM!` |
@@ -293,11 +295,13 @@ iteration with a bracketed bisection so a bad guess cannot diverge.
 
 **Adopt when a feature asks for it.** The rest of the statistical
 `*DIST`/`*INV` family (`TDIST`, `CHIDIST`, `FDIST`, …),
-`FORECAST`/`SLOPE`/`INTERCEPT`/`LINEST`/`TREND`, `XLOOKUP`, and the
+`LINEST`/`LOGEST`/`TREND`/`GROWTH`, `XLOOKUP`, and the
 dynamic-array family (`SORT`, `FILTER`, `HSTACK`, `TAKE`, `WRAPROWS`, …). Each
 needs design decisions this engine has not made yet — array results, iteration,
 repeated sampling — so they should arrive with the feature that wants them
-rather than as speculative surface.
+rather than as speculative surface. The scalar regressions (`CORREL`, `RSQ`,
+`SLOPE`, `INTERCEPT`, `FORECAST`, `STEYX`) used to sit here too; they are
+adopted — see the Regression row above.
 
 **Leave out.** The engineering *conversions* (`BIN2HEX`, `CONVERT`, `BESSELJ`,
 …) are a large surface with narrow use, and the client engine covers them where

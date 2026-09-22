@@ -144,6 +144,15 @@ _STRUCTURED_FUNCTIONS = frozenset(
         "SUMX2MY2",
         "SUMX2PY2",
         "SUMXY",
+        "TRIMMEAN",
+        "STANDARDIZE",
+        "PERCENTRANK",
+        "CORREL",
+        "RSQ",
+        "SLOPE",
+        "INTERCEPT",
+        "FORECAST",
+        "STEYX",
     }
 )
 
@@ -151,7 +160,21 @@ _STRUCTURED_FUNCTIONS = frozenset(
 # error operand: one written into the formula propagates, one stored in a
 # referenced cell is skipped like text.
 _ADOPTED_STATISTICAL_FUNCTIONS = frozenset(
-    {"MEDIAN", "MODE", "STDEV", "VAR", "AVERAGEA", "MAXA", "MINA"}
+    {
+        "MEDIAN",
+        "MODE",
+        "STDEV",
+        "VAR",
+        "AVERAGEA",
+        "MAXA",
+        "MINA",
+        "AVEDEV",
+        "DEVSQ",
+        "GEOMEAN",
+        "HARMEAN",
+        "VARP",
+        "STDEVP",
+    }
 )
 
 # The client engine's financial, distribution and combinatorics families,
