@@ -24,6 +24,7 @@ from ._formula_shared import (
     _to_number,
     _to_number_or_zero,
     _to_text,
+    _text_equals,
     _wildcard_match,
     is_error,
     parse_cell_ref,
@@ -443,7 +444,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if op in ("=", "<>", "<", ">", "<=", ">="):
             if op in ("=", "<>"):
                 if isinstance(left, str) or isinstance(right, str):
-                    comparison = _to_text(left) == _to_text(right)
+                    # Excel's text comparison ignores case; EXACT is the
+                    # case-sensitive test. A plain ``==`` here answered FALSE
+                    # for "a" = "A".
+                    comparison = _text_equals(left, right)
                 elif isinstance(left, bool) != isinstance(right, bool):
                     # Excel ranks types before comparing, so a logical is never
                     # its numeric value: TRUE = 1 is FALSE and TRUE > 1 is
@@ -1057,7 +1061,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if a is None or b is None:
             return False
         if isinstance(a, str) or isinstance(b, str):
-            return _to_text(a) == _to_text(b)
+            return _text_equals(a, b)
         if isinstance(a, bool) != isinstance(b, bool):
             # A logical never matches a number, for the same ranking reason
             # ``=`` does not: MATCH(1, {TRUE}, 0) is #N/A, not 1.
@@ -1065,7 +1069,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         try:
             return _to_number(a) == _to_number(b)
         except ValueError:
-            return _to_text(a) == _to_text(b)
+            return _text_equals(a, b)
 
     def _lookup(
         self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int

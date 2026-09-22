@@ -24,6 +24,7 @@ from ._formula_shared import (
     _to_number,
     _to_number_or_zero,
     _to_text,
+    _text_equals,
     is_error,
     parse_cell_ref,
 )
@@ -206,6 +207,10 @@ def _same_value(left: Any, right: Any) -> bool:
         return False
     if isinstance(left, str) != isinstance(right, str):
         return False
+    if isinstance(left, str):
+        # Two text values compare the way ``=`` does, which ignores case:
+        # SWITCH("b", "a", 1, "B", 2) is 2, not the default.
+        return _text_equals(left, right)
     return left == right
 
 
@@ -1455,9 +1460,18 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if len(args) < 3:
             return VALUE_ERROR
         expression = self._eval(args[0], sheet, seen, depth)
+        # An error operand propagates, as it does everywhere else: an error
+        # *expression* or the error *search* the scan reaches is the answer,
+        # where reading the error as just another value fell through to the
+        # default. Only the operands the scan actually evaluates propagate,
+        # which is the short-circuit rule the untaken branches already follow.
+        if is_error(expression):
+            return expression
         pairs = args[1:]
         for index in range(0, len(pairs) - 1, 2):
             search = self._eval(pairs[index], sheet, seen, depth)
+            if is_error(search):
+                return search
             if _same_value(expression, search):
                 return self._eval(pairs[index + 1], sheet, seen, depth)
         if len(pairs) % 2 == 1:

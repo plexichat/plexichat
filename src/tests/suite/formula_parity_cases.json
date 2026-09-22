@@ -3060,6 +3060,74 @@
     {
       "formula": "STEYX(G2:G4,C1:C3)",
       "expected": "number:0"
+    },
+    {
+      "formula": "\"a\"=\"A\"",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "\"a\"<>\"A\"",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "\"a\"=\"b\"",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "B1=\"ONE\"",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "B1<>\"one\"",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "EXACT(\"a\",\"A\")",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "IF(\"YES\"=\"yes\",1,2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"TWO\",B1:B3,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(5,K3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"7\",A6,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(1,K3,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "VLOOKUP(\"TWO\",B1:C3,2,FALSE)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "HLOOKUP(\"ONE\",B1:C3,2,FALSE)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "SWITCH(\"b\",\"a\",1,\"B\",2,3)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "SWITCH(\"B\",1/0,1,\"b\",2,3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SWITCH(1/0,\"a\",1,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SWITCH(\"a\",\"a\",1,1/0,2)",
+      "expected": "number:1"
     }
   ]
 }

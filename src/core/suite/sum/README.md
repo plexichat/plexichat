@@ -176,7 +176,10 @@ Two rules explain most of the behaviour:
 
 **An error operand propagates.** Pass an error into a function and it comes
 back out: `SUM(1, 1/0)`, `PROPER(1/0)`, `ROUND(1, 1/0)`, `DATE(1/0, 1, 1)` and
-`SUMIF(A1:A3, 1/0)` are all `#DIV/0!`. Three groups classify an error instead,
+`SUMIF(A1:A3, 1/0)` are all `#DIV/0!`. `SWITCH` propagates the operand the
+scan reaches: `SWITCH("B", 1/0, 1, "b", 2, 3)` is `#DIV/0!` rather than 2,
+while `SWITCH("a", "a", 1, 1/0, 2)` is 1 because the untaken branch is never
+evaluated. Three groups classify an error instead,
 because they answer a question *about* the value rather than computing with it:
 
 - `COUNT` counts numbers only, so an error is simply not counted;
@@ -205,10 +208,16 @@ holds no number in the summed range contributes 0 to `SUMIF`/`SUMIFS`, while
 `AVERAGEIF`/`AVERAGEIFS` skip it entirely — Excel ignores text and blanks in an
 average range, so a match with no number at all is `#DIV/0!`.
 
-**A lookup key compares the way `=` does.** `VLOOKUP` and `HLOOKUP` match the
-text `"1"` against the number 1, as Excel's `=` does, and an approximate match
-whose lookup value does not read as a number is a miss (`#N/A`) rather than an
-error; a `row_index_num` past the bottom of the table is `#REF!`.
+**A lookup key compares the way `=` does.** `VLOOKUP`, `HLOOKUP` and `MATCH`
+match the text `"1"` against the number 1, as Excel's `=` does, and an
+approximate match whose lookup value does not read as a number is a miss
+(`#N/A`) rather than an error; a `row_index_num` past the bottom of the table
+is `#REF!`.
+
+**Text compares case-insensitively.** Excel's `=` ignores case — `"a" = "A"` is
+`TRUE`, and `EXACT` is the case-sensitive test — so the `=`/`<>` operators, the
+lookup keys (`MATCH("TWO", …)` finds the text `two`) and `SWITCH`'s cases all
+match without regard to case. The criteria comparisons already did.
 
 **A logical is not its number.** The ranking above reaches `=` and `<>` too: a
 logical and a number are never equal (`TRUE = 1` is `FALSE`, where Python's own

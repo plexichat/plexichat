@@ -407,6 +407,17 @@ def _to_text(value: Any) -> str:
     return str(value)
 
 
+def _text_equals(left: Any, right: Any) -> bool:
+    """Compare two values as text the way Excel's ``=`` does.
+
+    Excel's text comparison is case-insensitive -- ``"a" = "A"`` is TRUE and
+    ``EXACT`` is the case-sensitive test -- so a plain ``==`` here answered
+    FALSE where Excel, the criteria comparisons and the client engine answer
+    TRUE. Lookup keys compare the way ``=`` does, so they use this too.
+    """
+    return _to_text(left).casefold() == _to_text(right).casefold()
+
+
 def _numeric(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
