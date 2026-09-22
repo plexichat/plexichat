@@ -8,7 +8,7 @@
     "drifting from Excel (or from the other engine) fails a test.",
     "Types are explicit (number:/text:/boolean:/error:/blank) so a text \"12\" is",
     "never mistaken for the number 12.",
-    "Cells A1:D6 hold the fixture data below; an unlisted cell is blank."
+    "Cells A1:F6 hold the fixture data below; an unlisted cell is blank."
   ],
   "sheet": "1",
   "grid": {
@@ -30,7 +30,10 @@
     "C3": 30,
     "D1": "apple",
     "D2": "banana",
-    "D3": "cherry"
+    "D3": "cherry",
+    "F1": "2abc",
+    "F2": "5",
+    "F3": true
   },
   "cases": [
     {
@@ -1731,6 +1734,82 @@
     },
     {
       "formula": "NA(1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUMPRODUCT(F1:F3)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "SUMPRODUCT(A1:A3,F1:F3)",
+      "expected": "number:13"
+    },
+    {
+      "formula": "\"1e999\"+1",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "ABS(\"1e999\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "ABS(1e999)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DATE(0,1,1)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "DATE(50,1,1)",
+      "expected": "number:18264"
+    },
+    {
+      "formula": "DATE(100,1,1)",
+      "expected": "number:36526"
+    },
+    {
+      "formula": "DATE(-1,1,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DATE(10000,1,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "YEAR(1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "WEEKDAY(1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "EOMONTH(1e9,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "EDATE(1e9,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "NETWORKDAYS(1,3000000)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "WORKDAY(1,1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "ROUND(2.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ROUNDUP(2.1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ROUNDDOWN(2.5)",
       "expected": "error:#VALUE!"
     }
   ]
