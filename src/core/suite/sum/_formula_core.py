@@ -212,6 +212,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return node[1]
         if kind == "bool":
             return node[1]
+        if kind == "blank":
+            # An omitted argument is Excel's "missing" operand, which behaves
+            # exactly like a blank cell (0 in arithmetic, "" as text).
+            return None
         if kind == "ref":
             ref = node[1]
             r_sheet, row, column = parse_cell_ref(ref, self._named_ranges)
@@ -489,6 +493,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         be able to tell the two apart.
         """
         kind = node[0]
+        if kind == "blank":
+            # An omitted argument, which ``_expand_arg`` reports as a blank
+            # value the way it would a blank cell.
+            return [None], False
         if kind == "ref":
             text = node[1]
             if ":" in text:

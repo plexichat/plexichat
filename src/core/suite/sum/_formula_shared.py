@@ -319,11 +319,21 @@ class _Parser:
             args: List[Any] = []
             if self._peek().kind != "rparen":
                 while True:
-                    args.append(self._expr())
+                    # An omitted argument -- ``SUM(1,)`` or ``SUM(,1)`` -- is
+                    # Excel's "missing" operand, which coerces exactly like an
+                    # empty cell (0 as a number, "" as text). Recording it as a
+                    # blank node lets the evaluator answer it as one instead of
+                    # failing the whole formula with a parse error.
                     if self._peek().kind == "comma":
-                        self._advance()
-                        continue
-                    break
+                        args.append(("blank",))
+                    else:
+                        args.append(self._expr())
+                    if self._peek().kind != "comma":
+                        break
+                    self._advance()
+                    if self._peek().kind == "rparen":
+                        args.append(("blank",))
+                        break
             self._expect_op(")")
             self._advance()
             return ("call", token.value, args)
