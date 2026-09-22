@@ -231,6 +231,40 @@ _ADOPTED_SINGLE_FUNCTIONS = frozenset(
     }
 )
 
+# The client engine's complex-number family, adopted wholesale. These pool
+# their arguments like the other value functions and read each one as Excel's
+# complex-number text.
+_COMPLEX_FUNCTIONS = frozenset(
+    {
+        "COMPLEX",
+        "IMABS",
+        "IMREAL",
+        "IMAGINARY",
+        "IMARGUMENT",
+        "IMCONJUGATE",
+        "IMSUM",
+        "IMSUB",
+        "IMPRODUCT",
+        "IMDIV",
+        "IMMOD",
+        "IMEXP",
+        "IMLOG",
+        "IMSQRT",
+        "IMCOS",
+        "IMSIN",
+        "IMTAN",
+        "IMCSC",
+        "IMSEC",
+        "IMCOT",
+        "IMCOSH",
+        "IMSINH",
+        "IMTANH",
+        "IMCSCH",
+        "IMSECH",
+        "IMCOTH",
+    }
+)
+
 # Functions that classify an error operand instead of propagating it. COUNT
 # counts numbers only, COUNTA counts anything non-empty (an error is data), and
 # COUNTBLANK counts an error cell as non-blank. The *IFS family matches an
@@ -536,7 +570,9 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         # COUNTBLANK and the *IFS family classify an error themselves (see
         # _ERROR_TOLERANT_FUNCTIONS), and the IS* family answers a question
         # *about* the error rather than failing on it.
-        if name in _VALUE_FUNCTIONS and name not in _ERROR_TOLERANT_FUNCTIONS:
+        if (
+            name in _VALUE_FUNCTIONS or name in _COMPLEX_FUNCTIONS
+        ) and name not in _ERROR_TOLERANT_FUNCTIONS:
             for value in values:
                 if is_error(value):
                     return value
@@ -544,6 +580,8 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._adopted_statistical(name, values, from_reference)
         if name in _ADOPTED_SINGLE_FUNCTIONS:
             return self._adopted_single(name, values)
+        if name in _COMPLEX_FUNCTIONS:
+            return self._complex(name, values)
         if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
             return self._aggregate(name, values, from_reference)
         if name in (

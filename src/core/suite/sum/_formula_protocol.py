@@ -77,5 +77,8 @@ class FormulaEvaluatorProtocol:
     ) -> Any:
         raise NotImplementedError
 
+    def _complex(self, name: str, values: List[Any]) -> Any:
+        raise NotImplementedError
+
 
 __all__ = ["FormulaEvaluatorProtocol"]

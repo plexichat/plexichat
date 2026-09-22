@@ -12,6 +12,7 @@ from ._formula_shared import (
     MAX_NETWORKDAYS_SPAN_DAYS,
     MAX_REPT_CHARS,
     MAX_WORKDAY_OFFSET_DAYS,
+    NAME_ERROR,
     N_A_ERROR,
     NUMERIC_TEXT_RE,
     NUM_ERROR,
@@ -472,6 +473,132 @@ _WEEK_START_DAYS = {
     16: 6,
     17: 0,
 }
+
+
+# Excel's complex-number text form, shared with the client engine. A value is
+# ``a+bi`` (or ``j``), a bare real is ``a+0i``, and a trailing-only imaginary
+# term like ``4i`` carries its own coefficient, so the parse splits on the last
+# joining sign that is neither a leading sign nor an exponent sign.
+def _parse_complex(value: Any):
+    """Parse Excel complex text into ``(re, im, suffix)``, or ``None``.
+
+    ``None`` means the text is not a complex number, which the caller turns
+    into ``#NUM!``.
+    """
+    text = _to_text(value).strip()
+    if text == "":
+        return None
+    unit = text[-1]
+    if unit not in ("i", "j"):
+        if not NUMERIC_TEXT_RE.match(text):
+            return None
+        return float(text), 0.0, "i"
+    body = text[:-1]
+    if body in ("", "+"):
+        return 0.0, 1.0, unit
+    if body == "-":
+        return 0.0, -1.0, unit
+    split = -1
+    for index in range(len(body) - 1, 0, -1):
+        if body[index] in "+-" and body[index - 1] not in "eE":
+            split = index
+            break
+    if split == -1:
+        if not NUMERIC_TEXT_RE.match(body):
+            return None
+        return 0.0, float(body), unit
+    real_part = body[:split]
+    imaginary_part = body[split:]
+    if not NUMERIC_TEXT_RE.match(real_part):
+        return None
+    if imaginary_part == "+":
+        return float(real_part), 1.0, unit
+    if imaginary_part == "-":
+        return float(real_part), -1.0, unit
+    if not NUMERIC_TEXT_RE.match(imaginary_part):
+        return None
+    return float(real_part), float(imaginary_part), unit
+
+
+def _format_coefficient(value: float) -> str:
+    """Print a coefficient as Excel does: 15 significant digits, no trailing
+    zeros. This reproduces JavaScript's ``toPrecision(15)``, which the client
+    engine uses, so the two engines emit byte-identical text."""
+    if value == 0:
+        return "0"
+    text = f"{value:.14e}"
+    mantissa, _, exponent = text.partition("e")
+    exponent_value = int(exponent)
+    digits = mantissa.replace("-", "").replace(".", "")
+    sign = "-" if mantissa.startswith("-") else ""
+    if exponent_value < -6 or exponent_value >= 15:
+        rest = digits[1:].rstrip("0")
+        mantissa_text = digits[0] + ("." + rest if rest else "")
+        exponent_sign = "+" if exponent_value >= 0 else "-"
+        return f"{sign}{mantissa_text}e{exponent_sign}{abs(exponent_value)}"
+    if exponent_value >= 0:
+        integer_part = digits[: exponent_value + 1]
+        fraction = digits[exponent_value + 1 :].rstrip("0")
+    else:
+        integer_part = "0"
+        fraction = ("0" * (-exponent_value - 1) + digits).rstrip("0")
+    return f"{sign}{integer_part}" + (f".{fraction}" if fraction else "")
+
+
+def _format_complex(real: float, imaginary: float, suffix: str = "i") -> str:
+    """Render coefficients in Excel's complex-number text form."""
+    result = ""
+    if real != 0:
+        result += _format_coefficient(real)
+    if imaginary != 0:
+        if imaginary > 0 and real != 0:
+            sign = "+"
+        elif imaginary > 0:
+            sign = ""
+        else:
+            sign = "-"
+        magnitude = _format_coefficient(abs(imaginary))
+        result += sign + ("" if magnitude == "1" else magnitude) + suffix
+    return result if result != "" else "0"
+
+
+def _complex_sin(value):
+    return (
+        math.sin(value[0]) * math.cosh(value[1]),
+        math.cos(value[0]) * math.sinh(value[1]),
+    )
+
+
+def _complex_cos(value):
+    return (
+        math.cos(value[0]) * math.cosh(value[1]),
+        -math.sin(value[0]) * math.sinh(value[1]),
+    )
+
+
+def _complex_sinh(value):
+    return (
+        math.sinh(value[0]) * math.cos(value[1]),
+        math.cosh(value[0]) * math.sin(value[1]),
+    )
+
+
+def _complex_cosh(value):
+    return (
+        math.cosh(value[0]) * math.cos(value[1]),
+        math.sinh(value[0]) * math.sin(value[1]),
+    )
+
+
+def _complex_divide(numerator, denominator):
+    """Complex division, or ``None`` when the divisor is zero."""
+    modulus = denominator[0] * denominator[0] + denominator[1] * denominator[1]
+    if modulus == 0:
+        return None
+    return (
+        (numerator[0] * denominator[0] + numerator[1] * denominator[1]) / modulus,
+        (numerator[1] * denominator[0] - numerator[0] * denominator[1]) / modulus,
+    )
 
 
 class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
@@ -2391,3 +2518,138 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return NUM_ERROR
             return float(math.floor(result + 0.5))
         return VALUE_ERROR
+
+    def _complex(self, name: str, values: List[Any]) -> Any:
+        """Excel's complex-number family, mirroring the client engine.
+
+        COMPLEX builds a value; an IM* function reads one (or two) complex
+        arguments, keeps the ``i``/``j`` suffix of the first, and prints the
+        result in Excel's complex-number text form.
+        """
+        if name == "COMPLEX":
+            if not 1 <= len(values) <= 3:
+                return VALUE_ERROR
+            error, real_part = _read_number(values[0])
+            if error is not None:
+                return error
+            imaginary_part = 0.0
+            if len(values) >= 2:
+                error, imaginary_part = _read_number(values[1])
+                if error is not None:
+                    return error
+            suffix = "i"
+            if len(values) == 3:
+                suffix = _to_text(values[2]).lower()
+                if suffix not in ("i", "j"):
+                    return VALUE_ERROR
+            return _format_complex(real_part, imaginary_part, suffix)
+
+        if name in ("IMSUM", "IMPRODUCT"):
+            if not values:
+                return VALUE_ERROR
+            real_total, imaginary_total = (0.0, 0.0) if name == "IMSUM" else (1.0, 0.0)
+            suffix = "i"
+            for index, value in enumerate(values):
+                parsed = _parse_complex(value)
+                if parsed is None:
+                    return NUM_ERROR
+                if index == 0:
+                    suffix = parsed[2]
+                if name == "IMSUM":
+                    real_total += parsed[0]
+                    imaginary_total += parsed[1]
+                else:
+                    real_total, imaginary_total = (
+                        real_total * parsed[0] - imaginary_total * parsed[1],
+                        real_total * parsed[1] + imaginary_total * parsed[0],
+                    )
+            return _format_complex(real_total, imaginary_total, suffix)
+
+        if name in ("IMABS", "IMREAL", "IMAGINARY", "IMCONJUGATE", "IMARGUMENT"):
+            if len(values) != 1:
+                return VALUE_ERROR
+            parsed = _parse_complex(values[0])
+            if parsed is None:
+                return NUM_ERROR
+            if name == "IMABS":
+                return math.hypot(parsed[0], parsed[1])
+            if name == "IMREAL":
+                return parsed[0]
+            if name == "IMAGINARY":
+                return parsed[1]
+            if name == "IMCONJUGATE":
+                return _format_complex(parsed[0], -parsed[1], parsed[2])
+            if parsed[0] == 0 and parsed[1] == 0:
+                return DIV_ZERO
+            return math.atan2(parsed[1], parsed[0])
+
+        if name in ("IMSUB", "IMDIV", "IMMOD"):
+            if len(values) != 2:
+                return VALUE_ERROR
+            first = _parse_complex(values[0])
+            second = _parse_complex(values[1])
+            if first is None or second is None:
+                return NUM_ERROR
+            if name == "IMSUB":
+                return _format_complex(
+                    first[0] - second[0], first[1] - second[1], first[2]
+                )
+            quotient = _complex_divide(first, second)
+            if quotient is None:
+                return DIV_ZERO
+            if name == "IMDIV":
+                return _format_complex(quotient[0], quotient[1], first[2])
+            quotient_real = math.trunc(quotient[0])
+            quotient_imaginary = math.trunc(quotient[1])
+            return _format_complex(
+                first[0] - (quotient_real * second[0] - quotient_imaginary * second[1]),
+                first[1] - (quotient_real * second[1] + quotient_imaginary * second[0]),
+                first[2],
+            )
+
+        if len(values) != 1:
+            return VALUE_ERROR
+        parsed = _parse_complex(values[0])
+        if parsed is None:
+            return NUM_ERROR
+        if name == "IMEXP":
+            magnitude = math.exp(parsed[0])
+            result = (magnitude * math.cos(parsed[1]), magnitude * math.sin(parsed[1]))
+        elif name == "IMLOG":
+            magnitude = math.hypot(parsed[0], parsed[1])
+            if magnitude == 0:
+                return NUM_ERROR
+            result = (math.log(magnitude), math.atan2(parsed[1], parsed[0]))
+        elif name == "IMSQRT":
+            radius = math.sqrt(math.hypot(parsed[0], parsed[1]))
+            theta = math.atan2(parsed[1], parsed[0]) / 2
+            result = (radius * math.cos(theta), radius * math.sin(theta))
+        elif name in ("IMCOS", "IMSIN", "IMTAN", "IMCSC", "IMSEC", "IMCOT"):
+            sine = _complex_sin(parsed)
+            cosine = _complex_cos(parsed)
+            result = {
+                "IMCOS": cosine,
+                "IMSIN": sine,
+                "IMTAN": _complex_divide(sine, cosine),
+                "IMCSC": _complex_divide((1.0, 0.0), sine),
+                "IMSEC": _complex_divide((1.0, 0.0), cosine),
+                "IMCOT": _complex_divide(cosine, sine),
+            }[name]
+            if result is None:
+                return DIV_ZERO
+        elif name in ("IMCOSH", "IMSINH", "IMTANH", "IMCSCH", "IMSECH", "IMCOTH"):
+            hyperbolic_sine = _complex_sinh(parsed)
+            hyperbolic_cosine = _complex_cosh(parsed)
+            result = {
+                "IMCOSH": hyperbolic_cosine,
+                "IMSINH": hyperbolic_sine,
+                "IMTANH": _complex_divide(hyperbolic_sine, hyperbolic_cosine),
+                "IMCSCH": _complex_divide((1.0, 0.0), hyperbolic_sine),
+                "IMSECH": _complex_divide((1.0, 0.0), hyperbolic_cosine),
+                "IMCOTH": _complex_divide(hyperbolic_cosine, hyperbolic_sine),
+            }[name]
+            if result is None:
+                return DIV_ZERO
+        else:
+            return NAME_ERROR
+        return _format_complex(result[0], result[1], parsed[2])

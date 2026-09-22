@@ -242,7 +242,7 @@ cells can match a pattern; the relational operators compare literally.
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
 | an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
-| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the regression family, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and engineering conversions/complex arithmetic | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the regression family, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the engineering conversions (`BIN2HEX`, `CONVERT`, `BESSELJ`, …) | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 An explicitly empty argument is read as a blank value rather than as the
 parameter's default — `LEFT("abc",)` is `""`, not `"a"`. Whether Excel applies
@@ -251,16 +251,16 @@ here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 163 functions (`TRUE`/`FALSE` work both as bare
+This engine implements 189 functions (`TRUE`/`FALSE` work both as bare
 literals and as zero-argument calls, matching Excel and the client engine);
-the client engine implements 249. The gap
+the client engine implements 262. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
 cheap-to-verify subset — but it has never been written down, so it is listed
 here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
 **Adopted.** The first version of this list was a plan; these have now been
-implemented, taking the engine from 84 to 163 functions:
+implemented, taking the engine from 84 to 189 functions:
 
 | Family | Functions | Note |
 |---|---|---|
@@ -274,6 +274,7 @@ implemented, taking the engine from 84 to 163 functions:
 | Financial | `PMT`, `FV`, `PV`, `NPV`, `NPER`, `RATE`, `IPMT`, `PPMT`, `IRR`, `MIRR`, `XNPV`, `SLN`, `SYD`, `DB` | `RATE` is a Newton iteration with a bisection fallback; `IRR`/`MIRR`/`XNPV` flatten a cash-flow range, and a result off the real line is `#NUM!` |
 | Distributions | `NORMDIST`, `NORMSDIST`, `NORMINV`, `NORMSINV`, `NORMINVS`, `BINOMDIST`, `POISSON`, `EXPONDIST`, `WEIBULL`, `GAMMALN`, `GAMMADIST`, `GAMMAINV`, `BETADIST`, `BETAINV`, `NEGBINOMDIST`, `FREQUENCY` | the incomplete gamma/beta integrals are ported from the client engine and kept numerically identical; `FREQUENCY` returns a column of counts |
 | Combinatorics | `COMBIN`, `COMBINA`, `PERMUT`, `FACT`, `FACTDOUBLE`, `MULTINOMIAL` | the integer helpers stop at the double overflow and report `#NUM!` |
+| Complex | `COMPLEX` and the `IM*` family (`IMSUM`, `IMDIV`, the trig and hyperbolic forms, …) | the complex-number text form and its 15-significant-digit coefficients are reproduced byte-for-byte from the client engine, and the `i`/`j` suffix survives the call |
 
 `TODAY` and `NOW` read the clock, so they are the one exception to the
 "deterministic" guarantee above: their answer depends on when the formula is
@@ -290,9 +291,10 @@ needs design decisions this engine has not made yet — array results, iteration
 repeated sampling — so they should arrive with the feature that wants them
 rather than as speculative surface.
 
-**Leave out.** Engineering conversions and complex arithmetic (`BIN2HEX`,
-`IMSUM`, `CONVERT`, `BESSELJ`, …) are a large surface with narrow use, and the
-client engine covers them where a formula needs one.
+**Leave out.** The engineering *conversions* (`BIN2HEX`, `CONVERT`, `BESSELJ`,
+…) are a large surface with narrow use, and the client engine covers them where
+a formula needs one. Complex arithmetic used to sit here too; it is adopted —
+see the Complex row above.
 
 The lexer accepts a name that is shaped like a cell reference (`ATAN2`, which is
 both) and resolves it as a call when a parenthesis follows, and it accepts a dot

@@ -2740,6 +2740,138 @@
     {
       "formula": "FACT(171)",
       "expected": "error:#NUM!"
+    },
+    {
+      "formula": "COMPLEX(3,4)",
+      "expected": "text:3+4i"
+    },
+    {
+      "formula": "COMPLEX(3,4,\"j\")",
+      "expected": "text:3+4j"
+    },
+    {
+      "formula": "COMPLEX(0,1)",
+      "expected": "text:i"
+    },
+    {
+      "formula": "IMABS(\"3+4i\")",
+      "expected": "number:5"
+    },
+    {
+      "formula": "IMREAL(\"3+4i\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "IMAGINARY(\"4i\")",
+      "expected": "number:4"
+    },
+    {
+      "formula": "IMCONJUGATE(\"3+4i\")",
+      "expected": "text:3-4i"
+    },
+    {
+      "formula": "IMCONJUGATE(\"3-4j\")",
+      "expected": "text:3+4j"
+    },
+    {
+      "formula": "IMARGUMENT(\"0\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMARGUMENT(\"1+i\")",
+      "expected": "number:0.7853981633974483"
+    },
+    {
+      "formula": "IMARGUMENT(\"1\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "IMSUM(\"1+2i\",\"3+4i\")",
+      "expected": "text:4+6i"
+    },
+    {
+      "formula": "IMSUM(\"4i\",\"1\")",
+      "expected": "text:1+4i"
+    },
+    {
+      "formula": "IMSUB(\"5+3i\",\"2+1i\")",
+      "expected": "text:3+2i"
+    },
+    {
+      "formula": "IMPRODUCT(\"1+2i\",\"3+4i\")",
+      "expected": "text:-5+10i"
+    },
+    {
+      "formula": "IMDIV(\"4+2i\",\"1+i\")",
+      "expected": "text:3-i"
+    },
+    {
+      "formula": "IMMOD(\"5+3i\",\"2+1i\")",
+      "expected": "text:1+i"
+    },
+    {
+      "formula": "IMEXP(\"0\")",
+      "expected": "text:1"
+    },
+    {
+      "formula": "IMLOG(\"1\")",
+      "expected": "text:0"
+    },
+    {
+      "formula": "IMSQRT(\"4\")",
+      "expected": "text:2"
+    },
+    {
+      "formula": "IMCOS(\"1+i\")",
+      "expected": "text:0.833730025131149-0.988897705762865i"
+    },
+    {
+      "formula": "IMSIN(\"1+i\")",
+      "expected": "text:1.29845758141598+0.634963914784736i"
+    },
+    {
+      "formula": "IMTAN(\"1+i\")",
+      "expected": "text:0.271752585319512+1.08392332733869i"
+    },
+    {
+      "formula": "IMCOT(\"1+i\")",
+      "expected": "text:0.217621561854403-0.868014142895925i"
+    },
+    {
+      "formula": "IMCSC(\"1+i\")",
+      "expected": "text:0.621518017170428-0.303931001628426i"
+    },
+    {
+      "formula": "IMSEC(\"1+i\")",
+      "expected": "text:0.498337030555187+0.591083841721045i"
+    },
+    {
+      "formula": "IMCOSH(\"1+i\")",
+      "expected": "text:0.833730025131149+0.988897705762865i"
+    },
+    {
+      "formula": "IMSINH(\"1+i\")",
+      "expected": "text:0.634963914784736+1.29845758141598i"
+    },
+    {
+      "formula": "IMTANH(\"1+i\")",
+      "expected": "text:1.08392332733869+0.271752585319512i"
+    },
+    {
+      "formula": "IMCSCH(\"1+i\")",
+      "expected": "text:0.303931001628426-0.621518017170428i"
+    },
+    {
+      "formula": "IMSECH(\"1+i\")",
+      "expected": "text:0.498337030555187-0.591083841721045i"
+    },
+    {
+      "formula": "IMCOTH(\"1+i\")",
+      "expected": "text:0.868014142895925-0.217621561854403i"
+    },
+    {
+      "formula": "IMABS(\"abc\")",
+      "expected": "error:#NUM!"
     }
   ]
 }
