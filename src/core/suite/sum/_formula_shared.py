@@ -1,6 +1,7 @@
 """Shared tokens, parser, and coercion helpers for the formula engine."""
 
 import datetime
+import math
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -345,7 +346,13 @@ def _to_number(value: Any) -> float:
     if isinstance(value, bool):
         return 1.0 if value else 0.0
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        if not math.isfinite(number):
+            # Infinity/NaN is not a spreadsheet value. Returning it let it flow
+            # into an ``int()`` (a date year, a REPT count) and raise
+            # OverflowError straight out of the engine instead of a cell error.
+            raise ValueError(NUM_ERROR)
+        return number
     if isinstance(value, str):
         # The whole string has to read as a number, the same complete-decimal
         # rule the aggregates apply to a text argument. ``float`` alone is too
@@ -356,7 +363,11 @@ def _to_number(value: Any) -> float:
         text = value.strip()
         if not NUMERIC_TEXT_RE.match(text):
             raise ValueError(VALUE_ERROR)
-        return float(text)
+        number = float(text)
+        if not math.isfinite(number):
+            # A decimal that overflows a double ("1e999") is #NUM!, not inf.
+            raise ValueError(NUM_ERROR)
+        return number
     raise ValueError(VALUE_ERROR)
 
 
@@ -392,9 +403,12 @@ def _coerce_number_text(value: Any) -> Optional[float]:
     if not NUMERIC_TEXT_RE.match(text):
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:  # pragma: no cover - the pattern above already gates this
         return None
+    # A decimal that overflows a double ("1e999") is not a number to include,
+    # so the aggregate ignores it rather than adding infinity to the total.
+    return number if math.isfinite(number) else None
 
 
 def _to_number_or_zero(value: Any) -> float:
