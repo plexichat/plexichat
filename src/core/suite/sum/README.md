@@ -237,7 +237,7 @@ Deliberate, and shared with the client engine unless noted:
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
 | an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
-| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, most financial and distribution functions, the dynamic-array family, and engineering conversions/complex arithmetic | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the regression family, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and engineering conversions/complex arithmetic | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 An explicitly empty argument is read as a blank value rather than as the
 parameter's default — `LEFT("abc",)` is `""`, not `"a"`. Whether Excel applies
@@ -246,43 +246,48 @@ here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 125 functions (`TRUE`/`FALSE` are literals, not
-functions, so `TRUE()` is `#VALUE!`); the client engine implements 249. The gap
+This engine implements 163 functions (`TRUE`/`FALSE` work both as bare
+literals and as zero-argument calls, matching Excel and the client engine);
+the client engine implements 249. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
 cheap-to-verify subset — but it has never been written down, so it is listed
 here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
 **Adopted.** The first version of this list was a plan; these have now been
-implemented, taking the engine from 84 to 125 functions:
+implemented, taking the engine from 84 to 163 functions:
 
 | Family | Functions | Note |
 |---|---|---|
+| Logical | `TRUE`, `FALSE` | zero-argument call forms of the literals; a stray argument is `#VALUE!` |
 | Lookup | `CHOOSE`, `IFS`, `SWITCH` | evaluated on the `IF`/`IFNA` short-circuit path, so an untaken branch is not evaluated |
 | Information | `ISLOGICAL`, `ISNONTEXT`, `ISEVEN`, `ISODD`, `ERROR.TYPE`, `N`, `T`, `CLEAN` | `ERROR.TYPE` and the `IS*` additions classify an error instead of propagating it |
 | Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | `GCD`/`LCM` truncate toward zero and reject a magnitude above 2^53 |
 | Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | an overflowing `SINH`/`COSH` is `#NUM!`, not infinity |
 | Date | `HOUR`, `MINUTE`, `SECOND`, `TIME`, `DATEVALUE`, `TODAY`, `NOW` | see the clock note below |
 | Statistics | `MEDIAN`, `LARGE`, `SMALL`, `RANK`, `STDEV`, `VAR`, `MODE`, `PERCENTILE`, `QUARTILE`, `AVERAGEA`, `MAXA`, `MINA` | pooled over the numbers the aggregates already collect; `LARGE`/`SMALL`/`RANK`/`PERCENTILE`/`QUARTILE` read their arguments separately |
+| Financial | `PMT`, `FV`, `PV`, `NPV`, `NPER`, `RATE`, `IPMT`, `PPMT`, `IRR`, `MIRR`, `XNPV`, `SLN`, `SYD`, `DB` | `RATE` is a Newton iteration with a bisection fallback; `IRR`/`MIRR`/`XNPV` flatten a cash-flow range, and a result off the real line is `#NUM!` |
+| Distributions | `NORMDIST`, `NORMSDIST`, `NORMINV`, `NORMSINV`, `NORMINVS`, `BINOMDIST`, `POISSON`, `EXPONDIST`, `WEIBULL`, `GAMMALN`, `GAMMADIST`, `GAMMAINV`, `BETADIST`, `BETAINV`, `NEGBINOMDIST`, `FREQUENCY` | the incomplete gamma/beta integrals are ported from the client engine and kept numerically identical; `FREQUENCY` returns a column of counts |
+| Combinatorics | `COMBIN`, `COMBINA`, `PERMUT`, `FACT`, `FACTDOUBLE`, `MULTINOMIAL` | the integer helpers stop at the double overflow and report `#NUM!` |
 
 `TODAY` and `NOW` read the clock, so they are the one exception to the
 "deterministic" guarantee above: their answer depends on when the formula is
-evaluated, which is also why the shared parity table does not pin them.
+evaluated, which is also why the shared parity table does not pin them. The
+distribution and financial functions are deterministic too — the inverses solve
+by bisection rather than by a random search, and `RATE` backs its Newton
+iteration with a bracketed bisection so a bad guess cannot diverge.
 
 **Adopt when a feature asks for it.** The rest of the statistical
-`*DIST`/`*INV` family, `FORECAST`/`SLOPE`/`INTERCEPT`/`LINEST`/`TREND`, the
-financial set (`NPV`, `IRR`, `PMT`, `FV`, …), `XLOOKUP`, and the dynamic-array
-family (`SORT`, `FILTER`, `HSTACK`, `TAKE`, `WRAPROWS`, …). Each needs design
-decisions this engine has not made yet — array results, iteration, numeric
-methods — so they should arrive with the feature that wants them rather than as
-speculative surface.
+`*DIST`/`*INV` family (`TDIST`, `CHIDIST`, `FDIST`, …),
+`FORECAST`/`SLOPE`/`INTERCEPT`/`LINEST`/`TREND`, `XLOOKUP`, and the
+dynamic-array family (`SORT`, `FILTER`, `HSTACK`, `TAKE`, `WRAPROWS`, …). Each
+needs design decisions this engine has not made yet — array results, iteration,
+repeated sampling — so they should arrive with the feature that wants them
+rather than as speculative surface.
 
 **Leave out.** Engineering conversions and complex arithmetic (`BIN2HEX`,
 `IMSUM`, `CONVERT`, `BESSELJ`, …) are a large surface with narrow use, and the
 client engine covers them where a formula needs one.
-
-One inconsistency worth knowing: the client registers `TRUE` and `FALSE` as
-functions (`TRUE()`), which Excel also accepts; here they are literals only.
 
 The lexer accepts a name that is shaped like a cell reference (`ATAN2`, which is
 both) and resolves it as a call when a parenthesis follows, and it accepts a dot
