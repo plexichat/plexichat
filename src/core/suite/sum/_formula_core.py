@@ -421,6 +421,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             if op in ("=", "<>"):
                 if isinstance(left, str) or isinstance(right, str):
                     comparison = _to_text(left) == _to_text(right)
+                elif isinstance(left, bool) != isinstance(right, bool):
+                    # Excel ranks types before comparing, so a logical is never
+                    # its numeric value: TRUE = 1 is FALSE and TRUE > 1 is
+                    # TRUE. Left to Python, ``True == 1`` answered TRUE, which
+                    # disagreed with the client engine (and with the ranked
+                    # comparisons the criteria functions already use).
+                    comparison = False
                 else:
                     comparison = left == right
                 return comparison if op == "=" else not comparison
@@ -979,12 +986,19 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     ) -> List[List[Any]]:
         """Resolve a ``A1:C10`` ref node into a 2-D matrix of values.
 
+        A single-cell reference (``B6``) is Excel's 1x1 array rather than an
+        empty range, so MATCH, LOOKUP, V/HLOOKUP and SUMPRODUCT read that one
+        cell instead of answering #VALUE!/#N/A for a one-cell argument.
+
         Lookup and criteria functions need the *shape* of a range (rows ×
         columns), which the flat ``_expand_arg`` path discards.
         """
-        if node[0] != "ref" or ":" not in node[1]:
+        if node[0] != "ref":
             return []
-        first, second = node[1].split(":", 1)
+        if ":" in node[1]:
+            first, second = node[1].split(":", 1)
+        else:
+            first = second = node[1]
         s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
         s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
         target = s1 or sheet
@@ -1004,21 +1018,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     def _criteria_range(
         self, node: Any, sheet: Optional[str], seen: set, depth: int
     ) -> List[List[Any]]:
-        """Resolve a criteria/sum range, accepting a single cell as 1×1.
+        """Resolve a criteria/sum range.
 
-        ``_range_matrix`` only describes ``A1:B2`` refs, so ``COUNTIF(B6, x)``
-        and ``SUMIFS(..., B6, x)`` used to see an empty range and answer 0
-        (or #DIV/0!) instead of testing B6.
+        A single cell is a 1x1 range to these functions (``COUNTIF(B6, x)``),
+        which ``_range_matrix`` describes.
         """
-        matrix = self._range_matrix(node, sheet, seen, depth)
-        if matrix or node[0] != "ref":
-            return matrix
-        ref_sheet, row, column = parse_cell_ref(node[1], self._named_ranges)
-        self._used += 1
-        if self._used > self._dependencies:
-            raise ValueError(NUM_ERROR)
-        target = ref_sheet or sheet
-        return [[self._resolve(target, row, column, seen, depth + 1)]]
+        return self._range_matrix(node, sheet, seen, depth)
 
     @staticmethod
     def _lookup_eq(a: Any, b: Any) -> bool:
@@ -1030,6 +1035,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return False
         if isinstance(a, str) or isinstance(b, str):
             return _to_text(a) == _to_text(b)
+        if isinstance(a, bool) != isinstance(b, bool):
+            # A logical never matches a number, for the same ranking reason
+            # ``=`` does not: MATCH(1, {TRUE}, 0) is #N/A, not 1.
+            return False
         try:
             return _to_number(a) == _to_number(b)
         except ValueError:
@@ -1184,8 +1193,21 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 # with wildcards: only text cells can match it.
                 return isinstance(value, str) and _wildcard_match(criteria, value)
             return _to_text(value).casefold() == criteria.casefold()
-        if isinstance(value, str) or isinstance(value, bool):
+        if isinstance(value, bool) or isinstance(criteria, bool):
+            # Criteria rank types the way every other comparison here does, so
+            # a logical criterion matches only a logical cell of the same
+            # value: COUNTIF(range, 1) does not count TRUE.
+            return (
+                isinstance(value, bool)
+                and isinstance(criteria, bool)
+                and value == criteria
+            )
+        if isinstance(value, str):
             return value == criteria
+        if value is None:
+            # A blank is not the number it coerces to in arithmetic, so
+            # COUNTIF(range, 0) counts zero cells rather than every empty one.
+            return False
         try:
             return _to_number(value) == _to_number(criteria)
         except ValueError:

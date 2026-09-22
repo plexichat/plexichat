@@ -210,6 +210,14 @@ text `"1"` against the number 1, as Excel's `=` does, and an approximate match
 whose lookup value does not read as a number is a miss (`#N/A`) rather than an
 error; a `row_index_num` past the bottom of the table is `#REF!`.
 
+**A logical is not its number.** The ranking above reaches `=` and `<>` too: a
+logical and a number are never equal (`TRUE = 1` is `FALSE`, where Python's own
+`True == 1` answered the opposite), and the criteria functions follow, so
+`COUNTIF(range, 1)` does not count a `TRUE` cell while `COUNTIF(range, TRUE)`
+does. A blank is likewise not the zero it coerces to in arithmetic, so
+`COUNTIF(range, 0)` counts the zero cells rather than the empty ones. Lookup
+keys rank the same way: `MATCH(1, {TRUE}, 0)` is `#N/A`.
+
 **An omitted argument is a blank.** An empty slot between commas — `SUM(1,)`,
 `SUM(,1)` or `SUM(1,,2)` — is Excel's "missing" operand, and both engines read
 it as a blank value: skipped by the aggregates, 0 as a number and `""` as text.
@@ -311,6 +319,9 @@ A multi-cell `OFFSET` is one reference in Excel; here it is a flat value list
 (the client engine represents it as a row-major matrix). `INDEX`'s "whole
 column"/"whole row" forms (`INDEX(A1:C3, 0, 2)`) arrive the same way, so the
 two shapes still add up identically under `SUM`.
+A one-cell reference is the 1×1 array Excel makes it, so `MATCH(1, A1, 0)`,
+`LOOKUP(1, A1, A1)`, `VLOOKUP(1, A1, 1, FALSE)`, `HLOOKUP(1, A1, 1, FALSE)`
+and `SUMPRODUCT(A1)` read that cell rather than reporting a miss.
 
 ## Configuration
 

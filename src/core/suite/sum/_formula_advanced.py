@@ -862,14 +862,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name == "COUNTBLANK":
             if len(args) != 1:
                 return VALUE_ERROR
+            # A single cell (COUNTBLANK(A1)) is a 1x1 range, which
+            # _range_matrix now describes. An error cell is not blank.
             matrix = self._range_matrix(args[0], sheet, seen, depth)
             if not matrix:
-                # A single cell (COUNTBLANK(A1)) is not a ":" range, so
-                # _range_matrix cannot describe it; Excel still reports
-                # whether that one cell is blank. An error cell is not blank.
-                if args[0][0] == "ref":
-                    value = self._eval(args[0], sheet, seen, depth)
-                    return 1.0 if value is None or value == "" else 0.0
                 return 0.0
             count = 0
             for row in matrix:
@@ -887,7 +883,14 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             for arg in args:
                 matrix = self._range_matrix(arg, sheet, seen, depth)
                 if not matrix:
-                    return VALUE_ERROR
+                    # A computed argument is an array too: a scalar is a 1x1
+                    # block and a nested OFFSET/INDEX result is one row, the
+                    # shape INDEX returns for it. Answering #VALUE! made
+                    # SUMPRODUCT(2, 3) an error rather than 6.
+                    value = self._eval(arg, sheet, seen, depth)
+                    if is_error(value):
+                        return value
+                    matrix = [list(value)] if isinstance(value, list) else [[value]]
                 matrices.append(matrix)
             # All matrices must have same shape
             rows = len(matrices[0])

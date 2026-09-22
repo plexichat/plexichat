@@ -2872,6 +2872,90 @@
     {
       "formula": "IMABS(\"abc\")",
       "expected": "error:#NUM!"
+    },
+    {
+      "formula": "1=TRUE",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "0=FALSE",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "TRUE=1",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "1<>TRUE",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "B6=1",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "B6=TRUE",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "COUNTIF(B6,1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(B6,TRUE)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIF(B6,1,B6)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(Z1:Z2,0)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(Z1:Z2,\"\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(1,A1,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(2,A1,1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(TRUE,B6,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(1,B6,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "LOOKUP(1,A1,A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "VLOOKUP(1,A1,1,FALSE)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "HLOOKUP(1,A1,1,FALSE)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMPRODUCT(A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMPRODUCT(A1,C1)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "SUMPRODUCT(2,3)",
+      "expected": "number:6"
     }
   ]
 }
