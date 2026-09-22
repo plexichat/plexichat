@@ -455,7 +455,43 @@
     },
     {
       "formula": "COUNTIF(B1:B3,\"tw*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"T*\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"t?o\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"*e*\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"=tw*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"<>tw*\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "COUNTIF(B1:B3,\"tw~*\")",
       "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(D1:D3,\"b*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIF(B1:B3,\"t*\",A1:A3)",
+      "expected": "number:5"
+    },
+    {
+      "formula": "COUNTIFS(B1:B3,\"t*\",A1:A3,\">=2\")",
+      "expected": "number:2"
     },
     {
       "formula": "COUNTIF(A1:A3,\"\")",

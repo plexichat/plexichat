@@ -19,10 +19,12 @@ from ._formula_shared import (
     CellResolver,
     _coerce_number_text,
     _criteria_operator,
+    _has_wildcard,
     _numeric,
     _to_number,
     _to_number_or_zero,
     _to_text,
+    _wildcard_match,
     is_error,
     parse_cell_ref,
     parse_formula,
@@ -1139,6 +1141,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             for op in (">=", "<=", "<>", ">", "<", "="):
                 if criteria.startswith(op) and len(criteria) > len(op):
                     return _criteria_operator(op, value, criteria[len(op) :].strip())
+            if _has_wildcard(criteria):
+                # A bare pattern (``COUNTIF(range, "tw*")``) is Excel's ``=``
+                # with wildcards: only text cells can match it.
+                return isinstance(value, str) and _wildcard_match(criteria, value)
             return _to_text(value).casefold() == criteria.casefold()
         if isinstance(value, str) or isinstance(value, bool):
             return value == criteria

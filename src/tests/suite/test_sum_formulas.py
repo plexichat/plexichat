@@ -1179,6 +1179,49 @@ def test_criteria_compare_across_types_like_excel():
     assert _eval('SUMIF(A1:A3, ">2")', resolver) == 0.0
 
 
+def test_criteria_wildcards_match_text_like_excel():
+    """``*``, ``?`` and ``~`` pattern-match text cells in criteria.
+
+    A bare pattern (``COUNTIF(range, "tw*")``) and the ``=``/``<>`` forms
+    match text cells against the pattern, case-insensitively; a number, a
+    logical or a blank never matches a pattern, so ``"<>tw*"`` counts them.
+    The relational operators keep their literal comparison (``">tw*"`` does
+    not pattern-match), and ``~`` escapes ``*``, ``?`` and ``~`` to literals.
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "text", "value": "one", "formula": None},
+        ("1", 1, 0): {"value_type": "text", "value": "two", "formula": None},
+        ("1", 2, 0): {"value_type": "text", "value": "three", "formula": None},
+        ("1", 0, 1): {"value_type": "number", "value": 10, "formula": None},
+        ("1", 1, 1): {"value_type": "number", "value": 20, "formula": None},
+        ("1", 2, 1): {"value_type": "number", "value": 30, "formula": None},
+        ("1", 0, 2): {"value_type": "number", "value": 2, "formula": None},
+        ("1", 1, 2): {"value_type": "boolean", "value": True, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('COUNTIF(A1:A3, "tw*")', resolver) == 1.0
+    # Matching is case-insensitive, so "T*" also catches "three".
+    assert _eval('COUNTIF(A1:A3, "T*")', resolver) == 2.0
+    assert _eval('COUNTIF(A1:A3, "t?o")', resolver) == 1.0
+    assert _eval('COUNTIF(A1:A3, "*o*")', resolver) == 2.0
+    assert _eval('COUNTIF(A1:A3, "=tw*")', resolver) == 1.0
+    assert _eval('COUNTIF(A1:A3, "<>tw*")', resolver) == 2.0
+    # A pattern only matches text: numbers, logicals and blanks never match,
+    # so the negated form counts them.
+    assert _eval('COUNTIF(C1:C2, "*")', resolver) == 0.0
+    assert _eval('COUNTIF(C1:C2, "<>*")', resolver) == 2.0
+    # "~" escapes a wildcard to a literal: no cell holds the text "tw*".
+    assert _eval('COUNTIF(A1:A3, "tw~*")', resolver) == 0.0
+    assert _eval('COUNTIF(A1:A3, "tw~?")', resolver) == 0.0
+    # The relational operators compare literally and do not pattern-match.
+    assert _eval('COUNTIF(A1:A3, ">tw*")', resolver) == 1.0
+    # The multi-criteria forms share the same matcher.
+    assert _eval('SUMIF(A1:A3, "t*", B1:B3)', resolver) == 50.0
+    assert _eval('AVERAGEIF(A1:A3, "t*", B1:B3)', resolver) == 25.0
+    assert _eval('COUNTIFS(A1:A3, "t*", B1:B3, ">15")', resolver) == 2.0
+    assert _eval('SUMIFS(B1:B3, A1:A3, "t*")', resolver) == 50.0
+
+
 def test_criteria_functions_accept_a_single_cell_range():
     """COUNTIF(A1, ...) tests that one cell; a ``:`` range is not required.
 

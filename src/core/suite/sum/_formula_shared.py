@@ -1,6 +1,7 @@
 """Shared tokens, parser, and coercion helpers for the formula engine."""
 
 import datetime
+import functools
 import math
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -498,6 +499,13 @@ def _compare_values(left: Any, right: Any) -> int:
 
 def _criteria_operator(op: str, value: Any, target: str) -> bool:
     """Apply one operator-prefixed criteria (``">=2"``, ``"<>x"``) to a value."""
+    if op in ("=", "<>") and _has_wildcard(target):
+        # Excel's wildcards only pattern-match text: ``COUNTIF(range, "=tw*")``
+        # matches the text cells starting with "tw", while a number, a logical
+        # or a blank never matches (so ``"<>tw*"`` counts them, the same way
+        # ``"<>x"`` already counts every cross-type value today).
+        matched = isinstance(value, str) and _wildcard_match(target, value)
+        return (not matched) if op == "<>" else matched
     order = _compare_values(value, _parse_criteria_target(target))
     if op == ">":
         return order > 0
@@ -510,3 +518,58 @@ def _criteria_operator(op: str, value: Any, target: str) -> bool:
     if op == "<>":
         return order != 0
     return order == 0
+
+
+def _has_wildcard(pattern: str) -> bool:
+    """Report whether a criteria pattern carries an unescaped wildcard.
+
+    ``*`` matches any run of characters and ``?`` exactly one; a ``~``
+    before ``*``, ``?`` or ``~`` escapes it to a literal, so ``"tw~*"
+    matches the text ``"tw*"`` rather than acting as a pattern.
+    """
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "~" and i + 1 < len(pattern) and pattern[i + 1] in ("*", "?", "~"):
+            i += 2
+            continue
+        if char in ("*", "?"):
+            return True
+        i += 1
+    return False
+
+
+@functools.lru_cache(maxsize=512)
+def _wildcard_pattern_to_regex(pattern: str) -> "re.Pattern[str]":
+    """Compile a criteria wildcard pattern to a case-insensitive regex.
+
+    Cached because a criteria compiles once per call but matches once per
+    cell: recompiling the pattern for every row would turn a 100k-row
+    COUNTIF into 100k compilations of the same expression.
+    """
+    parts = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "~" and i + 1 < len(pattern) and pattern[i + 1] in ("*", "?", "~"):
+            parts.append(re.escape(pattern[i + 1]))
+            i += 2
+            continue
+        if char == "*":
+            parts.append(".*")
+        elif char == "?":
+            parts.append(".")
+        else:
+            # A ``~`` before an ordinary character (and every other
+            # character) is literal, matching Excel.
+            parts.append(re.escape(char))
+        i += 1
+    return re.compile("".join(parts), re.IGNORECASE | re.DOTALL)
+
+
+def _wildcard_match(pattern: str, value: str) -> bool:
+    """Match text against an Excel-style wildcard pattern (``*``, ``?``, ``~``)."""
+    return (
+        _wildcard_pattern_to_regex(pattern.casefold()).fullmatch(value.casefold())
+        is not None
+    )

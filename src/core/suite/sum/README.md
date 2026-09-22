@@ -225,6 +225,12 @@ the client engine (this parser used to be right-associative here).
 
 Deliberate, and shared with the client engine unless noted:
 
+**Criteria support wildcards.** `SUMIF`, `COUNTIF`, `AVERAGEIF` and their
+multi-criteria forms pattern-match text cells with Excel's wildcards — `*`
+(any run), `?` (one character), `~` to escape either — case-insensitively, in
+a bare pattern (`COUNTIF(range, "tw*")`) and in the `=`/`<>` forms. Only text
+cells can match a pattern; the relational operators compare literally.
+
 | Case | Excel | Here |
 |---|---|---|
 | `"a" < "b"` | `TRUE` | `#VALUE!` — comparisons coerce to a number |
@@ -232,7 +238,6 @@ Deliberate, and shared with the client engine unless noted:
 | `COUNTA("")` | `1` | `0` — an empty-text argument counts as empty |
 | `IF("x", 1, 2)` | `#VALUE!` | `1` — non-boolean text is truthy |
 | `"" + 1` | `1` | `#VALUE!` — empty text does not coerce to 0 |
-| `COUNTIF(A1:A3, "tw*")` | wildcard match | `0` — criteria wildcards are not implemented |
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
