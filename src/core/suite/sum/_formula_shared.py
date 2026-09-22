@@ -18,6 +18,7 @@ cannot stall a viewport read. Errors propagate as ``#...`` strings.
 
 The engine is deliberately dependency-free and deterministic so it can be
 unit-tested in isolation and reused by viewport reads, CSV export, and sort.
+The one exception to the determinism is TODAY/NOW, which read the clock.
 """
 
 

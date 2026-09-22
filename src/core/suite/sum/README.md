@@ -210,6 +210,17 @@ text `"1"` against the number 1, as Excel's `=` does, and an approximate match
 whose lookup value does not read as a number is a miss (`#N/A`) rather than an
 error; a `row_index_num` past the bottom of the table is `#REF!`.
 
+**An omitted argument is a blank.** An empty slot between commas — `SUM(1,)`,
+`SUM(,1)` or `SUM(1,,2)` — is Excel's "missing" operand, and both engines read
+it as a blank value: skipped by the aggregates, 0 as a number and `""` as text.
+So `SUM(,)` is 0, `IF(FALSE,1,)` is blank and `LEFT("abc",)` takes 0 characters
+rather than the parameter's default of 1. It used to be a parse error here,
+while the client engine silently dropped a trailing comma, so the two engines
+disagreed about `SUM(1,)`.
+
+**`^` groups to the left.** `2^3^2` is `(2^3)^2`, i.e. 64, matching Excel and
+the client engine (this parser used to be right-associative here).
+
 ### Known divergences from Excel
 
 Deliberate, and shared with the client engine unless noted:
@@ -224,28 +235,39 @@ Deliberate, and shared with the client engine unless noted:
 | `COUNTIF(A1:A3, "tw*")` | wildcard match | `0` — criteria wildcards are not implemented |
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
-| `ISEVEN`, `ISREF`, `T`, `CLEAN`, most statistical/financial/engineering functions | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+| `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
+| an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
+| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, most financial and distribution functions, the dynamic-array family, and engineering conversions/complex arithmetic | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+
+An explicitly empty argument is read as a blank value rather than as the
+parameter's default — `LEFT("abc",)` is `""`, not `"a"`. Whether Excel applies
+the default for an empty argument rather than coercing it is not pinned down
+here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 84 functions (`TRUE`/`FALSE` are literals, not
+This engine implements 125 functions (`TRUE`/`FALSE` are literals, not
 functions, so `TRUE()` is `#VALUE!`); the client engine implements 249. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
 cheap-to-verify subset — but it has never been written down, so it is listed
 here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
-**Adopt next.** Cheap to implement on the machinery that is already here, and
-common enough in real sheets to be worth the surface area:
+**Adopted.** The first version of this list was a plan; these have now been
+implemented, taking the engine from 84 to 125 functions:
 
 | Family | Functions | Note |
 |---|---|---|
-| Lookup | `CHOOSE`, `IFS`, `SWITCH` | the `IF`/`IFNA` short-circuit path already exists |
-| Information | `ISLOGICAL`, `ISNONTEXT`, `ISEVEN`, `ISODD`, `ERROR.TYPE` | `_information` and the `ERROR_CODES` table are already here; `N`, `T`, `CLEAN` are one-liners on `_to_number`/`_to_text` |
-| Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | pure arithmetic over the existing aggregate walk |
-| Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | `math.atan2`/`math.sinh`… |
-| Date | `HOUR`, `MINUTE`, `SECOND`, `TIME`, `DATEVALUE`, `TODAY`, `NOW` | the serial-number helpers already exist for `DATE`/`DAYS` |
-| Statistics | `MEDIAN`, `LARGE`, `SMALL`, `RANK`, `STDEV`, `VAR`, `MODE`, `PERCENTILE`, `QUARTILE`, `AVERAGEA`, `MAXA`, `MINA` | sort/sum over the numbers the aggregates already collect |
+| Lookup | `CHOOSE`, `IFS`, `SWITCH` | evaluated on the `IF`/`IFNA` short-circuit path, so an untaken branch is not evaluated |
+| Information | `ISLOGICAL`, `ISNONTEXT`, `ISEVEN`, `ISODD`, `ERROR.TYPE`, `N`, `T`, `CLEAN` | `ERROR.TYPE` and the `IS*` additions classify an error instead of propagating it |
+| Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | `GCD`/`LCM` truncate toward zero and reject a magnitude above 2^53 |
+| Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | an overflowing `SINH`/`COSH` is `#NUM!`, not infinity |
+| Date | `HOUR`, `MINUTE`, `SECOND`, `TIME`, `DATEVALUE`, `TODAY`, `NOW` | see the clock note below |
+| Statistics | `MEDIAN`, `LARGE`, `SMALL`, `RANK`, `STDEV`, `VAR`, `MODE`, `PERCENTILE`, `QUARTILE`, `AVERAGEA`, `MAXA`, `MINA` | pooled over the numbers the aggregates already collect; `LARGE`/`SMALL`/`RANK`/`PERCENTILE`/`QUARTILE` read their arguments separately |
+
+`TODAY` and `NOW` read the clock, so they are the one exception to the
+"deterministic" guarantee above: their answer depends on when the formula is
+evaluated, which is also why the shared parity table does not pin them.
 
 **Adopt when a feature asks for it.** The rest of the statistical
 `*DIST`/`*INV` family, `FORECAST`/`SLOPE`/`INTERCEPT`/`LINEST`/`TREND`, the
