@@ -347,10 +347,16 @@ def _to_number(value: Any) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
+        # The whole string has to read as a number, the same complete-decimal
+        # rule the aggregates apply to a text argument. ``float`` alone is too
+        # permissive: it also accepts "inf", "nan" and the digit-separating
+        # underscore (``float("1_0") == 10.0``), none of which Excel reads as a
+        # number -- and the client engine refuses them too, so both engines
+        # agree on the string that is not a number.
+        text = value.strip()
+        if not NUMERIC_TEXT_RE.match(text):
             raise ValueError(VALUE_ERROR)
+        return float(text)
     raise ValueError(VALUE_ERROR)
 
 
