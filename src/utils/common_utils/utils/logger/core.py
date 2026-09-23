@@ -226,6 +226,12 @@ class Logger:
         logger = logging.getLogger("AppLogger")
         logger.setLevel(self.level)
 
+        # Remove any stale sanitizing filters left by previous Logger instances
+        # (getLogger returns a global singleton, so filters would otherwise
+        # accumulate once per Logger construction).
+        for existing in logger.filters[:]:
+            if isinstance(existing, SanitizingFilter):
+                logger.removeFilter(existing)
         # Add sanitizing filter
         logger.addFilter(SanitizingFilter())
 
