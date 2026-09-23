@@ -8,7 +8,7 @@
     "drifting from Excel (or from the other engine) fails a test.",
     "Types are explicit (number:/text:/boolean:/error:/blank) so a text \"12\" is",
     "never mistaken for the number 12.",
-    "Cells A1:F6 hold the fixture data below; an unlisted cell is blank."
+    "The cells listed below hold the fixture data; an unlisted cell is blank."
   ],
   "sheet": "1",
   "grid": {
@@ -50,7 +50,12 @@
     "I2": 300,
     "K1": "abc",
     "K2": true,
-    "K3": "5"
+    "K3": "5",
+    "L1": "tw*",
+    "L2": "*",
+    "L3": "~",
+    "L4": "?",
+    "M1": 999
   },
   "cases": [
     {
@@ -3128,6 +3133,118 @@
     {
       "formula": "SWITCH(\"a\",\"a\",1,1/0,2)",
       "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"ap*\",D1:D3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"A?PLE\",D1:D3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"*err*\",D1:D3,0)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "MATCH(\"*\",D1:D3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"??o\",B1:B3,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(\"*\",K1:K3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"*\",A1:A3,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(\"1*\",A1:A3,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(\"~*\",D1:D3,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(\"appl?\",D1:D3,1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "VLOOKUP(\"t*\",B1:C3,2,FALSE)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "VLOOKUP(\"A*\",D1:D3,1,FALSE)",
+      "expected": "text:apple"
+    },
+    {
+      "formula": "VLOOKUP(\"*\",K1:K3,1,FALSE)",
+      "expected": "text:abc"
+    },
+    {
+      "formula": "VLOOKUP(\"~*\",D1:D3,1,FALSE)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "VLOOKUP(\"a*\",D1:D3,1,TRUE)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "HLOOKUP(\"ap*\",D1:F1,1,FALSE)",
+      "expected": "text:apple"
+    },
+    {
+      "formula": "COUNTIF(L1,\"tw~*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(L2,\"~*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(L3,\"~~\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(L4,\"~?\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(L1:L4,\"~?*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIF(L1:L4,\"tw~*\",M1:M4)",
+      "expected": "number:999"
+    },
+    {
+      "formula": "MATCH(\"tw~*\",L1,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"~*\",L2,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"~~\",L3,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"~?\",L4,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "VLOOKUP(\"tw~*\",L1:M1,2,FALSE)",
+      "expected": "number:999"
+    },
+    {
+      "formula": "HLOOKUP(\"~?\",L4:N4,1,FALSE)",
+      "expected": "text:?"
     }
   ]
 }

@@ -762,8 +762,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # Flatten matrix for matching
             flat = [row[0] if row else None for row in matrix]
             if match_type == 0:  # Exact match
+                # A wildcard match is what Excel calls an exact match here:
+                # MATCH("ap*", D1:D3, 0) finds "apple".
                 for i, val in enumerate(flat):
-                    if self._lookup_eq(val, lookup_value):
+                    if self._lookup_eq(val, lookup_value, True):
                         return float(i + 1)
             elif match_type == 1:  # Less than (sorted ascending)
                 # Sorted ascending, so the answer is the last entry <= the

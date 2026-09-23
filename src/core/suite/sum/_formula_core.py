@@ -19,7 +19,7 @@ from ._formula_shared import (
     CellResolver,
     _coerce_number_text,
     _criteria_operator,
-    _has_wildcard,
+    _is_pattern,
     _numeric,
     _to_number,
     _to_number_or_zero,
@@ -1053,13 +1053,23 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         return self._range_matrix(node, sheet, seen, depth)
 
     @staticmethod
-    def _lookup_eq(a: Any, b: Any) -> bool:
+    def _lookup_eq(a: Any, b: Any, wildcards: bool = False) -> bool:
         """Equality used by V/HLOOKUP: numeric cells compare numerically,
-        anything text-like compares as text."""
+        anything text-like compares as text.
+
+        ``wildcards`` adds Excel's exact-lookup pattern rule: a *text* key that
+        reads as a pattern (``_is_pattern``) matches text cells instead of
+        comparing literally, so ``MATCH("ap*", D1:D3, 0)`` finds ``apple`` and
+        ``MATCH("tw~*", L1, 0)`` finds the literal ``tw*``. Only text can
+        match, the same rule the criteria comparisons use, and the approximate
+        forms never pattern-match, so they leave the flag off.
+        """
         if a is None and b is None:
             return True
         if a is None or b is None:
             return False
+        if wildcards and isinstance(b, str) and _is_pattern(b):
+            return isinstance(a, str) and _wildcard_match(b, a)
         if isinstance(a, str) or isinstance(b, str):
             return _text_equals(a, b)
         if isinstance(a, bool) != isinstance(b, bool):
@@ -1100,7 +1110,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return REF_ERROR
             key_row = matrix[0]
             for c, key in enumerate(key_row):
-                if self._lookup_eq(key, lookup_value):
+                if self._lookup_eq(key, lookup_value, not range_lookup):
                     return matrix[index][c]
             if range_lookup:
                 try:
@@ -1127,7 +1137,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         for row in matrix:
             if not row:
                 continue
-            if self._lookup_eq(row[0], lookup_value):
+            if self._lookup_eq(row[0], lookup_value, not range_lookup):
                 return row[index]
         if range_lookup:
             try:
@@ -1215,9 +1225,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             for op in (">=", "<=", "<>", ">", "<", "="):
                 if criteria.startswith(op) and len(criteria) > len(op):
                     return _criteria_operator(op, value, criteria[len(op) :].strip())
-            if _has_wildcard(criteria):
+            if _is_pattern(criteria):
                 # A bare pattern (``COUNTIF(range, "tw*")``) is Excel's ``=``
-                # with wildcards: only text cells can match it.
+                # with wildcards, escapes honoured: only text cells can match
+                # it, so ``COUNTIF(range, "tw~*")`` finds the text ``tw*``.
                 return isinstance(value, str) and _wildcard_match(criteria, value)
             return _to_text(value).casefold() == criteria.casefold()
         if isinstance(value, bool) or isinstance(criteria, bool):

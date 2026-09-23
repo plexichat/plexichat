@@ -510,7 +510,7 @@ def _compare_values(left: Any, right: Any) -> int:
 
 def _criteria_operator(op: str, value: Any, target: str) -> bool:
     """Apply one operator-prefixed criteria (``">=2"``, ``"<>x"``) to a value."""
-    if op in ("=", "<>") and _has_wildcard(target):
+    if op in ("=", "<>") and _is_pattern(target):
         # Excel's wildcards only pattern-match text: ``COUNTIF(range, "=tw*")``
         # matches the text cells starting with "tw", while a number, a logical
         # or a blank never matches (so ``"<>tw*"`` counts them, the same way
@@ -531,19 +531,22 @@ def _criteria_operator(op: str, value: Any, target: str) -> bool:
     return order == 0
 
 
-def _has_wildcard(pattern: str) -> bool:
-    """Report whether a criteria pattern carries an unescaped wildcard.
+def _is_pattern(pattern: str) -> bool:
+    """Report whether text has to be read as an Excel pattern.
 
-    ``*`` matches any run of characters and ``?`` exactly one; a ``~``
-    before ``*``, ``?`` or ``~`` escapes it to a literal, so ``"tw~*"
-    matches the text ``"tw*"`` rather than acting as a pattern.
+    That is the case when it carries a wildcard -- ``*`` for any run of
+    characters, ``?`` for exactly one -- or an escape sequence, because only
+    the pattern path honours one: a ``~`` before ``*``, ``?`` or ``~`` makes
+    that character literal, so the criteria ``"tw~*"`` matches the text
+    ``"tw*"``, where comparing the string as it stands would look for a
+    tilde. A ``~`` before an ordinary character is itself literal, as in
+    Excel.
     """
     i = 0
     while i < len(pattern):
         char = pattern[i]
         if char == "~" and i + 1 < len(pattern) and pattern[i + 1] in ("*", "?", "~"):
-            i += 2
-            continue
+            return True
         if char in ("*", "?"):
             return True
         i += 1

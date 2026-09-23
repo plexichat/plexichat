@@ -219,6 +219,14 @@ is `#REF!`.
 lookup keys (`MATCH("TWO", …)` finds the text `two`) and `SWITCH`'s cases all
 match without regard to case. The criteria comparisons already did.
 
+**An exact lookup takes wildcards.** An exact match — `MATCH`'s `match_type`
+0 and `VLOOKUP`/`HLOOKUP`'s `FALSE` — reads a *text* lookup value as a
+pattern, so `MATCH("ap*", D1:D3, 0)` is 1, `VLOOKUP("T*", B1:C3, 2, FALSE)`
+is 20, and `MATCH("tw~*", L1, 0)` finds the literal `tw*`. A pattern matches
+text cells only (`MATCH("*", A1:A3, 0)` is `#N/A` over a column of numbers),
+and the approximate forms carry no patterns at all, so `VLOOKUP("a*", D1:D3,
+1, TRUE)` is `#N/A`.
+
 **A logical is not its number.** The ranking above reaches `=` and `<>` too: a
 logical and a number are never equal (`TRUE = 1` is `FALSE`, where Python's own
 `True == 1` answered the opposite), and the criteria functions follow, so
@@ -245,8 +253,10 @@ Deliberate, and shared with the client engine unless noted:
 **Criteria support wildcards.** `SUMIF`, `COUNTIF`, `AVERAGEIF` and their
 multi-criteria forms pattern-match text cells with Excel's wildcards — `*`
 (any run), `?` (one character), `~` to escape either — case-insensitively, in
-a bare pattern (`COUNTIF(range, "tw*")`) and in the `=`/`<>` forms. Only text
-cells can match a pattern; the relational operators compare literally.
+a bare pattern (`COUNTIF(range, "tw*")`) and in the `=`/`<>` forms. A tilde
+that escapes a wildcard makes the text a pattern too, so `COUNTIF(range,
+"tw~*")` counts the cells holding the literal text `tw*`. Only text cells can
+match a pattern; the relational operators compare literally.
 
 | Case | Excel | Here |
 |---|---|---|
