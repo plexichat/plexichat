@@ -42,6 +42,38 @@ from .repository import (
 class VoiceCallManager(BaseManager):
     """Manager for voice-call domain logic and linked artifacts."""
 
+    # Fragments of error messages that signal a TRANSIENT database condition
+    # (pool exhaustion under burst load, SQLite lock contention, brief
+    # connect timeouts) rather than an authoritative answer. A membership
+    # lookup that hits one of these is retried instead of being treated as
+    # "nobody is in the channel": an empty roster is a subset of every
+    # consent set, so a false-empty read both rejects live members with a
+    # bogus "not currently in voice channel" error AND can fail recording
+    # OPEN (unanimity trivially holds over an empty set).
+    _TRANSIENT_DB_ERROR_FRAGMENTS = (
+        "pool exhausted",
+        "no available connections",
+        "database is locked",
+        "database table is locked",
+        "database is busy",
+        "connection timeout",
+        "timed out",
+        "timeout",
+        "busy",
+        "locked",
+        "connection refused",
+        "connection reset",
+        "connection closed",
+        "broken pipe",
+        "lost connection",
+        "no connection",
+    )
+
+    # How many times a membership lookup retries a transient failure, and
+    # the base backoff between attempts (exponential with jitter).
+    _ROSTER_LOOKUP_ATTEMPTS = 6
+    _ROSTER_LOOKUP_BACKOFF_BASE_S = 0.005
+
     def __init__(
         self,
         db,
@@ -302,22 +334,59 @@ class VoiceCallManager(BaseManager):
             raise ValueError(f"Voice call {call.id} has no channel ID")
         return call.channel_id
 
+    @classmethod
+    def _is_transient_db_error(cls, exc: BaseException) -> bool:
+        """True when ``exc`` looks like a transient DB condition worth retrying."""
+        err = str(exc).lower()
+        if type(exc).__name__ == "TimeoutError":
+            return True
+        return any(fragment in err for fragment in cls._TRANSIENT_DB_ERROR_FRAGMENTS)
+
+    def _lookup_participant_ids_strict(
+        self, channel_id: SnowflakeID
+    ) -> Optional[set[int]]:
+        """Return the live roster, or ``None`` when it could not be determined.
+
+        Transient failures (pool exhaustion, lock contention, timeouts) are
+        retried with backoff so a burst of concurrent joins/consents never
+        observes a false-empty channel. When the roster is still unreadable
+        after all attempts (or a non-transient error occurs), ``None`` is
+        returned so callers can fail CLOSED — never treat an unknown roster
+        as an empty one.
+        """
+        last_error: Optional[BaseException] = None
+        for attempt in range(self._ROSTER_LOOKUP_ATTEMPTS):
+            try:
+                return set(get_channel_voice_user_ids(self._db, channel_id))
+            except Exception as exc:
+                last_error = exc
+                if not self._is_transient_db_error(exc):
+                    break
+                if attempt < self._ROSTER_LOOKUP_ATTEMPTS - 1:
+                    time.sleep(
+                        self._ROSTER_LOOKUP_BACKOFF_BASE_S * (2**attempt)
+                        + random.uniform(0, self._ROSTER_LOOKUP_BACKOFF_BASE_S)
+                    )
+        logger.warning(
+            "voice_call participant lookup failed for channel %s: %s",
+            channel_id,
+            last_error,
+        )
+        return None
+
     def _current_participant_ids(self, channel_id: SnowflakeID) -> set[int]:
         """Return the users currently present in the voice channel.
 
         ``voice_states`` is the authoritative live-membership source. The
         historical ``participant_count`` on ``voice_calls`` is intentionally
         retained for call analytics and must not be used as a consent roster.
+
+        An unreadable roster degrades to an empty set here (historical
+        behaviour for snapshots and analytics); consent/recording decisions
+        must use :meth:`_lookup_participant_ids_strict` and fail closed.
         """
-        try:
-            return set(get_channel_voice_user_ids(self._db, channel_id))
-        except Exception as exc:
-            logger.warning(
-                "voice_call participant lookup failed for channel %s: %s",
-                channel_id,
-                exc,
-            )
-            return set()
+        result = self._lookup_participant_ids_strict(channel_id)
+        return result if result is not None else set()
 
     def _merge_participant_roster(self, call: VoiceCall, ids: set) -> None:
         """Persist the union of ``ids`` into the call artifact's roster.
@@ -417,13 +486,18 @@ class VoiceCallManager(BaseManager):
         # A newly joined participant has not consented yet.  End the current
         # recording segment immediately; a later consent event may start a new
         # segment once every currently known participant has agreed.
-        current_ids = self._current_participant_ids(self._require_channel_id(updated))
+        # Fail CLOSED: when the roster is unreadable we cannot prove the
+        # newcomer consented, so a new membership stops the segment rather
+        # than letting it run over a possibly unconsented participant.
+        roster_ids = self._lookup_participant_ids_strict(
+            self._require_channel_id(updated)
+        )
         consented_ids = {int(value) for value in updated.consented_participants}
         if (
             is_new_membership
             and updated.recorded
             and self._recording_manager is not None
-            and not current_ids.issubset(consented_ids)
+            and (roster_ids is None or not roster_ids.issubset(consented_ids))
         ):
             self._recording_manager.stop_call_recording(updated.id)
         return updated
@@ -508,10 +582,22 @@ class VoiceCallManager(BaseManager):
         # Start when consent transitions from incomplete to complete. A
         # duplicate consent must be idempotent and must not restart a live
         # recording segment.
-        current_ids = self._current_participant_ids(self._require_channel_id(updated))
+        # Fail CLOSED: an unreadable roster cannot prove unanimity (an empty
+        # set is trivially a "subset" of every consent set), so no recording
+        # is started. The consent itself is already persisted above; a later
+        # consent event re-evaluates once the roster is readable again.
+        roster_ids = self._lookup_participant_ids_strict(
+            self._require_channel_id(updated)
+        )
+        if roster_ids is None:
+            logger.warning(
+                f"voice_call consent recorded but roster unreadable "
+                f"(call {updated.id}): recording not started"
+            )
+            return updated
         after_consented_ids = {int(value) for value in updated.consented_participants}
-        was_complete = current_ids.issubset(before_consented_ids)
-        is_complete = current_ids.issubset(after_consented_ids)
+        was_complete = roster_ids.issubset(before_consented_ids)
+        is_complete = roster_ids.issubset(after_consented_ids)
         if (
             updated.recorded
             and self._recording_manager is not None
@@ -603,10 +689,29 @@ class VoiceCallManager(BaseManager):
         # complete set (a user who never consented is already the reason.
         # recording is not running); this mirrors the append's transition test
         # and keeps a duplicate revoke from stopping an unrelated segment.
-        current_ids = self._current_participant_ids(self._require_channel_id(updated))
+        # Fail CLOSED: when the roster is unreadable an actual withdrawal
+        # (the user was in the consent set before) stops the segment — a
+        # possibly-withdrawn participant must never stay recorded. A no-op
+        # duplicate revoke stays a no-op even then.
+        roster_ids = self._lookup_participant_ids_strict(
+            self._require_channel_id(updated)
+        )
         after_consented_ids = {int(value) for value in updated.consented_participants}
-        was_complete = current_ids.issubset(before_consented_ids)
-        is_complete = current_ids.issubset(after_consented_ids)
+        actually_withdrew = normalized_user_id in before_consented_ids
+        if roster_ids is None:
+            if (
+                updated.recorded
+                and self._recording_manager is not None
+                and actually_withdrew
+            ):
+                logger.warning(
+                    f"voice_call consent withdrawn but roster unreadable "
+                    f"(call {updated.id}): stopping recording"
+                )
+                self._recording_manager.stop_call_recording(updated.id)
+            return updated
+        was_complete = roster_ids.issubset(before_consented_ids)
+        is_complete = roster_ids.issubset(after_consented_ids)
         if (
             updated.recorded
             and self._recording_manager is not None

@@ -10,6 +10,23 @@ from src.utils import encryption
 import utils.config as config
 
 
+# Standard per-test SQLite pool: tiny per-connection caches (the production
+# defaults reserve ~32MB page cache + 256MB mmap PER connection; with
+# thousands of per-test pools that fills RAM/swap) but a generous
+# max_connections — API/route tests and the threaded race tests exercise
+# concurrent connections (test client + app + rate limiter + ...), so a
+# small max makes them exhaust the pool.
+_TEST_DB_POOL_CONFIG = {
+    "min_connections": 2,
+    "max_connections": 16,
+    "connect_timeout": 10,
+    "cache_size_kb": -1024,
+    "mmap_size": 1048576,
+    "journal_size_limit": 1048576,
+    "temp_store": "MEMORY",
+}
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_config(tmpdir_factory):
     """Initialize global configuration for tests (already done at import time)."""
@@ -98,20 +115,14 @@ def migrated_db_template():
     # tiny caches + a 1MB WAL cap instead. Keep a generous max_connections:
     # API/route tests exercise concurrent connections (test client + app +
     # rate limiter + ...), so a small max makes them exhaust the pool.
+    # (Values live in _TEST_DB_POOL_CONFIG so the per-test fixture below
+    # can re-apply them to the reused singleton.)
     config.set(
         "database",
         {
             "type": "sqlite",
             "path": template_path,
-            "connection_pool": {
-                "min_connections": 2,
-                "max_connections": 16,
-                "connect_timeout": 10,
-                "cache_size_kb": -1024,
-                "mmap_size": 1048576,
-                "journal_size_limit": 1048576,
-                "temp_store": "MEMORY",
-            },
+            "connection_pool": dict(_TEST_DB_POOL_CONFIG),
         },
     )
 
@@ -280,15 +291,7 @@ def db(setup_config, migrated_db_template):
     _config_loader.config["database"] = {
         "type": "sqlite",
         "path": temp_db.name,
-        "connection_pool": {
-            "min_connections": 2,
-            "max_connections": 16,
-            "connect_timeout": 10,
-            "cache_size_kb": -1024,
-            "mmap_size": 1048576,
-            "journal_size_limit": 1048576,
-            "temp_store": "MEMORY",
-        },
+        "connection_pool": dict(_TEST_DB_POOL_CONFIG),
     }
     _config_loader._invalidate_cache()
 
@@ -320,8 +323,17 @@ def db(setup_config, migrated_db_template):
     if db.engine is not None:
         try:
             db.config["path"] = temp_db.name
+            # ``connect()`` sizes the rebuilt pool from the singleton's OWN
+            # config dict — not the loader dict swapped above. A prior test
+            # in this worker that rebuilt the singleton with a smaller pool
+            # (e.g. pool-sizing tests using max_connections=5) would
+            # otherwise leak that size into every later test, starving
+            # concurrent tests with "connection pool exhausted" failures.
+            # Force the standard per-test pool config back on every test.
+            db.config["connection_pool"] = dict(_TEST_DB_POOL_CONFIG)
             if isinstance(db.engine.config, dict):
                 db.engine.config["path"] = temp_db.name
+                db.engine.config["connection_pool"] = dict(_TEST_DB_POOL_CONFIG)
         except Exception:
             pass
     if getattr(db, "_local", None) is not None:
