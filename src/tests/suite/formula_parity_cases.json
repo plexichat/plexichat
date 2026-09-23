@@ -3693,6 +3693,158 @@
     {
       "formula": "DATEVALUE(\"  2024-01-15  \")",
       "expected": "number:45306"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIF(A1:A3,A1,C1:C3)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "AVERAGEIF(A1:A3,A1,C1:C3)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "COUNTIFS(A1:A3,A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIFS(C1:C3,A1:A3,A1)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "AVERAGEIFS(C1:C3,A1:A3,A1)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "LARGE(A1:A3,A1)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "LARGE(A1:A3,B6)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "LARGE(A1:A3,Z1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "LARGE(A1:A3,A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SMALL(A1:A3,A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "RANK(A1,A1:A3)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "RANK(A1,A1:A3,1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "RANK(A6,A1:A3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "PERCENTILE(A1:A3,A1)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "QUARTILE(A1:A3,A1)",
+      "expected": "number:1.5"
+    },
+    {
+      "formula": "TRIMMEAN(A1:A3,I1)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "TRIMMEAN(A1:A3,A6)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A3,A1,A6)",
+      "expected": "number:0.1666667"
+    },
+    {
+      "formula": "STANDARDIZE(A1,1,2)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "FORECAST(A1,A1:A3,C1:C3)",
+      "expected": "number:0.10000000000000009"
+    },
+    {
+      "formula": "CORREL(A1:A3,B1:B3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "CORREL(D1:D3,A1:A3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "CORREL(A1:A3,F1:F3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "SLOPE(A1:A3,B1:B3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "SLOPE(A1:A3,F1:F3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "RSQ(A1:A3,D1:D3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "INTERCEPT(A1:A3,D1:D3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "STEYX(A1:A3,D1:D3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A3,1,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A3,1,0.5)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A3,1,1)",
+      "expected": "number:0.2"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A3,1,308)",
+      "expected": "number:0.16666666666666666"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A3,1,999)",
+      "expected": "number:0.16666666666666666"
+    },
+    {
+      "formula": "CHOOSE(A5,\"a\",\"b\",\"c\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SWITCH(A5,1,\"one\",\"d\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SWITCH(1,A5,\"x\",\"d\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SWITCH(1,1,\"x\",A5,\"d\")",
+      "expected": "text:x"
     }
   ]
 }

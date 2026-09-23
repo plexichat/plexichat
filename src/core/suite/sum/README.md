@@ -201,6 +201,14 @@ operators and the numeric functions apply the same whole-string rule, so
 `"2abc"+1` is `#VALUE!` while `"2"+1` is 3, and a decimal that overflows a
 double (`"1e999"+1`) is `#NUM!` rather than infinity.
 
+**A scalar or a criteria argument is read through its reference.** The range
+functions take their arguments apart — a rank, a quartile, a percent, a
+criteria — and read each one as a single value, so a reference in one of those
+slots is read out of the cell it names: `LARGE(A1:A3, A1)` is 3 and
+`COUNTIF(A1:A3, A1)` is 1. An error in the cell is the answer. The rule above —
+a referenced value is not coerced — is about the *range* slots; these are
+single values and read like a literal argument.
+
 **Criteria rank types.** `SUMIF`, `COUNTIF`, `AVERAGEIF` and their
 multi-criteria forms compare each cell against the criteria through Excel's
 sort order — number, then text, then `FALSE`, then `TRUE` — with text compared
@@ -280,6 +288,13 @@ spellings — and a value that names no date is `#VALUE!`. A bare number is not
 date text (`DATEVALUE(1)` is `#VALUE!`), and a day the month does not have
 (`DATEVALUE("2023-02-29")`) is rejected rather than rolled forward into March.
 `XNPV` reads its dates through the same list.
+
+**`PERCENTRANK`'s `significance`.** Excel rejects a significance below 1 with
+`#NUM!`, and the rank is rounded to that many digits. A double carries about
+15 significant digits, so a larger significance cannot round anything and the
+value comes back unrounded — `PERCENTRANK(A1:A3, 1, 999)` is the same as with
+308. Raising the rounding factor used to throw an `OverflowError` straight out
+of the evaluator.
 
 ### Known divergences from Excel
 
