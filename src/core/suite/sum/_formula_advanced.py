@@ -2177,6 +2177,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 error, significance = _read_number(sig_value)
                 if error is not None:
                     return error
+                # Excel rejects a significance below one outright.
+                if significance < 1:
+                    return NUM_ERROR
             numbers = _number_values(data)
             if not numbers:
                 return NUM_ERROR
@@ -2185,6 +2188,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             less_than = sum(1 for value in numbers if value < target)
             equal = sum(1 for value in numbers if value == target)
             rank = (less_than + 0.5 * equal) / len(numbers)
+            # A double carries ~15 significant digits and the rounding factor
+            # stops being representable past 1e308, so a larger significance
+            # returns the unrounded rank. Raising the exponentiation used to
+            # throw an OverflowError straight out of the evaluator.
+            if not math.isfinite(significance) or math.floor(significance) > 308:
+                return rank
             factor = 10.0 ** math.floor(significance)
             return round(rank * factor) / factor
         if name in ("CORREL", "RSQ", "SLOPE", "INTERCEPT", "FORECAST", "STEYX"):
