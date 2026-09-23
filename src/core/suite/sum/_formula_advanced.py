@@ -2766,7 +2766,16 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 cashflows.append(number)
             total = 0.0
             for index, cashflow in enumerate(cashflows):
-                total += cashflow / _pow_js(1 + rate, index + 1)
+                discount = _pow_js(1 + rate, index + 1)
+                # A rate of -1 makes the discount factor (1+rate)**n zero. That
+                # is a division by zero rather than an overflow, so it is
+                # #DIV/0! -- the answer the engine already gives the same zero
+                # denominator in MIRR -- and not the #NUM! an infinite result
+                # would earn. Dividing here used to raise ZeroDivisionError out
+                # of the engine instead.
+                if discount == 0:
+                    return DIV_ZERO
+                total += cashflow / discount
             return _finite(total)
         if name == "IRR":
             if len(values) < 1 or len(values) > 2:
@@ -2813,13 +2822,27 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if error is not None:
                 return error
             last = len(cashflows) - 1
-            if last <= 0:
+            # Excel needs a sign change for a rate to exist at all: at least one
+            # negative cash flow (something to discount back) and at least one
+            # positive one (something to compound forward). A lone value has
+            # neither, and MIRR is #DIV/0! for that as well as for an all-one-sign
+            # series; it used to read the sign by testing the two sums, which let
+            # a single negative value fall through to the -1 a bare 0/0 makes.
+            has_negative = any(cashflow < 0 for cashflow in cashflows)
+            has_positive = any(cashflow > 0 for cashflow in cashflows)
+            if last <= 0 or not (has_negative and has_positive):
                 return DIV_ZERO
             pv_negative = 0.0
             fv_positive = 0.0
             for t, cashflow in enumerate(cashflows):
                 if cashflow < 0:
-                    pv_negative += cashflow / _pow_js(1 + finance_rate, t)
+                    discount = _pow_js(1 + finance_rate, t)
+                    # A finance rate of -1 zeroes the discount factor of every
+                    # period after the first, which is #DIV/0! and not the
+                    # ZeroDivisionError this division used to raise.
+                    if discount == 0:
+                        return DIV_ZERO
+                    pv_negative += cashflow / discount
                 else:
                     fv_positive += cashflow * _pow_js(1 + reinvest_rate, last - t)
             if pv_negative == 0:
@@ -2848,7 +2871,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             start = serials[0]
             total = 0.0
             for amount, serial in zip(amounts, serials):
-                total += amount / _pow_js(1 + rate, (serial - start) / 365)
+                discount = _pow_js(1 + rate, (serial - start) / 365)
+                # As in NPV, a rate of -1 zeroes the discount factor of every
+                # period after the first, which is #DIV/0! and not #NUM!.
+                if discount == 0:
+                    return DIV_ZERO
+                total += amount / discount
             return _finite(total)
         if name == "SLN":
             if len(values) != 3:
