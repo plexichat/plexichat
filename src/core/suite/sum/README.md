@@ -170,7 +170,11 @@ machine-checked statement of that: every case is evaluated against both engines
 from the identical file, so a semantic change in one engine and not the other
 fails a test instead of drifting silently until someone notices a different
 answer on screen. The client repository carries a byte-identical copy of the
-same file.
+same file, and `src/tests/suite/test_sum_cross_engine.py` holds the two
+together from three directions: it generates a formula matrix over every
+operator and adopted function family and evaluates it in both engines, it runs
+every case in the table through both engines and compares the answers with each
+other, and it checks the two copies of the table are still byte-identical.
 
 Two rules explain most of the behaviour:
 
@@ -256,6 +260,26 @@ unary operators, so `--1` is `-(-1)` and `+-1` is `-1`, making `=--1` the
 number 1. Unary minus converts its operand to a number (`-"2"` is -2,
 `-TRUE` is -1), while unary plus is the identity, as in Excel: `+"2"` is the
 text `"2"` and `+TRUE` is `TRUE`.
+
+**A zero discount factor is `#DIV/0!`.** `NPV` and `XNPV` divide by
+`(1 + rate)` raised to the period, so a rate of -1 makes the denominator zero.
+Excel treats that as the division by zero it is, so the answer is `#DIV/0!`
+and not the `#NUM!` an infinite result earns; `MIRR`'s discounting follows the
+same rule. Dividing here used to raise out of the evaluator instead of
+answering an error at all.
+
+**`MIRR` needs a sign change.** Excel has no rate to solve for unless the cash
+flows hold at least one negative value (something to discount back) and at
+least one positive one (something to compound forward), so a series that is all
+one sign — a single value included — is `#DIV/0!` rather than the -1 a bare
+0/0 produces.
+
+**`DATEVALUE` reads date text.** The argument goes through one shared list of
+unambiguous shapes — ISO first, then the common US and day-month-name
+spellings — and a value that names no date is `#VALUE!`. A bare number is not
+date text (`DATEVALUE(1)` is `#VALUE!`), and a day the month does not have
+(`DATEVALUE("2023-02-29")`) is rejected rather than rolled forward into March.
+`XNPV` reads its dates through the same list.
 
 ### Known divergences from Excel
 

@@ -13,6 +13,7 @@ until someone notices a different answer on screen.
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -28,7 +29,7 @@ TABLE = json.loads(TABLE_PATH.read_text())
 # stay byte-identical" from a comment into a test: edit either copy without
 # mirroring it and the digest below stops matching, which fails *here* rather
 # than leaving the two engines silently asserting different contracts.
-TABLE_SHA256 = "a6dbcc9ddd186943d3822347d9ae8054a55ec2f2eb9db1686c6468ebbf4b9709"
+TABLE_SHA256 = "199b94d9a7573254efcc48fdc01f951317c2fa326b57b94b1d660045914c5267"
 
 
 def test_case_table_matches_the_shared_digest():
@@ -37,6 +38,42 @@ def test_case_table_matches_the_shared_digest():
         "formula_parity_cases.json changed. Copy it byte-for-byte to "
         "plexichat-client/tests/unit/data/formula-parity-cases.json "
         f"and update TABLE_SHA256 to {digest} in both parity tests."
+    )
+
+
+# The client ships its copy inside its own repository, so proving the two files
+# are still identical needs the sibling checkout. Without one the digest above
+# still holds each engine to the copy it ships; this closes the remaining gap,
+# where a copy is edited and the other is mirrored wrongly enough to keep both
+# digests self-consistent.
+_CLIENT_TABLE = Path("tests/unit/data/formula-parity-cases.json")
+
+
+def _client_table_path() -> Optional[Path]:
+    """The client's copy: PLEXICHAT_CLIENT_PATH, or a sibling checkout."""
+    roots = []
+    configured = os.environ.get("PLEXICHAT_CLIENT_PATH")
+    if configured:
+        roots.append(Path(configured))
+    roots.append(Path(__file__).resolve().parents[4] / "plexichat-client")
+    for root in roots:
+        candidate = root / _CLIENT_TABLE
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def test_the_client_copy_of_the_table_is_byte_identical():
+    client_table = _client_table_path()
+    if client_table is None:
+        pytest.skip(
+            "the client copy of the case table lives in the plexichat-client "
+            "checkout; set PLEXICHAT_CLIENT_PATH when the two are not siblings"
+        )
+    assert client_table.read_bytes() == TABLE_PATH.read_bytes(), (
+        f"the two copies of the case table have drifted apart: {TABLE_PATH} and "
+        f"{client_table}. Copy one over the other and update TABLE_SHA256 in "
+        "both parity tests."
     )
 
 
@@ -85,6 +122,19 @@ def _expected(raw: str) -> Any:
     raise AssertionError(f"unknown expectation {raw!r}")
 
 
+def _kind_of(value: Any) -> str:
+    """The table's name for the kind of value an engine answered with."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if value is None:
+        return "blank"
+    if isinstance(value, str) and value.startswith("#"):
+        return "error"
+    return "text"
+
+
 @pytest.mark.parametrize(
     "case", TABLE["cases"], ids=[case["formula"] for case in TABLE["cases"]]
 )
@@ -93,10 +143,17 @@ def test_engine_matches_the_shared_case_table(case):
         TABLE["sheet"], 60, 60, case["formula"]
     )
     expected = _expected(case["expected"])
+    # The kinds have to match before the values do: Python's own True == 1 would
+    # let a logical answer pass a `number:1` case and False == 0 would let it
+    # pass `number:0`, which is the very confusion the typed expectations (and
+    # the client's strict comparison) exist to catch. So the case's own kind is
+    # asserted first, and the comparison below only ever sees matching kinds.
+    assert _kind_of(result) == case["expected"].partition(":")[0], (
+        f"{case['formula']} -> {result!r}, expected {case['expected']!r}"
+    )
     if isinstance(expected, float):
         # A few cases are irrational (PI, RADIANS); the table stores them
-        # rounded, so compare with a tolerance and require a real number.
-        assert isinstance(result, (int, float)) and not isinstance(result, bool)
+        # rounded, so compare with a tolerance.
         assert result == pytest.approx(expected, abs=1e-9)
         return
     assert result == expected
