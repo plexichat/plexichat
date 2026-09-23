@@ -2,16 +2,23 @@
 
 The shared case table pins the answers both engines must give, but only for the
 cases somebody thought to write down. This test covers the other half of the
-contract: it builds a systematic matrix of comparisons, criteria and lookups,
-evaluates every formula in the server engine *and* in the client engine, and
-fails when the two disagree -- so a semantic change on one side shows up as a
-divergence instead of waiting for a case to be pinned.
+contract: it builds a systematic matrix -- every comparison and arithmetic
+operation over an operand alphabet, the criteria functions over four ranges,
+the text and date functions over their own operands, and the lookups over four
+vectors -- evaluates every formula in the server engine *and* in the client
+engine, and fails when the two disagree. A semantic change on one side shows up
+as a divergence instead of waiting for a case to be pinned.
 
 The client engine lives in the other repository, so the formulas are handed to
 node (see ``cross_engine_probe.mjs``). Without a client checkout or node the
 test skips: the two engines are separate checkouts, and the test says so rather
 than pretending it ran. Point ``PLEXICHAT_CLIENT_PATH`` at the client when the
 two are not siblings.
+
+This engine implements a deliberate subset of the client's functions, so the
+matrix is grouped by function and a group whose name this engine does not know
+is left out (see ``_missing``); the groups it leaves out are pinned, so losing
+a function shows up here rather than quietly shrinking the matrix.
 
 Nothing here needs pinning by hand: a disagreement prints the formula and both
 answers, and a legitimate difference belongs in the shared case table, where
@@ -22,6 +29,7 @@ import json
 import os
 import shutil
 import subprocess
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -57,6 +65,113 @@ _OPERANDS = [
 ]
 _OPERATORS = ["=", "<>", "<", ">", "<=", ">="]
 
+# The numeric alphabet the arithmetic operators cross: whole numbers, a
+# fraction, text that reads as a number and text that does not, logicals, two
+# cells and a reference to an error cell.
+_NUMBERS = [
+    "0",
+    "1",
+    "2",
+    "-1",
+    "1.5",
+    '"2"',
+    '"2abc"',
+    "TRUE",
+    "FALSE",
+    "A1",
+    "B6",
+    "Z1",
+]
+_ARITHMETIC = ["+", "-", "*", "/", "^"]
+
+# One call per text function, run over the same operands. The operators are
+# here too: `&` concatenates, and the nested call exercises composition.
+_TEXT_OPERANDS = [
+    '"a"',
+    '"A"',
+    '"abc"',
+    '"AbC"',
+    '" a "',
+    '"2"',
+    '"2abc"',
+    '""',
+    '"1.5"',
+    "A1",
+    "B1",
+    "D1",
+    "F1",
+    "F2",
+    "K1",
+    "L1",
+]
+_TEXT_CALLS = [
+    ("LEN", "LEN({x})"),
+    ("UPPER", "UPPER({x})"),
+    ("LOWER", "LOWER({x})"),
+    ("TRIM", "TRIM({x})"),
+    ("CLEAN", "CLEAN({x})"),
+    ("PROPER", "PROPER({x})"),
+    ("LEFT", "LEFT({x},2)"),
+    ("RIGHT", "RIGHT({x},2)"),
+    ("MID", "MID({x},2,3)"),
+    ("FIND", 'FIND("a",{x})'),
+    ("FIND uppercase", 'FIND("A",{x})'),
+    ("SEARCH", 'SEARCH("a",{x})'),
+    ("SEARCH uppercase", 'SEARCH("A",{x})'),
+    ("SUBSTITUTE", 'SUBSTITUTE({x},"a","b")'),
+    ("REPLACE", 'REPLACE({x},2,2,"z")'),
+    ("REPT", "REPT({x},2)"),
+    ("EXACT", 'EXACT({x},"A")'),
+    ("VALUE", "VALUE({x})"),
+    ("NUMBERVALUE", "NUMBERVALUE({x})"),
+    ("TEXT", 'TEXT({x},"0.00")'),
+    ("CHAR", "CHAR(65)"),
+    ("CODE", "CODE({x})"),
+    ("CONCATENATE", 'CONCATENATE({x},"!")'),
+    ("&", '{x}&"!"'),
+    ("T", "T({x})"),
+    ("composed", "LEN(TRIM(CLEAN({x})))"),
+]
+
+# The fixture's date serials, a couple of literals, and text that reads as a
+# date. TODAY and NOW are deliberately absent: they read the clock, so the two
+# engines cannot be compared on them.
+_DATE_OPERANDS = ["H1", "H2", "H6", "0", "39448", "-1", '"2023-01-01"']
+_DATE_CALLS = [
+    ("YEAR", "YEAR({x})"),
+    ("MONTH", "MONTH({x})"),
+    ("DAY", "DAY({x})"),
+    ("HOUR", "HOUR({x})"),
+    ("MINUTE", "MINUTE({x})"),
+    ("SECOND", "SECOND({x})"),
+    ("WEEKDAY", "WEEKDAY({x})"),
+    ("WEEKDAY,2", "WEEKDAY({x},2)"),
+    ("WEEKNUM", "WEEKNUM({x})"),
+    ("WEEKNUM,2", "WEEKNUM({x},2)"),
+    ("EOMONTH", "EOMONTH({x},0)"),
+    ("EOMONTH,+1", "EOMONTH({x},1)"),
+    ("EDATE", "EDATE({x},1)"),
+    ("EDATE,-1", "EDATE({x},-1)"),
+    ("NETWORKDAYS", "NETWORKDAYS({x},H2)"),
+    ("WORKDAY", "WORKDAY({x},10)"),
+]
+_DATE_EXTRAS = [
+    "DATE(2024,2,29)",
+    "DATE(2024,13,1)",
+    "DATE(2023,2,29)",
+    "DATE(0,1,1)",
+    "DATE(9999,12,31)",
+    "TIME(25,0,0)",
+    "TIME(1,2,3)",
+    "TIME(-1,0,0)",
+    "DATE(2024,3,1)-DATE(2024,2,1)",
+    'DATEVALUE("2023-01-01")',
+    'DATEVALUE("12/31/2023")',
+    'DATEVALUE("nope")',
+    "H1+1",
+    "H2-H1",
+]
+
 # The criteria alphabet crossed with four ranges, including the cells holding a
 # literal `*`, `?` and `~` that the escape rule is about.
 _CRITERIA_PAIRS = [
@@ -78,31 +193,90 @@ _CRITERIA = [
     '""',
     "TRUE",
 ]
+_CRITERIA_CALLS = [
+    ("COUNTIF", "COUNTIF({r},{c})"),
+    ("SUMIF", "SUMIF({r},{c},{s})"),
+    ("AVERAGEIF", "AVERAGEIF({r},{c},{s})"),
+]
 
 # Lookup keys -- text, a number, a logical and patterns -- against a text
-# vector, a numeric vector and the wildcard cells, exact and approximate.
+# vector, a numeric vector and the wildcard cells. LOOKUP is here to hold the
+# two engines together on the approximate form, which does not take wildcards.
 _LOOKUP_KEYS = ["1", "2", '"a"', '"tw*"', '"tw~*"', '"~*"', '"ap*"', "TRUE"]
 _LOOKUP_RANGES = ["D1:D3", "B1:B3", "A1:A3", "L1:L4"]
+_LOOKUP_CALLS = [
+    ("MATCH exact", "MATCH({k},{r},0)"),
+    ("MATCH approx", "MATCH({k},{r},1)"),
+    ("VLOOKUP exact", "VLOOKUP({k},{r},1,FALSE)"),
+    ("VLOOKUP approx", "VLOOKUP({k},{r},1,TRUE)"),
+    ("LOOKUP", "LOOKUP({k},{r})"),
+]
 
 
-def _formulas() -> List[str]:
-    """Build the matrix: comparisons, then criteria calls, then lookups."""
-    formulas: List[str] = []
-    for left in _OPERANDS:
-        for right in _OPERANDS:
-            for operator in _OPERATORS:
-                formulas.append(f"{left}{operator}{right}")
-    for criteria in _CRITERIA:
-        for criteria_range, sum_range in _CRITERIA_PAIRS:
-            formulas.append(f"COUNTIF({criteria_range},{criteria})")
-            formulas.append(f"SUMIF({criteria_range},{criteria},{sum_range})")
-            formulas.append(f"AVERAGEIF({criteria_range},{criteria},{sum_range})")
-    for key in _LOOKUP_KEYS:
-        for lookup_range in _LOOKUP_RANGES:
-            formulas.append(f"MATCH({key},{lookup_range},0)")
-            formulas.append(f"MATCH({key},{lookup_range},1)")
-            formulas.append(f"VLOOKUP({key},{lookup_range},1,FALSE)")
-    return formulas
+def _product(alphabet: str, length: int) -> List[Tuple[str, ...]]:
+    """All ``length``-tuples over ``alphabet``, for the sign combinations."""
+    if length == 0:
+        return [()]
+    return [
+        (char,) + tail for char in alphabet for tail in _product(alphabet, length - 1)
+    ]
+
+
+# Groups the matrix cannot cover because this engine does not implement the
+# function at all: the client's CHAR/CODE pair. Everything else in ``_groups``
+# is generated and compared.
+_EXPECTED_MISSING = ("text CHAR", "text CODE")
+
+
+def _groups() -> "OrderedDict[str, List[str]]":
+    """The matrix, grouped by operator or function.
+
+    Grouping is what lets one call decide whether a function is worth
+    generating: the engine is a subset, so a name it does not implement would
+    answer #NAME? on every call and bury the real divergences.
+    """
+    groups: "OrderedDict[str, List[str]]" = OrderedDict()
+    for operator in _OPERATORS:
+        groups[f"compare {operator}"] = [
+            f"{left}{operator}{right}" for left in _OPERANDS for right in _OPERANDS
+        ]
+    for operator in _ARITHMETIC:
+        groups[f"arithmetic {operator}"] = [
+            f"{left}{operator}{right}" for left in _NUMBERS for right in _NUMBERS
+        ]
+    # Unary signs nest (``--1`` is ``-(-1)``), so cross each operand with sign
+    # strings of one to three characters rather than only the single signs;
+    # chained signs used to parse as a binary operator with no left operand on
+    # the client, which surfaced as #VALUE!.
+    sign_strings = [
+        "".join(sign) for length in (1, 2, 3) for sign in _product("-+", length)
+    ]
+    groups["unary sign"] = [
+        f"{sign}{number}" for sign in sign_strings for number in _NUMBERS
+    ] + ["-(1)", "+A1"]
+    groups["percent"] = [f"{number}%" for number in _NUMBERS] + ["1%+1", "10%*2"]
+    for name, template in _TEXT_CALLS:
+        groups[f"text {name}"] = [
+            template.format(x=operand) for operand in _TEXT_OPERANDS
+        ]
+    for name, template in _DATE_CALLS:
+        groups[f"date {name}"] = [
+            template.format(x=operand) for operand in _DATE_OPERANDS
+        ]
+    groups["date arithmetic"] = list(_DATE_EXTRAS)
+    for name, template in _CRITERIA_CALLS:
+        groups[f"criteria {name}"] = [
+            template.format(r=criteria_range, c=criteria, s=sum_range)
+            for criteria in _CRITERIA
+            for criteria_range, sum_range in _CRITERIA_PAIRS
+        ]
+    for name, template in _LOOKUP_CALLS:
+        groups[f"lookup {name}"] = [
+            template.format(k=key, r=lookup_range)
+            for key in _LOOKUP_KEYS
+            for lookup_range in _LOOKUP_RANGES
+        ]
+    return groups
 
 
 def _parse_ref(ref: str) -> Tuple[int, int]:
@@ -150,6 +324,40 @@ def _typed(value: Any) -> Dict[str, Any]:
     if isinstance(value, str) and value.startswith("#"):
         return {"kind": "error", "value": value}
     return {"kind": "text", "value": value}
+
+
+def _evaluate(formula: str) -> Dict[str, Any]:
+    """Evaluate one formula in this engine."""
+    return _typed(
+        FormulaEvaluator(_resolver).evaluate_cell(TABLE["sheet"], 60, 60, formula)
+    )
+
+
+def _missing() -> Dict[str, str]:
+    """Groups this engine does not implement, with the call that shows it.
+
+    The engine is a deliberate subset of the client's, so a function it does not
+    implement would answer #NAME? to every call and bury the real divergences.
+    The group's first call is the probe: an unknown *name* is what produces
+    #NAME?, where a wrong argument or a bad value produces something else.
+    """
+    return {
+        name: calls[0]
+        for name, calls in _groups().items()
+        if (lambda result: result["kind"] == "error" and result["value"] == "#NAME?")(
+            _evaluate(calls[0])
+        )
+    }
+
+
+def _formulas() -> List[str]:
+    missing = _missing()
+    return [
+        formula
+        for name, calls in _groups().items()
+        if name not in missing
+        for formula in calls
+    ]
 
 
 def _same(ours: Dict[str, Any], theirs: Dict[str, Any]) -> bool:
@@ -231,12 +439,7 @@ def test_engines_agree_on_a_generated_matrix():
         )
 
     formulas = _formulas()
-    ours = {
-        formula: _typed(
-            FormulaEvaluator(_resolver).evaluate_cell(TABLE["sheet"], 60, 60, formula)
-        )
-        for formula in formulas
-    }
+    ours = {formula: _evaluate(formula) for formula in formulas}
     theirs = _client_results(node, engine, formulas)
     divergences = [
         (formula, ours[formula], theirs[index])
@@ -244,3 +447,12 @@ def test_engines_agree_on_a_generated_matrix():
         if not _same(ours[formula], theirs[index])
     ]
     assert not divergences, _report(divergences, len(formulas))
+
+
+def test_the_groups_this_engine_leaves_out_are_the_known_subset():
+    """Keep the matrix honest: a newly missing function fails here.
+
+    Every entry below is a function or operator the client engine has and this
+    one deliberately does not, so the differential matrix above cannot cover it.
+    """
+    assert set(_missing()) == set(_EXPECTED_MISSING)
