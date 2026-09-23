@@ -354,6 +354,73 @@ def test_the_combinatorics_adopted_from_the_client_engine():
     assert _eval("MULTINOMIAL(170,1)") == NUM_ERROR
 
 
+def test_the_engineering_functions_adopted_from_the_client_engine():
+    """The base conversions, bitwise operations and special functions."""
+    assert _eval('BIN2DEC("101")') == 5
+    assert _eval('BIN2DEC("1111111111")') == -1
+    assert _eval('BIN2DEC("2")') == NUM_ERROR
+    assert _eval('BIN2DEC("10101010101")') == NUM_ERROR
+    assert _eval("DEC2BIN(5)") == "101"
+    assert _eval("DEC2BIN(5,8)") == "00000101"
+    assert _eval("DEC2BIN(-5)") == "1111111011"
+    assert _eval("DEC2BIN(512)") == NUM_ERROR
+    assert _eval("DEC2BIN(5,2)") == NUM_ERROR
+    assert _eval('BIN2HEX("1111")') == "F"
+    assert _eval('BIN2HEX("1111111111")') == "FFFFFFFFFF"
+    assert _eval('BIN2OCT("101")') == "5"
+    assert _eval('HEX2DEC("FF")') == 255
+    assert _eval('HEX2DEC("FFFFFFFFFF")') == -1
+    assert _eval('HEX2DEC("GG")') == NUM_ERROR
+    assert _eval('HEX2BIN("F")') == "1111"
+    assert _eval('HEX2BIN("FFFFFFFF00")') == NUM_ERROR
+    assert _eval("DEC2HEX(255)") == "FF"
+    assert _eval("DEC2HEX(-1)") == "FFFFFFFFFF"
+    assert _eval("DEC2HEX(549755813888)") == NUM_ERROR
+    assert _eval('HEX2OCT("FF")') == "377"
+    assert _eval("DEC2OCT(8)") == "10"
+    assert _eval("DEC2OCT(-1)") == "7777777777"
+    assert _eval('OCT2DEC("17")') == 15
+    assert _eval('OCT2DEC("7777777777")') == -1
+    assert _eval('OCT2BIN("17")') == "1111"
+    assert _eval('OCT2HEX("17")') == "F"
+    assert _eval('OCT2HEX("7777777777")') == "FFFFFFFFFF"
+    # The decimal forms take no padding: the extra argument is accepted and
+    # never coerced, so even text reads past it.
+    assert _eval('BIN2DEC("101","abc")') == 5
+    assert _eval('HEX2DEC("FF","abc")') == 255
+    assert _eval("BITAND(5,3)") == 1
+    assert _eval("BITOR(5,3)") == 7
+    assert _eval("BITXOR(5,3)") == 6
+    assert _eval("BITAND(-1,3)") == NUM_ERROR
+    assert _eval("BITLSHIFT(4,2)") == 16
+    assert _eval("BITRSHIFT(16,2)") == 4
+    assert _eval("BITLSHIFT(5,60)") == NUM_ERROR
+    assert _eval("DELTA(5,5)") == 1
+    assert _eval("DELTA(5,4)") == 0
+    assert _eval("DELTA(5)") == 0
+    assert _eval("GESTEP(5,4)") == 1
+    assert _eval("GESTEP(4,5)") == 0
+    assert _eval("GESTEP(5)") == 1
+    # ERF runs Abramowitz & Stegun 7.1.26, as the client does.
+    assert _close(_eval("ERF(1)"), 0.8427006897475899)
+    assert _close(_eval("ERFC(1)"), 0.15729931025241006)
+    assert _close(_eval("ERF(0,1)"), 0.84270068874759)
+    assert _close(_eval("BESSELJ(1.5,0)"), 0.5118276717359181)
+    assert _eval("BESSELJ(0,0)") == 1
+    assert _eval("BESSELJ(1.5,-1)") == NUM_ERROR
+    assert _close(_eval("BESSELY(1.5,0)"), 0.3824489237977588)
+    assert _eval("BESSELY(-1,0)") == NUM_ERROR
+    assert _close(_eval('CONVERT(1,"m","cm")'), 100)
+    assert _close(_eval('CONVERT(1,"kg","g")'), 1000)
+    assert _close(_eval('CONVERT(32,"F","C")'), 0)
+    assert _close(_eval('CONVERT(0,"C","K")'), 273.15)
+    assert _eval('CONVERT(1,"m","g")') == N_A_ERROR
+    assert _eval('CONVERT(1,"foo","m")') == N_A_ERROR
+    # An error operand propagates out of the engineering functions too.
+    assert _eval("BIN2DEC(1/0)") == DIV_ZERO
+    assert _eval("BITAND(1/0,1)") == DIV_ZERO
+
+
 def test_cross_sheet_quoted_sheet_name():
     """The default sheet is 'Sheet 1' (with a space), so quoted refs must work."""
     cells = {
@@ -1255,10 +1322,13 @@ def test_a_name_shaped_like_a_cell_reference_can_still_be_called():
     # instead of a parse error.
     assert _eval("ATAN2(1, 2)") == math.atan2(1.0, 2.0)
     assert _eval("SUMXY(A1:A2, A1:A2)") == 125.0
-    # A name that is still unimplemented (the engineering set is deliberately
-    # left out) reports #NAME? rather than a parse error.
-    assert _eval("BIN2DEC(1010)") == NAME_ERROR
-    assert _eval('HEX2DEC("FF")') == NAME_ERROR
+    # The engineering conversions were the same story: BIN2DEC and HEX2DEC are
+    # implemented now, so the call reaches the function as well.
+    assert _eval("BIN2DEC(1010)") == 10
+    assert _eval('HEX2DEC("FF")') == 255
+    # A name that is still unimplemented reports #NAME? rather than a parse
+    # error (LOG10 is in neither engine).
+    assert _eval("LOG10(10)") == NAME_ERROR
     # A name that reads as a reference is still one when it is not being called:
     # "ATAN2" is column ATAN (31135 zero-based), row 2.
     cells = {("1", 1, 31135): {"value_type": "number", "value": 99, "formula": None}}

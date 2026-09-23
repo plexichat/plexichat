@@ -3245,6 +3245,238 @@
     {
       "formula": "HLOOKUP(\"~?\",L4:N4,1,FALSE)",
       "expected": "text:?"
+    },
+    {
+      "formula": "BIN2DEC(\"101\")",
+      "expected": "number:5"
+    },
+    {
+      "formula": "BIN2DEC(\"1111111111\")",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "BIN2DEC(\"2\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BIN2DEC(\"10101010101\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DEC2BIN(5)",
+      "expected": "text:101"
+    },
+    {
+      "formula": "DEC2BIN(5,8)",
+      "expected": "text:00000101"
+    },
+    {
+      "formula": "DEC2BIN(-5)",
+      "expected": "text:1111111011"
+    },
+    {
+      "formula": "DEC2BIN(512)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DEC2BIN(5,2)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BIN2HEX(\"1111\")",
+      "expected": "text:F"
+    },
+    {
+      "formula": "BIN2HEX(\"1111111111\")",
+      "expected": "text:FFFFFFFFFF"
+    },
+    {
+      "formula": "BIN2OCT(\"101\")",
+      "expected": "text:5"
+    },
+    {
+      "formula": "HEX2DEC(\"FF\")",
+      "expected": "number:255"
+    },
+    {
+      "formula": "HEX2DEC(\"FFFFFFFFFF\")",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "HEX2DEC(\"GG\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "HEX2BIN(\"F\")",
+      "expected": "text:1111"
+    },
+    {
+      "formula": "HEX2BIN(\"FFFFFFFF00\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DEC2HEX(255)",
+      "expected": "text:FF"
+    },
+    {
+      "formula": "DEC2HEX(-1)",
+      "expected": "text:FFFFFFFFFF"
+    },
+    {
+      "formula": "DEC2HEX(549755813888)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "HEX2OCT(\"FF\")",
+      "expected": "text:377"
+    },
+    {
+      "formula": "DEC2OCT(8)",
+      "expected": "text:10"
+    },
+    {
+      "formula": "DEC2OCT(-1)",
+      "expected": "text:7777777777"
+    },
+    {
+      "formula": "OCT2DEC(\"17\")",
+      "expected": "number:15"
+    },
+    {
+      "formula": "OCT2DEC(\"7777777777\")",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "OCT2BIN(\"17\")",
+      "expected": "text:1111"
+    },
+    {
+      "formula": "OCT2HEX(\"17\")",
+      "expected": "text:F"
+    },
+    {
+      "formula": "OCT2HEX(\"7777777777\")",
+      "expected": "text:FFFFFFFFFF"
+    },
+    {
+      "formula": "BITAND(5,3)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "BITOR(5,3)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "BITXOR(5,3)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "BITAND(-1,3)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BITLSHIFT(4,2)",
+      "expected": "number:16"
+    },
+    {
+      "formula": "BITRSHIFT(16,2)",
+      "expected": "number:4"
+    },
+    {
+      "formula": "BITLSHIFT(5,60)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DELTA(5,5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "DELTA(5,4)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "DELTA(5)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "GESTEP(5,4)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "GESTEP(4,5)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "GESTEP(5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "ERF(1)",
+      "expected": "number:0.8427006897475899"
+    },
+    {
+      "formula": "ERFC(1)",
+      "expected": "number:0.15729931025241006"
+    },
+    {
+      "formula": "ERF(0,1)",
+      "expected": "number:0.84270068874759"
+    },
+    {
+      "formula": "BESSELJ(1.5,0)",
+      "expected": "number:0.5118276717359181"
+    },
+    {
+      "formula": "BESSELJ(0,0)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "BESSELJ(1.5,-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BESSELY(1.5,0)",
+      "expected": "number:0.3824489237977588"
+    },
+    {
+      "formula": "BESSELY(-1,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "CONVERT(1,\"m\",\"cm\")",
+      "expected": "number:100"
+    },
+    {
+      "formula": "CONVERT(1,\"km\",\"m\")",
+      "expected": "number:1000"
+    },
+    {
+      "formula": "CONVERT(1,\"kg\",\"g\")",
+      "expected": "number:1000"
+    },
+    {
+      "formula": "CONVERT(32,\"F\",\"C\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "CONVERT(0,\"C\",\"K\")",
+      "expected": "number:273.15"
+    },
+    {
+      "formula": "CONVERT(1,\"m\",\"g\")",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "CONVERT(1,\"foo\",\"m\")",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "BIN2DEC(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "BITAND(1/0,1)",
+      "expected": "error:#DIV/0!"
     }
   ]
 }

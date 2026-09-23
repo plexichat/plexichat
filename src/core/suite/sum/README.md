@@ -268,8 +268,11 @@ match a pattern; the relational operators compare literally.
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
+| `ERF`/`ERFC` | precise to ~1e-16 | Abramowitz & Stegun 7.1.26 (~1.5e-7), shared with the client engine |
+| fractional `DEC2BIN`/`DEC2HEX`/`DEC2OCT` inputs | truncated to an integer | rendered through the float base conversion both engines share (e.g. `DEC2BIN(5.9)` is `"101.9000000000000004"`) |
+| `BITAND`/`BITOR`/`BITXOR` past 2^31 | full 48-bit result | 32-bit wrap, shared with the client engine |
 | an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
-| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the `LINEST`/`LOGEST`/`TREND`/`GROWTH` regression machinery, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the engineering conversions (`BIN2HEX`, `CONVERT`, `BESSELJ`, …) | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the `LINEST`/`LOGEST`/`TREND`/`GROWTH` regression machinery, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the volatile `RAND`/`RANDBETWEEN`/`RANDARRAY` trio | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 An explicitly empty argument is read as a blank value rather than as the
 parameter's default — `LEFT("abc",)` is `""`, not `"a"`. Whether Excel applies
@@ -278,7 +281,7 @@ here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 204 functions (`TRUE`/`FALSE` work both as bare
+This engine implements 228 functions (`TRUE`/`FALSE` work both as bare
 literals and as zero-argument calls, matching Excel and the client engine);
 the client engine implements 262. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
@@ -287,7 +290,7 @@ here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
 **Adopted.** The first version of this list was a plan; these have now been
-implemented, taking the engine from 84 to 204 functions:
+implemented, taking the engine from 84 to 228 functions:
 
 | Family | Functions | Note |
 |---|---|---|
@@ -304,6 +307,7 @@ implemented, taking the engine from 84 to 204 functions:
 | Distributions | `NORMDIST`, `NORMSDIST`, `NORMINV`, `NORMSINV`, `NORMINVS`, `BINOMDIST`, `POISSON`, `EXPONDIST`, `WEIBULL`, `GAMMALN`, `GAMMADIST`, `GAMMAINV`, `BETADIST`, `BETAINV`, `NEGBINOMDIST`, `FREQUENCY` | the incomplete gamma/beta integrals are ported from the client engine and kept numerically identical; `FREQUENCY` returns a column of counts |
 | Combinatorics | `COMBIN`, `COMBINA`, `PERMUT`, `FACT`, `FACTDOUBLE`, `MULTINOMIAL` | the integer helpers stop at the double overflow and report `#NUM!` |
 | Complex | `COMPLEX` and the `IM*` family (`IMSUM`, `IMDIV`, the trig and hyperbolic forms, …) | the complex-number text form and its 15-significant-digit coefficients are reproduced byte-for-byte from the client engine, and the `i`/`j` suffix survives the call |
+| Engineering | the base conversions (`BIN2DEC` … `OCT2HEX`), the bitwise operations (`BITAND`, `BITLSHIFT`, …), `DELTA`, `GESTEP`, `ERF`/`ERFC`, `BESSELJ`/`BESSELY` and `CONVERT` | the two's-complement widths, the ignored `places` on the `*2DEC` forms, the 32-bit wrap past 2^31 and the float rendering of fractional inputs are reproduced from the client engine (see the divergences above); `ERF` runs Abramowitz & Stegun 7.1.26 |
 
 `TODAY` and `NOW` read the clock, so they are the one exception to the
 "deterministic" guarantee above: their answer depends on when the formula is
@@ -322,10 +326,13 @@ rather than as speculative surface. The scalar regressions (`CORREL`, `RSQ`,
 `SLOPE`, `INTERCEPT`, `FORECAST`, `STEYX`) used to sit here too; they are
 adopted — see the Regression row above.
 
-**Leave out.** The engineering *conversions* (`BIN2HEX`, `CONVERT`, `BESSELJ`,
-…) are a large surface with narrow use, and the client engine covers them where
-a formula needs one. Complex arithmetic used to sit here too; it is adopted —
-see the Complex row above.
+**Leave out.** The volatile `RAND`/`RANDBETWEEN`/`RANDARRAY` trio (this engine
+is deterministic outside `TODAY`/`NOW`), the introspective forms (`ISREF`,
+`ISFORMULA`, `SHEET`/`SHEETS`, `INFO`, `ISOMITTED`) and the array-plumbing
+wrappers (`ARRAYFORMULA`, `ANDARRAY`, `ORARRAY`): a large surface with narrow
+use on a read path, and the client engine covers them where a formula needs
+one. The engineering conversions and the complex arithmetic used to sit here
+too; they are adopted — see the Engineering and Complex rows above.
 
 The lexer accepts a name that is shaped like a cell reference (`ATAN2`, which is
 both) and resolves it as a call when a parenthesis follows, and it accepts a dot

@@ -1,6 +1,7 @@
 """Formula evaluator mixin: advanced text/date/trig/criteria functions."""
 
 import datetime
+import decimal
 import math
 from typing import Any, List, Optional
 
@@ -604,6 +605,381 @@ def _complex_divide(numerator, denominator):
         (numerator[0] * denominator[0] + numerator[1] * denominator[1]) / modulus,
         (numerator[1] * denominator[0] - numerator[0] * denominator[1]) / modulus,
     )
+
+
+# ── plumbing for the engineering set ──
+#
+# The base conversions, bitwise operations, DELTA/GESTEP, ERF/ERFC, the Bessel
+# functions and CONVERT, ported from the client engine's engineering module and
+# kept identical down to its quirks, so a sheet that uses them reads the same
+# whichever engine evaluates it.
+
+
+def _js_number_text(number: float) -> str:
+    """Render a double the way JavaScript's ``String(number)`` does.
+
+    The base conversions stringify their input (and the intermediate digits)
+    that way, so ``repr`` alone is not enough: Python prints ``1e-05`` where
+    JavaScript prints ``0.00001`` and pads exponents (``1e-07`` vs ``1e-7``).
+    Both spell the shortest string that round-trips, so ``repr`` supplies the
+    digits and this places the point and the exponent the JavaScript way.
+    """
+    if not math.isfinite(number):
+        if math.isnan(number):
+            return "NaN"
+        return "Infinity" if number > 0 else "-Infinity"
+    if number == 0:
+        return "0"
+    if float(number).is_integer():
+        return str(int(number))
+    negative = number < 0
+    digits_tuple = decimal.Decimal(repr(abs(float(number)))).as_tuple()
+    digits = "".join(str(digit) for digit in digits_tuple.digits)
+    # The Decimal is finite here (non-finite inputs return above), so the
+    # exponent is an int; the cast keeps the type-checker from carrying the
+    # NaN/Infinity spellings into the arithmetic below.
+    point = int(digits_tuple.exponent) + len(digits)
+    if 0 < point <= 21:
+        if point >= len(digits):
+            out = digits + "0" * (point - len(digits))
+        else:
+            out = digits[:point] + "." + digits[point:]
+    elif -6 < point <= 0:
+        out = "0." + "0" * (-point) + digits
+    else:
+        shown = point - 1
+        out = digits[0] + ("." + digits[1:] if len(digits) > 1 else "")
+        out += "e" + ("+" if shown >= 0 else "-") + str(abs(shown))
+    return ("-" if negative else "") + out
+
+
+def _js_string(value: Any) -> str:
+    """JavaScript's ``String(value)`` for a cell value.
+
+    A blank is ``"null"`` rather than the empty text the sheet helpers use, a
+    logical keeps its lowercase spelling, and a number renders as JavaScript
+    prints it -- which is what the conversions and CONVERT feed their parsing
+    and unit lookup, so ``BIN2DEC`` of a blank is ``#NUM!`` rather than 0.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return _js_number_text(float(value))
+    return str(value)
+
+
+def _parse_base(value: Any, base: int) -> Optional[int]:
+    """Read base-``base`` text the way the conversions do, or ``None``.
+
+    ``None`` means the text is not a number in that base, which the caller
+    turns into ``#NUM!``. The input is trimmed, upper-cased and stripped of a
+    single ``0X`` prefix; an empty remainder reads as 0.
+    """
+    text = _js_string(value).strip().upper()
+    if text.startswith("0X"):
+        text = text[2:]
+    result = 0
+    for char in text:
+        try:
+            digit = int(char, base)
+        except ValueError:
+            return None
+        result = result * base + digit
+    return result
+
+
+def _to_base(value: float, base: int, places: Optional[float]) -> Any:
+    """Print a number in base ``base``, padded to ``places`` when given.
+
+    A negative value is rendered in two's complement with at least 10 digits,
+    exactly as the client engine sizes it; a result longer than ``places`` is
+    ``#NUM!``. ``places`` counts characters the way ``padStart`` does, so a
+    fractional count is floored by the padding itself.
+    """
+    if value < 0:
+        # Two's complement in 10 digits, exactly as the client engine sizes
+        # it: every negative conversion passes an explicit 10-digit width, so
+        # the computed minimum never applies -- even a small magnitude like
+        # -512 renders in the full 10-digit form.
+        value = float(base**10) + value
+    result = ""
+    remaining = abs(value)
+    if remaining == 0:
+        result = "0"
+    while remaining > 0:
+        digit = remaining % base
+        if digit < 10:
+            result = _js_number_text(digit) + result
+        else:
+            result = chr(55 + int(digit)) + result
+        remaining = math.floor(remaining / base)
+    if places is not None:
+        if len(result) > places:
+            return NUM_ERROR
+        try:
+            result = result.rjust(int(places), "0")
+        except (MemoryError, OverflowError):
+            # A padding no string can hold: the client engine's ``padStart``
+            # throws there too, which its evaluator reports as ``#VALUE!``.
+            return VALUE_ERROR
+    return result
+
+
+def _fact_float(n: int) -> float:
+    """``n!`` accumulated in doubles, the way the client series does.
+
+    The factorials feed a division, so an exactly-rounded integer factorial
+    divided once can differ from the client's multiply-and-divide chain in the
+    last ulp; accumulating here keeps the Bessel terms bit-identical.
+    """
+    result = 1.0
+    for index in range(2, n + 1):
+        result *= index
+    return result
+
+
+def _erf_single(x: float) -> float:
+    """The error function (Abramowitz & Stegun 7.1.26), as the client runs it."""
+    sign = -1.0 if x < 0 else 1.0
+    ax = abs(x)
+    t = 1.0 / (1.0 + 0.3275911 * ax)
+    y = 1.0 - (
+        ((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+        + 0.254829592
+    ) * t * math.exp(-ax * ax)
+    return sign * y
+
+
+def _bessel_j(x: float, n: int) -> float:
+    """The Bessel function of the first kind ``J_n(x)``, by series."""
+    if x == 0:
+        return 1.0 if n == 0 else 0.0
+    total = 0.0
+    for k in range(40):
+        term = (
+            (-1) ** k / (_fact_float(k) * _fact_float(k + n)) * (x / 2) ** (2 * k + n)
+        )
+        total += term
+        if abs(term) < 1e-14:
+            break
+    return total
+
+
+def _bessel_y0_series(x: float) -> float:
+    """``Y_0(x)`` by the Abramowitz & Stegun 9.1.13 series, as the client runs it."""
+    gamma = 0.5772156649015329
+    result = (2 / math.pi) * (math.log(x / 2) + gamma) * _bessel_j(x, 0)
+    for k in range(1, 40):
+        harmonic = 0.0
+        for j in range(1, k + 1):
+            harmonic += 1 / j
+        term = (
+            (-1) ** (k - 1)
+            * harmonic
+            / (_fact_float(k) * _fact_float(k))
+            * (x / 2) ** (2 * k)
+        )
+        result += (2 / math.pi) * term
+        if k > 2 and abs(term) < 1e-16:
+            break
+    return result
+
+
+# CONVERT's unit table: each entry is ``(dimension, factor-to-base)``. Ported
+# entry-for-entry from the client engine, including the Excel-compat fixes its
+# comments describe (the ``at`` atmosphere, the ``e`` erg, the ``cal`` IT
+# calorie, the ``m/h`` metre-per-hour and the decimal/binary data units).
+_CONVERT_UNITS = {
+    "M": ("length", 1),
+    "METER": ("length", 1),
+    "METERS": ("length", 1),
+    "METRE": ("length", 1),
+    "CM": ("length", 0.01),
+    "CENTIMETER": ("length", 0.01),
+    "CENTIMETERS": ("length", 0.01),
+    "MM": ("length", 0.001),
+    "MILLIMETER": ("length", 0.001),
+    "MILLIMETERS": ("length", 0.001),
+    "KM": ("length", 1000),
+    "KILOMETER": ("length", 1000),
+    "KILOMETERS": ("length", 1000),
+    "IN": ("length", 0.0254),
+    "INCH": ("length", 0.0254),
+    "INCHES": ("length", 0.0254),
+    "FT": ("length", 0.3048),
+    "FOOT": ("length", 0.3048),
+    "FEET": ("length", 0.3048),
+    "YD": ("length", 0.9144),
+    "YARD": ("length", 0.9144),
+    "YARDS": ("length", 0.9144),
+    "MI": ("length", 1609.344),
+    "MILE": ("length", 1609.344),
+    "MILES": ("length", 1609.344),
+    "NMI": ("length", 1852),
+    "NAUTMI": ("length", 1852),
+    "G": ("mass", 1),
+    "GRAM": ("mass", 1),
+    "GRAMS": ("mass", 1),
+    "GR": ("mass", 1),
+    "KG": ("mass", 1000),
+    "KILOGRAM": ("mass", 1000),
+    "KILOGRAMS": ("mass", 1000),
+    "MG": ("mass", 0.001),
+    "MILLIGRAM": ("mass", 0.001),
+    "MILLIGRAMS": ("mass", 0.001),
+    "LB": ("mass", 453.59237),
+    "LBM": ("mass", 453.59237),
+    "POUND": ("mass", 453.59237),
+    "POUNDS": ("mass", 453.59237),
+    "OZ": ("mass", 28.349523125),
+    "OUNCE": ("mass", 28.349523125),
+    "OUNCES": ("mass", 28.349523125),
+    "STONE": ("mass", 6350.29318),
+    "TON": ("mass", 907184.74),
+    "UK_TON": ("mass", 1016046.9088),
+    "LTON": ("mass", 1016046.9088),
+    "MTON": ("mass", 1000000),
+    "SEC": ("time", 1),
+    "SECOND": ("time", 1),
+    "SECONDS": ("time", 1),
+    "S": ("time", 1),
+    "MIN": ("time", 60),
+    "MINUTE": ("time", 60),
+    "MINUTES": ("time", 60),
+    "MN": ("time", 60),
+    "HR": ("time", 3600),
+    "HOUR": ("time", 3600),
+    "HOURS": ("time", 3600),
+    "DAY": ("time", 86400),
+    "DAYS": ("time", 86400),
+    "DY": ("time", 86400),
+    "WK": ("time", 604800),
+    "WEEK": ("time", 604800),
+    "WEEKS": ("time", 604800),
+    "YR": ("time", 31536000),
+    "YEAR": ("time", 31536000),
+    "YEARS": ("time", 31536000),
+    "L": ("volume", 1),
+    "LITER": ("volume", 1),
+    "LITERS": ("volume", 1),
+    "LTR": ("volume", 1),
+    "ML": ("volume", 0.001),
+    "MILLILITER": ("volume", 0.001),
+    "MILLILITERS": ("volume", 0.001),
+    "CUP": ("volume", 0.2365882365),
+    "CUPS": ("volume", 0.2365882365),
+    "GAL": ("volume", 3.785411784),
+    "GALLON": ("volume", 3.785411784),
+    "GALLONS": ("volume", 3.785411784),
+    "QT": ("volume", 0.946352946),
+    "QUART": ("volume", 0.946352946),
+    "QUARTS": ("volume", 0.946352946),
+    "PT": ("volume", 0.473176473),
+    "PINT": ("volume", 0.473176473),
+    "PINTS": ("volume", 0.473176473),
+    "TSP": ("volume", 0.00492892159375),
+    "TEASPOON": ("volume", 0.00492892159375),
+    "TBSP": ("volume", 0.01478676478125),
+    "TABLESPOON": ("volume", 0.01478676478125),
+    "FL_OZ": ("volume", 0.0295735295625),
+    "OZ_FL": ("volume", 0.0295735295625),
+    "PA": ("pressure", 1),
+    "PASCAL": ("pressure", 1),
+    "ATM": ("pressure", 101325),
+    "ATMOSPHERE": ("pressure", 101325),
+    "MMHG": ("pressure", 133.322387415),
+    "PSI": ("pressure", 6894.757293168),
+    "BAR": ("pressure", 100000),
+    "AT": ("pressure", 101325),
+    "N": ("force", 1),
+    "NEWTON": ("force", 1),
+    "NEWTONS": ("force", 1),
+    "DYN": ("force", 0.00001),
+    "DYNE": ("force", 0.00001),
+    "DYNES": ("force", 0.00001),
+    "LBF": ("force", 4.4482216152605),
+    "POUND_FORCE": ("force", 4.4482216152605),
+    "J": ("energy", 1),
+    "JOULE": ("energy", 1),
+    "JOULES": ("energy", 1),
+    "E": ("energy", 1e-7),
+    "ERG": ("energy", 1e-7),
+    "ERGS": ("energy", 1e-7),
+    "CAL": ("energy", 4.1868),
+    "CALORIE": ("energy", 4.1868),
+    "CALORIES": ("energy", 4.1868),
+    "KWH": ("energy", 3600000),
+    "BTU": ("energy", 1055.05585262),
+    "EV": ("energy", 1.602176634e-19),
+    "ELECTRONVOLT": ("energy", 1.602176634e-19),
+    "W": ("power", 1),
+    "WATT": ("power", 1),
+    "WATTS": ("power", 1),
+    "HP": ("power", 745.6998715822702),
+    "HORSEPOWER": ("power", 745.6998715822702),
+    "C": ("temperature", None),
+    "CELSIUS": ("temperature", None),
+    "CEL": ("temperature", None),
+    "F": ("temperature", None),
+    "FAHRENHEIT": ("temperature", None),
+    "FAH": ("temperature", None),
+    "K": ("temperature", None),
+    "KELVIN": ("temperature", None),
+    "KEL": ("temperature", None),
+    "M/H": ("speed", 1 / 3600),
+    "M/HR": ("speed", 1 / 3600),
+    "MPH": ("speed", 0.44704),
+    "MI/H": ("speed", 0.44704),
+    "KM/H": ("speed", 0.2777777778),
+    "KMH": ("speed", 0.2777777778),
+    "KPH": ("speed", 0.2777777778),
+    "KN": ("speed", 0.5144444444),
+    "KNOT": ("speed", 0.5144444444),
+    "KNOTS": ("speed", 0.5144444444),
+    "M/S": ("speed", 1),
+    "MPS": ("speed", 1),
+    "M/SEC": ("speed", 1),
+    "FT/S": ("speed", 0.3048),
+    "FPS": ("speed", 0.3048),
+    "BIT": ("data", 1),
+    "BITS": ("data", 1),
+    "BYTE": ("data", 8),
+    "BYTES": ("data", 8),
+    "B": ("data", 8),
+    "KB": ("data", 8000),
+    "KIB": ("data", 8192),
+    "KIBIBYTE": ("data", 8192),
+    "MB": ("data", 8000000),
+    "MIB": ("data", 8388608),
+    "MIBIBYTE": ("data", 8388608),
+    "GB": ("data", 8000000000),
+    "GIB": ("data", 8589934592),
+    "GIBIBYTE": ("data", 8589934592),
+    "TB": ("data", 8000000000000),
+    "TIB": ("data", 8796093022208),
+    "TEBIBYTE": ("data", 8796093022208),
+    "KBIT": ("data", 1000),
+    "KIBIT": ("data", 1024),
+    "MBIT": ("data", 1000000),
+    "MIBIT": ("data", 1048576),
+    "GBIT": ("data", 1000000000),
+    "GIBIT": ("data", 1073741824),
+    "TBIT": ("data", 1000000000000),
+    "TIBIT": ("data", 1099511627776),
+}
+
+
+def _to_int32(number: float) -> int:
+    """JavaScript's ``ToInt32`` for the bitwise operations.
+
+    The client engine evaluates ``BITAND``/``BITOR``/``BITXOR`` with the
+    ``&``/``|``/``^`` operators, which wrap past 2**31 (so a large input can
+    answer negative), where Python's integers never wrap.
+    """
+    wrapped = int(number) % 2**32
+    return wrapped - 2**32 if wrapped >= 2**31 else wrapped
 
 
 class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
@@ -1421,7 +1797,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
 
     # ── Functions adopted from the client engine ────────────────────────────
     #
-    # The client engine implements 249 functions and this one a deliberately
+    # The client engine implements 262 functions and this one a deliberately
     # compact subset. The block below is the README's "adopt next" list --
     # cheap functions over machinery that is already here, added so a sheet
     # that uses them reads the same on both engines.
@@ -2852,3 +3228,285 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         else:
             return NAME_ERROR
         return _format_complex(result[0], result[1], parsed[2])
+
+    def _engineering(self, name: str, values: List[Any]) -> Any:
+        """The engineering functions: base conversions, bitwise operations,
+        DELTA/GESTEP, ERF/ERFC, the Bessel functions and CONVERT.
+
+        Every parameter is a scalar, so these read the pooled ``values`` the
+        dispatcher builds; an error operand has already propagated on the way
+        in. The coercion mirrors the client engine's: a conversion input is
+        stringified (a blank is ``"null"``, hence ``#NUM!``), every other
+        parameter goes through the numeric coercion, and ``places`` counts
+        characters the way ``padStart`` does.
+        """
+        if name in ("BIN2DEC", "BIN2HEX", "BIN2OCT"):
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            raw = _js_string(values[0]).strip()
+            if len(raw) > 10:
+                return NUM_ERROR
+            parsed = _parse_base(values[0], 2)
+            if parsed is None:
+                return NUM_ERROR
+            if len(raw) == 10 and raw[0] == "1":
+                parsed -= 1024
+            if name == "BIN2DEC":
+                # The second slot is accepted and ignored, as in the client
+                # engine -- it is never coerced, so even text reads past it.
+                return parsed
+            places = None
+            if len(values) == 2:
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
+            return _to_base(float(parsed), 16 if name == "BIN2HEX" else 8, places)
+        if name in ("DEC2BIN", "DEC2HEX", "DEC2OCT"):
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            places = None
+            if len(values) == 2:
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
+            if name == "DEC2BIN":
+                if number < -512 or number > 511:
+                    return NUM_ERROR
+                return _to_base(number, 2, places)
+            if name == "DEC2HEX":
+                if number < -549755813888 or number > 549755813887:
+                    return NUM_ERROR
+                return _to_base(number, 16, places)
+            if number < -536870912 or number > 536870911:
+                return NUM_ERROR
+            return _to_base(number, 8, places)
+        if name in ("HEX2BIN", "HEX2DEC", "HEX2OCT"):
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            raw = _js_string(values[0]).strip()
+            if len(raw) > 10:
+                return NUM_ERROR
+            parsed = _parse_base(values[0], 16)
+            if parsed is None:
+                return NUM_ERROR
+            if name != "HEX2BIN" and len(raw) == 10 and raw[0] in ("F", "f"):
+                # A 10-digit hex starting with F is negative -- except as a
+                # HEX2BIN input, which the client reads unsigned and rejects
+                # past 511 instead.
+                parsed -= 16**10
+            places = None
+            if len(values) == 2:
+                if name == "HEX2DEC":
+                    # The decimal form takes no padding: the extra argument is
+                    # accepted and never coerced, so even text reads past it.
+                    return parsed
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
+            if name == "HEX2DEC":
+                return parsed
+            if name == "HEX2BIN":
+                if parsed > 511:
+                    return NUM_ERROR
+                return _to_base(float(parsed), 2, places)
+            if parsed > 536870911:
+                return NUM_ERROR
+            return _to_base(float(parsed), 8, places)
+        if name in ("OCT2BIN", "OCT2DEC", "OCT2HEX"):
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            raw = _js_string(values[0]).strip()
+            if len(raw) > 10:
+                return NUM_ERROR
+            parsed = _parse_base(values[0], 8)
+            if parsed is None:
+                return NUM_ERROR
+            if name != "OCT2BIN" and len(raw) == 10 and raw[0] == "7":
+                # As with hex, the 10-digit negative form does not apply to
+                # the OCT2BIN input, which is read unsigned instead.
+                parsed -= 8**10
+            places = None
+            if len(values) == 2:
+                if name == "OCT2DEC":
+                    # As with HEX2DEC, the extra argument is accepted and
+                    # never coerced.
+                    return parsed
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
+            if name == "OCT2DEC":
+                return parsed
+            if name == "OCT2BIN":
+                if parsed > 511:
+                    return NUM_ERROR
+                return _to_base(float(parsed), 2, places)
+            if parsed > 549755813887:
+                return NUM_ERROR
+            return _to_base(float(parsed), 16, places)
+        if name in ("BITAND", "BITOR", "BITXOR"):
+            if len(values) != 2:
+                return VALUE_ERROR
+            error, first = _read_number(values[0])
+            if error is not None:
+                return error
+            error, second = _read_number(values[1])
+            if error is not None:
+                return error
+            if first < 0 or second < 0 or first >= 2**48 or second >= 2**48:
+                return NUM_ERROR
+            left, right = _to_int32(first), _to_int32(second)
+            if name == "BITAND":
+                return left & right
+            if name == "BITOR":
+                return left | right
+            return left ^ right
+        if name in ("BITLSHIFT", "BITRSHIFT"):
+            if len(values) != 2:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            error, shift = _read_number(values[1])
+            if error is not None:
+                return error
+            if number < 0 or number >= 2**48 or shift < -53 or shift > 53:
+                return NUM_ERROR
+            if name == "BITLSHIFT":
+                if shift >= 0:
+                    return number * 2.0**shift
+                return math.floor(number / 2.0**-shift)
+            if shift >= 0:
+                return math.floor(number / 2.0**shift)
+            return number * 2.0**-shift
+        if name == "DELTA":
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            error, first = _read_number(values[0])
+            if error is not None:
+                return error
+            second = 0.0
+            if len(values) == 2:
+                error, second = _read_number(values[1])
+                if error is not None:
+                    return error
+            return 1 if first == second else 0
+        if name == "GESTEP":
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            step = 0.0
+            if len(values) == 2:
+                error, step = _read_number(values[1])
+                if error is not None:
+                    return error
+            return 1 if number >= step else 0
+        if name == "ERF":
+            if not 1 <= len(values) <= 2:
+                return VALUE_ERROR
+            error, lower = _read_number(values[0])
+            if error is not None:
+                return error
+            if len(values) == 1:
+                return _erf_single(lower)
+            error, upper = _read_number(values[1])
+            if error is not None:
+                return error
+            return _erf_single(upper) - _erf_single(lower)
+        if name == "ERFC":
+            if len(values) != 1:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            return 1.0 - _erf_single(number)
+        if name == "BESSELJ":
+            if len(values) != 2:
+                return VALUE_ERROR
+            error, x = _read_number(values[0])
+            if error is not None:
+                return error
+            error, order = _read_number(values[1])
+            if error is not None:
+                return error
+            n = math.floor(order)
+            if n < 0:
+                return NUM_ERROR
+            return _bessel_j(x, n)
+        if name == "BESSELY":
+            if len(values) != 2:
+                return VALUE_ERROR
+            error, x = _read_number(values[0])
+            if error is not None:
+                return error
+            error, order = _read_number(values[1])
+            if error is not None:
+                return error
+            n = math.floor(order)
+            if x <= 0 or n < 0:
+                return NUM_ERROR
+            y0 = _bessel_y0_series(x)
+            if n == 0:
+                return y0
+            j0 = _bessel_j(x, 0)
+            j1 = _bessel_j(x, 1)
+            if abs(j0) > 1e-14:
+                # The Wronskian identity J1*Y0 - J0*Y1 = 2/(pi*x), solved
+                # for Y1 -- exact to the precision of the Y0 series.
+                y1 = (j1 * y0 - 2 / (math.pi * x)) / j0
+            else:
+                # J0(x) is near a zero of J0: Y1 = -Y0' by central
+                # differences of the series.
+                eps = 1e-6 * max(1, x)
+                y1 = -(_bessel_y0_series(x + eps) - _bessel_y0_series(x - eps)) / (
+                    2 * eps
+                )
+            if n == 1:
+                return y1
+            y_previous, y_current = y0, y1
+            for index in range(1, n):
+                y_previous, y_current = (
+                    y_current,
+                    (2 * index / x) * y_current - y_previous,
+                )
+            return y_current
+        if name == "CONVERT":
+            if len(values) != 3:
+                return VALUE_ERROR
+            error, number = _read_number(values[0])
+            if error is not None:
+                return error
+            source = _CONVERT_UNITS.get(_js_string(values[1]).strip().upper())
+            target = _CONVERT_UNITS.get(_js_string(values[2]).strip().upper())
+            if source is None or target is None:
+                return N_A_ERROR
+            if source[0] == "temperature" and target[0] == "temperature":
+                if _js_string(values[1]).strip().upper() in ("C", "CELSIUS", "CEL"):
+                    celsius = number
+                elif _js_string(values[1]).strip().upper() in (
+                    "F",
+                    "FAHRENHEIT",
+                    "FAH",
+                ):
+                    celsius = (number - 32) * 5 / 9
+                else:
+                    celsius = number - 273.15
+                if _js_string(values[2]).strip().upper() in ("C", "CELSIUS", "CEL"):
+                    return celsius
+                if _js_string(values[2]).strip().upper() in (
+                    "F",
+                    "FAHRENHEIT",
+                    "FAH",
+                ):
+                    return celsius * 9 / 5 + 32
+                return celsius + 273.15
+            if source[0] != target[0]:
+                return N_A_ERROR
+            if source[1] is None or target[1] is None:
+                return N_A_ERROR
+            return number * source[1] / target[1]
+        return NAME_ERROR

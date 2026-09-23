@@ -126,6 +126,33 @@ _VALUE_FUNCTIONS = frozenset(
         "N",
         "ISEVEN",
         "ISODD",
+        # The engineering family pools its scalar arguments the same way, so
+        # it joins this set for flattening and error-operand propagation; the
+        # arity and coercion rules live in ``_engineering``.
+        "BIN2DEC",
+        "BIN2HEX",
+        "BIN2OCT",
+        "DEC2BIN",
+        "DEC2HEX",
+        "DEC2OCT",
+        "HEX2BIN",
+        "HEX2DEC",
+        "HEX2OCT",
+        "OCT2BIN",
+        "OCT2DEC",
+        "OCT2HEX",
+        "BITAND",
+        "BITOR",
+        "BITXOR",
+        "BITLSHIFT",
+        "BITRSHIFT",
+        "DELTA",
+        "GESTEP",
+        "ERF",
+        "ERFC",
+        "BESSELJ",
+        "BESSELY",
+        "CONVERT",
     }
 )
 
@@ -224,6 +251,40 @@ _DISTRIBUTION_FUNCTIONS = frozenset(
 
 _COMBINATORICS_FUNCTIONS = frozenset(
     {"COMBIN", "COMBINA", "PERMUT", "FACT", "FACTDOUBLE", "MULTINOMIAL"}
+)
+
+# The client engine's engineering family, adopted wholesale: the base
+# conversions (BIN2DEC through OCT2HEX), the bitwise operations, DELTA/GESTEP,
+# ERF/ERFC, the Bessel functions and CONVERT. Like _ADOPTED_SINGLE_FUNCTIONS
+# they pool their arguments into one value list (every parameter is a scalar)
+# and decide arity for themselves.
+_ENGINEERING_FUNCTIONS = frozenset(
+    {
+        "BIN2DEC",
+        "BIN2HEX",
+        "BIN2OCT",
+        "DEC2BIN",
+        "DEC2HEX",
+        "DEC2OCT",
+        "HEX2BIN",
+        "HEX2DEC",
+        "HEX2OCT",
+        "OCT2BIN",
+        "OCT2DEC",
+        "OCT2HEX",
+        "BITAND",
+        "BITOR",
+        "BITXOR",
+        "BITLSHIFT",
+        "BITRSHIFT",
+        "DELTA",
+        "GESTEP",
+        "ERF",
+        "ERFC",
+        "BESSELJ",
+        "BESSELY",
+        "CONVERT",
+    }
 )
 
 # The adopted functions that take a single scalar, or no argument at all.
@@ -616,6 +677,8 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._adopted_single(name, values)
         if name in _COMPLEX_FUNCTIONS:
             return self._complex(name, values)
+        if name in _ENGINEERING_FUNCTIONS:
+            return self._engineering(name, values)
         if name in ("SUM", "AVERAGE", "COUNT", "COUNTA", "MIN", "MAX", "PRODUCT"):
             return self._aggregate(name, values, from_reference)
         if name in (
