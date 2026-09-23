@@ -33,7 +33,14 @@ function parseRef(ref) {
 /** Encode a result the way the Python side compares it. */
 function typed(value) {
     if (typeof value === 'boolean') return { kind: 'boolean', value };
-    if (typeof value === 'number') return { kind: 'number', value };
+    if (typeof value === 'number') {
+        // A NaN or an infinity is not a spreadsheet value, and JSON cannot
+        // carry one (it stringifies to null, which the Python side read as a
+        // missing number and crashed on instead of reporting). Give it its own
+        // kind so the disagreement is named.
+        if (!Number.isFinite(value)) return { kind: 'nonfinite', value: String(value) };
+        return { kind: 'number', value };
+    }
     if (value === null || value === undefined) return { kind: 'blank' };
     if (typeof value === 'string' && value.startsWith('#')) {
         return { kind: 'error', value };

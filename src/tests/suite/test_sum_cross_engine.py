@@ -5,7 +5,9 @@ cases somebody thought to write down. This test covers the other half of the
 contract: it builds a systematic matrix -- every comparison and arithmetic
 operation over an operand alphabet, the criteria functions over four ranges,
 the text and date functions over their own operands, the lookups over four
-vectors, and the adopted engineering, financial, statistical, distribution,
+vectors, the structured family over its ranges, the branching family over its
+keys, the scalar and criteria slots of the range functions over cell
+references, and the adopted engineering, financial, statistical, distribution,
 combinatorics and complex families each at arities one to three -- evaluates
 every formula in the server engine *and* in the client engine, and fails when
 the two disagree. A semantic change on one side shows up as a divergence
@@ -31,6 +33,7 @@ both engines are then held to it.
 """
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -224,6 +227,85 @@ _LOOKUP_CALLS = [
     ("XLOOKUP reverse", 'XLOOKUP({k},{r},{r},"nf",0,-1)'),
 ]
 
+# The scalar slot of the range functions, crossed with cell references and
+# literals. The evaluator hands these functions their arguments unevaluated, so
+# a scalar or a criterion written as a cell has to be *read from that cell*
+# before the function can use it. A number, numeric text, plain text, a
+# logical, a blank, a zero and an error cell cover the coercion, the skip and
+# the propagation. Both defects this group found were here: a raw argument node
+# fed to a coercion helper answered #VALUE! (LARGE(A1:A3, A1)), and a criterion
+# still in node form matched nothing at all (COUNTIF(A1:A3, A1) was 0).
+_RANGE_KEYS = [
+    "A1",
+    "A4",
+    "A5",
+    "A6",
+    "B6",
+    "I1",
+    "K3",
+    "Z1",
+    "M1",
+    "1",
+    "0.5",
+    '"2"',
+    "TRUE",
+    '"a"',
+]
+_RANGE_CALLS = [
+    ("criteria SUMIF", "SUMIF(A1:A3,{k},C1:C3)"),
+    ("criteria COUNTIF", "COUNTIF(A1:A3,{k})"),
+    ("criteria AVERAGEIF", "AVERAGEIF(A1:A3,{k},C1:C3)"),
+    ("criteria SUMIFS", "SUMIFS(C1:C3,A1:A3,{k})"),
+    ("criteria COUNTIFS", "COUNTIFS(A1:A3,{k})"),
+    ("criteria AVERAGEIFS", "AVERAGEIFS(C1:C3,A1:A3,{k})"),
+    ("LARGE k", "LARGE(A1:A3,{k})"),
+    ("SMALL k", "SMALL(A1:A3,{k})"),
+    ("RANK number", "RANK({k},A1:A3)"),
+    ("RANK order", "RANK(A1,A1:A3,{k})"),
+    ("PERCENTILE k", "PERCENTILE(A1:A3,{k})"),
+    ("QUARTILE quart", "QUARTILE(A1:A3,{k})"),
+    ("TRIMMEAN percent", "TRIMMEAN(A1:A3,{k})"),
+    ("PERCENTRANK significance", "PERCENTRANK(A1:A3,A1,{k})"),
+    ("STANDARDIZE x", "STANDARDIZE({k},1,2)"),
+    ("FORECAST x", "FORECAST({k},A1:A3,C1:C3)"),
+]
+
+# The structured family takes a range plus a scalar, which the generic family
+# generator below cannot express: it passes the same operand to every slot, and
+# a scalar is not a range. Each is called over the text, numeric and
+# pattern-holding ranges, so the family's own pairing rule -- text is dropped
+# per side, and the survivors have to pair up -- is compared on both engines.
+_STRUCTURED_RANGES = ["A1:A3", "C1:C3", "D1:D3", "F1:F3", "L1:L4"]
+_STRUCTURED_CALLS = [
+    ("CORREL", "CORREL({r},C1:C3)"),
+    ("RSQ", "RSQ({r},C1:C3)"),
+    ("SLOPE", "SLOPE({r},C1:C3)"),
+    ("INTERCEPT", "INTERCEPT({r},C1:C3)"),
+    ("STEYX", "STEYX({r},C1:C3)"),
+    ("SUMX2MY2", "SUMX2MY2({r},C1:C3)"),
+    ("SUMX2PY2", "SUMX2PY2({r},C1:C3)"),
+    ("SUMXY", "SUMXY({r},C1:C3)"),
+    ("LARGE", "LARGE({r},1)"),
+    ("SMALL", "SMALL({r},1)"),
+    ("QUARTILE", "QUARTILE({r},1)"),
+    ("PERCENTILE", "PERCENTILE({r},0.5)"),
+    ("PERCENTRANK", "PERCENTRANK({r},1,3)"),
+    ("RANK", "RANK(1,{r})"),
+    ("TRIMMEAN", "TRIMMEAN({r},0.2)"),
+]
+
+# The branching family picks a branch or an argument, so the same key serves as
+# the index, the condition's operand and SWITCH's expression.
+_BRANCHING_CALLS = [
+    ("CHOOSE index", 'CHOOSE({k},"a","b","c")'),
+    ("CHOOSE values", "CHOOSE(1,{k},B1,C1)"),
+    ("IFS", 'IFS({k}>1,"hi",TRUE,"lo")'),
+    ("IFS zero", 'IFS({k}<0,"neg",{k}=0,"zero")'),
+    ("SWITCH", 'SWITCH({k},1,"one",2,"two","other")'),
+    ("SWITCH text", 'SWITCH({k},"a","A","b","B","z")'),
+    ("SWITCH default", 'SWITCH({k},1,"one","d")'),
+]
+
 
 def _product(alphabet: str, length: int) -> List[Tuple[str, ...]]:
     """All ``length``-tuples over ``alphabet``, for the sign combinations."""
@@ -308,6 +390,34 @@ def _groups() -> "OrderedDict[str, List[str]]":
             for key in _LOOKUP_KEYS
             for lookup_range in _LOOKUP_RANGES
         ]
+    for name, template in _RANGE_CALLS:
+        groups[f"reference {name}"] = [template.format(k=key) for key in _RANGE_KEYS]
+    for name, template in _STRUCTURED_CALLS:
+        groups[f"structured {name}"] = [
+            template.format(r=lookup_range) for lookup_range in _STRUCTURED_RANGES
+        ]
+    for name, template in _BRANCHING_CALLS:
+        groups[f"branching {name}"] = [template.format(k=key) for key in _RANGE_KEYS]
+    # PERCENTRANK rounds to `significance` digits. Excel rejects a significance
+    # below one, and a rounding factor past 1e308 is not representable, so a
+    # larger one returns the unrounded rank. The extremes used to raise an
+    # OverflowError on this side and divide an infinity by itself on the
+    # client's, which the sheet read as a blank.
+    groups["percentrank significance"] = [
+        f"PERCENTRANK(A1:A3,1,{significance})"
+        for significance in (
+            "0",
+            "0.5",
+            "1",
+            "2",
+            "3",
+            "15",
+            "16",
+            "308",
+            "309",
+            "1000",
+        )
+    ]
     for family, names in _FAMILIES:
         # One group per function, so _missing() can drop just that function.
         for name in sorted(names):
@@ -358,7 +468,17 @@ def _typed(value: Any) -> Dict[str, Any]:
     if isinstance(value, bool):
         return {"kind": "boolean", "value": value}
     if isinstance(value, (int, float)):
-        return {"kind": "number", "value": float(value)}
+        # A NaN or an infinity is not a spreadsheet value; it gets its own kind
+        # so the report names it instead of comparing it as a number (and so
+        # the client probe, whose results arrive as JSON, can carry it at all).
+        number = float(value)
+        if not math.isfinite(number):
+            if math.isnan(number):
+                spelling = "NaN"
+            else:
+                spelling = "Infinity" if number > 0 else "-Infinity"
+            return {"kind": "nonfinite", "value": spelling}
+        return {"kind": "number", "value": number}
     if value is None:
         return {"kind": "blank"}
     if isinstance(value, str) and value.startswith("#"):
@@ -404,7 +524,12 @@ def _same(ours: Dict[str, Any], theirs: Dict[str, Any]) -> bool:
     if ours["kind"] != theirs["kind"]:
         return False
     if ours["kind"] == "number":
-        return abs(ours["value"] - theirs["value"]) < 1e-9
+        left, right = ours.get("value"), theirs.get("value")
+        # A result JSON cannot carry (a NaN the client probe stringified) is a
+        # disagreement, not a crash: the comparison used to subtract None.
+        if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+            return False
+        return abs(left - right) < 1e-9
     return ours.get("value") == theirs.get("value")
 
 
