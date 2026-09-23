@@ -3477,6 +3477,66 @@
     {
       "formula": "BITAND(1/0,1)",
       "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "--1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "+-1",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "-+1",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "---1",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "++1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "-+-+1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "+\"2\"",
+      "expected": "text:2"
+    },
+    {
+      "formula": "+\"2abc\"",
+      "expected": "text:2abc"
+    },
+    {
+      "formula": "+\"a\"",
+      "expected": "text:a"
+    },
+    {
+      "formula": "+TRUE",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "+FALSE",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "-\"2\"",
+      "expected": "number:-2"
+    },
+    {
+      "formula": "-TRUE",
+      "expected": "number:-1"
+    },
+    {
+      "formula": "+Z1",
+      "expected": "blank:"
+    },
+    {
+      "formula": "-Z1",
+      "expected": "number:0"
     }
   ]
 }

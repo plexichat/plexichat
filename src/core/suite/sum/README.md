@@ -246,6 +246,12 @@ disagreed about `SUM(1,)`.
 **`^` groups to the left.** `2^3^2` is `(2^3)^2`, i.e. 64, matching Excel and
 the client engine (this parser used to be right-associative here).
 
+**Unary signs nest, and only unary minus coerces.** Repeated signs are nested
+unary operators, so `--1` is `-(-1)` and `+-1` is `-1`, making `=--1` the
+number 1. Unary minus converts its operand to a number (`-"2"` is -2,
+`-TRUE` is -1), while unary plus is the identity, as in Excel: `+"2"` is the
+text `"2"` and `+TRUE` is `TRUE`.
+
 ### Known divergences from Excel
 
 Deliberate, and shared with the client engine unless noted:
