@@ -4,10 +4,15 @@ The shared case table pins the answers both engines must give, but only for the
 cases somebody thought to write down. This test covers the other half of the
 contract: it builds a systematic matrix -- every comparison and arithmetic
 operation over an operand alphabet, the criteria functions over four ranges,
-the text and date functions over their own operands, and the lookups over four
-vectors -- evaluates every formula in the server engine *and* in the client
-engine, and fails when the two disagree. A semantic change on one side shows up
-as a divergence instead of waiting for a case to be pinned.
+the text and date functions over their own operands, the lookups over four
+vectors, and the adopted engineering, financial, statistical, distribution,
+combinatorics and complex families each at arities one to three -- evaluates
+every formula in the server engine *and* in the client engine, and fails when
+the two disagree. A semantic change on one side shows up as a divergence
+instead of waiting for a case to be pinned. The table's own cases are compared
+engine-to-engine as well (see
+``test_the_engines_agree_on_every_shared_case``), so a loose comparison in
+either repository's parity test cannot hide a disagreement here.
 
 The client engine lives in the other repository, so the formulas are handed to
 node (see ``cross_engine_probe.mjs``). Without a client checkout or node the
@@ -35,6 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
+from src.core.suite.sum import _formula_core as engine_core
 from src.core.suite.sum.formulas import FormulaEvaluator
 
 TABLE_PATH = Path(__file__).parent / "formula_parity_cases.json"
@@ -228,6 +234,26 @@ def _product(alphabet: str, length: int) -> List[Tuple[str, ...]]:
     ]
 
 
+# The families this engine adopted from the client wholesale. The names come
+# from this engine's own dispatch sets, so no group is missing on this side, and
+# each function is called at arities one to three over one numeric alphabet. A
+# wrong arity answers #VALUE! on both sides, which is agreement; what the sweep
+# is for is the calls that do not. It found two: NPV at a rate of -1 divided by
+# zero here while the client answered #NUM!, and NPER at a rate of -1 answered a
+# finite 0 there while this engine answered #NUM!.
+#
+# TODAY and NOW read the clock, so the two engines cannot be compared on them.
+_FAMILY_ALPHABET = ["0", "1", "2", "0.5", "-1", '"2"', "TRUE", "Z1"]
+_FAMILIES = (
+    ("engineering", engine_core._ENGINEERING_FUNCTIONS),
+    ("financial", engine_core._FINANCIAL_FUNCTIONS),
+    ("statistical", engine_core._ADOPTED_STATISTICAL_FUNCTIONS),
+    ("distribution", engine_core._DISTRIBUTION_FUNCTIONS),
+    ("combinatorics", engine_core._COMBINATORICS_FUNCTIONS),
+    ("complex", engine_core._COMPLEX_FUNCTIONS),
+    ("single", engine_core._ADOPTED_SINGLE_FUNCTIONS - {"TODAY", "NOW"}),
+)
+
 # Groups the matrix cannot cover because this engine does not implement the
 # function at all: the client's CHAR/CODE pair. Everything else in ``_groups``
 # is generated and compared.
@@ -282,6 +308,14 @@ def _groups() -> "OrderedDict[str, List[str]]":
             for key in _LOOKUP_KEYS
             for lookup_range in _LOOKUP_RANGES
         ]
+    for family, names in _FAMILIES:
+        # One group per function, so _missing() can drop just that function.
+        for name in sorted(names):
+            groups[f"{family} {name}"] = [
+                f"{name}({','.join([operand] * arity)})"
+                for arity in (1, 2, 3)
+                for operand in _FAMILY_ALPHABET
+            ]
     return groups
 
 
@@ -462,3 +496,33 @@ def test_the_groups_this_engine_leaves_out_are_the_known_subset():
     one deliberately does not, so the differential matrix above cannot cover it.
     """
     assert set(_missing()) == set(_EXPECTED_MISSING)
+
+
+def test_the_engines_agree_on_every_shared_case():
+    """Every pinned case, compared engine-to-engine rather than to its value.
+
+    Each repository's parity test checks its own engine against the table's
+    ``expected`` column, so the two engines meet only through that column -- and
+    a comparison loose enough to accept the wrong *kind* of value (Python's
+    ``True == 1``, a blank against the 0 it coerces to) passes on one side while
+    the other answers something else. This runs the whole table through both
+    engines and compares the results with each other, so the column's wording
+    cannot hide a disagreement between them.
+    """
+    node = shutil.which("node")
+    engine = _client_engine()
+    if node is None or engine is None:
+        pytest.skip(
+            "cross-engine check needs node and the plexichat-client checkout; "
+            "set PLEXICHAT_CLIENT_PATH when the two are not siblings"
+        )
+
+    formulas = [case["formula"] for case in TABLE["cases"]]
+    ours = {formula: _evaluate(formula) for formula in formulas}
+    theirs = _client_results(node, engine, formulas)
+    divergences = [
+        (formula, ours[formula], theirs[index])
+        for index, formula in enumerate(formulas)
+        if not _same(ours[formula], theirs[index])
+    ]
+    assert not divergences, _report(divergences, len(formulas))
