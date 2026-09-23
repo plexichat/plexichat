@@ -1090,7 +1090,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
     def _lookup_advanced(
         self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
     ) -> Any:
-        """INDEX, MATCH, INDIRECT, OFFSET, LOOKUP."""
+        """INDEX, MATCH, INDIRECT, OFFSET, LOOKUP, XLOOKUP."""
         if name == "INDEX":
             # INDEX(array, row_num, [col_num])
             if len(args) < 2 or len(args) > 3:
@@ -1234,6 +1234,127 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if best_idx >= 0 and best_idx < len(result_flat):
                 return result_flat[best_idx]
             return N_A_ERROR
+        elif name == "XLOOKUP":
+            # XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found],
+            #         [match_mode], [search_mode])
+            # match_mode: 0 exact (default), -1 exact or next smaller,
+            #             1 exact or next larger, 2 wildcard (*, ?, ~).
+            # search_mode: 1 first-to-last (default), -1 last-to-first,
+            #              2 binary ascending, -2 binary descending.
+            # The binary modes scan linearly in the same direction here: on
+            # sorted data the answers agree, and this engine never promises
+            # logarithmic time, only the same value.
+            if len(args) < 3 or len(args) > 6:
+                return VALUE_ERROR
+            lookup_value = self._eval(args[0], sheet, seen, depth)
+            if is_error(lookup_value):
+                return lookup_value
+            lookup_matrix = self._range_matrix(args[1], sheet, seen, depth)
+            if not lookup_matrix:
+                value = self._eval(args[1], sheet, seen, depth)
+                if is_error(value):
+                    return value
+                lookup_matrix = [list(value)] if isinstance(value, list) else [[value]]
+            return_matrix = self._range_matrix(args[2], sheet, seen, depth)
+            if not return_matrix:
+                value = self._eval(args[2], sheet, seen, depth)
+                if is_error(value):
+                    return value
+                return_matrix = [list(value)] if isinstance(value, list) else [[value]]
+            match_mode = 0
+            if len(args) >= 5:
+                mode_value = self._eval(args[4], sheet, seen, depth)
+                if is_error(mode_value):
+                    return mode_value
+                try:
+                    match_mode = int(_to_number(mode_value))
+                except ValueError as exc:
+                    return str(exc)
+            search_mode = 1
+            if len(args) == 6:
+                search_value = self._eval(args[5], sheet, seen, depth)
+                if is_error(search_value):
+                    return search_value
+                try:
+                    search_mode = int(_to_number(search_value))
+                except ValueError as exc:
+                    return str(exc)
+            if match_mode not in (0, -1, 1, 2):
+                return VALUE_ERROR
+            if search_mode not in (1, -1, 2, -2):
+                return VALUE_ERROR
+            # A single row is a horizontal vector; anything taller is
+            # searched by its first column, the way VLOOKUP keys on the
+            # first column of its table.
+            if len(lookup_matrix) == 1:
+                lookup_vector = list(lookup_matrix[0])
+            else:
+                lookup_vector = [row[0] if row else None for row in lookup_matrix]
+            # The return block answers row-wise when it has one row per
+            # lookup entry, and column-wise when both blocks are a single
+            # row of the same length (the horizontal form).
+            column_wise = False
+            if len(return_matrix) == len(lookup_vector):
+                return_rows = [list(row) for row in return_matrix]
+            elif (
+                len(lookup_matrix) == 1
+                and len(return_matrix) == 1
+                and len(return_matrix[0]) == len(lookup_vector)
+            ):
+                column_wise = True
+                return_rows = [list(return_matrix[0])]
+            else:
+                return VALUE_ERROR
+            if search_mode in (-1, -2):
+                order = list(range(len(lookup_vector) - 1, -1, -1))
+            else:
+                order = list(range(len(lookup_vector)))
+            matched = -1
+            # The approximate modes answer the *closest* value on the right
+            # side -- the smallest entry ranked at or above the lookup for
+            # mode 1, the largest at or below it for mode -1 -- rather than
+            # the first entry the scan crosses. A forward scan that stopped
+            # at the first entry <= the lookup answered 1 for
+            # XLOOKUP(2.5, {1,2,3}, ..., -1) where the next smaller is 2.
+            # Ties keep the first entry in search order.
+            best_probe: Any = None
+            for i in order:
+                probe = lookup_vector[i]
+                if match_mode == 0:
+                    if self._lookup_eq(probe, lookup_value):
+                        matched = i
+                        break
+                elif match_mode == 2:
+                    if self._lookup_eq(probe, lookup_value, True):
+                        matched = i
+                        break
+                elif match_mode == 1:
+                    # Exact or next larger: the first entry that ranks at
+                    # or above the lookup value. Ranked comparison (not
+                    # numeric coercion) is what lets text order too.
+                    if _compare_values(probe, lookup_value) >= 0 and (
+                        matched < 0 or _compare_values(probe, best_probe) < 0
+                    ):
+                        matched = i
+                        best_probe = probe
+                else:
+                    if _compare_values(probe, lookup_value) <= 0 and (
+                        matched < 0 or _compare_values(probe, best_probe) > 0
+                    ):
+                        matched = i
+                        best_probe = probe
+            if matched < 0:
+                # if_not_found evaluates only on a miss, so a costly or
+                # failing fallback never poisons a hit.
+                if len(args) >= 4:
+                    return self._eval(args[3], sheet, seen, depth)
+                return N_A_ERROR
+            if column_wise:
+                return return_rows[0][matched]
+            row = return_rows[matched]
+            if len(row) == 1:
+                return row[0]
+            return list(row)
         return VALUE_ERROR
 
     # ── Advanced aggregate functions ────────────────────────────────────────

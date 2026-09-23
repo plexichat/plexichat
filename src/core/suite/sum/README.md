@@ -220,12 +220,17 @@ lookup keys (`MATCH("TWO", …)` finds the text `two`) and `SWITCH`'s cases all
 match without regard to case. The criteria comparisons already did.
 
 **An exact lookup takes wildcards.** An exact match — `MATCH`'s `match_type`
-0 and `VLOOKUP`/`HLOOKUP`'s `FALSE` — reads a *text* lookup value as a
-pattern, so `MATCH("ap*", D1:D3, 0)` is 1, `VLOOKUP("T*", B1:C3, 2, FALSE)`
-is 20, and `MATCH("tw~*", L1, 0)` finds the literal `tw*`. A pattern matches
+0, `VLOOKUP`/`HLOOKUP`'s `FALSE`, and `XLOOKUP`'s `match_mode` 0 and 2 — reads
+a *text* lookup value as a pattern, so `MATCH("ap*", D1:D3, 0)` is 1,
+`VLOOKUP("T*", B1:C3, 2, FALSE)` is 20, and `MATCH("tw~*", L1, 0)` finds the
+literal `tw*`. A pattern matches
 text cells only (`MATCH("*", A1:A3, 0)` is `#N/A` over a column of numbers),
 and the approximate forms carry no patterns at all, so `VLOOKUP("a*", D1:D3,
-1, TRUE)` is `#N/A`.
+1, TRUE)` is `#N/A`. `XLOOKUP`'s `match_mode` 1 and -1 answer the closest
+value on the right side — the smallest entry ranked at or above the lookup,
+or the largest ranked at or below it — through the same type ranking, so text
+orders too; `search_mode` -1 and -2 scan last-to-first, and the binary modes
+scan linearly in the same direction, which agrees on sorted data.
 
 **A logical is not its number.** The ranking above reaches `=` and `<>` too: a
 logical and a number are never equal (`TRUE = 1` is `FALSE`, where Python's own
@@ -278,7 +283,7 @@ match a pattern; the relational operators compare literally.
 | fractional `DEC2BIN`/`DEC2HEX`/`DEC2OCT` inputs | truncated to an integer | rendered through the float base conversion both engines share (e.g. `DEC2BIN(5.9)` is `"101.9000000000000004"`) |
 | `BITAND`/`BITOR`/`BITXOR` past 2^31 | full 48-bit result | 32-bit wrap, shared with the client engine |
 | an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
-| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, `XLOOKUP`, the `LINEST`/`LOGEST`/`TREND`/`GROWTH` regression machinery, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the volatile `RAND`/`RANDBETWEEN`/`RANDARRAY` trio | implemented | `#NAME?` — the server engine is a deliberately compact subset |
+| `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, the `LINEST`/`LOGEST`/`TREND`/`GROWTH` regression machinery, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the volatile `RAND`/`RANDBETWEEN`/`RANDARRAY` trio | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 An explicitly empty argument is read as a blank value rather than as the
 parameter's default — `LEFT("abc",)` is `""`, not `"a"`. Whether Excel applies
@@ -287,7 +292,7 @@ here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 228 functions (`TRUE`/`FALSE` work both as bare
+This engine implements 229 functions (`TRUE`/`FALSE` work both as bare
 literals and as zero-argument calls, matching Excel and the client engine);
 the client engine implements 262. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
@@ -296,12 +301,12 @@ here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
 **Adopted.** The first version of this list was a plan; these have now been
-implemented, taking the engine from 84 to 228 functions:
+implemented, taking the engine from 84 to 229 functions:
 
 | Family | Functions | Note |
 |---|---|---|
 | Logical | `TRUE`, `FALSE` | zero-argument call forms of the literals; a stray argument is `#VALUE!` |
-| Lookup | `CHOOSE`, `IFS`, `SWITCH` | evaluated on the `IF`/`IFNA` short-circuit path, so an untaken branch is not evaluated |
+| Lookup | `CHOOSE`, `IFS`, `SWITCH`, `XLOOKUP` | `CHOOSE`/`IFS`/`SWITCH` are evaluated on the `IF`/`IFNA` short-circuit path, so an untaken branch is not evaluated; `XLOOKUP` defers `if_not_found` the same way, so a failing fallback never poisons a hit |
 | Information | `ISLOGICAL`, `ISNONTEXT`, `ISEVEN`, `ISODD`, `ERROR.TYPE`, `N`, `T`, `CLEAN` | `ERROR.TYPE` and the `IS*` additions classify an error instead of propagating it |
 | Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | `GCD`/`LCM` truncate toward zero and reject a magnitude above 2^53 |
 | Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | an overflowing `SINH`/`COSH` is `#NUM!`, not infinity |
@@ -324,7 +329,7 @@ iteration with a bracketed bisection so a bad guess cannot diverge.
 
 **Adopt when a feature asks for it.** The rest of the statistical
 `*DIST`/`*INV` family (`TDIST`, `CHIDIST`, `FDIST`, …),
-`LINEST`/`LOGEST`/`TREND`/`GROWTH`, `XLOOKUP`, and the
+`LINEST`/`LOGEST`/`TREND`/`GROWTH`, and the
 dynamic-array family (`SORT`, `FILTER`, `HSTACK`, `TAKE`, `WRAPROWS`, …). Each
 needs design decisions this engine has not made yet — array results, iteration,
 repeated sampling — so they should arrive with the feature that wants them

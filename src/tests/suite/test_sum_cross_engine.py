@@ -210,6 +210,12 @@ _LOOKUP_CALLS = [
     ("VLOOKUP exact", "VLOOKUP({k},{r},1,FALSE)"),
     ("VLOOKUP approx", "VLOOKUP({k},{r},1,TRUE)"),
     ("LOOKUP", "LOOKUP({k},{r})"),
+    ("XLOOKUP exact", "XLOOKUP({k},{r},{r})"),
+    ("XLOOKUP not-found", 'XLOOKUP({k},{r},{r},"nf")'),
+    ("XLOOKUP next larger", 'XLOOKUP({k},{r},{r},"nf",1)'),
+    ("XLOOKUP next smaller", 'XLOOKUP({k},{r},{r},"nf",-1)'),
+    ("XLOOKUP wildcard", 'XLOOKUP({k},{r},{r},"nf",2)'),
+    ("XLOOKUP reverse", 'XLOOKUP({k},{r},{r},"nf",0,-1)'),
 ]
 
 

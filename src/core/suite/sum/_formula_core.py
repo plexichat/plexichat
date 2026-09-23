@@ -733,7 +733,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "DAYS":
             return self._days(values)
         # ── Advanced functions ──────────────────────────────────────────────
-        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP"):
+        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP", "XLOOKUP"):
             return self._lookup_advanced(name, args, sheet, seen, depth)
         if name in ("COUNTBLANK", "COUNTIF", "SUMPRODUCT"):
             return self._advanced_aggregate(name, args, sheet, seen, depth)

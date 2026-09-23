@@ -3537,6 +3537,90 @@
     {
       "formula": "-Z1",
       "expected": "number:0"
+    },
+    {
+      "formula": "XLOOKUP(2,A1:A3,B1:B3)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "XLOOKUP(\"TWO\",B1:B3,A1:A3)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "XLOOKUP(\"2\",A1:A3,B1:B3)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "XLOOKUP(99,A1:A3,B1:B3)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "XLOOKUP(99,A1:A3,B1:B3,\"missing\")",
+      "expected": "text:missing"
+    },
+    {
+      "formula": "XLOOKUP(1/0,A1:A3,B1:B3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(1,A1:A3,B1:B3,1/0)",
+      "expected": "text:one"
+    },
+    {
+      "formula": "XLOOKUP(99,A1:A3,B1:B3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(2.5,A1:A3,B1:B3,\"nf\",1)",
+      "expected": "text:three"
+    },
+    {
+      "formula": "XLOOKUP(2.5,A1:A3,B1:B3,\"nf\",-1)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "XLOOKUP(0,A1:A3,B1:B3,\"nf\",-1)",
+      "expected": "text:nf"
+    },
+    {
+      "formula": "XLOOKUP(99,A1:A3,B1:B3,\"nf\",1)",
+      "expected": "text:nf"
+    },
+    {
+      "formula": "XLOOKUP(\"ap*\",D1:D3,A1:A3,\"nf\",2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "XLOOKUP(\"BAN*\",D1:D3,C1:C3,\"nf\",2)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "XLOOKUP(\"~*\",D1:D3,A1:A3,\"nf\",2)",
+      "expected": "text:nf"
+    },
+    {
+      "formula": "XLOOKUP(\"ap*\",D1:D3,A1:A3,\"nf\",0)",
+      "expected": "text:nf"
+    },
+    {
+      "formula": "XLOOKUP(\"banana\",D1:D3,C1:C3,\"nf\",0,-1)",
+      "expected": "number:20"
+    },
+    {
+      "formula": "XLOOKUP(2,A1:A3,B1:B3,\"nf\",9)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(2,A1:A3,B1:B3,\"nf\",0,9)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(2,A1:A3,B1:B2)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(TRUE,A1:A3,B1:B3)",
+      "expected": "error:#N/A"
     }
   ]
 }
