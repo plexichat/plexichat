@@ -41,7 +41,11 @@ try:
 
     AIORTC_AVAILABLE = True
 except ImportError:
-    logger.warning("aiortc not installed - SFU adapter will not be available")
+    try:
+        logger.warning("aiortc not installed - SFU adapter will not be available")
+    except RuntimeError:
+        # Logger not configured yet (import runs before setup_logging()).
+        pass
 
 MediaRecorder: Any = None
 AIORTC_RECORDING_AVAILABLE = False
@@ -50,7 +54,13 @@ try:
 
     AIORTC_RECORDING_AVAILABLE = True
 except ImportError:
-    logger.warning("aiortc MediaRecorder not available - recording will be disabled")
+    try:
+        logger.warning(
+            "aiortc MediaRecorder not available - recording will be disabled"
+        )
+    except RuntimeError:
+        # Logger not configured yet (import runs before setup_logging()).
+        pass
 
 
 def _parse_ice_params_from_sdp(sdp: str) -> Dict[str, str]:

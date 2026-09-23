@@ -110,7 +110,12 @@ try:
     WEBAUTHN_AVAILABLE = True
 except ImportError:
     WEBAUTHN_AVAILABLE = False
-    logger.warning("webauthn library not installed. Passkey support disabled.")
+    try:
+        logger.warning("webauthn library not installed. Passkey support disabled.")
+    except RuntimeError:
+        # Logger not configured yet (import runs before setup_logging()).
+        # The notice is best-effort; passkey calls raise at use time.
+        pass
 
     from typing import Any
 
