@@ -343,6 +343,7 @@ class SelfTestRunner:
         # Public license export requires cryptographic challenge-response flow
         # (Ed25519 signature of challenge nonce)
         excluded.add("GET:/public/license/export")
+        excluded.add("GET:/api/v1/public/license/export")
 
         # --- Approval-gated endpoints (covered by dedicated ceremony tests
         # with real multi-admin approvals instead of the generic fuzzer,

@@ -46,6 +46,7 @@ from .capabilities import router as capabilities_router
 from .artifacts import router as artifacts_router
 from .federation import router as federation_router
 from .join import router as join_router
+from .public_license import router as public_license_router
 from .suite.registry import router as suite_router
 from .suite.stash import router as stash_router
 from .suite.sum import router as sum_router
@@ -123,6 +124,13 @@ def create_api_router() -> APIRouter:
 
     # Client-facing PlexiJoin federation surface (/Join contract, join.js).
     api_router.include_router(join_router, prefix="/Join")
+
+    # Public license endpoints under the API prefix. The router carries its
+    # own ``/public/license`` prefix, so this serves
+    # ``/api/v1/public/license/*`` (the provisional-banner contract the web
+    # client reads). The root mount in ``src/api/app.py`` is preserved for
+    # the external signing-authority protocol.
+    api_router.include_router(public_license_router)
 
     # Include the authenticated PlexiSuite registry and universal-home feed.
     api_router.include_router(suite_router)
