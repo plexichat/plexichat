@@ -18,6 +18,11 @@ while doing it:
   hardware). ``_init_hsm`` already guarded every one of its notices against
   an unconfigured logger; ``_init_tpm`` did not, so the import failed on any
   host without a TPM.
+* ``src/core/voice/signaling/sfu/mediasoup_ws.py`` resolves the
+  deployment-scoped stable-peer secret at import time and warns with
+  ``logger.critical`` when none is configured, which is the case for a
+  default deployment -- and the warning itself took down the whole signaling
+  package.
 
 The modules are exercised as isolated copies loaded under a throwaway name,
 never via ``importlib.reload()`` on the shared module: reloading re-executes
@@ -41,6 +46,22 @@ def _disable_logger(real_logger):
     real_logger._setup_called = False
     with pytest.raises(RuntimeError):
         real_logger.warning("precondition: unconfigured logger raises")
+
+
+def _unconfigure_config(monkeypatch) -> None:
+    """Make ``utils.config.get`` behave like an unconfigured loader.
+
+    The stable-peer secret is read from config *before* the warning is
+    emitted, so a configured ``rate_limiting.bypass_secret`` would answer the
+    lookup and the probe would never reach the log call this test is about.
+    Failing the lookup is what an import before ``config.setup()`` sees.
+    """
+    import utils.config as config
+
+    def _raise(key, default=None):
+        raise RuntimeError("Config not configured")
+
+    monkeypatch.setattr(config, "get", _raise)
 
 
 def _load_isolated(live_module: types.ModuleType) -> types.ModuleType:
@@ -94,6 +115,24 @@ class TestOptionalDependencyImportWarnings:
             reloaded = _load_isolated(adapter)
             assert reloaded.AIORTC_AVAILABLE is False
             assert reloaded.AIORTC_RECORDING_AVAILABLE is False
+        finally:
+            real_logger._setup_called = saved_flag
+
+    def test_mediasoup_adapter_import_without_a_secret_and_logger(self, monkeypatch):
+        """The stable-peer secret is resolved at import time, and warns."""
+        from src.utils.common_utils.utils import logger as real_logger
+        import src.core.voice.signaling.sfu.mediasoup_ws as mediasoup
+
+        saved_flag = real_logger._setup_called
+        monkeypatch.delenv("PLEXICHAT_VOICE_STABLE_PEER_SECRET", raising=False)
+        monkeypatch.delenv("PLEXICHAT_SYSTEM_KEY", raising=False)
+        _unconfigure_config(monkeypatch)
+        try:
+            _disable_logger(real_logger)
+            reloaded = _load_isolated(mediasoup)
+            # The empty secret is what made the probe warn; a configured secret
+            # would mean the import was never at risk and this proves nothing.
+            assert reloaded._STABLE_PEER_SECRET == b""
         finally:
             real_logger._setup_called = saved_flag
 

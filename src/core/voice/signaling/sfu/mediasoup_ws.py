@@ -88,13 +88,21 @@ def _load_stable_peer_secret() -> bytes:
     except Exception:
         pass
 
-    logger.critical(
-        "mediasoup_ws: NO deployment-scoped stable-peer secret was "
-        "configured. peer_id values will be CONSTANT per instance "
-        "(any restart / redeploy rotates them). Set "
-        "voice.mediated.stable_peer_secret or "
-        "PLEXICHAT_VOICE_STABLE_PEER_SECRET in production."
-    )
+    # Best-effort: this runs at import time (see the module-level call below),
+    # which can precede ``logger.setup()``. An unconfigured logger raises,
+    # and a crash here would take the whole signaling package with it. The
+    # notice is not lost: no secret means the next ``_stable_peer_id`` call
+    # resolves it again, with a configured logger by then.
+    try:
+        logger.critical(
+            "mediasoup_ws: NO deployment-scoped stable-peer secret was "
+            "configured. peer_id values will be CONSTANT per instance "
+            "(any restart / redeploy rotates them). Set "
+            "voice.mediated.stable_peer_secret or "
+            "PLEXICHAT_VOICE_STABLE_PEER_SECRET in production."
+        )
+    except RuntimeError:
+        pass  # Logger not configured yet
     return b""
 
 
