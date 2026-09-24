@@ -512,6 +512,20 @@ def _utf16_first_unit(text: str) -> int:
     return 0xD800 + ((code - 0x10000) >> 10)
 
 
+def _fold_case(text: str) -> str:
+    """Fold text the way Excel's case-insensitive comparisons do.
+
+    Excel folds one character at a time, without the full case folding that
+    can expand a single letter: ``"straße" = "STRASSE"`` is FALSE, because
+    ``ß`` is one letter and ``SS`` is two. ``str.casefold()`` applies the full
+    fold and answered TRUE, disagreeing with Excel and with the client engine,
+    whose ``toLowerCase()`` folds the same way ``str.lower()`` does. Every
+    case-insensitive comparison in this package goes through this helper so
+    the two engines cannot drift apart again.
+    """
+    return text.lower()
+
+
 def _text_equals(left: Any, right: Any) -> bool:
     """Compare two values as text the way Excel's ``=`` does.
 
@@ -520,7 +534,7 @@ def _text_equals(left: Any, right: Any) -> bool:
     FALSE where Excel, the criteria comparisons and the client engine answer
     TRUE. Lookup keys compare the way ``=`` does, so they use this too.
     """
-    return _to_text(left).casefold() == _to_text(right).casefold()
+    return _fold_case(_to_text(left)) == _fold_case(_to_text(right))
 
 
 def _numeric(value: Any) -> bool:
@@ -605,7 +619,8 @@ def _compare_values(left: Any, right: Any) -> int:
         left_key: Any = int(bool(left))
         right_key: Any = int(bool(right))
     elif left_rank == 1:
-        left_key, right_key = _to_text(left).casefold(), _to_text(right).casefold()
+        left_key = _fold_case(_to_text(left))
+        right_key = _fold_case(_to_text(right))
     else:
         left_key, right_key = _to_number(left), _to_number(right)
     if left_key == right_key:
@@ -689,6 +704,6 @@ def _wildcard_pattern_to_regex(pattern: str) -> "re.Pattern[str]":
 def _wildcard_match(pattern: str, value: str) -> bool:
     """Match text against an Excel-style wildcard pattern (``*``, ``?``, ``~``)."""
     return (
-        _wildcard_pattern_to_regex(pattern.casefold()).fullmatch(value.casefold())
+        _wildcard_pattern_to_regex(_fold_case(pattern)).fullmatch(_fold_case(value))
         is not None
     )

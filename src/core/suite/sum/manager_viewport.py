@@ -4,7 +4,13 @@ import sqlite3
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from .formulas import FormulaEvaluator, _coerce_number_text, _to_text, is_error
+from .formulas import (
+    FormulaEvaluator,
+    _coerce_number_text,
+    _fold_case,
+    _to_text,
+    is_error,
+)
 from .segments import SegmentEncoder
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
@@ -218,8 +224,8 @@ class SumManagerViewport(SumManagerProtocol):
         # "2" missed every computed cell, while the client engine's String(2)
         # is "2". Booleans print as TRUE/FALSE here and true/false there, so
         # both sides fold case.
-        needle = "" if target is None else _to_text(target).casefold()
-        haystack = "" if value is None else _to_text(value).casefold()
+        needle = "" if target is None else _fold_case(_to_text(target))
+        haystack = "" if value is None else _fold_case(_to_text(value))
         if op == "contains":
             return value is not None and needle in haystack
         if op == "not_contains":
@@ -235,7 +241,7 @@ class SumManagerViewport(SumManagerProtocol):
             if number is not None and target_number is not None:
                 equal = number == target_number
             else:
-                equal = _to_text(value).casefold() == _to_text(target).casefold()
+                equal = _fold_case(_to_text(value)) == _fold_case(_to_text(target))
             return equal if op == "eq" else not equal
         # The four ordering operators need a number on both sides; anything
         # else (a blank, "abc", "inf", "0x10") has nothing to compare.

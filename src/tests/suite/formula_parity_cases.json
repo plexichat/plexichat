@@ -55,7 +55,8 @@
     "L2": "*",
     "L3": "~",
     "L4": "?",
-    "M1": 999
+    "M1": 999,
+    "N1": "stra\u00dfe"
   },
   "cases": [
     {
@@ -3985,6 +3986,38 @@
     {
       "formula": "REPT(\"\ud83d\ude00\",16384)",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "\"stra\u00dfe\"=\"STRASSE\"",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "\"stra\u00dfe\"=\"Stra\u00dfe\"",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "EXACT(\"stra\u00dfe\",\"STRASSE\")",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "COUNTIF(N1:N1,\"STRASSE\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTIF(N1:N1,\"Stra\u00dfe\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "COUNTIF(N1:N1,\"stra*\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(\"STRASSE\",N1:N1,0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(\"stra\u00dfe\",N1:N1,0)",
+      "expected": "number:1"
     }
   ]
 }

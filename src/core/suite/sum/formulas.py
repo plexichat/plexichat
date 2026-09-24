@@ -46,6 +46,7 @@ from ._formula_shared import (  # noqa: F401  (facade re-exports)
     CellResolver,
     _Parser,
     _coerce_number_text,
+    _fold_case,
     _to_text,
     _tokenize,
     is_error,

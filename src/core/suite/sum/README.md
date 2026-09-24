@@ -233,7 +233,10 @@ is `#REF!`.
 **Text compares case-insensitively.** Excel's `=` ignores case — `"a" = "A"` is
 `TRUE`, and `EXACT` is the case-sensitive test — so the `=`/`<>` operators, the
 lookup keys (`MATCH("TWO", …)` finds the text `two`) and `SWITCH`'s cases all
-match without regard to case. The criteria comparisons already did.
+match without regard to case. The criteria comparisons already did. The fold is
+one character at a time, not Unicode's full case folding, so
+`"straße" = "STRASSE"` is `FALSE` — `ß` is one letter and `SS` is two — the way
+the client engine's lower-casing reads it.
 
 **An exact lookup takes wildcards.** An exact match — `MATCH`'s `match_type`
 0, `VLOOKUP`/`HLOOKUP`'s `FALSE`, and `XLOOKUP`'s `match_mode` 0 and 2 — reads

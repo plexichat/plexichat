@@ -19,6 +19,7 @@ from ._formula_shared import (
     CellResolver,
     _coerce_number_text,
     _criteria_operator,
+    _fold_case,
     _is_pattern,
     _numeric,
     _to_number,
@@ -1308,7 +1309,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 # with wildcards, escapes honoured: only text cells can match
                 # it, so ``COUNTIF(range, "tw~*")`` finds the text ``tw*``.
                 return isinstance(value, str) and _wildcard_match(criteria, value)
-            return _to_text(value).casefold() == criteria.casefold()
+            return _fold_case(_to_text(value)) == _fold_case(criteria)
         if isinstance(value, bool) or isinstance(criteria, bool):
             # Criteria rank types the way every other comparison here does, so
             # a logical criterion matches only a logical cell of the same
