@@ -336,10 +336,10 @@ _FAMILIES = (
     ("single", engine_core._ADOPTED_SINGLE_FUNCTIONS - {"TODAY", "NOW"}),
 )
 
-# Groups the matrix cannot cover because this engine does not implement the
-# function at all: the client's CHAR/CODE pair. Everything else in ``_groups``
-# is generated and compared.
-_EXPECTED_MISSING = ("text CHAR", "text CODE")
+# Every function the matrix names is now implemented on both sides, so no
+# group is skipped. Keep the pin: losing a function must fail here rather
+# than quietly shrinking the matrix.
+_EXPECTED_MISSING: tuple = ()
 
 
 def _groups() -> "OrderedDict[str, List[str]]":

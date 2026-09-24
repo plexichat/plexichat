@@ -331,16 +331,20 @@ here, so both engines simply agree with each other.
 
 ### Functions the client engine has that this one does not
 
-This engine implements 229 functions (`TRUE`/`FALSE` work both as bare
+This engine implements 231 functions (`TRUE`/`FALSE` work both as bare
 literals and as zero-argument calls, matching Excel and the client engine);
-the client engine implements 262. The gap
+the client engine implements 264. The gap
 is by design — a viewport read, a CSV export and a sort need a compact,
 cheap-to-verify subset — but it has never been written down, so it is listed
 here, with what to adopt next and what to leave alone. Every function named
 below is callable in the client engine today.
 
 **Adopted.** The first version of this list was a plan; these have now been
-implemented, taking the engine from 84 to 229 functions:
+implemented, taking the engine from 84 to 231 functions:
+
+| Family | Functions | Note |
+|---|---|---|
+| Text | `CHAR`, `CODE` | `CHAR` truncates toward zero and rejects a code outside 1-255 with `#VALUE!`; `CODE` reads the first character and rejects empty text |
 
 | Family | Functions | Note |
 |---|---|---|

@@ -85,6 +85,8 @@ _VALUE_FUNCTIONS = frozenset(
         "SEARCH",
         "REPLACE",
         "REPT",
+        "CHAR",
+        "CODE",
         "EOMONTH",
         "EDATE",
         "WEEKDAY",
@@ -745,6 +747,8 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             "SEARCH",
             "REPLACE",
             "REPT",
+            "CHAR",
+            "CODE",
         ):
             return self._advanced_text(name, values)
         if name in ("EOMONTH", "EDATE", "WEEKDAY", "WEEKNUM", "NETWORKDAYS", "WORKDAY"):

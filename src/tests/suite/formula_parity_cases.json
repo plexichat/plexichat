@@ -2179,6 +2179,54 @@
       "expected": "error:#DIV/0!"
     },
     {
+      "formula": "CHAR(65)",
+      "expected": "text:A"
+    },
+    {
+      "formula": "CHAR(65.9)",
+      "expected": "text:A"
+    },
+    {
+      "formula": "CHAR(\"65\")",
+      "expected": "text:A"
+    },
+    {
+      "formula": "CHAR(0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "CHAR(256)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "CHAR(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CODE(\"A\")",
+      "expected": "number:65"
+    },
+    {
+      "formula": "CODE(\"ABC\")",
+      "expected": "number:65"
+    },
+    {
+      "formula": "CODE(\"\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "CODE(65)",
+      "expected": "number:54"
+    },
+    {
+      "formula": "CODE(TRUE)",
+      "expected": "number:84"
+    },
+    {
+      "formula": "CODE(A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
       "formula": "SIGN(-3)",
       "expected": "number:-1"
     },

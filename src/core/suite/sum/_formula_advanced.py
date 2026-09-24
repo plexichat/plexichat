@@ -1424,7 +1424,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
     # ── Advanced text functions ─────────────────────────────────────────────
 
     def _advanced_text(self, name: str, values: List[Any]) -> Any:
-        """TEXT, VALUE, NUMBERVALUE, FIND, SEARCH, REPLACE, REPT."""
+        """TEXT, VALUE, NUMBERVALUE, FIND, SEARCH, REPLACE, REPT, CHAR, CODE."""
         if name == "TEXT":
             # TEXT(value, format_text)
             if len(values) != 2:
@@ -1538,6 +1538,26 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(text) * times > MAX_REPT_CHARS:
                 return VALUE_ERROR
             return text * times
+        elif name == "CHAR":
+            # CHAR(number): the character with that code (1-255 in Excel).
+            if len(values) != 1:
+                return VALUE_ERROR
+            try:
+                number = _to_number(values[0])
+            except (ValueError, OverflowError) as exc:
+                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
+            code = math.trunc(number)
+            if code < 1 or code > 255:
+                return VALUE_ERROR
+            return chr(code)
+        elif name == "CODE":
+            # CODE(text): the code of the first character.
+            if len(values) != 1:
+                return VALUE_ERROR
+            text = _to_text(values[0])
+            if not text:
+                return VALUE_ERROR
+            return float(ord(text[0]))
         return VALUE_ERROR
 
     # ── Advanced date functions ─────────────────────────────────────────────
