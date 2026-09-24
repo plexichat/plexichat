@@ -34,6 +34,12 @@ To verify that utilities provide helpful error messages when setup is not called
 python tests\integration\test_error_handling.py
 ```
 
+The same checks are also collected by pytest, so `pytest tests/` covers them:
+
+```bash
+pytest tests\integration\test_error_handling.py
+```
+
 ## What This Demonstrates
 
 The integration tests prove that:
