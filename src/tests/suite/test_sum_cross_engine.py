@@ -94,7 +94,12 @@ _NUMBERS = [
 _ARITHMETIC = ["+", "-", "*", "/", "^"]
 
 # One call per text function, run over the same operands. The operators are
-# here too: `&` concatenates, and the nested call exercises composition.
+# here too: `&` concatenates, and the nested call exercises composition. The
+# astral operand (two emoji, four UTF-16 units) holds the units rule: Excel
+# and the client engine measure text in UTF-16 code units, so LEN answers 4
+# and LEFT/RIGHT/MID/FIND/SEARCH/REPLACE/CODE cut and count in units rather
+# than in the code points Python indexes. Counting in code points answered
+# LEN("😀") as 1 here while the client answered 2.
 _TEXT_OPERANDS = [
     '"a"',
     '"A"',
@@ -105,6 +110,7 @@ _TEXT_OPERANDS = [
     '"2abc"',
     '""',
     '"1.5"',
+    '"😀😃"',
     "A1",
     "B1",
     "D1",
@@ -417,6 +423,41 @@ def _groups() -> "OrderedDict[str, List[str]]":
             "309",
             "1000",
         )
+    ]
+    # Positions inside astral text are UTF-16 units on both sides now: a start
+    # or a count can land inside a surrogate pair and keep the surviving half,
+    # as Excel does. The operand sweep above covers the whole-function forms;
+    # these cover the calls whose positions the templates cannot express.
+    groups["text astral positions"] = [
+        'FIND("😄","😀😃😄",2)',
+        'SEARCH("😄","😀😃😄",2)',
+        'REPLACE("😀😃😄",2,2,"z")',
+        'FIND("","abc",5)',
+        'SEARCH("","abc",5)',
+    ]
+    # AND/OR evaluate every argument: Excel does not short-circuit them, so an
+    # error anywhere propagates even when an earlier argument already decides
+    # the result, and the first error in argument order wins. The client used
+    # to stop at the deciding argument, answering FALSE for AND(FALSE, 1/0).
+    groups["branching AND/OR errors"] = [
+        "AND(FALSE,1/0)",
+        "OR(TRUE,1/0)",
+        "AND(FALSE,NA())",
+        "OR(TRUE,NA())",
+        "AND(NA(),1/0)",
+        "AND(1/0,NA())",
+        "OR(NA(),1/0)",
+        "OR(1/0,NA())",
+        "AND(TRUE,TRUE,1/0)",
+        "OR(FALSE,FALSE,NA())",
+    ]
+    # REPT is bounded at 32,767 UTF-16 units on both sides; the server cap
+    # used to have no client counterpart, so a huge repeat answered #VALUE!
+    # here and a multi-megabyte string there.
+    groups["text REPT bound"] = [
+        'REPT("x",32767)',
+        'REPT("x",32768)',
+        'REPT("😀",16384)',
     ]
     for family, names in _FAMILIES:
         # One group per function, so _missing() can drop just that function.

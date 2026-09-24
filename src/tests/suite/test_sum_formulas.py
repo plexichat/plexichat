@@ -992,6 +992,47 @@ def test_rept_is_bounded_against_multi_gb_allocations():
     assert _eval('REPT("x", 999999999)') == VALUE_ERROR
 
 
+def test_rept_bound_counts_utf16_units_like_len():
+    """REPT refuses the same calls on both engines, measured in units.
+
+    The bound counts the UTF-16 code units LEN reports, so an emoji counts
+    double: 32,767 units build fine and one unit more is #VALUE!, on either
+    engine. Strings this long do not belong in the shared parity table, so
+    the boundary-ok sides live here while the refusals are pinned there.
+    """
+    assert _eval('REPT("x", 32767)') == "x" * 32767
+    assert _eval('REPT("x", 32768)') == VALUE_ERROR
+    assert _eval('REPT("😀", 16383)') == "😀" * 16383
+    assert _eval('REPT("😀", 16384)') == VALUE_ERROR
+
+
+def test_text_positions_count_utf16_units():
+    """LEN/LEFT/RIGHT/MID/FIND/SEARCH/REPLACE/CODE measure UTF-16 units.
+
+    Excel and the client engine count an astral character as two units, so
+    positions can land inside a surrogate pair and keep the surviving half.
+    """
+    assert _eval('LEN("😀")') == 2.0
+    assert _eval('LEFT("😀😃😄", 1)') == "\ud83d"
+    assert _eval('RIGHT("😀😃😄", 1)') == "\ude04"
+    assert _eval('MID("😀😃😄", 2, 1)') == "\ude00"
+    assert _eval('FIND("😃", "😀😃😄")') == 3.0
+    assert _eval('REPLACE("😀😃😄", 2, 2, "z")') == "\ud83dz\ude03😄"
+    assert _eval('CODE("😀")') == 55357.0
+
+
+def test_and_or_evaluate_every_argument():
+    """AND/OR propagate an error anywhere, with no short-circuit.
+
+    Excel evaluates every argument, so a deciding argument does not hide a
+    later error, and the first error in argument order wins.
+    """
+    assert _eval("AND(FALSE, 1/0)") == DIV_ZERO
+    assert _eval("OR(TRUE, 1/0)") == DIV_ZERO
+    assert _eval("AND(NA(), 1/0)") == N_A_ERROR
+    assert _eval("OR(1/0, NA())") == DIV_ZERO
+
+
 def test_networkdays_and_workday_span_is_bounded():
     """Agent 30 M3: date loops must not run for billions of iterations.
 

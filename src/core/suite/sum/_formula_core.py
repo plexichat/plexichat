@@ -25,6 +25,8 @@ from ._formula_shared import (
     _to_number_or_zero,
     _to_text,
     _text_equals,
+    _utf16_len,
+    _utf16_slice,
     _wildcard_match,
     is_error,
     parse_cell_ref,
@@ -899,7 +901,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "INT":
             return float(math.floor(_to_number(value)))
         if name == "LEN":
-            return float(len(_to_text(value)))
+            # Excel counts UTF-16 code units, so an astral character (an emoji)
+            # is two: LEN("😀") is 2. Python's len counts code points, which
+            # answered 1 here while the client engine -- a UTF-16 string by
+            # definition -- answered 2.
+            return float(_utf16_len(_to_text(value)))
         if name == "UPPER":
             return _to_text(value).upper()
         if name == "LOWER":
@@ -1066,14 +1072,19 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
         if start < 1 or num_chars < 0:
             return VALUE_ERROR
+        # Positions and counts are UTF-16 code units, as in Excel and the
+        # client engine: LEFT("😀", 1) keeps the lone high surrogate rather
+        # than the whole character Python slicing would keep.
         if name == "LEFT":
-            return text[:num_chars]
+            return _utf16_slice(text, 0, num_chars)
         if name == "RIGHT":
             # Python's text[-0:] is the whole string, so zero needs its own
             # branch to match the empty result Excel returns.
-            return text[-num_chars:] if num_chars else ""
+            if not num_chars:
+                return ""
+            return _utf16_slice(text, _utf16_len(text) - num_chars, None)
         offset = start - 1
-        return text[offset : offset + num_chars]
+        return _utf16_slice(text, offset, offset + num_chars)
 
     def _range_matrix(
         self, node: Any, sheet: Optional[str], seen: set, depth: int

@@ -26,6 +26,10 @@ from ._formula_shared import (
     _to_number_or_zero,
     _to_text,
     _text_equals,
+    _utf16_find,
+    _utf16_first_unit,
+    _utf16_len,
+    _utf16_slice,
     is_error,
     parse_cell_ref,
 )
@@ -1491,7 +1495,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 start_num = int(_to_number(values[2]))
             if start_num < 1:
                 return VALUE_ERROR
-            pos = within_text.find(find_text, start_num - 1)
+            # The start and the answer are UTF-16 code units, as in Excel and
+            # the client engine: FIND("😃", "😀😃😄") is 3, not the 2 Python's
+            # code-point indexing answered.
+            pos = _utf16_find(find_text, within_text, start_num - 1)
             if pos == -1:
                 # Excel reports a failed FIND/SEARCH as #VALUE!, not #N/A.
                 return VALUE_ERROR
@@ -1508,7 +1515,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 start_num = int(_to_number(values[2]))
             if start_num < 1:
                 return VALUE_ERROR
-            pos = within_text.find(find_text, start_num - 1)
+            # Unit-based like FIND above: SEARCH("😃", "😀😃😄") is 3.
+            pos = _utf16_find(find_text, within_text, start_num - 1)
             if pos == -1:
                 # Excel reports a failed FIND/SEARCH as #VALUE!, not #N/A.
                 return VALUE_ERROR
@@ -1523,8 +1531,14 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             new_text = _to_text(values[3])
             if start_num < 1:
                 return VALUE_ERROR
+            # Unit-based like the slices: cutting inside an astral character
+            # keeps the surviving half, as Excel and the client engine do.
             start = start_num - 1
-            return old_text[:start] + new_text + old_text[start + num_chars :]
+            return (
+                _utf16_slice(old_text, 0, start)
+                + new_text
+                + _utf16_slice(old_text, start + num_chars, None)
+            )
         elif name == "REPT":
             # REPT(text, number_times)
             if len(values) != 2:
@@ -1534,8 +1548,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if times < 0:
                 return VALUE_ERROR
             # Bound the allocation: REPT("x", 10**9) would otherwise try to
-            # materialize a multi-gigabyte string on a read path.
-            if len(text) * times > MAX_REPT_CHARS:
+            # materialise a multi-gigabyte string on a read path. The bound
+            # counts UTF-16 code units, the same units LEN reports, so the
+            # client engine enforces the identical limit on its side.
+            if _utf16_len(text) * times > MAX_REPT_CHARS:
                 return VALUE_ERROR
             return text * times
         elif name == "CHAR":
@@ -1551,13 +1567,16 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return VALUE_ERROR
             return chr(code)
         elif name == "CODE":
-            # CODE(text): the code of the first character.
+            # CODE(text): the code of the first character. That is the first
+            # UTF-16 unit -- CODE("😀") is 55357, the high surrogate -- the
+            # way the client engine's charCodeAt(0) reads it. Python's ord
+            # reads the whole code point (128512) instead.
             if len(values) != 1:
                 return VALUE_ERROR
             text = _to_text(values[0])
             if not text:
                 return VALUE_ERROR
-            return float(ord(text[0]))
+            return float(_utf16_first_unit(text))
         return VALUE_ERROR
 
     # ── Advanced date functions ─────────────────────────────────────────────

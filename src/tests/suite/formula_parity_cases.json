@@ -3893,6 +3893,98 @@
     {
       "formula": "SWITCH(1,1,\"x\",A5,\"d\")",
       "expected": "text:x"
+    },
+    {
+      "formula": "LEN(\"\ud83d\ude00\")",
+      "expected": "number:2"
+    },
+    {
+      "formula": "LEN(\"\ud83d\ude00\ud83d\ude03\")",
+      "expected": "number:4"
+    },
+    {
+      "formula": "LEFT(\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\",1)",
+      "expected": "text:\ud83d"
+    },
+    {
+      "formula": "RIGHT(\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\",1)",
+      "expected": "text:\ude04"
+    },
+    {
+      "formula": "MID(\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\",2,1)",
+      "expected": "text:\ude00"
+    },
+    {
+      "formula": "LEFT(\"\ud83d\ude00\",2)",
+      "expected": "text:\ud83d\ude00"
+    },
+    {
+      "formula": "FIND(\"\ud83d\ude03\",\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "SEARCH(\"\ud83d\ude03\",\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\")",
+      "expected": "number:3"
+    },
+    {
+      "formula": "FIND(\"\ud83d\ude04\",\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\",2)",
+      "expected": "number:5"
+    },
+    {
+      "formula": "CODE(\"\ud83d\ude00\")",
+      "expected": "number:55357"
+    },
+    {
+      "formula": "REPLACE(\"\ud83d\ude00\ud83d\ude03\ud83d\ude04\",2,2,\"z\")",
+      "expected": "text:\ud83dz\ude03\ud83d\ude04"
+    },
+    {
+      "formula": "AND(FALSE,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OR(TRUE,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AND(FALSE,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "OR(TRUE,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "AND(NA(),1/0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "OR(1/0,NA())",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AND(TRUE,TRUE,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OR(FALSE,FALSE,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "FIND(\"\",\"abc\",5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SEARCH(\"\",\"abc\",5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "REPT(\"x\",32768)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "REPT(\"\ud83d\ude00\",16384)",
+      "expected": "error:#VALUE!"
     }
   ]
 }

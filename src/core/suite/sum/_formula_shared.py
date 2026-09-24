@@ -407,6 +407,111 @@ def _to_text(value: Any) -> str:
     return str(value)
 
 
+# ── UTF-16 text measurement ──────────────────────────────────────────────
+
+
+def _utf16_units(text: str) -> List[int]:
+    """Split text into its UTF-16 code units.
+
+    Excel measures text in UTF-16 code units -- ``LEN("😀")`` is 2, and
+    ``LEFT("😀", 1)`` is the lone high surrogate -- and so does the client
+    engine, whose strings are UTF-16 by definition. Python indexes Unicode
+    code points instead, so every positional text function goes through this
+    list rather than slicing the string directly. A surrogate already sitting
+    in the text (one half of a pair read from JSON, say) is one unit, the
+    same way the client engine reads it.
+    """
+    units: List[int] = []
+    for character in text:
+        code = ord(character)
+        if code < 0x10000:
+            units.append(code)
+        else:
+            code -= 0x10000
+            units.append(0xD800 + (code >> 10))
+            units.append(0xDC00 + (code & 0x3FF))
+    return units
+
+
+def _utf16_from_units(units: List[int]) -> str:
+    """Reassemble text from UTF-16 code units.
+
+    A surrogate pair decodes back to its character; a lone surrogate decodes
+    to the surrogate character itself, which Python strings allow. That is
+    what ``LEFT("😀", 1)`` has to return to match Excel and the client engine.
+    """
+    chars: List[str] = []
+    index = 0
+    while index < len(units):
+        unit = units[index]
+        if (
+            0xD800 <= unit <= 0xDBFF
+            and index + 1 < len(units)
+            and 0xDC00 <= units[index + 1] <= 0xDFFF
+        ):
+            chars.append(
+                chr(0x10000 + ((unit - 0xD800) << 10) + (units[index + 1] - 0xDC00))
+            )
+            index += 2
+        else:
+            chars.append(chr(unit))
+            index += 1
+    return "".join(chars)
+
+
+def _utf16_len(text: str) -> int:
+    """Length of text in UTF-16 code units, the way Excel counts it."""
+    if text.isascii():
+        return len(text)
+    return len(_utf16_units(text))
+
+
+def _utf16_slice(text: str, start: int, stop: Optional[int] = None) -> str:
+    """Slice text by UTF-16 code-unit offsets.
+
+    ``start`` is inclusive and ``stop`` exclusive, in units, with the usual
+    Python negative-index meaning -- the list being sliced is the unit list,
+    so ``LEFT("😀", 1)`` keeps the first unit (the lone high surrogate) and
+    ``RIGHT("😀", 1)`` the last one, exactly as the client engine slices.
+    """
+    if text.isascii():
+        return text[start:stop]
+    return _utf16_from_units(_utf16_units(text)[start:stop])
+
+
+def _utf16_find(needle: str, haystack: str, start: int) -> int:
+    """Unit offset of ``needle`` in ``haystack`` at or after ``start``.
+
+    Answers the offset in UTF-16 code units, or -1 when there is no match --
+    ``str.find`` over the UTF-16 byte form, which keeps the C-speed search of
+    the plain ``str.find`` it replaces. A match has to start on a unit
+    boundary, so an odd-byte hit (the needle's bytes straddling two units) is
+    skipped and the search resumes after it. The empty-needle and past-the-end
+    answers fall out the same way ``str.find`` gives them.
+    """
+    if needle.isascii() and haystack.isascii():
+        return haystack.find(needle, start)
+    hay = haystack.encode("utf-16-le", "surrogatepass")
+    ndl = needle.encode("utf-16-le", "surrogatepass")
+    position = hay.find(ndl, max(start, 0) * 2)
+    while position != -1 and position % 2 == 1:
+        position = hay.find(ndl, position + 1)
+    return -1 if position == -1 else position // 2
+
+
+def _utf16_first_unit(text: str) -> int:
+    """First UTF-16 code unit of text, which is what CODE reports.
+
+    A basic-multilingual character is its own code point; an astral one (an
+    emoji, say) reports its high surrogate -- ``CODE("😀")`` is 55357 -- the
+    way the client engine's ``charCodeAt(0)`` reads it.
+    """
+    code = ord(text[0])
+    if code < 0x10000:
+        return code
+    return 0xD800 + ((code - 0x10000) >> 10)
+
+
 def _text_equals(left: Any, right: Any) -> bool:
     """Compare two values as text the way Excel's ``=`` does.
 

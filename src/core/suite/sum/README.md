@@ -191,6 +191,10 @@ because they answer a question *about* the value rather than computing with it:
 - `COUNTBLANK` counts an error cell as non-blank;
 - the `IS*` family and `TYPE` report `FALSE` and `16`.
 
+`AND` and `OR` evaluate every argument -- Excel does not short-circuit them --
+so `AND(FALSE, 1/0)` is `#DIV/0!` rather than `FALSE`, and the first error in
+argument order wins (`AND(NA(), 1/0)` is `#N/A`).
+
 **A text argument is coerced, a referenced value is not.** Excel translates a
 text argument into a number (`SUM("2")` is 2) but never a value read from a
 cell or range (`SUM(A1)` is 0 when A1 holds the text `"2"`), which is why a
@@ -296,6 +300,17 @@ value comes back unrounded — `PERCENTRANK(A1:A3, 1, 999)` is the same as with
 308. Raising the rounding factor used to throw an `OverflowError` straight out
 of the evaluator.
 
+**Text counts UTF-16 code units.** Excel measures text the way the client
+engine's strings work -- in UTF-16 code units -- so an astral character (an
+emoji) is two: `LEN("😀")` is 2, `FIND("😃", "😀😃😄")` is 3, and a position
+can land inside a surrogate pair and keep the surviving half
+(`LEFT("😀😃😄", 1)` is the lone high surrogate, `MID("😀😃😄", 2, 1)` the lone
+low one). `CODE` reports the first unit, so `CODE("😀")` is 55357, and a
+`FIND`/`SEARCH` start past the end of the text is `#VALUE!` even for an empty
+search string. Python indexes code points instead, so the positional functions
+go through the UTF-16 helpers in `_formula_shared.py` rather than slicing the
+string directly.
+
 ### Known divergences from Excel
 
 Deliberate, and shared with the client engine unless noted:
@@ -344,7 +359,7 @@ implemented, taking the engine from 84 to 231 functions:
 
 | Family | Functions | Note |
 |---|---|---|
-| Text | `CHAR`, `CODE` | `CHAR` truncates toward zero and rejects a code outside 1-255 with `#VALUE!`; `CODE` reads the first character and rejects empty text |
+| Text | `CHAR`, `CODE` | `CHAR` truncates toward zero and rejects a code outside 1-255 with `#VALUE!`; `CODE` reads the first UTF-16 unit and rejects empty text, so `CODE("😀")` is 55357 |
 
 | Family | Functions | Note |
 |---|---|---|
@@ -396,7 +411,10 @@ first.
 The engine is also bounded where Excel is not: `REPT`, `NETWORKDAYS` and
 `WORKDAY` refuse to materialise a huge string or iterate for hours
 (`MAX_REPT_CHARS`, `MAX_NETWORKDAYS_SPAN_DAYS`, `MAX_WORKDAY_OFFSET_DAYS`), and
-return `#VALUE!`/`#NUM!` so a single formula cannot stall a viewport read. A
+return `#VALUE!`/`#NUM!` so a single formula cannot stall a viewport read. The
+`REPT` cap counts UTF-16 code units -- the same units `LEN` reports -- and the
+client engine enforces the identical limit, so both engines refuse the same
+calls (`REPT("x", 32768)` and `REPT("😀", 16384)` are both `#VALUE!`). A
 date serial outside the range a date can name, or a `DATE` year outside
 0..9999, is `#NUM!` as well.
 A multi-cell `OFFSET` is one reference in Excel; here it is a flat value list
