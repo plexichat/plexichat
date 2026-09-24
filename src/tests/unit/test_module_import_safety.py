@@ -50,6 +50,7 @@ _REPORT_MARKER = "SWEEP_REPORT"
 # from the test process.
 _SWEEP = """
 import importlib
+import io
 import json
 import os
 import sys
@@ -106,23 +107,32 @@ def main():
     modules = _discover(root)
     modules.append("logger_import_probe")
 
+    # Import-time printing is the tell-tale of a script masquerading as a
+    # module, so the sweep collects it as a failure too.
+    printed = io.StringIO()
+    real_stdout = sys.stdout
     failures = []
-    for name in modules:
-        try:
-            importlib.import_module(name)
-        except BaseException as exc:  # noqa: BLE001 - the type is the payload
-            failures.append(
-                {
-                    "module": name,
-                    "error": type(exc).__name__,
-                    "message": str(exc),
-                }
-            )
+    sys.stdout = printed
+    try:
+        for name in modules:
+            try:
+                importlib.import_module(name)
+            except BaseException as exc:  # noqa: BLE001 - the type is the payload
+                failures.append(
+                    {
+                        "module": name,
+                        "error": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                )
+    finally:
+        sys.stdout = real_stdout
 
     report = {
         "scanned": len(modules),
         "probe_detected": any(f["module"] == "logger_import_probe" for f in failures),
         "failures": failures,
+        "import_output": printed.getvalue()[:4000],
     }
     sys.stdout.write("SWEEP_REPORT" + json.dumps(report) + "\\n")
 
@@ -174,4 +184,10 @@ class TestModuleImportsBeforeLoggerSetup:
             + "\n".join(
                 f"  {f['module']}: {f['error']}: {f['message']}" for f in failures[:20]
             )
+        )
+
+        # A module that prints while being imported is a script pretending to
+        # be a module: its output lands in whatever program imported it.
+        assert report["import_output"] == "", (
+            f"importing production modules wrote to stdout:\n{report['import_output']}"
         )
