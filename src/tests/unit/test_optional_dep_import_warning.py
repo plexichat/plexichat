@@ -9,6 +9,16 @@ logger is only configured in ``setup_logging()``, so on a fresh interpreter
 The warnings are best-effort (guarded), so the modules import cleanly and
 report ``*_AVAILABLE = False`` instead.
 
+This file also covers the modules that build state at import time and log
+while doing it:
+
+* ``src/utils/encryption/vault.py`` constructs the module-level ``vault``
+  instance on import, and its TPM probe notices a missing ``tpm2_pytss``
+  (the documented default — TPM support is installed only on hosts with the
+  hardware). ``_init_hsm`` already guarded every one of its notices against
+  an unconfigured logger; ``_init_tpm`` did not, so the import failed on any
+  host without a TPM.
+
 The modules are exercised as isolated copies loaded under a throwaway name,
 never via ``importlib.reload()`` on the shared module: reloading re-executes
 the module in place and rebinds every class it defines, while other test
@@ -84,5 +94,19 @@ class TestOptionalDependencyImportWarnings:
             reloaded = _load_isolated(adapter)
             assert reloaded.AIORTC_AVAILABLE is False
             assert reloaded.AIORTC_RECORDING_AVAILABLE is False
+        finally:
+            real_logger._setup_called = saved_flag
+
+    def test_vault_import_without_tpm_and_logger(self, monkeypatch):
+        """The module-level ``vault`` instance is built at import time."""
+        from src.utils.common_utils.utils import logger as real_logger
+        import src.utils.encryption.vault as vault_module
+
+        saved_flag = real_logger._setup_called
+        monkeypatch.setitem(sys.modules, "tpm2_pytss", None)
+        try:
+            _disable_logger(real_logger)
+            reloaded = _load_isolated(vault_module)
+            assert reloaded.vault._tpm_available is False
         finally:
             real_logger._setup_called = saved_flag

@@ -96,10 +96,19 @@ class HardwareVault:
         compat: previously TPM was auto-detected with no config knob).
         The body is inlined (no nested def) so the outer method actually runs.
         """
+        # Every notice below is best-effort: the module-level ``vault``
+        # instance is constructed at import time, which can happen before
+        # ``logger.setup()``. An unconfigured logger raises
+        # ``RuntimeError``, so an unguarded call would make importing this
+        # module fail on any host without TPM hardware. Same guard as
+        # ``_init_hsm``.
         self._tpm_config = self._tpm_config_dict()
         self._tpm_enabled = bool(self._tpm_config.get("enabled", True))
         if not self._tpm_enabled:
-            logger.debug("TPM 2.0 disabled in configuration")
+            try:
+                logger.debug("TPM 2.0 disabled in configuration")
+            except RuntimeError:
+                pass  # Logger not configured yet
             return
         try:
             tpm2_pytss = cast(Any, importlib.import_module("tpm2_pytss"))
@@ -112,9 +121,15 @@ class HardwareVault:
                 cap = ctx.get_capability(0, 0x00000001, 1)  # TPM_CAP_PROPERTIES
                 if cap:
                     self._tpm_available = True
-                    logger.info("TPM 2.0 hardware detected and available")
+                    try:
+                        logger.info("TPM 2.0 hardware detected and available")
+                    except RuntimeError:
+                        pass  # Logger not configured yet
         except (ImportError, Exception):
-            logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
+            try:
+                logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
+            except RuntimeError:
+                pass  # Logger not configured yet
 
     def _init_hsm(self):
         """Try to initialize HSM (PKCS#11) connection."""
