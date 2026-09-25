@@ -410,6 +410,18 @@ def test_the_engineering_functions_adopted_from_the_client_engine():
     assert _eval("BESSELJ(1.5,-1)") == NUM_ERROR
     assert _close(_eval("BESSELY(1.5,0)"), 0.3824489237977588)
     assert _eval("BESSELY(-1,0)") == NUM_ERROR
+    # A Bessel argument past the range the 40-term series can hold overflows
+    # the doubles instead of answering: the terms raise OverflowError out of
+    # the series, and the Y recurrence runs to a NaN. Both are #NUM!, the way
+    # an overflowing double is not a cell value anywhere else in the engine.
+    assert _eval("BESSELJ(281474976710655,0)") == NUM_ERROR
+    assert _eval("BESSELY(281474976710655,0)") == NUM_ERROR
+    assert _eval("BESSELJ(1e308,0)") == NUM_ERROR
+    assert _eval("BESSELY(1e308,0)") == NUM_ERROR
+    assert _eval("BESSELY(1,1000000)") == NUM_ERROR
+    # A huge order needs no loop to answer: every factorial past 170! is
+    # already +inf, so the J series is 0 without spinning to the order.
+    assert _eval("BESSELJ(1,1000000)") == 0
     assert _close(_eval('CONVERT(1,"m","cm")'), 100)
     assert _close(_eval('CONVERT(1,"kg","g")'), 1000)
     assert _close(_eval('CONVERT(32,"F","C")'), 0)

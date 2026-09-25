@@ -725,6 +725,12 @@ def _fact_float(n: int) -> float:
     result = 1.0
     for index in range(2, n + 1):
         result *= index
+        if not math.isfinite(result):
+            # A factorial past 170 leaves the doubles. Returning as soon as it
+            # overflows keeps a huge order from spinning a loop that cannot
+            # produce a representable number; the loop below would answer the
+            # same infinity.
+            return float("inf")
     return result
 
 
@@ -3634,7 +3640,13 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             n = math.floor(order)
             if n < 0:
                 return NUM_ERROR
-            return _bessel_j(x, n)
+            try:
+                return _finite(_bessel_j(x, n))
+            except OverflowError:
+                # A term of the series overflowed the doubles: the argument is
+                # past the range the 40-term series can hold, and an
+                # overflowing double is not a cell value.
+                return NUM_ERROR
         if name == "BESSELY":
             if len(values) != 2:
                 return VALUE_ERROR
@@ -3647,31 +3659,41 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             n = math.floor(order)
             if x <= 0 or n < 0:
                 return NUM_ERROR
-            y0 = _bessel_y0_series(x)
-            if n == 0:
-                return y0
-            j0 = _bessel_j(x, 0)
-            j1 = _bessel_j(x, 1)
-            if abs(j0) > 1e-14:
-                # The Wronskian identity J1*Y0 - J0*Y1 = 2/(pi*x), solved
-                # for Y1 -- exact to the precision of the Y0 series.
-                y1 = (j1 * y0 - 2 / (math.pi * x)) / j0
-            else:
-                # J0(x) is near a zero of J0: Y1 = -Y0' by central
-                # differences of the series.
-                eps = 1e-6 * max(1, x)
-                y1 = -(_bessel_y0_series(x + eps) - _bessel_y0_series(x - eps)) / (
-                    2 * eps
-                )
-            if n == 1:
-                return y1
-            y_previous, y_current = y0, y1
-            for index in range(1, n):
-                y_previous, y_current = (
-                    y_current,
-                    (2 * index / x) * y_current - y_previous,
-                )
-            return y_current
+            try:
+                y0 = _bessel_y0_series(x)
+                if n == 0:
+                    return _finite(y0)
+                j0 = _bessel_j(x, 0)
+                j1 = _bessel_j(x, 1)
+                if abs(j0) > 1e-14:
+                    # The Wronskian identity J1*Y0 - J0*Y1 = 2/(pi*x), solved
+                    # for Y1 -- exact to the precision of the Y0 series.
+                    y1 = (j1 * y0 - 2 / (math.pi * x)) / j0
+                else:
+                    # J0(x) is near a zero of J0: Y1 = -Y0' by central
+                    # differences of the series.
+                    eps = 1e-6 * max(1, x)
+                    y1 = -(_bessel_y0_series(x + eps) - _bessel_y0_series(x - eps)) / (
+                        2 * eps
+                    )
+                if n == 1:
+                    return _finite(y1)
+                y_previous, y_current = y0, y1
+                for index in range(1, n):
+                    y_previous, y_current = (
+                        y_current,
+                        (2 * index / x) * y_current - y_previous,
+                    )
+                    if not math.isfinite(y_current):
+                        # The recurrence leaves the doubles long before it
+                        # reaches a huge order; stopping here keeps the loop
+                        # from spinning to the end on values no cell can hold.
+                        return NUM_ERROR
+                return _finite(y_current)
+            except OverflowError:
+                # As with BESSELJ above, a term of the series overflowed the
+                # doubles, so the argument is past what the series can hold.
+                return NUM_ERROR
         if name == "CONVERT":
             if len(values) != 3:
                 return VALUE_ERROR
