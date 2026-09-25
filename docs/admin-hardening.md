@@ -4,8 +4,8 @@ This guide describes how to lock down the admin UI and API. Apply these settings
 
 ## Admin authentication
 
-* Admin routes use opaque sessions, not JWTs. Every state-changing or sensitive read operation requires the matching `require_admin_permission` scope. See `src/api/routes/admin/permissions.py:42`.
-* Wildcard permissions such as `*` are rejected (`src/core/servers/roles.py:201`). Grant each permission explicitly.
+* Admin routes use opaque sessions, not JWTs. Every state-changing or sensitive read operation requires the matching `require_admin_permission` scope (`src/api/routes/admin/utils.py:164`). Scopes are defined in `src/core/admin/permissions.py:42`.
+* Wildcard permissions such as `*` are rejected (`src/core/servers/permission_utils.py:28`). Grant each permission explicitly.
 * Require OTP for the admin UI:
 
   ```yaml
@@ -29,12 +29,12 @@ admin_ui:
   blocked_ips: []
 ```
 
-* Keep `tls.enabled: false` only for local development. For production, set `tls.enabled: true` and configure `tls.cert_path` and `tls.key_path` (`src/config_defaults.py:599`).
-* The server binds to `127.0.0.1:8000` by default (`server.host` in `src/config_defaults.py:54`). Put a reverse proxy in front of it and forward only trusted `X-Forwarded-For` values.
+* Keep `tls.enabled: false` only for local development. For production, set `tls.enabled: true` and configure `tls.cert_path` and `tls.key_path` (`src/config_defaults.py:621`).
+* The server binds to `127.0.0.1:8000` by default (`server.host` in `src/config_defaults.py:70`). Put a reverse proxy in front of it and forward only trusted `X-Forwarded-For` values.
 
 ## Rate limiting and approvals
 
-* Global rate limits default to `25000` requests per `60` s, user `10000`, and IP `5000` (`src/config_defaults.py:273`). Keep `rate_limiting.enabled: true` in production.
+* Global rate limits default to `25000` requests per `60` s, user `10000`, and IP `5000` (`src/config_defaults.py:272`). Keep `rate_limiting.enabled: true` in production.
 * Gate destructive actions with the approval workflow:
 
   ```yaml
@@ -74,14 +74,14 @@ Review audit logs regularly and forward them to your SIEM.
 
 ## Voice and media
 
-* The SFU backend defaults to `aiortc` (`voice.sfu_backend` in `src/config_defaults.py:399`). Change it only if you operate `mediasoup` or `janus`.
+* The SFU backend defaults to `aiortc` (`voice.sfu_backend` in `src/config_defaults.py:396`). Change it only if you operate `mediasoup` or `janus`.
 * File uploads are scanned when `media.scanner_enabled` is true and `SCANNER_HOST` points at the `clamav` service (`docker-compose.yml:171`).
 * External media goes through `GET /api/v1/media/proxy?url=...` (`src/api/routes/media.py:465`) with SSRF validation. Do not expose RustFS directly.
 
 ## Gateway and health
 
 * The WebSocket gateway is `ws://host/gateway` (`src/api/websocket/gateway.py:261`), not `/ws`.
-* Use `GET /api/v1/ready` for liveness and `GET /api/v1/health` for detailed checks (`src/api/routes/health.py:18`). Both live under the API prefix (`src/config_defaults.py:131`).
+* Use `GET /api/v1/ready` for liveness and `GET /api/v1/health` for detailed checks (`src/api/routes/health.py:18`). Both live under the API prefix (`src/config_defaults.py:130`).
 
 ## Next steps
 

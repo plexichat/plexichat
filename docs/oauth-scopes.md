@@ -45,7 +45,7 @@ scopes = parse_scopes("identify email guilds")
 valid, issues = validate_scopes(scopes)
 ```
 
-The server also enforces scopes during the OAuth flow. See `src/api/routes/auth/oauth.py:122` and `src/api/routes/auth/oauth_config.py:1`.
+The server also enforces scopes during the OAuth flow. See `src/api/routes/auth/oauth.py:202` and `src/api/routes/auth/oauth_config.py:1`.
 
 ## Usage notes
 

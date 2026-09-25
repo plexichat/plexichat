@@ -34,9 +34,9 @@ Place these options before the subcommand. They apply to all subcommands.
 
 | Option | Description |
 |---|---|
-| `--config PATH` | Path to a custom YAML configuration file. If you omit this flag, the server auto-detects `~/.plexichat/config/config.yaml` first, then `./config/config.yaml` (`src/cli/main.py:398`). |
-| `--host HOST` | Override the server bind address. Default `127.0.0.1` from `server.host` (`src/config_defaults.py:54`). |
-| `--port PORT` | Override the server port. Default `8000` from `server.port` (`src/config_defaults.py:54`). |
+| `--config PATH` | Path to a custom YAML configuration file. If you omit this flag, the server auto-detects `~/.plexichat/config/config.yaml` first, then `./config/config.yaml` (`src/server/config_loader.py:440`). |
+| `--host HOST` | Override the server bind address. Default `127.0.0.1` from `server.host` (`src/config_defaults.py:70`). |
+| `--port PORT` | Override the server port. Default `8000` from `server.port` (`src/config_defaults.py:70`). |
 
 Environment variable alternatives:
 
@@ -199,11 +199,11 @@ The CLI and `config.yaml` use the keys defined in `src/config_defaults.py`. Comm
 
 | Wrong key | Correct key | Notes |
 |---|---|---|
-| `api.host`, `api.port`, `api.workers` | `server.host`, `server.port`, `server.reload` | Server binding is under `server` (`src/config_defaults.py:54`) |
-| `api.prefix` | `api_prefix` | Nested under `api` as `api.api_prefix` (`src/config_defaults.py:131`) |
-| Nested `cors.*` object | Flat `cors_*` keys | For example, `api.cors_origins`, `api.cors_allow_methods` (`src/config_defaults.py:133`) |
-| `api.ssl` | `tls` | TLS is a top-level `tls` block (`src/config_defaults.py:599`) |
-| `mediasoup` assumed default | `aiortc` | Default SFU is `aiortc`; `mediasoup` and `janus` are opt-in (`src/config_defaults.py:399`) |
+| `api.host`, `api.port`, `api.workers` | `server.host`, `server.port`, `server.reload` | Server binding is under `server` (`src/config_defaults.py:70`) |
+| `api.prefix` | `api_prefix` | Nested under `api` as `api.api_prefix` (`src/config_defaults.py:130`) |
+| Nested `cors.*` object | Flat `cors_*` keys | For example, `api.cors_origins`, `api.cors_allow_methods` (`src/config_defaults.py:132`) |
+| `api.ssl` | `tls` | TLS is a top-level `tls` block (`src/config_defaults.py:618`) |
+| `mediasoup` assumed default | `aiortc` | Default SFU is `aiortc`; `mediasoup` and `janus` are opt-in (`src/config_defaults.py:396`) |
 
 Before you change the server config, open `src/config_defaults.py` and confirm the key name.
 

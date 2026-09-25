@@ -24,15 +24,15 @@ The `api/` and `websocket/` subdirectories provide per-group docs:
 * Gateway: opcodes `50` and `60`–`67`, intents `20` and `21` (see `src/api/websocket/opcodes.py:50` and `src/core/events/types.py:120`)
 * Health: `GET /api/v1/ready` (readiness) and `GET /api/v1/health` (detailed) — see `src/api/routes/health.py:18`
 
-If you need the live route list, inspect `src/api/routes/__init__.py:56`, which registers every router under `/api/v1`.
+If you need the live route list, inspect `src/api/app.py:515`, which mounts every router under the configured API prefix.
 
 ## Key API conventions
 
-* Base prefix is `/api/v1` (`api.api_prefix` in `src/config_defaults.py:131`). Do not use `/api` alone.
+* Base prefix is `/api/v1` (`api.api_prefix` in `src/config_defaults.py:130`). Do not use `/api` alone.
 * Gateway path is `/gateway` (`src/api/websocket/gateway.py:261`), not `/ws`.
-* Channel creation uses `channel_type` (`src/api/routes/servers/channels.py:85`), for example `{"name": "general", "channel_type": "text"}`.
+* Channel creation uses `channel_type` (`src/api/routes/servers/channels.py:134`), for example `{"name": "general", "channel_type": "text"}`.
 * `read_by` on messages is a list of `ReaderInfo` objects (`src/api/schemas/messages.py:94`).
-* OAuth requires PKCE `S256` with a `code_challenge` (`src/api/routes/auth/oauth.py:122`).
+* OAuth requires PKCE `S256` with a `code_challenge` (`src/api/routes/auth/oauth.py:202`).
 * Presence reads outside your friends and shared servers return `404` (`src/api/routes/presence.py:379`).
 * Bulk delete is `POST /api/v1/channels/{channel_id}/messages/bulk-delete` (max 100 IDs, see `src/api/routes/messages/messages_crud/delete.py:218`).
 * Media proxy is `GET /api/v1/media/proxy?url=...` (`src/api/routes/media.py:465`).

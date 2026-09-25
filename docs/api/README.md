@@ -9,7 +9,7 @@ This directory contains narrative documentation for the Plexichat REST API. Use 
 | Production | `https://api.plexichat.com/api/v1` |
 | Development | `http://localhost:8000/api/v1` |
 
-The API prefix is configurable as `api.api_prefix` (default `/api/v1`) in `src/config_defaults.py:131`. The server host and port are `server.host` and `server.port` (`src/config_defaults.py:54`), not `api.host` or `api.port`.
+The API prefix is configurable as `api.api_prefix` (default `/api/v1`) in `src/config_defaults.py:130`. The server host and port are `server.host` and `server.port` (`src/config_defaults.py:70`), not `api.host` or `api.port`.
 
 All paths in the `docs/api/` guides are relative to the API prefix unless noted.
 

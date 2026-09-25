@@ -52,9 +52,9 @@ Useful commands:
 
 The server stores data in `~/.plexichat/` and exposes:
 
-* API at `http://127.0.0.1:8000/api/v1` (`api.api_prefix` in `src/config_defaults.py:131`)
+* API at `http://127.0.0.1:8000/api/v1` (`api.api_prefix` in `src/config_defaults.py:130`)
 * WebSocket gateway at `ws://127.0.0.1:8000/gateway` (`src/api/websocket/gateway.py:261`)
-* Health probes at `http://127.0.0.1:8000/api/v1/ready` and `http://127.0.0.1:8000/api/v1/health` (`src/api/routes/health.py:18`, `src/api/app.py:194`)
+* Health probes at `http://127.0.0.1:8000/api/v1/ready` and `http://127.0.0.1:8000/api/v1/health` (`src/api/routes/health.py:18`, `src/api/routes/health.py:47`)
 * Interactive docs at `http://127.0.0.1:8000/docs`
 
 ## Configure
@@ -71,17 +71,17 @@ If you set `PLEXICHAT_CONFIG`, it points directly to the file you want to use (s
 
 | Key | Default | Description |
 |---|---|---|
-| `server.host` | `127.0.0.1` | Bind address (`src/config_defaults.py:54`) |
+| `server.host` | `127.0.0.1` | Bind address (`src/config_defaults.py:70`) |
 | `server.port` | `8000` | HTTP port |
-| `api.api_prefix` | `/api/v1` | Prefix for all REST routes (`src/config_defaults.py:131`) |
-| `tls.enabled` | `false` | Enable TLS; cert paths default to `~/.plexichat/certs/` (`src/config_defaults.py:599`) |
-| `voice.sfu_backend` | `aiortc` | SFU backend: `aiortc`, `mediasoup`, or `janus` (`src/config_defaults.py:399`) |
+| `api.api_prefix` | `/api/v1` | Prefix for all REST routes (`src/config_defaults.py:130`) |
+| `tls.enabled` | `false` | Enable TLS; cert paths default to `~/.plexichat/certs/` (`src/config_defaults.py:621`) |
+| `voice.sfu_backend` | `aiortc` | SFU backend: `aiortc`, `mediasoup`, or `janus` (`src/config_defaults.py:396`) |
 | `database.type` | `sqlite` | `sqlite` for development, `postgres` for production |
 | `valkey.enabled` | `false` | Set `true` when you run multiple workers |
 
 ### Rate limits
 
-Global defaults live in `src/config_defaults.py:273`:
+Global defaults live in `src/config_defaults.py:272`:
 
 | Scope | Requests per window | Window | Burst | Notes |
 |---|---|---|---|---|
@@ -101,7 +101,7 @@ Set `tls.enabled: true` and provide `tls.cert_path` and `tls.key_path`, or let t
 
 ### OAuth 2.0 with PKCE
 
-Plexichat supports OAuth with PKCE. Only `S256` is accepted (`src/api/routes/auth/oauth.py:122`):
+Plexichat supports OAuth with PKCE. Only `S256` is accepted (`src/api/routes/auth/oauth.py:202`):
 
 1. Call `GET /api/v1/auth/oauth/{provider}/login?redirect_uri=...&code_challenge=...&code_challenge_method=S256`.
 2. You must include a `code_challenge` (43–128 characters, `A-Za-z0-9-._~`). Requests without it return `400`.
@@ -118,14 +118,14 @@ You can read a user's presence only if you are that user, a friend, or a member 
 
 ### RBAC and scopes
 
-* Wildcard permissions such as `*` are rejected (`src/core/servers/roles.py:201`).
-* Permission scopes are defined in `src/api/routes/admin/permissions.py:42` and enforced by `require_admin_permission`.
+* Wildcard permissions such as `*` are rejected (`src/core/servers/permission_utils.py:28`).
+* Permission scopes are defined in `src/core/admin/permissions.py:42` and enforced by `require_admin_permission` (`src/api/routes/admin/utils.py:164`).
 
 ## Use the API
 
 ### Route groups
 
-The API router mounts these groups under `/api/v1` (`src/api/routes/__init__.py:56`):
+The API router mounts these groups under `/api/v1` (`src/api/app.py:515`):
 
 | Prefix | Description |
 |---|---|
@@ -147,7 +147,7 @@ The API router mounts these groups under `/api/v1` (`src/api/routes/__init__.py:
 
 ### Key request details
 
-* Create a channel: send `channel_type`, not `type` (`src/api/routes/servers/channels.py:85` uses `ChannelType`). Example:
+* Create a channel: send `channel_type`, not `type` (`src/api/routes/servers/channels.py:134` uses `ChannelType`). Example:
 
   ```json
   {
@@ -169,7 +169,7 @@ Connect to `/gateway`:
 const ws = new WebSocket("ws://127.0.0.1:8000/gateway");
 ```
 
-* Heartbeat interval: `45000` ms (`src/config_defaults.py:165`)
+* Heartbeat interval: `45000` ms (`src/config_defaults.py:162`)
 * Gateway opcodes: `50` (`RATCHET_UPDATE`), `60`–`67` (artifacts and PlexiSum: `ARTIFACT_SUBSCRIBE`, `ARTIFACT_UNSUBSCRIBE`, `ARTIFACT_OP`, `ARTIFACT_SYNC`, `SUM_SUBSCRIBE`, `SUM_UNSUBSCRIBE`, `SUM_OP`, `SUM_SYNC`) — see `src/api/websocket/opcodes.py:50`
 * Intents: `20` (`ARTIFACTS`) and `21` (`SUMS`) — see `src/core/events/types.py:120`
 
