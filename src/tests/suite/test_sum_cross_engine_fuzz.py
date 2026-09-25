@@ -99,6 +99,25 @@ _ONE_ARG_FUNCTIONS = [
     "AVERAGE",
     "MIN",
     "MAX",
+    # The date readers and the complex family: the serial's date part, and a
+    # complex coefficient a double cannot hold, are both corners the enumerated
+    # alphabet never reached.
+    "DAY",
+    "MONTH",
+    "YEAR",
+    "WEEKDAY",
+    "HOUR",
+    "MINUTE",
+    "SECOND",
+    "IMABS",
+    "IMREAL",
+    "IMAGINARY",
+    "IMARGUMENT",
+    "IMSQRT",
+    "IMEXP",
+    "IMLOG",
+    "IMSINH",
+    "IMCOSH",
 ]
 _TWO_ARG_FUNCTIONS = [
     "POWER",
@@ -126,6 +145,12 @@ _TWO_ARG_FUNCTIONS = [
     "COUNTIF",
     "SUMIF",
     "AVERAGEIF",
+    "DAYS",
+    "IMSUM",
+    "IMSUB",
+    "IMPRODUCT",
+    "IMDIV",
+    "IMMOD",
 ]
 _THREE_ARG_FUNCTIONS = [
     "IF",
@@ -136,6 +161,9 @@ _THREE_ARG_FUNCTIONS = [
     "COUNT",
     "SUMIFS",
     "AVERAGEIFS",
+    "TIME",
+    "DATE",
+    "IMSUM",
 ]
 
 
@@ -144,16 +172,19 @@ def _random_number(rng: random.Random) -> str:
 
     ``repr`` spells the shortest decimal that round-trips, which is also what
     JavaScript's ``Number`` reads, so the two engines start from the identical
-    double. The magnitudes span small integers, ordinary fractions and the
-    wide-exponent ends of the range (where the number-to-text rule lives).
+    double. The magnitudes span small integers, ordinary fractions, the
+    wide-exponent middle of the range, and its ends -- the number-to-text rule
+    and the complex overflow rule only show up at those ends.
     """
     roll = rng.random()
-    if roll < 0.35:
+    if roll < 0.30:
         value = float(rng.randint(-50, 50))
-    elif roll < 0.65:
+    elif roll < 0.55:
         value = rng.uniform(-1e4, 1e4)
-    else:
+    elif roll < 0.90:
         value = math.ldexp(rng.random(), rng.randint(-20, 20)) * rng.choice([1, -1])
+    else:
+        value = math.ldexp(rng.random(), rng.choice([-300, 300])) * rng.choice([1, -1])
     return repr(value)
 
 

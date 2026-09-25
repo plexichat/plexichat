@@ -151,7 +151,11 @@ _TEXT_CALLS = [
 # The fixture's date serials, a couple of literals, and text that reads as a
 # date. TODAY and NOW are deliberately absent: they read the clock, so the two
 # engines cannot be compared on them.
-_DATE_OPERANDS = ["H1", "H2", "H6", "0", "39448", "-1", '"2023-01-01"']
+# The negative and positive fractions hold the date readers to the same
+# serial rule: the fraction of a serial is a time of day and never moves the
+# date, so DAY(-2.5) is 28 on both sides. Reading the raw fraction put the
+# client half a day into 1899-12-27 and answered 27 there.
+_DATE_OPERANDS = ["H1", "H2", "H6", "0", "39448", "-1", "-2.5", "2.5", '"2023-01-01"']
 _DATE_CALLS = [
     ("YEAR", "YEAR({x})"),
     ("MONTH", "MONTH({x})"),
@@ -458,6 +462,30 @@ def _groups() -> "OrderedDict[str, List[str]]":
         'REPT("x",32767)',
         'REPT("x",32768)',
         'REPT("😀",16384)',
+    ]
+    # The complex family reads a coefficient out of a double, and an argument
+    # past what a double holds raised an OverflowError out of this engine
+    # (IMSINH(1e300)) where the client printed text like "Infinity-NaNi". Both
+    # answer #NUM! now -- a coefficient a double cannot hold is not a complex
+    # value -- and this battery holds them together on the edges the operand
+    # alphabet never reaches.
+    groups["complex extremes"] = [
+        "IMSINH(1e300)",
+        "IMSINH(-1e300)",
+        'IMSINH("1e300")',
+        "IMCOSH(1000)",
+        "IMEXP(710)",
+        "IMEXP(1e300)",
+        "IMCSCH(1e300)",
+        "IMSECH(1e300)",
+        "IMCOTH(1e300)",
+        'IMTAN("1e300i")',
+        'IMCSC("1e300i")',
+        "IMPRODUCT(1e300,1e300)",
+        "IMSUM(1e300,1e300)",
+        "IMSQRT(1e300)",
+        "IMEXP(709)",
+        'IMSINH("1e300i")',
     ]
     for family, names in _FAMILIES:
         # One group per function, so _missing() can drop just that function.

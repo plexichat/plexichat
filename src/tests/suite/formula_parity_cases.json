@@ -4210,6 +4210,42 @@
     {
       "formula": "LEN(\"\u0661\u0662\u0663\")",
       "expected": "number:3"
+    },
+    {
+      "formula": "IMSINH(1e300)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "IMCOSH(1000)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "IMEXP(710)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "IMPRODUCT(1e300,1e300)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DAY(-2.5)",
+      "expected": "number:28"
+    },
+    {
+      "formula": "COUNTBLANK(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "DAYS(10.9,0.1)",
+      "expected": "number:10"
+    },
+    {
+      "formula": "DAYS(2,1.5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "TIME(-1,\"#\",0)",
+      "expected": "error:#VALUE!"
     }
   ]
 }
