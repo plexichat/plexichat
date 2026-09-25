@@ -1070,15 +1070,22 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         try:
             text = _to_text(values[0])
             if name == "MID":
-                start = int(_to_number(values[1]))
-                num_chars = int(_to_number(values[2]))
+                start_number = _to_number(values[1])
+                count_number = _to_number(values[2])
             else:
-                start = 1
-                num_chars = int(_to_number(values[1])) if len(values) == 2 else 1
+                start_number = 1.0
+                count_number = _to_number(values[1]) if len(values) == 2 else 1.0
         except (ValueError, OverflowError) as exc:
             return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
-        if start < 1 or num_chars < 0:
+        # Test the raw count: Excel rejects a negative one even when it
+        # truncates to zero, and the client engine checks the argument before
+        # slicing. ``int(-0.5)`` is 0, so checking after the cast let
+        # ``LEFT(text, -0.5)`` slice from the start where the client answers
+        # #VALUE!.
+        if start_number < 1 or count_number < 0:
             return VALUE_ERROR
+        start = int(start_number)
+        num_chars = int(count_number)
         # Positions and counts are UTF-16 code units, as in Excel and the
         # client engine: LEFT("😀", 1) keeps the lone high surrogate rather
         # than the whole character Python slicing would keep.
@@ -1089,7 +1096,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # branch to match the empty result Excel returns.
             if not num_chars:
                 return ""
-            return _utf16_slice(text, _utf16_len(text) - num_chars, None)
+            # A count past the length takes the whole string. Passing the
+            # negative ``len - num_chars`` straight to the slice read from the
+            # end again instead of clamping to the start, so RIGHT("abcdef",
+            # 10) returned the last few characters where Excel -- and the
+            # client engine's ``slice(-count)`` -- answer the whole string.
+            start = max(_utf16_len(text) - num_chars, 0)
+            return _utf16_slice(text, start, None)
         offset = start - 1
         return _utf16_slice(text, offset, offset + num_chars)
 

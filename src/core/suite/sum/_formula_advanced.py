@@ -1488,27 +1488,36 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(values) != 4:
                 return VALUE_ERROR
             old_text = _to_text(values[0])
-            start_num = int(_to_number(values[1]))
-            num_chars = int(_to_number(values[2]))
+            start_number = _to_number(values[1])
+            count_number = _to_number(values[2])
             new_text = _to_text(values[3])
-            if start_num < 1:
+            if start_number < 1:
                 return VALUE_ERROR
             # Unit-based like the slices: cutting inside an astral character
             # keeps the surviving half, as Excel and the client engine do.
-            start = start_num - 1
+            #
+            # The cut is the client's ``start_num - 1 + num_chars`` truncated
+            # as one sum, not each part truncated first: JavaScript truncates
+            # the slice bound, so a negative fractional count shortens the
+            # tail rather than collapsing to zero.
+            start = int(start_number) - 1
+            cut = int(start_number - 1 + count_number)
             return (
                 _utf16_slice(old_text, 0, start)
                 + new_text
-                + _utf16_slice(old_text, start + num_chars, None)
+                + _utf16_slice(old_text, cut, None)
             )
         elif name == "REPT":
             # REPT(text, number_times)
             if len(values) != 2:
                 return VALUE_ERROR
             text = _to_text(values[0])
-            times = int(_to_number(values[1]))
-            if times < 0:
+            count = _to_number(values[1])
+            # The raw count, not its truncation: ``REPT("x", -0.5)`` is #VALUE!
+            # in Excel and the client engine, where ``int()`` rounded it to 0.
+            if count < 0:
                 return VALUE_ERROR
+            times = int(count)
             # Bound the allocation: REPT("x", 10**9) would otherwise try to
             # materialise a multi-gigabyte string on a read path. The bound
             # counts UTF-16 code units, the same units LEN reports, so the
