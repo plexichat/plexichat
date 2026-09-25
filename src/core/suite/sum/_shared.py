@@ -213,7 +213,11 @@ def _classify_csv_value(
             "value_type": "boolean",
             "value": False,
         }
-    if re.match(r"^-?\d+(\.\d+)?$", text.strip()):
+    # ASCII digits only, matching the formula engine's numeric pattern and the
+    # client's CSV classifier: an ASCII ``\d`` would also match the digits of
+    # other scripts (and ``float`` reads them), typing an Arabic-Indic numeral
+    # as a number here and as text there.
+    if re.match(r"^-?[0-9]+(\.[0-9]+)?\Z", text.strip()):
         return {
             "row": row_index,
             "column": column_index,

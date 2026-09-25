@@ -65,7 +65,15 @@ _DATE_EPOCH = datetime.date(1899, 12, 30)
 # A complete signed decimal, optionally in scientific notation. Used both by
 # VALUE/NUMBERVALUE and by the aggregates, which coerce a text *argument* that
 # reads as a whole number rather than parsing a prefix of it.
-NUMERIC_TEXT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+# ASCII digits only: Python's ``\d`` (and ``float()``) also accept the
+# Unicode decimal digits of other scripts -- ``float("\u0661\u0662\u0663")`` is
+# 123 -- while JavaScript's ``\d`` and ``Number()`` recognise only ASCII, so the
+# client engine and Excel both read "\u0661\u0662\u0663" as text. Spelling the
+# class out keeps a number the same number on both engines, and because the
+# pattern gates every ``float()`` call the coercion cannot see the rest.
+NUMERIC_TEXT_RE = re.compile(
+    r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z"
+)
 
 # A resolver returns the raw cell as a dict with at least
 # ``value_type`` and ``value`` (and optionally ``formula``), or ``None``.
@@ -81,13 +89,13 @@ def is_error(value: Any) -> bool:
 _TOKEN_RE = re.compile(
     r"""
     (?P<ws>\s+)
-  | (?P<num>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)
+  | (?P<num>(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)
   | (?P<str>"(?:[^"]|"")*")
     # The trailing boundary matters: without it a function name containing a
     # digit (BIN2DEC, ATAN2, SUMX2MY2) matched as the cell reference "BIN2"
     # followed by an identifier, so those names could never be called and
     # reported #VALUE! (a parse error) instead of #NAME?.
-  |    (?P<ref>(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?\d+)?)(?![A-Za-z0-9_])
+  |    (?P<ref>(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?[0-9]+(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_]*)!)?\$?[A-Za-z]+\$?[0-9]+)?)(?![A-Za-z0-9_])
   | (?P<op><=|>=|<>|=|<|>|\+|-|\*|/|\^|&|%)
   | (?P<lparen>\()
   | (?P<rparen>\))
@@ -101,7 +109,7 @@ _TOKEN_RE = re.compile(
 # A bare ``ATAN2``-shaped token is both a legal cell reference and, in Excel, a
 # function name. Which one it is depends on what follows it, so the tokenizer
 # keeps this pattern to hand and lets the caller decide.
-_SIMPLE_REF_RE = re.compile(r"[A-Za-z]+\d+")
+_SIMPLE_REF_RE = re.compile(r"[A-Za-z]+[0-9]+")
 
 
 class _Token:
@@ -177,7 +185,7 @@ def _tokenize(text: str) -> List[_Token]:
 # ── cell reference parsing ───────────────────────────────────────────────────
 
 _CELL_RE = re.compile(
-    r"^(?:(?:'([^']*)'|([A-Za-z_][A-Za-z0-9_]*))!)?\$?([A-Za-z]+)\$?(\d+)$"
+    r"^(?:(?:'([^']*)'|([A-Za-z_][A-Za-z0-9_]*))!)?\$?([A-Za-z]+)\$?([0-9]+)$"
 )
 
 # Named range pattern (e.g., "MyRange", "Sheet1!MyRange")
