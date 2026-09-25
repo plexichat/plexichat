@@ -344,6 +344,7 @@ match a pattern; the relational operators compare literally.
 | `IF("x", 1, 2)` | `#VALUE!` | `1` — non-boolean text is truthy |
 | `"" + 1` | `1` | `#VALUE!` — empty text does not coerce to 0 |
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
+| `DATEVALUE` of a text date before 1900-01-01 | `#VALUE!` | read as a serial, so `DATEVALUE("0001-01-01")` is `-693593` |
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
 | `ERF`/`ERFC` | precise to ~1e-16 | Abramowitz & Stegun 7.1.26 (~1.5e-7), shared with the client engine |

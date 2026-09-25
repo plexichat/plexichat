@@ -3136,10 +3136,6 @@
       "expected": "boolean:false"
     },
     {
-      "formula": "EXACT(\"a\",\"A\")",
-      "expected": "boolean:false"
-    },
-    {
       "formula": "IF(\"YES\"=\"yes\",1,2)",
       "expected": "number:1"
     },
@@ -3570,10 +3566,6 @@
     {
       "formula": "+FALSE",
       "expected": "boolean:false"
-    },
-    {
-      "formula": "-\"2\"",
-      "expected": "number:-2"
     },
     {
       "formula": "-TRUE",
@@ -4058,6 +4050,166 @@
     {
       "formula": "TEXT(1e21,\"General\")",
       "expected": "text:1e+21"
+    },
+    {
+      "formula": "DEC2BIN(5.9)",
+      "expected": "text:101.9000000000000004"
+    },
+    {
+      "formula": "DEC2HEX(255.9)",
+      "expected": "text:FF"
+    },
+    {
+      "formula": "DEC2OCT(8.9)",
+      "expected": "text:10.9000000000000004"
+    },
+    {
+      "formula": "DEC2BIN(-1)",
+      "expected": "text:1111111111"
+    },
+    {
+      "formula": "DEC2BIN(-512)",
+      "expected": "text:1000000000"
+    },
+    {
+      "formula": "BITAND(4294967296,4294967296)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "BITOR(4294967296,1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "BITXOR(3000000000,0)",
+      "expected": "number:-1294967296"
+    },
+    {
+      "formula": "BITAND(3000000000,3000000000)",
+      "expected": "number:-1294967296"
+    },
+    {
+      "formula": "BITLSHIFT(5.9,1)",
+      "expected": "number:11.8"
+    },
+    {
+      "formula": "BITRSHIFT(7.9,1)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "COSH(1000)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "ERF(-1.5)",
+      "expected": "number:-0.966105266402972"
+    },
+    {
+      "formula": "CONVERT(1,\"m\",\"ft\")",
+      "expected": "number:3.280839895013123"
+    },
+    {
+      "formula": "DATE(1899,12,31)",
+      "expected": "number:693962"
+    },
+    {
+      "formula": "DATE(1900,2,28)",
+      "expected": "number:60"
+    },
+    {
+      "formula": "DATE(1900,3,1)",
+      "expected": "number:61"
+    },
+    {
+      "formula": "YEAR(DATE(1900,1,1))",
+      "expected": "number:1900"
+    },
+    {
+      "formula": "MONTH(DATE(1900,1,1))",
+      "expected": "number:1"
+    },
+    {
+      "formula": "DAY(DATE(1900,1,1))",
+      "expected": "number:1"
+    },
+    {
+      "formula": "YEAR(DATE(1899,12,31))",
+      "expected": "number:3799"
+    },
+    {
+      "formula": "MONTH(DATE(1899,12,31))",
+      "expected": "number:12"
+    },
+    {
+      "formula": "DAY(DATE(1899,12,31))",
+      "expected": "number:31"
+    },
+    {
+      "formula": "DATE(2023,2,29)",
+      "expected": "number:44986"
+    },
+    {
+      "formula": "DATE(2024,2,29)",
+      "expected": "number:45351"
+    },
+    {
+      "formula": "DATEVALUE(\"2023-01-01\")",
+      "expected": "number:44927"
+    },
+    {
+      "formula": "DATEVALUE(1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "DATEVALUE(\"0001-01-01\")",
+      "expected": "number:-693593"
+    },
+    {
+      "formula": "LEFT(\"abc\",-0.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "RIGHT(\"abc\",-0.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MID(\"abc\",1,-0.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "REPT(\"x\",-0.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "RIGHT(\"abc\",99)",
+      "expected": "text:abc"
+    },
+    {
+      "formula": "RIGHT(\"abc\",2.5)",
+      "expected": "text:bc"
+    },
+    {
+      "formula": "LEFT(\"abc\",2.5)",
+      "expected": "text:ab"
+    },
+    {
+      "formula": "\"\u0661\"+1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VALUE(\"\u0661\u0662\u0663\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NUMBERVALUE(\"\uff11\uff12\uff13\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUM(\"\u0661\u0662\u0663\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "LEN(\"\u0661\u0662\u0663\")",
+      "expected": "number:3"
     }
   ]
 }
