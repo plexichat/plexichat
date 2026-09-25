@@ -7,9 +7,11 @@ random text run through the operators and the text, math, logical, criteria and
 date functions, evaluated in the server engine *and* the client engine until the
 two disagree. It is what found the divergences no enumerated alphabet reached:
 a negative fractional count truncated toward zero (``LEFT(text, -0.5)`` sliced
-from the start), ``RIGHT`` past the end of the text reading from the end again,
-``DATEVALUE`` years before 0100, and the Unicode decimal digits (``SUM("123")``
-with Arabic-Indic digits was 123 here and 0 on the client).
+from the start) and ``RIGHT`` past the end of the text reading from the end
+again. The audit's other findings have no random spelling to fuzz toward --
+``DATEVALUE`` years before 0100, and the decimal digits outside ASCII that
+neither engine reads as a number -- so the shared case table pins those by
+hand.
 
 The check is deterministic -- a fixed seed, and no clock or random function in
 the generated formulas -- so a failure reproduces exactly. The client engine

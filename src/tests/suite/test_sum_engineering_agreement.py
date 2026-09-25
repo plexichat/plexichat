@@ -1,13 +1,15 @@
 """Differential check: the engineering quirks both engines share.
 
-The shared case table pins the answers both engines give where they agree
-with Excel. A few engineering behaviours do not: a fractional ``DEC2BIN``
-input renders through the float base conversion (``DEC2BIN(5.9)`` is
-``"101.9000000000000004"``), and the bitwise operations wrap past 2**31 the
-way JavaScript's ``&``/``|``/``^`` do. Those cannot go in the table -- the
-table holds what Excel returns -- but they still have to agree, so this test
-runs a fixed battery through the server engine *and* the client engine and
-fails on a disagreement.
+A few engineering behaviours deliberately differ from Excel: a fractional
+``DEC2BIN`` input renders through the float base conversion (``DEC2BIN(5.9)``
+is ``"101.9000000000000004"``), bitwise operands past 2**31 wrap the way
+JavaScript's ``&``/``|``/``^`` do, and ``ERF``/``ERFC`` use the Abramowitz &
+Stegun approximation. The shared case table pins the edge cases of each as the
+value both engines agree on, and the engine README lists them under the known
+divergences. This test is the broader live check: it runs a fixed battery of
+engineering inputs -- the pinned edges, the fractional and out-of-range
+operands, wrong arities and error arguments -- through the server engine *and*
+the client engine and fails on a disagreement.
 
 The client engine lives in the other repository, so this skips with a reason
 when node or the client checkout is missing, exactly as the generated-matrix
