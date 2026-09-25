@@ -9,6 +9,10 @@
  * The table's grid is the cell fixture, so both engines read the same cells
  * and only their semantics are under test.
  *
+ * A request carrying {"functions": true} instead answers {"functions": [...]},
+ * the names the client engine registers, which the function-coverage test
+ * holds against the shared table and the documented server-side gap.
+ *
  * Usage: node cross_engine_probe.mjs <table path> <engine index.js path>
  */
 
@@ -53,24 +57,33 @@ const request = await readStdin();
 const table = JSON.parse(readFileSync(tablePath, 'utf8'));
 const { createFormulaEngine } = await import(pathToFileURL(enginePath).href);
 
-const cells = new Map();
-for (const [ref, entry] of Object.entries(table.grid)) {
-    const [row, column] = parseRef(ref);
-    const cell = entry && typeof entry === 'object'
-        ? { value_type: 'formula', value: null, formula: entry.formula }
-        : { value_type: typeof entry, value: entry, formula: null };
-    cells.set(`${row},${column}`, cell);
-}
-
-const resolver = (_sheet, row, column) => cells.get(`${row},${column}`) ?? null;
-const results = [];
-for (const formula of request.formulas) {
-    try {
-        results.push(typed(createFormulaEngine().evaluate(formula, resolver)));
-    } catch (error) {
-        // A thrown error is a crash, not an Excel error value: report it as
-        // its own kind so the Python side never reads it as agreement.
-        results.push({ kind: 'throw', value: String(error && error.message) });
+if (request.functions) {
+    const engine = createFormulaEngine();
+    // Written in one call and *without* process.exit, which can truncate a
+    // pipe write before it flushes.
+    process.stdout.write(
+        JSON.stringify({ functions: [...engine.functionRegistry.keys()].sort() }),
+    );
+} else {
+    const cells = new Map();
+    for (const [ref, entry] of Object.entries(table.grid)) {
+        const [row, column] = parseRef(ref);
+        const cell = entry && typeof entry === 'object'
+            ? { value_type: 'formula', value: null, formula: entry.formula }
+            : { value_type: typeof entry, value: entry, formula: null };
+        cells.set(`${row},${column}`, cell);
     }
+
+    const resolver = (_sheet, row, column) => cells.get(`${row},${column}`) ?? null;
+    const results = [];
+    for (const formula of request.formulas) {
+        try {
+            results.push(typed(createFormulaEngine().evaluate(formula, resolver)));
+        } catch (error) {
+            // A thrown error is a crash, not an Excel error value: report it as
+            // its own kind so the Python side never reads it as agreement.
+            results.push({ kind: 'throw', value: String(error && error.message) });
+        }
+    }
+    process.stdout.write(JSON.stringify({ results }));
 }
-process.stdout.write(JSON.stringify({ results }));
