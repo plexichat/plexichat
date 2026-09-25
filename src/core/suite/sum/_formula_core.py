@@ -356,11 +356,13 @@ _COMPLEX_FUNCTIONS = frozenset(
 )
 
 # Functions that classify an error operand instead of propagating it. COUNT
-# counts numbers only, COUNTA counts anything non-empty (an error is data), and
-# COUNTBLANK counts an error cell as non-blank. The *IFS family matches an
-# error cell as "no match" rather than failing the whole formula.
+# counts numbers only and COUNTA counts anything non-empty (an error is data);
+# the *IFS family matches an error cell as "no match" rather than failing the
+# whole formula. COUNTBLANK is deliberately absent: it tolerates an error read
+# out of a cell (an error cell is not blank) but propagates one written into
+# the formula, so the propagation loop in ``_call`` decides it by provenance.
 _ERROR_TOLERANT_FUNCTIONS = frozenset(
-    {"COUNT", "COUNTA", "COUNTBLANK", "SUMIFS", "COUNTIFS", "AVERAGEIFS"}
+    {"COUNT", "COUNTA", "SUMIFS", "COUNTIFS", "AVERAGEIFS"}
 )
 
 
@@ -679,8 +681,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if (
             name in _VALUE_FUNCTIONS or name in _COMPLEX_FUNCTIONS
         ) and name not in _ERROR_TOLERANT_FUNCTIONS:
-            for value in values:
-                if is_error(value):
+            for value, from_ref in zip(values, from_reference):
+                # COUNTBLANK answers a question about a *cell*, and an error
+                # cell is not blank, so one read from a reference is counted
+                # rather than propagated. An error written into the formula is
+                # not a cell at all and still propagates, which is what the
+                # client engine does: COUNTBLANK(A5) is 0 on both sides and
+                # COUNTBLANK(1/0) is #DIV/0! on both.
+                if is_error(value) and not (name == "COUNTBLANK" and from_ref):
                     return value
         if name in _ADOPTED_STATISTICAL_FUNCTIONS:
             return self._adopted_statistical(name, values, from_reference)

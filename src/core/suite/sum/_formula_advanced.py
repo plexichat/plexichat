@@ -556,7 +556,14 @@ def _format_coefficient(value: float) -> str:
 
 
 def _format_complex(real: float, imaginary: float, suffix: str = "i") -> str:
-    """Render coefficients in Excel's complex-number text form."""
+    """Render coefficients in Excel's complex-number text form.
+
+    A coefficient a double cannot hold is not a complex value, so it is
+    ``#NUM!`` -- the same rule ``SINH``/``COSH`` follow for an argument past
+    ~710. Printing it instead produced text like ``Infinity-NaNi``.
+    """
+    if not (math.isfinite(real) and math.isfinite(imaginary)):
+        return NUM_ERROR
     result = ""
     if real != 0:
         result += _format_coefficient(real)
@@ -572,31 +579,46 @@ def _format_complex(real: float, imaginary: float, suffix: str = "i") -> str:
     return result if result != "" else "0"
 
 
+def _overflowing(function, value: float) -> float:
+    """A hyperbolic or exponential value, as the double that holds it.
+
+    Python's ``math`` raises ``OverflowError`` where JavaScript quietly answers
+    ``Infinity`` (``IMSINH(1e300)`` used to escape the evaluator as an
+    exception). The finiteness check in ``_complex`` is what turns either into
+    ``#NUM!``, so the two engines answer the same thing and no formula can
+    raise its way out of the sheet.
+    """
+    try:
+        return function(value)
+    except OverflowError:
+        return math.inf
+
+
 def _complex_sin(value):
     return (
-        math.sin(value[0]) * math.cosh(value[1]),
-        math.cos(value[0]) * math.sinh(value[1]),
+        math.sin(value[0]) * _overflowing(math.cosh, value[1]),
+        math.cos(value[0]) * _overflowing(math.sinh, value[1]),
     )
 
 
 def _complex_cos(value):
     return (
-        math.cos(value[0]) * math.cosh(value[1]),
-        -math.sin(value[0]) * math.sinh(value[1]),
+        math.cos(value[0]) * _overflowing(math.cosh, value[1]),
+        -math.sin(value[0]) * _overflowing(math.sinh, value[1]),
     )
 
 
 def _complex_sinh(value):
     return (
-        math.sinh(value[0]) * math.cos(value[1]),
-        math.cosh(value[0]) * math.sin(value[1]),
+        _overflowing(math.sinh, value[0]) * math.cos(value[1]),
+        _overflowing(math.cosh, value[0]) * math.sin(value[1]),
     )
 
 
 def _complex_cosh(value):
     return (
-        math.cosh(value[0]) * math.cos(value[1]),
-        math.sinh(value[0]) * math.sin(value[1]),
+        _overflowing(math.cosh, value[0]) * math.cos(value[1]),
+        _overflowing(math.sinh, value[0]) * math.sin(value[1]),
     )
 
 
@@ -2509,13 +2531,18 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(values) != 3:
                 return VALUE_ERROR
             parts: List[float] = []
+            # Every component is coerced before any of them is range-checked:
+            # an argument that is not a number is #VALUE! no matter how a later
+            # component looks. Checking each in turn reported #NUM! for
+            # TIME(-1, "#", 0) where the client engine (and Excel) answer
+            # #VALUE!.
             for value in values:
                 error, number = _read_number(value)
                 if error is not None:
                     return error
-                if number < 0 or number > MAX_TIME_COMPONENT:
-                    return NUM_ERROR
                 parts.append(number)
+            if any(number < 0 or number > MAX_TIME_COMPONENT for number in parts):
+                return NUM_ERROR
             # Excel folds the result into a single day, so TIME(27, 0, 0) is
             # 03:00 rather than 27 hours.
             seconds = (parts[0] * 3600 + parts[1] * 60 + parts[2]) % 86400
@@ -3342,6 +3369,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return DIV_ZERO
             if name == "IMDIV":
                 return _format_complex(quotient[0], quotient[1], first[2])
+            if not (math.isfinite(quotient[0]) and math.isfinite(quotient[1])):
+                # ``math.trunc`` of an infinity raises rather than answering.
+                return NUM_ERROR
             quotient_real = math.trunc(quotient[0])
             quotient_imaginary = math.trunc(quotient[1])
             return _format_complex(
@@ -3356,7 +3386,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if parsed is None:
             return NUM_ERROR
         if name == "IMEXP":
-            magnitude = math.exp(parsed[0])
+            magnitude = _overflowing(math.exp, parsed[0])
             result = (magnitude * math.cos(parsed[1]), magnitude * math.sin(parsed[1]))
         elif name == "IMLOG":
             magnitude = math.hypot(parsed[0], parsed[1])
