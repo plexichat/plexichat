@@ -1104,9 +1104,23 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
 
         Lookup and criteria functions need the *shape* of a range (rows ×
         columns), which the flat ``_expand_arg`` path discards.
+
+        Anything that is not a ``ref`` node -- a literal, or a nested call
+        such as OFFSET/INDEX -- is read the way the client engine reads it: a
+        single value is a 1x1 array and a block of values is one row, never an
+        empty range. Returning ``[]`` for a literal made every range function
+        see no cells at all, so ``COUNTIF("abc", "abc")`` was 0 and
+        ``MATCH("a", "a", 0)`` was #N/A where the client answered 1.
         """
         if node[0] != "ref":
-            return []
+            value = self._eval(node, sheet, seen, depth)
+            if isinstance(value, list):
+                return (
+                    [list(row) for row in value]
+                    if (value and isinstance(value[0], list))
+                    else [list(value)]
+                )
+            return [[value]]
         if ":" in node[1]:
             first, second = node[1].split(":", 1)
         else:
