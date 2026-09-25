@@ -4018,6 +4018,46 @@
     {
       "formula": "MATCH(\"stra\u00dfe\",N1:N1,0)",
       "expected": "number:1"
+    },
+    {
+      "formula": "1e21&\"\"",
+      "expected": "text:1e+21"
+    },
+    {
+      "formula": "-1e21&\"\"",
+      "expected": "text:-1e+21"
+    },
+    {
+      "formula": "1e20&\"\"",
+      "expected": "text:100000000000000000000"
+    },
+    {
+      "formula": "1e-5&\"\"",
+      "expected": "text:0.00001"
+    },
+    {
+      "formula": "0.000001&\"\"",
+      "expected": "text:0.000001"
+    },
+    {
+      "formula": "1e-7&\"\"",
+      "expected": "text:1e-7"
+    },
+    {
+      "formula": "10^-7&\"\"",
+      "expected": "text:1e-7"
+    },
+    {
+      "formula": "1e300&\"\"",
+      "expected": "text:1e+300"
+    },
+    {
+      "formula": "LEN(1e21&\"\")",
+      "expected": "number:5"
+    },
+    {
+      "formula": "TEXT(1e21,\"General\")",
+      "expected": "text:1e+21"
     }
   ]
 }

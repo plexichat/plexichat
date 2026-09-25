@@ -1,6 +1,7 @@
 """Shared tokens, parser, and coercion helpers for the formula engine."""
 
 import datetime
+import decimal
 import functools
 import math
 import re
@@ -397,13 +398,68 @@ def _to_number(value: Any) -> float:
     raise ValueError(VALUE_ERROR)
 
 
+def _js_number_text(number: float) -> str:
+    """Render a double the way JavaScript's ``String(number)`` does.
+
+    The two engines have to spell a number the same way, so this is the one
+    number-to-text rule in the package: ``repr`` supplies the shortest string
+    that round-trips (JavaScript does the same), and this places the point and
+    the exponent the way ECMAScript's ``Number::toString`` does. Python's own
+    ``str`` disagrees on both ends of the range -- it prints ``1e-05`` where
+    JavaScript prints ``0.00001``, pads the exponent (``1e-07`` vs ``1e-7``),
+    and expands a large value such as ``1e21`` into 22 digits where JavaScript
+    switches to ``1e+21`` after 10**21. The engineering conversions stringify
+    their input (and the intermediate digits) through this too, so ``repr``
+    alone was never enough for them either.
+
+    A whole number goes through the same digit placement rather than
+    ``str(int(number))``: that shortcut is right down to 10**21 and then
+    wrong -- ``1e21`` is an integer-valued double, so it printed the full 22
+    digits where JavaScript prints ``1e+21``, and ``1e300`` printed 301
+    digits. Normalizing the ``Decimal`` strips the trailing ``.0`` a whole
+    number carries (``repr(5.0)`` is ``"5.0"``) without losing the exponent
+    JavaScript needs at the top of the range.
+    """
+    if not math.isfinite(number):
+        if math.isnan(number):
+            return "NaN"
+        return "Infinity" if number > 0 else "-Infinity"
+    if number == 0:
+        return "0"
+    negative = number < 0
+    digits_tuple = decimal.Decimal(repr(abs(float(number)))).normalize().as_tuple()
+    digits = "".join(str(digit) for digit in digits_tuple.digits)
+    # The Decimal is finite here (non-finite inputs return above), so the
+    # exponent is an int; the cast keeps the type-checker from carrying the
+    # NaN/Infinity spellings into the arithmetic below.
+    point = int(digits_tuple.exponent) + len(digits)
+    if 0 < point <= 21:
+        if point >= len(digits):
+            out = digits + "0" * (point - len(digits))
+        else:
+            out = digits[:point] + "." + digits[point:]
+    elif -6 < point <= 0:
+        out = "0." + "0" * (-point) + digits
+    else:
+        shown = point - 1
+        out = digits[0] + ("." + digits[1:] if len(digits) > 1 else "")
+        out += "e" + ("+" if shown >= 0 else "-") + str(abs(shown))
+    return ("-" if negative else "") + out
+
+
 def _to_text(value: Any) -> str:
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
     if value is None:
         return ""
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
+    if isinstance(value, (int, float)):
+        try:
+            number = float(value)
+        except OverflowError:
+            # An integer past a double (a cell's JSON can carry one) is the
+            # Infinity JavaScript reads from the same literal.
+            return "Infinity" if value > 0 else "-Infinity"
+        return _js_number_text(number)
     return str(value)
 
 

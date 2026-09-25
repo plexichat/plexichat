@@ -1,7 +1,6 @@
 """Formula evaluator mixin: advanced text/date/trig/criteria functions."""
 
 import datetime
-import decimal
 import math
 from typing import Any, List, Optional
 
@@ -21,6 +20,7 @@ from ._formula_shared import (
     VALUE_ERROR,
     _DATE_EPOCH,
     _compare_values,
+    _js_number_text,
     _numeric,
     _to_number,
     _to_number_or_zero,
@@ -617,44 +617,6 @@ def _complex_divide(numerator, denominator):
 # functions and CONVERT, ported from the client engine's engineering module and
 # kept identical down to its quirks, so a sheet that uses them reads the same
 # whichever engine evaluates it.
-
-
-def _js_number_text(number: float) -> str:
-    """Render a double the way JavaScript's ``String(number)`` does.
-
-    The base conversions stringify their input (and the intermediate digits)
-    that way, so ``repr`` alone is not enough: Python prints ``1e-05`` where
-    JavaScript prints ``0.00001`` and pads exponents (``1e-07`` vs ``1e-7``).
-    Both spell the shortest string that round-trips, so ``repr`` supplies the
-    digits and this places the point and the exponent the JavaScript way.
-    """
-    if not math.isfinite(number):
-        if math.isnan(number):
-            return "NaN"
-        return "Infinity" if number > 0 else "-Infinity"
-    if number == 0:
-        return "0"
-    if float(number).is_integer():
-        return str(int(number))
-    negative = number < 0
-    digits_tuple = decimal.Decimal(repr(abs(float(number)))).as_tuple()
-    digits = "".join(str(digit) for digit in digits_tuple.digits)
-    # The Decimal is finite here (non-finite inputs return above), so the
-    # exponent is an int; the cast keeps the type-checker from carrying the
-    # NaN/Infinity spellings into the arithmetic below.
-    point = int(digits_tuple.exponent) + len(digits)
-    if 0 < point <= 21:
-        if point >= len(digits):
-            out = digits + "0" * (point - len(digits))
-        else:
-            out = digits[:point] + "." + digits[point:]
-    elif -6 < point <= 0:
-        out = "0." + "0" * (-point) + digits
-    else:
-        shown = point - 1
-        out = digits[0] + ("." + digits[1:] if len(digits) > 1 else "")
-        out += "e" + ("+" if shown >= 0 else "-") + str(abs(shown))
-    return ("-" if negative else "") + out
 
 
 def _js_string(value: Any) -> str:

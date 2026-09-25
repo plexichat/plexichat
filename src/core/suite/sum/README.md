@@ -314,6 +314,16 @@ search string. Python indexes code points instead, so the positional functions
 go through the UTF-16 helpers in `_formula_shared.py` rather than slicing the
 string directly.
 
+**A number renders the way JavaScript prints it.** Converting a number to text
+-- the `&` operator, `TEXT`'s fallback, `VALUE`, a criteria comparison -- goes
+through ECMAScript's `Number::toString`, which is what the client engine's
+`String(value)` does. That is the shortest round-tripping decimal, written
+plainly from `1e-6` up to (but not including) `1e21` and in scientific notation
+otherwise, with no zero padding on the exponent: `1e-5` is `0.00001`, `1e-6` is
+`0.000001`, `1e-7` is `1e-7`, `1e21` is `1e+21` and `1e300` is `1e+300`.
+Python's own `str` disagreed at both ends -- it printed `1e-05` and `1e-07`,
+and expanded `1e21` into 22 digits and `1e300` into 301.
+
 ### Known divergences from Excel
 
 Deliberate, and shared with the client engine unless noted:
