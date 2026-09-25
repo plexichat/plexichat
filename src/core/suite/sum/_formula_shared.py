@@ -745,7 +745,15 @@ def _is_pattern(pattern: str) -> bool:
 
 @functools.lru_cache(maxsize=512)
 def _wildcard_pattern_to_regex(pattern: str) -> "re.Pattern[str]":
-    """Compile a criteria wildcard pattern to a case-insensitive regex.
+    """Compile a criteria wildcard pattern, folded to lower case.
+
+    ``_wildcard_match`` lower-cases the pattern and the value through
+    ``_fold_case`` before it applies this, so the pattern is compiled without
+    ``re.IGNORECASE``: that flag folds a *different* set of characters than
+    ``str.lower()`` (it matches ``s`` against the long s and ``k`` against the
+    Kelvin sign), and JavaScript's ``i`` flag folds a third set, so leaving it
+    on made the two engines disagree on those code points. The fold the rest of
+    the comparison helpers use is the one that applies here too.
 
     Cached because a criteria compiles once per call but matches once per
     cell: recompiling the pattern for every row would turn a 100k-row
@@ -768,7 +776,7 @@ def _wildcard_pattern_to_regex(pattern: str) -> "re.Pattern[str]":
             # character) is literal, matching Excel.
             parts.append(re.escape(char))
         i += 1
-    return re.compile("".join(parts), re.IGNORECASE | re.DOTALL)
+    return re.compile("".join(parts), re.DOTALL)
 
 
 def _wildcard_match(pattern: str, value: str) -> bool:
