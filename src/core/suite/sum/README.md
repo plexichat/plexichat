@@ -175,6 +175,11 @@ together from three directions: it generates a formula matrix over every
 operator and adopted function family and evaluates it in both engines, it runs
 every case in the table through both engines and compares the answers with each
 other, and it checks the two copies of the table are still byte-identical.
+Around it, `test_sum_cross_engine_fuzz.py` throws a seeded stream of random
+formulas at both engines, `test_sum_engineering_agreement.py` runs the
+engineering quirks the README documents past both of them, and
+`test_sum_function_coverage.py` holds the client engine's whole function
+inventory to this table and to the documented gap.
 
 Two rules explain most of the behaviour:
 
@@ -188,7 +193,9 @@ because they answer a question *about* the value rather than computing with it:
 
 - `COUNT` counts numbers only, so an error is simply not counted;
 - `COUNTA` counts anything non-empty, and an error is data;
-- `COUNTBLANK` counts an error cell as non-blank;
+- `COUNTBLANK` counts an error *cell* as non-blank, while an error written
+  into the formula still propagates -- `COUNTBLANK(A5)` is 0 and
+  `COUNTBLANK(1/0)` is `#DIV/0!`;
 - the `IS*` family and `TYPE` report `FALSE` and `16`.
 
 `AND` and `OR` evaluate every argument -- Excel does not short-circuit them --
@@ -346,7 +353,7 @@ match a pattern; the relational operators compare literally.
 | `DATE`/`YEAR`/`MONTH`/`DAY` before 1900-03-01 | Excel's serials | one day lower (see `_DATE_EPOCH`; modern serials match) |
 | `DATEVALUE` of a text date before 1900-01-01 | `#VALUE!` | read as a serial, so `DATEVALUE("0001-01-01")` is `-693593` |
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
-| `SINH`/`COSH` of an argument past ~710 | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
+| `SINH`/`COSH` of an argument past ~710, and any complex result whose coefficient a double cannot hold | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
 | `ERF`/`ERFC` | precise to ~1e-16 | Abramowitz & Stegun 7.1.26 (~1.5e-7), shared with the client engine |
 | fractional `DEC2BIN`/`DEC2HEX`/`DEC2OCT` inputs | truncated to an integer | rendered through the float base conversion both engines share (e.g. `DEC2BIN(5.9)` is `"101.9000000000000004"`) |
 | `BITAND`/`BITOR`/`BITXOR` past 2^31 | full 48-bit result | 32-bit wrap, shared with the client engine |
