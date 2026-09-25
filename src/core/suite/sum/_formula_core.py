@@ -470,7 +470,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return None
         if kind == "ref":
             ref = node[1]
-            r_sheet, row, column = parse_cell_ref(ref, self._named_ranges)
+            try:
+                r_sheet, row, column = parse_cell_ref(ref, self._named_ranges)
+            except ValueError:
+                # A name that is neither a cell reference nor a defined named
+                # range is #REF!, the answer the client engine gives. It used
+                # to reach evaluate_cell's catch-all and surface as #VALUE!.
+                return REF_ERROR
             target_sheet = r_sheet or sheet
             return self._resolve(target_sheet, row, column, seen, depth)
         if kind == "neg":

@@ -334,7 +334,13 @@ class _Parser:
             return ("ref", token.value)
         if token.kind == "id":
             self._advance()
-            self._expect_op("(")
+            if self._peek().value != "(":
+                # A bare name with no call is Excel's named-range reference.
+                # Parsing it as one lets an unresolvable name answer the
+                # client engine's #REF! instead of failing the whole formula
+                # with a parse error, and a defined name resolves through the
+                # named-range table the same way a cell reference does.
+                return ("ref", token.value)
             self._advance()
             args: List[Any] = []
             if self._peek().kind != "rparen":
