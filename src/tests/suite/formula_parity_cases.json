@@ -11,7 +11,11 @@
     "The cells listed below hold the fixture data; an unlisted cell is blank.",
     "A range in a scalar slot follows the pooled-argument rule: a one-cell",
     "range is that cell, an error cell propagates, and more than one cell is",
-    "#VALUE! -- never a comma-joined string."
+    "#VALUE! -- never a comma-joined string.",
+    "A fixed-arity call rejects a stray argument (#VALUE!) before it evaluates",
+    "any operand, so a wrong count beats an error operand; an error operand",
+    "otherwise propagates out of every value function. The cases at the end pin",
+    "both rules."
   ],
   "sheet": "1",
   "grid": {
@@ -4649,6 +4653,110 @@
     {
       "formula": "DEC2BIN(A1:A3)",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NOT(1/0,1/0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LEN(1,2)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ABS(1,2,3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MID(\"abc\",1,1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "TRUE(1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NA(1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "RSQ(1/0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "INTERCEPT(1/0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "STEYX(1/0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MOD(1/0,1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "PMT(1/0,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PMT(1,1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PMT(NA(),NA(),NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "FV(1/0,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PV(1/0,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "NPV(1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "RATE(1/0,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IRR(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MIRR(1/0,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "GAMMADIST(1/0,1/0,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COMBIN(1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FACT(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MULTINOMIAL(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "GCD(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMABS(1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PERCENTRANK(1/0,1/0)",
+      "expected": "error:#DIV/0!"
     }
   ]
 }
