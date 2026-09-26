@@ -45,6 +45,15 @@ from src.tests.suite.test_sum_cross_engine import (
 SEED = 20260925
 ITERATIONS = 1500
 
+# The Bessel functions get a stream of their own rather than riding the generic
+# operand draw above: the interesting input is the *order*, which the generic
+# alphabet almost never reaches past a few, and the argument magnitudes that
+# separate the 40-term series' range from its overflow. Pulling from a separate
+# seed keeps the formulas generated for every other function byte-identical to
+# before this block was added.
+BESSEL_SEED = 20260926
+BESSEL_ITERATIONS = 400
+
 # The characters both runtimes case-fold and match identically: ASCII, a few
 # accented letters, the sharp s and its capital, the micro sign and Greek mu,
 # the sigma pair, the dotted/dotless i, and the wildcard/escape characters the
@@ -151,6 +160,11 @@ _TWO_ARG_FUNCTIONS = [
     "IMPRODUCT",
     "IMDIV",
     "IMMOD",
+    # The Bessel pair, so the generic operand draw also covers their arity and
+    # the text/blank/logical coercion of both slots; the order-focused stream
+    # below is what reaches the recurrence and overflow corners.
+    "BESSELJ",
+    "BESSELY",
 ]
 _THREE_ARG_FUNCTIONS = [
     "IF",
@@ -198,6 +212,22 @@ def _operand(rng: random.Random) -> str:
     return _random_number(rng) if rng.random() < 0.5 else _random_text(rng)
 
 
+def _bessel_order(rng: random.Random) -> str:
+    """A Bessel order: the small ones the series is exact at, the middle ones
+    the Y recurrence has to climb to, the huge ones where J underflows to 0 and
+    Y runs out of doubles, and a fractional one that both engines floor."""
+    roll = rng.random()
+    if roll < 0.40:
+        return str(rng.randint(0, 12))
+    if roll < 0.70:
+        return str(rng.randint(0, 200))
+    if roll < 0.85:
+        return str(rng.randint(0, 5000))
+    if roll < 0.95:
+        return str(rng.choice([10000, 100000, 1000000, 1000000000]))
+    return repr(rng.uniform(0, 12))
+
+
 def _formulas() -> List[str]:
     rng = random.Random(SEED)
     formulas: List[str] = []
@@ -228,6 +258,16 @@ def _formulas() -> List[str]:
     return formulas
 
 
+def _bessel_formulas() -> List[str]:
+    """Bessel calls whose order and argument cover the series' whole range."""
+    rng = random.Random(BESSEL_SEED)
+    formulas: List[str] = []
+    for _ in range(BESSEL_ITERATIONS):
+        name = rng.choice(["BESSELJ", "BESSELY"])
+        formulas.append(f"{name}({_random_number(rng)},{_bessel_order(rng)})")
+    return formulas
+
+
 def _fuzzy_same(ours: Dict[str, Any], theirs: Dict[str, Any]) -> bool:
     """Compare two typed results, tolerating a libm ulp on a number."""
     if ours["kind"] != theirs["kind"]:
@@ -249,7 +289,7 @@ def test_engines_agree_on_random_formulas():
             "set PLEXICHAT_CLIENT_PATH when the two are not siblings"
         )
 
-    formulas = _formulas()
+    formulas = _formulas() + _bessel_formulas()
     ours = {formula: _evaluate(formula) for formula in formulas}
     theirs = _client_results(node, engine, formulas)
     divergences = [

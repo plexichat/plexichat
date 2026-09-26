@@ -74,6 +74,17 @@ FORMULAS: List[str] = [
     "BESSELY(1e308,0)",
     "BESSELJ(1,1000000)",
     "BESSELY(1,1000000)",
+    # The Bessel order rules both engines share: a fractional order floors, a
+    # negative order is #NUM!, Y past x = 0 is #NUM!, J at x = 0 is 1 or 0, and
+    # an order or an argument no double can hold is #NUM! rather than a crash.
+    "BESSELJ(1.5,2.9)",
+    "BESSELY(1.5,2.9)",
+    "BESSELJ(-1.5,2)",
+    "BESSELJ(0,3)",
+    "BESSELY(0,0)",
+    "BESSELJ(1,1e400)",
+    "BESSELY(1,1e400)",
+    "BESSELJ(1e400,0)",
     "ERF(-1.5)",
     "ERFC(2)",
 ]
