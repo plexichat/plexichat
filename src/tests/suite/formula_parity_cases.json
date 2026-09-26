@@ -4390,6 +4390,90 @@
     {
       "formula": "MATCH(1/0,A1:A3,0)",
       "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "HOUR(1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "MINUTE(1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SECOND(1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "HOUR(-1e9)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SECOND(1e300)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "YEAR(2958465.5)",
+      "expected": "number:9999"
+    },
+    {
+      "formula": "DAY(2958465.5)",
+      "expected": "number:31"
+    },
+    {
+      "formula": "HOUR(2958465.5)",
+      "expected": "number:12"
+    },
+    {
+      "formula": "WEEKNUM(2958465.5)",
+      "expected": "number:53"
+    },
+    {
+      "formula": "HOUR(-693593.5)",
+      "expected": "number:12"
+    },
+    {
+      "formula": "YEAR(-693593.5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "EOMONTH(2958465,0)",
+      "expected": "number:2958465"
+    },
+    {
+      "formula": "EOMONTH(-693593,0)",
+      "expected": "number:-693563"
+    },
+    {
+      "formula": "EDATE(-693593,0)",
+      "expected": "number:-693593"
+    },
+    {
+      "formula": "NETWORKDAYS(2958465,2958465)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "WORKDAY(2958465,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "WORKDAY(-693594,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "NETWORKDAYS(-693594,-693594)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "WEEKNUM(-693593)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SECOND(-78320.75783565)",
+      "expected": "number:43"
+    },
+    {
+      "formula": "BESSELY(17027.04502110774,0)",
+      "expected": "error:#NUM!"
     }
   ]
 }

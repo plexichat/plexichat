@@ -60,7 +60,11 @@ MAX_WORKDAY_OFFSET_DAYS = 100_000
 # doubles, so without this a single formula could drive the loop for hours; a
 # value past the cap is #NUM!. Shared with the client engine.
 MAX_LOOP_ITERATIONS = 100_000
-# Excel's own maximum date serial (9999-12-31); serials beyond this are #NUM!.
+# The span of serials a date can name: 0001-01-01 .. 9999-12-31. The serial's
+# integer part is the date and its fraction is a time of day, so the check is
+# on the truncated serial, not the raw one -- 2958465.5 still names 9999-12-31.
+# A serial outside the span is #NUM!.
+MIN_DATE_SERIAL = -693_593
 MAX_DATE_SERIAL = 2_958_465
 
 # Excel's epoch: serial 1 == 1900-01-01, with the classic 1900 leap-year bug

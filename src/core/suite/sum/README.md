@@ -232,7 +232,13 @@ optional sum range.
 **The time of day truncates through whole milliseconds.** The date readers
 share the client engine's clock, which keeps integer milliseconds, so a serial
 naming 41.8 seconds is the 41st second -- `SECOND(0.04701185841617224)` is 41,
-not the 42 a round to the nearest second answered here.
+not the 42 a round to the nearest second answered here. The time of day is read
+from the whole milliseconds the serial carries (`trunc(serial * 86400000)`
+reduced to one day), the way the client's `Date` does; reading the leftover
+fraction after subtracting `floor(serial)` disagreed with the client by a
+second at a millisecond boundary on a negative serial. The readers also name a
+time *on a date*, so a serial whose date part is outside the covered span is
+`#NUM!` like every other date reader rather than a silent 0.
 
 **Places is coerced before a conversion's input is validated.** The base
 conversions read their `places` argument first, so a bad number *and* bad
