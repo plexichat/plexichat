@@ -220,14 +220,20 @@ slots is read out of the cell it names: `LARGE(A1:A3, A1)` is 3 and
 a referenced value is not coerced — is about the *range* slots; these are
 single values and read like a literal argument.
 
-**A fixed-arity call rejects a stray argument.** The scalar functions read
-exactly their declared operands, so `ABS(1, 2)`, `SIN(1, 2)` and `LEN("a",
-"b")` are `#VALUE!` rather than quietly reading the first one; only `PI()`
-ignores its arguments on both engines. `NETWORKDAYS`, `WORKDAY` and `COUNTIF`
-bound their optional slots the same way, so a fourth argument
-(`NETWORKDAYS(1, 2, 3, 4)`) or a third to a two-argument form
+**A fixed-arity call rejects a stray argument before it evaluates anything.**
+The scalar functions read exactly their declared operands, so `ABS(1, 2)`,
+`SIN(1, 2)` and `LEN("a", "b")` are `#VALUE!` rather than quietly reading the
+first one; only `PI()` ignores its arguments on both engines. `NETWORKDAYS`,
+`WORKDAY` and `COUNTIF` bound their optional slots the same way, so a fourth
+argument (`NETWORKDAYS(1, 2, 3, 4)`) or a third to a two-argument form
 (`COUNTIF(1, 1, 1)`) is `#VALUE!`, while `SUMIF`/`AVERAGEIF` still take their
-optional sum range.
+optional sum range. `_ARITY` holds every fixed-arity bounds and the check runs
+*before* the operands are read, so a wrong count beats an error operand:
+`NOT(1/0, 1/0)` is `#VALUE!`, not `#DIV/0!`, matching the client engine's
+pre-check. An error operand otherwise propagates out of every value function
+(`PMT(1/0, 1/0, 1/0)` and `GCD(1/0)` are `#DIV/0!`); `_read_number` reads a
+scalar slot through the same pooled rule as the client's `toNumber`, so an
+error is propagated rather than coerced into `#VALUE!`.
 
 **The time of day truncates through whole milliseconds.** The date readers
 share the client engine's clock, which keeps integer milliseconds, so a serial
@@ -548,30 +554,30 @@ Footer (32 bytes): SHA-256 checksum of uncompressed payload
 
 The scalar-slot range rule above is pinned: `LEN(A1:A3)` is `#VALUE!` and
 `LEN(A1:A5)` is `#DIV/0!` on both sides, and the shared case table holds the
-engines to it. Three classes of disagreement remain open. They were found by
-the exhaustive differential sweep (`tests/unit/formula-sweep.test.mjs` in the
-client repository), which calls every registered function at arities zero
-through four over numbers, text, an error, a blank, a logical, a cell, a
+engines to it. The arity-first rule and the propagation of an error operand
+are pinned the same way. Two classes of disagreement remain open. They were
+found by the exhaustive differential sweep (`tests/unit/formula-sweep.test.mjs`
+in the client repository), which calls every registered function at arities
+zero through four over numbers, text, an error, a blank, a logical, a cell, a
 multi-cell range and the error cell:
 
-- a **multi-cell range passed where one value is expected**. The two engines
-  order their argument checks differently around a range, so a function that
-  flattens its arguments (the value and text families) and a function that
-  evaluates a slot directly (`IF`, `NOT`, `AND`, the lookup and criteria
-  slots) do not agree on every corner. The one-cell range, the plain
-  multi-cell range and the error cell are the three cases the table already
-  pins; other combinations are open.
-- the **order of the arity check and error propagation**: whether a stray
-  argument to a fixed-arity call is `#VALUE!` before or after an error operand
-  is propagated differs by function.
+- a **multi-cell range passed where one value is expected**. This engine
+  flattens a range before dispatch (`_expand_arg`), so an error cell inside it
+  reaches a function that only wanted one value, while the client reads the
+  range per slot and applies the pooled rule. A function that flattens its
+  arguments (the value and text families) and a function that evaluates a slot
+  directly (`IF`, `NOT`, `AND`, the lookup and criteria slots) therefore do
+  not agree on every corner. The one-cell range, the plain multi-cell range
+  and the error cell are the three cases the table already pins; other
+  combinations are open.
 - a **matrix result** such as `FREQUENCY`: the differential probes compare a
   matrix by identity, so the two sides never read as equal even when the
   counts match.
 
-None of these change an ordinary formula; each shows up only on a malformed
-call (a stray argument, a range where a scalar belongs) or an error operand.
-The sweep fails on any disagreement outside these classes, so a new one
-cannot slip in unnoticed.
+None of these change an ordinary formula; the first shows up only on a range
+where a scalar belongs, the second only on an array-returning function. The
+sweep fails on any disagreement outside these classes, so a new one cannot
+slip in unnoticed.
 
 ## Related code
 
