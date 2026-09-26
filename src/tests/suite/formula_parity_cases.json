@@ -8,7 +8,10 @@
     "drifting from Excel (or from the other engine) fails a test.",
     "Types are explicit (number:/text:/boolean:/error:/blank) so a text \"12\" is",
     "never mistaken for the number 12.",
-    "The cells listed below hold the fixture data; an unlisted cell is blank."
+    "The cells listed below hold the fixture data; an unlisted cell is blank.",
+    "A range in a scalar slot follows the pooled-argument rule: a one-cell",
+    "range is that cell, an error cell propagates, and more than one cell is",
+    "#VALUE! -- never a comma-joined string."
   ],
   "sheet": "1",
   "grid": {
@@ -4514,6 +4517,138 @@
     {
       "formula": "SUMX2MY2(1e300,1e300)",
       "expected": "error:#NUM!"
+    },
+    {
+      "formula": "LEN(A1:A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "LEN(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LEN(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "UPPER(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "UPPER(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LOWER(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "TRIM(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LEFT(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "RIGHT(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MID(A1:A3,1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "EXACT(A1:A3,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "CODE(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VALUE(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "N(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "N(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "T(A1:A1)",
+      "expected": "text:"
+    },
+    {
+      "formula": "T(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "T(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CONCAT(A1:A3)",
+      "expected": "text:123"
+    },
+    {
+      "formula": "CONCAT(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CONCATENATE(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ABS(A1:A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "ABS(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ABS(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SQRT(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "INT(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SIGN(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MOD(A1:A3,A2)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "BIN2DEC(\"101\")",
+      "expected": "number:5"
+    },
+    {
+      "formula": "BIN2DEC(A1:A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "BIN2DEC(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "BIN2DEC(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "DEC2BIN(A1:A3)",
+      "expected": "error:#VALUE!"
     }
   ]
 }
