@@ -33,6 +33,7 @@ from typing import Any, Dict, List
 
 import pytest
 
+from src.core.suite.sum import _formula_core as engine_core
 from src.tests.suite.test_sum_cross_engine import (
     _client_engine,
     _client_results,
@@ -65,6 +66,18 @@ BESSEL_ITERATIONS = 400
 # byte-identical.
 POWER_SEED = 20260927
 POWER_ITERATIONS = 400
+
+# The call contract gets a stream of its own for the same reason: the generic
+# draw above only calls each function at a valid arity with everyday operands,
+# so it never tried a stray argument (``ABS(1, 2)`` was silently 1 here while
+# the client engine answers ``#VALUE!``), a fractional time serial
+# (``SECOND`` rounded where the client truncates), a conversion whose number
+# *and* places are bad (the client coerces places first), a computed error in
+# a criteria range (an error cell only fails to match), or a lookup over a
+# range holding an error cell. A separate seed keeps every other function's
+# generated formulas byte-identical to before this block was added.
+CONTRACT_SEED = 20260928
+CONTRACT_TIME_ITERATIONS = 200
 
 # The characters both runtimes case-fold and match identically: ASCII, a few
 # accented letters, the sharp s and its capital, the micro sign and Greek mu,
@@ -318,6 +331,124 @@ def _power_formulas() -> List[str]:
     return formulas
 
 
+# The fixed-arity core functions a stray argument used to slip past: every
+# one-argument name called with two, every two-argument name with three, and
+# the two range functions that take an optional third argument called with
+# four. The operand is always valid, so a wrong arity is the only thing that
+# can fail -- which is what makes a silent extra argument visible. NOW and
+# TODAY read the clock, so no call can pin them and they are absent here.
+_CONTRACT_ARITY_NAMES = (
+    "ABS",
+    "ACOS",
+    "ASIN",
+    "ATAN",
+    "COS",
+    "DEGREES",
+    "INT",
+    "ISBLANK",
+    "ISNUMBER",
+    "ISTEXT",
+    "LEN",
+    "LOWER",
+    "RADIANS",
+    "SIN",
+    "SQRT",
+    "TAN",
+    "TRIM",
+    "UPPER",
+    "CEILING",
+    "COUNTIF",
+    "FLOOR",
+    "MOD",
+    "POWER",
+    "ROUND",
+    "ROUNDDOWN",
+    "ROUNDUP",
+    "NETWORKDAYS",
+    "WORKDAY",
+)
+
+# Conversions whose number *and* places are bad: the client coerces places
+# first, so the answer is the places error rather than the number one.
+_CONTRACT_ORDER_CALLS = [
+    'BIN2OCT(18,"abc")',
+    'BIN2OCT(18.985,"abc")',
+    'BIN2HEX("101","y")',
+    'HEX2BIN("12345678901","x")',
+    'OCT2BIN("77777777777","z")',
+    'DEC2BIN(5,"x")',
+]
+
+# Criteria calls over a computed error (which propagates) and over the error
+# cell the shared table's grid holds in A5 (which only fails to match). The
+# grid also holds 1..3 in A1:A3, so the range cases have cells to match.
+_CONTRACT_RANGE_CALLS = [
+    "COUNTIF(1/0,1)",
+    "SUMIF(1/0,1)",
+    "SUMIF(1,1,1/0)",
+    "SUMIFS(1/0,1,1)",
+    "COUNTIFS(1/0,1)",
+    "COUNTIF(1/0,NA())",
+    "SUMIF(NA(),1,1/0)",
+    "COUNTIF(A5,1)",
+    "SUMIF(A5,1)",
+    "COUNTIF(A1:A5,2)",
+    "SUMIF(A1:A5,1,A1:A5)",
+    'COUNTIF(INDIRECT("A5"),1)',
+]
+
+# Lookups over the grid's A1:A5, which holds an error cell the lookup never
+# touches, plus the computed-error keys that still propagate out of one.
+_CONTRACT_LOOKUP_CALLS = [
+    "INDEX(A1:A5,2)",
+    "MATCH(2,A1:A5,0)",
+    "LOOKUP(2,A1:A5)",
+    "XLOOKUP(2,A1:A5,A1:A5)",
+    "COUNTIF(OFFSET(A1,0,0,5,1),2)",
+    "INDEX(A1:A3,1/0)",
+    "MATCH(1/0,A1:A3,0)",
+]
+
+
+def _contract_formulas() -> List[str]:
+    """The call-contract stream: wrong arities, time, order, ranges, lookups.
+
+    The arity calls are systematic -- every fixed name at arities zero to
+    four over the benign operand both engines must reject or compute
+    identically -- while the time calls draw seeded fractional serials, the
+    corners rounding used to miss. The order, range and lookup calls are the
+    fixed formulas that found those divergences, held here so both engines
+    keep agreeing on them.
+    """
+    formulas = [
+        f"{name}({','.join(['1'] * arity)})"
+        for name in _CONTRACT_ARITY_NAMES
+        for arity in (0, 1, 2, 3, 4)
+    ]
+    # The adopted families the matrix sweeps at arities one to three get
+    # their edges here: an empty call and a four-argument one.
+    for _, names in (
+        ("engineering", engine_core._ENGINEERING_FUNCTIONS),
+        ("financial", engine_core._FINANCIAL_FUNCTIONS),
+        ("statistical", engine_core._ADOPTED_STATISTICAL_FUNCTIONS),
+        ("distribution", engine_core._DISTRIBUTION_FUNCTIONS),
+        ("combinatorics", engine_core._COMBINATORICS_FUNCTIONS),
+        ("complex", engine_core._COMPLEX_FUNCTIONS),
+        ("single", engine_core._ADOPTED_SINGLE_FUNCTIONS - {"TODAY", "NOW"}),
+    ):
+        for name in sorted(names):
+            formulas.append(f"{name}()")
+            formulas.append(f"{name}(1,1,1,1)")
+    rng = random.Random(CONTRACT_SEED)
+    for _ in range(CONTRACT_TIME_ITERATIONS):
+        serial = repr(rng.uniform(-100000, 100000) + rng.random())
+        formulas.append(f"{rng.choice(['HOUR', 'MINUTE', 'SECOND'])}({serial})")
+    formulas.extend(_CONTRACT_ORDER_CALLS)
+    formulas.extend(_CONTRACT_RANGE_CALLS)
+    formulas.extend(_CONTRACT_LOOKUP_CALLS)
+    return formulas
+
+
 def _fuzzy_same(ours: Dict[str, Any], theirs: Dict[str, Any]) -> bool:
     """Compare two typed results, tolerating a libm ulp on a number."""
     if ours["kind"] != theirs["kind"]:
@@ -339,7 +470,9 @@ def test_engines_agree_on_random_formulas():
             "set PLEXICHAT_CLIENT_PATH when the two are not siblings"
         )
 
-    formulas = _formulas() + _bessel_formulas() + _power_formulas()
+    formulas = (
+        _formulas() + _bessel_formulas() + _power_formulas() + _contract_formulas()
+    )
     ours = {formula: _evaluate(formula) for formula in formulas}
     theirs = _client_results(node, engine, formulas)
     divergences = [
