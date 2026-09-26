@@ -4278,6 +4278,118 @@
     {
       "formula": "TIME(-1,\"#\",0)",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ABS(1,2)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SIN(1,2)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LEN(\"a\",\"b\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MOD(5,2,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NETWORKDAYS(1,2,3,4)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "WORKDAY(1,1,1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "COUNTIF(1,1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SECOND(0.04701185841617224)",
+      "expected": "number:41"
+    },
+    {
+      "formula": "SECOND(0.00001)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SECOND(TIME(1,7,42))",
+      "expected": "number:42"
+    },
+    {
+      "formula": "HOUR(TIME(12,34,56))",
+      "expected": "number:12"
+    },
+    {
+      "formula": "BIN2OCT(18,\"abc\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "HEX2BIN(\"12345678901\",\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "DEC2BIN(5,\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "COUNTIF(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(1,1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIFS(1/0,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIF(1/0,NA())",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(NA(),1,1/0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "COUNTIF(A5,1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUMIF(A5,1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "INDEX(A1:A5,2)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MATCH(2,A1:A5,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "LOOKUP(2,A1:A5)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "XLOOKUP(2,A1:A5,A1:A5)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "INDEX(A1:A3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(1/0,A1:A3,0)",
+      "expected": "error:#DIV/0!"
     }
   ]
 }
