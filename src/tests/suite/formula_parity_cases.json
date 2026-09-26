@@ -14,8 +14,9 @@
     "#VALUE! -- never a comma-joined string.",
     "A fixed-arity call rejects a stray argument (#VALUE!) before it evaluates",
     "any operand, so a wrong count beats an error operand; an error operand",
-    "otherwise propagates out of every value function. The cases at the end pin",
-    "both rules."
+    "otherwise propagates out of every value function. AND/OR read a range cell",
+    "by cell and OFFSET propagates an error written into its lazy offsets. The",
+    "cases at the end pin those rules."
   ],
   "sheet": "1",
   "grid": {
@@ -4757,6 +4758,234 @@
     {
       "formula": "PERCENTRANK(1/0,1/0)",
       "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AND(A1:A3)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "OR(A1:A3)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "AND(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OR(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AND(A1:A1,A2)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "AND(A1:A3,TRUE)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "NOT(A1:A1)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "NOT(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NOT(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IF(A1:A1,1,2)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "IF(A1:A5,1,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OFFSET(A1,1,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "OFFSET(A1,1,1)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "OFFSET(A5,A5,A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OFFSET(A1,1/0,0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OFFSET(A1,1,1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "OFFSET(A1,1,1,1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ISBLANK(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ISNUMBER(A1:A1)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISNUMBER(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ISTEXT(A1:A1)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "TYPE(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ISERROR(A1:A1)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISERROR(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ISBLANK(A5)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNUMBER(A5)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISLOGICAL(A1:A1)",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNONTEXT(A1:A1)",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ERROR.TYPE(A5)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "ERROR.TYPE(A1:A1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "LARGE(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LARGE(A1:A3,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SMALL(A1:A5,A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PERCENTILE(A1:A3,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "QUARTILE(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "TRIMMEAN(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "STANDARDIZE(A1:A5,A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PERCENTRANK(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "RANK(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FORECAST(A1:A5,A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIF(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIF(A1:A3,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUMIF(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIFS(A1:A5,A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTIFS(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "GCD(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "GCD(A1:A3)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "LCM(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMSQ(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMABS(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMABS(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "IMSUM(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMREAL(A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SWITCH(A1:A5,1,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "PI(1/0)",
+      "expected": "number:3.141592654"
+    },
+    {
+      "formula": "PI(A5)",
+      "expected": "number:3.141592654"
+    },
+    {
+      "formula": "PI(1,2)",
+      "expected": "number:3.141592654"
     }
   ]
 }
