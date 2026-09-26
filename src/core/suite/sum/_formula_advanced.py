@@ -169,7 +169,25 @@ def _read_number(value: Any) -> tuple:
     A function that cannot skip a value (SUMSQ, the cross-product sums, a
     rank or a percentile) reports the coercion failure instead of treating the
     value as absent, which is what the client engine's ``toNumber`` does.
+
+    The scalar slot follows the same pooled-argument rule as the client's
+    ``scalarize``: an error is not a value to coerce but one to propagate --
+    ``PMT(1/0, 1/0, 1/0)`` is #DIV/0!, not the #VALUE! a failed coercion would
+    give -- and a range read where one value belongs answers #VALUE! unless it
+    holds exactly one cell, that cell's error propagating first. Without the
+    explicit check ``_to_number`` treated the error text as ordinary text and
+    mangled every operand error into #VALUE!.
     """
+    if is_error(value):
+        return value, None
+    if isinstance(value, (list, tuple)):
+        cells = _flatten_argument(value)
+        for cell in cells:
+            if is_error(cell):
+                return cell, None
+        if len(cells) != 1:
+            return VALUE_ERROR, None
+        value = cells[0]
     try:
         return None, _to_number(value)
     except ValueError as exc:

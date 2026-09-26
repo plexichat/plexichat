@@ -366,6 +366,205 @@ _ERROR_TOLERANT_FUNCTIONS = frozenset(
     {"COUNT", "COUNTA", "SUMIFS", "COUNTIFS", "AVERAGEIFS"}
 )
 
+# The arity of every fixed-arity function, mirrored from the client engine's
+# ``arity.js``. A stray argument is #VALUE! *before* the arguments are
+# evaluated, so a function called with the wrong number of them never lets an
+# error operand decide the answer -- NOT(1/0, 1/0) is #VALUE!, not #DIV/0!.
+# Each entry is ``(min, max, step)``: valid when ``min <= count <= max`` and,
+# when *step* is not None, ``count % 2 == step``. ``max`` of None is unbounded.
+# A name absent from the table is variadic (SUM, CONCAT, ...) or checks its own
+# bounds (PI ignores its arguments; IF/IFS/SWITCH/CHOOSE read the raw nodes),
+# so the sweep never turns a #NAME? into #VALUE!. The client-only names (the
+# introspective forms, the regression machinery and the array family) are
+# absent: this engine answers #NAME? for them.
+_ARITY: Dict[str, Tuple[int, Optional[int], Optional[int]]] = {
+    "ABS": (1, 1, None),
+    "ACOS": (1, 1, None),
+    "AND": (1, None, None),
+    "ASIN": (1, 1, None),
+    "ATAN": (1, 1, None),
+    "ATAN2": (2, 2, None),
+    "AVERAGEIF": (2, 3, None),
+    "AVERAGEIFS": (3, None, 1),
+    "BESSELJ": (2, 2, None),
+    "BESSELY": (2, 2, None),
+    "BETADIST": (3, 5, None),
+    "BETAINV": (3, 5, None),
+    "BIN2DEC": (1, 2, None),
+    "BIN2HEX": (1, 2, None),
+    "BIN2OCT": (1, 2, None),
+    "BINOMDIST": (4, 4, None),
+    "BITAND": (2, 2, None),
+    "BITLSHIFT": (2, 2, None),
+    "BITOR": (2, 2, None),
+    "BITRSHIFT": (2, 2, None),
+    "BITXOR": (2, 2, None),
+    "CHAR": (1, 1, None),
+    "CLEAN": (1, 1, None),
+    "CODE": (1, 1, None),
+    "COMBIN": (2, 2, None),
+    "COMBINA": (2, 2, None),
+    "COMPLEX": (1, 3, None),
+    "CONVERT": (3, 3, None),
+    "CORREL": (2, 2, None),
+    "COS": (1, 1, None),
+    "COSH": (1, 1, None),
+    "COUNTBLANK": (1, 1, None),
+    "COUNTIF": (2, 2, None),
+    "COUNTIFS": (2, None, 0),
+    "DATE": (3, 3, None),
+    "DATEVALUE": (1, 1, None),
+    "DAY": (1, 1, None),
+    "DAYS": (2, 2, None),
+    "DB": (4, 5, None),
+    "DEC2BIN": (1, 2, None),
+    "DEC2HEX": (1, 2, None),
+    "DEC2OCT": (1, 2, None),
+    "DEGREES": (1, 1, None),
+    "DELTA": (1, 2, None),
+    "EDATE": (2, 2, None),
+    "EOMONTH": (2, 2, None),
+    "ERF": (1, 2, None),
+    "ERFC": (1, 1, None),
+    "EXACT": (2, 2, None),
+    "EXPONDIST": (3, 3, None),
+    "FACT": (1, 1, None),
+    "FACTDOUBLE": (1, 1, None),
+    "FALSE": (0, 0, None),
+    "FIND": (2, 3, None),
+    "FORECAST": (3, 3, None),
+    "FREQUENCY": (2, 2, None),
+    "FV": (3, 5, None),
+    "GAMMADIST": (4, 4, None),
+    "GAMMAINV": (3, 3, None),
+    "GAMMALN": (1, 1, None),
+    "GESTEP": (1, 2, None),
+    "HEX2BIN": (1, 2, None),
+    "HEX2DEC": (1, 2, None),
+    "HEX2OCT": (1, 2, None),
+    "HLOOKUP": (3, 4, None),
+    "HOUR": (1, 1, None),
+    "IMABS": (1, 1, None),
+    "IMAGINARY": (1, 1, None),
+    "IMARGUMENT": (1, 1, None),
+    "IMCONJUGATE": (1, 1, None),
+    "IMCOS": (1, 1, None),
+    "IMCOSH": (1, 1, None),
+    "IMCOT": (1, 1, None),
+    "IMCOTH": (1, 1, None),
+    "IMCSC": (1, 1, None),
+    "IMCSCH": (1, 1, None),
+    "IMDIV": (2, 2, None),
+    "IMEXP": (1, 1, None),
+    "IMLOG": (1, 1, None),
+    "IMMOD": (2, 2, None),
+    "IMPRODUCT": (1, None, None),
+    "IMREAL": (1, 1, None),
+    "IMSEC": (1, 1, None),
+    "IMSECH": (1, 1, None),
+    "IMSIN": (1, 1, None),
+    "IMSINH": (1, 1, None),
+    "IMSQRT": (1, 1, None),
+    "IMSUB": (2, 2, None),
+    "IMSUM": (1, None, None),
+    "IMTAN": (1, 1, None),
+    "IMTANH": (1, 1, None),
+    "INDEX": (2, 3, None),
+    "INDIRECT": (1, 2, None),
+    "INT": (1, 1, None),
+    "INTERCEPT": (2, 2, None),
+    "IPMT": (4, 6, None),
+    "IRR": (1, 2, None),
+    "ISEVEN": (1, 1, None),
+    "ISODD": (1, 1, None),
+    "LARGE": (2, 2, None),
+    "LEFT": (1, 2, None),
+    "LEN": (1, 1, None),
+    "LOOKUP": (2, 3, None),
+    "LOWER": (1, 1, None),
+    "MATCH": (2, 3, None),
+    "MID": (3, 3, None),
+    "MINUTE": (1, 1, None),
+    "MIRR": (3, 3, None),
+    "MOD": (2, 2, None),
+    "MONTH": (1, 1, None),
+    "N": (1, 1, None),
+    "NA": (0, 0, None),
+    "NEGBINOMDIST": (3, 3, None),
+    "NETWORKDAYS": (2, 3, None),
+    "NORMDIST": (4, 4, None),
+    "NORMINV": (3, 3, None),
+    "NORMINVS": (1, 1, None),
+    "NORMSDIST": (1, 1, None),
+    "NORMSINV": (1, 1, None),
+    "NOT": (1, 1, None),
+    "NPER": (3, 5, None),
+    "NPV": (2, None, None),
+    "NUMBERVALUE": (1, 3, None),
+    "OCT2BIN": (1, 2, None),
+    "OCT2DEC": (1, 2, None),
+    "OCT2HEX": (1, 2, None),
+    "OFFSET": (3, 5, None),
+    "OR": (1, None, None),
+    "PERCENTILE": (2, 2, None),
+    "PERCENTRANK": (2, 3, None),
+    "PERMUT": (2, 2, None),
+    "PMT": (3, 5, None),
+    "POISSON": (3, 3, None),
+    "POWER": (2, 2, None),
+    "PPMT": (4, 6, None),
+    "PROPER": (1, 1, None),
+    "PV": (3, 5, None),
+    "QUARTILE": (2, 2, None),
+    "RADIANS": (1, 1, None),
+    "RANK": (2, 3, None),
+    "RATE": (3, 6, None),
+    "REPLACE": (4, 4, None),
+    "REPT": (2, 2, None),
+    "RIGHT": (1, 2, None),
+    "ROUND": (2, 2, None),
+    "ROUNDDOWN": (2, 2, None),
+    "ROUNDUP": (2, 2, None),
+    "RSQ": (2, 2, None),
+    "SEARCH": (2, 3, None),
+    "SECOND": (1, 1, None),
+    "SIGN": (1, 1, None),
+    "SIN": (1, 1, None),
+    "SINH": (1, 1, None),
+    "SLN": (3, 3, None),
+    "SLOPE": (2, 2, None),
+    "SMALL": (2, 2, None),
+    "SQRT": (1, 1, None),
+    "STANDARDIZE": (3, 3, None),
+    "STEYX": (2, 2, None),
+    "SUBSTITUTE": (3, 4, None),
+    "SUMIF": (2, 3, None),
+    "SUMIFS": (3, None, 1),
+    "SUMPRODUCT": (1, None, None),
+    "SUMSQ": (1, None, None),
+    "SUMX2MY2": (2, 2, None),
+    "SUMX2PY2": (2, 2, None),
+    "SUMXY": (2, 2, None),
+    "SYD": (4, 4, None),
+    "T": (1, 1, None),
+    "TAN": (1, 1, None),
+    "TANH": (1, 1, None),
+    "TEXT": (2, 2, None),
+    "TIME": (3, 3, None),
+    "TRIM": (1, 1, None),
+    "TRIMMEAN": (2, 2, None),
+    "TRUE": (0, 0, None),
+    "UPPER": (1, 1, None),
+    "VALUE": (1, 1, None),
+    "VLOOKUP": (3, 4, None),
+    "WEEKDAY": (1, 2, None),
+    "WEEKNUM": (1, 2, None),
+    "WEIBULL": (4, 4, None),
+    "WORKDAY": (2, 3, None),
+    "XNPV": (3, 3, None),
+    "YEAR": (1, 1, None),
+}
+
 
 class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     def __init__(
@@ -473,6 +672,27 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return None
         if kind == "ref":
             ref = node[1]
+            if ":" in ref:
+                # A range reached a slot that wants one value (an operator, an
+                # IF condition, a lookup key). It used to fall through
+                # ``parse_cell_ref`` and answer #REF! for the colon; the
+                # client engine read it as a row-major matrix. Both now apply
+                # the pooled rule the scalar functions share: an error cell in
+                # the range propagates, a one-cell range is that cell, and
+                # anything else is #VALUE! -- never a comma-joined string.
+                first, second = ref.split(":", 1)
+                try:
+                    s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
+                    s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
+                except ValueError:
+                    return REF_ERROR
+                values = self._range_values(s1 or sheet, r1, c1, r2, c2, seen, depth)
+                for value in values:
+                    if is_error(value):
+                        return value
+                if len(values) == 1:
+                    return values[0]
+                return VALUE_ERROR
             try:
                 r_sheet, row, column = parse_cell_ref(ref, self._named_ranges)
             except ValueError:
@@ -590,6 +810,17 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     def _call(
         self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
     ) -> Any:
+        # A stray argument is #VALUE! before any argument is evaluated, so a
+        # function called with the wrong number of them never lets an error
+        # operand decide the answer (see _ARITY). An unknown name is not in
+        # the table, so this never turns a #NAME? into #VALUE!.
+        arity = _ARITY.get(name)
+        if arity is not None:
+            low, high, step = arity
+            if len(args) < low or (high is not None and len(args) > high):
+                return VALUE_ERROR
+            if step is not None and len(args) % 2 != step:
+                return VALUE_ERROR
         # Evaluate the arguments lazily where the function is short-circuiting.
         if name == "IF":
             # Excel's third argument is optional: IF(test, value_if_true) is
@@ -613,9 +844,16 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name in ("AND", "OR"):
             if not args:
                 return VALUE_ERROR
-            evaluated = [self._eval(arg, sheet, seen, depth) for arg in args]
-            # An error operand propagates, as it does from every other
-            # value-based function: AND(1/0) is #DIV/0!, not TRUE.
+            # Flattened like a pooled function: Excel's AND/OR accept a range
+            # and read every cell, so AND(A1:A3) is TRUE over 1, 2, 3. Reading
+            # each argument with ``_eval`` answered #REF! for the range, which
+            # made the client engine (which reads the cells) the only one that
+            # could use the idiom. An error operand still propagates --
+            # AND(1/0) and AND(A1:A5) with an error in A5 are #DIV/0!.
+            evaluated: List[Any] = []
+            for arg in args:
+                expanded, _ = self._expand_arg(arg, sheet, seen, depth)
+                evaluated.extend(expanded)
             for value in evaluated:
                 if is_error(value):
                     return value
