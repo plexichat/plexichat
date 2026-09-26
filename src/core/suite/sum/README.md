@@ -355,6 +355,8 @@ match a pattern; the relational operators compare literally.
 | single-argument `ROUND`/`ROUNDUP`/`ROUNDDOWN` | a formula error | `#VALUE!` — `num_digits` is required |
 | `SINH`/`COSH` of an argument past ~710, and any complex result whose coefficient a double cannot hold | `#NUM!` | `#NUM!` — an overflowing double is not a cell value |
 | `ERF`/`ERFC` | precise to ~1e-16 | Abramowitz & Stegun 7.1.26 (~1.5e-7), shared with the client engine |
+| `BESSELJ`/`BESSELY` past the range the 40-term series can hold | a small oscillating value | `#NUM!` — a series term overflows the doubles, and an overflowing double is not a cell value |
+| `BESSELJ` with a huge order at a small `x` (`BESSELJ(1,1000000)`), and `BESSELY` with a huge order | a small value | `BESSELJ` underflows to `0` while the `BESSELY` recurrence leaves the doubles (`#NUM!`), shared with the client engine |
 | fractional `DEC2BIN`/`DEC2HEX`/`DEC2OCT` inputs | truncated to an integer | rendered through the float base conversion both engines share (e.g. `DEC2BIN(5.9)` is `"101.9000000000000004"`) |
 | `BITAND`/`BITOR`/`BITXOR` past 2^31 | full 48-bit result | 32-bit wrap, shared with the client engine |
 | an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |

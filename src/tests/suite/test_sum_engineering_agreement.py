@@ -33,7 +33,8 @@ from src.tests.suite.test_sum_cross_engine import (
 
 # Inputs where the two engines deliberately differ from Excel but must agree
 # with each other: fractional conversion inputs, large bitwise operands past
-# the 32-bit wrap, blank inputs, and the float shift/places spellings.
+# the 32-bit wrap, blank inputs, the float shift/places spellings, and Bessel
+# arguments past the range the series can hold (which answer #NUM!).
 FORMULAS: List[str] = [
     "DEC2BIN(5.9)",
     "DEC2HEX(255.9)",
@@ -67,6 +68,12 @@ FORMULAS: List[str] = [
     'CONVERT(1,"ft","in")',
     "BESSELY(2.4048,0)",
     "BESSELJ(10,3)",
+    "BESSELJ(281474976710655,0)",
+    "BESSELY(281474976710655,0)",
+    "BESSELJ(1e308,0)",
+    "BESSELY(1e308,0)",
+    "BESSELJ(1,1000000)",
+    "BESSELY(1,1000000)",
     "ERF(-1.5)",
     "ERFC(2)",
 ]

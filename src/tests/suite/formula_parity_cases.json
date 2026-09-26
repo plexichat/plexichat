@@ -3488,6 +3488,30 @@
       "expected": "error:#NUM!"
     },
     {
+      "formula": "BESSELJ(281474976710655,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BESSELY(281474976710655,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BESSELJ(1e308,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BESSELY(1e308,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BESSELJ(1,1000000)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "BESSELY(1,1000000)",
+      "expected": "error:#NUM!"
+    },
+    {
       "formula": "CONVERT(1,\"m\",\"cm\")",
       "expected": "number:100"
     },
