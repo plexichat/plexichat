@@ -76,6 +76,28 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "postgres: Tests requiring PostgreSQL/Docker")
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Stop the process-wide ``Database`` monitor thread at session end.
+
+    The ``Database`` singleton auto-starts a background pool-monitor thread
+    that logs periodically. Without an explicit stop it outlives pytest's
+    capture/teardown and writes to already-closed streams, surfacing as
+    ``ValueError: I/O operation on closed file`` "Logging error" noise
+    after the final test. Best-effort: never fail the session on teardown.
+    """
+    try:
+        from src.core.database import Database
+
+        inst = getattr(Database, "_instance", None)
+        if inst is not None:
+            try:
+                inst.stop_pool_monitoring()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-mark tests based on their location."""
     for item in items:

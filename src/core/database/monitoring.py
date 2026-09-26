@@ -172,11 +172,25 @@ class DatabaseMonitor:
                 f"Started pool monitoring thread (interval: {self._periodic_log_interval}s)"
             )
 
-    def stop_pool_monitoring(self):
-        """Stop the background logging thread."""
+    def stop_pool_monitoring(self, timeout: float = 5.0):
+        """Stop the background logging thread.
+
+        Signals the loop via ``_stop_event`` and then joins the thread so
+        ``stop`` is synchronous: when this returns the thread is no longer
+        alive (or the join timed out). The join happens outside ``_lock``
+        because the loop acquires the same lock in ``_cleanup_metrics`` /
+        ``calculate_error_rate`` — joining while holding it could deadlock.
+        Safe to call when monitoring was never started.
+        """
         with self._lock:
             self._stop_logging = True
             self._stop_event.set()
+            thread = self._periodic_logging_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+            with self._lock:
+                if not thread.is_alive():
+                    self._periodic_logging_thread = None
 
     def _format_log_context(self, **kwargs) -> str:
         """Internal helper for structured logging context."""

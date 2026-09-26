@@ -31,9 +31,10 @@ from src.tests._conftest.user_fixtures import *  # noqa: F401,F403
 from src.tests._conftest.api_fixtures import *  # noqa: F401,F403
 from src.tests._conftest.module_registry import *  # noqa: F401,F403
 from src.tests._conftest.misc_fixtures import *  # noqa: F401,F403
-from src.tests._conftest.hooks import (
+from src.tests._conftest.hooks import (  # noqa: F401
     pytest_configure,
     pytest_collection_modifyitems,
+    pytest_sessionfinish,
 )
 
 # PostgreSQL Docker fixtures: pytest only sees fixtures defined in (or
@@ -69,4 +70,5 @@ __all__ = [
     "_isolate_global_config",
     "pytest_configure",
     "pytest_collection_modifyitems",
+    "pytest_sessionfinish",
 ]

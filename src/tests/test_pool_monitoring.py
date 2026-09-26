@@ -268,9 +268,9 @@ class TestPeriodicLogging:
 
         test_db.stop_pool_monitoring()
 
-        # Give thread time to stop
-        time.sleep(0.1)
-        assert not test_db.monitor._periodic_logging_thread.is_alive()
+        # stop() is synchronous: it joins the thread and clears the ref.
+        thread = test_db.monitor._periodic_logging_thread
+        assert thread is None or not thread.is_alive()
 
     def test_start_monitoring_idempotent(self, test_db):
         """Test that starting monitoring multiple times is safe."""
