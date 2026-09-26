@@ -359,7 +359,7 @@ match a pattern; the relational operators compare literally.
 | `BESSELJ` with a huge order at a small `x` (`BESSELJ(1,1000000)`), and `BESSELY` with a huge order | a small value | `BESSELJ` underflows to `0` while the `BESSELY` recurrence leaves the doubles (`#NUM!`), shared with the client engine |
 | fractional `DEC2BIN`/`DEC2HEX`/`DEC2OCT` inputs | truncated to an integer | rendered through the float base conversion both engines share (e.g. `DEC2BIN(5.9)` is `"101.9000000000000004"`) |
 | `BITAND`/`BITOR`/`BITXOR` past 2^31 | full 48-bit result | 32-bit wrap, shared with the client engine |
-| an error stored in a statistical range (`MEDIAN(A1:A3)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
+| an error stored in a statistical range (`MEDIAN(A1:A5)`) | `#DIV/0!` | the cell is skipped like text; an error *written into* the formula still propagates |
 | `ISREF`, `ISFORMULA`, `SHEET`/`SHEETS`, `LAMBDA`/`LET`, the `LINEST`/`LOGEST`/`TREND`/`GROWTH` regression machinery, the remaining `*DIST`/`*INV` functions (`TDIST`, `CHIDIST`, `FDIST`, …), the dynamic-array family, and the volatile `RAND`/`RANDBETWEEN`/`RANDARRAY` trio | implemented | `#NAME?` — the server engine is a deliberately compact subset |
 
 An explicitly empty argument is read as a blank value rather than as the

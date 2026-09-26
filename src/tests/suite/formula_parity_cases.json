@@ -1964,6 +1964,10 @@
       "expected": "number:2"
     },
     {
+      "formula": "ROUND(1.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
       "formula": "IF(TRUE,1,)",
       "expected": "number:1"
     },
@@ -2425,6 +2429,10 @@
     },
     {
       "formula": "MEDIAN(A1:A3,A5)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "MEDIAN(A1:A5)",
       "expected": "number:2"
     },
     {
