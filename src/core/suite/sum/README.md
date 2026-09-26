@@ -544,6 +544,35 @@ Body:  zstd-compressed (or raw) SQLite payload
 Footer (32 bytes): SHA-256 checksum of uncompressed payload
 ```
 
+### Still-open engine-to-engine differences
+
+The scalar-slot range rule above is pinned: `LEN(A1:A3)` is `#VALUE!` and
+`LEN(A1:A5)` is `#DIV/0!` on both sides, and the shared case table holds the
+engines to it. Three classes of disagreement remain open. They were found by
+the exhaustive differential sweep (`tests/unit/formula-sweep.test.mjs` in the
+client repository), which calls every registered function at arities zero
+through four over numbers, text, an error, a blank, a logical, a cell, a
+multi-cell range and the error cell:
+
+- a **multi-cell range passed where one value is expected**. The two engines
+  order their argument checks differently around a range, so a function that
+  flattens its arguments (the value and text families) and a function that
+  evaluates a slot directly (`IF`, `NOT`, `AND`, the lookup and criteria
+  slots) do not agree on every corner. The one-cell range, the plain
+  multi-cell range and the error cell are the three cases the table already
+  pins; other combinations are open.
+- the **order of the arity check and error propagation**: whether a stray
+  argument to a fixed-arity call is `#VALUE!` before or after an error operand
+  is propagated differs by function.
+- a **matrix result** such as `FREQUENCY`: the differential probes compare a
+  matrix by identity, so the two sides never read as equal even when the
+  counts match.
+
+None of these change an ordinary formula; each shows up only on a malformed
+call (a stray argument, a range where a scalar belongs) or an error operand.
+The sweep fails on any disagreement outside these classes, so a new one
+cannot slip in unnoticed.
+
 ## Related code
 
 - `src/core/suite/sum/__init__.py:25` — `setup()` entry point
