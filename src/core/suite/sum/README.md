@@ -370,6 +370,17 @@ otherwise, with no zero padding on the exponent: `1e-5` is `0.00001`, `1e-6` is
 Python's own `str` disagreed at both ends -- it printed `1e-05` and `1e-07`,
 and expanded `1e21` into 22 digits and `1e300` into 301.
 
+**A squared term is bounded by the doubles.** The spread and cross-product
+aggregates -- `AVEDEV`, `DEVSQ`, `STDEV`, `STDEVP`, `VAR`, `VARP`, `SUMSQ`,
+`SUMX2MY2`, `SUMX2PY2`, `SUMXY` -- sum terms that overflow long before their
+inputs do: the square of `1e300` is not a double. Excel answers `#NUM!` there,
+and so does this engine, rather than letting an `Infinity`, the `NaN` of an
+`inf - inf`, or an `OverflowError` out of the evaluator. Python's `** 2` raised
+where the client engine's multiplication quietly answered `Infinity`, so
+`STDEV(1e300, -1)` used to crash here and leak a non-number there; both now
+answer `#NUM!`. `AVEDEV` is included because its absolute deviations can
+overflow the sum the same way.
+
 **A per-unit loop is bounded.** `DB` walks one period at a time, and
 `BINOMDIST`/`POISSON` sum one term per success or event. Those arguments are
 unrestricted doubles, so without a bound a single formula could drive the loop

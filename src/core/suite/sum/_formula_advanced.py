@@ -2261,7 +2261,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                     total += x * x - y * y
                 else:
                     total += x * x + y * y
-            return total
+            # A sum of squares past the doubles is #NUM!, not an infinity or
+            # the NaN an ``inf - inf`` leaves; the client engine answers the
+            # same.
+            return _finite(total)
         if name == "TRIMMEAN":
             if len(args) != 2:
                 return VALUE_ERROR
@@ -2468,30 +2471,37 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if best_count == 1:
                 return NUM_ERROR
             return float(best)
+        # The squared deviations are where the spread measures overflow: the
+        # sum of the squares leaves the doubles long before the values do.
+        # Python's ``** 2`` raises OverflowError there, where the client
+        # engine's multiplication quietly answers Infinity, so multiply and
+        # pass the result through ``_finite``; an overflowing double is not a
+        # cell value and both engines answer #NUM!.
         if name in ("STDEV", "VAR"):
             if len(numbers) < 2:
                 return DIV_ZERO
             mean = sum(numbers) / len(numbers)
-            total = sum((value - mean) ** 2 for value in numbers)
+            total = sum((value - mean) * (value - mean) for value in numbers)
             variance = total / (len(numbers) - 1)
-            return math.sqrt(variance) if name == "STDEV" else variance
+            return _finite(math.sqrt(variance) if name == "STDEV" else variance)
         if name in ("STDEVP", "VARP"):
             if not numbers:
                 return DIV_ZERO
             mean = sum(numbers) / len(numbers)
-            total = sum((value - mean) ** 2 for value in numbers)
+            total = sum((value - mean) * (value - mean) for value in numbers)
             variance = total / len(numbers)
-            return math.sqrt(variance) if name == "STDEVP" else variance
+            return _finite(math.sqrt(variance) if name == "STDEVP" else variance)
         if name == "AVEDEV":
             if not numbers:
                 return DIV_ZERO
             mean = sum(numbers) / len(numbers)
-            return sum(abs(value - mean) for value in numbers) / len(numbers)
+            return _finite(sum(abs(value - mean) for value in numbers) / len(numbers))
         if name == "DEVSQ":
             if not numbers:
                 return DIV_ZERO
             mean = sum(numbers) / len(numbers)
-            return sum((value - mean) ** 2 for value in numbers)
+            total = sum((value - mean) * (value - mean) for value in numbers)
+            return _finite(total)
         if name == "GEOMEAN":
             if not numbers or any(value < 0 for value in numbers):
                 return NUM_ERROR
@@ -2610,7 +2620,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 if error is not None:
                     return error
                 total += number * number
-            return total
+            # A square past the doubles is #NUM!, not an infinity on the
+            # sheet; the client engine answers the same.
+            return _finite(total)
         if name == "ATAN2":
             if len(values) != 2:
                 return VALUE_ERROR

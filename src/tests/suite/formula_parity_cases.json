@@ -4474,6 +4474,46 @@
     {
       "formula": "BESSELY(17027.04502110774,0)",
       "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DEVSQ(1e300,-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "STDEV(1e300,-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "STDEVP(1e300,-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "VAR(1e300,-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "VARP(1e300,-1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "AVEDEV(1e308,-1e308)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SUMSQ(1e300)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SUMXY(1e300,1e300)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SUMX2PY2(1e300,1e300)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "SUMX2MY2(1e300,1e300)",
+      "expected": "error:#NUM!"
     }
   ]
 }
