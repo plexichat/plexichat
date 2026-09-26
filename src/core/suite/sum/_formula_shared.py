@@ -90,6 +90,26 @@ def is_error(value: Any) -> bool:
     return isinstance(value, str) and value in ERROR_CODES
 
 
+def _computed_range_error(node: Any, matrix: List[List[Any]]) -> Optional[Any]:
+    """The first error in a computed criteria range, or ``None``.
+
+    An error *cell* inside a criteria range only fails to match, but an
+    error written into the formula propagates -- ``COUNTIF(1/0, 1)`` is
+    ``#DIV/0!`` while ``COUNTIF(A5, 1)`` is 0 when A5 holds ``1/0``. The
+    two arrive as the same string, so the caller's node tells them apart:
+    a plain reference holds cells, anything else (a literal, a nested call)
+    is computed. A computed *block* (OFFSET over several cells) still holds
+    cells, so only a single value propagates; the shape is what the range
+    matrix already describes.
+    """
+    if node[0] == "ref":
+        return None
+    if len(matrix) != 1 or len(matrix[0]) != 1:
+        return None
+    value = matrix[0][0]
+    return value if is_error(value) else None
+
+
 # ── tokenizer ────────────────────────────────────────────────────────────────
 
 _TOKEN_RE = re.compile(

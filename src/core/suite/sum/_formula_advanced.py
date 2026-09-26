@@ -21,6 +21,7 @@ from ._formula_shared import (
     VALUE_ERROR,
     _DATE_EPOCH,
     _compare_values,
+    _computed_range_error,
     _js_number_text,
     _numeric,
     _to_number,
@@ -127,9 +128,15 @@ def _parse_date_text(text: str) -> Optional[datetime.date]:
 
 
 def _time_of_day(serial: float) -> int:
-    """The seconds past midnight the serial's fractional part names."""
+    """The seconds past midnight the serial's fractional part names.
+
+    Truncated toward the second through whole milliseconds, the way the
+    client engine's Date keeps integer milliseconds: a serial naming 41.8
+    seconds reads 41. Rounding to the nearest second answered 42 here
+    while the client -- and Excel -- answered 41.
+    """
     fraction = serial - math.floor(serial)
-    return int(round(fraction * 86400.0)) % 86400
+    return (math.floor(fraction * 86400000.0) // 1000) % 86400
 
 
 def _read_number(value: Any) -> tuple:
@@ -1109,10 +1116,16 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # #VALUE!, and reads a 0 as "every row" / "every column" -- so
             # INDEX(A1:C3, 0, 2) is the whole second column, which SUM can add
             # up, rather than the #REF! this used to answer.
-            row_num = int(_to_number(self._eval(args[1], sheet, seen, depth)))
+            row_value = self._eval(args[1], sheet, seen, depth)
+            if is_error(row_value):
+                return row_value
+            row_num = int(_to_number(row_value))
             col_num = 1
             if len(args) == 3:
-                col_num = int(_to_number(self._eval(args[2], sheet, seen, depth)))
+                col_value = self._eval(args[2], sheet, seen, depth)
+                if is_error(col_value):
+                    return col_value
+                col_num = int(_to_number(col_value))
             if row_num < 0 or col_num < 0:
                 return VALUE_ERROR
             width = max((len(row) for row in matrix), default=0)
@@ -1129,12 +1142,17 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(args) < 2 or len(args) > 3:
                 return VALUE_ERROR
             lookup_value = self._eval(args[0], sheet, seen, depth)
+            if is_error(lookup_value):
+                return lookup_value
             matrix = self._range_matrix(args[1], sheet, seen, depth)
             if not matrix:
                 return N_A_ERROR
             match_type = 1
             if len(args) == 3:
-                match_type = int(_to_number(self._eval(args[2], sheet, seen, depth)))
+                type_value = self._eval(args[2], sheet, seen, depth)
+                if is_error(type_value):
+                    return type_value
+                match_type = int(_to_number(type_value))
             # Flatten matrix for matching
             flat = [row[0] if row else None for row in matrix]
             if match_type == 0:  # Exact match
@@ -1163,7 +1181,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # INDIRECT(ref_text, [a1])
             if len(args) < 1 or len(args) > 2:
                 return VALUE_ERROR
-            ref_text = _to_text(self._eval(args[0], sheet, seen, depth))
+            ref_value = self._eval(args[0], sheet, seen, depth)
+            if is_error(ref_value):
+                return ref_value
+            ref_text = _to_text(ref_value)
             try:
                 r_sheet, row, col = parse_cell_ref(ref_text, self._named_ranges)
                 target = r_sheet or sheet
@@ -1188,14 +1209,26 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
             s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
             target = s1 or sheet
-            rows = int(_to_number(self._eval(args[1], sheet, seen, depth)))
-            cols = int(_to_number(self._eval(args[2], sheet, seen, depth)))
+            rows_value = self._eval(args[1], sheet, seen, depth)
+            if is_error(rows_value):
+                return rows_value
+            cols_value = self._eval(args[2], sheet, seen, depth)
+            if is_error(cols_value):
+                return cols_value
+            rows = int(_to_number(rows_value))
+            cols = int(_to_number(cols_value))
             height = r2 - r1 + 1
             width = c2 - c1 + 1
             if len(args) >= 4:
-                height = int(_to_number(self._eval(args[3], sheet, seen, depth)))
+                height_value = self._eval(args[3], sheet, seen, depth)
+                if is_error(height_value):
+                    return height_value
+                height = int(_to_number(height_value))
             if len(args) == 5:
-                width = int(_to_number(self._eval(args[4], sheet, seen, depth)))
+                width_value = self._eval(args[4], sheet, seen, depth)
+                if is_error(width_value):
+                    return width_value
+                width = int(_to_number(width_value))
             # Return the range as a flat list
             result = []
             for r in range(r1 + rows, r1 + rows + height):
@@ -1211,6 +1244,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(args) < 2 or len(args) > 3:
                 return VALUE_ERROR
             lookup_value = self._eval(args[0], sheet, seen, depth)
+            if is_error(lookup_value):
+                return lookup_value
             matrix = self._range_matrix(args[1], sheet, seen, depth)
             if not matrix:
                 return N_A_ERROR
@@ -1792,8 +1827,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
     def _advanced_trig(self, name: str, values: List[Any]) -> Any:
         """PI, RADIANS, DEGREES, SIN, COS, TAN, ASIN, ACOS, ATAN."""
         if name == "PI":
+            # PI() ignores its arguments on both engines, so the arity is
+            # deliberately unchecked here.
             return math.pi
-        if not values:
+        # Every other function here takes exactly one argument: SIN(1, 2)
+        # is #VALUE!, matching the client engine.
+        if len(values) != 1:
             return VALUE_ERROR
         value = _to_number(values[0])
         if name == "RADIANS":
@@ -1833,12 +1872,21 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             sum_matrix = self._criteria_range(sum_range_node, sheet, seen, depth)
             if not sum_matrix:
                 return 0.0
+            # An error written into the sum range propagates (an error cell
+            # is read as 0 when its row matches, as below).
+            sum_error = _computed_range_error(sum_range_node, sum_matrix)
+            if sum_error is not None:
+                return sum_error
             num_criteria = (len(args) - 1) // 2
             criteria_matrices = []
             criteria_list = []
             for i in range(num_criteria):
-                cr_matrix = self._criteria_range(args[1 + i * 2], sheet, seen, depth)
+                cr_node = args[1 + i * 2]
+                cr_matrix = self._criteria_range(cr_node, sheet, seen, depth)
                 criteria_matrices.append(cr_matrix)
+                range_error = _computed_range_error(cr_node, cr_matrix)
+                if range_error is not None:
+                    return range_error
                 crit_node = args[2 + i * 2]
                 if crit_node[0] == "str":
                     criteria_list.append(crit_node[1])
@@ -1874,8 +1922,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             criteria_matrices = []
             criteria_list = []
             for i in range(num_criteria):
-                cr_matrix = self._criteria_range(args[i * 2], sheet, seen, depth)
+                cr_node = args[i * 2]
+                cr_matrix = self._criteria_range(cr_node, sheet, seen, depth)
                 criteria_matrices.append(cr_matrix)
+                range_error = _computed_range_error(cr_node, cr_matrix)
+                if range_error is not None:
+                    return range_error
                 crit_node = args[i * 2 + 1]
                 if crit_node[0] == "str":
                     criteria_list.append(crit_node[1])
@@ -1917,12 +1969,19 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             )
             if not average_matrix:
                 return DIV_ZERO
+            average_error = _computed_range_error(average_range_node, average_matrix)
+            if average_error is not None:
+                return average_error
             num_criteria = (len(args) - 1) // 2
             criteria_matrices = []
             criteria_list = []
             for i in range(num_criteria):
-                cr_matrix = self._criteria_range(args[1 + i * 2], sheet, seen, depth)
+                cr_node = args[1 + i * 2]
+                cr_matrix = self._criteria_range(cr_node, sheet, seen, depth)
                 criteria_matrices.append(cr_matrix)
+                range_error = _computed_range_error(cr_node, cr_matrix)
+                if range_error is not None:
+                    return range_error
                 crit_node = args[2 + i * 2]
                 if crit_node[0] == "str":
                     criteria_list.append(crit_node[1])
@@ -3507,6 +3566,26 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name in ("BIN2DEC", "BIN2HEX", "BIN2OCT"):
             if not 1 <= len(values) <= 2:
                 return VALUE_ERROR
+            if name == "BIN2DEC":
+                raw = _js_string(values[0]).strip()
+                if len(raw) > 10:
+                    return NUM_ERROR
+                parsed = _parse_base(values[0], 2)
+                if parsed is None:
+                    return NUM_ERROR
+                if len(raw) == 10 and raw[0] == "1":
+                    parsed -= 1024
+                # The second slot is accepted and ignored, as in the client
+                # engine -- it is never coerced, so even text reads past it.
+                return parsed
+            # Places is coerced before the input is validated, the way the
+            # client engine orders it: BIN2OCT(18, "abc") is #VALUE! (bad
+            # places), not #NUM! (bad input).
+            places = None
+            if len(values) == 2:
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
             raw = _js_string(values[0]).strip()
             if len(raw) > 10:
                 return NUM_ERROR
@@ -3515,15 +3594,6 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return NUM_ERROR
             if len(raw) == 10 and raw[0] == "1":
                 parsed -= 1024
-            if name == "BIN2DEC":
-                # The second slot is accepted and ignored, as in the client
-                # engine -- it is never coerced, so even text reads past it.
-                return parsed
-            places = None
-            if len(values) == 2:
-                error, places = _read_number(values[1])
-                if error is not None:
-                    return error
             return _to_base(float(parsed), 16 if name == "BIN2HEX" else 8, places)
         if name in ("DEC2BIN", "DEC2HEX", "DEC2OCT"):
             if not 1 <= len(values) <= 2:
@@ -3550,6 +3620,24 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name in ("HEX2BIN", "HEX2DEC", "HEX2OCT"):
             if not 1 <= len(values) <= 2:
                 return VALUE_ERROR
+            if name == "HEX2DEC":
+                raw = _js_string(values[0]).strip()
+                if len(raw) > 10:
+                    return NUM_ERROR
+                parsed = _parse_base(values[0], 16)
+                if parsed is None:
+                    return NUM_ERROR
+                if len(raw) == 10 and raw[0] in ("F", "f"):
+                    parsed -= 16**10
+                # The decimal form takes no padding: the extra argument is
+                # accepted and never coerced, so even text reads past it.
+                return parsed
+            # Places before input validation, as in the BIN2* branch above.
+            places = None
+            if len(values) == 2:
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
             raw = _js_string(values[0]).strip()
             if len(raw) > 10:
                 return NUM_ERROR
@@ -3561,17 +3649,6 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 # HEX2BIN input, which the client reads unsigned and rejects
                 # past 511 instead.
                 parsed -= 16**10
-            places = None
-            if len(values) == 2:
-                if name == "HEX2DEC":
-                    # The decimal form takes no padding: the extra argument is
-                    # accepted and never coerced, so even text reads past it.
-                    return parsed
-                error, places = _read_number(values[1])
-                if error is not None:
-                    return error
-            if name == "HEX2DEC":
-                return parsed
             if name == "HEX2BIN":
                 if parsed > 511:
                     return NUM_ERROR
@@ -3582,6 +3659,24 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name in ("OCT2BIN", "OCT2DEC", "OCT2HEX"):
             if not 1 <= len(values) <= 2:
                 return VALUE_ERROR
+            if name == "OCT2DEC":
+                raw = _js_string(values[0]).strip()
+                if len(raw) > 10:
+                    return NUM_ERROR
+                parsed = _parse_base(values[0], 8)
+                if parsed is None:
+                    return NUM_ERROR
+                if len(raw) == 10 and raw[0] == "7":
+                    parsed -= 8**10
+                # As with HEX2DEC, the extra argument is accepted and
+                # never coerced.
+                return parsed
+            # Places before input validation, as in the BIN2* branch above.
+            places = None
+            if len(values) == 2:
+                error, places = _read_number(values[1])
+                if error is not None:
+                    return error
             raw = _js_string(values[0]).strip()
             if len(raw) > 10:
                 return NUM_ERROR
@@ -3592,17 +3687,6 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 # As with hex, the 10-digit negative form does not apply to
                 # the OCT2BIN input, which is read unsigned instead.
                 parsed -= 8**10
-            places = None
-            if len(values) == 2:
-                if name == "OCT2DEC":
-                    # As with HEX2DEC, the extra argument is accepted and
-                    # never coerced.
-                    return parsed
-                error, places = _read_number(values[1])
-                if error is not None:
-                    return error
-            if name == "OCT2DEC":
-                return parsed
             if name == "OCT2BIN":
                 if parsed > 511:
                     return NUM_ERROR

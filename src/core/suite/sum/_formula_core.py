@@ -18,6 +18,7 @@ from ._formula_shared import (
     VALUE_ERROR,
     CellResolver,
     _coerce_number_text,
+    _computed_range_error,
     _criteria_operator,
     _fold_case,
     _is_pattern,
@@ -637,6 +638,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return name == "TRUE"
         if name in ("VLOOKUP", "HLOOKUP"):
             return self._lookup(name, args, sheet, seen, depth)
+        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP", "XLOOKUP"):
+            # Raw arguments, before the range expansion below: these read
+            # their ranges cell by cell, so expanding every range up front
+            # propagated an error cell the lookup never touches --
+            # INDEX(A1:A5, 1) was #DIV/0! when A5 holds 1/0, where the
+            # client engine (and Excel) answer A1. VLOOKUP above is the
+            # same shape for the same reason.
+            return self._lookup_advanced(name, args, sheet, seen, depth)
         if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):
             return self._criteria(name, args, sheet, seen, depth)
         if name in ("IFERROR", "IFNA"):
@@ -761,8 +770,6 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "DAYS":
             return self._days(values)
         # ── Advanced functions ──────────────────────────────────────────────
-        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP", "XLOOKUP"):
-            return self._lookup_advanced(name, args, sheet, seen, depth)
         if name in ("COUNTBLANK", "COUNTIF", "SUMPRODUCT"):
             return self._advanced_aggregate(name, args, sheet, seen, depth)
         if name in (
@@ -778,6 +785,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         ):
             return self._advanced_text(name, values)
         if name in ("EOMONTH", "EDATE", "WEEKDAY", "WEEKNUM", "NETWORKDAYS", "WORKDAY"):
+            if name in ("NETWORKDAYS", "WORKDAY") and len(args) > 3:
+                # A holiday range arrives as one argument no matter how many
+                # cells it flattens to, so the raw count is what bounds the
+                # call: NETWORKDAYS(1, 1, 1, 1) is #VALUE!. Errors still
+                # propagate first, through the shared check above.
+                return VALUE_ERROR
             return self._advanced_date(name, values)
         if name in (
             "PI",
@@ -898,7 +911,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         return VALUE_ERROR
 
     def _single(self, name: str, values: List[Any]) -> Any:
-        if not values:
+        # Fixed arity: a stray argument is #VALUE!, the way the client
+        # engine answers it. Reading only the first value silently agreed
+        # on every valid call while disagreeing on ABS(1, 2) and friends.
+        if len(values) != 1:
             return VALUE_ERROR
         value = values[0]
         # The IS* family answers a question *about* its operand, so an error
@@ -976,7 +992,8 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         return VALUE_ERROR
 
     def _double(self, name: str, values: List[Any]) -> Any:
-        if len(values) < 2:
+        # Fixed arity, as above: MOD(1, 1, 1) is #VALUE!, not 0.
+        if len(values) != 2:
             return VALUE_ERROR
         a, b = values[0], values[1]
         if is_error(a):
@@ -1299,6 +1316,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         matrix = self._criteria_range(args[0], sheet, seen, depth)
         if not matrix:
             return DIV_ZERO if name == "AVERAGEIF" else 0.0
+        # An error written into the range propagates; an error cell only
+        # fails to match (see _computed_range_error).
+        range_error = _computed_range_error(args[0], matrix)
+        if range_error is not None:
+            return range_error
         first = args[1]
         if first[0] == "str":
             criteria: Any = first[1]
@@ -1310,9 +1332,18 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # An error *criteria* argument propagates; an error cell inside the
             # criteria range only fails to match.
             return criteria
+        if name == "COUNTIF" and len(args) != 2:
+            # COUNTIF takes exactly two arguments -- SUMIF and AVERAGEIF take
+            # an optional sum range, but a third argument to COUNTIF is
+            # #VALUE!. Checked after the criteria so an error there still
+            # propagates first, the way the client engine orders it.
+            return VALUE_ERROR
         sum_matrix = matrix
         if len(args) == 3:
             sum_matrix = self._criteria_range(args[2], sheet, seen, depth)
+            sum_error = _computed_range_error(args[2], sum_matrix)
+            if sum_error is not None:
+                return sum_error
         total = 0.0
         count = 0
         for r in range(min(len(matrix), len(sum_matrix))):
