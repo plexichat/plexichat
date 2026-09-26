@@ -2142,15 +2142,19 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
     ) -> tuple:
         """Evaluate one argument that must be a single value.
 
-        Returns ``(error, value)``. A whole range where a scalar belongs is
-        #VALUE!, which is what the client engine's ``toNumber`` reports for an
-        array.
+        Returns ``(error, value)``. A range read where one value belongs
+        follows the pooled rule the client engine's ``scalarize`` applies: an
+        error cell propagates, a one-cell range is that cell and anything else
+        is #VALUE!. Checking the cell count first answered #VALUE! for a range
+        that held an error, where the client engine propagated it --
+        ``LARGE(A1:A5, A1:A5)`` was #VALUE! here and #DIV/0! there.
         """
         values, _ = self._expand_arg(node, sheet, seen, depth)
+        for value in values:
+            if is_error(value):
+                return value, None
         if len(values) != 1:
             return VALUE_ERROR, None
-        if is_error(values[0]):
-            return values[0], None
         return None, values[0]
 
     def _percentile(self, numbers: List[float], percent: float) -> Any:
