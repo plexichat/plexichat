@@ -220,6 +220,25 @@ slots is read out of the cell it names: `LARGE(A1:A3, A1)` is 3 and
 a referenced value is not coerced — is about the *range* slots; these are
 single values and read like a literal argument.
 
+**A fixed-arity call rejects a stray argument.** The scalar functions read
+exactly their declared operands, so `ABS(1, 2)`, `SIN(1, 2)` and `LEN("a",
+"b")` are `#VALUE!` rather than quietly reading the first one; only `PI()`
+ignores its arguments on both engines. `NETWORKDAYS`, `WORKDAY` and `COUNTIF`
+bound their optional slots the same way, so a fourth argument
+(`NETWORKDAYS(1, 2, 3, 4)`) or a third to a two-argument form
+(`COUNTIF(1, 1, 1)`) is `#VALUE!`, while `SUMIF`/`AVERAGEIF` still take their
+optional sum range.
+
+**The time of day truncates through whole milliseconds.** The date readers
+share the client engine's clock, which keeps integer milliseconds, so a serial
+naming 41.8 seconds is the 41st second -- `SECOND(0.04701185841617224)` is 41,
+not the 42 a round to the nearest second answered here.
+
+**Places is coerced before a conversion's input is validated.** The base
+conversions read their `places` argument first, so a bad number *and* bad
+places report the places error: `BIN2OCT(18, "abc")` is `#VALUE!` (bad
+places), not the `#NUM!` a bad input earns when places is valid.
+
 **Criteria rank types.** `SUMIF`, `COUNTIF`, `AVERAGEIF` and their
 multi-criteria forms compare each cell against the criteria through Excel's
 sort order — number, then text, then `FALSE`, then `TRUE` — with text compared
@@ -231,11 +250,25 @@ holds no number in the summed range contributes 0 to `SUMIF`/`SUMIFS`, while
 `AVERAGEIF`/`AVERAGEIFS` skip it entirely — Excel ignores text and blanks in an
 average range, so a match with no number at all is `#DIV/0!`.
 
+**An error in a criteria range is not an error cell.** An error *written
+into* the formula in a criteria or sum range propagates -- `COUNTIF(1/0, 1)`
+and `SUMIF(1, 1, 1/0)` are `#DIV/0!` -- while an error held in a *cell* of the
+range only fails to match, so `COUNTIF(A5, 1)` is 0 when A5 holds `1/0`. The
+two arrive as the same string, so the argument node tells them apart: a plain
+reference holds cells, anything computed is a value.
+
 **A lookup key compares the way `=` does.** `VLOOKUP`, `HLOOKUP` and `MATCH`
 match the text `"1"` against the number 1, as Excel's `=` does, and an
 approximate match whose lookup value does not read as a number is a miss
 (`#N/A`) rather than an error; a `row_index_num` past the bottom of the table
 is `#REF!`.
+
+**A lookup reads its range cell by cell.** `INDEX`, `MATCH`, `OFFSET`,
+`INDIRECT`, `LOOKUP` and `XLOOKUP` walk the cells they need rather than
+expanding the whole range first, so an error cell the lookup never touches is
+not its answer: `INDEX(A1:A5, 2)` is 2 even when A5 holds `1/0`. A computed
+error still propagates -- `INDEX(A1:A3, 1/0)` and `MATCH(1/0, A1:A3, 0)` are
+`#DIV/0!`.
 
 **Text compares case-insensitively.** Excel's `=` ignores case — `"a" = "A"` is
 `TRUE`, and `EXACT` is the case-sensitive test — so the `=`/`<>` operators, the
