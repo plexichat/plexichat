@@ -54,6 +54,18 @@ ITERATIONS = 1500
 BESSEL_SEED = 20260926
 BESSEL_ITERATIONS = 400
 
+# The power and root operators get a stream of their own for the same reason the
+# Bessel pair did: the narrow corners are the *magnitudes*, and the generic
+# draw above reaches the ends of the double range only occasionally and almost
+# never as a base and an exponent that meet on an edge. The pairs here are
+# built to land on them -- a base past one with an exponent big enough to
+# overflow, a denormal under a root, a negative base under a fractional
+# exponent -- which is where the two engines' libm and their overflow rules can
+# part company. A separate seed keeps every other function's generated formulas
+# byte-identical.
+POWER_SEED = 20260927
+POWER_ITERATIONS = 400
+
 # The characters both runtimes case-fold and match identically: ASCII, a few
 # accented letters, the sharp s and its capital, the micro sign and Greek mu,
 # the sigma pair, the dotted/dotless i, and the wildcard/escape characters the
@@ -268,6 +280,44 @@ def _bessel_formulas() -> List[str]:
     return formulas
 
 
+def _power_operand(rng: random.Random) -> str:
+    """A magnitude for the power/root stream.
+
+    The small integers make a root exact, the fractions make a fractional
+    exponent, and the powers of two at the ends of the range are the bases and
+    exponents where a power overflows to ``#NUM!`` or a root underflows toward
+    a denormal.
+    """
+    roll = rng.random()
+    if roll < 0.25:
+        return str(rng.randint(-10, 10))
+    if roll < 0.45:
+        return repr(rng.choice([0.5, 1.5, 2.0, 0.1, 0.9, -0.5, -2.0]))
+    if roll < 0.70:
+        return repr(rng.uniform(-1.0, 1.0))
+    if roll < 0.85:
+        return repr(math.ldexp(1.0, rng.randint(0, 1023)))
+    return repr(math.ldexp(1.0, -rng.randint(0, 1074)))
+
+
+def _power_formulas() -> List[str]:
+    """Powers and roots whose bases and exponents meet the range's ends."""
+    rng = random.Random(POWER_SEED)
+    formulas: List[str] = []
+    for _ in range(POWER_ITERATIONS):
+        roll = rng.random()
+        base, exponent = _power_operand(rng), _power_operand(rng)
+        if roll < 0.40:
+            formulas.append(f"POWER({base},{exponent})")
+        elif roll < 0.70:
+            formulas.append(f"({base})^({exponent})")
+        elif roll < 0.85:
+            formulas.append(f"SQRT({base})")
+        else:
+            formulas.append(f"({base})^(1/({exponent}))")
+    return formulas
+
+
 def _fuzzy_same(ours: Dict[str, Any], theirs: Dict[str, Any]) -> bool:
     """Compare two typed results, tolerating a libm ulp on a number."""
     if ours["kind"] != theirs["kind"]:
@@ -289,7 +339,7 @@ def test_engines_agree_on_random_formulas():
             "set PLEXICHAT_CLIENT_PATH when the two are not siblings"
         )
 
-    formulas = _formulas() + _bessel_formulas()
+    formulas = _formulas() + _bessel_formulas() + _power_formulas()
     ours = {formula: _evaluate(formula) for formula in formulas}
     theirs = _client_results(node, engine, formulas)
     divergences = [

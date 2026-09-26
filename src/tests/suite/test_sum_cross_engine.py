@@ -487,6 +487,37 @@ def _groups() -> "OrderedDict[str, List[str]]":
         "IMEXP(709)",
         'IMSINH("1e300i")',
     ]
+    # A formula is untrusted input, so a numeric argument must not be able to
+    # spin a loop once per unit of itself. These are the arguments that used to
+    # hang the engines: DB's depreciation periods, BINOMDIST's summed successes
+    # and POISSON's summed events walked one step per unit of an unrestricted
+    # double, and the inverse beta's factor overflowed a double mid-bisection.
+    # Each loop is now bounded and answers #NUM! past the bound, so a regression
+    # fails here (a hang trips the file's timeout rather than passing quietly).
+    groups["extreme arguments"] = [
+        "DB(1000,100,10,1000000000)",
+        "DB(1000,100,10,1e18)",
+        "DB(1000,100,1000000000,5)",
+        "DB(1000,100,1000000000,1000000000)",
+        "DB(1000,1001,10,1e9)",
+        "DB(1000,100,1000000000,100000)",
+        "BINOMDIST(1000000000,1000000000,0.5,TRUE)",
+        "BINOMDIST(170,1e18,0.5,TRUE)",
+        "BINOMDIST(100000,100000,0.5,TRUE)",
+        "POISSON(1000000000,1,TRUE)",
+        "POISSON(1,1000000000,TRUE)",
+        "POISSON(100000,1,TRUE)",
+        "GAMMAINV(0.5,1e18,1e18)",
+        "GAMMAINV(0.5,1e300,1e300)",
+        "BETAINV(0.5,1e300,1e300)",
+        "BETAINV(0.5,1e18,1e18)",
+        "FACTDOUBLE(1000000000)",
+        "FACT(1000000000)",
+        "COMBIN(1000000000,500000000)",
+        "PERMUT(1000000000,500000000)",
+        "MULTINOMIAL(1000000000,1000000000)",
+        "COMBINA(1000000000,1000000000)",
+    ]
     for family, names in _FAMILIES:
         # One group per function, so _missing() can drop just that function.
         for name in sorted(names):
@@ -690,6 +721,64 @@ def test_the_groups_this_engine_leaves_out_are_the_known_subset():
     one deliberately does not, so the differential matrix above cannot cover it.
     """
     assert set(_missing()) == set(_EXPECTED_MISSING)
+
+
+# The functions the client engine implements and this one deliberately does not
+# (the README's divergence table): the dynamic-array family, the LINEST-family
+# regression machinery, the volatile trio, the introspective forms and the
+# array-plumbing wrappers. The matrix cannot cover them -- they answer #NAME? to
+# every call, which is exactly what ``_missing`` drops -- so they are pinned by
+# name here. Adopting one of them is a deliberate change that has to remove it
+# from this list; the client test pins the other half of the row.
+_CLIENT_ONLY_FUNCTIONS = (
+    "SORT",
+    "FILTER",
+    "HSTACK",
+    "VSTACK",
+    "TAKE",
+    "DROP",
+    "WRAPROWS",
+    "WRAPCOLS",
+    "TOROW",
+    "TOCOL",
+    "CHOOSEROWS",
+    "CHOOSECOLS",
+    "EXPAND",
+    "SEQUENCE",
+    "UNIQUE",
+    "LINEST",
+    "LOGEST",
+    "TREND",
+    "GROWTH",
+    "RAND",
+    "RANDBETWEEN",
+    "RANDARRAY",
+    "ISREF",
+    "ISFORMULA",
+    "SHEET",
+    "SHEETS",
+    "INFO",
+    "ISOMITTED",
+    "LAMBDA",
+    "LET",
+    "ARRAYFORMULA",
+    "ANDARRAY",
+    "ORARRAY",
+)
+
+
+@pytest.mark.parametrize("name", _CLIENT_ONLY_FUNCTIONS)
+def test_the_client_only_functions_answer_name_error(name):
+    """The other half of the divergence row: this engine answers #NAME?.
+
+    The client engine implements these and this one does not (see the README's
+    divergence table); if one is adopted here, the client's own pin has to be
+    updated too, so the row cannot drift.
+    """
+    assert _evaluate(f"{name}(1)") == {"kind": "error", "value": "#NAME?"}, (
+        f"{name} is a client-only function; this engine answered something "
+        "other than #NAME?"
+    )
 
 
 def test_the_engines_agree_on_every_shared_case():
