@@ -54,6 +54,12 @@ MAX_REPT_CHARS = 32_767
 MAX_NETWORKDAYS_SPAN_DAYS = 200_000
 # Largest work-day offset WORKDAY will walk (~273 years of workdays).
 MAX_WORKDAY_OFFSET_DAYS = 100_000
+# Cap on the per-argument iteration count of the numeric loops that walk one
+# step per unit of an argument (DB's depreciation periods, BINOMDIST's summed
+# successes, POISSON's summed events). Those arguments are unrestricted
+# doubles, so without this a single formula could drive the loop for hours; a
+# value past the cap is #NUM!. Shared with the client engine.
+MAX_LOOP_ITERATIONS = 100_000
 # Excel's own maximum date serial (9999-12-31); serials beyond this are #NUM!.
 MAX_DATE_SERIAL = 2_958_465
 

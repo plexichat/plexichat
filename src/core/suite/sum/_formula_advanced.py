@@ -9,6 +9,7 @@ from ._formula_shared import (
     DIV_ZERO,
     ERROR_CODES,
     MAX_DATE_SERIAL,
+    MAX_LOOP_ITERATIONS,
     MAX_NETWORKDAYS_SPAN_DAYS,
     MAX_REPT_CHARS,
     MAX_WORKDAY_OFFSET_DAYS,
@@ -362,7 +363,12 @@ def _gamma_p(a: float, x: float) -> float:
         return total * math.exp(-x + a * math.log(x) - gln)
     b = x + 1.0 - a
     c = 1e300
-    d = 1.0 / b
+    # JavaScript divides by zero to Infinity rather than raising, and the
+    # continued fraction then carries that Infinity into a NaN. Reproduce it
+    # there instead of letting the ZeroDivisionError escape: at huge `a` the
+    # ``1 - a`` rounds away, so ``b`` is exactly zero and the client answers
+    # #NUM! while this engine used to raise.
+    d = 1.0 / b if b != 0 else float("inf")
     h = d
     for i in range(1, 1000):
         an = -i * (i - a)
@@ -2971,6 +2977,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # iteration on both engines.
             i = 1
             while i <= period:
+                if i > MAX_LOOP_ITERATIONS:
+                    # A period long enough to walk this loop for hours is not a
+                    # depreciation either engine can answer for; a formula is
+                    # untrusted input, so it is #NUM! rather than a hang.
+                    return NUM_ERROR
                 if i == 1:
                     depreciation = cost * rate * month / 12
                 elif i == life + 1:
@@ -2978,6 +2989,16 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 else:
                     depreciation = book_value * rate
                 book_value -= depreciation
+                if depreciation == 0 and i > life + 1:
+                    # Past ``life + 1`` every remaining period takes the
+                    # ``book_value * rate`` branch, and once that has
+                    # underflowed to zero it stays zero: the book no longer
+                    # moves, so the remaining periods cannot change the answer
+                    # and the loop can stop instead of counting them out one at
+                    # a time. The ``life + 1`` branch itself is excluded -- its
+                    # ``12 - month`` factor makes it zero for a twelve-month
+                    # year, and the periods after it are nonzero again.
+                    break
                 i += 1
             return _finite(depreciation)
         return VALUE_ERROR
@@ -3055,10 +3076,27 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 # answering 0 made a nonsense argument look like a real result.
                 return NUM_ERROR
             if cumulative:
+                if successes > MAX_LOOP_ITERATIONS:
+                    # One term per success; a count large enough to make that
+                    # unbounded work is #NUM! rather than a hang.
+                    return NUM_ERROR
                 total = 0.0
+                # ``_combin(trials, i)`` rebuilds its running product from
+                # scratch on every call, which makes the sum quadratic. Walk
+                # the same product once and round each step exactly as
+                # ``_combin`` does, so every term stays bit-identical while
+                # each iteration is O(1).
+                coefficient = 1.0
                 for i in range(successes + 1):
+                    if i > 0:
+                        coefficient = coefficient * (trials - (i - 1)) / i
+                    rounded = (
+                        float(math.floor(coefficient + 0.5))
+                        if math.isfinite(coefficient)
+                        else float("inf")
+                    )
                     total += (
-                        _combin(trials, i)
+                        rounded
                         * _pow_js(probability, i)
                         * _pow_js(1 - probability, trials - i)
                     )
@@ -3080,9 +3118,23 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if events < 0 or mean <= 0:
                 return NUM_ERROR
             if cumulative:
+                if events > MAX_LOOP_ITERATIONS:
+                    # One term per event; a count large enough to make that
+                    # unbounded work is #NUM! rather than a hang.
+                    return NUM_ERROR
                 total = 0.0
+                # ``_factorial`` rebuilds the product up to ``i`` on every
+                # term, which makes the sum quadratic in ``i``. Carry the same
+                # product across the loop instead: ``fact(i)`` is exactly that
+                # running product, so every term stays bit-identical while
+                # each iteration is O(1).
+                factorial = 1.0
                 for i in range(events + 1):
-                    total += math.exp(-mean) * _pow_js(mean, i) / _factorial(i)
+                    if i >= 2:
+                        factorial *= i
+                        if not math.isfinite(factorial):
+                            factorial = float("inf")
+                    total += math.exp(-mean) * _pow_js(mean, i) / factorial
                 return _finite(total)
             return _finite(math.exp(-mean) * _pow_js(mean, events) / _factorial(events))
         if name == "EXPONDIST":
@@ -3194,7 +3246,15 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             lo, hi = 0.0, 1.0
             for _ in range(100):
                 mid = (lo + hi) / 2
-                if _betai(mid, alpha, beta) < first:
+                cdf = _betai(mid, alpha, beta)
+                if not math.isfinite(cdf):
+                    # An incomplete beta that left the reals cannot be inverted:
+                    # the parameters are past what the double arithmetic can
+                    # resolve, so answer #NUM! rather than converging on
+                    # whatever the overflow left behind (the client engine
+                    # makes the same check).
+                    return NUM_ERROR
+                if cdf < first:
                     lo = mid
                 else:
                     hi = mid

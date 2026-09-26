@@ -331,6 +331,19 @@ otherwise, with no zero padding on the exponent: `1e-5` is `0.00001`, `1e-6` is
 Python's own `str` disagreed at both ends -- it printed `1e-05` and `1e-07`,
 and expanded `1e21` into 22 digits and `1e300` into 301.
 
+**A per-unit loop is bounded.** `DB` walks one period at a time, and
+`BINOMDIST`/`POISSON` sum one term per success or event. Those arguments are
+unrestricted doubles, so without a bound a single formula could drive the loop
+for hours; past `MAX_LOOP_ITERATIONS` steps the answer is `#NUM!` rather than a
+hang, shared with the client engine. The depreciation loop also stops as soon
+as its step underflows to zero past the asset's life, because the book can no
+longer move and the remaining periods cannot change the answer. The same
+argument applies to the inverse distributions: an arithmetic overflow inside
+the numeric families is `#NUM!` rather than an escaping exception, since the
+client engine computes in doubles and turns an `Infinity`/`NaN` into `#NUM!`,
+so `GAMMAINV`/`BETAINV` do the same where a denominator rounds away or a factor
+leaves the doubles.
+
 ### Known divergences from Excel
 
 Deliberate, and shared with the client engine unless noted:

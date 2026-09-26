@@ -652,12 +652,21 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._branched(name, args, sheet, seen, depth)
         if name in _STRUCTURED_FUNCTIONS:
             return self._structured(name, args, sheet, seen, depth)
-        if name in _FINANCIAL_FUNCTIONS:
-            return self._financial(name, args, sheet, seen, depth)
-        if name in _DISTRIBUTION_FUNCTIONS:
-            return self._distribution(name, args, sheet, seen, depth)
-        if name in _COMBINATORICS_FUNCTIONS:
-            return self._combinatorics(name, args, sheet, seen, depth)
+        # The numeric families compute in double precision, and the client
+        # engine's helpers never raise: an overflow there is an Infinity or a
+        # NaN that its result check turns into #NUM!. Python's arithmetic
+        # raises instead -- ``math.exp`` overflows, and a denominator whose
+        # subtraction rounded away divides by zero -- so the same argument has
+        # to land on the same #NUM! here rather than escaping as an exception.
+        try:
+            if name in _FINANCIAL_FUNCTIONS:
+                return self._financial(name, args, sheet, seen, depth)
+            if name in _DISTRIBUTION_FUNCTIONS:
+                return self._distribution(name, args, sheet, seen, depth)
+            if name in _COMBINATORICS_FUNCTIONS:
+                return self._combinatorics(name, args, sheet, seen, depth)
+        except (OverflowError, ZeroDivisionError, ValueError):
+            return NUM_ERROR
 
         values: List[Any] = []
         # Which entries were read out of a reference, running parallel to
