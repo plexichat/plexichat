@@ -220,6 +220,20 @@ slots is read out of the cell it names: `LARGE(A1:A3, A1)` is 3 and
 a referenced value is not coerced — is about the *range* slots; these are
 single values and read like a literal argument.
 
+**A range read where one value is expected follows the pooled rule.** A scalar
+slot is reduced to a single value the way the client engine's `scalarize`
+does: an error cell in the range propagates, a one-cell range is that cell,
+and a range of more than one cell is `#VALUE!` -- never a comma-joined string.
+This applies to every scalar slot -- `_scalar_argument` for
+`LARGE`/`RANK`/`PERCENTRANK` and the regressions, `_read_number` for the
+financial and statistical arguments, the criteria operand and the
+`IF`/`NOT`/`SWITCH` slots -- and it is applied *per argument* rather than
+flattening the range into the pooled list, so `LARGE(A1:A5, A1:A5)` propagates
+the error cell from the rank argument. The IS*/TYPE inspectors are the one
+refinement: they answer a question *about* one value and treat an error as
+input, so a one-cell range is inspected (`ISBLANK(A5)` is FALSE) while a
+multi-cell range is `#VALUE!` rather than propagating the error cell.
+
 **A fixed-arity call rejects a stray argument before it evaluates anything.**
 The scalar functions read exactly their declared operands, so `ABS(1, 2)`,
 `SIN(1, 2)` and `LEN("a", "b")` are `#VALUE!` rather than quietly reading the
@@ -554,30 +568,21 @@ Footer (32 bytes): SHA-256 checksum of uncompressed payload
 
 The scalar-slot range rule above is pinned: `LEN(A1:A3)` is `#VALUE!` and
 `LEN(A1:A5)` is `#DIV/0!` on both sides, and the shared case table holds the
-engines to it. The arity-first rule and the propagation of an error operand
-are pinned the same way. Two classes of disagreement remain open. They were
-found by the exhaustive differential sweep (`tests/unit/formula-sweep.test.mjs`
-in the client repository), which calls every registered function at arities
-zero through four over numbers, text, an error, a blank, a logical, a cell, a
-multi-cell range and the error cell:
+engines to it. The arity-first rule, the propagation of an error operand and
+the per-slot range rule are pinned the same way. One class of disagreement
+remains open. It was found by the exhaustive differential sweep
+(`tests/unit/formula-sweep.test.mjs` in the client repository), which calls
+every registered function at arities zero through four over numbers, text, an
+error, a blank, a logical, a cell, a multi-cell range and the error cell:
 
-- a **multi-cell range passed where one value is expected**. This engine
-  flattens a range before dispatch (`_expand_arg`), so an error cell inside it
-  reaches a function that only wanted one value, while the client reads the
-  range per slot and applies the pooled rule. A function that flattens its
-  arguments (the value and text families) and a function that evaluates a slot
-  directly (`IF`, `NOT`, `AND`, the lookup and criteria slots) therefore do
-  not agree on every corner. The one-cell range, the plain multi-cell range
-  and the error cell are the three cases the table already pins; other
-  combinations are open.
 - a **matrix result** such as `FREQUENCY`: the differential probes compare a
   matrix by identity, so the two sides never read as equal even when the
   counts match.
 
-None of these change an ordinary formula; the first shows up only on a range
-where a scalar belongs, the second only on an array-returning function. The
-sweep fails on any disagreement outside these classes, so a new one cannot
-slip in unnoticed.
+The sweep now agrees on every function at every arity over the whole operand
+alphabet; the only remaining divergence is that matrix comparison, which is an
+artifact of the probe rather than a different answer. A new disagreement
+fails the sweep, so one cannot slip in unnoticed.
 
 ## Related code
 
