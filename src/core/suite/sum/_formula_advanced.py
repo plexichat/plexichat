@@ -163,6 +163,27 @@ def _time_of_day(serial: float) -> int:
     return (total_ms % 86400000) // 1000 % 86400
 
 
+# The base conversions (BIN2DEC .. OCT2HEX). Their input is scalarized before
+# the places are coerced, so the family shares one early error check in
+# ``_engineering``.
+_BASE_CONVERSION_FUNCTIONS = frozenset(
+    {
+        "BIN2DEC",
+        "BIN2HEX",
+        "BIN2OCT",
+        "DEC2BIN",
+        "DEC2HEX",
+        "DEC2OCT",
+        "HEX2BIN",
+        "HEX2DEC",
+        "HEX2OCT",
+        "OCT2BIN",
+        "OCT2DEC",
+        "OCT2HEX",
+    }
+)
+
+
 def _read_number(value: Any) -> tuple:
     """Coerce one value, returning ``(error, number)``.
 
@@ -1156,7 +1177,13 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 value = self._eval(args[0], sheet, seen, depth)
                 if is_error(value):
                     return value
-                matrix = [list(value)] if isinstance(value, list) else [[value]]
+                if isinstance(value, list) and value and isinstance(value[0], list):
+                    # A block from OFFSET arrives row-major already.
+                    matrix = value
+                elif isinstance(value, list):
+                    matrix = [list(value)]
+                else:
+                    matrix = [[value]]
             # Excel truncates a fractional offset, rejects a negative one with
             # #VALUE!, and reads a 0 as "every row" / "every column" -- so
             # INDEX(A1:C3, 0, 2) is the whole second column, which SUM can add
@@ -1186,9 +1213,20 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # MATCH(lookup_value, lookup_array, [match_type])
             if len(args) < 2 or len(args) > 3:
                 return VALUE_ERROR
-            lookup_value = self._eval(args[0], sheet, seen, depth)
-            if is_error(lookup_value):
-                return lookup_value
+            # The match type is coerced first, the way the client engine reads
+            # it before it searches: MATCH(A1:A5, 1, "x") is the #VALUE! from
+            # the match type, not the lookup range's error cell.
+            match_type = 1
+            if len(args) == 3:
+                type_value = self._eval(args[2], sheet, seen, depth)
+                if is_error(type_value):
+                    return type_value
+                try:
+                    match_type = int(_to_number(type_value))
+                except ValueError as exc:
+                    message = str(exc)
+                    return message if message in ERROR_CODES else VALUE_ERROR
+            lookup_value = self._lookup_value(args[0], sheet, seen, depth)
             matrix = self._range_matrix(args[1], sheet, seen, depth)
             if not matrix:
                 return N_A_ERROR
@@ -1197,12 +1235,6 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             range_error = _computed_range_error(args[1], matrix)
             if range_error is not None:
                 return range_error
-            match_type = 1
-            if len(args) == 3:
-                type_value = self._eval(args[2], sheet, seen, depth)
-                if is_error(type_value):
-                    return type_value
-                match_type = int(_to_number(type_value))
             # Flatten matrix for matching
             flat = [row[0] if row else None for row in matrix]
             if match_type == 0:  # Exact match
@@ -1276,33 +1308,41 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 height_value = self._eval(args[3], sheet, seen, depth)
                 if is_error(height_value):
                     return height_value
-                height = int(_to_number(height_value))
+                height = _to_number(height_value)
             if len(args) == 5:
                 width_value = self._eval(args[4], sheet, seen, depth)
                 if is_error(width_value):
                     return width_value
-                width = int(_to_number(width_value))
-            if height <= 0 or width <= 0:
+                width = _to_number(width_value)
+            if not (height >= 1) or not (width >= 1):
                 # Excel needs a positive height and width; zero or negative
                 # spans are #REF!, not an empty block leaking out as a value.
+                # A fractional 0.5 fails here too, as the client engine's
+                # ``!(height >= 1)`` does.
                 return REF_ERROR
-            # Return the range as a flat list
-            result = []
+            # The span is a loop bound, so a fractional 1.9 reaches two cells
+            # (``c < col + width`` in the client engine), not one.
+            height = math.ceil(height)
+            width = math.ceil(width)
+            block = []
             for r in range(r1 + rows, r1 + rows + height):
+                row_values = []
                 for c in range(c1 + cols, c1 + cols + width):
-                    result.append(self._resolve(target, r, c, seen, depth + 1))
-            # A single-cell block collapses to its value, as Excel returns the
-            # referenced value itself; anything larger stays a flat value list.
-            if len(result) == 1:
-                return result[0]
-            return result
+                    row_values.append(self._resolve(target, r, c, seen, depth + 1))
+                block.append(row_values)
+            # A single row collapses to a flat row and a single cell to its
+            # value; a taller block stays a row-major matrix -- the shape the
+            # client engine's ``collapseBlock`` returns and the block readers
+            # (INDEX, the argument flattener) already expect.
+            if len(block) == 1:
+                row_values = block[0]
+                return row_values[0] if len(row_values) == 1 else row_values
+            return block
         elif name == "LOOKUP":
             # LOOKUP(lookup_value, lookup_vector, [result_vector])
             if len(args) < 2 or len(args) > 3:
                 return VALUE_ERROR
-            lookup_value = self._eval(args[0], sheet, seen, depth)
-            if is_error(lookup_value):
-                return lookup_value
+            lookup_value = self._lookup_value(args[0], sheet, seen, depth)
             matrix = self._range_matrix(args[1], sheet, seen, depth)
             if not matrix:
                 return N_A_ERROR
@@ -1506,6 +1546,13 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             for m in matrices:
                 if len(m) != rows or (rows > 0 and len(m[0]) != cols):
                     return VALUE_ERROR
+            # The shapes agree, so an error cell is read and propagates: the
+            # client engine reports the mismatch first and the error second.
+            for m in matrices:
+                for row in m:
+                    for val in row:
+                        if is_error(val):
+                            return val
             # Calculate sumproduct
             total = 0.0
             for r in range(rows):
@@ -3573,6 +3620,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             real_total, imaginary_total = (0.0, 0.0) if name == "IMSUM" else (1.0, 0.0)
             suffix = "i"
             for index, value in enumerate(values):
+                if is_error(value):
+                    return value
                 parsed = _parse_complex(value)
                 if parsed is None:
                     return NUM_ERROR
@@ -3591,6 +3640,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name in ("IMABS", "IMREAL", "IMAGINARY", "IMCONJUGATE", "IMARGUMENT"):
             if len(values) != 1:
                 return VALUE_ERROR
+            if is_error(values[0]):
+                return values[0]
             parsed = _parse_complex(values[0])
             if parsed is None:
                 return NUM_ERROR
@@ -3609,9 +3660,15 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name in ("IMSUB", "IMDIV", "IMMOD"):
             if len(values) != 2:
                 return VALUE_ERROR
+            if is_error(values[0]):
+                return values[0]
             first = _parse_complex(values[0])
+            if first is None:
+                return NUM_ERROR
+            if is_error(values[1]):
+                return values[1]
             second = _parse_complex(values[1])
-            if first is None or second is None:
+            if second is None:
                 return NUM_ERROR
             if name == "IMSUB":
                 return _format_complex(
@@ -3635,6 +3692,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
 
         if len(values) != 1:
             return VALUE_ERROR
+        if is_error(values[0]):
+            return values[0]
         parsed = _parse_complex(values[0])
         if parsed is None:
             return NUM_ERROR
@@ -3691,6 +3750,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         parameter goes through the numeric coercion, and ``places`` counts
         characters the way ``padStart`` does.
         """
+        if name in _BASE_CONVERSION_FUNCTIONS and is_error(values[0]):
+            # The input is scalarized before the places are coerced, the way
+            # the client reads ``String(scalarize(args[0]))`` first: a range
+            # holding an error cell propagates ahead of a bad places value.
+            return values[0]
         if name in ("BIN2DEC", "BIN2HEX", "BIN2OCT"):
             if not 1 <= len(values) <= 2:
                 return VALUE_ERROR

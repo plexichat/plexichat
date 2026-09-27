@@ -593,35 +593,37 @@ call. Closing its last gaps needed both engines:
   to return a raw matrix for a range result where this engine answers the
   error.
 
-**Mixed operands, one open class.** A second, mixed-operand sweep calls each
-covered function with two different operands (and a rotating triple). This
-engine now checks every eager argument in `_call`, so an error *argument*
-propagates in argument order ahead of a later range's error cell, and the
-pooled aggregates propagate a formula-written error ahead of a referenced
-error cell. What is still open is a call whose **first** argument fails a
-coercion (a text where a number or a complex value belongs) while a **later**
-argument is a multi-cell range holding an error cell: the client processes the
-first argument and answers its `#VALUE!`/`#NUM!`, while this engine still
-reaches the range's error. The functions with that residue are listed as
-`OPEN_MIXED` in the sweep and excluded from the mixed pass:
+**Mixed operands, no open class.** A second, mixed-operand sweep calls each
+covered function with two different operands (and a rotating triple), which
+the per-arity sweep never does -- it repeats one operand at every slot. Every
+covered function now agrees, so there is no allowance left and a divergence in
+any of them fails the run.
 
-- the base conversions and bitwise set (`BIN2DEC`...`OCT2HEX`, `BITAND`...
-  `BITXOR`), `DELTA`, `GESTEP`, `ERF`, `ATAN2`, `BESSELJ`, `BESSELY`
-- the date shifts (`DAYS`, `EDATE`, `EOMONTH`, `WEEKDAY`, `WEEKNUM`,
-  `NETWORKDAYS`, `WORKDAY`)
-- the lookups `MATCH`, `LOOKUP`, `VLOOKUP`, `HLOOKUP`
-- `SUMPRODUCT`, `FORECAST`, `RANK`, `PERCENTRANK`, `MULTINOMIAL`, `CONCAT`,
-  `CONCATENATE` and the `IM*` pair forms (`IMDIV`, `IMSUB`, `IMMOD`,
-  `IMPRODUCT`, `IMSUM`)
+Closing it needed the argument model to match the client engine's. That engine
+evaluates each argument eagerly and each function reads its arguments as
+*slots*, coercing one as it goes (its `scalarize`/`toNumber`): a one-cell
+reference or expression is that value, an error in a slot propagates when the
+body reads it, and a multi-cell range where one value belongs is `#VALUE!`.
+This engine pooled every argument into one flattened value list, so an error
+cell in a later range was answered before the body read an earlier slot
+(`BESSELJ("x", A1:A5)` was the range's `#DIV/0!` where the client answers the
+first slot's `#VALUE!`). Three changes align the two:
 
-Closing the class needs per-slot coercion in those families -- this engine
-reads their arguments pooled -- so it is a project of its own rather than a
-quiet allowance. The `ROUND`/`ROUNDUP`/`ROUNDDOWN`/`MOD`/`POWER`/`CEILING`/
-`FLOOR` family already reads each slot separately in client order (with
-`ROUND` reading its digits first and `MOD` its dividend first), so those
-seven are held to full mixed-operand agreement. A divergence in any *other*
-function fails the mixed sweep,
-so a new one cannot slip in unnoticed.
+- the scalar families -- the engineering and complex sets and the date shifts
+  -- now receive one entry per argument, read through `_scalar_slot`, and their
+  bodies coerce each slot in client order (`ROUND` reads its digits first, the
+  base conversions scalarize their input before the places).
+- a flat range reader (`RANK`, `PERCENTRANK`, `FORECAST`, `SUMPRODUCT`) defers
+  *every* reference but still evaluates its scalar arguments eagerly, so an
+  error among them propagates in argument order
+  (`_FLAT_ARGUMENT_ERROR_FUNCTIONS`).
+- the coercions propagate: `_to_number` re-raises an error value (and
+  scalarizes a range) instead of reading its spelling as text, so a body that
+  reads a slot holding an error answers the error rather than `#VALUE!`.
+
+The shared case table pins each direction of the slot/range precedence, the
+multi-cell lookup value that compares equal to nothing, and the aggregates'
+shape check before an error cell.
 
 ## Related code
 

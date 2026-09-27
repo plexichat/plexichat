@@ -41,7 +41,11 @@ from ._formula_shared import (
 # arguments.
 # The pooled aggregates decide their own error precedence (see _aggregate),
 # so the blanket value-function propagation below must not pre-empt them.
-_AGGREGATE_ERROR_FUNCTIONS = frozenset({"SUM", "AVERAGE", "MIN", "MAX", "PRODUCT"})
+_AGGREGATE_ERROR_FUNCTIONS = frozenset(
+    # SUMPRODUCT decides its own precedence too: a shape mismatch is #VALUE!
+    # before any error cell in the arrays is read.
+    {"SUM", "AVERAGE", "MIN", "MAX", "PRODUCT", "SUMPRODUCT"}
+)
 
 _VALUE_FUNCTIONS = frozenset(
     {
@@ -299,6 +303,22 @@ _EAGER_ARGUMENT_ERROR_EXCLUDED = frozenset(
     }
 )
 
+# Flat range readers -- the client engine's FLAT_RANGE_FUNCTIONS -- that are
+# *not* already excluded from the eager argument-error rule. Each defers every
+# reference argument (a single cell as much as a range) and reads the cells
+# itself, but still evaluates its scalar arguments eagerly: an error among them
+# propagates in argument order before the body runs. These bodies decide their
+# own range-error precedence, so the flat rule is applied to the scalar
+# arguments here rather than pooling the call.
+_FLAT_ARGUMENT_ERROR_FUNCTIONS = frozenset(
+    {
+        "RANK",
+        "PERCENTRANK",
+        "FORECAST",
+        "SUMPRODUCT",
+    }
+)
+
 # The client engine's financial, distribution and combinatorics families,
 # adopted wholesale. Like _STRUCTURED_FUNCTIONS they read their arguments as
 # separate slots -- a rate, a period, a parallel range -- rather than one
@@ -444,6 +464,32 @@ _COMPLEX_FUNCTIONS = frozenset(
     }
 )
 
+# The families whose arguments are all single scalars: the engineering set and
+# the complex-number set. Their bodies read ``values[k]`` slot by slot, so the
+# dispatcher hands them one entry per argument (see the slot branch in
+# ``_call``) rather than the flattened cell list a pooled reader wants.
+_SCALAR_SLOT_FUNCTIONS = (
+    _ENGINEERING_FUNCTIONS
+    | _COMPLEX_FUNCTIONS
+    | frozenset(
+        {
+            "ATAN2",
+            "DAYS",
+            "EDATE",
+            "EOMONTH",
+            "WEEKDAY",
+            "WEEKNUM",
+            "WORKDAY",
+            "NETWORKDAYS",
+        }
+    )
+)
+
+# A scalar family whose tail is a range: NETWORKDAYS and WORKDAY read their two
+# required arguments as scalars and the holiday list as a range, so only the
+# leading slots are scalarized and the rest are pooled.
+_SCALAR_SLOT_LEAD = {"NETWORKDAYS": 2, "WORKDAY": 2}
+
 # Functions that classify an error operand instead of propagating it. COUNT
 # counts numbers only and COUNTA counts anything non-empty (an error is data);
 # the *IFS family matches an error cell as "no match" rather than failing the
@@ -493,6 +539,11 @@ _ARITY: Dict[str, Tuple[int, Optional[int], Optional[int]]] = {
     "CODE": (1, 1, None),
     "COMBIN": (2, 2, None),
     "COMBINA": (2, 2, None),
+    # Variadic text joins. They live here for the eager argument-error rule:
+    # CONCAT(A1:A5, NA()) is #N/A, the error operand, ahead of the range's
+    # error cell -- the client evaluates every non-deferred argument first.
+    "CONCAT": (0, None, None),
+    "CONCATENATE": (0, None, None),
     "COMPLEX": (1, 3, None),
     "CONVERT": (3, 3, None),
     "CORREL": (2, 2, None),
@@ -580,6 +631,11 @@ _ARITY: Dict[str, Tuple[int, Optional[int], Optional[int]]] = {
     "MIRR": (3, 3, None),
     "MOD": (2, 2, None),
     "MONTH": (1, 1, None),
+    # Any number of arguments, including none: MULTINOMIAL() is 1 (the empty
+    # product over 0!). It lives here for its arity bound *and* so the eager
+    # argument-error rule covers it -- MULTINOMIAL("x", 1/0) is #DIV/0!, the
+    # error operand, rather than the #VALUE! the first slot's coercion earns.
+    "MULTINOMIAL": (0, None, None),
     "N": (1, 1, None),
     "NA": (0, 0, None),
     "NEGBINOMDIST": (3, 3, None),
@@ -926,6 +982,18 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             error = self._argument_error(args, sheet, seen, depth)
             if error is not None:
                 return error
+        elif name in _FLAT_ARGUMENT_ERROR_FUNCTIONS:
+            # A flat range reader defers *every* reference -- a ``:`` range
+            # and a single cell alike -- to read the cells itself, but it
+            # still evaluates its scalar arguments eagerly and propagates an
+            # error among them in argument order. RANK("x", 1/0) is #DIV/0!
+            # here and in the client engine, where reading only the body left
+            # the first slot's #VALUE! to win.
+            error = self._argument_error(
+                args, sheet, seen, depth, defer_references=True
+            )
+            if error is not None:
+                return error
         # Evaluate the arguments lazily where the function is short-circuiting.
         if name == "IF":
             # Excel's third argument is optional: IF(test, value_if_true) is
@@ -1042,10 +1110,30 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         # a value that came from a reference, so the aggregates need the
         # provenance and not just the flattened values.
         from_reference: List[bool] = []
-        for arg in args:
-            expanded, is_reference = self._expand_arg(arg, sheet, seen, depth)
-            values.extend(expanded)
-            from_reference.extend([is_reference] * len(expanded))
+        if name in _SCALAR_SLOT_FUNCTIONS:
+            # A scalar family reads each argument as one slot, the way the
+            # client engine's ``scalarize``/``toNumber`` do: a one-cell
+            # reference or expression is that value, an error in the slot
+            # propagates when the body reads it, and a multi-cell range is
+            # #VALUE!. Pooling the range into its cells instead would let an
+            # error cell decide the answer before the body read an earlier
+            # slot (``BESSELJ("x", A1:A5)`` was the range's #DIV/0! where the
+            # client answers the first slot's #VALUE!).
+            lead = _SCALAR_SLOT_LEAD.get(name)
+            for index, arg in enumerate(args):
+                if lead is not None and index >= lead:
+                    expanded, is_reference = self._expand_arg(arg, sheet, seen, depth)
+                    values.extend(expanded)
+                    from_reference.extend([is_reference] * len(expanded))
+                    continue
+                error, value = self._scalar_slot(arg, sheet, seen, depth)
+                values.append(error if error is not None else value)
+                from_reference.append(False)
+        else:
+            for arg in args:
+                expanded, is_reference = self._expand_arg(arg, sheet, seen, depth)
+                values.extend(expanded)
+                from_reference.extend([is_reference] * len(expanded))
         # An error operand propagates out of the value-based functions. Excel
         # treats it as data the caller has to see rather than a value to
         # coerce, and without this the coercion helpers mangled it instead of
@@ -1059,6 +1147,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             (name in _VALUE_FUNCTIONS or name in _COMPLEX_FUNCTIONS)
             and name not in _ERROR_TOLERANT_FUNCTIONS
             and name not in _AGGREGATE_ERROR_FUNCTIONS
+            and name not in _SCALAR_SLOT_FUNCTIONS
         ):
             for value, from_ref in zip(values, from_reference):
                 # COUNTBLANK answers a question about a *cell*, and an error
@@ -1190,12 +1279,25 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         value = self._eval(node, sheet, seen, depth)
         if isinstance(value, list):
             # A function returning a block of values (OFFSET) contributes each of
-            # them, exactly the way a range argument does.
-            return list(value), True
+            # them, exactly the way a range argument does. A taller block is a
+            # row-major matrix, so a nested row is flattened into the one value
+            # list the pooled readers want.
+            flattened: List[Any] = []
+            for item in value:
+                if isinstance(item, list):
+                    flattened.extend(item)
+                else:
+                    flattened.append(item)
+            return flattened, True
         return [value], False
 
     def _argument_error(
-        self, args: List[Any], sheet: Optional[str], seen: set, depth: int
+        self,
+        args: List[Any],
+        sheet: Optional[str],
+        seen: set,
+        depth: int,
+        defer_references: bool = False,
     ) -> Optional[str]:
         """The error a *value argument* raises before the body reads it.
 
@@ -1206,9 +1308,17 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         evaluates to a matrix the function reads for itself, so only a single
         value -- a literal, a single-cell reference or an expression -- is
         checked here.
+
+        ``defer_references`` is the flat range reader's rule: it hands over
+        *every* reference unevaluated -- a single cell as much as a ``:``
+        range -- so both are skipped here and only an expression or a literal
+        argument is inspected.
         """
         for arg in args:
-            if arg[0] == "ref" and ":" in arg[1]:
+            if defer_references:
+                if arg[0] == "ref":
+                    continue
+            elif arg[0] == "ref" and ":" in arg[1]:
                 continue
             value = self._eval(arg, sheet, seen, depth)
             if is_error(value):
@@ -1628,15 +1738,41 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         except ValueError:
             return _text_equals(a, b)
 
+    def _lookup_value(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """Read a lookup value the way the client engine does.
+
+        A single value -- a literal, an expression or a one-cell reference --
+        is that value, but a multi-cell range arrives as a *matrix* that
+        compares equal to nothing, so an error cell inside it does not
+        propagate: the body coerces a later argument (the index, the match
+        type) first and reports its error instead. Reading the range through
+        ``_eval`` collapsed it to its error cell and answered #DIV/0! for the
+        whole call.
+        """
+        values, _ = self._expand_arg(node, sheet, seen, depth)
+        if len(values) == 1:
+            return values[0]
+        return list(values)
+
     def _lookup(
         self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
     ) -> Any:
         """VLOOKUP / HLOOKUP with exact or sorted approximate matching."""
         if len(args) < 3 or len(args) > 4:
             return VALUE_ERROR
-        lookup_value = self._eval(args[0], sheet, seen, depth)
-        if is_error(lookup_value):
-            return lookup_value
+        # The column/row index is coerced before the lookup value or the table
+        # is read, the way the client engine orders it: VLOOKUP(A1:A5, 1, "x")
+        # is the #VALUE! from the index, not the lookup range's error cell.
+        try:
+            index = int(_to_number(self._eval(args[2], sheet, seen, depth))) - 1
+        except ValueError as exc:
+            message = str(exc)
+            return message if message in ERROR_CODES else VALUE_ERROR
+        if index < 0:
+            return VALUE_ERROR
+        lookup_value = self._lookup_value(args[0], sheet, seen, depth)
         matrix = self._range_matrix(args[1], sheet, seen, depth)
         if not matrix:
             return N_A_ERROR
@@ -1646,12 +1782,6 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         table_error = _computed_range_error(args[1], matrix)
         if table_error is not None:
             return table_error
-        try:
-            index = int(_to_number(self._eval(args[2], sheet, seen, depth))) - 1
-        except ValueError as exc:
-            return str(exc)
-        if index < 0:
-            return VALUE_ERROR
         range_lookup = True
         if len(args) == 4:
             range_lookup = bool(self._truthy(self._eval(args[3], sheet, seen, depth)))

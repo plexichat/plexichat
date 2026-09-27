@@ -5234,6 +5234,250 @@
     {
       "formula": "FORECAST(1,A5,A1)",
       "expected": "error:#N/A"
+    },
+    {
+      "formula": "ROUND(A1:A5,\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ROUND(\"x\",A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ROUNDUP(A1:A5,\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MOD(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MOD(A1:A5,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "POWER(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "CEILING(A1:A5,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FLOOR(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "BIN2DEC(\"x\",A1:A5)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "BIN2DEC(1,A1:A5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "BIN2HEX(A1:A5,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "BITAND(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "BITLSHIFT(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "DEC2BIN(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "DEC2HEX(A1:A5,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "DELTA(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "GESTEP(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "ERF(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "BESSELJ(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "BESSELY(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "CONVERT(1,\"m\",A1:A5)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "COMPLEX(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "IMSUM(\"x\",A1:A5)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "IMDIV(A1:A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMSUB(A1,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "IMMOD(\"x\",A1:A5)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "IMPRODUCT(A1:A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "ATAN2(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "DAYS(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "EDATE(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "EOMONTH(A1:A5,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "WEEKDAY(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "WEEKNUM(A1:A5,\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "NETWORKDAYS(\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "WORKDAY(A1:A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "RANK(\"x\",1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "RANK(A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "PERCENTRANK(1,\"x\",1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MULTINOMIAL(\"x\",1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MULTINOMIAL(A1:A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "FORECAST(\"x\",1/0,NA())",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMPRODUCT(1,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUMPRODUCT(A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "SUMPRODUCT(A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CONCAT(A1:A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "CONCATENATE(A1:A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "VLOOKUP(A1:A5,1,\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "HLOOKUP(A1:A5,1,\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MATCH(A1:A5,\"x\")",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "MATCH(A1:A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(A1:A5,1,\"x\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LOOKUP(A1:A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "LOOKUP(A1:A5,\"x\")",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "OFFSET(A1,0,0,1,1.9)",
+      "expected": "array:number:1|text:one"
+    },
+    {
+      "formula": "OFFSET(A1,0,0,1,0.5)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "SUM(OFFSET(A1:A2,0,0))",
+      "expected": "number:3"
+    },
+    {
+      "formula": "INDEX(OFFSET(A1:A3,0,1),2)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "OFFSET(A1:A2,1,0,1,1)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "HEX2DEC(\"0XFF\")",
+      "expected": "number:255"
+    },
+    {
+      "formula": "HEX2BIN(\"0XFF\")",
+      "expected": "text:11111111"
+    },
+    {
+      "formula": "OCT2DEC(\"0x10\")",
+      "expected": "error:#NUM!"
     }
   ]
 }

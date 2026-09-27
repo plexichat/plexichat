@@ -424,7 +424,34 @@ def _to_number(value: Any) -> float:
             # OverflowError straight out of the engine instead of a cell error.
             raise ValueError(NUM_ERROR)
         return number
+    if isinstance(value, (list, tuple)):
+        # A range where one value belongs is the client engine's
+        # ``scalarize``: an error cell propagates, a one-cell block is that
+        # cell and anything larger is #VALUE!. Without this a matrix reached
+        # ``_to_number`` as a list and raised a bare #VALUE!, hiding the error
+        # cell a lookup or a comparison should have propagated.
+        cells: List[Any] = []
+        stack = list(value)
+        while stack:
+            item = stack.pop(0)
+            if isinstance(item, (list, tuple)):
+                stack[0:0] = list(item)
+            else:
+                cells.append(item)
+        for cell in cells:
+            if is_error(cell):
+                raise ValueError(cell)
+        if len(cells) == 1:
+            return _to_number(cells[0])
+        raise ValueError(VALUE_ERROR)
     if isinstance(value, str):
+        if value in ERROR_CODES:
+            # An error is not text to coerce: it propagates, the way the
+            # client engine's ``toNumber`` re-throws the error value rather
+            # than reading its spelling as a number. Callers that surface the
+            # ValueError's message then answer the error itself instead of the
+            # #VALUE! a failed coercion would give.
+            raise ValueError(value)
         # The whole string has to read as a number, the same complete-decimal
         # rule the aggregates apply to a text argument. ``float`` alone is too
         # permissive: it also accepts "inf", "nan" and the digit-separating
