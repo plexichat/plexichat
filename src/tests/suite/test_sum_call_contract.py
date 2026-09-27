@@ -102,6 +102,18 @@ _CASES = [
     ('COUNTIF(INDIRECT("A5"),1)', "error:#DIV/0!"),
     ("INDEX(A1:A3,1/0)", "error:#DIV/0!"),
     ("MATCH(1/0,A1:A3,0)", "error:#DIV/0!"),
+    # The clock takes no arguments: a stray one is #VALUE!, as Excel
+    # rejects it, rather than the time the client engine used to answer.
+    ("NOW(1)", "error:#VALUE!"),
+    ("TODAY(1)", "error:#VALUE!"),
+    ("TODAY(A1)", "error:#VALUE!"),
+    # A range that never resolves propagates out of every lookup: the
+    # INDIRECT below is #REF! on both engines, so no match is attempted.
+    ('MATCH(2,INDIRECT("A1:A5"),0)', "error:#REF!"),
+    ('LOOKUP(2,INDIRECT("A1:A5"))', "error:#REF!"),
+    ('XLOOKUP(2,INDIRECT("A1:A5"),A1:A5)', "error:#REF!"),
+    ('VLOOKUP(2,INDIRECT("A1:B5"),1,FALSE)', "error:#REF!"),
+    ('COUNTIF(INDIRECT("A1:A3"),2)', "error:#REF!"),
 ]
 
 
