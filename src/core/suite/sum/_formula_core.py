@@ -1855,6 +1855,16 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return True
         if a is None or b is None:
             return False
+        if isinstance(b, (list, tuple)):
+            # The key is one value, the way the client engine's ``lookupEquals``
+            # reads it: its ``toNumber``/``toText`` scalarize the lookup value,
+            # so an error cell inside a multi-cell key propagates
+            # (MATCH(A1:A5, A1:A5, 0) is #DIV/0!) and a multi-cell key with no
+            # error is #VALUE! (MATCH(A1:A2, A1:A5, 0)). The approximate forms
+            # never reach here -- they rank the key with ``_compare_values`` --
+            # so only the exact comparison scalarizes, exactly as the client's
+            # exact branch does and its approximate branch does not.
+            b = _scalarize(b)
         if wildcards and isinstance(b, str) and _is_pattern(b):
             return isinstance(a, str) and _wildcard_match(b, a)
         if isinstance(a, str) or isinstance(b, str):
@@ -1871,15 +1881,16 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
     def _lookup_value(
         self, node: Any, sheet: Optional[str], seen: set, depth: int
     ) -> Any:
-        """Read a lookup value the way the client engine does.
+        """Read a lookup value the way the client engine keeps it.
 
         A single value -- a literal, an expression or a one-cell reference --
-        is that value, but a multi-cell range arrives as a *matrix* that
-        compares equal to nothing, so an error cell inside it does not
-        propagate: the body coerces a later argument (the index, the match
-        type) first and reports its error instead. Reading the range through
-        ``_eval`` collapsed it to its error cell and answered #DIV/0! for the
-        whole call.
+        is that value; a multi-cell range arrives as the *matrix* the client
+        keeps, so a key that "compares equal to nothing" leaves the body to
+        report its own error (MATCH's approximate branches answer #N/A,
+        LOOKUP/XLOOKUP answer #VALUE!). The *exact* comparison is the
+        exception: it scalarizes the key in ``_lookup_eq``, exactly as the
+        client's ``lookupEquals`` does, so an error cell in a multi-cell key
+        propagates and a multi-cell key with no error is #VALUE!.
         """
         values, _ = self._expand_arg(node, sheet, seen, depth)
         if len(values) == 1:
