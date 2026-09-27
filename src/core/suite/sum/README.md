@@ -671,6 +671,17 @@ A nested-call error that a function *returns* is a value the enclosing
 function can classify (``COUNT(ABS("x"))`` is 0), the same rule the ``_call``
 wrapper enforces.
 
+**Deeper shapes.** Four more shapes -- four distinct operands, a call nested
+two deep, a reference-producing nested call (``OFFSET``/``INDEX``/``INDIRECT``)
+and the empty-argument forms (``LEFT("abc",)``) -- were checked against the
+client engine and agree. They exposed one last defect there: ``XLOOKUP`` did
+not propagate a *computed* scalar error in its lookup or return array,
+answering ``#N/A`` for ``XLOOKUP(1, SUM(A1:A5), 1)`` where every other lookup --
+and this engine -- answer ``#DIV/0!``. The client now propagates one eagerly
+while a plain reference (and the identity ``+A5``) keeps its error as a cell,
+the ``_computed_range_error`` rule this engine already used. The shared table
+pins both directions.
+
 ## Related code
 
 - `src/core/suite/sum/__init__.py:25` — `setup()` entry point

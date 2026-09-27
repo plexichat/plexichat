@@ -5602,6 +5602,42 @@
     {
       "formula": "COUNTBLANK(ABS(\"x\"))",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(1,SUM(A1:A5),1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(1,1,SUM(A1:A5))",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(1,SUM(A1:A5),SUM(A1:A5))",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(99,A1:A2,SUM(A1:A5),\"nf\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(1,+SUM(A1:A5),1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(1,A5,1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "XLOOKUP(1,+A5,1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "XLOOKUP(1,-A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(1,+A1:A5,1)",
+      "expected": "error:#VALUE!"
     }
   ]
 }

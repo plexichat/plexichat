@@ -144,6 +144,17 @@ _CASES = [
     ("XLOOKUP(A1:A5,1,1)", "error:#DIV/0!"),
     ("XLOOKUP(A1:A5,1,NA())", "error:#N/A"),
     ("XLOOKUP(A1:A5,1,A1:A5)", "error:#VALUE!"),
+    # A *computed* scalar error in the lookup or return array propagates,
+    # while a plain reference keeps its error as a cell that fails to match
+    # (and unary plus, the identity, still reads as that reference).
+    ("XLOOKUP(1,SUM(A1:A5),1)", "error:#DIV/0!"),
+    ("XLOOKUP(1,1,SUM(A1:A5))", "error:#DIV/0!"),
+    ("XLOOKUP(1,SUM(A1:A5),SUM(A1:A5))", "error:#DIV/0!"),
+    ('XLOOKUP(99,A1:A2,SUM(A1:A5),"nf")', "error:#DIV/0!"),
+    ("XLOOKUP(1,A5,1)", "error:#N/A"),
+    ("XLOOKUP(1,+A5,1)", "error:#N/A"),
+    ("XLOOKUP(1,-A5,1)", "error:#DIV/0!"),
+    ("XLOOKUP(1,+A1:A5,1)", "error:#VALUE!"),
     # A written criteria error propagates first, then the summed range's, then
     # a criteria read out of a cell.
     ("SUMIF(1,1/0,NA())", "error:#DIV/0!"),
