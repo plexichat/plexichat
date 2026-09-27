@@ -5478,6 +5478,50 @@
     {
       "formula": "OCT2DEC(\"0x10\")",
       "expected": "error:#NUM!"
+    },
+    {
+      "formula": "COUNT(ABS(\"x\"))",
+      "expected": "number:0"
+    },
+    {
+      "formula": "COUNTA(ABS(\"x\"))",
+      "expected": "number:1"
+    },
+    {
+      "formula": "ISERROR(ABS(\"x\"))",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "ISNA(ABS(\"x\"))",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "TYPE(ABS(\"x\"))",
+      "expected": "number:16"
+    },
+    {
+      "formula": "ISBLANK(ABS(\"x\"))",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISNUMBER(ABS(\"x\"))",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "ISTEXT(ABS(\"x\"))",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "PI(ABS(\"x\"))",
+      "expected": "number:3.141592653589793"
+    },
+    {
+      "formula": "IFERROR(ABS(\"x\"), 42)",
+      "expected": "number:42"
+    },
+    {
+      "formula": "SUM(1, ABS(\"x\"))",
+      "expected": "error:#VALUE!"
     }
   ]
 }

@@ -625,6 +625,32 @@ The shared case table pins each direction of the slot/range precedence, the
 multi-cell lookup value that compares equal to nothing, and the aggregates'
 shape check before an error cell.
 
+**Nested calls and three operands.** Two shapes the sweeps above never build
+were added: every covered function called with *three* distinct operands (all
+7^3 orderings, not the rotating triple) and with a nested call in a slot
+(`COUNT(ABS("x"))`). The nested shape found and fixed a real defect:
+
+- a **nested call that fails** now yields its error *value*. Many bodies raise
+  a ``ValueError`` / ``ZeroDivisionError`` / ``OverflowError``, and that
+  exception used to unwind straight past the enclosing function, so an
+  error-tolerant caller could not classify or skip it: ``COUNT(ABS("x"))`` was
+  ``#VALUE!`` rather than 0, ``ISERROR(ABS("x"))`` was ``#VALUE!`` rather than
+  TRUE and ``PI(ABS("x"))`` was ``#VALUE!`` rather than pi. The ``_call``
+  wrapper turns a raised error into the call's value, and the dependency-budget
+  abort raises a distinct ``_DependencyBudgetExceeded`` so a runaway cycle still
+  unwinds the whole formula instead of becoming a skippable value. The shared
+  table pins the classified answers (`COUNT`, the ``IS*`` family, ``TYPE``,
+  ``PI``, ``IFERROR``).
+
+Still open, and deliberately not pinned: **89 three-operand cases across nine
+functions** -- a per-family slot-coercion order rather than one shared rule.
+The lookups disagree when the lookup value or the ``if_not_found`` is a range
+whose error cell the other engine reads first (``VLOOKUP(A1:A5, 1, 1)`` is
+``#DIV/0!`` here and ``#N/A`` there), ``OFFSET`` coerces the row offset before
+the column offset's error, and the criteria pair, ``DATE``/``TIME`` and ``MID``
+each have their own order. The per-arity and mixed-operand sweeps do not reach
+this shape, and the table does not pin it.
+
 ## Related code
 
 - `src/core/suite/sum/__init__.py:25` — `setup()` entry point

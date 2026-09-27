@@ -35,6 +35,17 @@ from ._formula_shared import (
     parse_formula,
 )
 
+
+class _DependencyBudgetExceeded(Exception):
+    """The per-formula dependency budget ran out (a runaway cycle).
+
+    Raised instead of the formula errors ``_call`` turns into values, so the
+    ``_call`` wrapper below never swallows it: the abort has to unwind the
+    whole formula rather than become a #NUM! an enclosing error-tolerant
+    function could then skip.
+    """
+
+
 # Functions whose arguments are flattened into a ``values`` list by ``_call``.
 # Kept beside the dispatch below so the two stay in step: an unknown name must
 # still report #NAME? rather than surface an error that happened to sit in its
@@ -762,13 +773,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._computed[key]
         self._used += 1
         if self._used > self._dependencies:
-            raise ValueError(NUM_ERROR)
+            raise _DependencyBudgetExceeded
         seen.add(key)
         try:
             node = parse_formula(formula)
             value = self._eval(node, sheet, seen, depth)
             self._computed[key] = value
             return value
+        except _DependencyBudgetExceeded:
+            return NUM_ERROR
         except ValueError as exc:
             message = str(exc)
             return message if message in ERROR_CODES else VALUE_ERROR
@@ -783,7 +796,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return None
         self._used += 1
         if self._used > self._dependencies:
-            raise ValueError(NUM_ERROR)
+            raise _DependencyBudgetExceeded
         formula = cell.get("formula")
         if formula:
             return self.evaluate_cell(sheet, row, column, formula, seen, depth + 1)
@@ -806,7 +819,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             for c in range(c_start, c_end + 1):
                 self._used += 1
                 if self._used > self._dependencies:
-                    raise ValueError(NUM_ERROR)
+                    raise _DependencyBudgetExceeded
                 values.append(self._resolve(sheet, r, c, seen, depth + 1))
         return values
 
@@ -960,6 +973,34 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         return VALUE_ERROR
 
     def _call(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """Evaluate a function call, yielding its error value when it fails.
+
+        The client engine evaluates a function body to a *value*: a body that
+        fails yields the error it raised, and an enclosing function can then
+        classify or skip it (COUNT ignores it, ISERROR reports TRUE, PI ignores
+        its arguments). Many bodies here raise ``ValueError`` /
+        ``ZeroDivisionError`` / ``OverflowError`` instead, and without this
+        wrapper the exception unwound straight past every enclosing call, so
+        ``COUNT(ABS("x"))`` was #VALUE! (not 0) and ``PI(ABS("x"))`` was
+        #VALUE! (not pi). ``_DependencyBudgetExceeded`` is deliberately *not*
+        caught: a runaway cycle has to abort the whole formula rather than
+        become a #NUM! an enclosing error-tolerant function could skip.
+        """
+        try:
+            return self._call_impl(name, args, sheet, seen, depth)
+        except _DependencyBudgetExceeded:
+            raise
+        except ZeroDivisionError:
+            return DIV_ZERO
+        except OverflowError:
+            return NUM_ERROR
+        except ValueError as exc:
+            message = str(exc)
+            return message if message in ERROR_CODES else VALUE_ERROR
+
+    def _call_impl(
         self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
     ) -> Any:
         # A stray argument is #VALUE! before any argument is evaluated, so a

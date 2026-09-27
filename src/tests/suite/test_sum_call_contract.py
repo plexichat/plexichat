@@ -114,6 +114,21 @@ _CASES = [
     ('XLOOKUP(2,INDIRECT("A1:A5"),A1:A5)', "error:#REF!"),
     ('VLOOKUP(2,INDIRECT("A1:B5"),1,FALSE)', "error:#REF!"),
     ('COUNTIF(INDIRECT("A1:A3"),2)', "error:#REF!"),
+    # A nested call that fails yields its error *value* rather than raising
+    # past the enclosing function, so an error-tolerant caller can classify or
+    # skip it: COUNT skips it (0), the IS* family answers *about* it and PI
+    # ignores its arguments. Raising instead made COUNT(ABS("x")) #VALUE!
+    # rather than 0 and PI(ABS("x")) #VALUE! rather than pi.
+    ('COUNT(ABS("x"))', "number:0"),
+    ('COUNTA(ABS("x"))', "number:1"),
+    ('ISERROR(ABS("x"))', "boolean:true"),
+    ('ISNA(ABS("x"))', "boolean:false"),
+    ('TYPE(ABS("x"))', "number:16"),
+    ('ISBLANK(ABS("x"))', "boolean:false"),
+    ('ISNUMBER(ABS("x"))', "boolean:false"),
+    ('ISTEXT(ABS("x"))', "boolean:false"),
+    ('IFERROR(ABS("x"),42)', "number:42"),
+    ('SUM(1,ABS("x"))', "error:#VALUE!"),
 ]
 
 
@@ -124,5 +139,7 @@ def test_call_contract_matches_the_pinned_answer(formula, expected):
     assert result["kind"] == kind, f"{formula} -> {result!r}, expected {expected!r}"
     if kind == "number":
         assert result["value"] == pytest.approx(float(literal), abs=1e-9)
+    elif kind == "boolean":
+        assert result["value"] == (literal == "true")
     elif kind != "blank":
         assert result["value"] == literal
