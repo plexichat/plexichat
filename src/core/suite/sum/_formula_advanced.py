@@ -717,11 +717,14 @@ def _parse_base(value: Any, base: int) -> Optional[int]:
     """Read base-``base`` text the way the conversions do, or ``None``.
 
     ``None`` means the text is not a number in that base, which the caller
-    turns into ``#NUM!``. The input is trimmed, upper-cased and stripped of a
-    single ``0X`` prefix; an empty remainder reads as 0.
+    turns into ``#NUM!``. The input is trimmed, upper-cased and -- for the
+    hexadecimal conversions only -- stripped of a single ``0X`` prefix; an
+    empty remainder reads as 0. ``X`` is not a binary or octal digit, so
+    stripping the prefix there turned ``BIN2DEC("0X10")`` into 2 instead of
+    ``#NUM!``.
     """
     text = _js_string(value).strip().upper()
-    if text.startswith("0X"):
+    if base == 16 and text.startswith("0X"):
         text = text[2:]
     result = 0
     for char in text:
@@ -1253,8 +1256,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 second = ref_text
             else:
                 first, second = ref_text.split(":", 1)
-            s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
-            s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
+            try:
+                s1, r1, c1 = parse_cell_ref(first, self._named_ranges)
+                s2, r2, c2 = parse_cell_ref(second, self._named_ranges)
+            except ValueError:
+                return REF_ERROR
             target = s1 or sheet
             rows_value = self._eval(args[1], sheet, seen, depth)
             if is_error(rows_value):
@@ -1276,6 +1282,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 if is_error(width_value):
                     return width_value
                 width = int(_to_number(width_value))
+            if height <= 0 or width <= 0:
+                # Excel needs a positive height and width; zero or negative
+                # spans are #REF!, not an empty block leaking out as a value.
+                return REF_ERROR
             # Return the range as a flat list
             result = []
             for r in range(r1 + rows, r1 + rows + height):

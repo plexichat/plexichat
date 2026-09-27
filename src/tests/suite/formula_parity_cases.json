@@ -4832,6 +4832,30 @@
       "expected": "error:#DIV/0!"
     },
     {
+      "formula": "OFFSET(A1,0,0,0,1)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "OFFSET(A1,0,0,1,0)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "OFFSET(A1,0,0,-1,1)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "BIN2DEC(\"0X10\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "OCT2DEC(\"0X10\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "HEX2DEC(\"0X10\")",
+      "expected": "number:16"
+    },
+    {
       "formula": "ISBLANK(A1:A3)",
       "expected": "error:#VALUE!"
     },
