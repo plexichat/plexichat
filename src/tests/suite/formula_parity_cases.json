@@ -5682,6 +5682,98 @@
     {
       "formula": "XLOOKUP(1,1,INDEX(A1:A5,0,1))",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LEFT(A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "RIGHT(A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "EXACT(A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUBSTITUTE(A1:A3,A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "REPLACE(1,\"x\",A1:A5,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "FIND(A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SEARCH(A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "REPT(A1:A3,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "TEXT(A1:A5,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NUMBERVALUE(A1:A5,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "COUNTIFS(A1:A3,A1:A3,1,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(FREQUENCY(A1:A5,A1:A5),1,A1:A5)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "SUMIFS(A1:A3,FREQUENCY(A1:A5,A1:A5),1)",
+      "expected": "number:6"
+    },
+    {
+      "formula": "SUMIF(A1:C1,10,A1:A3)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "AVERAGEIF(A1:A3,FREQUENCY(A1:A5,A1:A5),1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A1:A3+A5",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "A1:A3-A5",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "A1:A3=A1:A3",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A1:A3=1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A1:A3&1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A1:A3/1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "1+A1:A3",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A1:A3<1",
+      "expected": "error:#VALUE!"
     }
   ]
 }

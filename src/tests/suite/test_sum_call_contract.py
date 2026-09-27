@@ -162,6 +162,35 @@ _CASES = [
     ("SUMIF(1,A5,NA())", "error:#N/A"),
     ("SUMIF(1,A5,1)", "error:#DIV/0!"),
     ("AVERAGEIF(1,A5,1)", "error:#DIV/0!"),
+    # The fixed-arity text bodies read their slots in body order and scalarize
+    # each, so an earlier slot's coercion beats an error cell in a later range.
+    ("LEFT(A1:A3,A1:A5)", "error:#VALUE!"),
+    ("RIGHT(A1:A3,A1:A5)", "error:#VALUE!"),
+    ("EXACT(A1:A3,A1:A5)", "error:#VALUE!"),
+    ("SUBSTITUTE(A1:A3,A1:A3,A1:A5)", "error:#VALUE!"),
+    ('REPLACE(1,"x",A1:A5,1)', "error:#VALUE!"),
+    ("FIND(A1:A3,A1:A5)", "error:#VALUE!"),
+    ("SEARCH(A1:A3,A1:A5)", "error:#VALUE!"),
+    ("REPT(A1:A3,A1:A5)", "error:#VALUE!"),
+    # TEXT reads its format before its value, NUMBERVALUE its separators.
+    ("TEXT(A1:A5,A1:A3)", "error:#VALUE!"),
+    ("NUMBERVALUE(A1:A5,A1:A3)", "error:#VALUE!"),
+    # A written error argument propagates eagerly through the *IF family.
+    ("COUNTIFS(A1:A3,A1:A3,1,1/0)", "error:#DIV/0!"),
+    # Criteria and sum ranges align by flat index, so a function-returned
+    # matrix or a row against a column compares every position.
+    ("SUMIF(FREQUENCY(A1:A5,A1:A5),1,A1:A5)", "number:6"),
+    ("SUMIFS(A1:A3,FREQUENCY(A1:A5,A1:A5),1)", "number:6"),
+    ("SUMIF(A1:C1,10,A1:A3)", "number:3"),
+    # A range operand in a binary operator keeps its matrix until the operator
+    # applies it, then is scalarized.
+    ("A1:A3+A5", "error:#DIV/0!"),
+    ("A1:A3-A5", "error:#DIV/0!"),
+    ("A1:A3=A1:A3", "error:#VALUE!"),
+    ("A1:A3=1", "error:#VALUE!"),
+    ("A1:A3&1", "error:#VALUE!"),
+    ("A1:A3/1", "error:#VALUE!"),
+    ("1+A1:A3", "error:#VALUE!"),
 ]
 
 

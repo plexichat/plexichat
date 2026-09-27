@@ -704,6 +704,39 @@ cell, while the client returns the matrix. ``evaluate_cell`` now returns the
 matrix for a bare range, so ``A1:A5``, ``+A1:A5`` and ``(A1:A5)`` all spill the
 same way on both engines.
 
+**The fixed-arity text bodies read slots in body order.** The same scalar-slot
+rule the numeric families follow applies to the text functions, but their
+bodies read the slots in their own order -- ``TEXT`` reads its format before
+its value, ``NUMBERVALUE`` its separators before its text, ``LEFT`` its text
+before its count -- and a text slot's error has to surface when the body reads
+it. The bodies now read text through ``_slot_text`` (which propagates an error
+value) while ``_to_number`` already raises, so ``LEFT(A1:A3, A1:A5)`` is the
+first slot's #VALUE! and ``TEXT(A1:A5, A1:A3)`` the format slot's #VALUE!.
+``MID`` and the date constructors use the same path.
+
+**Criteria and sum ranges align by flat index.** Calling each function with an
+array-valued argument in *every* slot found the criteria/sum ranges aligning by
+(row, column) where the client flattens both row-major and aligns by flat
+index, so a function-returned matrix
+(``SUMIF(FREQUENCY(A1:A5, A1:A5), 1, A1:A5)``) or a row against a column read
+only the first element. SUMIF/AVERAGEIF and the ``*IFS`` family now align flat
+(``SUMIF(A1:C1, 10, A1:A3)`` is 3, not 1). The ``*IF``/``*IFS`` family also
+propagates a *written* error argument eagerly -- the client evaluates a
+non-range argument before the body -- so ``COUNTIFS(A1:A3, A1:A3, 1, 1/0)`` is
+#DIV/0!, while a criteria range stays deferred.
+
+**A range operand in a binary operator is scalarized.** Outside a function
+call the operator keeps a range operand a matrix until it applies it, so the
+other operand's error is not masked (``A1:A3 + A5`` is A5's #DIV/0!) and the
+operator then scalarizes it (``A1:A3 = A1:A3`` and ``A1:A3 & 1`` are the
+matrix's #VALUE!, not a bare FALSE or a joined string). One residual class
+stays open: when the *right* operand's evaluation *raises* its error (a nested
+call or expression) while the left is an error *cell*, the client's exception
+aborts before the operator's left-first error check, so ``A5 + NA()`` is #N/A
+there and #DIV/0! here. The two engines represent a nested failure as an
+exception and as a value respectively, so this ordering artifact is not
+aligned.
+
 ## Related code
 
 - `src/core/suite/sum/__init__.py:25` — `setup()` entry point
