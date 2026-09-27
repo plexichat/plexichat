@@ -918,21 +918,41 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             value = self._eval(node[1], sheet, seen, depth)
             if is_error(value):
                 return value
-            return -_to_number(value)
+            # A coercion failure is returned as an error *value*, like every
+            # other branch: raising past an enclosing error-catching function
+            # (``IFERROR(-"abc", 9)``, ``ISERROR(K1%)``) lost the failure,
+            # where the client engine's unary evaluator yields the value its
+            # body failed with.
+            try:
+                return -_to_number(value)
+            except ValueError as exc:
+                return str(exc)
         if kind == "%":
             value = self._eval(node[1], sheet, seen, depth)
             if is_error(value):
                 return value
-            return _to_number(value) / 100.0
+            try:
+                return _to_number(value) / 100.0
+            except ValueError as exc:
+                return str(exc)
         if kind == "cmp":
             # Comparison nodes are ("cmp", op, left, right).
             op = node[1]
             left = self._operand(node[2], sheet, seen, depth)
+            # Left-first, and the right operand is not evaluated once the left
+            # has failed. The right operand may *raise* (a nested coercion
+            # failure such as ``A5 + -"abc"`` or ``NA() + A1:A5/1``), and an
+            # uncaught raise would outrank the left error -- the same ordering
+            # the client engine's evaluateBinaryOp fixes by short-circuiting.
+            if is_error(left):
+                return left
             right = self._operand(node[3], sheet, seen, depth)
             return self._apply(op, left, right)
         if kind in ("+", "-", "*", "/", "^", "&"):
             op = kind
             left = self._operand(node[1], sheet, seen, depth)
+            if is_error(left):
+                return left
             right = self._operand(node[2], sheet, seen, depth)
             return self._apply(op, left, right)
         if kind == "call":
@@ -1019,13 +1039,21 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             except ValueError as exc:
                 return str(exc)
         if op == "/":
+            # The divisor is read first, as the client engine does: a zero
+            # divisor is #DIV/0! before the dividend is coerced. The dividend
+            # coercion is guarded too, so a nested left failure is returned as
+            # an error value instead of raising past an enclosing operator.
             try:
                 rn = _to_number(right)
             except ValueError as exc:
                 return str(exc)
             if rn == 0:
                 return DIV_ZERO
-            return _to_number(left) / rn
+            try:
+                ln = _to_number(left)
+            except ValueError as exc:
+                return str(exc)
+            return ln / rn
         if op == "^":
             try:
                 base = _to_number(left)
