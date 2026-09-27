@@ -504,6 +504,7 @@ _ARITY: Dict[str, Tuple[int, Optional[int], Optional[int]]] = {
     "NORMINVS": (1, 1, None),
     "NORMSDIST": (1, 1, None),
     "NORMSINV": (1, 1, None),
+    "NOW": (0, 0, None),
     "NOT": (1, 1, None),
     "NPER": (3, 5, None),
     "NPV": (2, None, None),
@@ -559,6 +560,7 @@ _ARITY: Dict[str, Tuple[int, Optional[int], Optional[int]]] = {
     "TANH": (1, 1, None),
     "TEXT": (2, 2, None),
     "TIME": (3, 3, None),
+    "TODAY": (0, 0, None),
     "TRIM": (1, 1, None),
     "TRIMMEAN": (2, 2, None),
     "TRUE": (0, 0, None),
@@ -1486,6 +1488,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         matrix = self._range_matrix(args[1], sheet, seen, depth)
         if not matrix:
             return N_A_ERROR
+        # An error written into the table propagates instead of reading as
+        # a row that never matches (see _computed_range_error): VLOOKUP over
+        # INDIRECT("A1:B5") is #REF!, not #N/A.
+        table_error = _computed_range_error(args[1], matrix)
+        if table_error is not None:
+            return table_error
         try:
             index = int(_to_number(self._eval(args[2], sheet, seen, depth))) - 1
         except ValueError as exc:

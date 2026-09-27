@@ -1189,6 +1189,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             matrix = self._range_matrix(args[1], sheet, seen, depth)
             if not matrix:
                 return N_A_ERROR
+            # An error written into the lookup range propagates; an error
+            # cell only fails to match (see _computed_range_error).
+            range_error = _computed_range_error(args[1], matrix)
+            if range_error is not None:
+                return range_error
             match_type = 1
             if len(args) == 3:
                 type_value = self._eval(args[2], sheet, seen, depth)
@@ -1291,10 +1296,16 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             matrix = self._range_matrix(args[1], sheet, seen, depth)
             if not matrix:
                 return N_A_ERROR
+            range_error = _computed_range_error(args[1], matrix)
+            if range_error is not None:
+                return range_error
             flat = [row[0] if row else None for row in matrix]
             result_flat = flat
             if len(args) == 3:
                 result_matrix = self._range_matrix(args[2], sheet, seen, depth)
+                result_error = _computed_range_error(args[2], result_matrix)
+                if result_error is not None:
+                    return result_error
                 result_flat = [row[0] if row else None for row in result_matrix]
             # LOOKUP assumes sorted ascending, finds last value <= lookup_value.
             # The comparison ranks types the way Excel orders them, because
@@ -1332,12 +1343,18 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 if is_error(value):
                     return value
                 lookup_matrix = [list(value)] if isinstance(value, list) else [[value]]
+            lookup_error = _computed_range_error(args[1], lookup_matrix)
+            if lookup_error is not None:
+                return lookup_error
             return_matrix = self._range_matrix(args[2], sheet, seen, depth)
             if not return_matrix:
                 value = self._eval(args[2], sheet, seen, depth)
                 if is_error(value):
                     return value
                 return_matrix = [list(value)] if isinstance(value, list) else [[value]]
+            return_error = _computed_range_error(args[2], return_matrix)
+            if return_error is not None:
+                return return_error
             match_mode = 0
             if len(args) >= 5:
                 mode_value = self._eval(args[4], sheet, seen, depth)
