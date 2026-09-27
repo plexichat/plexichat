@@ -39,6 +39,10 @@ from ._formula_shared import (
 # Kept beside the dispatch below so the two stay in step: an unknown name must
 # still report #NAME? rather than surface an error that happened to sit in its
 # arguments.
+# The pooled aggregates decide their own error precedence (see _aggregate),
+# so the blanket value-function propagation below must not pre-empt them.
+_AGGREGATE_ERROR_FUNCTIONS = frozenset({"SUM", "AVERAGE", "MIN", "MAX", "PRODUCT"})
+
 _VALUE_FUNCTIONS = frozenset(
     {
         "SUM",
@@ -211,6 +215,87 @@ _ADOPTED_STATISTICAL_FUNCTIONS = frozenset(
         "HARMEAN",
         "VARP",
         "STDEVP",
+    }
+)
+
+# The client engine's FLAT_RANGE_FUNCTIONS, LAZY_FUNCTIONS and
+# ERROR_TOLERANT_FUNCTIONS: the calls whose arguments are *not* evaluated
+# eagerly. A pooled range reader (SUM, MEDIAN, CORREL), a short-circuiting
+# branch (IF, CHOOSE), an error-classifying inspector (IS*) and the lazy
+# lookups (XLOOKUP, OFFSET) read their arguments for themselves, so an argument
+# that is an error must not be propagated before the body. Every other
+# function lets an error *argument* pass in argument order (see
+# _argument_error).
+_EAGER_ARGUMENT_ERROR_EXCLUDED = frozenset(
+    {
+        # Flat range readers (client FLAT_RANGE_FUNCTIONS).
+        "SUM",
+        "AVERAGE",
+        "COUNT",
+        "COUNTA",
+        "MIN",
+        "MAX",
+        "PRODUCT",
+        "COUNTBLANK",
+        "SUMPRODUCT",
+        "SUMIF",
+        "COUNTIF",
+        "AVERAGEIF",
+        "SUMIFS",
+        "COUNTIFS",
+        "AVERAGEIFS",
+        "AVERAGEA",
+        "MAXA",
+        "MINA",
+        "MEDIAN",
+        "MODE",
+        "LARGE",
+        "SMALL",
+        "RANK",
+        "PERCENTILE",
+        "QUARTILE",
+        "GEOMEAN",
+        "HARMEAN",
+        "AVEDEV",
+        "DEVSQ",
+        "STDEV",
+        "STDEVP",
+        "VAR",
+        "VARP",
+        "TRIMMEAN",
+        "PERCENTRANK",
+        "CORREL",
+        "RSQ",
+        "SLOPE",
+        "INTERCEPT",
+        "STEYX",
+        "FORECAST",
+        "FREQUENCY",
+        # Short-circuiting and error-classifying calls (client LAZY_FUNCTIONS).
+        "IF",
+        "IFERROR",
+        "IFNA",
+        "AND",
+        "OR",
+        "IFS",
+        "SWITCH",
+        "CHOOSE",
+        "ISREF",
+        "ISFORMULA",
+        "SHEET",
+        "SHEETS",
+        "XLOOKUP",
+        "OFFSET",
+        "ISERROR",
+        "ISNA",
+        "ISBLANK",
+        "ISNUMBER",
+        "ISTEXT",
+        "ISLOGICAL",
+        "ISNONTEXT",
+        "TYPE",
+        "ERROR.TYPE",
+        "PI",
     }
 )
 
@@ -832,9 +917,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return VALUE_ERROR
             if step is not None and len(args) % 2 != step:
                 return VALUE_ERROR
-        # The complex-number family is otherwise pooled; an error *argument*
-        # still propagates first, in argument order (see _argument_error).
-        if name in _COMPLEX_FUNCTIONS:
+        # The client engine evaluates every argument before it calls the
+        # function, so an error *argument* propagates in argument order --
+        # ahead of an error cell in a later range read, a length mismatch or a
+        # coercion failure. The pooled range readers and the lazy/classifying
+        # calls read their arguments for themselves and are excluded.
+        if name in _ARITY and name not in _EAGER_ARGUMENT_ERROR_EXCLUDED:
             error = self._argument_error(args, sheet, seen, depth)
             if error is not None:
                 return error
@@ -892,27 +980,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return VALUE_ERROR
             return name == "TRUE"
         if name in ("VLOOKUP", "HLOOKUP"):
-            error = self._argument_error(args, sheet, seen, depth)
-            if error is not None:
-                return error
             return self._lookup(name, args, sheet, seen, depth)
-        if name in ("INDEX", "MATCH", "INDIRECT", "LOOKUP"):
+        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP", "XLOOKUP"):
             # Raw arguments, before the range expansion below: these read
             # their ranges cell by cell, so expanding every range up front
             # propagated an error cell the lookup never touches --
             # INDEX(A1:A5, 1) was #DIV/0! when A5 holds 1/0, where the
             # client engine (and Excel) answer A1. VLOOKUP above is the
-            # same shape for the same reason. An error *argument* still
-            # propagates first, in argument order, as the client's eager
-            # evaluation throws it before the lookup runs.
-            error = self._argument_error(args, sheet, seen, depth)
-            if error is not None:
-                return error
-            return self._lookup_advanced(name, args, sheet, seen, depth)
-        if name in ("XLOOKUP", "OFFSET"):
-            # XLOOKUP reads its arrays lazily and answers a lookup array's
-            # error cell as "not found" rather than propagating it, so its
-            # arguments are not pre-checked.
+            # same shape for the same reason.
             return self._lookup_advanced(name, args, sheet, seen, depth)
         if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):
             return self._criteria(name, args, sheet, seen, depth)
@@ -965,8 +1040,10 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         # _ERROR_TOLERANT_FUNCTIONS), and the IS* family answers a question
         # *about* the error rather than failing on it.
         if (
-            name in _VALUE_FUNCTIONS or name in _COMPLEX_FUNCTIONS
-        ) and name not in _ERROR_TOLERANT_FUNCTIONS:
+            (name in _VALUE_FUNCTIONS or name in _COMPLEX_FUNCTIONS)
+            and name not in _ERROR_TOLERANT_FUNCTIONS
+            and name not in _AGGREGATE_ERROR_FUNCTIONS
+        ):
             for value, from_ref in zip(values, from_reference):
                 # COUNTBLANK answers a question about a *cell*, and an error
                 # cell is not blank, so one read from a reference is counted
@@ -1171,7 +1248,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return len(numbers)
         # SUM/AVERAGE/MIN/MAX/PRODUCT propagate an error operand. Filtering it
         # out with the non-numeric cells silently returned a plausible but
-        # wrong total (``SUM(1, 1/0)`` was 1, not ``#DIV/0!``).
+        # wrong total (``SUM(1, 1/0)`` was 1, not ``#DIV/0!``). An error
+        # *written into* the formula propagates ahead of an error cell in a
+        # referenced range, in argument order, so ``SUM(A1:A5, NA())`` is #N/A
+        # while ``SUM(A1:A5)`` is the range's #DIV/0!.
+        for value, ranged in zip(values, from_reference):
+            if is_error(value) and not ranged:
+                return value
         for value in values:
             if is_error(value):
                 return value
