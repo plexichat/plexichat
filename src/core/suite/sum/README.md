@@ -568,14 +568,16 @@ Footer (32 bytes): SHA-256 checksum of uncompressed payload
 
 ### Engine-to-engine differences
 
-None. The scalar-slot range rule above is pinned (`LEN(A1:A3)` is `#VALUE!`
-and `LEN(A1:A5)` is `#DIV/0!` on both sides), and so are the arity-first rule,
-the propagation of an error operand and the per-slot range rule -- the shared
-case table holds the engines to all of them. The exhaustive differential sweep
-(`tests/unit/formula-sweep.test.mjs` in the client repository) calls every
-registered function at arities zero through four over numbers, text, an error,
-a blank, a logical, a cell, a multi-cell range and the error cell, and now
-agrees on every one. Closing the last gaps needed both engines:
+**Per argument, none.** The scalar-slot range rule above is pinned
+(`LEN(A1:A3)` is `#VALUE!` and `LEN(A1:A5)` is `#DIV/0!` on both sides), and so
+are the arity-first rule, the propagation of an error operand and the per-slot
+range rule -- the shared case table holds the engines to all of them. The
+exhaustive differential sweep (`tests/unit/formula-sweep.test.mjs` in the
+client repository) calls every registered function at arities zero through
+four over numbers, text, an error, a blank, a logical, a cell, a multi-cell
+range and the error cell, and now agrees on every one. It *repeats one operand
+at every slot*, though, so it never compares two different operands in one
+call. Closing its last gaps needed both engines:
 
 - the probes compared a **matrix result** (`FREQUENCY`) by identity, so two
   matching matrices never read as equal. They now compare a matrix element by
@@ -591,7 +593,32 @@ agrees on every one. Closing the last gaps needed both engines:
   to return a raw matrix for a range result where this engine answers the
   error.
 
-A new disagreement fails the sweep, so one cannot slip in unnoticed.
+**Mixed operands, one open class.** A second, mixed-operand sweep calls each
+covered function with two different operands (and a rotating triple). This
+engine now checks every eager argument in `_call`, so an error *argument*
+propagates in argument order ahead of a later range's error cell, and the
+pooled aggregates propagate a formula-written error ahead of a referenced
+error cell. What is still open is a call whose **first** argument fails a
+coercion (a text where a number or a complex value belongs) while a **later**
+argument is a multi-cell range holding an error cell: the client processes the
+first argument and answers its `#VALUE!`/`#NUM!`, while this engine still
+reaches the range's error. The functions with that residue are listed as
+`OPEN_MIXED` in the sweep and excluded from the mixed pass:
+
+- `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `POWER`, `CEILING`, `FLOOR`
+- the base conversions and bitwise set (`BIN2DEC`...`OCT2HEX`, `BITAND`...
+  `BITXOR`), `DELTA`, `GESTEP`, `ERF`, `ATAN2`, `BESSELJ`, `BESSELY`
+- the date shifts (`DAYS`, `EDATE`, `EOMONTH`, `WEEKDAY`, `WEEKNUM`,
+  `NETWORKDAYS`, `WORKDAY`)
+- the lookups `MATCH`, `LOOKUP`, `VLOOKUP`, `HLOOKUP`
+- `SUMPRODUCT`, `FORECAST`, `RANK`, `PERCENTRANK`, `MULTINOMIAL`, `CONCAT`,
+  `CONCATENATE` and the `IM*` pair forms (`IMDIV`, `IMSUB`, `IMMOD`,
+  `IMPRODUCT`, `IMSUM`)
+
+Closing the class needs per-slot coercion in those families -- this engine
+reads their arguments pooled -- so it is a project of its own rather than a
+quiet allowance. A divergence in any *other* function fails the mixed sweep,
+so a new one cannot slip in unnoticed.
 
 ## Related code
 
