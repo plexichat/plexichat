@@ -3420,11 +3420,23 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name == "FREQUENCY":
             if len(values) != 2:
                 return VALUE_ERROR
-            data = _number_values(_flatten_argument(values[0]))
-            bins = _number_values(_flatten_argument(values[1]))
-            result = [0] * (len(bins) + 1)
-            for value in data:
-                for index, edge in enumerate(bins):
+            # Read the two arrays through ``_expand_arg`` rather than the pooled
+            # ``values``, so the provenance of each entry survives: an error
+            # *written into* the formula propagates (``FREQUENCY(1/0, 1/0)`` is
+            # ``#DIV/0!``, as Excel and the client engine answer) while an error
+            # stored in a referenced *cell* is skipped the way text is. Reading
+            # the pooled list dropped both, so a computed error answered ``[0]``
+            # here where the client propagated it -- a divergence the sweep's
+            # matrix-comparison allowance had been hiding.
+            data, data_ref = self._expand_arg(args[0], sheet, seen, depth)
+            bins, bins_ref = self._expand_arg(args[1], sheet, seen, depth)
+            error = _literal_error(data, data_ref) or _literal_error(bins, bins_ref)
+            if error is not None:
+                return error
+            edges = _number_values(bins)
+            result = [0] * (len(edges) + 1)
+            for value in _number_values(data):
+                for index, edge in enumerate(edges):
                     if value <= edge:
                         result[index] += 1
                         break

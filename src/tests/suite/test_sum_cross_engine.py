@@ -581,6 +581,11 @@ def _typed(value: Any) -> Dict[str, Any]:
         return {"kind": "number", "value": number}
     if value is None:
         return {"kind": "blank"}
+    if isinstance(value, (list, tuple)):
+        # A function that answers a matrix (FREQUENCY, the dynamic-array
+        # family) encodes element by element, so a matching matrix reads as
+        # equal instead of diverging on list identity.
+        return {"kind": "array", "value": [_typed(item) for item in value]}
     if isinstance(value, str) and value.startswith("#"):
         return {"kind": "error", "value": value}
     return {"kind": "text", "value": value}
@@ -630,6 +635,13 @@ def _same(ours: Dict[str, Any], theirs: Dict[str, Any]) -> bool:
         if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
             return False
         return abs(left - right) < 1e-9
+    if ours["kind"] == "array":
+        left, right = ours.get("value"), theirs.get("value")
+        if not isinstance(left, list) or not isinstance(right, list):
+            return False
+        if len(left) != len(right):
+            return False
+        return all(_same(item, other) for item, other in zip(left, right))
     return ours.get("value") == theirs.get("value")
 
 

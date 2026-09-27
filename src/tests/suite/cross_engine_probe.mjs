@@ -46,6 +46,13 @@ function typed(value) {
         return { kind: 'number', value };
     }
     if (value === null || value === undefined) return { kind: 'blank' };
+    if (Array.isArray(value)) {
+        // A function that answers a matrix (FREQUENCY, the dynamic-array
+        // family) encodes element by element. Without this the array fell
+        // through to ``text`` and two matching matrices never read as equal,
+        // because an array is compared by identity on the Python side.
+        return { kind: 'array', value: value.map(typed) };
+    }
     if (typeof value === 'string' && value.startsWith('#')) {
         return { kind: 'error', value };
     }

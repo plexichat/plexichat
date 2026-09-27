@@ -226,8 +226,10 @@ does: an error cell in the range propagates, a one-cell range is that cell,
 and a range of more than one cell is `#VALUE!` -- never a comma-joined string.
 This applies to every scalar slot -- `_scalar_argument` for
 `LARGE`/`RANK`/`PERCENTRANK` and the regressions, `_read_number` for the
-financial and statistical arguments, the criteria operand and the
-`IF`/`NOT`/`SWITCH` slots -- and it is applied *per argument* rather than
+financial and statistical arguments, the criteria operand and the whole
+branching family's slots (`IF`/`NOT`/`IFERROR`/`IFNA`/`IFS`/`SWITCH`/`CHOOSE`
+conditions, branch values, search keys, results and fallback) -- and it is
+applied *per argument* rather than
 flattening the range into the pooled list, so `LARGE(A1:A5, A1:A5)` propagates
 the error cell from the rank argument. The IS*/TYPE inspectors are the one
 refinement: they answer a question *about* one value and treat an error as
@@ -564,25 +566,32 @@ Body:  zstd-compressed (or raw) SQLite payload
 Footer (32 bytes): SHA-256 checksum of uncompressed payload
 ```
 
-### Still-open engine-to-engine differences
+### Engine-to-engine differences
 
-The scalar-slot range rule above is pinned: `LEN(A1:A3)` is `#VALUE!` and
-`LEN(A1:A5)` is `#DIV/0!` on both sides, and the shared case table holds the
-engines to it. The arity-first rule, the propagation of an error operand and
-the per-slot range rule are pinned the same way. One class of disagreement
-remains open. It was found by the exhaustive differential sweep
-(`tests/unit/formula-sweep.test.mjs` in the client repository), which calls
-every registered function at arities zero through four over numbers, text, an
-error, a blank, a logical, a cell, a multi-cell range and the error cell:
+None. The scalar-slot range rule above is pinned (`LEN(A1:A3)` is `#VALUE!`
+and `LEN(A1:A5)` is `#DIV/0!` on both sides), and so are the arity-first rule,
+the propagation of an error operand and the per-slot range rule -- the shared
+case table holds the engines to all of them. The exhaustive differential sweep
+(`tests/unit/formula-sweep.test.mjs` in the client repository) calls every
+registered function at arities zero through four over numbers, text, an error,
+a blank, a logical, a cell, a multi-cell range and the error cell, and now
+agrees on every one. Closing the last gaps needed both engines:
 
-- a **matrix result** such as `FREQUENCY`: the differential probes compare a
-  matrix by identity, so the two sides never read as equal even when the
-  counts match.
+- the probes compared a **matrix result** (`FREQUENCY`) by identity, so two
+  matching matrices never read as equal. They now compare a matrix element by
+  element, which exposed -- and let the shared table pin -- a real
+  disagreement: this engine dropped a computed error operand
+  (`FREQUENCY(1/0, 1/0)` answered `[0]`) where the client propagated
+  `#DIV/0!`. `FREQUENCY` reads its two arrays through the same
+  provenance-aware rule as the criteria functions, so an error written into
+  the formula propagates while an error cell in a referenced range is skipped.
+- the branching family (`IF`, `IFERROR`, `IFNA`, `IFS`, `SWITCH`, `CHOOSE`)
+  reads **every** slot -- conditions, branch values, search keys, results and
+  the fallback -- through the pooled rule; the client engine's branches used
+  to return a raw matrix for a range result where this engine answers the
+  error.
 
-The sweep now agrees on every function at every arity over the whole operand
-alphabet; the only remaining divergence is that matrix comparison, which is an
-artifact of the probe rather than a different answer. A new disagreement
-fails the sweep, so one cannot slip in unnoticed.
+A new disagreement fails the sweep, so one cannot slip in unnoticed.
 
 ## Related code
 

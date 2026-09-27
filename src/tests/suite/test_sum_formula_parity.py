@@ -29,7 +29,7 @@ TABLE = json.loads(TABLE_PATH.read_text())
 # stay byte-identical" from a comment into a test: edit either copy without
 # mirroring it and the digest below stops matching, which fails *here* rather
 # than leaving the two engines silently asserting different contracts.
-TABLE_SHA256 = "fea1b16136fb9e0737e8746c5c69340733dda2aa9ec51133ad8c0b5677265fc0"
+TABLE_SHA256 = "867a83dfcf9ef1f1e49c7e3926152aee0ba01141e644a99673611ae5b539e6d8"
 
 
 def test_case_table_matches_the_shared_digest():
@@ -107,7 +107,11 @@ def _resolver(sheet: Optional[str], row: int, column: int) -> Optional[Dict[str,
 
 
 def _expected(raw: str) -> Any:
-    """Decode a typed expectation from the table."""
+    """Decode a typed expectation from the table.
+
+    An array value (a matrix-returning function such as FREQUENCY) is written
+    as ``array:`` followed by its typed elements joined with ``|``.
+    """
     kind, _, literal = raw.partition(":")
     if kind == "number":
         return float(literal)
@@ -119,6 +123,8 @@ def _expected(raw: str) -> Any:
         return literal
     if kind == "blank":
         return None
+    if kind == "array":
+        return [_expected(item) for item in literal.split("|")]
     raise AssertionError(f"unknown expectation {raw!r}")
 
 
@@ -130,6 +136,8 @@ def _kind_of(value: Any) -> str:
         return "number"
     if value is None:
         return "blank"
+    if isinstance(value, (list, tuple)):
+        return "array"
     if isinstance(value, str) and value.startswith("#"):
         return "error"
     return "text"
