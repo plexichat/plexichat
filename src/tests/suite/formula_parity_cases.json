@@ -5866,6 +5866,78 @@
     {
       "formula": "IFERROR(K1%,9)",
       "expected": "number:9"
+    },
+    {
+      "formula": "1:1",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A:A",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A1 : B2",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "OFFSET(A1,0,0):B2",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "$A$1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "$A1",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUM($A$1:$B$2)",
+      "expected": "number:3"
+    },
+    {
+      "formula": "MATCH(1,1,0.5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "MATCH(A1:A5,1,0.5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(A1:A3,FALSE,0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VLOOKUP(1,A1:B2,1.9)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "VLOOKUP(-1,0.5,2)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "VLOOKUP(A1:A5,A1:A5,2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "HLOOKUP(\"a\",\"\",1e3)",
+      "expected": "error:#REF!"
+    },
+    {
+      "formula": "OFFSET(A2,0.5,0)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "OFFSET(A2,0.5,A1)",
+      "expected": "text:two"
+    },
+    {
+      "formula": "SUMIF(+(A5),1)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "OFFSET(+(A1),0,0)",
+      "expected": "number:1"
     }
   ]
 }
