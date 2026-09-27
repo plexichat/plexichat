@@ -293,7 +293,7 @@ class _Parser:
 
     def _expr(self) -> Any:
         # comparison / equality (lowest precedence)
-        node = self._additive()
+        node = self._concat()
         while self._peek().kind == "op" and self._peek().value in (
             "<",
             ">",
@@ -303,13 +303,25 @@ class _Parser:
             "<>",
         ):
             op = self._advance().value
-            right = self._additive()
+            right = self._concat()
             node = ("cmp", op, node, right)
+        return node
+
+    def _concat(self) -> Any:
+        # ``&`` binds looser than arithmetic but tighter than comparison, as
+        # in Excel: ``1&1+1`` is ``1&(1+1)`` ("12") and ``1=1&1`` is
+        # ``1=(1&1)`` (FALSE). Sharing the additive level made ``1&1+1``
+        # ``(1&1)+1`` (the number 12).
+        node = self._additive()
+        while self._peek().kind == "op" and self._peek().value == "&":
+            self._advance()
+            right = self._additive()
+            node = ("&", node, right)
         return node
 
     def _additive(self) -> Any:
         node = self._multiplicative()
-        while self._peek().kind == "op" and self._peek().value in ("+", "-", "&"):
+        while self._peek().kind == "op" and self._peek().value in ("+", "-"):
             op = self._advance().value
             right = self._multiplicative()
             node = (op, node, right)
