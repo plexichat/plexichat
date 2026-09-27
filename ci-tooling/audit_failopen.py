@@ -101,8 +101,9 @@ import argparse
 import ast
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import NamedTuple
 
 # ---------------------------------------------------------------------------
 # Classification vocabulary
@@ -180,9 +181,7 @@ def _is_dependency(symbol: str) -> bool:
     ``perms`` ...) are truthiness checks, not dependency guards, and must not
     be reported as fail-open authorization guards.
     """
-    if symbol in DEP_ATTRS or symbol in DEP_NAMES:
-        return True
-    return False
+    return symbol in DEP_ATTRS or symbol in DEP_NAMES
 
 
 # Authorization-oriented calls; a guard block that skips one of these without a
@@ -805,9 +804,12 @@ def _test_references_probe(
 def _probe_is_called(fn: ast.AST, probes: dict[str, tuple[str, int]]) -> bool:
     """True when the function actually invokes one of the probed helpers."""
     for node in ast.walk(fn):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in probes:
-                return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in probes
+        ):
+            return True
     return False
 
 
@@ -1746,9 +1748,9 @@ def _collection_and_row_names(fn: ast.AST) -> tuple[set[str], set[str]]:
             if value is not None and targets:
                 reads = _loaded_names(value)
                 collection = False
-                if _is_collection_reader(value):
-                    collection = True
-                elif isinstance(value, comps) and (reads & collections):
+                if _is_collection_reader(value) or (
+                    isinstance(value, comps) and (reads & collections)
+                ):
                     collection = True
                 elif _simple_call_name(value) in FLAG_CALLS:
                     collection = bool(reads & collections)
