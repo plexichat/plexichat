@@ -1004,6 +1004,22 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._branched(name, args, sheet, seen, depth)
         if name in _STRUCTURED_FUNCTIONS:
             return self._structured(name, args, sheet, seen, depth)
+        if name in (
+            "ROUND",
+            "ROUNDUP",
+            "ROUNDDOWN",
+            "MOD",
+            "POWER",
+            "CEILING",
+            "FLOOR",
+        ):
+            # Scalar slots, read per argument in client order: a coercion
+            # failure in an earlier slot beats an error cell in a later
+            # range (ROUND(A1:A5, "x") is #VALUE!, not the range's #DIV/0!),
+            # which the pooled propagation below could not express -- it
+            # scanned the flattened values first and always returned the
+            # error cell. ROUND reads its digits first, like the client.
+            return self._double_args(name, args, sheet, seen, depth)
         # The numeric families compute in double precision, and the client
         # engine's helpers never raise: an overflow there is an Infinity or a
         # NaN that its result check turns into #NUM!. Python's arithmetic
@@ -1080,16 +1096,6 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._information(name, values)
         if name in ("LEFT", "RIGHT", "MID"):
             return self._text_slice(name, values)
-        if name in (
-            "ROUND",
-            "ROUNDUP",
-            "ROUNDDOWN",
-            "MOD",
-            "POWER",
-            "CEILING",
-            "FLOOR",
-        ):
-            return self._double(name, values)
         if name in ("CONCAT", "CONCATENATE"):
             return "".join(_to_text(value) for value in values)
         if name == "EXACT":
@@ -1363,57 +1369,70 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return 1
         return VALUE_ERROR
 
-    def _double(self, name: str, values: List[Any]) -> Any:
-        # Fixed arity, as above: MOD(1, 1, 1) is #VALUE!, not 0.
-        if len(values) != 2:
+    def _scalar_slot(
+        self, node: Any, sheet: Optional[str], seen: set, depth: int
+    ) -> Tuple[Optional[str], Any]:
+        """Read one scalar slot through the pooled range rule.
+
+        An error cell in the slot propagates, a one-cell slot is that cell
+        and anything else is #VALUE! -- the client engine's ``scalarize``.
+        Returns ``(error, value)``.
+        """
+        values, _ = self._expand_arg(node, sheet, seen, depth)
+        for value in values:
+            if is_error(value):
+                return value, None
+        if len(values) != 1:
+            return VALUE_ERROR, None
+        return None, values[0]
+
+    @staticmethod
+    def _coerce_slot(value: Any) -> Tuple[Optional[str], Optional[float]]:
+        """Coerce one scalar slot value, returning ``(error, number)``."""
+        if is_error(value):
+            return value, None
+        try:
+            return None, _to_number(value)
+        except ValueError as exc:
+            message = str(exc)
+            return (message if message in ERROR_CODES else VALUE_ERROR), None
+
+    def _double_args(
+        self, name: str, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """ROUND/MOD/POWER/CEILING/FLOOR over raw argument nodes.
+
+        Each slot is reduced and coerced in client order -- the first slot
+        first, except ROUND which reads its digits first like the client
+        engine's ``roundDigits`` -- so a coercion failure in the earlier slot
+        beats an error cell in a later range. The pooled propagation in
+        ``_call`` cannot express that: it scans the flattened values first
+        and always answers the error cell.
+        """
+        if len(args) != 2:
             return VALUE_ERROR
-        a, b = values[0], values[1]
-        if is_error(a):
-            return a
-        if name == "MOD":
-            try:
-                divisor = _to_number(b)
-            except ValueError as exc:
-                return str(exc)
-            if divisor == 0:
-                return DIV_ZERO
-            # Excel's MOD is n - d*INT(n/d), so the result carries the sign of
-            # the divisor. math.fmod truncates toward zero instead and returned
-            # the dividend's sign, so MOD(-7, 2) was -1 where Excel says 1.
-            number = _to_number(a)
-            return number - divisor * math.floor(number / divisor)
-        if name == "POWER":
-            try:
-                base = _to_number(a)
-                exponent = _to_number(b)
-            except ValueError as exc:
-                return str(exc)
-            # A negative base with a fractional exponent and any overflow are
-            # #NUM!; zero to a negative power is 1 / 0**n, i.e. #DIV/0!.
-            if base == 0 and exponent < 0:
-                return DIV_ZERO
-            try:
-                return math.pow(base, exponent)
-            except (ValueError, OverflowError):
-                return NUM_ERROR
         if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):
+            error, raw_digits = self._scalar_slot(args[1], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, digits_number = self._coerce_slot(raw_digits)
+            if error is not None or digits_number is None:
+                return error or VALUE_ERROR
+            error, raw_number = self._scalar_slot(args[0], sheet, seen, depth)
+            if error is not None:
+                return error
+            error, number = self._coerce_slot(raw_number)
+            if error is not None or number is None:
+                return error or VALUE_ERROR
             try:
-                digits = int(_to_number(b))
+                digits = int(digits_number)
             except (ValueError, OverflowError) as exc:
-                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
-            # Spreadsheets cap rounding precision at 15 digits. Without a
-            # clamp, ``ROUND(1, 99999999999)`` computes ``10 ** digits`` as a
-            # multi-gigabyte big integer and stalls/OOMs the viewport read.
+                message = str(exc)
+                return message if message in ERROR_CODES else VALUE_ERROR
             digits = max(-15, min(digits, 15))
             factor = 10**digits
-            scaled = _to_number(a) * factor
+            scaled = number * factor
             magnitude = abs(scaled)
-            # Excel breaks ties away from zero, so ``round()`` (which breaks
-            # them to even) and a raw ``ceil``/``floor`` were both wrong for
-            # negative numbers: ROUND(-2.5) gave -2 and ROUNDUP(-2.1) gave -2.
-            # A relative epsilon absorbs binary-float noise (2.675 * 100 lands
-            # just below 267.5) without moving a genuinely sub-half value; it
-            # is capped so it can never shift a large magnitude by a step.
             epsilon = min(magnitude * 1e-12, 1e-9)
             if name == "ROUND":
                 rounded = math.floor(magnitude + 0.5 + epsilon)
@@ -1422,37 +1441,47 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             else:
                 rounded = math.floor(magnitude + epsilon)
             return math.copysign(rounded, scaled) / factor
-        if name in ("CEILING", "FLOOR"):
-            try:
-                number = _to_number(a)
-                significance = _to_number(b)
-            except (ValueError, OverflowError) as exc:
-                return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
-            if significance == 0:
+        error, raw_a = self._scalar_slot(args[0], sheet, seen, depth)
+        if error is not None:
+            return error
+        error, a = self._coerce_slot(raw_a)
+        if error is not None or a is None:
+            return error or VALUE_ERROR
+        error, raw_b = self._scalar_slot(args[1], sheet, seen, depth)
+        if error is not None:
+            return error
+        error, b = self._coerce_slot(raw_b)
+        if error is not None or b is None:
+            return error or VALUE_ERROR
+        if name == "MOD":
+            if b == 0:
                 return DIV_ZERO
-            # Excel rejects a positive number with a negative significance
-            # instead of silently returning a multiple of it.
-            if number > 0 and significance < 0:
+            return a - b * math.floor(a / b)
+        if name == "POWER":
+            if a == 0 and b < 0:
+                return DIV_ZERO
+            try:
+                return math.pow(a, b)
+            except (ValueError, OverflowError):
                 return NUM_ERROR
-            if number == 0:
+        if name in ("CEILING", "FLOOR"):
+            if b == 0:
+                return DIV_ZERO
+            if a > 0 and b < 0:
+                return NUM_ERROR
+            if a == 0:
                 return 0.0
-            # When the signs match the magnitude rounds away from zero. When
-            # the number is negative and the significance positive it is the
-            # mirror image: CEILING moves toward zero and FLOOR away from it.
-            same_sign = (number < 0) == (significance < 0)
+            same_sign = (a < 0) == (b < 0)
             away_from_zero = same_sign == (name == "CEILING")
-            magnitude = abs(number) / abs(significance)
+            magnitude = abs(a) / abs(b)
             epsilon = min(magnitude * 1e-12, 1e-9)
             if away_from_zero:
                 multiple = math.ceil(magnitude - epsilon)
             else:
                 multiple = math.floor(magnitude + epsilon)
-            result = multiple * abs(significance)
-            if number < 0:
+            result = multiple * abs(b)
+            if a < 0:
                 result = -result
-            # Snap to the 15 significant digits a spreadsheet keeps so the
-            # multiply cannot leak binary noise (FLOOR(1.58, 0.1) was
-            # 1.5000000000000002).
             return float(f"{result:.15g}")
         return VALUE_ERROR
 

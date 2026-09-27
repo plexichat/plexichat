@@ -605,7 +605,6 @@ first argument and answers its `#VALUE!`/`#NUM!`, while this engine still
 reaches the range's error. The functions with that residue are listed as
 `OPEN_MIXED` in the sweep and excluded from the mixed pass:
 
-- `ROUND`, `ROUNDUP`, `ROUNDDOWN`, `MOD`, `POWER`, `CEILING`, `FLOOR`
 - the base conversions and bitwise set (`BIN2DEC`...`OCT2HEX`, `BITAND`...
   `BITXOR`), `DELTA`, `GESTEP`, `ERF`, `ATAN2`, `BESSELJ`, `BESSELY`
 - the date shifts (`DAYS`, `EDATE`, `EOMONTH`, `WEEKDAY`, `WEEKNUM`,
@@ -617,7 +616,11 @@ reaches the range's error. The functions with that residue are listed as
 
 Closing the class needs per-slot coercion in those families -- this engine
 reads their arguments pooled -- so it is a project of its own rather than a
-quiet allowance. A divergence in any *other* function fails the mixed sweep,
+quiet allowance. The `ROUND`/`ROUNDUP`/`ROUNDDOWN`/`MOD`/`POWER`/`CEILING`/
+`FLOOR` family already reads each slot separately in client order (with
+`ROUND` reading its digits first and `MOD` its dividend first), so those
+seven are held to full mixed-operand agreement. A divergence in any *other*
+function fails the mixed sweep,
 so a new one cannot slip in unnoticed.
 
 ## Related code

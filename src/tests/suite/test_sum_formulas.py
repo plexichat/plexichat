@@ -944,6 +944,52 @@ def test_mod_carries_the_sign_of_the_divisor():
     assert _eval("MOD(7, 3)") == 1.0
 
 
+def test_double_family_reads_scalar_slots_in_client_order():
+    """ROUND/MOD/POWER/CEILING/FLOOR coerce per slot, in argument order.
+
+    A coercion failure in the earlier slot beats an error cell in a later
+    range: the client engine coerces each argument as it goes, while the
+    pooled reader used to scan the flattened values first and always answer
+    the error cell. ROUND reads its digits first, like the client's
+    ``roundDigits``; the rest read the first slot first, so ``MOD("x", 0)``
+    is #VALUE! rather than the #DIV/0! the divisor-first read gave.
+    """
+    grid = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 2, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 3, "formula": None},
+        ("1", 3, 0): {"value_type": "text", "value": "x", "formula": None},
+        ("1", 4, 0): {
+            "value_type": "formula",
+            "value": None,
+            "formula": "1/0",
+        },
+    }
+    resolver = _resolver(grid)
+
+    def run(formula):
+        return FormulaEvaluator(resolver).evaluate_cell("1", 9, 9, formula)
+
+    # The earlier slot's coercion failure wins over the later range's error.
+    assert run('ROUND(A1:A5, "x")') == VALUE_ERROR
+    assert run('ROUNDUP(A1:A5, "x")') == VALUE_ERROR
+    assert run('ROUNDDOWN(A1:A5, "x")') == VALUE_ERROR
+    assert run('MOD("x", A1:A5)') == VALUE_ERROR
+    assert run('POWER("x", A1:A5)') == VALUE_ERROR
+    assert run('CEILING("x", A1:A5)') == VALUE_ERROR
+    assert run('FLOOR("x", A1:A5)') == VALUE_ERROR
+    # The later slot's range error wins when the earlier slot coerces cleanly.
+    assert run('ROUND("x", A1:A5)') == DIV_ZERO
+    assert run('MOD(A1:A5, "x")') == DIV_ZERO
+    assert run('POWER(A1:A5, "x")') == DIV_ZERO
+    assert run('CEILING(A1:A5, "x")') == DIV_ZERO
+    # MOD reads its dividend first: a bad dividend beats a zero divisor.
+    assert run('MOD("x", 0)') == VALUE_ERROR
+    # A multi-cell range with no error cell of its own is #VALUE!.
+    assert run("ROUND(A1:A2, 0)") == VALUE_ERROR
+    assert run("MOD(A1:A2, 1)") == VALUE_ERROR
+
+
 def test_power_and_caret_reject_non_finite_results():
     """POWER and ^ report Excel's errors instead of returning non-finite data.
 
