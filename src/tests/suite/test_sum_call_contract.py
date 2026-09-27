@@ -18,7 +18,13 @@ corners below, where this engine disagreed with the client engine:
   to match (``COUNTIF(A5, 1)`` is 0 when A5 holds ``1/0``);
 * a lookup over a range holding an error cell failed outright
   (``INDEX(A1:A5, 2)`` was ``#DIV/0!``) because the ranges were expanded
-  before the lookup ran, instead of reading cell by cell.
+  before the lookup ran, instead of reading cell by cell;
+* a binary operator evaluated the right operand before inspecting the left,
+  so a *thrown* right-side failure outranked an error *cell* on the left
+  (``A5+NA()`` was ``#N/A``) instead of answering the left error ``#DIV/0!``;
+* the exact ``MATCH`` key was kept a matrix that "compares equal to nothing"
+  (``MATCH(A1:A5, A1:A5, 0)`` answered ``#N/A``) instead of reading it as one
+  scalar slot -- an error cell propagates and a multi-cell key is ``#VALUE!``.
 
 Each answer is written the way the shared table writes one --
 ``kind:value`` -- and a finite number is compared with a tolerance.
@@ -191,6 +197,22 @@ _CASES = [
     ("A1:A3&1", "error:#VALUE!"),
     ("A1:A3/1", "error:#VALUE!"),
     ("1+A1:A3", "error:#VALUE!"),
+    # A binary operator answers the left operand's error before evaluating the
+    # right: an error cell on the left beats a thrown failure on the right.
+    ("A5+NA()", "error:#DIV/0!"),
+    ("(A5)+NA()", "error:#DIV/0!"),
+    ("A5&NA()", "error:#DIV/0!"),
+    ('A5+ABS("x")', "error:#DIV/0!"),
+    ("NA()+A5", "error:#N/A"),
+    # MATCH reads its key as one scalar slot in the exact branch -- an error
+    # cell propagates, a multi-cell key is #VALUE! -- while the approximate
+    # branches rank the key and answer #N/A.
+    ("MATCH(A1:A5,A1:A5,0)", "error:#DIV/0!"),
+    ("MATCH(A1:A2,A1:A5,0)", "error:#VALUE!"),
+    ("MATCH(A1:A5,A1:A5,1)", "error:#DIV/0!"),
+    ("MATCH(A1:A2,A1:A5,1)", "error:#VALUE!"),
+    ("LOOKUP(A1:A2,A1:A5)", "error:#VALUE!"),
+    ("XLOOKUP(A1:A2,A1:A5,1)", "error:#VALUE!"),
 ]
 
 

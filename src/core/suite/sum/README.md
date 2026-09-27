@@ -729,13 +729,21 @@ non-range argument before the body -- so ``COUNTIFS(A1:A3, A1:A3, 1, 1/0)`` is
 call the operator keeps a range operand a matrix until it applies it, so the
 other operand's error is not masked (``A1:A3 + A5`` is A5's #DIV/0!) and the
 operator then scalarizes it (``A1:A3 = A1:A3`` and ``A1:A3 & 1`` are the
-matrix's #VALUE!, not a bare FALSE or a joined string). One residual class
-stays open: when the *right* operand's evaluation *raises* its error (a nested
-call or expression) while the left is an error *cell*, the client's exception
-aborts before the operator's left-first error check, so ``A5 + NA()`` is #N/A
-there and #DIV/0! here. The two engines represent a nested failure as an
-exception and as a value respectively, so this ordering artifact is not
-aligned.
+matrix's #VALUE!, not a bare FALSE or a joined string).
+
+**A binary operator is left-first, and the right operand is not evaluated
+once the left has failed.** An error *cell* on the left (``A5``) beats a
+*thrown* failure on the right (``NA()``, ``ABS("x")``), so ``A5 + NA()`` is
+#DIV/0! on both engines. The client used to evaluate the right operand
+eagerly, so a throw unwound before its left-first error check -- the last open
+operand-ordering class -- and ``A5 + NA()`` was #N/A there.
+
+**MATCH reads its exact-match key as one scalar slot.** ``MATCH(A1:A5,
+A1:A5, 0)`` propagates the key's error cell (#DIV/0!) and ``MATCH(A1:A2,
+A1:A5, 0)`` is #VALUE!, the client's ``scalarize`` rule. The approximate
+branches rank the key instead, so ``MATCH(A1:A5, "x")`` stays #N/A. LOOKUP and
+XLOOKUP keep their own key rule -- a multi-cell value compares equal to
+nothing and the body answers #VALUE! -- which the client shares.
 
 ## Related code
 

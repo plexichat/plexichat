@@ -5774,6 +5774,54 @@
     {
       "formula": "A1:A3<1",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "A5+NA()",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "(A5)+NA()",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "NA()+A5",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "A5&NA()",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "A5+ABS(\"x\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(A1:A5,A1:A5,0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(A1:A2,A1:A5,0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MATCH(A1:A5,A1:A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "MATCH(A1:A2,A1:A5,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "LOOKUP(A1:A2,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(A1:A2,A1:A5,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "INDEX(A1:A5,MATCH(A1:A5,A1:A5,0))",
+      "expected": "error:#DIV/0!"
     }
   ]
 }
