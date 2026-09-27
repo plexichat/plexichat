@@ -290,6 +290,21 @@ def _same_value(left: Any, right: Any) -> bool:
     return left == right
 
 
+def _lookup_vector(matrix: List[List[Any]]) -> List[Any]:
+    """The 1-D vector a MATCH/LOOKUP/XLOOKUP search reads.
+
+    The client engine's ``lookupVector``: a single row is a *horizontal*
+    vector (every cell of that row), anything taller is searched by its first
+    column the way VLOOKUP keys on its first column. Taking column 0 of a
+    one-row matrix read only its first cell, so a horizontal vector collapsed
+    to one element -- MATCH(2, FREQUENCY(A1:A5, A1:A5)) answered 1 here where
+    the client answers 4, and every one-row range read the same way.
+    """
+    if len(matrix) == 1:
+        return list(matrix[0])
+    return [row[0] if row else None for row in matrix]
+
+
 # ── numeric plumbing for the financial, distribution and combinatorics sets ──
 #
 # The probability functions need the normal CDF, the log-gamma and the two
@@ -1205,10 +1220,17 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return REF_ERROR
             rows = matrix if row_num == 0 else [matrix[row_num - 1]]
             block = [row if col_num == 0 else [row[col_num - 1]] for row in rows]
-            # A block collapses to a flat value list, the shape OFFSET returns
-            # here, and a 1x1 block to the value itself.
-            cells = [cell for row in block for cell in row]
-            return cells[0] if len(cells) == 1 else cells
+            # Shape the block the way the client engine's INDEX does: a 1x1
+            # block is the value, a single row is a flat vector, and anything
+            # else stays the row-major matrix (a whole column is a column of
+            # one-element rows). Collapsing every block to one flat list lost
+            # the orientation OFFSET already keeps, so XLOOKUP(1, 1,
+            # INDEX(A1:A5, 0, 1)) saw a one-row block where the client sees a
+            # five-row column and answered an array instead of #VALUE!.
+            if len(block) == 1:
+                row_values = list(block[0])
+                return row_values[0] if len(row_values) == 1 else row_values
+            return [list(row) for row in block]
         elif name == "MATCH":
             # MATCH(lookup_value, lookup_array, [match_type])
             if len(args) < 2 or len(args) > 3:
@@ -1235,8 +1257,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             range_error = _computed_range_error(args[1], matrix)
             if range_error is not None:
                 return range_error
-            # Flatten matrix for matching
-            flat = [row[0] if row else None for row in matrix]
+            # Flatten matrix for matching, a one-row matrix as a horizontal
+            # vector (see _lookup_vector).
+            flat = _lookup_vector(matrix)
             if match_type == 0:  # Exact match
                 # A wildcard match is what Excel calls an exact match here:
                 # MATCH("ap*", D1:D3, 0) finds "apple".
@@ -1263,7 +1286,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # INDIRECT(ref_text, [a1])
             if len(args) < 1 or len(args) > 2:
                 return VALUE_ERROR
-            ref_value = self._eval(args[0], sheet, seen, depth)
+            # The ref_text argument is one value, so a matrix -- a range or a
+            # nested call -- follows the pooled rule (the client's scalarize):
+            # INDIRECT(FREQUENCY(A1:A5, A1:A5)) is #VALUE! and
+            # INDIRECT(OFFSET(A1, 0, 0, 5, 1)) propagates the error cell.
+            ref_value = self._scalar_or(args[0], sheet, seen, depth)
             if is_error(ref_value):
                 return ref_value
             ref_text = _to_text(ref_value)
@@ -1353,14 +1380,14 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             range_error = _computed_range_error(args[1], matrix)
             if range_error is not None:
                 return range_error
-            flat = [row[0] if row else None for row in matrix]
+            flat = _lookup_vector(matrix)
             result_flat = flat
             if len(args) == 3:
                 result_matrix = self._range_matrix(args[2], sheet, seen, depth)
                 result_error = _computed_range_error(args[2], result_matrix)
                 if result_error is not None:
                     return result_error
-                result_flat = [row[0] if row else None for row in result_matrix]
+                result_flat = _lookup_vector(result_matrix)
             # LOOKUP assumes sorted ascending, finds last value <= lookup_value.
             # The comparison ranks types the way Excel orders them, because
             # _to_number raised ValueError on the first text entry and the scan
@@ -1439,10 +1466,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # A single row is a horizontal vector; anything taller is
             # searched by its first column, the way VLOOKUP keys on the
             # first column of its table.
-            if len(lookup_matrix) == 1:
-                lookup_vector = list(lookup_matrix[0])
-            else:
-                lookup_vector = [row[0] if row else None for row in lookup_matrix]
+            lookup_vector = _lookup_vector(lookup_matrix)
             # The return block answers row-wise when it has one row per
             # lookup entry, and column-wise when both blocks are a single
             # row of the same length (the horizontal form).
@@ -1466,6 +1490,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 for item in lookup_value:
                     if is_error(item):
                         return item
+                # A plain multi-cell value with no error cell compares equal to
+                # nothing, and the client engine's scalarize answers #VALUE! for
+                # it: XLOOKUP(A1:A3, 1, 1) is #VALUE! rather than #N/A.
+                return VALUE_ERROR
             if search_mode in (-1, -2):
                 order = list(range(len(lookup_vector) - 1, -1, -1))
             else:
@@ -1590,6 +1618,42 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         return VALUE_ERROR
 
     # ── Advanced text functions ─────────────────────────────────────────────
+
+    def _numbervalue(
+        self, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        """NUMBERVALUE(text, [decimal_separator], [group_separator]).
+
+        Each slot is a single value -- the client engine's ``toText``
+        scalarizes -- so the pooled argument list took the wrong entry: a
+        range flattened its cells, and since the arity happens to allow one to
+        three arguments, ``NUMBERVALUE(A1:A3)`` was the first cell (1) where
+        the client answers #VALUE!.
+        """
+        if len(args) < 1 or len(args) > 3:
+            return VALUE_ERROR
+        text_value = self._scalar_or(args[0], sheet, seen, depth)
+        if is_error(text_value):
+            return text_value
+        decimal_sep = "."
+        group_sep = ","
+        if len(args) >= 2:
+            decimal_value = self._scalar_or(args[1], sheet, seen, depth)
+            if is_error(decimal_value):
+                return decimal_value
+            decimal_sep = _to_text(decimal_value)
+        if len(args) == 3:
+            group_value = self._scalar_or(args[2], sheet, seen, depth)
+            if is_error(group_value):
+                return group_value
+            group_sep = _to_text(group_value)
+        if not decimal_sep:
+            return VALUE_ERROR
+        # Remove group separators and replace the decimal separator, then
+        # validate the whole string rather than parsing a prefix.
+        text = _to_text(text_value).replace(group_sep, "").replace(decimal_sep, ".")
+        number = _parse_numeric_text(text, "")
+        return VALUE_ERROR if number is None else number
 
     def _advanced_text(self, name: str, values: List[Any]) -> Any:
         """TEXT, VALUE, NUMBERVALUE, FIND, SEARCH, REPLACE, REPT, CHAR, CODE."""
@@ -2041,7 +2105,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 elif crit_node[0] == "num":
                     criteria_list.append(crit_node[1])
                 else:
-                    criteria = self._eval(crit_node, sheet, seen, depth)
+                    # A criteria argument is one value: scalarize a matrix the
+                    # way the client engine does.
+                    criteria = self._scalar_or(crit_node, sheet, seen, depth)
                     if is_error(criteria):
                         # An error criteria operand propagates; an error cell
                         # inside a criteria range only fails to match.
@@ -2082,7 +2148,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 elif crit_node[0] == "num":
                     criteria_list.append(crit_node[1])
                 else:
-                    criteria = self._eval(crit_node, sheet, seen, depth)
+                    # A criteria argument is one value: scalarize a matrix the
+                    # way the client engine does.
+                    criteria = self._scalar_or(crit_node, sheet, seen, depth)
                     if is_error(criteria):
                         # An error criteria operand propagates; an error cell
                         # inside a criteria range only fails to match.
@@ -2136,7 +2204,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 elif crit_node[0] == "num":
                     criteria_list.append(crit_node[1])
                 else:
-                    criteria = self._eval(crit_node, sheet, seen, depth)
+                    # A criteria argument is one value: scalarize a matrix the
+                    # way the client engine does.
+                    criteria = self._scalar_or(crit_node, sheet, seen, depth)
                     if is_error(criteria):
                         # An error criteria operand propagates; an error cell
                         # inside a criteria range only fails to match.
@@ -2186,7 +2256,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name == "CHOOSE":
             if len(args) < 2:
                 return VALUE_ERROR
-            index = self._eval(args[0], sheet, seen, depth)
+            index = self._scalar_or(args[0], sheet, seen, depth)
             if is_error(index):
                 return index
             error, number = _read_number(index)
@@ -2195,37 +2265,41 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             position = math.floor(number)
             if position < 1 or position > len(args) - 1:
                 return VALUE_ERROR
-            return self._eval(args[position], sheet, seen, depth)
+            return self._scalar_or(args[position], sheet, seen, depth)
         if name == "IFS":
             if len(args) < 2 or len(args) % 2 != 0:
                 return VALUE_ERROR
+            # Each condition and the chosen result is one value, so a matrix --
+            # a range or a nested call -- follows the pooled rule (scalarize).
             for index in range(0, len(args), 2):
-                condition = self._eval(args[index], sheet, seen, depth)
+                condition = self._scalar_or(args[index], sheet, seen, depth)
                 if is_error(condition):
                     return condition
                 if self._truthy(condition):
-                    return self._eval(args[index + 1], sheet, seen, depth)
+                    return self._scalar_or(args[index + 1], sheet, seen, depth)
             return N_A_ERROR
         # SWITCH(expression, search1, result1, ..., [default])
         if len(args) < 3:
             return VALUE_ERROR
-        expression = self._eval(args[0], sheet, seen, depth)
+        expression = self._scalar_or(args[0], sheet, seen, depth)
         # An error operand propagates, as it does everywhere else: an error
         # *expression* or the error *search* the scan reaches is the answer,
         # where reading the error as just another value fell through to the
         # default. Only the operands the scan actually evaluates propagate,
         # which is the short-circuit rule the untaken branches already follow.
+        # Each operand the scan reads is one value, so a matrix follows the
+        # pooled rule (scalarize).
         if is_error(expression):
             return expression
         pairs = args[1:]
         for index in range(0, len(pairs) - 1, 2):
-            search = self._eval(pairs[index], sheet, seen, depth)
+            search = self._scalar_or(pairs[index], sheet, seen, depth)
             if is_error(search):
                 return search
             if _same_value(expression, search):
-                return self._eval(pairs[index + 1], sheet, seen, depth)
+                return self._scalar_or(pairs[index + 1], sheet, seen, depth)
         if len(pairs) % 2 == 1:
-            return self._eval(pairs[-1], sheet, seen, depth)
+            return self._scalar_or(pairs[-1], sheet, seen, depth)
         return N_A_ERROR
 
     def _scalar_argument(
@@ -2461,7 +2535,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if not math.isfinite(significance) or math.floor(significance) > 308:
                 return rank
             factor = 10.0 ** math.floor(significance)
-            return round(rank * factor) / factor
+            # Round half away from zero, the way the client engine's
+            # ``Math.round`` does. Python's ``round`` is half-to-even, so a
+            # rank landing exactly on a half -- PERCENTRANK(A1:C1, 1, 1), whose
+            # rank is 0.25 -- answered 0.2 here where the client answers 0.3.
+            # The rank is never negative, so ``floor(x + 0.5)`` is exact.
+            return math.floor(rank * factor + 0.5) / factor
         if name in ("CORREL", "RSQ", "SLOPE", "INTERCEPT", "FORECAST", "STEYX"):
             return self._bivariate(name, args, sheet, seen, depth)
         return VALUE_ERROR

@@ -5638,6 +5638,50 @@
     {
       "formula": "XLOOKUP(1,+A1:A5,1)",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "INDEX(A1:C3,2,0)",
+      "expected": "array:number:2|text:two|number:20"
+    },
+    {
+      "formula": "IF(1,FREQUENCY(A1:A5,A1:A5))",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "NOT(A1:C1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUMIF(1,FREQUENCY(A1:A5,A1:A5))",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "INDIRECT(OFFSET(A1,0,0,5,1))",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "NUMBERVALUE(A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "PERCENTRANK(A1:C1,1,1)",
+      "expected": "number:0.3"
+    },
+    {
+      "formula": "MATCH(2,FREQUENCY(A1:A5,A1:A5))",
+      "expected": "number:4"
+    },
+    {
+      "formula": "LOOKUP(1,FREQUENCY(A1:A5,A1:A5))",
+      "expected": "number:0"
+    },
+    {
+      "formula": "XLOOKUP(A1:A3,1,1)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(1,1,INDEX(A1:A5,0,1))",
+      "expected": "error:#VALUE!"
     }
   ]
 }

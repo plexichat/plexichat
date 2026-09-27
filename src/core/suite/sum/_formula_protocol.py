@@ -33,6 +33,11 @@ class FormulaEvaluatorProtocol:
     def _advanced_text(self, name: str, values: List[Any]) -> Any:
         raise NotImplementedError
 
+    def _numbervalue(
+        self, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Any:
+        raise NotImplementedError
+
     def _advanced_date(self, name: str, values: List[Any]) -> Any:
         raise NotImplementedError
 

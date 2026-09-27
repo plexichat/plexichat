@@ -682,6 +682,28 @@ while a plain reference (and the identity ``+A5``) keeps its error as a cell,
 the ``_computed_range_error`` rule this engine already used. The shared table
 pins both directions.
 
+**Array-valued arguments.** Calling each function with an array-valued
+argument -- ``FREQUENCY``'s matrix and the ranges ``OFFSET``/``INDEX``/
+``INDIRECT`` produce -- in *every* slot, not only the first, found one more
+family of disagreements. This engine already had the client engine's
+``scalarize`` rule (``_scalar_slot``) but did not apply it to the branching
+family's slots, the criteria operands or ``NUMBERVALUE``, and its fixed-arity
+slots read a plain multi-cell range's first element where the client answers
+the pooled error. ``_scalar_or`` now applies that rule to those slots,
+``INDIRECT`` scalarizes the reference text it reads, ``XLOOKUP`` reads a plain
+multi-cell lookup value as ``#VALUE!``, ``PERCENTRANK`` rounds half away from
+zero like the client's ``Math.round`` (Python's ``round`` is banker's),
+``INDEX``/``MATCH``/``LOOKUP`` preserve a vector's shape instead of collapsing
+a single-row range to its first element, and ``INDEX`` keeps a multi-cell
+block's shape instead of flattening it. The differential now reads 0
+divergences across 15,118 array-argument forms.
+
+**A bare range expression.** A top-level formula that is just a range
+(``A1:A5``) was evaluated with the scalar-slot rule, so it read as its error
+cell, while the client returns the matrix. ``evaluate_cell`` now returns the
+matrix for a bare range, so ``A1:A5``, ``+A1:A5`` and ``(A1:A5)`` all spill the
+same way on both engines.
+
 ## Related code
 
 - `src/core/suite/sum/__init__.py:25` — `setup()` entry point

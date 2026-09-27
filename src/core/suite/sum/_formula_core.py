@@ -784,7 +784,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         seen.add(key)
         try:
             node = parse_formula(formula)
-            value = self._eval(node, sheet, seen, depth)
+            if node[0] == "ref" and ":" in node[1]:
+                # A bare range is the *matrix* the client engine's top-level
+                # ``evaluate`` returns (and a formula cell holding one spills
+                # the same way). Reading it through ``_eval`` applied the
+                # scalar-slot pooled rule instead, so ``=A1:A5`` was its error
+                # cell (#DIV/0!) rather than the five-cell column.
+                value = self._range_matrix(node, sheet, seen, depth)
+            else:
+                value = self._eval(node, sheet, seen, depth)
             self._computed[key] = value
             return value
         except _DependencyBudgetExceeded:
@@ -1053,14 +1061,17 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # a boolean. ``_truthy`` returns a plain bool, so the old guard
             # could never fire and IF(1/0, 1, 2) took the true branch -- a
             # non-empty error string is truthy -- instead of returning
-            # #DIV/0!.
-            condition = self._eval(args[0], sheet, seen, depth)
+            # #DIV/0!. The condition and the chosen branch are single values,
+            # so a matrix -- whether a range or a nested call -- is read through
+            # ``_scalar_or`` the way the client engine's ``scalarize`` reads it
+            # (IF(1, FREQUENCY(A1:A5, A1:A5)) is #VALUE!).
+            condition = self._scalar_or(args[0], sheet, seen, depth)
             if is_error(condition):
                 return condition
             if self._truthy(condition):
-                return self._eval(args[1], sheet, seen, depth)
+                return self._scalar_or(args[1], sheet, seen, depth)
             if len(args) == 3:
-                return self._eval(args[2], sheet, seen, depth)
+                return self._scalar_or(args[2], sheet, seen, depth)
             return False
         if name in ("AND", "OR"):
             if not args:
@@ -1083,7 +1094,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "NOT":
             if len(args) != 1:
                 return VALUE_ERROR
-            value = self._eval(args[0], sheet, seen, depth)
+            value = self._scalar_or(args[0], sheet, seen, depth)
             if is_error(value):
                 return value
             return not self._truthy(value)
@@ -1110,11 +1121,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name in ("IFERROR", "IFNA"):
             if len(args) != 2:
                 return VALUE_ERROR
-            value = self._eval(args[0], sheet, seen, depth)
-            if isinstance(value, str) and value in ERROR_CODES:
-                if name == "IFNA" and value != N_A_ERROR:
-                    return value
-                return self._eval(args[1], sheet, seen, depth)
+            # Both slots are single values, so a matrix follows the pooled
+            # rule: the error or #VALUE! it raises is what IFERROR catches and
+            # IFNA substitutes only for #N/A -- IFERROR(FREQUENCY(A1:A5, A1:A5),
+            # 1) is 1, matching the client engine's scalarize.
+            error, value = self._scalar_slot(args[0], sheet, seen, depth)
+            if error is not None:
+                if name == "IFNA" and error != N_A_ERROR:
+                    return error
+                return self._scalar_or(args[1], sheet, seen, depth)
             return value
         if name in _BRANCHING_FUNCTIONS:
             return self._branched(name, args, sheet, seen, depth)
@@ -1271,6 +1286,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             "CHAR",
             "CODE",
         ):
+            # NUMBERVALUE reads each slot as one value (the client's toText
+            # scalarizes), so it takes the raw nodes rather than the pooled
+            # list: NUMBERVALUE(A1:A3) is #VALUE!, not the first flattened cell.
+            if name == "NUMBERVALUE":
+                return self._numbervalue(args, sheet, seen, depth)
             return self._advanced_text(name, values)
         if name in ("EOMONTH", "EDATE", "WEEKDAY", "WEEKNUM", "NETWORKDAYS", "WORKDAY"):
             if name in ("NETWORKDAYS", "WORKDAY") and len(args) > 3:
@@ -1543,6 +1563,19 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if len(values) != 1:
             return VALUE_ERROR, None
         return None, values[0]
+
+    def _scalar_or(self, node: Any, sheet: Optional[str], seen: set, depth: int) -> Any:
+        """One slot's single value, or the error the pooled rule raises.
+
+        The client engine's ``scalarize``: a matrix is ``#VALUE!`` unless it
+        holds an error cell (which propagates) and a one-cell range is that
+        cell. Used where the argument must be a single value -- an IF
+        condition or branch, ``NOT``, the ``IFERROR``/``IFNA`` value and
+        fallback -- so a nested call that answers a matrix is read the same
+        way a range of the same shape is.
+        """
+        error, value = self._scalar_slot(node, sheet, seen, depth)
+        return error if error is not None else value
 
     @staticmethod
     def _coerce_slot(value: Any) -> Tuple[Optional[str], Optional[float]]:
@@ -1920,7 +1953,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         elif first[0] == "num":
             criteria = first[1]
         else:
-            criteria = self._eval(first, sheet, seen, depth)
+            # A criteria argument is a single value, so a matrix -- a range or
+            # a nested call -- follows the pooled rule (the client's
+            # scalarize): SUMIF(1, FREQUENCY(A1:A5, A1:A5)) is #VALUE! and
+            # SUMIF(1, OFFSET(A1, 0, 0, 5, 1)) propagates the error cell.
+            criteria = self._scalar_or(first, sheet, seen, depth)
         if is_error(criteria) and first[0] != "ref":
             # An error *written* as the criteria propagates straight away --
             # SUMIF(1, 1/0, NA()) is #DIV/0! and SUMIF(1, NA(), 1/0) is #N/A.

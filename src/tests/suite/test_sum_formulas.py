@@ -689,8 +689,10 @@ def test_index_truncates_its_offsets_and_accepts_a_zero():
     resolver = _resolver(cells)
     assert _eval("INDEX(A1:C3, 2, 3)", resolver) == 200
     assert _eval("INDEX(A1:C3, 1.9, 2.7)", resolver) == 10
-    # The whole second column, as a block SUM can add up.
-    assert _eval("INDEX(A1:C3, 0, 2)", resolver) == [10, 20, 30]
+    # The whole second column keeps its orientation -- a column of one-element
+    # rows, the shape the client engine's INDEX returns -- while a single *row*
+    # stays a flat vector. Both flatten under SUM.
+    assert _eval("INDEX(A1:C3, 0, 2)", resolver) == [[10], [20], [30]]
     assert _eval("INDEX(A1:C3, 2, 0)", resolver) == [2, 20, 200]
     assert _eval("SUM(INDEX(A1:C3, 0, 2))", resolver) == 60.0
     assert _eval("SUM(INDEX(A1:C3, 2, 0))", resolver) == 222.0
@@ -701,6 +703,28 @@ def test_index_truncates_its_offsets_and_accepts_a_zero():
     # A single cell is a 1x1 block, and an error offset still propagates.
     assert _eval("INDEX(B1, 1)", resolver) == 10
     assert _eval("INDEX(A1:C3, 1/0, 1)", resolver) == DIV_ZERO
+
+
+def test_bare_range_and_whole_block_shapes():
+    """A bare range is a matrix, and INDEX keeps a block's orientation.
+
+    A formula that is just a range used to be read through the *scalar*-slot
+    pooled rule (its error cell, or #VALUE!), where the client engine returns
+    the matrix; INDEX collapsed every multi-cell block to a flat list, losing
+    the column/row shape the client keeps.
+    """
+    values = {(0, 0): 1, (0, 1): 10, (1, 0): 2, (1, 1): 20}
+    cells = {
+        ("1", row, col): {"value_type": "number", "value": value, "formula": None}
+        for (row, col), value in values.items()
+    }
+    resolver = _resolver(cells)
+    assert _eval("A1:B2", resolver) == [[1, 10], [2, 20]]
+    # INDEX(..., 0, 0) keeps the 2-D shape, a whole column is a column of
+    # one-element rows, and a whole row is a flat vector.
+    assert _eval("INDEX(A1:B2, 0, 0)", resolver) == [[1, 10], [2, 20]]
+    assert _eval("INDEX(A1:B2, 0, 2)", resolver) == [[10], [20]]
+    assert _eval("INDEX(A1:B2, 1, 0)", resolver) == [1, 10]
 
 
 def test_sumif_countif_averageif():
