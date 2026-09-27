@@ -66,7 +66,9 @@
     "L3": "~",
     "L4": "?",
     "M1": 999,
-    "N1": "stra\u00dfe"
+    "N1": "stra\u00dfe",
+    "P1": 2,
+    "P2": 1
   },
   "cases": [
     {
@@ -5084,6 +5086,130 @@
     {
       "formula": "CHOOSE(1,A1:A5,2)",
       "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FREQUENCY(A1:A3,P1:P2)",
+      "expected": "array:number:2|number:0|number:1"
+    },
+    {
+      "formula": "FREQUENCY(A1:A3,A1:B2)",
+      "expected": "array:number:1|number:1|number:1"
+    },
+    {
+      "formula": "FREQUENCY(A1:B2,C1:C3)",
+      "expected": "array:number:2|number:0|number:0|number:0"
+    },
+    {
+      "formula": "FREQUENCY(A1:A3,B4)",
+      "expected": "array:number:3"
+    },
+    {
+      "formula": "FREQUENCY(A1:A3,Z1)",
+      "expected": "array:number:3"
+    },
+    {
+      "formula": "FREQUENCY(A1:A3,)",
+      "expected": "array:number:3"
+    },
+    {
+      "formula": "FREQUENCY(B4,A1:A3)",
+      "expected": "array:number:0|number:0|number:0|number:0"
+    },
+    {
+      "formula": "FREQUENCY(A1:A5,A1:B2)",
+      "expected": "array:number:1|number:1|number:1"
+    },
+    {
+      "formula": "FREQUENCY(A1:B2,P1:P2)",
+      "expected": "array:number:2|number:0|number:0"
+    },
+    {
+      "formula": "FREQUENCY(A1:A3,F1:F3)",
+      "expected": "array:number:3|number:0|number:0"
+    },
+    {
+      "formula": "FREQUENCY(P1:P2,A1:A3)",
+      "expected": "array:number:1|number:1|number:0|number:0"
+    },
+    {
+      "formula": "SUMX2MY2(A5,NA())",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMX2MY2(A5,A1:A3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMX2MY2(A1:A3,A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMX2MY2(\"x\",A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMX2MY2(A5:A6,A1:A2)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMX2MY2(A1:A5,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUMX2PY2(A5,NA())",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMXY(A5,A1:A3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMX2MY2(A1:A3,A1:A3)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUMX2PY2(A1:A3,A1:A3)",
+      "expected": "number:28"
+    },
+    {
+      "formula": "SUMXY(A1:A3,A1:A3)",
+      "expected": "number:14"
+    },
+    {
+      "formula": "CORREL(1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "CORREL(A5,A1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "SLOPE(1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SLOPE(A5,A1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "RSQ(1/0,A1:A3)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "INTERCEPT(A1:A3,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "STEYX(A5,A1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "FORECAST(1,1/0,1/0)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "FORECAST(1,A5,A1)",
+      "expected": "error:#N/A"
     }
   ]
 }

@@ -2279,11 +2279,19 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if name in ("SUMX2MY2", "SUMX2PY2", "SUMXY"):
             if len(args) != 2:
                 return VALUE_ERROR
-            left, left_ref = self._expand_arg(args[0], sheet, seen, depth)
-            right, right_ref = self._expand_arg(args[1], sheet, seen, depth)
-            error = _literal_error(left, left_ref) or _literal_error(right, right_ref)
-            if error is not None:
-                return error
+            left, _ = self._expand_arg(args[0], sheet, seen, depth)
+            right, _ = self._expand_arg(args[1], sheet, seen, depth)
+            # An argument that is a single error value -- written into the
+            # formula or a one-cell reference that holds one -- propagates
+            # before the pair is read, the way the client engine's eager
+            # argument evaluation throws it before the function body. That
+            # error therefore beats a length mismatch or a text coercion in
+            # the other argument. An error embedded in a *multi-cell* range is
+            # not pre-propagated: the element read below reaches it in pairing
+            # order, so a text cell before it still answers #VALUE!.
+            for values in (left, right):
+                if len(values) == 1 and is_error(values[0]):
+                    return values[0]
             if len(left) != len(right):
                 return VALUE_ERROR
             total = 0.0
