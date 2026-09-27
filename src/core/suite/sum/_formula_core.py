@@ -832,6 +832,12 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return VALUE_ERROR
             if step is not None and len(args) % 2 != step:
                 return VALUE_ERROR
+        # The complex-number family is otherwise pooled; an error *argument*
+        # still propagates first, in argument order (see _argument_error).
+        if name in _COMPLEX_FUNCTIONS:
+            error = self._argument_error(args, sheet, seen, depth)
+            if error is not None:
+                return error
         # Evaluate the arguments lazily where the function is short-circuiting.
         if name == "IF":
             # Excel's third argument is optional: IF(test, value_if_true) is
@@ -886,14 +892,27 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
                 return VALUE_ERROR
             return name == "TRUE"
         if name in ("VLOOKUP", "HLOOKUP"):
+            error = self._argument_error(args, sheet, seen, depth)
+            if error is not None:
+                return error
             return self._lookup(name, args, sheet, seen, depth)
-        if name in ("INDEX", "MATCH", "INDIRECT", "OFFSET", "LOOKUP", "XLOOKUP"):
+        if name in ("INDEX", "MATCH", "INDIRECT", "LOOKUP"):
             # Raw arguments, before the range expansion below: these read
             # their ranges cell by cell, so expanding every range up front
             # propagated an error cell the lookup never touches --
             # INDEX(A1:A5, 1) was #DIV/0! when A5 holds 1/0, where the
             # client engine (and Excel) answer A1. VLOOKUP above is the
-            # same shape for the same reason.
+            # same shape for the same reason. An error *argument* still
+            # propagates first, in argument order, as the client's eager
+            # evaluation throws it before the lookup runs.
+            error = self._argument_error(args, sheet, seen, depth)
+            if error is not None:
+                return error
+            return self._lookup_advanced(name, args, sheet, seen, depth)
+        if name in ("XLOOKUP", "OFFSET"):
+            # XLOOKUP reads its arrays lazily and answers a lookup array's
+            # error cell as "not found" rather than propagating it, so its
+            # arguments are not pre-checked.
             return self._lookup_advanced(name, args, sheet, seen, depth)
         if name in ("SUMIF", "COUNTIF", "AVERAGEIF"):
             return self._criteria(name, args, sheet, seen, depth)
@@ -1091,6 +1110,27 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # them, exactly the way a range argument does.
             return list(value), True
         return [value], False
+
+    def _argument_error(
+        self, args: List[Any], sheet: Optional[str], seen: set, depth: int
+    ) -> Optional[str]:
+        """The error a *value argument* raises before the body reads it.
+
+        The client engine evaluates every argument before it calls the
+        function, so an argument that evaluates to an error propagates in
+        argument order -- ahead of an error cell inside a later range read or
+        a length mismatch. A multi-cell range is not such a value: it
+        evaluates to a matrix the function reads for itself, so only a single
+        value -- a literal, a single-cell reference or an expression -- is
+        checked here.
+        """
+        for arg in args:
+            if arg[0] == "ref" and ":" in arg[1]:
+                continue
+            value = self._eval(arg, sheet, seen, depth)
+            if is_error(value):
+                return value
+        return None
 
     def _truthy(self, value: Any) -> bool:
         if isinstance(value, bool):
