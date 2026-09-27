@@ -1294,13 +1294,17 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             except ValueError:
                 return REF_ERROR
             target = s1 or sheet
+            # The rows offset is coerced before the cols *argument* is even
+            # read: the client engine's OFFSET reads its numbers in order, so a
+            # non-numeric rows (``"x"``) is #VALUE! ahead of an error cell or
+            # error operand in cols (``OFFSET(A1, "x", 1/0)``).
             rows_value = self._eval(args[1], sheet, seen, depth)
             if is_error(rows_value):
                 return rows_value
+            rows = int(_to_number(rows_value))
             cols_value = self._eval(args[2], sheet, seen, depth)
             if is_error(cols_value):
                 return cols_value
-            rows = int(_to_number(rows_value))
             cols = int(_to_number(cols_value))
             height = r2 - r1 + 1
             width = c2 - c1 + 1
@@ -1384,7 +1388,12 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # logarithmic time, only the same value.
             if len(args) < 3 or len(args) > 6:
                 return VALUE_ERROR
-            lookup_value = self._eval(args[0], sheet, seen, depth)
+            # A multi-cell lookup *value* is read as the matrix the client
+            # engine keeps -- it compares equal to nothing -- rather than
+            # collapsed to its error cell by ``_eval``, which answered #DIV/0!
+            # for XLOOKUP(A1:A5, 1, NA()) where the client answers #N/A. A
+            # scalar error still propagates.
+            lookup_value = self._lookup_value(args[0], sheet, seen, depth)
             if is_error(lookup_value):
                 return lookup_value
             lookup_matrix = self._range_matrix(args[1], sheet, seen, depth)
@@ -1449,6 +1458,14 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                 return_rows = [list(return_matrix[0])]
             else:
                 return VALUE_ERROR
+            # Once the arrays and their shapes are settled, a multi-cell lookup
+            # *value* surfaces its error cell in the comparison -- the client
+            # engine's scalarize raises it while matching, so
+            # XLOOKUP(A1:A5, 1, 1) is the lookup value's #DIV/0!.
+            if isinstance(lookup_value, list):
+                for item in lookup_value:
+                    if is_error(item):
+                        return item
             if search_mode in (-1, -2):
                 order = list(range(len(lookup_vector) - 1, -1, -1))
             else:

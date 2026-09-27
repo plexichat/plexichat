@@ -5522,6 +5522,86 @@
     {
       "formula": "SUM(1, ABS(\"x\"))",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MID(1,\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "DATE(1,\"x\",A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "TIME(A1:A5,\"x\",NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "OFFSET(A1,\"x\",1/0)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "VLOOKUP(A1:A5,1,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "HLOOKUP(A1:A5,A1,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(A1:A5,1,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(A1:A5,1,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "XLOOKUP(A1:A5,NA(),1)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "XLOOKUP(A1:A5,1,A1:A5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(A1:A5,A1:A5,A1:A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(1,A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "SUMIF(1,A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(1,1/0,NA())",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIF(1,NA(),1/0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "AVERAGEIF(1,A5,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "AVERAGEIF(1,A5,1)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTBLANK(SUM(A5))",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "COUNTBLANK(SUM(NA()))",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "COUNTBLANK(ABS(\"x\"))",
+      "expected": "error:#VALUE!"
     }
   ]
 }

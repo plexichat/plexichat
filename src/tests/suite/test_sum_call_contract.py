@@ -129,6 +129,28 @@ _CASES = [
     ('ISTEXT(ABS("x"))', "boolean:false"),
     ('IFERROR(ABS("x"),42)', "number:42"),
     ('SUM(1,ABS("x"))', "error:#VALUE!"),
+    # The three-operand slot-coercion order, per family: an earlier slot's
+    # coercion failure or error beats an error cell in a later range, while a
+    # written error still propagates in argument order.
+    ('MID(1,"x",A1:A5)', "error:#VALUE!"),
+    ('DATE(1,"x",A1:A5)', "error:#VALUE!"),
+    ('TIME(A1:A5,"x",NA())', "error:#N/A"),
+    ('OFFSET(A1,"x",1/0)', "error:#VALUE!"),
+    # A multi-cell lookup value is one slot: its error cell propagates and a
+    # multi-cell value of plain values is #VALUE!.
+    ("VLOOKUP(A1:A5,1,1)", "error:#DIV/0!"),
+    ("HLOOKUP(A1:A5,A1,1)", "error:#DIV/0!"),
+    # XLOOKUP settles the arrays and their shape first, then the lookup value.
+    ("XLOOKUP(A1:A5,1,1)", "error:#DIV/0!"),
+    ("XLOOKUP(A1:A5,1,NA())", "error:#N/A"),
+    ("XLOOKUP(A1:A5,1,A1:A5)", "error:#VALUE!"),
+    # A written criteria error propagates first, then the summed range's, then
+    # a criteria read out of a cell.
+    ("SUMIF(1,1/0,NA())", "error:#DIV/0!"),
+    ("SUMIF(1,NA(),1/0)", "error:#N/A"),
+    ("SUMIF(1,A5,NA())", "error:#N/A"),
+    ("SUMIF(1,A5,1)", "error:#DIV/0!"),
+    ("AVERAGEIF(1,A5,1)", "error:#DIV/0!"),
 ]
 
 

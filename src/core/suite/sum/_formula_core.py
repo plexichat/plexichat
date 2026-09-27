@@ -492,6 +492,13 @@ _SCALAR_SLOT_FUNCTIONS = (
             "WEEKNUM",
             "WORKDAY",
             "NETWORKDAYS",
+            # MID and the date/time constructors coerce their slots in order too
+            # (MID reads start before length, DATE reads year before month
+            # before day, TIME reads every component in turn), so a coercion
+            # failure in an earlier slot beats an error cell in a later range.
+            "MID",
+            "DATE",
+            "TIME",
         }
     )
 )
@@ -504,9 +511,9 @@ _SCALAR_SLOT_LEAD = {"NETWORKDAYS": 2, "WORKDAY": 2}
 # Functions that classify an error operand instead of propagating it. COUNT
 # counts numbers only and COUNTA counts anything non-empty (an error is data);
 # the *IFS family matches an error cell as "no match" rather than failing the
-# whole formula. COUNTBLANK is deliberately absent: it tolerates an error read
-# out of a cell (an error cell is not blank) but propagates one written into
-# the formula, so the propagation loop in ``_call`` decides it by provenance.
+# whole formula. COUNTBLANK tolerates an error read out of a cell (an error
+# cell is not blank) but propagates one written into the formula, so the
+# propagation loop in ``_call`` decides it by provenance.
 _ERROR_TOLERANT_FUNCTIONS = frozenset(
     {"COUNT", "COUNTA", "SUMIFS", "COUNTIFS", "AVERAGEIFS"}
 )
@@ -1813,7 +1820,15 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return message if message in ERROR_CODES else VALUE_ERROR
         if index < 0:
             return VALUE_ERROR
-        lookup_value = self._lookup_value(args[0], sheet, seen, depth)
+        # The lookup value is read as one *slot*, the way the client engine
+        # scalarizes it: an error cell in a multi-cell value propagates and a
+        # multi-cell value with no error is #VALUE! (VLOOKUP(A1:A3, 1, 1)).
+        # Keeping it a matrix that "compares equal to nothing" answered #N/A
+        # where the client propagates the error or reports #VALUE!.
+        lookup_error, lookup_scalar = self._scalar_slot(args[0], sheet, seen, depth)
+        if lookup_error is not None:
+            return lookup_error
+        lookup_value = lookup_scalar
         matrix = self._range_matrix(args[1], sheet, seen, depth)
         if not matrix:
             return N_A_ERROR
@@ -1906,15 +1921,14 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             criteria = first[1]
         else:
             criteria = self._eval(first, sheet, seen, depth)
-        if is_error(criteria):
-            # An error *criteria* argument propagates; an error cell inside the
-            # criteria range only fails to match.
+        if is_error(criteria) and first[0] != "ref":
+            # An error *written* as the criteria propagates straight away --
+            # SUMIF(1, 1/0, NA()) is #DIV/0! and SUMIF(1, NA(), 1/0) is #N/A.
             return criteria
         if name == "COUNTIF" and len(args) != 2:
             # COUNTIF takes exactly two arguments -- SUMIF and AVERAGEIF take
             # an optional sum range, but a third argument to COUNTIF is
-            # #VALUE!. Checked after the criteria so an error there still
-            # propagates first, the way the client engine orders it.
+            # #VALUE!.
             return VALUE_ERROR
         sum_matrix = matrix
         if len(args) == 3:
@@ -1922,6 +1936,11 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             sum_error = _computed_range_error(args[2], sum_matrix)
             if sum_error is not None:
                 return sum_error
+        if is_error(criteria):
+            # A criteria read out of a *cell* propagates too, but only after
+            # the summed range's own error: SUMIF(1, A5, NA()) is the summed
+            # range's #N/A while SUMIF(1, A5, 1) is the criteria cell's #DIV/0!.
+            return criteria
         total = 0.0
         count = 0
         for r in range(min(len(matrix), len(sum_matrix))):
@@ -1957,6 +1976,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # An error *cell* inside a criteria range only fails to match; an
             # error *criteria* argument is what propagates (handled by _criteria).
             return False
+
         if criteria is None:
             return value is None or value == ""
         if isinstance(criteria, str):

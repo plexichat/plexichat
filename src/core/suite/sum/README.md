@@ -642,14 +642,34 @@ were added: every covered function called with *three* distinct operands (all
   table pins the classified answers (`COUNT`, the ``IS*`` family, ``TYPE``,
   ``PI``, ``IFERROR``).
 
-Still open, and deliberately not pinned: **89 three-operand cases across nine
-functions** -- a per-family slot-coercion order rather than one shared rule.
-The lookups disagree when the lookup value or the ``if_not_found`` is a range
-whose error cell the other engine reads first (``VLOOKUP(A1:A5, 1, 1)`` is
-``#DIV/0!`` here and ``#N/A`` there), ``OFFSET`` coerces the row offset before
-the column offset's error, and the criteria pair, ``DATE``/``TIME`` and ``MID``
-each have their own order. The per-arity and mixed-operand sweeps do not reach
-this shape, and the table does not pin it.
+The **three-operand shape** is now closed too: the mixed-operand sweep's
+rotating triple never compares three *different* operands, and calling every
+function with all 7^3 orderings found 89 disagreements, all of them a
+per-family slot-coercion order the pooled reader got wrong. Each family now
+reads its slots the way the client engine does, and the shared table pins a
+representative case from every one:
+
+- ``MID``/``DATE``/``TIME`` join the scalar-slot family, so a coercion failure
+  in an earlier slot beats an error cell in a later range
+  (``MID(1, "x", A1:A5)`` is ``#VALUE!``) while a *written* error argument still
+  propagates in argument order (``TIME(A1:A5, "x", NA())`` is ``#N/A``).
+- ``OFFSET`` coerces its row offset before it reads the column offset
+  (``OFFSET(A1, "x", 1/0)`` is ``#VALUE!``).
+- ``VLOOKUP``/``HLOOKUP`` read the lookup value as one slot -- an error cell in
+  a multi-cell value propagates and a multi-cell value of plain values is
+  ``#VALUE!`` -- instead of keeping it a matrix that matched nothing.
+- ``XLOOKUP`` settles the lookup array, the return array and their shape first
+  and only then surfaces a multi-cell lookup value's error, matching the client
+  engine's order (``XLOOKUP(A1:A5, 1, 1)`` is ``#DIV/0!``, ``XLOOKUP(A1:A5, 1,
+  NA())`` is ``#N/A``, ``XLOOKUP(A1:A5, 1, A1:A5)`` is ``#VALUE!``).
+- the criteria pair propagates a *written* criteria error first
+  (``SUMIF(1, 1/0, NA())`` is ``#DIV/0!``), then the summed range's own error,
+  and only then a criteria read out of a cell (``SUMIF(1, A5, NA())`` is
+  ``#N/A`` while ``SUMIF(1, A5, 1)`` is ``#DIV/0!``).
+
+A nested-call error that a function *returns* is a value the enclosing
+function can classify (``COUNT(ABS("x"))`` is 0), the same rule the ``_call``
+wrapper enforces.
 
 ## Related code
 
