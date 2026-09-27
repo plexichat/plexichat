@@ -342,7 +342,16 @@ the client engine (this parser used to be right-associative here).
 unary operators, so `--1` is `-(-1)` and `+-1` is `-1`, making `=--1` the
 number 1. Unary minus converts its operand to a number (`-"2"` is -2,
 `-TRUE` is -1), while unary plus is the identity, as in Excel: `+"2"` is the
-text `"2"` and `+TRUE` is `TRUE`.
+text `"2"` and `+TRUE` is `TRUE`. A coercion failure is an error *value*, so
+`-"abc"` is `#VALUE!` and `IFERROR(-"abc", 9)` is 9 rather than a `#VALUE!`
+that unwound past the catcher.
+
+**`&` binds between arithmetic and comparison.** `1&1+1` is `1&(1+1)` (the
+text "12") and `1=1&1` is `1=(1&1)` (FALSE). Concatenation used to share the
+additive level, so `1&1+1` parsed as `(1&1)+1` (the number 12). A binary
+operator is also left-first and does not evaluate its right operand once the
+left has failed, so a *raised* right-side failure does not outrank the left
+error (`NA()+A1:A5/1` is #N/A, not #DIV/0!).
 
 **A zero discount factor is `#DIV/0!`.** `NPV` and `XNPV` divide by
 `(1 + rate)` raised to the period, so a rate of -1 makes the denominator zero.

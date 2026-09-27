@@ -24,7 +24,14 @@ corners below, where this engine disagreed with the client engine:
   (``A5+NA()`` was ``#N/A``) instead of answering the left error ``#DIV/0!``;
 * the exact ``MATCH`` key was kept a matrix that "compares equal to nothing"
   (``MATCH(A1:A5, A1:A5, 0)`` answered ``#N/A``) instead of reading it as one
-  scalar slot -- an error cell propagates and a multi-cell key is ``#VALUE!``.
+  scalar slot -- an error cell propagates and a multi-cell key is ``#VALUE!``;
+* ``&`` shared the additive precedence level, so ``1&1+1`` parsed as
+  ``(1&1)+1`` (the number 12) instead of Excel's ``1&(1+1)`` (the text "12");
+* a binary operator evaluated its right operand before answering a left error,
+  so a *raised* right-side failure outranked it (``NA()+A1:A5/1`` answered
+  #DIV/0!) where the client answers the left error;
+* a unary ``-``/``%`` coercion failure raised instead of yielding an error
+  value, so ``IFERROR(-"abc", 9)`` was #VALUE! rather than 9.
 
 Each answer is written the way the shared table writes one --
 ``kind:value`` -- and a finite number is compared with a tolerance.
@@ -213,6 +220,23 @@ _CASES = [
     ("MATCH(A1:A2,A1:A5,1)", "error:#VALUE!"),
     ("LOOKUP(A1:A2,A1:A5)", "error:#VALUE!"),
     ("XLOOKUP(A1:A2,A1:A5,1)", "error:#VALUE!"),
+    # ``&`` binds looser than arithmetic and tighter than comparison, so it
+    # sits on its own level between them (Excel's order).
+    ("1&1+1", "text:12"),
+    ("1&2*3", "text:16"),
+    ("1=1&1", "boolean:false"),
+    ("1&1=1", "boolean:false"),
+    ("1<2&3", "boolean:true"),
+    # The right operand of a binary operator is not evaluated once the left has
+    # failed, even when the right would *raise* (a nested coercion failure).
+    ("NA()+A1:A5/1", "error:#N/A"),
+    ('A5+-"abc"', "error:#DIV/0!"),
+    ('A5+"abc"%', "error:#DIV/0!"),
+    # A unary coercion failure is an error *value*, so an error-catching
+    # function sees it.
+    ('-"abc"', "error:#VALUE!"),
+    ('IFERROR(-"abc",9)', "number:9"),
+    ("IFERROR(K1%,9)", "number:9"),
 ]
 
 

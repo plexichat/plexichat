@@ -5822,6 +5822,50 @@
     {
       "formula": "INDEX(A1:A5,MATCH(A1:A5,A1:A5,0))",
       "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "1&1+1",
+      "expected": "text:12"
+    },
+    {
+      "formula": "1&2*3",
+      "expected": "text:16"
+    },
+    {
+      "formula": "1=1&1",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "1&1=1",
+      "expected": "boolean:false"
+    },
+    {
+      "formula": "1<2&3",
+      "expected": "boolean:true"
+    },
+    {
+      "formula": "NA()+A1:A5/1",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "A5+-\"abc\"",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "A5+\"abc\"%",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "-\"abc\"",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "IFERROR(-\"abc\",9)",
+      "expected": "number:9"
+    },
+    {
+      "formula": "IFERROR(K1%,9)",
+      "expected": "number:9"
     }
   ]
 }
