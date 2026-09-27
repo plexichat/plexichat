@@ -25,6 +25,7 @@ from ._formula_shared import (
     _computed_range_error,
     _js_number_text,
     _numeric,
+    _slot_text,
     _to_number,
     _to_number_or_zero,
     _to_text,
@@ -1084,9 +1085,9 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         """
         if len(values) < 3 or len(values) > 4:
             return VALUE_ERROR
-        text = _to_text(values[0])
-        old = _to_text(values[1])
-        new = _to_text(values[2])
+        text = _slot_text(values[0])
+        old = _slot_text(values[1])
+        new = _slot_text(values[2])
         if old == "":
             return text
         if len(values) == 4:
@@ -1619,42 +1620,6 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
 
     # ── Advanced text functions ─────────────────────────────────────────────
 
-    def _numbervalue(
-        self, args: List[Any], sheet: Optional[str], seen: set, depth: int
-    ) -> Any:
-        """NUMBERVALUE(text, [decimal_separator], [group_separator]).
-
-        Each slot is a single value -- the client engine's ``toText``
-        scalarizes -- so the pooled argument list took the wrong entry: a
-        range flattened its cells, and since the arity happens to allow one to
-        three arguments, ``NUMBERVALUE(A1:A3)`` was the first cell (1) where
-        the client answers #VALUE!.
-        """
-        if len(args) < 1 or len(args) > 3:
-            return VALUE_ERROR
-        text_value = self._scalar_or(args[0], sheet, seen, depth)
-        if is_error(text_value):
-            return text_value
-        decimal_sep = "."
-        group_sep = ","
-        if len(args) >= 2:
-            decimal_value = self._scalar_or(args[1], sheet, seen, depth)
-            if is_error(decimal_value):
-                return decimal_value
-            decimal_sep = _to_text(decimal_value)
-        if len(args) == 3:
-            group_value = self._scalar_or(args[2], sheet, seen, depth)
-            if is_error(group_value):
-                return group_value
-            group_sep = _to_text(group_value)
-        if not decimal_sep:
-            return VALUE_ERROR
-        # Remove group separators and replace the decimal separator, then
-        # validate the whole string rather than parsing a prefix.
-        text = _to_text(text_value).replace(group_sep, "").replace(decimal_sep, ".")
-        number = _parse_numeric_text(text, "")
-        return VALUE_ERROR if number is None else number
-
     def _advanced_text(self, name: str, values: List[Any]) -> Any:
         """TEXT, VALUE, NUMBERVALUE, FIND, SEARCH, REPLACE, REPT, CHAR, CODE."""
         if name == "TEXT":
@@ -1662,7 +1627,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(values) != 2:
                 return VALUE_ERROR
             value = values[0]
-            fmt = _to_text(values[1])
+            fmt = _slot_text(values[1])
             if _numeric(value):
                 # Simple numeric formatting
                 if fmt == "0":
@@ -1702,22 +1667,24 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             decimal_sep = "."
             group_sep = ","
             if len(values) >= 2:
-                decimal_sep = _to_text(values[1])
+                decimal_sep = _slot_text(values[1])
             if len(values) == 3:
-                group_sep = _to_text(values[2])
+                group_sep = _slot_text(values[2])
             if not decimal_sep:
                 return VALUE_ERROR
             # Remove group separators and replace the decimal separator, then
             # validate the whole string rather than parsing a prefix.
-            text = _to_text(values[0]).replace(group_sep, "").replace(decimal_sep, ".")
+            text = (
+                _slot_text(values[0]).replace(group_sep, "").replace(decimal_sep, ".")
+            )
             number = _parse_numeric_text(text, "")
             return VALUE_ERROR if number is None else number
         elif name == "FIND":
             # FIND(find_text, within_text, [start_num])
             if len(values) < 2 or len(values) > 3:
                 return VALUE_ERROR
-            find_text = _to_text(values[0])
-            within_text = _to_text(values[1])
+            find_text = _slot_text(values[0])
+            within_text = _slot_text(values[1])
             start_num = 1
             if len(values) == 3:
                 start_num = int(_to_number(values[2]))
@@ -1736,8 +1703,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # Case-insensitive version of FIND
             if len(values) < 2 or len(values) > 3:
                 return VALUE_ERROR
-            find_text = _to_text(values[0]).lower()
-            within_text = _to_text(values[1]).lower()
+            find_text = _slot_text(values[0]).lower()
+            within_text = _slot_text(values[1]).lower()
             start_num = 1
             if len(values) == 3:
                 start_num = int(_to_number(values[2]))
@@ -1753,10 +1720,10 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # REPLACE(old_text, start_num, num_chars, new_text)
             if len(values) != 4:
                 return VALUE_ERROR
-            old_text = _to_text(values[0])
+            old_text = _slot_text(values[0])
             start_number = _to_number(values[1])
             count_number = _to_number(values[2])
-            new_text = _to_text(values[3])
+            new_text = _slot_text(values[3])
             if start_number < 1:
                 return VALUE_ERROR
             # Unit-based like the slices: cutting inside an astral character
@@ -1777,7 +1744,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # REPT(text, number_times)
             if len(values) != 2:
                 return VALUE_ERROR
-            text = _to_text(values[0])
+            text = _slot_text(values[0])
             count = _to_number(values[1])
             # The raw count, not its truncation: ``REPT("x", -0.5)`` is #VALUE!
             # in Excel and the client engine, where ``int()`` rounded it to 0.
@@ -2113,21 +2080,28 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                         # inside a criteria range only fails to match.
                         return criteria
                     criteria_list.append(criteria)
+            # Flat alignment, the client engine's row-major flattening: the
+            # sum range is the spine and each criteria range lines up with it
+            # by index, so a function-returned matrix or a row range against
+            # the sum column still compares every position.
+            flat_sum = [cell for row in sum_matrix for cell in row]
+            flat_criteria = [
+                [cell for row in matrix for cell in row] for matrix in criteria_matrices
+            ]
             total = 0.0
-            for r in range(len(sum_matrix)):
-                for c in range(len(sum_matrix[r])):
-                    all_match = True
-                    for ci in range(num_criteria):
-                        cr_mat = criteria_matrices[ci]
-                        if r < len(cr_mat) and c < len(cr_mat[r]):
-                            if not self._criteria_test(criteria_list[ci], cr_mat[r][c]):
-                                all_match = False
-                                break
-                        else:
+            for index in range(len(flat_sum)):
+                all_match = True
+                for ci in range(num_criteria):
+                    crit = flat_criteria[ci]
+                    if index < len(crit):
+                        if not self._criteria_test(criteria_list[ci], crit[index]):
                             all_match = False
                             break
-                    if all_match:
-                        total += _to_number_or_zero(sum_matrix[r][c])
+                    else:
+                        all_match = False
+                        break
+                if all_match:
+                    total += _to_number_or_zero(flat_sum[index])
             return float(total)
         if name == "COUNTIFS":
             if len(args) < 2 or len(args) % 2 != 0:
@@ -2158,23 +2132,25 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                     criteria_list.append(criteria)
             if not criteria_matrices:
                 return 0.0
-            max_rows = max(len(m) for m in criteria_matrices)
-            max_cols = max((len(m[0]) if m else 0) for m in criteria_matrices)
+            # Flat alignment, as in SUMIFS: the first criteria range is the
+            # spine, matching the client engine's ``criteria[0].values``.
+            flat_criteria = [
+                [cell for row in matrix for cell in row] for matrix in criteria_matrices
+            ]
             count = 0
-            for r in range(max_rows):
-                for c in range(max_cols):
-                    all_match = True
-                    for ci in range(num_criteria):
-                        cr_mat = criteria_matrices[ci]
-                        if r < len(cr_mat) and c < len(cr_mat[r]):
-                            if not self._criteria_test(criteria_list[ci], cr_mat[r][c]):
-                                all_match = False
-                                break
-                        else:
+            for index in range(len(flat_criteria[0])):
+                all_match = True
+                for ci in range(num_criteria):
+                    crit = flat_criteria[ci]
+                    if index < len(crit):
+                        if not self._criteria_test(criteria_list[ci], crit[index]):
                             all_match = False
                             break
-                    if all_match:
-                        count += 1
+                    else:
+                        all_match = False
+                        break
+                if all_match:
+                    count += 1
             return float(count)
         if name == "AVERAGEIFS":
             if len(args) < 3 or len(args) % 2 != 1:
@@ -2212,26 +2188,30 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                         # inside a criteria range only fails to match.
                         return criteria
                     criteria_list.append(criteria)
+            # Flat alignment, as in SUMIFS: the average range is the spine.
+            flat_average = [cell for row in average_matrix for cell in row]
+            flat_criteria = [
+                [cell for row in matrix for cell in row] for matrix in criteria_matrices
+            ]
             total = 0.0
             count = 0
-            for r in range(len(average_matrix)):
-                for c in range(len(average_matrix[r])):
-                    all_match = True
-                    for ci in range(num_criteria):
-                        cr_mat = criteria_matrices[ci]
-                        if r < len(cr_mat) and c < len(cr_mat[r]):
-                            if not self._criteria_test(criteria_list[ci], cr_mat[r][c]):
-                                all_match = False
-                                break
-                        else:
+            for index in range(len(flat_average)):
+                all_match = True
+                for ci in range(num_criteria):
+                    crit = flat_criteria[ci]
+                    if index < len(crit):
+                        if not self._criteria_test(criteria_list[ci], crit[index]):
                             all_match = False
                             break
-                    if all_match and _numeric(average_matrix[r][c]):
-                        # As in AVERAGEIF: only the numeric entries of the
-                        # average range are averaged; text and blanks are
-                        # ignored rather than counted as zero.
-                        total += _to_number_or_zero(average_matrix[r][c])
-                        count += 1
+                    else:
+                        all_match = False
+                        break
+                if all_match and _numeric(flat_average[index]):
+                    # As in AVERAGEIF: only the numeric entries of the
+                    # average range are averaged; text and blanks are
+                    # ignored rather than counted as zero.
+                    total += _to_number_or_zero(flat_average[index])
+                    count += 1
             if count == 0:
                 return DIV_ZERO
             return float(total) / count

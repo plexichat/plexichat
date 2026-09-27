@@ -23,6 +23,8 @@ from ._formula_shared import (
     _fold_case,
     _is_pattern,
     _numeric,
+    _scalarize,
+    _slot_text,
     _to_number,
     _to_number_or_zero,
     _to_text,
@@ -327,6 +329,18 @@ _FLAT_ARGUMENT_ERROR_FUNCTIONS = frozenset(
         "PERCENTRANK",
         "FORECAST",
         "SUMPRODUCT",
+        # The *IF/*IFS family reads its ranges itself (so a range is deferred)
+        # but the client engine still evaluates a *written* argument eagerly,
+        # so an error operand in a later argument propagates ahead of an
+        # earlier criteria's #VALUE!:
+        # COUNTIFS(A1:A3, A1:A3, 1, 1/0) and
+        # SUMIF(A1:A3, FREQUENCY(A1:A3, A1:A3), 1/0) are #DIV/0!.
+        "SUMIF",
+        "COUNTIF",
+        "AVERAGEIF",
+        "SUMIFS",
+        "COUNTIFS",
+        "AVERAGEIFS",
     }
 )
 
@@ -499,9 +513,27 @@ _SCALAR_SLOT_FUNCTIONS = (
             "MID",
             "DATE",
             "TIME",
+            # The fixed-arity text functions read each argument as one slot
+            # too, in their own body order: a clean multi-cell range where one
+            # value belongs is #VALUE! and an error cell in a slot propagates,
+            # whichever slot the body reaches first (`_slot_text` propagates an
+            # error value, `_to_number` already raises). Pooling them let an
+            # error cell in a later range decide the answer before an earlier
+            # slot's #VALUE! (LEFT(A1:A3, A1:A5)).
+            "LEFT",
+            "RIGHT",
+            "EXACT",
+            "SUBSTITUTE",
+            "REPLACE",
+            "TEXT",
+            "FIND",
+            "SEARCH",
+            "REPT",
+            "NUMBERVALUE",
         }
     )
 )
+
 
 # A scalar family whose tail is a range: NETWORKDAYS and WORKDAY read their two
 # required arguments as scalars and the holiday list as a range, so only the
@@ -895,13 +927,13 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if kind == "cmp":
             # Comparison nodes are ("cmp", op, left, right).
             op = node[1]
-            left = self._eval(node[2], sheet, seen, depth)
-            right = self._eval(node[3], sheet, seen, depth)
+            left = self._operand(node[2], sheet, seen, depth)
+            right = self._operand(node[3], sheet, seen, depth)
             return self._apply(op, left, right)
         if kind in ("+", "-", "*", "/", "^", "&"):
             op = kind
-            left = self._eval(node[1], sheet, seen, depth)
-            right = self._eval(node[2], sheet, seen, depth)
+            left = self._operand(node[1], sheet, seen, depth)
+            right = self._operand(node[2], sheet, seen, depth)
             return self._apply(op, left, right)
         if kind == "call":
             name = node[1]
@@ -909,15 +941,37 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             return self._call(name, args, sheet, seen, depth)
         raise ValueError(VALUE_ERROR)
 
+    def _operand(self, node: Any, sheet: Optional[str], seen: set, depth: int) -> Any:
+        """Evaluate one operand of a binary operator.
+
+        A range operand keeps its matrix shape -- the client engine evaluates
+        a range reference to an array and only reduces it when the operator
+        applies it. Reducing it here instead (the scalar-slot rule ``_eval``
+        applies to a bare range) let the range's own #VALUE!/error cell mask
+        the *other* operand's error, so ``A1:A3 + A5`` was #VALUE! rather than
+        A5's #DIV/0!.
+        """
+        if node[0] == "ref" and ":" in node[1]:
+            return self._range_matrix(node, sheet, seen, depth)
+        return self._eval(node, sheet, seen, depth)
+
     def _apply(self, op: str, left: Any, right: Any) -> Any:
         if is_error(left):
             return left
         if is_error(right):
             return right
         if op == "&":
-            return _to_text(left) + _to_text(right)
+            try:
+                return _to_text(_scalarize(left)) + _to_text(_scalarize(right))
+            except ValueError as exc:
+                return str(exc)
         if op in ("=", "<>", "<", ">", "<=", ">="):
             if op in ("=", "<>"):
+                try:
+                    left = _scalarize(left)
+                    right = _scalarize(right)
+                except ValueError as exc:
+                    return str(exc)
                 if isinstance(left, str) or isinstance(right, str):
                     # Excel's text comparison ignores case; EXACT is the
                     # case-sensitive test. A plain ``==`` here answered FALSE
@@ -1253,7 +1307,7 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
         if name == "EXACT":
             if len(values) != 2:
                 return VALUE_ERROR
-            return _to_text(values[0]) == _to_text(values[1])
+            return _slot_text(values[0]) == _slot_text(values[1])
         if name == "PROPER":
             if len(values) != 1:
                 return VALUE_ERROR
@@ -1286,11 +1340,6 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             "CHAR",
             "CODE",
         ):
-            # NUMBERVALUE reads each slot as one value (the client's toText
-            # scalarizes), so it takes the raw nodes rather than the pooled
-            # list: NUMBERVALUE(A1:A3) is #VALUE!, not the first flattened cell.
-            if name == "NUMBERVALUE":
-                return self._numbervalue(args, sheet, seen, depth)
             return self._advanced_text(name, values)
         if name in ("EOMONTH", "EDATE", "WEEKDAY", "WEEKNUM", "NETWORKDAYS", "WORKDAY"):
             if name in ("NETWORKDAYS", "WORKDAY") and len(args) > 3:
@@ -1978,21 +2027,27 @@ class FormulaEvaluatorCore(FormulaEvaluatorProtocol):
             # the summed range's own error: SUMIF(1, A5, NA()) is the summed
             # range's #N/A while SUMIF(1, A5, 1) is the criteria cell's #DIV/0!.
             return criteria
+        # Both ranges are read flat, position by position -- the client
+        # engine's ``getRangeValues`` flattens a range row-major, so the
+        # criteria range and the sum range align by flat index even when their
+        # shapes differ (a function-returned matrix, or a row against a
+        # column). Aligning the two 2-D matrices by (row, column) instead
+        # compared only the first element when one side was a single row.
+        flat = [cell for row in matrix for cell in row]
+        flat_sum = [cell for row in sum_matrix for cell in row]
         total = 0.0
         count = 0
-        for r in range(min(len(matrix), len(sum_matrix))):
-            row = matrix[r]
-            sum_row = sum_matrix[r]
-            for c in range(min(len(row), len(sum_row))):
-                if self._criteria_test(criteria, row[c]):
-                    value = sum_row[c]
-                    if name == "AVERAGEIF" and not _numeric(value):
-                        # Excel averages only the numeric entries of the
-                        # average range: text and blanks are ignored, so a
-                        # match with no number at all yields #DIV/0!.
-                        continue
-                    total += _to_number_or_zero(value)
-                    count += 1
+        for index, cell in enumerate(flat):
+            if not self._criteria_test(criteria, cell):
+                continue
+            value = flat_sum[index] if index < len(flat_sum) else None
+            if name == "AVERAGEIF" and not _numeric(value):
+                # Excel averages only the numeric entries of the
+                # average range: text and blanks are ignored, so a
+                # match with no number at all yields #DIV/0!.
+                continue
+            total += _to_number_or_zero(value)
+            count += 1
         if name == "SUMIF":
             return float(total)
         if name == "COUNTIF":

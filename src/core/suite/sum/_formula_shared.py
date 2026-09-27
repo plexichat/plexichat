@@ -409,6 +409,33 @@ def parse_formula(text: str) -> Any:
 # ── evaluation ───────────────────────────────────────────────────────────────
 
 
+def _scalarize(value: Any) -> Any:
+    """Reduce one operand to a single value, the client engine's ``scalarize``.
+
+    A non-matrix is itself, a one-cell block is that cell, an error cell
+    raises that error and anything larger raises #VALUE!. A binary operator's
+    *range* operand is read through here (the operand is kept a matrix until
+    the operator applies it), so ``A1:A3 = A1:A3`` is the matrix's #VALUE!
+    rather than a comparison of two arrays.
+    """
+    if not isinstance(value, (list, tuple)):
+        return value
+    cells: List[Any] = []
+    stack = list(value)
+    while stack:
+        item = stack.pop(0)
+        if isinstance(item, (list, tuple)):
+            stack[0:0] = list(item)
+        else:
+            cells.append(item)
+    for cell in cells:
+        if is_error(cell):
+            raise ValueError(cell)
+    if len(cells) == 1:
+        return cells[0]
+    raise ValueError(VALUE_ERROR)
+
+
 def _to_number(value: Any) -> float:
     if value is None:
         # Blank cells coerce to zero in arithmetic (Excel behavior); only
@@ -532,6 +559,23 @@ def _to_text(value: Any) -> str:
             return "Infinity" if value > 0 else "-Infinity"
         return _js_number_text(number)
     return str(value)
+
+
+def _slot_text(value: Any) -> str:
+    """Read a fixed-arity slot as text, propagating an error value.
+
+    The client engine's ``toText`` scalarizes first, so an error value is
+    re-thrown rather than read as its spelling. The pooled readers want the
+    spelling (they classify errors), so ``_to_text`` keeps that behaviour;
+    the scalar-slot text bodies use this instead, because they read one slot
+    and then coerce the next, and a text slot's error has to surface before a
+    later slot's coercion can answer a different error (``REPLACE(1, "x",
+    A1:A5, 1)`` is #VALUE! from the start-num coercion, not the range's
+    #DIV/0!).
+    """
+    if is_error(value):
+        raise ValueError(value)
+    return _to_text(value)
 
 
 # ── UTF-16 text measurement ──────────────────────────────────────────────
