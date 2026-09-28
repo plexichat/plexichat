@@ -279,6 +279,9 @@ value names, and the covered range is checked on the rounded part. A holiday
 names the day its rounded serial's integer part (truncated toward zero), so
 `NETWORKDAYS(45292, 45292, 45291.99999999999)` counts the holiday and answers
 0, and `NETWORKDAYS(-2, -2, -2.5)` counts -2 rather than flooring to -3.
+A reversed span counts negative, as Excel does: the same workdays are counted
+forward, then negated, so `NETWORKDAYS(DATE(2024,1,10),DATE(2024,1,1))` is -8
+and a holiday counts either way.
 
 **Places is coerced before a conversion's input is validated.** The base
 conversions read their `places` argument first, so a bad number *and* bad

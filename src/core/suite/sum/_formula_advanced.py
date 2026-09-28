@@ -1969,6 +1969,13 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if abs(end_part - start_part) > MAX_NETWORKDAYS_SPAN_DAYS:
                 return NUM_ERROR
             holidays = _holiday_serials(values[2:])
+            # A reversed span counts negative, as Excel does: swap the ends,
+            # count the workdays forward, then negate. A holiday counts the
+            # same day either way, so only the sign changes.
+            sign = 1
+            if start_part > end_part:
+                start_part, end_part = end_part, start_part
+                sign = -1
             # Walk the day serials by index rather than by adding a day to a
             # ``date``: the last day (9999-12-31) has no successor, so the
             # increment after it raised an OverflowError straight out of the
@@ -1982,7 +1989,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
                     _DATE_EPOCH + datetime.timedelta(days=serial)
                 ).isoweekday() <= 5 and serial not in holidays:
                     count += 1
-            return float(count)
+            return float(sign * count)
         elif name == "WORKDAY":
             # WORKDAY(start_date, days, [holidays])
             if len(values) < 2:

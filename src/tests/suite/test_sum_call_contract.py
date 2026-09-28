@@ -291,6 +291,11 @@ _CASES = [
     ("NETWORKDAYS(45292, 45292, 45291.99999999999)", "number:0"),
     ("NETWORKDAYS(-2, -2, -2.5)", "number:0"),
     ("WORKDAY(-3, 1, -2.5)", "number:-1"),
+    # A reversed span counts negative, as Excel does: the same workdays are
+    # counted forward, then negated, so a holiday counts either way.
+    ("NETWORKDAYS(DATE(2024,1,10),DATE(2024,1,1))", "number:-8"),
+    ("NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,10),DATE(2024,1,2))", "number:7"),
+    ("NETWORKDAYS(DATE(2024,1,10),DATE(2024,1,1),DATE(2024,1,2))", "number:-7"),
 ]
 
 

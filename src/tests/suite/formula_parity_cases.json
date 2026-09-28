@@ -6086,6 +6086,18 @@
     {
       "formula": "WORKDAY(-3, 1, -2.5)",
       "expected": "number:-1"
+    },
+    {
+      "formula": "NETWORKDAYS(DATE(2024,1,10),DATE(2024,1,1))",
+      "expected": "number:-8"
+    },
+    {
+      "formula": "NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,10),DATE(2024,1,2))",
+      "expected": "number:7"
+    },
+    {
+      "formula": "NETWORKDAYS(DATE(2024,1,10),DATE(2024,1,1),DATE(2024,1,2))",
+      "expected": "number:-7"
     }
   ]
 }
