@@ -355,12 +355,18 @@ def emit_workbook_update(
 
     The actor is typically excluded (they applied the change locally); every
     other viewer refreshes their viewport when the event arrives. ``data``
-    carries the workbook id, new revision, actor id, and any extras (e.g.
-    mention targets for comments).
+    carries extras (e.g. mention targets for comments); the workbook id,
+    new revision and actor id are always (re)stated from the explicit
+    arguments so a caller cannot emit an identifier-less event. Id fields
+    are stringified like the message family; ``revision`` stays numeric.
     """
+    payload = dict(data or {})
+    payload["workbook_id"] = str(workbook_id)
+    payload["revision"] = int(revision)
+    payload["actor_id"] = str(actor_id)
     _emit(
         EventType.WORKBOOK_UPDATE,
-        data,
+        payload,
         user_ids=user_ids,
         exclude_user_ids=exclude_user_ids,
     )

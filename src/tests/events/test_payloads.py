@@ -390,3 +390,57 @@ class TestChannelPinsUpdatePayload:
         assert data["server_id"] is None
         assert data["guild_id"] is None
         assert data["pinned_message_ids"] == []
+
+
+class TestWorkbookUpdatePayload:
+    """WORKBOOK_UPDATE always carries its identifiers from the arguments."""
+
+    def test_workbook_update_injects_ids(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["event_type"] = event_type
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_workbook_update(
+            42,
+            7,
+            99,
+            {"note": "hello"},
+            user_ids=[1, 2],
+            exclude_user_ids=[99],
+        )
+
+        assert captured["event_type"] == EventType.WORKBOOK_UPDATE
+        data = captured["data"]
+        assert data["workbook_id"] == "42"
+        assert data["revision"] == 7
+        assert data["actor_id"] == "99"
+        assert data["note"] == "hello"
+        assert captured["kwargs"]["user_ids"] == [1, 2]
+        assert captured["kwargs"]["exclude_user_ids"] == [99]
+
+    def test_workbook_update_overrides_stale_ids_and_keeps_caller_dict(
+        self, monkeypatch
+    ):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["data"] = data
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        extra = {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
+        gateway_emit.emit_workbook_update(42, 7, 99, extra)
+
+        data = captured["data"]
+        assert data["workbook_id"] == "42"
+        assert data["revision"] == 7
+        assert data["actor_id"] == "99"
+        # The caller's dict is not mutated.
+        assert extra == {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
