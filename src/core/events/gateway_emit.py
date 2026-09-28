@@ -180,13 +180,20 @@ def emit_channel_pins_update(
     guild_id: Optional[int] = None,
     pinned_message_ids: Optional[List[int]] = None,
 ) -> None:
-    """Notify clients that the pinned-message set of a channel changed."""
+    """Notify clients that the pinned-message set of a channel changed.
+
+    Payload id fields are stringified so the shape matches the other
+    message-family events; ``server_id`` is canonical with ``guild_id``
+    kept as a legacy alias (matching MESSAGE_DELETE_BULK).
+    """
+    sid = str(guild_id) if guild_id is not None else None
     _emit(
         EventType.CHANNEL_PINS_UPDATE,
         {
-            "channel_id": channel_id,
-            "guild_id": guild_id,
-            "pinned_message_ids": pinned_message_ids or [],
+            "channel_id": str(channel_id),
+            "server_id": sid,
+            "guild_id": sid,
+            "pinned_message_ids": [str(mid) for mid in (pinned_message_ids or [])],
         },
         channel_id=channel_id,
         server_id=guild_id,

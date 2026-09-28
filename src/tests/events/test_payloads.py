@@ -344,3 +344,49 @@ class TestEventToDict:
         data = event.data
         assert isinstance(data["id"], str)
         assert isinstance(data["channel_id"], str)
+
+
+class TestChannelPinsUpdatePayload:
+    """CHANNEL_PINS_UPDATE carries string IDs like the message family."""
+
+    def test_pins_update_stringifies_ids(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["event_type"] = event_type
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_channel_pins_update(
+            123, guild_id=456, pinned_message_ids=[7, 8]
+        )
+
+        assert captured["event_type"] == EventType.CHANNEL_PINS_UPDATE
+        data = captured["data"]
+        assert data["channel_id"] == "123"
+        assert data["server_id"] == "456"
+        assert data["guild_id"] == "456"
+        assert data["pinned_message_ids"] == ["7", "8"]
+        # Routing keys stay ints, as with the sibling emitters.
+        assert captured["kwargs"]["channel_id"] == 123
+        assert captured["kwargs"]["server_id"] == 456
+
+    def test_pins_update_without_guild_or_pins(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["data"] = data
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_channel_pins_update(123)
+
+        data = captured["data"]
+        assert data["channel_id"] == "123"
+        assert data["server_id"] is None
+        assert data["guild_id"] is None
+        assert data["pinned_message_ids"] == []
