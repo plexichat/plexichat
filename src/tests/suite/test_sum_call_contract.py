@@ -261,6 +261,29 @@ _CASES = [
     ("HOUR(0.9999999999999999)", "number:0"),
     ("MINUTE(0.9999999999999999)", "number:0"),
     ("SECOND(0.9999999999999999)", "number:0"),
+    # The same storage rule decides a date part, because the serial is stored
+    # before either a date or a time reader sees it: 45291.99999999999 rounds
+    # to 45292 (2024-01-01), so every date part answers the boundary's. The
+    # rule is symmetric about zero (-0.9999999999999999 stores as -1).
+    ("YEAR(45291.99999999999)", "number:2024"),
+    ("MONTH(45291.99999999999)", "number:1"),
+    ("DAY(45291.99999999999)", "number:1"),
+    ("WEEKDAY(45291.99999999999)", "number:2"),
+    ("YEAR(-0.9999999999999999)", "number:1899"),
+    ("MONTH(-0.9999999999999999)", "number:12"),
+    ("DAY(-0.9999999999999999)", "number:29"),
+    ("WEEKDAY(-0.9999999999999999)", "number:6"),
+    # DAYS, EDATE, EOMONTH, WORKDAY and NETWORKDAYS read a serial they round
+    # the same way, so each stays on the day the stored value names.
+    ("DAYS(10.9, 0.1)", "number:10"),
+    ("DAYS(0.9, 0.1)", "number:0"),
+    ("DAYS(45291.99999999999, 45292)", "number:0"),
+    ("EDATE(45291.99999999999, 1)", "number:45323"),
+    ("EOMONTH(45291.99999999999, 1)", "number:45351"),
+    ("WORKDAY(45291.99999999999, 1)", "number:45293"),
+    ("NETWORKDAYS(45291.99999999999, 45292)", "number:1"),
+    # The covered range is checked on the rounded part, not the raw serial.
+    ("YEAR(2958465.5)", "number:9999"),
 ]
 
 

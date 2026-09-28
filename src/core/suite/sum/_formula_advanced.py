@@ -129,18 +129,32 @@ def _parse_date_text(text: str) -> Optional[datetime.date]:
     return None
 
 
+def _round_serial(serial: float) -> float:
+    """A serial rounded to the 15 significant decimal digits Excel stores.
+
+    Excel keeps only 15 significant digits, so a serial carrying more is stored
+    rounded: ``45291.99999999999`` is stored as ``45292`` and names 2024-01-01,
+    and ``0.9999999999999999`` is stored as ``1`` (midnight). Every date *and*
+    time part is read from the rounded serial, so both engines answer the
+    boundary value's date and time rather than the raw fraction's.
+    """
+    return float(f"{serial:.15g}")
+
+
 def _date_part(serial: float) -> Optional[int]:
     """The date a serial names, or ``None`` when it names none.
 
     The serial's integer part (truncated toward zero, matching the client
     engine's ``Math.trunc``) is the date and its fraction is a time of day, so
     the range is checked on the part, not on the raw serial: ``2958465.5``
-    names 9999-12-31 and is in range. A serial whose date part falls outside
-    the covered span is ``None``, which the caller reports as #NUM!.
+    names 9999-12-31 and is in range. The serial is rounded to Excel's 15
+    significant digits first, so a value a hair below a day boundary reads the
+    boundary's date. A serial whose date part falls outside the covered span is
+    ``None``, which the caller reports as #NUM!.
     """
     if not math.isfinite(serial):
         return None
-    part = math.trunc(serial)
+    part = math.trunc(_round_serial(serial))
     if part < MIN_DATE_SERIAL or part > MAX_DATE_SERIAL:
         return None
     return part
@@ -162,8 +176,7 @@ def _time_of_day(serial: float) -> int:
     fraction up) answered 00:00:00, and the client rounded a computed serial a
     hair below a second *up* where the server answered the lower second.
     """
-    serial = float(f"{serial:.15g}")
-    total_ms = math.trunc(serial * 86400000.0)
+    total_ms = math.trunc(_round_serial(serial) * 86400000.0)
     return (total_ms % 86400000) // 1000 % 86400
 
 
@@ -1151,7 +1164,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if len(values) != 1:
             return VALUE_ERROR
         try:
-            serial = int(_to_number(values[0]))
+            serial = int(_round_serial(_to_number(values[0])))
         except ValueError as exc:
             return str(exc)
         try:
@@ -1171,8 +1184,8 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
         if len(values) != 2:
             return VALUE_ERROR
         try:
-            end = int(_to_number(values[0]))
-            start = int(_to_number(values[1]))
+            end = int(_round_serial(_to_number(values[0])))
+            start = int(_round_serial(_to_number(values[1])))
         except ValueError as exc:
             return str(exc)
         return float(end - start)
@@ -1795,7 +1808,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(values) != 2:
                 return VALUE_ERROR
             try:
-                start_serial = int(_to_number(values[0]))
+                start_serial = int(_round_serial(_to_number(values[0])))
                 months = int(_to_number(values[1]))
             except (ValueError, OverflowError) as exc:
                 return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
@@ -1836,7 +1849,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(values) != 2:
                 return VALUE_ERROR
             try:
-                start_serial = int(_to_number(values[0]))
+                start_serial = int(_round_serial(_to_number(values[0])))
                 months = int(_to_number(values[1]))
             except (ValueError, OverflowError) as exc:
                 return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
@@ -1875,7 +1888,7 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             if len(values) < 1 or len(values) > 2:
                 return VALUE_ERROR
             try:
-                serial = int(_to_number(values[0]))
+                serial = int(_round_serial(_to_number(values[0])))
             except (ValueError, OverflowError) as exc:
                 return str(exc) if str(exc) in ERROR_CODES else VALUE_ERROR
             return_type = 1

@@ -267,6 +267,16 @@ client applied the 15-digit rule. The readers also name a time *on a date*, so
 a serial whose date part is outside the covered span is `#NUM!` like every
 other date reader rather than a silent 0.
 
+**The same 15-digit rounding decides a date part.** Excel stores the serial
+before any reader sees it, so the rule is not the time readers' alone: a serial
+a hair below a day boundary is stored as the boundary, and `YEAR`, `MONTH`,
+`DAY` and `WEEKDAY` answer the boundary's date. `YEAR(45291.99999999999)` is
+2024 (the serial stores as 45292, i.e. 2024-01-01), and the rule is symmetric
+about zero (`DAY(-0.9999999999999999)` is 29, because the serial stores as -1).
+`DAYS`, `EDATE`, `EOMONTH`, `WORKDAY` and `NETWORKDAYS` read a serial the same
+way through the shared `_round_serial`, so each stays on the day the stored
+value names, and the covered range is checked on the rounded part.
+
 **Places is coerced before a conversion's input is validated.** The base
 conversions read their `places` argument first, so a bad number *and* bad
 places report the places error: `BIN2OCT(18, "abc")` is `#VALUE!` (bad
