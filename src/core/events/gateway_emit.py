@@ -13,11 +13,36 @@ All helpers are intentionally non-raising: a failure to dispatch must never
 break the underlying REST/CRUD operation that triggered it.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import utils.logger as logger
 
 from .types import EventType
+
+F = TypeVar("F", bound=Callable[..., None])
+
+
+def _non_raising(fn: F) -> F:
+    """Guard a gateway emitter so payload building cannot raise.
+
+    ``_emit`` already swallows dispatch errors, but ``int(...)``/``str(...)``
+    coercions run while building the payload dict -- outside that guard. A
+    malformed id (e.g. ``user["id"] = "abc"`` or a bad ``revision``) would
+    then raise into the REST handler, violating this module's non-raising
+    contract. The decorator keeps the guarantee for current and future
+    helpers: log at WARNING (so breakage is visible) and return None.
+    """
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"gateway_emit: failed to build {fn.__name__}: {e}")
+            return None
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _emit(
@@ -52,6 +77,7 @@ def _emit(
 # --------------------------------------------------------------------------
 # User / profile
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_user_update(
     user: Dict[str, Any], exclude_user_id: Optional[int] = None
 ) -> None:
@@ -68,6 +94,7 @@ def emit_user_update(
 # --------------------------------------------------------------------------
 # Messages
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_message_delete_bulk(
     channel_id: int,
     message_ids: List[int],
@@ -94,6 +121,7 @@ def emit_message_delete_bulk(
     )
 
 
+@_non_raising
 def emit_message_reaction_remove_all(
     channel_id: int,
     message_id: int,
@@ -122,6 +150,7 @@ def emit_message_reaction_remove_all(
 # --------------------------------------------------------------------------
 # Polls
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_poll_update(
     poll_id: int,
     message_id: int,
@@ -152,6 +181,7 @@ def emit_poll_update(
     )
 
 
+@_non_raising
 def emit_message_reaction_remove_emoji(
     channel_id: int,
     message_id: int,
@@ -175,6 +205,7 @@ def emit_message_reaction_remove_emoji(
     )
 
 
+@_non_raising
 def emit_channel_pins_update(
     channel_id: int,
     guild_id: Optional[int] = None,
@@ -203,6 +234,7 @@ def emit_channel_pins_update(
 # --------------------------------------------------------------------------
 # Servers / guilds
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_guild_update(
     server_id: int,
     *,
@@ -231,6 +263,7 @@ def emit_guild_update(
 # --------------------------------------------------------------------------
 # Server roles
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_guild_role_create(server_id: int, role: Dict[str, Any]) -> None:
     _emit(
         EventType.GUILD_ROLE_CREATE,
@@ -239,6 +272,7 @@ def emit_guild_role_create(server_id: int, role: Dict[str, Any]) -> None:
     )
 
 
+@_non_raising
 def emit_guild_role_update(server_id: int, role: Dict[str, Any]) -> None:
     _emit(
         EventType.GUILD_ROLE_UPDATE,
@@ -247,6 +281,7 @@ def emit_guild_role_update(server_id: int, role: Dict[str, Any]) -> None:
     )
 
 
+@_non_raising
 def emit_guild_role_delete(server_id: int, role_id: int) -> None:
     _emit(
         EventType.GUILD_ROLE_DELETE,
@@ -258,6 +293,7 @@ def emit_guild_role_delete(server_id: int, role_id: int) -> None:
 # --------------------------------------------------------------------------
 # Server bans
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_guild_ban_add(
     server_id: int, user_id: int, reason: Optional[str] = None
 ) -> None:
@@ -268,6 +304,7 @@ def emit_guild_ban_add(
     )
 
 
+@_non_raising
 def emit_guild_ban_remove(server_id: int, user_id: int) -> None:
     _emit(
         EventType.GUILD_BAN_REMOVE,
@@ -279,6 +316,7 @@ def emit_guild_ban_remove(server_id: int, user_id: int) -> None:
 # --------------------------------------------------------------------------
 # Invites
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_invite_create(server_id: int, invite: Dict[str, Any]) -> None:
     _emit(
         EventType.INVITE_CREATE,
@@ -287,6 +325,7 @@ def emit_invite_create(server_id: int, invite: Dict[str, Any]) -> None:
     )
 
 
+@_non_raising
 def emit_invite_delete(server_id: int, code: str) -> None:
     _emit(
         EventType.INVITE_DELETE,
@@ -298,6 +337,7 @@ def emit_invite_delete(server_id: int, code: str) -> None:
 # --------------------------------------------------------------------------
 # Webhooks
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_webhooks_update(server_id: int, channel_id: Optional[int] = None) -> None:
     _emit(
         EventType.WEBHOOKS_UPDATE,
@@ -309,6 +349,7 @@ def emit_webhooks_update(server_id: int, channel_id: Optional[int] = None) -> No
 # --------------------------------------------------------------------------
 # Threads
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_thread_create(thread: Dict[str, Any]) -> None:
     _emit(
         EventType.THREAD_CREATE,
@@ -318,6 +359,7 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
     )
 
 
+@_non_raising
 def emit_thread_update(thread: Dict[str, Any]) -> None:
     _emit(
         EventType.THREAD_UPDATE,
@@ -327,6 +369,7 @@ def emit_thread_update(thread: Dict[str, Any]) -> None:
     )
 
 
+@_non_raising
 def emit_thread_delete(
     thread_id: int,
     guild_id: Optional[int] = None,
@@ -343,6 +386,7 @@ def emit_thread_delete(
 # --------------------------------------------------------------------------
 # PlexiSum workbooks (realtime collaboration)
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_workbook_update(
     workbook_id: int,
     revision: int,
@@ -375,6 +419,7 @@ def emit_workbook_update(
 # --------------------------------------------------------------------------
 # Security / account alerts (bridges the audit log to live clients)
 # --------------------------------------------------------------------------
+@_non_raising
 def emit_security_alert(
     user_id: int,
     action: str,

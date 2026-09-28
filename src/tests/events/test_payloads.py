@@ -444,3 +444,28 @@ class TestWorkbookUpdatePayload:
         assert data["actor_id"] == "99"
         # The caller's dict is not mutated.
         assert extra == {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
+
+
+class TestNonRaisingEmitters:
+    """Emitters must never raise into the REST handler (module contract)."""
+
+    def test_user_update_with_malformed_id_does_not_raise(self):
+        from src.core.events import gateway_emit
+
+        # int("abc") used to propagate ValueError out of the helper.
+        assert gateway_emit.emit_user_update({"id": "abc"}) is None
+
+    def test_workbook_update_with_malformed_revision_does_not_raise(self):
+        from src.core.events import gateway_emit
+
+        assert gateway_emit.emit_workbook_update(42, "not-a-number", 99, {}) is None
+
+    def test_broken_payload_build_does_not_raise(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        class BadStr:
+            def __str__(self):
+                raise RuntimeError("boom")
+
+        # str() coercion inside the helper must also stay non-raising.
+        assert gateway_emit.emit_channel_pins_update(BadStr()) is None
