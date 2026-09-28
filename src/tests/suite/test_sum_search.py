@@ -152,3 +152,31 @@ def test_list_workbooks_route_forwards_search(monkeypatch):
 def test_list_workbooks_route_normalizes_blank_search(monkeypatch):
     _assert_route_forwards_search(monkeypatch, "", None)
     _assert_route_forwards_search(monkeypatch, "   ", None)
+
+
+def test_list_workbooks_search_treats_like_wildcards_literally(
+    db, two_users, server_manager
+):
+    """``%``, ``_`` and ``\\`` in the query must not act as wildcards."""
+    owner, _ = two_users
+    manager = _make_manager(db, server_manager)
+    manager.create_workbook(owner.id, "Alpha Report")
+    manager.create_workbook(owner.id, "100% Coverage")
+    manager.create_workbook(owner.id, "under_score")
+    manager.create_workbook(owner.id, r"back\slash")
+
+    items, total = manager.list_workbooks(owner.id, search="%")
+    assert total == 1
+    assert items[0]["title"] == "100% Coverage"
+
+    items, total = manager.list_workbooks(owner.id, search="_")
+    assert total == 1
+    assert items[0]["title"] == "under_score"
+
+    items, total = manager.list_workbooks(owner.id, search="\\")
+    assert total == 1
+    assert items[0]["title"] == r"back\slash"
+
+    # A blank query is not a match-everything wildcard.
+    items, total = manager.list_workbooks(owner.id, search="   ")
+    assert total == 4

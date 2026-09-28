@@ -360,9 +360,20 @@ class SumManagerWorkbooks(SumManagerProtocol):
             where += " AND scope = ?"
             params.append(normalized_scope)
         if search:
-            needle = f"%{str(search).strip().lower()}%"
-            where += " AND LOWER(title) LIKE ?"
-            params.append(needle)
+            raw = str(search).strip()
+            if raw:
+                # Escape LIKE wildcards so a literal %, _ or \ in the query
+                # cannot over-match (e.g. searching "%" must not list every
+                # workbook). Parameterization alone does not do this.
+                escaped = (
+                    raw.lower()
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                needle = f"%{escaped}%"
+                where += " AND LOWER(title) LIKE ? ESCAPE '\\'"
+                params.append(needle)
         count = self._db.fetch_one(
             f"SELECT COUNT(*) AS count FROM sum_workbooks WHERE {where}", tuple(params)
         )
