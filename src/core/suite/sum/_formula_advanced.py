@@ -79,14 +79,17 @@ def _holiday_serials(values: List[Any]) -> set:
     ``_expand_arg`` flattens a range into ``values``, so blanks and non-date
     cells (a stray label beside the real dates) can sit alongside them. Excel
     ignores those rather than failing the whole formula, so a value that does
-    not coerce to a number is skipped instead of poisoning the result.
+    not coerce to a number is skipped instead of poisoning the result. Each
+    holiday names the day its rounded serial's integer part (truncated toward
+    zero, matching the client engine), so a serial a hair below a boundary
+    counts as the boundary's day.
     """
     serials = set()
     for value in values:
         if value is None or is_error(value):
             continue
         try:
-            serials.add(int(_to_number(value)))
+            serials.add(math.trunc(_round_serial(_to_number(value))))
         except (TypeError, ValueError):
             continue
     return serials

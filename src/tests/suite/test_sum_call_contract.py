@@ -282,8 +282,15 @@ _CASES = [
     ("EOMONTH(45291.99999999999, 1)", "number:45351"),
     ("WORKDAY(45291.99999999999, 1)", "number:45293"),
     ("NETWORKDAYS(45291.99999999999, 45292)", "number:1"),
-    # The covered range is checked on the rounded part, not the raw serial.
+    # The covered range is checked on the rounded part, not the raw serial:
+    # 2958465.999999999 stores as 2958466, outside the span, so it is #NUM!.
     ("YEAR(2958465.5)", "number:9999"),
+    ("YEAR(2958465.999999999)", "error:#NUM!"),
+    # A holiday names the day its rounded serial's integer part (truncated
+    # toward zero): 45291.99999999999 counts as 45292, and -2.5 as -2.
+    ("NETWORKDAYS(45292, 45292, 45291.99999999999)", "number:0"),
+    ("NETWORKDAYS(-2, -2, -2.5)", "number:0"),
+    ("WORKDAY(-3, 1, -2.5)", "number:-1"),
 ]
 
 

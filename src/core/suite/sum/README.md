@@ -275,7 +275,10 @@ a hair below a day boundary is stored as the boundary, and `YEAR`, `MONTH`,
 about zero (`DAY(-0.9999999999999999)` is 29, because the serial stores as -1).
 `DAYS`, `EDATE`, `EOMONTH`, `WORKDAY` and `NETWORKDAYS` read a serial the same
 way through the shared `_round_serial`, so each stays on the day the stored
-value names, and the covered range is checked on the rounded part.
+value names, and the covered range is checked on the rounded part. A holiday
+names the day its rounded serial's integer part (truncated toward zero), so
+`NETWORKDAYS(45292, 45292, 45291.99999999999)` counts the holiday and answers
+0, and `NETWORKDAYS(-2, -2, -2.5)` counts -2 rather than flooring to -3.
 
 **Places is coerced before a conversion's input is validated.** The base
 conversions read their `places` argument first, so a bad number *and* bad

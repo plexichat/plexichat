@@ -6070,6 +6070,22 @@
     {
       "formula": "YEAR(2958465.5)",
       "expected": "number:9999"
+    },
+    {
+      "formula": "YEAR(2958465.999999999)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "NETWORKDAYS(45292, 45292, 45291.99999999999)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "NETWORKDAYS(-2, -2, -2.5)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "WORKDAY(-3, 1, -2.5)",
+      "expected": "number:-1"
     }
   ]
 }
