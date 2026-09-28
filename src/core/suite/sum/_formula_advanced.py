@@ -149,17 +149,20 @@ def _date_part(serial: float) -> Optional[int]:
 def _time_of_day(serial: float) -> int:
     """The seconds past midnight the serial names.
 
-    Read from the whole milliseconds the serial carries, exactly as the
-    client engine's Date does: ``Date`` holds an integer millisecond count, so
-    the time of day is ``trunc(serial * 86400000)`` reduced to one day. A
-    serial naming 41.8 seconds reads 41, and truncating toward the second
-    (rather than rounding) is what the client -- and Excel -- answer.
+    Read from the whole milliseconds the serial carries: the time of day is
+    ``trunc(serial * 86400000)`` reduced to one day. A serial naming 41.8
+    seconds reads 41, and truncating toward the second (rather than rounding)
+    is what the client -- and Excel -- answer.
 
-    This used to subtract ``floor(serial)`` and read the leftover fraction,
-    which rounds differently at the edges: for a negative serial the two
-    spellings disagreed by a second near a millisecond boundary
-    (``SECOND(-78320.75783565)`` was 43 on the client and 42 here).
+    Excel keeps only 15 significant decimal digits, so the serial is rounded
+    there first: 0.9999999999999999 is stored as 1 and reads midnight, not
+    23:59:59. Without the rounding the two engines disagreed in *both*
+    directions at a boundary -- the server answered 23:59:59 here while the
+    client's Date (built on the ~2e12 ms epoch, which rounded the extra
+    fraction up) answered 00:00:00, and the client rounded a computed serial a
+    hair below a second *up* where the server answered the lower second.
     """
+    serial = float(f"{serial:.15g}")
     total_ms = math.trunc(serial * 86400000.0)
     return (total_ms % 86400000) // 1000 % 86400
 
