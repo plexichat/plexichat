@@ -251,16 +251,21 @@ pre-check. An error operand otherwise propagates out of every value function
 scalar slot through the same pooled rule as the client's `toNumber`, so an
 error is propagated rather than coerced into `#VALUE!`.
 
-**The time of day truncates through whole milliseconds.** The date readers
-share the client engine's clock, which keeps integer milliseconds, so a serial
-naming 41.8 seconds is the 41st second -- `SECOND(0.04701185841617224)` is 41,
-not the 42 a round to the nearest second answered here. The time of day is read
-from the whole milliseconds the serial carries (`trunc(serial * 86400000)`
-reduced to one day), the way the client's `Date` does; reading the leftover
-fraction after subtracting `floor(serial)` disagreed with the client by a
-second at a millisecond boundary on a negative serial. The readers also name a
-time *on a date*, so a serial whose date part is outside the covered span is
-`#NUM!` like every other date reader rather than a silent 0.
+**The time of day truncates through whole milliseconds, after Excel's 15-digit
+rounding.** Excel keeps only 15 significant decimal digits, so the serial is
+rounded there before the time is read: a serial naming 41.8 seconds is the
+41st second -- `SECOND(0.04701185841617224)` is 41, not the 42 a round to the
+nearest second answered here -- a value a hair below a boundary rounds *to* it
+(`HOUR(0.9999999999999999)` is 0), and one carrying more than 15 digits rounds
+at that digit (`MINUTE(28/3)` is 59, because `28/3` is stored as
+`9.33333333333333`, i.e. 07:59:59). The time is then read from the whole
+milliseconds the serial carries (`trunc(serial * 86400000)` reduced to one
+day). Reading the leftover fraction after subtracting `floor(serial)`
+disagreed with the client by a second at a millisecond boundary on a negative
+serial; reading the un-rounded serial disagreed in both directions once the
+client applied the 15-digit rule. The readers also name a time *on a date*, so
+a serial whose date part is outside the covered span is `#NUM!` like every
+other date reader rather than a silent 0.
 
 **Places is coerced before a conversion's input is validated.** The base
 conversions read their `places` argument first, so a bad number *and* bad
@@ -409,8 +414,11 @@ and so does this engine, rather than letting an `Infinity`, the `NaN` of an
 `inf - inf`, or an `OverflowError` out of the evaluator. Python's `** 2` raised
 where the client engine's multiplication quietly answered `Infinity`, so
 `STDEV(1e300, -1)` used to crash here and leak a non-number there; both now
-answer `#NUM!`. `AVEDEV` is included because its absolute deviations can
-overflow the sum the same way.
+answer `#NUM!`. The sum is compensated -- this engine's Python `sum()` -- and
+the client engine's spread measures now sum the same way, so
+`VAR(1e3, 12, 1, 2, 3) & ""` spells `198223.3` on both rather than the
+`198223.30000000002` a naive left-to-right loop printed there. `AVEDEV` is
+included because its absolute deviations can overflow the sum the same way.
 
 **A per-unit loop is bounded.** `DB` walks one period at a time, and
 `BINOMDIST`/`POISSON` sum one term per success or event. Those arguments are
@@ -483,7 +491,7 @@ implemented, taking the engine from 84 to 231 functions:
 | Logical | `TRUE`, `FALSE` | zero-argument call forms of the literals; a stray argument is `#VALUE!` |
 | Lookup | `CHOOSE`, `IFS`, `SWITCH`, `XLOOKUP` | `CHOOSE`/`IFS`/`SWITCH` are evaluated on the `IF`/`IFNA` short-circuit path, so an untaken branch is not evaluated; `XLOOKUP` defers `if_not_found` the same way, so a failing fallback never poisons a hit |
 | Information | `ISLOGICAL`, `ISNONTEXT`, `ISEVEN`, `ISODD`, `ERROR.TYPE`, `N`, `T`, `CLEAN` | `ERROR.TYPE` and the `IS*` additions classify an error instead of propagating it |
-| Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | `GCD`/`LCM` truncate toward zero and reject a magnitude above 2^53 |
+| Math | `SIGN`, `GCD`, `LCM`, `SUMSQ`, `SUMX2MY2`, `SUMX2PY2`, `SUMXY` | `GCD`/`LCM` truncate toward zero, reject a magnitude above 2^53, and read their arguments one at a time, so an earlier argument's `#NUM!` beats a later `#VALUE!` (`GCD(-1, "x")` is `#NUM!`) |
 | Trig | `ATAN2`, `SINH`, `COSH`, `TANH` | an overflowing `SINH`/`COSH` is `#NUM!`, not infinity |
 | Date | `HOUR`, `MINUTE`, `SECOND`, `TIME`, `DATEVALUE`, `TODAY`, `NOW` | see the clock note below |
 | Statistics | `MEDIAN`, `LARGE`, `SMALL`, `RANK`, `STDEV`, `VAR`, `MODE`, `PERCENTILE`, `QUARTILE`, `AVERAGEA`, `MAXA`, `MINA` | pooled over the numbers the aggregates already collect; `LARGE`/`SMALL`/`RANK`/`PERCENTILE`/`QUARTILE` read their arguments separately |
@@ -688,8 +696,12 @@ not propagate a *computed* scalar error in its lookup or return array,
 answering ``#N/A`` for ``XLOOKUP(1, SUM(A1:A5), 1)`` where every other lookup --
 and this engine -- answer ``#DIV/0!``. The client now propagates one eagerly
 while a plain reference (and the identity ``+A5``) keeps its error as a cell,
-the ``_computed_range_error`` rule this engine already used. The shared table
-pins both directions.
+the ``_computed_range_error`` rule this engine already used. The client also
+now reads the lookup array, and answers its error, *before* it evaluates the
+return array -- the order this engine reads them -- so a return array that
+*raises* no longer pre-empts the lookup array's error
+(``XLOOKUP(0, 1/0, LCM(-1, 1))`` is ``#DIV/0!``, not ``LCM``'s ``#NUM!``). The
+shared table pins both directions.
 
 **Array-valued arguments.** Calling each function with an array-valued
 argument -- ``FREQUENCY``'s matrix and the ranges ``OFFSET``/``INDEX``/

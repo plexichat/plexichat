@@ -5938,6 +5938,74 @@
     {
       "formula": "OFFSET(+(A1),0,0)",
       "expected": "number:1"
+    },
+    {
+      "formula": "GCD(-1,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "GCD(-1,\"x\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "LCM(-1,\"x\")",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "XLOOKUP(0,1/0,LCM(-1,1))",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "XLOOKUP(0,1,NA())",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "XLOOKUP(0,NA(),1/0)",
+      "expected": "error:#N/A"
+    },
+    {
+      "formula": "HOUR(28/3)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "MINUTE(28/3)",
+      "expected": "number:59"
+    },
+    {
+      "formula": "SECOND(28/3)",
+      "expected": "number:59"
+    },
+    {
+      "formula": "HOUR(9.333333333333332)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "MINUTE(9.333333333333332)",
+      "expected": "number:59"
+    },
+    {
+      "formula": "SECOND(9.333333333333332)",
+      "expected": "number:59"
+    },
+    {
+      "formula": "HOUR(0.9999999999999999)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "MINUTE(0.9999999999999999)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SECOND(0.9999999999999999)",
+      "expected": "number:0"
+    },
+    {
+      "formula": "HOUR(1/3)",
+      "expected": "number:7"
+    },
+    {
+      "formula": "MINUTE(1/3)",
+      "expected": "number:59"
     }
   ]
 }

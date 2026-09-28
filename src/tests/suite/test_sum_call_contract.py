@@ -237,6 +237,30 @@ _CASES = [
     ('-"abc"', "error:#VALUE!"),
     ('IFERROR(-"abc",9)', "number:9"),
     ("IFERROR(K1%,9)", "number:9"),
+    # GCD/LCM read their arguments one at a time, so an earlier negative is
+    # #NUM! before a later argument is coerced -- GCD(-1, "x") is #NUM!, not
+    # the #VALUE! the text alone would earn.
+    ("GCD(-1,1)", "error:#NUM!"),
+    ('GCD(-1,"x")', "error:#NUM!"),
+    ('LCM(-1,"x")', "error:#NUM!"),
+    ('GCD(1,"x")', "error:#VALUE!"),
+    # XLOOKUP reads its lookup array before its return array, so a return
+    # array that raises does not pre-empt the lookup array's error.
+    ("XLOOKUP(0,1/0,LCM(-1,1))", "error:#DIV/0!"),
+    ("XLOOKUP(0,1,NA())", "error:#N/A"),
+    ("XLOOKUP(0,NA(),1/0)", "error:#N/A"),
+    # Excel keeps only 15 significant digits, so the serial rounds there before
+    # the time of day is read: 28/3 is stored as 9.33333333333333 (07:59:59),
+    # while 0.9999999999999999 rounds up to 1 (midnight).
+    ("HOUR(28/3)", "number:7"),
+    ("MINUTE(28/3)", "number:59"),
+    ("SECOND(28/3)", "number:59"),
+    ("HOUR(9.333333333333332)", "number:7"),
+    ("MINUTE(9.333333333333332)", "number:59"),
+    ("SECOND(9.333333333333332)", "number:59"),
+    ("HOUR(0.9999999999999999)", "number:0"),
+    ("MINUTE(0.9999999999999999)", "number:0"),
+    ("SECOND(0.9999999999999999)", "number:0"),
 ]
 
 
