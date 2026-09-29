@@ -10,8 +10,8 @@ assertion in a *different* file observe nothing, because ``pytest-xdist``'s
 ``--dist loadfile`` hands files to workers in arbitrary order.
 
 ``isolated_logger()`` makes such a fixture symmetrical: it calls
-``logger.setup()`` on entry and restores the previous level and propagation
-flag on exit.
+``logger.setup()`` on entry and restores the previous level, propagation
+flag, handlers, filters and logger singletons on exit.
 
 ``_app_logger_level_guard`` is the suite-wide net. It is an autouse fixture
 that runs around every test and fails when the live ``AppLogger`` level does
@@ -31,7 +31,7 @@ import pytest
 
 import utils.logger as logger
 
-__all__ = ["isolated_logger", "_app_logger_level_guard"]
+__all__ = ["isolated_logger", "_app_logger_level_guard", "expected_level"]
 
 # Level configured for the suite at import time by ``config_env.py``. Read here
 # (rather than from a session fixture) because session-scoped fixtures may
@@ -77,10 +77,27 @@ def isolated_logger(
     Pass ``suppress_setup_errors=True`` to preserve callers that historically
     wrapped ``setup()`` in a bare ``except Exception: pass`` (the logger is
     best-effort for tests).
+
+    Only restoring the level is not enough: ``logger.setup()`` closes and
+    replaces every handler on the process-global ``"AppLogger"`` (and rebinds
+    ``utils.logger._logger_instance``). Without a full restore the outer
+    suite's handlers stay closed and later tests keep logging into the
+    (possibly deleted) scoped directory. Snapshot the handlers, filters and
+    module singletons, detach them so the scoped ``setup()`` cannot close
+    them, then close the scoped handlers and re-attach the originals.
     """
     app_logger = logging.getLogger("AppLogger")
     previous_level = app_logger.level
     previous_propagate = app_logger.propagate
+    previous_handlers = app_logger.handlers[:]
+    previous_filters = app_logger.filters[:]
+    previous_instance = logger._logger_instance
+    previous_setup_called = logger._setup_called
+    # Detach first so the scoped setup() has nothing of ours to close.
+    for handler in previous_handlers:
+        app_logger.removeHandler(handler)
+    for filt in previous_filters:
+        app_logger.removeFilter(filt)
     _active_levels.append(_resolve_level(setup_kwargs.get("level")))
     try:
         try:
@@ -90,9 +107,24 @@ def isolated_logger(
                 raise
         yield
     finally:
-        _active_levels.pop()
+        if _active_levels:
+            _active_levels.pop()
+        for handler in app_logger.handlers[:]:
+            try:
+                handler.close()
+            except Exception:
+                pass
+            app_logger.removeHandler(handler)
+        for filt in app_logger.filters[:]:
+            app_logger.removeFilter(filt)
+        for handler in previous_handlers:
+            app_logger.addHandler(handler)
+        for filt in previous_filters:
+            app_logger.addFilter(filt)
         app_logger.setLevel(previous_level)
         app_logger.propagate = previous_propagate
+        logger._logger_instance = previous_instance
+        logger._setup_called = previous_setup_called
 
 
 def _report_leak(

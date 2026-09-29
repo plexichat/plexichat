@@ -73,6 +73,10 @@ def reset_singletons():
     ``INFO`` level) runs ``_setup_logger`` and calls
     ``logging.getLogger("AppLogger").setLevel(...)``; without this restore
     that level leaks into every later ``src/tests`` file in the worker.
+
+    Handlers/filters are detached before the test so a ``setup()`` inside
+    the test cannot close the outer suite's handlers; the scoped handlers
+    are closed afterwards and the originals re-attached.
     """
     import logging
 
@@ -87,8 +91,26 @@ def reset_singletons():
         getattr(logger, "_logger_instance", None),
         app_logger.level,
         app_logger.propagate,
+        app_logger.handlers[:],
+        app_logger.filters[:],
     )
+    for handler in snapshot[6]:
+        app_logger.removeHandler(handler)
+    for filt in snapshot[7]:
+        app_logger.removeFilter(filt)
     yield
+    for handler in app_logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass
+        app_logger.removeHandler(handler)
+    for filt in app_logger.filters[:]:
+        app_logger.removeFilter(filt)
+    for handler in snapshot[6]:
+        app_logger.addHandler(handler)
+    for filt in snapshot[7]:
+        app_logger.addFilter(filt)
     config._setup_called = snapshot[0]
     config._config_instance = snapshot[1]
     logger._setup_called = snapshot[2]
