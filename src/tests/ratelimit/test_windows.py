@@ -72,8 +72,21 @@ class TestFixedWindowReset:
 class TestSlidingWindowBehavior:
     """Tests for sliding window behavior."""
 
-    def test_sliding_window_gradual_recovery(self, memory_storage, test_user_id):
-        """Test sliding window allows gradual recovery."""
+    def test_sliding_window_gradual_recovery(
+        self, memory_storage, test_user_id, monkeypatch
+    ):
+        """Test sliding window allows gradual recovery.
+
+        Uses a controlled clock instead of ``time.sleep``: with a real 0.3s
+        window the three allowed requests can take longer than the window on
+        a loaded xdist worker, so the fourth check spuriously succeeds and the
+        test flakes. Advancing a fake clock makes the boundary exact.
+        """
+        from src.core.ratelimit import manager as manager_module
+
+        now = [10_000.0]
+        monkeypatch.setattr(manager_module.time, "time", lambda: now[0])
+
         config = RateLimitConfig(
             requests=3,
             window_seconds=0.3,
@@ -85,19 +98,21 @@ class TestSlidingWindowBehavior:
             route_configs={"GET /test": config},
             enable_global_limit=False,
         )
-        for i in range(3):
+        for _ in range(3):
             result = manager.check_rate_limit(
                 user_id=test_user_id,
                 route="GET /test",
             )
             assert result.allowed
-            time.sleep(0.05)
+            now[0] += 0.05
+        # t=10000.15: all three timestamps (10000.0/05/10) are inside the window.
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
         )
         assert not result.allowed
-        time.sleep(0.2)
+        # t=10000.35: the 10000.0 timestamp has aged out, so one slot is free.
+        now[0] += 0.2
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
