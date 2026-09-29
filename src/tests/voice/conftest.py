@@ -10,8 +10,8 @@ import pytest
 
 
 import utils.config as config
-import utils.logger as logger
 import utils.version as version
+from src.tests._conftest.logger_isolation import isolated_logger
 
 # Setup config before importing voice modules
 DEFAULT_TEST_CONFIG = {
@@ -46,11 +46,13 @@ def _configure_voice_logger(tmp_path_factory):
     repo) and removes it when the session ends.
     """
     log_dir = str(tmp_path_factory.mktemp("voice_logs"))
-    try:
-        logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
-    except Exception:
-        pass
-    yield
+    with isolated_logger(
+        log_dir=log_dir,
+        level="WARNING",
+        zip_logs=False,
+        suppress_setup_errors=True,
+    ):
+        yield
     shutil.rmtree(log_dir, ignore_errors=True)
 
 

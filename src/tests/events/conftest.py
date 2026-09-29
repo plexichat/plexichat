@@ -1,7 +1,6 @@
 """Fixtures for events module tests."""
 
 import pytest
-import utils.logger as logger
 from src.core import events
 from src.core.events.types import GatewayIntent
 from src.core.events.router import EventRouter
@@ -17,9 +16,12 @@ def setup_events(db, rel_manager, server_manager, messaging_manager):
     through the fail-open "no routing module" bypass instead of the real
     router. The teardown clears the module globals so no stale manager
     (pinned to this test's deleted database) leaks into later suites.
+
+    The shared test logger is already configured by
+    ``src.tests._conftest.config_env`` at import time; no per-module
+    ``logger.setup()`` call is needed here (it would mutate the
+    process-global ``AppLogger`` level for every later test in the worker).
     """
-    if not logger._setup_called:
-        logger.setup(log_dir="logs", level="WARNING")
     events.setup(
         relationships_module=rel_manager,
         servers_module=server_manager,

@@ -14,16 +14,15 @@ and reclaims idle checked-out connections when the pool is exhausted (or on a
 periodic reap) so a leaked worker can never permanently starve the pool.
 """
 
-import logging
 import threading
 import time
 
 import pytest
 
 import src.utils.config as config
-import src.utils.logger as logger
 from src.core.database.core import Database
 from src.core.database.engines.sqlite import SqliteEngine
+from src.tests._conftest.logger_isolation import isolated_logger
 
 
 @pytest.fixture(scope="module")
@@ -32,14 +31,10 @@ def setup_logging(tmp_path_factory):
     # ``logger.setup()`` mutates the process-global "AppLogger" singleton.
     # Raising it to ERROR here would otherwise filter WARNING/INFO records for
     # every later test in the same worker, so caplog-based assertions in other
-    # files silently observe nothing. Restore the previous level on teardown.
-    app_logger = logging.getLogger("AppLogger")
-    previous_level = app_logger.level
-    logger.setup(log_dir=str(temp_dir / "logs"), level="ERROR")
-    try:
+    # files silently observe nothing. ``isolated_logger`` restores the level on
+    # teardown.
+    with isolated_logger(log_dir=str(temp_dir / "logs"), level="ERROR"):
         yield temp_dir
-    finally:
-        app_logger.setLevel(previous_level)
 
 
 def _make_pool(tmp_path, max_connections=8, idle_reclaim_seconds=0.05):

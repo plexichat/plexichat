@@ -23,8 +23,8 @@ import threading
 import pytest
 
 import utils.config as config
-import utils.logger as logger
 from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
 pytestmark = [
     pytest.mark.postgres,
@@ -42,9 +42,10 @@ def setup_docker_tests():
     """Setup logging for Docker tests."""
     log_dir = "temp_test_docker"
     os.makedirs(log_dir, exist_ok=True)
-    logger.setup(log_dir=log_dir, level="DEBUG")
-
-    yield
+    # ``isolated_logger`` restores the global level after the module so this
+    # DEBUG setting cannot leak into later tests in the same worker.
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield
 
     # Cleanup
     import shutil

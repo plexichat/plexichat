@@ -10,7 +10,6 @@ import tempfile
 from typing import Optional
 
 import utils.config as config
-import utils.logger as logger
 from src.core.database import Database
 from .config import get_test_config
 
@@ -48,11 +47,10 @@ class DatabaseManager:
         log_dir = os.path.join(self.test_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
 
-        # Setup logger (suppress most output during tests)
-        try:
-            logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
-        except Exception:
-            pass  # Logger may already be setup
+        # NOTE: no logger.setup() here. The shared test logger is configured
+        # once by src.tests._conftest.config_env; calling setup() would mutate
+        # the process-global AppLogger level/handlers for every later test in
+        # the same worker. See src.tests._conftest.logger_isolation.
 
         # Setup config
         config_path = os.path.join(self.test_dir, "config.yaml")

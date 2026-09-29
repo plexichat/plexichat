@@ -16,7 +16,7 @@ import pytest
 import os
 
 import utils.config as config
-import utils.logger as logger
+from src.tests._conftest.logger_isolation import isolated_logger
 
 # ---------------------------------------------------------------------------
 # FakeGlideClient -- in-memory mock of the valkey-glide-sync API subset used
@@ -451,8 +451,10 @@ return current
 def setup_module(tmp_path_factory):
     temp_dir = tmp_path_factory.mktemp("redis_test")
     log_dir = str(temp_dir / "logs")
-    logger.setup(log_dir=log_dir, level="DEBUG")
-    yield temp_dir
+    # ``isolated_logger`` restores the level after the module so this DEBUG
+    # setting cannot leak into later tests in the same worker.
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield temp_dir
 
 
 @pytest.fixture

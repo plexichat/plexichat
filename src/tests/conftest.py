@@ -31,6 +31,10 @@ from src.tests._conftest.user_fixtures import *  # noqa: F401,F403
 from src.tests._conftest.api_fixtures import *  # noqa: F401,F403
 from src.tests._conftest.module_registry import *  # noqa: F401,F403
 from src.tests._conftest.misc_fixtures import *  # noqa: F401,F403
+from src.tests._conftest.logger_isolation import (  # noqa: F401
+    isolated_logger,
+    _app_logger_level_guard,
+)
 from src.tests._conftest.hooks import (  # noqa: F401
     pytest_configure,
     pytest_collection_modifyitems,

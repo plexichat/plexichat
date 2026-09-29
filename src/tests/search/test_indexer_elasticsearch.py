@@ -12,19 +12,20 @@ import pytest
 
 from src.core.search.indexer.elasticsearch import ElasticsearchIndexer
 from src.core.search.models import IndexedMessage
+from src.tests._conftest.logger_isolation import isolated_logger
 
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_logger(tmp_path_factory):
     """Setup logger for elasticsearch tests."""
-    import utils.logger as logger
-
     log_dir = str(tmp_path_factory.mktemp("es_test_logs"))
-    try:
-        logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
-    except Exception:
-        pass
-    yield
+    with isolated_logger(
+        log_dir=log_dir,
+        level="WARNING",
+        zip_logs=False,
+        suppress_setup_errors=True,
+    ):
+        yield
 
 
 class ElasticsearchMock:
