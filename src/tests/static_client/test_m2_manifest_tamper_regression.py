@@ -97,7 +97,11 @@ def test_m2_tampered_file_is_quarantined_not_resigned(caplog):
         assert verify_manifest_detailed(target, key) != VERIFY_OK
 
         parsed, asset = _make_asset(tag)
-        caplog.set_level(logging.WARNING)
+        # The quarantine warning is emitted through the custom "AppLogger"
+        # logger, so scope the level on it rather than the root logger: the
+        # root level alone is not enough when another test has raised the
+        # process-global AppLogger above WARNING.
+        caplog.set_level(logging.WARNING, logger="AppLogger")
         with patch("src.static_client.manager.get_signing_key", return_value=key):
             with patch.object(
                 StaticClientManager,

@@ -14,6 +14,7 @@ and reclaims idle checked-out connections when the pool is exhausted (or on a
 periodic reap) so a leaked worker can never permanently starve the pool.
 """
 
+import logging
 import threading
 import time
 
@@ -28,8 +29,17 @@ from src.core.database.engines.sqlite import SqliteEngine
 @pytest.fixture(scope="module")
 def setup_logging(tmp_path_factory):
     temp_dir = tmp_path_factory.mktemp("pool_reclaim")
+    # ``logger.setup()`` mutates the process-global "AppLogger" singleton.
+    # Raising it to ERROR here would otherwise filter WARNING/INFO records for
+    # every later test in the same worker, so caplog-based assertions in other
+    # files silently observe nothing. Restore the previous level on teardown.
+    app_logger = logging.getLogger("AppLogger")
+    previous_level = app_logger.level
     logger.setup(log_dir=str(temp_dir / "logs"), level="ERROR")
-    return temp_dir
+    try:
+        yield temp_dir
+    finally:
+        app_logger.setLevel(previous_level)
 
 
 def _make_pool(tmp_path, max_connections=8, idle_reclaim_seconds=0.05):

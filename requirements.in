@@ -139,7 +139,8 @@ msgpack==1.2.1
 # Push notifications
 # PyJWT is required for token-based APNs HTTP/2 push delivery
 # (replaces the now-removed ``# TODO`` stub in push/manager.py).
-PyJWT==2.13.0
+# Pinned to 2.14.0+ to clear CVE-2026-102274 (pip-audit).
+PyJWT==2.14.0
 # h2 pinned to 4.4.1+ clears CVE-2026-71554 (pip-audit)
 h2==4.4.1
 # pywebpush is the Web Push (VAPID) delivery client used by push/manager.py's
