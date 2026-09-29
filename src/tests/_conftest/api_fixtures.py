@@ -132,6 +132,12 @@ def _reset_wired_module_globals():
         avatars,
         admin,
         telemetry,
+        embeds,
+        webhooks,
+        threads,
+        settings,
+        events,
+        ratelimit,
     )
 
     polls._manager = None
@@ -149,6 +155,20 @@ def _reset_wired_module_globals():
     admin._setup_complete = False
     telemetry._db = None
     telemetry._setup_complete = False
+    # Remaining modules wired by ``_wire_module_graph`` that were previously
+    # left pinned to this test's (now deleted) database.
+    embeds._manager = None
+    embeds._setup_complete = False
+    webhooks._manager = None
+    webhooks._setup_complete = False
+    threads._manager = None
+    threads._setup_complete = False
+    settings._manager = None
+    settings._setup_complete = False
+    events._manager = None
+    events._setup_complete = False
+    ratelimit._manager = None
+    ratelimit._setup_complete = False
 
 
 # =============================================================================

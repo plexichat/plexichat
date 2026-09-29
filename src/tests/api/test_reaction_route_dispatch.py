@@ -62,11 +62,19 @@ def dispatch_env(monkeypatch):
 
     recorder = _RecorderReactions()
     monkeypatch.setattr(reactions_routes.api, "get_reactions", lambda: recorder)
+
+    async def _allow_rate_limit(**kwargs):
+        return _RateLimitResult()
+
+    # The DELETE routes call the ASYNC rate-limit entry point; stub both so the
+    # test no longer depends on a ratelimit manager leaked from an earlier test
+    # (which raised once api fixtures started resetting the global manager).
     monkeypatch.setattr(
         ratelimit,
         "check_rate_limit",
         lambda **kwargs: _RateLimitResult(),
     )
+    monkeypatch.setattr(ratelimit, "acheck_rate_limit", _allow_rate_limit)
 
     app = FastAPI()
     app.include_router(reactions_routes.router)
