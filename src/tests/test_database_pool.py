@@ -2,6 +2,7 @@
 Tests for database connection pool management, including age-based eviction.
 """
 
+import logging
 import pytest
 import os
 import time
@@ -18,8 +19,17 @@ from src.core.database.core import Database
 @pytest.fixture(scope="module")
 def setup_logging(tmp_path_factory):
     temp_dir = tmp_path_factory.mktemp("test_pool")
+    # ``logger.setup()`` mutates the process-global "AppLogger" singleton;
+    # snapshot the level so this module's DEBUG setting cannot leak into later
+    # tests in the same worker (where it inflates caplog output and can break
+    # negative log assertions).
+    app_logger = logging.getLogger("AppLogger")
+    previous_level = app_logger.level
     logger.setup(log_dir=str(temp_dir / "logs"), level="DEBUG")
-    yield temp_dir
+    try:
+        yield temp_dir
+    finally:
+        app_logger.setLevel(previous_level)
 
 
 def test_connection_age_eviction(setup_logging):
