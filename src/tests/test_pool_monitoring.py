@@ -20,6 +20,7 @@ from unittest.mock import patch
 import utils.config as config
 import utils.logger as logger
 from src.core.database.core import Database
+from src.tests._conftest.waiting import wait_until
 
 
 @contextmanager
@@ -286,18 +287,24 @@ class TestPeriodicLogging:
         with patch.object(logger, "info") as mock_info:
             test_db.start_pool_monitoring()
 
-            # The loop logs immediately and then every interval; a short
-            # wait is enough to capture at least one statistics line.
-            time.sleep(0.7)
+            def _stats_line_logged() -> bool:
+                for call in mock_info.call_args_list:
+                    if not call.args:
+                        continue
+                    line = str(call.args[0]).lower()
+                    if (
+                        "pool monitoring statistics" in line
+                        and "active_connections=" in line
+                    ):
+                        return True
+                return False
 
-            info_calls = [call[0][0].lower() for call in mock_info.call_args_list]
-            stats_lines = [
-                call
-                for call in info_calls
-                if "pool monitoring statistics" in call
-                and "active_connections=" in call
-            ]
-            assert len(stats_lines) >= 1
+            # The loop logs immediately then every interval; wait for the
+            # first statistics line rather than guessing with a fixed sleep.
+            wait_until(
+                _stats_line_logged,
+                message="pool monitoring never logged a statistics line",
+            )
             assert test_db.monitor._periodic_logging_thread.is_alive()
 
     def test_stop_monitoring_safe_when_not_running(self, test_db):

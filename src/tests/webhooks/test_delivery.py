@@ -19,6 +19,7 @@ from src.core.webhooks.delivery import (
     WebhookDeliveryJob,
     process_due_retries,
 )
+from src.tests._conftest.waiting import wait_until
 
 
 def _fresh_timestamp_ms() -> str:
@@ -447,14 +448,17 @@ class TestWebhookDeliveryJob:
         assert job._thread.name == "WebhookDeliveryJob"
         assert job._thread.daemon is True
 
-        deadline = time.time() + 3
-        while len(cycles) < 2 and time.time() < deadline:
-            time.sleep(0.05)
+        # The loop sleeps a full interval between cycles; wait for both to be
+        # observed instead of racing a fixed deadline on a busy worker.
+        wait_until(
+            lambda: len(cycles) >= 2,
+            timeout=10.0,
+            message="webhook delivery thread did not complete two cycles",
+        )
 
         job.stop()
         assert job._is_running is False
         assert job._thread is None
-        assert len(cycles) >= 2
 
     def test_stop_without_start_is_safe(self):
         job = WebhookDeliveryJob(None)

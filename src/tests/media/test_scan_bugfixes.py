@@ -11,9 +11,10 @@ Regression tests for media bug fixes.
 from __future__ import annotations
 
 import io
-import time
 
 import pytest
+
+from src.tests._conftest.waiting import wait_until
 
 pytestmark = pytest.mark.integration
 
@@ -32,18 +33,23 @@ def test_large_streamed_upload_is_scanned_not_left_pending(media_manager, db):
     )
     assert result is not None
 
-    # The background scan runs in an executor; poll until it resolves.
-    status = "pending"
-    for _ in range(200):
+    # The background scan runs in an executor; wait for the row to leave
+    # PENDING instead of polling on a fixed sleep budget.
+    def _resolved_scan_status():
         row = db.fetch_one(
             "SELECT scan_status FROM media_files WHERE id = ?",
             (int(result.file_id),),
         )
         if row and row["scan_status"] != "pending":
-            status = row["scan_status"]
-            break
-        time.sleep(0.05)
+            return row["scan_status"]
+        return None
+
+    status = wait_until(
+        _resolved_scan_status,
+        timeout=10.0,
+        message="large streamed upload was never scanned",
+    )
 
     # With no scanner configured the file must at least leave PENDING (SKIPPED);
     # it must never remain stuck pending forever (which made it unservable).
-    assert status != "pending", "large streamed upload was never scanned"
+    assert status != "pending"
