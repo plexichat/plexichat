@@ -52,31 +52,31 @@ class TestBasicOperations:
 class TestTTL:
     """Tests for TTL (time-to-live) functionality."""
 
-    def test_bucket_expires_after_ttl(self):
+    def test_bucket_expires_after_ttl(self, rate_limit_clock):
         """Test bucket expires after TTL."""
         storage = MemoryStorage(cleanup_interval=0.05)
         state = {"tokens": 10}
         storage.set_bucket("test:key", state, ttl=0.1)
         assert storage.get_bucket("test:key") is not None
-        time.sleep(0.15)
+        rate_limit_clock.advance(0.15)
         assert storage.get_bucket("test:key") is None
 
-    def test_bucket_without_ttl_persists(self, memory_storage):
+    def test_bucket_without_ttl_persists(self, memory_storage, rate_limit_clock):
         """Test bucket without TTL persists."""
         state = {"tokens": 10}
         memory_storage.set_bucket("test:key", state)
-        time.sleep(0.1)
+        rate_limit_clock.advance(0.1)
         bucket = memory_storage.get_bucket("test:key")
         assert bucket is not None
         assert bucket["tokens"] == 10
 
-    def test_ttl_can_be_updated(self):
+    def test_ttl_can_be_updated(self, rate_limit_clock):
         """Test TTL can be updated."""
         storage = MemoryStorage(cleanup_interval=0.05)
         state = {"tokens": 10}
         storage.set_bucket("test:key", state, ttl=0.1)
         storage.set_bucket("test:key", state, ttl=1.0)
-        time.sleep(0.15)
+        rate_limit_clock.advance(0.15)
         bucket = storage.get_bucket("test:key")
         assert bucket is not None
         assert bucket["tokens"] == 10
@@ -290,22 +290,22 @@ class TestThreadSafety:
 class TestCleanup:
     """Tests for automatic cleanup."""
 
-    def test_cleanup_removes_expired_buckets(self):
+    def test_cleanup_removes_expired_buckets(self, rate_limit_clock):
         """Test cleanup removes expired buckets."""
         storage = MemoryStorage(cleanup_interval=0.05, max_buckets=1000)
         storage.set_bucket("key1", {"tokens": 10}, ttl=0.05)
         storage.set_bucket("key2", {"tokens": 20}, ttl=1.0)
-        time.sleep(0.1)
+        rate_limit_clock.advance(0.1)
         storage.get_bucket("trigger_cleanup")
         assert storage.get_bucket("key1") is None
         assert storage.get_bucket("key2") is not None
 
-    def test_max_buckets_enforced(self):
+    def test_max_buckets_enforced(self, rate_limit_clock):
         """Test max buckets limit is enforced."""
         storage = MemoryStorage(cleanup_interval=0.01, max_buckets=10)
         for i in range(20):
             storage.set_bucket(f"key:{i}", {"tokens": i, "last_update": i})
-        time.sleep(0.02)
+        rate_limit_clock.advance(0.02)
         storage.get_bucket("trigger_cleanup")
         stats = storage.get_stats()
         assert stats["bucket_count"] <= 10

@@ -430,7 +430,9 @@ class TestBucketManipulation:
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert not result.allowed
 
-    def test_fixed_window_boundary_manipulation(self, memory_storage, test_user_id):
+    def test_fixed_window_boundary_manipulation(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test fixed window boundaries can't be manipulated."""
         config = RateLimitConfig(
             requests=5,
@@ -448,7 +450,7 @@ class TestBucketManipulation:
             assert result.allowed
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert not result.allowed
-        time.sleep(1.1)
+        rate_limit_clock.advance(1.1)
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert result.allowed
 

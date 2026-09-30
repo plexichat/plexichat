@@ -53,6 +53,47 @@ def mocker():
 # =============================================================================
 
 
+class _FakeRateLimitClock:
+    """Deterministic ``time`` stand-in for the rate-limit tests.
+
+    ``RateLimitManager`` reads ``time.time()`` for window boundaries, and the
+    in-memory storage reads ``time.monotonic()`` for token-bucket refill and
+    TTL expiry. Swapping each module's ``time`` for this object lets a test
+    advance the clock explicitly, so a window/TTL assertion is exact instead
+    of racing a real ``time.sleep`` on a loaded xdist worker.
+    """
+
+    def __init__(self, start: float = 10_000.0) -> None:
+        self.now = float(start)
+
+    def time(self) -> float:
+        return self.now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture
+def rate_limit_clock(monkeypatch):
+    """Advanceable clock for the rate limiter (see ``_FakeRateLimitClock``)."""
+    import time as _time
+
+    from src.core.ratelimit import manager as manager_module
+    from src.core.ratelimit.storage import memory as memory_module
+
+    # Start from the real monotonic clock so a ``MemoryStorage`` built before
+    # this fixture patched the module (its ``_last_cleanup`` came from real
+    # ``time.monotonic``) does not look like it is in the future — otherwise
+    # ``advance`` could never trigger a cleanup.
+    clock = _FakeRateLimitClock(start=_time.monotonic())
+    monkeypatch.setattr(manager_module, "time", clock)
+    monkeypatch.setattr(memory_module, "time", clock)
+    return clock
+
+
 @pytest.fixture
 def memory_storage():
     """MemoryStorage fixture for rate limiting tests."""

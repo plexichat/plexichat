@@ -2,7 +2,6 @@
 Tests for edge cases - concurrent requests, clock skew, etc.
 """
 
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.core.ratelimit.models import RateLimitConfig, RateLimitAlgorithm, BucketType
@@ -242,7 +241,7 @@ class TestZeroAndNegativeValues:
 class TestVeryShortWindows:
     """Tests for very short time windows."""
 
-    def test_sub_second_window(self, memory_storage, test_user_id):
+    def test_sub_second_window(self, memory_storage, test_user_id, rate_limit_clock):
         """Test sub-second time window."""
         config = RateLimitConfig(
             requests=2,
@@ -266,14 +265,14 @@ class TestVeryShortWindows:
             route="GET /test",
         )
         assert not result.allowed
-        time.sleep(0.15)
+        rate_limit_clock.advance(0.15)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
         )
         assert result.allowed
 
-    def test_millisecond_window(self, memory_storage, test_user_id):
+    def test_millisecond_window(self, memory_storage, test_user_id, rate_limit_clock):
         """Test millisecond time window."""
         config = RateLimitConfig(
             requests=1,
@@ -291,7 +290,7 @@ class TestVeryShortWindows:
             route="GET /test",
         )
         assert result.allowed
-        time.sleep(0.02)
+        rate_limit_clock.advance(0.02)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
