@@ -341,8 +341,11 @@ class TwoFactorMixin(AuthManagerProtocol):
             from src.core.events.gateway_emit import emit_security_alert
 
             emit_security_alert(user_id, "two_factor_enabled")
-        except Exception:
-            pass
+        except Exception as e:
+            # Non-raising by design (gateway emission must not break the
+            # 2FA flow), but surface at WARNING so a broken security-alert
+            # path is visible at default log levels.
+            logger.warning(f"Failed to emit 2FA-enabled security alert: {e}")
         invalidate_pattern("user_data:*")
         return True
 
@@ -399,14 +402,22 @@ class TwoFactorMixin(AuthManagerProtocol):
                     (user_id,),
                 )
             invalidate_pattern("token_verify:*")
-        except Exception:
-            logger.debug("Failed to revoke sessions on 2FA disable", exc_info=True)
+        except Exception as e:
+            # Security-relevant: if revocation fails, previously trusted
+            # sessions survive the 2FA disable. Stay non-raising (the
+            # disable itself succeeded) but log at WARNING so the gap is
+            # visible at default levels instead of hidden at DEBUG.
+            logger.warning(
+                f"Failed to revoke sessions on 2FA disable for user {user_id}: {e}",
+                exc_info=True,
+            )
         try:
             from src.core.events.gateway_emit import emit_security_alert
 
             emit_security_alert(user_id, "two_factor_disabled")
-        except Exception:
-            pass
+        except Exception as e:
+            # Same non-raising contract as the enabled path: log loudly.
+            logger.warning(f"Failed to emit 2FA-disabled security alert: {e}")
         return True
 
     def regenerate_backup_codes(self, user_id: int, password: str) -> List[str]:
