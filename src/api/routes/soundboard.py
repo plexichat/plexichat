@@ -94,22 +94,48 @@ def _get_soundboard():
 
 def _parse_server_id(server_id: str) -> int:
     try:
-        return int(server_id)
-    except (ValueError, TypeError):
+        parsed = int(str(server_id).strip())
+    except (ValueError, TypeError, AttributeError):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid server ID"}},
         )
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server ID"}},
+        )
+    return parsed
 
 
 def _parse_int(value: str, label: str) -> int:
     try:
-        return int(value)
-    except (ValueError, TypeError):
+        parsed = int(str(value).strip())
+    except (ValueError, TypeError, AttributeError):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": f"Invalid {label}"}},
         )
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {label}"}},
+        )
+    return parsed
+
+
+def _require_sound_in_server(sound, server_id: int):
+    """Ensure a loaded sound belongs to the URL server, else 404.
+
+    The ``/{server_id}/soundboard/{sound_id}`` routes previously validated
+    ``server_id`` but discarded it, so ``GET /999/soundboard/<id-of-456>``
+    returned 200 whenever the caller could see the sound's real server.
+    Mismatched (or missing, for non-members) sounds 404 without leaking
+    which server actually owns the row.
+    """
+    if sound is None or int(getattr(sound, "server_id", -1)) != int(server_id):
+        raise HTTPException(status_code=404, detail="Sound not found")
+    return sound
 
 
 def _require_manage_permission(user_id: int, server_id: int) -> None:
@@ -308,11 +334,10 @@ async def get_sound(
 ) -> SoundResponse:
     """Fetch a single sound from the server's soundboard."""
     soundboard = _get_soundboard()
-    _parse_server_id(server_id)
+    sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
     sound = soundboard.get_sound(sid_sound, current_user.user_id)
-    if not sound:
-        raise HTTPException(status_code=404, detail="Sound not found")
+    _require_sound_in_server(sound, sid)
     return _sound_to_response(sound)
 
 
@@ -329,8 +354,9 @@ async def update_sound(
 ) -> SoundResponse:
     """Update editable metadata (name, emoji, volume, cooldown)."""
     soundboard = _get_soundboard()
-    _parse_server_id(server_id)
+    sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
+    _require_sound_in_server(soundboard.get_sound(sid_sound, current_user.user_id), sid)
     try:
         sound = soundboard.update_sound(
             current_user.user_id,
@@ -367,6 +393,7 @@ async def delete_sound(
     sid_sound = _parse_int(sound_id, "sound ID")
 
     _require_manage_permission(current_user.user_id, sid)
+    _require_sound_in_server(soundboard.get_sound(sid_sound, current_user.user_id), sid)
 
     try:
         deleted = soundboard.delete_sound(current_user.user_id, sid_sound)
@@ -397,6 +424,8 @@ async def set_sound_permission(
     rid = _parse_int(role_id, "role ID")
 
     _require_manage_permission(current_user.user_id, sid)
+    scoped = soundboard.get_sound(sid_sound, current_user.user_id)
+    _require_sound_in_server(scoped, sid)
 
     try:
         perm = soundboard.set_sound_permissions(
@@ -433,9 +462,10 @@ async def play_sound(
 ) -> SoundPlaybackResponse:
     """Trigger playback tracking for a sound in a voice channel."""
     soundboard = _get_soundboard()
-    _parse_server_id(server_id)
+    sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
     cid = _parse_int(body.channel_id, "channel ID")
+    _require_sound_in_server(soundboard.get_sound(sid_sound, current_user.user_id), sid)
     try:
         playback = soundboard.play_sound(
             current_user.user_id, sid_sound, cid, volume=body.volume

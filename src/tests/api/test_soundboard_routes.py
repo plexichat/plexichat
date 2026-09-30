@@ -244,3 +244,59 @@ class TestSoundboardRoutes:
         body = res.json()
         assert str(body["role_id"]) == str(role.id)
         assert body["can_use"] is False
+
+    def test_sound_scoped_to_url_server(
+        self, test_client, test_server, owner_headers, server_manager
+    ):
+        """A sound from server A is not visible under server B's URL (404)."""
+        server, owner = test_server
+        other = server_manager.create_server(
+            owner.id, f"Other Server {uuid.uuid4().hex[:6]}"
+        )
+        created = test_client.post(
+            f"/api/v1/servers/{server.id}/soundboard",
+            headers=owner_headers,
+            data={"name": f"scoped_{uuid.uuid4().hex[:6]}"},
+            files={"file": ("s.mp3", _mp3_bytes(), "audio/mpeg")},
+        ).json()
+
+        mismatched = test_client.get(
+            f"/api/v1/servers/{other.id}/soundboard/{created['id']}",
+            headers=owner_headers,
+        )
+        assert mismatched.status_code == 404
+
+        mismatched_patch = test_client.patch(
+            f"/api/v1/servers/{other.id}/soundboard/{created['id']}",
+            headers=owner_headers,
+            json={"volume": 0.5},
+        )
+        assert mismatched_patch.status_code == 404
+
+        mismatched_delete = test_client.delete(
+            f"/api/v1/servers/{other.id}/soundboard/{created['id']}",
+            headers=owner_headers,
+        )
+        assert mismatched_delete.status_code == 404
+
+        # The sound is still reachable under its own server.
+        got = test_client.get(
+            f"/api/v1/servers/{server.id}/soundboard/{created['id']}",
+            headers=owner_headers,
+        )
+        assert got.status_code == 200
+
+    def test_non_positive_ids_rejected(self, test_client, test_server, owner_headers):
+        server, _user = test_server
+        assert (
+            test_client.get("/api/v1/servers/0/soundboard", headers=owner_headers)
+        ).status_code == 400
+        assert (
+            test_client.get(
+                f"/api/v1/servers/{server.id}/soundboard/0",
+                headers=owner_headers,
+            )
+        ).status_code == 400
+        assert (
+            test_client.get("/api/v1/servers/-5/soundboard", headers=owner_headers)
+        ).status_code == 400
