@@ -11,20 +11,41 @@ import pytest
 # =============================================================================
 
 
-def pytest_configure(config):
-    """Register custom markers."""
-    # Under pytest-xdist every worker shares the single on-disk Hypothesis
-    # database; concurrent writes from parallel workers can raise database-
-    # lock errors that surface as random, non-reproducible failures on
-    # arbitrary tests. Give each worker an in-memory database instead.
-    if os.environ.get("PYTEST_XDIST_WORKER"):
-        try:
-            from hypothesis import settings
+def _configure_hypothesis(config):
+    """Load the project's Hypothesis profile before any property test runs.
 
-            settings.register_profile("xdist", settings(database=None))
-            settings.load_profile("xdist")
-        except Exception:
-            pass
+    ``deadline=None`` disables Hypothesis's default per-example wall-clock
+    deadline (200ms). That deadline is a latency guard, not a correctness
+    assertion: under pytest-xdist the host is oversubscribed, so a single
+    example can exceed it on a loaded runner and surface as an intermittent
+    ``DeadlineExceeded`` / ``too_slow`` failure in a test that is not about
+    timing at all. Property tests here assert logic, so the deadline is off by
+    default; a test that genuinely wants a bound can still pass an explicit
+    ``deadline`` (see ``test_property_based_quick.py``).
+
+    Under pytest-xdist the on-disk example database is disabled too: every
+    worker shares it and concurrent writes raise database-lock errors that
+    surface as random, non-reproducible failures, so each worker gets an
+    in-memory database instead.
+    """
+    try:
+        from hypothesis import settings
+    except Exception:
+        return
+
+    profile = {"deadline": None}
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        profile["database"] = None
+    settings.register_profile("plexichat", **profile)
+    # Respect an explicit --hypothesis-profile rather than clobbering it; the
+    # project profile stays registered so it can still be selected by name.
+    if not config.getoption("hypothesis_profile", None):
+        settings.load_profile("plexichat")
+
+
+def pytest_configure(config):
+    """Register custom markers and the project Hypothesis profile."""
+    _configure_hypothesis(config)
     config.addinivalue_line("markers", "unit: Fast unit tests, no database required")
     config.addinivalue_line("markers", "integration: Tests requiring full module setup")
     config.addinivalue_line(
