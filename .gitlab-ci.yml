@@ -346,6 +346,23 @@ test:formula_parity:
   needs: []
   allow_failure: false
 
+# Order-independence gate. The suite is required to pass in any file order,
+# and the only way to keep that true is to actually run it in a different
+# one. A fixed seed makes the order -- and any failure it exposes --
+# reproducible: replay locally with the same --shuffle-seed value. Files stay
+# whole, so this is the same test set as test:pytest in a shuffled order.
+test:shuffled_order:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  variables:
+    SHUFFLE_SEED: "424242"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - python -m pytest -q --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
+  needs: []
+  allow_failure: false
+
 # Dedicated run of the database-backed suites against real services.
 #
 # ``test:pytest`` runs everything else, but with no backend reachable the

@@ -253,6 +253,35 @@ pytest -n 4                 # Use 4 workers
 pytest -m "not slow" -n auto
 ```
 
+### Order Independence
+
+The suite must pass in **any** file order. A fixed default order can hide
+order coupling -- a fixture that leaves process-global state behind for a
+later file -- until it fails on a different machine or worker split. Two
+pieces of tooling keep that honest:
+
+**Seeded shuffle.** `--shuffle-seed <n>` runs the files in a reproducible
+random order. Tests inside a file keep their order and stay together, so
+`--dist loadfile` still pins a file to a single xdist worker. Re-running with
+the same seed reproduces a failure exactly:
+
+```bash
+# Replay a CI order-dependence failure locally
+pytest -n auto --dist loadfile --shuffle-seed 424242
+```
+
+**Process-global leak guard.** The autouse `_app_logger_level_guard` in
+`src/tests/_conftest/logger_isolation.py` fails any test or fixture that
+leaves the process-global `"AppLogger"` level changed, naming the offending
+test instead of letting a later file's `caplog` assertion fail mysteriously.
+A fixture that intentionally reconfigures the logger wraps the call in
+`isolated_logger(...)`, which restores the level, propagation flag, handlers,
+filters and module singletons on exit.
+
+CI runs the suite once in the default order (`test:pytest`) and once with a
+fixed `--shuffle-seed` (`test:shuffled_order`), so order dependence is caught
+on every merge request rather than by luck.
+
 ### Coverage Reporting
 
 ```bash
