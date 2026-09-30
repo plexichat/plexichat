@@ -315,10 +315,12 @@ class ElasticsearchIndexer(BaseIndexer):
                 )
 
             bulk_data = "\n".join(bulk_body) + "\n"
-            # nosec B310
             import urllib.request
 
             url = self._validate_http_url(f"{self._hosts[0]}/_bulk")
+            from src.utils.security import URLValidator
+
+            URLValidator().validate_url_for_request(url)
             req = urllib.request.Request(
                 url,
                 data=bulk_data.encode(),

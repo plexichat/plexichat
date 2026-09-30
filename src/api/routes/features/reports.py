@@ -356,7 +356,9 @@ async def update_report_status(
     # to exactly one placeholder, in order. (A previous revision built a
     # ``params`` list and then referenced it positionally from the inline
     # tuple — a divergence trap; keep every value named from here on.)
-    assigned_to = int(body.assigned_to) if body.assigned_to else None
+    assigned_to = (
+        parse_id(body.assigned_to, "assigned-to ID") if body.assigned_to else None
+    )
     resolution = None if is_reopen else body.resolution
     resolved_at = None if is_reopen else (now if body.resolution else None)
     resolved_by = (

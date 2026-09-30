@@ -103,6 +103,38 @@ router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
 ARTIFACT_ICON = config.get("artifacts", {}).get("inline_icon", "📎")
 
 
+def _parse_optional_id(value: Optional[str], field: str) -> Optional[int]:
+    """Parse an optional client-supplied ID, failing with 400 not 500.
+
+    List filters arrive as raw query strings (``Optional[str]``), so a value
+    like ``?conversation_id=abc`` would previously raise a bare ``ValueError``
+    from ``int()`` and collapse into a generic 500 via the route's
+    ``except Exception`` handler. Validate explicitly to match the single-ID
+    routes below, which return 400 for the same input.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text.isdecimal():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        )
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        )
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        )
+    return parsed
+
+
 # === Routes ===
 
 
@@ -217,10 +249,10 @@ async def list_artifacts(
     GETs and the chat artifacts pane keep ``include_payload=True``.
     """
     try:
-        conv_id = int(conversation_id) if conversation_id is not None else None
-        chan_id = int(channel_id) if channel_id is not None else None
-        srv_id = int(server_id) if server_id is not None else None
-        auth_id = int(author_id) if author_id is not None else None
+        conv_id = _parse_optional_id(conversation_id, "conversation ID")
+        chan_id = _parse_optional_id(channel_id, "channel ID")
+        srv_id = _parse_optional_id(server_id, "server ID")
+        auth_id = _parse_optional_id(author_id, "author ID")
 
         # Every list request is subject to the base artifacts capability,
         # including untyped listings.
