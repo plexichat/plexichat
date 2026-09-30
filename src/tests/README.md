@@ -282,6 +282,45 @@ CI runs the suite once in the default order (`test:pytest`) and once with a
 fixed `--shuffle-seed` (`test:shuffled_order`), so order dependence is caught
 on every merge request rather than by luck.
 
+### Deterministic Timing
+
+Tests must not wait for a background effect with a fixed `time.sleep`. Under
+`pytest-xdist` the host is oversubscribed, so a sleep tuned on an idle machine
+is a flake on a loaded runner -- the effect is simply later than the guessed
+budget. Two patterns keep timing-sensitive tests exact:
+
+**Wait for the condition.** A test that observes a worker thread's first
+cycle, an executor-driven database update, or a background log line should
+poll the observable state using `wait_until` from
+`src/tests/_conftest/waiting.py`. It returns as soon as the condition holds
+and fails with the caller's message if a bounded timeout elapses, so the happy
+path is as fast as the effect and a genuinely missing effect is a clear
+failure rather than a stall:
+
+```python
+from src.tests._conftest.waiting import wait_until
+
+wait_until(
+    lambda: worker.cycles >= 2,
+    timeout=10.0,
+    message="worker thread did not complete two cycles",
+)
+```
+
+**Drive the clock, don't sleep through it.** Tests of window/TTL/refill logic
+should advance a controlled clock instead of racing real time. The rate limiter
+exposes one via the `rate_limit_clock` fixture, which stands in for the
+manager's `time.time()` and the in-memory storage's `time.monotonic()`:
+
+```python
+def test_window_expires(rate_limit_manager, rate_limit_clock):
+    rate_limit_clock.advance(61)  # exact boundary, no sleep
+```
+
+Sleeps that merely keep two operations apart (so a timestamp increases) or let
+threads start before a concurrent action remain appropriate -- the rule is only
+that a test must not *guess* how long a background effect will take.
+
 ### Coverage Reporting
 
 ```bash
