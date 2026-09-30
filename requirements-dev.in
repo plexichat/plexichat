@@ -17,6 +17,10 @@
 
 # pre-commit: runs the hooks defined in .pre-commit-config.yaml.
 pre-commit==4.6.0
+# virtualenv is a transitive dependency of pre-commit; pinned to 21.7.13+
+# to clear PYSEC-2026-4011, PYSEC-2026-4012, PYSEC-2026-4013, PYSEC-2026-4014
+# (pip-audit). Pinned here so a later resolution cannot regress it.
+virtualenv==21.7.13
 
 # ruff + ruff-format: the ``ruff`` and ``ruff-format`` hooks.
 ruff==0.15.12
