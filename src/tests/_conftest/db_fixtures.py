@@ -36,7 +36,7 @@ def setup_config(tmpdir_factory):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_global_config():
+def _isolate_global_config(_global_singleton_guard):
     """Restore the shared config after every test.
 
     Several test fixtures call ``config.setup()`` with partial configs
@@ -58,21 +58,24 @@ def _isolate_global_config():
 
     snapshot = copy.deepcopy(_config_loader.config)
     snapshot_path = getattr(_config_loader, "config_path", None)
+    snapshot_setup_called = config._setup_called
     try:
         yield
     finally:
-        from utils.config import _config_instance as _config_loader_current
-
-        if _config_loader_current is not None:
-            _config_loader_current.config = snapshot
-            # Parity with the old config.setup() restore: keep the loader
-            # pointed at the pre-test path so stray config.set() writes don't
-            # land in a test's temp file.
-            if snapshot_path is not None and hasattr(
-                _config_loader_current, "config_path"
-            ):
-                _config_loader_current.config_path = snapshot_path
-            _config_loader_current._invalidate_cache()
+        # Restore the module-level singleton identity as well as its contents.
+        # A test that calls ``config.setup()`` replaces ``_config_instance``;
+        # restoring only the dict would leave that replacement (and its path /
+        # setup flag) in place for every later test in the worker. Put the
+        # original instance back and re-apply the snapshot to it.
+        config._config_instance = _config_loader
+        config._setup_called = snapshot_setup_called
+        if _config_loader is not None:
+            _config_loader.config = snapshot
+            # Keep the loader pointed at the pre-test path so stray config.set()
+            # writes don't land in a test's temp file.
+            if snapshot_path is not None and hasattr(_config_loader, "config_path"):
+                _config_loader.config_path = snapshot_path
+            _config_loader._invalidate_cache()
 
 
 # =============================================================================

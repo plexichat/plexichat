@@ -29,9 +29,16 @@ from typing import Any, Iterator
 
 import pytest
 
+import utils.config as config
 import utils.logger as logger
+import utils.version as version
 
-__all__ = ["isolated_logger", "_app_logger_level_guard", "expected_level"]
+__all__ = [
+    "isolated_logger",
+    "_app_logger_level_guard",
+    "_global_singleton_guard",
+    "expected_level",
+]
 
 # Level configured for the suite at import time by ``config_env.py``. Read here
 # (rather than from a session fixture) because session-scoped fixtures may
@@ -160,3 +167,66 @@ def _app_logger_level_guard(request: pytest.FixtureRequest) -> Iterator[None]:
     expected = expected_level()
     if app_logger.level != expected:
         _report_leak(request, app_logger.level, expected, "end")
+
+
+# Process-global singletons that shared fixtures reconfigure and must leave as
+# they found them. ``_app_logger_level_guard`` covers the AppLogger *level*
+# (the value that leaked in the original bug); this covers the module
+# singletons themselves, which ``logger.setup()`` / ``config.setup()`` /
+# ``version.setup()`` replace wholesale.
+_SINGLETON_ATTRS = (
+    (logger, ("_logger_instance", "_setup_called")),
+    (config, ("_config_instance", "_setup_called")),
+    (version, ("_current_version", "_min_supported_version", "_setup_called")),
+)
+
+
+def _snapshot_singletons() -> "dict[tuple[Any, str], Any]":
+    """Return ``{(module, attribute): value}`` for the guarded singletons."""
+    return {
+        (module, attribute): getattr(module, attribute)
+        for module, attributes in _SINGLETON_ATTRS
+        for attribute in attributes
+    }
+
+
+def _same_value(before: Any, after: Any) -> bool:
+    """Identity for objects, equality for the plain sentinel/flag values."""
+    if before is after:
+        return True
+    if before is None or isinstance(before, (bool, int, str, bytes)):
+        return before == after
+    return False
+
+
+@pytest.fixture(autouse=True)
+def _global_singleton_guard(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail fast when a test leaves a process-global singleton replaced.
+
+    Unlike the logger *level* (which has a session baseline and explicit
+    ``isolated_logger`` scopes), an instance is expected to be whatever the
+    surrounding module fixture configured — so this compares the value the
+    test started with against the value it ended with. A fixture that swaps
+    ``config._config_instance`` / ``logger._logger_instance`` (or the version
+    objects) must therefore put the original back, or the test is named here
+    instead of corrupting an arbitrary later file.
+    """
+    before = _snapshot_singletons()
+    yield
+    after = _snapshot_singletons()
+    leaked = [
+        f"{module.__name__}.{attribute}"
+        for (module, attribute), value in before.items()
+        if not _same_value(value, after[(module, attribute)])
+    ]
+    if leaked:
+        pytest.fail(
+            "process-global singleton(s) not restored by {node!r}: {leaked}. "
+            "Wrap the mutation so it is restored on exit — use "
+            "isolated_logger() for logger.setup() and the "
+            "_isolate_global_config fixture for config.setup().".format(
+                node=request.node.nodeid,
+                leaked=", ".join(sorted(leaked)),
+            ),
+            pytrace=False,
+        )
