@@ -181,9 +181,12 @@ class PlexichatServer:
                 use_https = True
                 logger.info("TLS enabled - server will use HTTPS")
 
-        assert self.app is not None
-        assert host is not None
-        assert port is not None
+        if self.app is None:
+            raise RuntimeError("Server app is not initialized; cannot start.")
+        if host is None:
+            raise RuntimeError("Server host is not configured; cannot start.")
+        if port is None:
+            raise RuntimeError("Server port is not configured; cannot start.")
 
         plexi_level = config.get("logging", {}).get("level", "info").lower()
         uvi_level = plexi_level if plexi_level not in ("debug", "trace") else "info"
@@ -198,7 +201,8 @@ class PlexichatServer:
         )
 
         self.server = uvicorn.Server(uvi_config)
-        assert self.server is not None
+        if self.server is None:
+            raise RuntimeError("Failed to create uvicorn server instance.")
 
         def signal_handler(signum, frame):
             signal_map = {
