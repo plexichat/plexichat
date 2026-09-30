@@ -82,6 +82,10 @@ httpx[http2]==0.28.1
 # harness, threaded transcription uploads). Note it is also a hard runtime
 # requirement of pywebpush below, so it cannot be dropped from this tree.
 requests==2.34.2
+# urllib3 pinned to 2.8.0+ clears CVE-2026-97687, CVE-2026-97688 and
+# CVE-2026-97689 (pip-audit); it is a transitive dependency of requests and
+# botocore, so it is pinned here to keep a later resolution from regressing it.
+urllib3==2.8.0
 # idna pinned to 3.15+ clears PYSEC-2026-215 (pip-audit)
 idna==3.15
 # aiohttp is no longer imported by our code — the SFU adapters make their
@@ -139,8 +143,9 @@ msgpack==1.2.1
 # Push notifications
 # PyJWT is required for token-based APNs HTTP/2 push delivery
 # (replaces the now-removed ``# TODO`` stub in push/manager.py).
-# Pinned to 2.14.0+ to clear CVE-2026-102274 (pip-audit).
-PyJWT==2.14.0
+# Pinned to 2.15.0+ to clear CVE-2026-101918 (pip-audit); 2.14.0+ cleared
+# CVE-2026-102274.
+PyJWT==2.15.0
 # h2 pinned to 4.4.1+ clears CVE-2026-71554 (pip-audit)
 h2==4.4.1
 # pywebpush is the Web Push (VAPID) delivery client used by push/manager.py's
