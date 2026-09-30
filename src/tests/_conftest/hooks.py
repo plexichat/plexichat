@@ -1,7 +1,9 @@
 """pytest_configure / pytest_collection_modifyitems hooks."""
 
-import pytest
 import os
+import random
+
+import pytest
 
 
 # =============================================================================
@@ -98,8 +100,37 @@ def pytest_sessionfinish(session, exitstatus):
         pass
 
 
+def _item_file_key(item):
+    """Return the per-file key used to group items for shuffling."""
+    path = getattr(item, "path", None)
+    if path is not None:
+        return str(path)
+    return str(item.fspath)
+
+
+def shuffle_test_order(items, seed):
+    """Reorder ``items`` by shuffling whole files, deterministically by ``seed``.
+
+    Tests from the same file keep their relative order and stay adjacent, so
+    ``pytest-xdist``'s ``--dist loadfile`` still hands each file to one worker;
+    only the order of the file groups changes. The same seed always yields the
+    same order, so an order-dependent failure is reproducible with
+    ``--shuffle-seed``.
+    """
+    groups = {}
+    keys = []
+    for item in items:
+        key = _item_file_key(item)
+        if key not in groups:
+            groups[key] = []
+            keys.append(key)
+        groups[key].append(item)
+    random.Random(seed).shuffle(keys)
+    return [item for key in keys for item in groups[key]]
+
+
 def pytest_collection_modifyitems(config, items):
-    """Auto-mark tests based on their location."""
+    """Auto-mark tests based on their location, then optionally shuffle."""
     for item in items:
         item_path = str(item.fspath).replace(os.sep, "/")
 
@@ -177,3 +208,10 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.slow)
         elif "/unit/" in item_path:
             item.add_marker(pytest.mark.unit)
+
+    # Optional seeded shuffle, applied after the auto-markers so the
+    # reordered list keeps every marker. Grouping by file is preserved so
+    # ``--dist loadfile`` can still pin each file to a single xdist worker.
+    seed = config.getoption("shuffle_seed", None)
+    if seed is not None:
+        items[:] = shuffle_test_order(items, seed)

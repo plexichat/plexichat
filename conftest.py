@@ -35,3 +35,20 @@ def pytest_addoption(parser):
     ``pytest.ini`` value takes effect either way.
     """
     parser.addini("cache_dir", help="Cache directory path", default=".pytest_cache")
+    # Registered here (the project-root conftest) rather than in
+    # src/tests/conftest.py so the option exists no matter which test tree a
+    # run targets; the hook that consumes it lives in
+    # src/tests/_conftest/hooks.py.
+    parser.addoption(
+        "--shuffle-seed",
+        type=int,
+        default=None,
+        metavar="SEED",
+        help=(
+            "Run test files in a seeded random order (tests within a file keep "
+            "their order and stay together, so --dist loadfile still pins a "
+            "file to one worker). Any seed yields a reproducible order, so an "
+            "order-dependent failure can be replayed with the same seed. "
+            "Without this option the default collection order is used."
+        ),
+    )
