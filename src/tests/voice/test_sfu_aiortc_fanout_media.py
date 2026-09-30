@@ -27,6 +27,7 @@ except ImportError:
 
 from src.core.voice.signaling.sfu.aiortc_adapter import AiortcAdapter
 from src.core.voice.signaling.sfu.base import MediaKind
+from src.tests._conftest.waiting import wait_until_async
 
 CONNECT_TIMEOUT_S = 15.0
 FRAME_TIMEOUT_S = 12.0
@@ -77,16 +78,6 @@ class _Collector:
                 pass
 
 
-async def _wait_until(predicate, timeout: float = CONNECT_TIMEOUT_S) -> bool:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if predicate():
-            return True
-        await asyncio.sleep(0.05)
-    return predicate()
-
-
 async def _connect_receiver(adapter, room_id: str, peer_id: str) -> tuple:
     client = RTCPeerConnection()
     collector = _Collector()
@@ -106,13 +97,18 @@ async def _connect_receiver(adapter, room_id: str, peer_id: str) -> tuple:
         RTCSessionDescription(sdp=answer["sdp"], type="answer")
     )
     peer = adapter._rooms[room_id][peer_id]
-    connected = await _wait_until(
+    await wait_until_async(
         lambda: (
             peer.pc.connectionState == "connected"
             and client.connectionState == "connected"
-        )
+        ),
+        timeout=CONNECT_TIMEOUT_S,
+        message=lambda: (
+            f"never connected: sfu={peer.pc.connectionState} "
+            f"client={client.connectionState}/{client.iceConnectionState}"
+        ),
     )
-    return client, collector, connected
+    return client, collector
 
 
 @pytest.mark.asyncio
@@ -129,16 +125,20 @@ async def test_two_subscribers_both_receive_the_produced_track() -> None:
     adapter._rooms[room_id]["pub"].incoming_video_tracks.append(source)
     await adapter.produce(room_id, "pub", "t", MediaKind.VIDEO, {})
 
-    c1, col1, ok1 = await _connect_receiver(adapter, room_id, "sub1")
-    c2, col2, ok2 = await _connect_receiver(adapter, room_id, "sub2")
+    c1, col1 = await _connect_receiver(adapter, room_id, "sub1")
+    c2, col2 = await _connect_receiver(adapter, room_id, "sub2")
     try:
-        assert ok1 and ok2, f"subscriptions did not connect: {ok1}/{ok2}"
-
         # Both are served by ONE read of the source; neither may be starved.
-        got1 = await _wait_until(lambda: len(col1.frames) >= 3, FRAME_TIMEOUT_S)
-        got2 = await _wait_until(lambda: len(col2.frames) >= 3, FRAME_TIMEOUT_S)
-        assert got1, f"sub1 received {len(col1.frames)} frames"
-        assert got2, f"sub2 received {len(col2.frames)} frames"
+        await wait_until_async(
+            lambda: len(col1.frames) >= 3,
+            timeout=FRAME_TIMEOUT_S,
+            message=lambda: f"sub1 received only {len(col1.frames)} frames",
+        )
+        await wait_until_async(
+            lambda: len(col2.frames) >= 3,
+            timeout=FRAME_TIMEOUT_S,
+            message=lambda: f"sub2 received only {len(col2.frames)} frames",
+        )
     finally:
         await col1.stop()
         await col2.stop()

@@ -35,6 +35,7 @@ from src.core.voice.signaling.sfu.aiortc_adapter import (
     AiortcAdapter,
     BoundedVideoTrack,
 )
+from src.tests._conftest.waiting import wait_until_async
 
 # ICE on loopback completes in well under a second; these are generous so a
 # loaded box does not turn a working media path into a flake.
@@ -94,20 +95,19 @@ class _Collector:
                 pass
 
 
-async def _wait_until(predicate, timeout: float = CONNECT_TIMEOUT_S) -> bool:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if predicate():
-            return True
-        await asyncio.sleep(0.05)
-    return predicate()
-
-
 async def _wait_for_frames(
-    collector: _Collector, count: int, timeout: float = FRAME_TIMEOUT_S
+    collector: _Collector,
+    count: int,
+    timeout: float = FRAME_TIMEOUT_S,
+    message=None,
 ) -> bool:
-    return await _wait_until(lambda: len(collector.frames) >= count, timeout)
+    await wait_until_async(
+        lambda: len(collector.frames) >= count,
+        timeout=timeout,
+        message=message
+        or (lambda: f"only {len(collector.frames)} frames arrived; wanted {count}"),
+    )
+    return True
 
 
 async def _connect_receiver(adapter, room_id: str, peer_id: str) -> tuple:
@@ -116,8 +116,8 @@ async def _connect_receiver(adapter, room_id: str, peer_id: str) -> tuple:
     aiortc never emits ``negotiationneeded``, so the SFU is always the
     answerer: the client offers a recvonly video transceiver, the SFU already
     holds the video sender (added before the offer), and its answer binds the
-    sender to that m-line so RTP can flow. Returns ``(client, collector,
-    connected)``.
+    sender to that m-line so RTP can flow. Returns ``(client, collector)``
+    once the connection is established.
     """
     client = RTCPeerConnection()
     collector = _Collector()
@@ -139,13 +139,19 @@ async def _connect_receiver(adapter, room_id: str, peer_id: str) -> tuple:
     )
 
     peer = adapter._rooms[room_id][peer_id]
-    connected = await _wait_until(
+    await wait_until_async(
         lambda: (
             peer.pc.connectionState == "connected"
             and client.connectionState == "connected"
-        )
+        ),
+        timeout=CONNECT_TIMEOUT_S,
+        message=lambda: (
+            f"never connected: sfu={peer.pc.connectionState}/"
+            f"{peer.pc.iceConnectionState} client={client.connectionState}/"
+            f"{client.iceConnectionState}"
+        ),
     )
-    return client, collector, connected
+    return client, collector
 
 
 @pytest.mark.asyncio
@@ -158,18 +164,16 @@ async def test_a_degraded_peer_still_receives_video_over_rtp() -> None:
     source = _VideoSource()
     sender = peer.pc.addTrack(source)
 
-    client, collector, connected = await _connect_receiver(adapter, room_id, peer_id)
+    client, collector = await _connect_receiver(adapter, room_id, peer_id)
     try:
-        assert connected, (
-            f"never connected: sfu={peer.pc.connectionState}/"
-            f"{peer.pc.iceConnectionState} client={client.connectionState}/"
-            f"{client.iceConnectionState}"
-        )
-
         # Baseline: real RTP video reaches the client before any hint.
-        assert await _wait_for_frames(collector, 1), (
-            "no video arrived before the degradation hint; the media path "
-            "itself is broken, so this test cannot say anything about the hint"
+        await _wait_for_frames(
+            collector,
+            1,
+            message=(
+                "no video arrived before the degradation hint; the media path "
+                "itself is broken, so this test cannot say anything about the hint"
+            ),
         )
         assert collector.frames[0].width == 160
 
@@ -181,9 +185,13 @@ async def test_a_degraded_peer_still_receives_video_over_rtp() -> None:
 
         # The crux: more video arrives *after* the sender was degraded.
         baseline = len(collector.frames)
-        assert await _wait_for_frames(collector, baseline + 1), (
-            "the degraded peer stopped receiving video: "
-            f"{baseline} frames total, none since the hint"
+        await _wait_for_frames(
+            collector,
+            baseline + 1,
+            message=(
+                "the degraded peer stopped receiving video: "
+                f"{baseline} frames total, none since the hint"
+            ),
         )
     finally:
         await collector.stop()
@@ -210,11 +218,12 @@ async def test_a_peer_degraded_before_connecting_still_receives_video() -> None:
     assert applied is True
     assert isinstance(sender.track, BoundedVideoTrack)
 
-    client, collector, connected = await _connect_receiver(adapter, room_id, peer_id)
+    client, collector = await _connect_receiver(adapter, room_id, peer_id)
     try:
-        assert connected, "never connected with a pre-degraded sender"
-        assert await _wait_for_frames(collector, 1), (
-            "a peer degraded before connecting received no video at all"
+        await _wait_for_frames(
+            collector,
+            1,
+            message="a peer degraded before connecting received no video at all",
         )
     finally:
         await collector.stop()
@@ -232,22 +241,23 @@ async def test_restoring_the_hint_keeps_video_flowing() -> None:
     source = _VideoSource()
     sender = peer.pc.addTrack(source)
 
-    client, collector, connected = await _connect_receiver(adapter, room_id, peer_id)
+    client, collector = await _connect_receiver(adapter, room_id, peer_id)
     try:
-        assert connected
-        assert await _wait_for_frames(collector, 1)
+        await _wait_for_frames(collector, 1)
 
         assert await adapter.set_preferred_layers(room_id, peer_id, "", 0, 0)
         baseline = len(collector.frames)
-        assert await _wait_for_frames(collector, baseline + 1)
+        await _wait_for_frames(collector, baseline + 1)
 
         restored = await adapter.set_preferred_layers(room_id, peer_id, "", 2, 2)
         assert restored is True
         assert sender.track is source, "full rate was not re-attached"
 
         baseline = len(collector.frames)
-        assert await _wait_for_frames(collector, baseline + 1), (
-            "video stopped after the hint was lifted"
+        await _wait_for_frames(
+            collector,
+            baseline + 1,
+            message="video stopped after the hint was lifted",
         )
     finally:
         await collector.stop()

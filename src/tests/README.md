@@ -307,6 +307,26 @@ wait_until(
 )
 ```
 
+`wait_until_async` is the same contract on an event loop: the predicate may be
+sync or a coroutine, and the wait yields with `asyncio.sleep` between polls so
+timers, transports and background tasks keep running. Pass `timeout` to match
+the effect's budget:
+
+```python
+from src.tests._conftest.waiting import wait_until_async
+
+await wait_until_async(
+    lambda: peer.pc.connectionState == "connected",
+    timeout=CONNECT_TIMEOUT_S,
+    message=lambda: f"never connected: {peer.pc.iceConnectionState}",
+)
+```
+
+`message` accepts a plain string or a zero-argument callable. The callable form
+is only rendered when the timeout is actually reached, so it can read live
+state (an ICE state, a frame count) for the failure instead of snapshotting it
+at call time.
+
 **Drive the clock, don't sleep through it.** Tests of window/TTL/refill logic
 should advance a controlled clock instead of racing real time. The rate limiter
 exposes one via the `rate_limit_clock` fixture, which stands in for the
@@ -319,7 +339,19 @@ def test_window_expires(rate_limit_manager, rate_limit_clock):
 
 Sleeps that merely keep two operations apart (so a timestamp increases) or let
 threads start before a concurrent action remain appropriate -- the rule is only
-that a test must not *guess* how long a background effect will take.
+that a test must not *guess* how long a background effect will take. Every
+such sleep is listed with its reason in
+`src/tests/unit/test_intentional_sleep_sites.py`, and that registry is enforced
+as a test: a new `time.sleep`/`asyncio.sleep` (or an extra one in a listed
+file) fails until it is given a justification or replaced with a bounded wait,
+so the next determinism sweep does not have to re-triage the tree.
+
+Finally, these timing-sensitive suites are also run under deliberate CPU
+contention on every merge request: `test:timing_under_load` (GitLab) and
+`server-timing-under-load` (GitHub Actions) start busy-loop burners that
+oversubscribe the box and then run the suites above. A wait whose budget is
+generous on an idle machine but too tight on a loaded one fails there, instead
+of flaking intermittently later.
 
 ### Coverage Reporting
 

@@ -363,6 +363,65 @@ test:shuffled_order:
   needs: []
   allow_failure: false
 
+# Wall-clock determinism gate. These suites wait on background effects -- a
+# worker thread's first cycle, an executor-driven database update, the pool
+# reclaiming an idle connection, a rate-limit window, an ICE/media handshake.
+# They pass on an idle box; the failure mode this closes is a wait whose fixed
+# budget is generous there but too tight on a loaded runner. The job runs
+# exactly those suites while dummy CPU burners oversubscribe the box, so an
+# under-budgeted wait goes red on the merge request instead of flaking later.
+# The deterministic replacements live in src/tests/_conftest/waiting.py.
+test:timing_under_load:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  variables:
+    # Busy-loop burners per CPU; >1 deliberately oversubscribes the scheduler.
+    PLEXICHAT_LOAD_PER_CPU: "2"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - |
+      set -eu
+      cpus=$(nproc)
+      burners=$((cpus * PLEXICHAT_LOAD_PER_CPU))
+      echo "Oversubscribing ${cpus} CPU(s) with ${burners} busy-loop burners"
+      burner_pids=""
+      for _ in $(seq 1 "$burners"); do
+        dd if=/dev/zero of=/dev/null bs=1M status=none &
+        burner_pids="$burner_pids $!"
+      done
+      stop_burners() {
+        # shellcheck disable=SC2086
+        kill $burner_pids 2>/dev/null || true
+      }
+      trap stop_burners EXIT
+      # Serial on purpose: the burners supply the contention, and running in
+      # one process keeps each file whole so the waits run where they live.
+      # The -m override relaxes pytest.ini's default deselect to include
+      # slow-marked timeout/reclaim tests -- the most clock-sensitive ones --
+      # while still excluding the duration-only performance suites.
+      python -m pytest -q --maxfail=20 --durations=25 \
+        -m "not performance and not production_simulation and not multiprocess" \
+        src/tests/ratelimit \
+        src/tests/webhooks \
+        src/tests/presence \
+        src/tests/websocket \
+        src/tests/events/test_queued_delivery_integration.py \
+        src/tests/media/test_scan_bugfixes.py \
+        src/tests/test_pool_monitoring.py \
+        src/tests/test_sqlite_pool_reclaim.py \
+        src/tests/test_database_pool.py \
+        src/tests/auth/test_sessions.py \
+        src/tests/auth/test_audit.py \
+        src/tests/voice/test_voice_media_handshake_e2e.py \
+        src/tests/voice/test_sfu_aiortc_media.py \
+        src/tests/voice/test_sfu_aiortc_fanout_media.py \
+        src/tests/voice/test_sfu_aiortc_degraded_media.py
+      stop_burners
+      trap - EXIT
+  needs: []
+  allow_failure: false
+
 # Dedicated run of the database-backed suites against real services.
 #
 # ``test:pytest`` runs everything else, but with no backend reachable the

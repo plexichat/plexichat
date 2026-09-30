@@ -31,6 +31,7 @@ except ImportError:
 
 import src.core.voice as voice
 import src.core.voice.signaling as signaling
+from src.tests._conftest.waiting import wait_until_async
 
 CONNECT_TIMEOUT_S = 15.0
 
@@ -133,16 +134,6 @@ def _sfu_peer(channel_id: int, owner_id: int):
     return sfu, sfu._rooms[f"voice_{channel_id}"][f"user_{owner_id}"]
 
 
-async def _wait_until(predicate, timeout: float = CONNECT_TIMEOUT_S) -> bool:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if predicate():
-            return True
-        await asyncio.sleep(0.05)
-    return predicate()
-
-
 def _remote_candidates(pc) -> list:
     """The SFU pc's ICE transport's view of the client's candidates."""
     for transceiver in pc.getTransceivers():
@@ -167,15 +158,16 @@ async def test_full_handshake_reaches_connected_and_media_flows(wired_call):
         assert "a=candidate:" in answer.sdp
 
         _sfu, peer = _sfu_peer(cid, owner.id)
-        connected = await _wait_until(
+        await wait_until_async(
             lambda: (
                 peer.pc.connectionState == "connected"
                 and client.connectionState == "connected"
-            )
-        )
-        assert connected, (
-            f"never connected: sfu={peer.pc.connectionState} "
-            f"client={client.connectionState}/{client.iceConnectionState}"
+            ),
+            timeout=CONNECT_TIMEOUT_S,
+            message=lambda: (
+                f"never connected: sfu={peer.pc.connectionState} "
+                f"client={client.connectionState}/{client.iceConnectionState}"
+            ),
         )
 
         assert peer.incoming_audio_tracks, "SFU received no audio track"
@@ -206,7 +198,11 @@ async def test_trickled_candidate_reaches_the_sfu_media_plane(wired_call):
     client, _answer = await _start_call(owner.id, cid)
     try:
         _sfu, peer = _sfu_peer(cid, owner.id)
-        assert await _wait_until(lambda: peer.pc.remoteDescription is not None)
+        await wait_until_async(
+            lambda: peer.pc.remoteDescription is not None,
+            timeout=CONNECT_TIMEOUT_S,
+            message="SFU peer connection never applied the client's offer",
+        )
 
         accepted = await signaling.handle_ice_candidate_async(
             owner.id, cid, HOST_CANDIDATE, "0", 0
@@ -214,16 +210,16 @@ async def test_trickled_candidate_reaches_the_sfu_media_plane(wired_call):
         assert accepted is True
 
         # aiortc records it asynchronously on the ICE transport.
-        delivered = await _wait_until(
+        await wait_until_async(
             lambda: any(
                 candidate.ip == "192.168.1.100" and candidate.port == 54321
                 for candidate in _remote_candidates(peer.pc)
             ),
             timeout=5.0,
-        )
-        assert delivered, (
-            "the client's trickled candidate never reached the SFU peer "
-            f"connection: {_remote_candidates(peer.pc)}"
+            message=lambda: (
+                "the client's trickled candidate never reached the SFU peer "
+                f"connection: {_remote_candidates(peer.pc)}"
+            ),
         )
 
         # ...and it is still recorded on the signaling connection.

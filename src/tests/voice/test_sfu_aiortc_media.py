@@ -28,6 +28,7 @@ except ImportError:
     pytest.skip("aiortc not installed", allow_module_level=True)
 
 from src.core.voice.signaling.sfu.aiortc_adapter import AiortcAdapter
+from src.tests._conftest.waiting import wait_until_async
 
 # ICE on loopback completes in well under a second; these are generous so a
 # loaded CI box does not turn a working media path into a flake.
@@ -52,16 +53,6 @@ class _ToneTrack(MediaStreamTrack):
         frame.pts = self.pts
         self.pts += 960
         return frame
-
-
-async def _wait_until(predicate, timeout: float = CONNECT_TIMEOUT_S) -> bool:
-    """Poll ``predicate`` until true or the timeout expires."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate():
-            return True
-        await asyncio.sleep(0.05)
-    return predicate()
 
 
 async def _offer_from(client: RTCPeerConnection) -> RTCSessionDescription:
@@ -89,16 +80,17 @@ async def test_media_flows_from_client_to_the_aiortc_sfu() -> None:
         )
 
         peer = adapter._rooms[room_id][peer_id]
-        connected = await _wait_until(
+        await wait_until_async(
             lambda: (
                 peer.pc.connectionState == "connected"
                 and client.connectionState == "connected"
-            )
-        )
-        assert connected, (
-            f"never connected: sfu={peer.pc.connectionState}/"
-            f"{peer.pc.iceConnectionState} client={client.connectionState}/"
-            f"{client.iceConnectionState}"
+            ),
+            timeout=CONNECT_TIMEOUT_S,
+            message=lambda: (
+                f"never connected: sfu={peer.pc.connectionState}/"
+                f"{peer.pc.iceConnectionState} client={client.connectionState}/"
+                f"{client.iceConnectionState}"
+            ),
         )
 
         assert peer.incoming_audio_tracks, "SFU received no audio track"
@@ -162,7 +154,11 @@ async def test_produce_uses_the_media_track_the_client_sent() -> None:
             RTCSessionDescription(sdp=answer["sdp"], type="answer")
         )
         peer = adapter._rooms[room_id][peer_id]
-        assert await _wait_until(lambda: bool(peer.incoming_audio_tracks))
+        await wait_until_async(
+            lambda: bool(peer.incoming_audio_tracks),
+            timeout=CONNECT_TIMEOUT_S,
+            message="SFU received no audio track from the client",
+        )
 
         producer = await adapter.produce(
             room_id, peer_id, "transport-1", MediaKind.AUDIO, {"codecs": []}
