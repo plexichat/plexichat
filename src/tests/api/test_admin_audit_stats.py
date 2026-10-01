@@ -158,3 +158,57 @@ def test_export_csv_timestamp_is_utc(non_utc_host):
     finally:
         for c in reversed(ctx):
             c.stop()
+
+
+class _ListDB:
+    """Fake DB for the paginated list: a count plus fixed rows."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetch_one(self, query, params=None):
+        return {"total": len(self._rows)}
+
+    def fetch_all(self, query, params=None):
+        return self._rows
+
+
+def test_list_timestamp_is_utc(non_utc_host):
+    """GET /audit/logs must render ``timestamp`` as UTC, like the export."""
+    from datetime import datetime
+
+    from src.api.routes.admin import audit as audit_routes
+
+    epoch_ms = int(datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    row = {
+        "id": 1,
+        "admin_id": 2,
+        "action": "role.grant",
+        "target_type": "admin_user",
+        "target_id": "3",
+        "details": "",
+        "ip_address": "1.2.3.4",
+        "user_agent": "ua",
+        "status": "success",
+        "created_at": epoch_ms,
+    }
+    fake_db = _ListDB([row])
+
+    app = FastAPI()
+    app.include_router(audit_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    ctx = (
+        patch.object(audit_routes, "check_host_restriction"),
+        patch.object(audit_routes, "require_admin_permission"),
+        patch("src.api.get_db", return_value=fake_db),
+    )
+    for c in ctx:
+        c.start()
+    try:
+        response = client.get("/api/v1/admin/audit/logs")
+        assert response.status_code == 200
+        # UTC noon; a naive server-local render on the non-UTC host would be 08:00.
+        assert response.json()["logs"][0]["timestamp"] == "2026-06-15T12:00:00+00:00"
+    finally:
+        for c in reversed(ctx):
+            c.stop()

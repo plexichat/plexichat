@@ -124,8 +124,11 @@ async def get_audit_logs(
                     "user_agent": log.get("user_agent"),
                     "status": log["status"],
                     "created_at": log["created_at"],
+                    # created_at is UTC millis; render UTC so the list, the
+                    # stats day boundary, and the CSV export agree on the
+                    # instant regardless of the server's local zone.
                     "timestamp": datetime.fromtimestamp(
-                        log["created_at"] / 1000
+                        log["created_at"] / 1000, tz=timezone.utc
                     ).isoformat()
                     if log.get("created_at")
                     else None,

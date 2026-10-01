@@ -227,11 +227,11 @@ def setup(
         logger.info(f"License validated for instance: {validation.instance_id}")
         logger.info(f"License source: {_license_manager.get_license_source()}")
         if _license_manager.get_expiry_timestamp():
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             ts = _license_manager.get_expiry_timestamp()
             if ts is not None:
-                expiry = datetime.fromtimestamp(float(ts))
+                expiry = datetime.fromtimestamp(float(ts), tz=timezone.utc)
                 logger.info(f"License expires: {expiry.isoformat()}")
         return True
     else:

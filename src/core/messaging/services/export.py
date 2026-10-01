@@ -552,9 +552,7 @@ class TranscriptExportService(BaseService):
         """Generate plain text export."""
         lines = []
         lines.append("=== Plexichat Chat Transcript ===")
-        lines.append(
-            f"Generated: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}"
-        )
+        lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
         lines.append(f"Messages: {len(messages)}")
         lines.append("=" * 50)
         lines.append("")
@@ -562,7 +560,7 @@ class TranscriptExportService(BaseService):
         for msg in messages:
             ts = msg.get("created_at", 0)
             try:
-                dt = __import__("datetime").datetime.utcfromtimestamp(ts / 1000)
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
                 time_str = dt.isoformat()
             except Exception:
                 time_str = str(ts)
@@ -599,14 +597,14 @@ class TranscriptExportService(BaseService):
         parts.append("</style></head><body>")
         parts.append("<h1>Plexichat Chat Transcript</h1>")
         parts.append(
-            f"<p>Messages: {len(messages)} | Generated: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}</p>"
+            f"<p>Messages: {len(messages)} | Generated: {datetime.now(timezone.utc).isoformat()}</p>"
         )
         parts.append("<div class='messages'>")
 
         for msg in messages:
             ts = msg.get("created_at", 0)
             try:
-                dt = __import__("datetime").datetime.utcfromtimestamp(ts / 1000)
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
                 time_str = dt.isoformat()
             except Exception:
                 time_str = str(ts)
