@@ -4,7 +4,7 @@ Admin audit log routes for querying and exporting audit records.
 
 from fastapi import APIRouter, Request, HTTPException, Query
 from typing import Optional, Annotated
-from datetime import datetime
+from datetime import datetime, timezone
 import csv
 import io
 
@@ -159,8 +159,10 @@ async def get_audit_stats(request: Request):
         if db is None:
             raise HTTPException(status_code=503, detail="Database not available")
 
+        # created_at is stored as UTC millis (time.time() * 1000), so the
+        # day boundary must also be UTC midnight, not server-local midnight.
         today_start = int(
-            datetime.now()
+            datetime.now(timezone.utc)
             .replace(hour=0, minute=0, second=0, microsecond=0)
             .timestamp()
             * 1000
