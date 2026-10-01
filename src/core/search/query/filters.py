@@ -3,7 +3,7 @@ Filter processor - Apply parsed filters to search results.
 """
 
 from typing import List, Optional, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 import utils.config as config
 from src.core.database.collections import CappedDict
@@ -222,9 +222,16 @@ class FilterProcessor:
         return None
 
     def _date_to_timestamp(self, date_str: str) -> Optional[int]:
-        """Convert date string to timestamp in milliseconds."""
+        """Convert a ``YYYY-MM-DD`` date to UTC epoch milliseconds.
+
+        ``created_at`` is stored as UTC milliseconds, so the date boundary
+        must be UTC midnight. Parsing the naive value and calling
+        ``.timestamp()`` resolved it in the SERVER's local zone, making a
+        ``before:``/``after:`` filter include or drop messages depending on
+        the host's TZ.
+        """
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             return int(dt.timestamp() * 1000)
         except ValueError:
             return None

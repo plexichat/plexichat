@@ -2,6 +2,9 @@
 Tests for search filters.
 """
 
+import os
+import time
+
 import pytest
 from datetime import datetime, timedelta, timezone
 
@@ -12,6 +15,28 @@ from src.core.search.models import (
     FilterType,
     MessageSearchResult,
 )
+
+
+@pytest.fixture
+def non_utc_host():
+    """Run the test as if the server lived in a non-UTC timezone.
+
+    Restores the previous ``TZ`` (and re-syncs the C library clock) on
+    teardown so the switch cannot leak into later tests in this worker.
+    """
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset unavailable")
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/New_York"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
 
 
 @pytest.mark.search
@@ -258,6 +283,16 @@ class TestFilterProcessor:
 
         assert len(filtered) == 1
         assert filtered[0].content == "old"
+
+    def test_date_bounds_are_utc_on_a_non_utc_host(self, non_utc_host):
+        """A ``YYYY-MM-DD`` bound is UTC midnight, not server-local midnight.
+
+        ``created_at`` is stored as UTC milliseconds, so the boundary must
+        not shift with the host's time zone (America/New_York here).
+        """
+        # 2024-01-01T00:00:00Z; the naive-local reading would be
+        # 2024-01-01T05:00:00Z on the non-UTC host.
+        assert FilterProcessor()._date_to_timestamp("2024-01-01") == 1704067200000
 
     def test_after_date_filter(self):
         """Test after:date filter."""
