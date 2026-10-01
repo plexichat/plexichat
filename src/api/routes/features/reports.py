@@ -94,6 +94,8 @@ _USER_REPORT_COLUMNS = (
 
 ENHANCED_REPORT_RATE_LIMIT = 10
 ENHANCED_REPORT_RATE_WINDOW = 60
+VALID_REPORT_PRIORITIES = {"low", "medium", "high", "critical"}
+VALID_REPORT_STATUSES = {"open", "investigating", "resolved", "dismissed", "escalated"}
 VALID_REPORT_CATEGORIES = {
     "harassment",
     "spam",
@@ -227,10 +229,9 @@ async def submit_enhanced_report(
 ):
     _check_enhanced_report_rate_limit(current_user.user_id)
 
-    valid_priorities = {"low", "medium", "high", "critical"}
-    if body.priority not in valid_priorities:
+    if body.priority not in VALID_REPORT_PRIORITIES:
         raise_bad_request(
-            f"Invalid priority. Must be one of: {', '.join(valid_priorities)}"
+            f"Invalid priority. Must be one of: {', '.join(sorted(VALID_REPORT_PRIORITIES))}"
         )
 
     # REP-4: only supported target types are accepted
@@ -422,10 +423,16 @@ async def update_report_status(
 
     rid = parse_id(report_id, "report ID")
 
-    valid_statuses = {"open", "investigating", "resolved", "dismissed", "escalated"}
-    if body.status not in valid_statuses:
+    if body.status not in VALID_REPORT_STATUSES:
         raise_bad_request(
-            f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            f"Invalid status. Must be one of: {', '.join(sorted(VALID_REPORT_STATUSES))}"
+        )
+
+    # Priority is validated on submit; validate it here too so a status
+    # update cannot store an arbitrary string in the moderation queue.
+    if body.priority is not None and body.priority not in VALID_REPORT_PRIORITIES:
+        raise_bad_request(
+            f"Invalid priority. Must be one of: {', '.join(sorted(VALID_REPORT_PRIORITIES))}"
         )
 
     # The response must reflect persisted state: updating a report that does

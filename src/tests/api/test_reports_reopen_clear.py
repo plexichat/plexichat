@@ -14,6 +14,9 @@ import asyncio
 import sqlite3
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from src.api.routes.features import reports as reports_route
 from src.api.routes.features.reports import (
     ReportStatusUpdateRequest,
@@ -146,9 +149,6 @@ def test_escalate_transition_sets_escalated_at(monkeypatch):
 def test_unknown_report_returns_404(monkeypatch):
     # The UPDATE matches no rows for an unknown id; the endpoint must not echo
     # the requested status back as a success.
-    import pytest
-    from fastapi import HTTPException
-
     db = _make_db()
     monkeypatch.setattr(reports_route.api, "get_db", lambda: db)
     body = ReportStatusUpdateRequest(status="resolved")
@@ -158,3 +158,30 @@ def test_unknown_report_returns_404(monkeypatch):
         asyncio.run(update_report_status("999", body, current_user))
 
     assert exc.value.status_code == 404
+
+
+def test_invalid_priority_returns_400_and_keeps_stored_value(monkeypatch):
+    # Submit validates priority but the status update did not, so garbage
+    # priority strings were stored in the moderation queue.
+    db = _make_db()
+    monkeypatch.setattr(reports_route.api, "get_db", lambda: db)
+    body = ReportStatusUpdateRequest(status="investigating", priority="garbage")
+    current_user = SimpleNamespace(user_id=ADMIN_ID)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_report_status("1", body, current_user))
+
+    assert exc.value.status_code == 400
+    assert _row(db)["priority"] == "high"
+
+
+def test_valid_priority_update_is_stored(monkeypatch):
+    db = _make_db()
+    monkeypatch.setattr(reports_route.api, "get_db", lambda: db)
+    body = ReportStatusUpdateRequest(status="investigating", priority="critical")
+    current_user = SimpleNamespace(user_id=ADMIN_ID)
+
+    result = asyncio.run(update_report_status("1", body, current_user))
+
+    assert result["status"] == "investigating"
+    assert _row(db)["priority"] == "critical"
