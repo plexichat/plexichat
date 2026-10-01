@@ -248,7 +248,7 @@ class TestFilterProcessor:
 
     def test_before_date_filter(self):
         """Test before:date filter."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc)
         old_ts = int((now - timedelta(days=10)).timestamp() * 1000)
         new_ts = int(now.timestamp() * 1000)
 
@@ -296,7 +296,7 @@ class TestFilterProcessor:
 
     def test_after_date_filter(self):
         """Test after:date filter."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc)
         old_ts = int((now - timedelta(days=10)).timestamp() * 1000)
         new_ts = int(now.timestamp() * 1000)
 

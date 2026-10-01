@@ -244,19 +244,19 @@ class FilterProcessor:
 
     def _has_image(self, result: MessageSearchResult) -> bool:
         """Check if message has image attachment."""
-        return False
+        return "image" in (result.attachment_types or [])
 
     def _has_video(self, result: MessageSearchResult) -> bool:
         """Check if message has video attachment."""
-        return False
+        return "video" in (result.attachment_types or [])
 
     def _has_audio(self, result: MessageSearchResult) -> bool:
         """Check if message has audio attachment."""
-        return False
+        return "audio" in (result.attachment_types or [])
 
     def _has_embed(self, result: MessageSearchResult) -> bool:
         """Check if message has embed."""
-        return False
+        return bool(result.has_embeds)
 
     def _check_mentions(self, result: MessageSearchResult, user_id: int) -> bool:
         """Check if message mentions a user."""
