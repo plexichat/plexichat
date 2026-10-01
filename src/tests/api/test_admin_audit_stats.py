@@ -212,3 +212,43 @@ def test_list_timestamp_is_utc(non_utc_host):
     finally:
         for c in reversed(ctx):
             c.stop()
+
+
+class _RecordingDB:
+    """Fake DB that records the SQL and params passed to each query."""
+
+    def __init__(self):
+        self.calls = []
+
+    def fetch_one(self, query, params=None):
+        self.calls.append((query, tuple(params or ())))
+        return {"total": 0}
+
+    def fetch_all(self, query, params=None):
+        return []
+
+
+def test_list_date_from_zero_is_applied():
+    """``date_from=0`` is a real epoch bound and must not be dropped as falsy."""
+    from src.api.routes.admin import audit as audit_routes
+
+    fake_db = _RecordingDB()
+    app = FastAPI()
+    app.include_router(audit_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    ctx = (
+        patch.object(audit_routes, "check_host_restriction"),
+        patch.object(audit_routes, "require_admin_permission"),
+        patch("src.api.get_db", return_value=fake_db),
+    )
+    for c in ctx:
+        c.start()
+    try:
+        response = client.get("/api/v1/admin/audit/logs?date_from=0")
+        assert response.status_code == 200
+        count_query, count_params = fake_db.calls[0]
+        assert "created_at >= ?" in count_query
+        assert count_params == (0,)
+    finally:
+        for c in reversed(ctx):
+            c.stop()

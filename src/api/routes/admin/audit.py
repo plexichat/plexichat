@@ -78,7 +78,7 @@ async def get_audit_logs(
             conditions.append("status = ?")
             params.append(status)
 
-        if admin_id:
+        if admin_id is not None:
             conditions.append("admin_id = ?")
             params.append(admin_id)
 
@@ -86,11 +86,13 @@ async def get_audit_logs(
             conditions.append("target_type = ?")
             params.append(target_type)
 
-        if date_from:
+        # ``_coerce_nullable_int`` maps null/empty to None, so a present 0 is a
+        # real bound (epoch) and must not be dropped as falsy.
+        if date_from is not None:
             conditions.append("created_at >= ?")
             params.append(date_from)
 
-        if date_to:
+        if date_to is not None:
             conditions.append("created_at <= ?")
             params.append(date_to)
 
@@ -261,7 +263,7 @@ async def export_audit_logs(
             conditions.append("status = ?")
             params.append(status)
 
-        if admin_id:
+        if admin_id is not None:
             conditions.append("admin_id = ?")
             params.append(admin_id)
 
@@ -269,11 +271,13 @@ async def export_audit_logs(
             conditions.append("target_type = ?")
             params.append(target_type)
 
-        if date_from:
+        # ``_coerce_nullable_int`` maps null/empty to None, so a present 0 is a
+        # real bound (epoch) and must not be dropped as falsy.
+        if date_from is not None:
             conditions.append("created_at >= ?")
             params.append(date_from)
 
-        if date_to:
+        if date_to is not None:
             conditions.append("created_at <= ?")
             params.append(date_to)
 
