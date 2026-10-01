@@ -51,10 +51,12 @@ class RegistrationMixin(AuthManagerProtocol):
                 if not dob:
                     raise AuthError("Date of birth is required", "dob")
                 try:
-                    from datetime import datetime
+                    from datetime import datetime, timezone
 
                     birth_date = datetime.strptime(dob, "%Y-%m-%d")
-                    today = datetime.today()
+                    # UTC date so the age gate answers the same day on every
+                    # host regardless of each server's local zone.
+                    today = datetime.now(timezone.utc)
                     calc_age = (
                         today.year
                         - birth_date.year
