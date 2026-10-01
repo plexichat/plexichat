@@ -4,7 +4,8 @@ Admin licensing routes for managing instance license state.
 
 from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
+import math
 from typing import Optional
 from .utils import (
     check_host_restriction,
@@ -17,6 +18,25 @@ import utils.licensing as licensing_module
 from src.core.admin.logging import AdminLogEntry, get_admin_logger
 
 router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
+
+
+def _expiry_date_iso(expiry_ts: float) -> str:
+    """Format an expiry timestamp as UTC ISO-8601."""
+    return datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat()
+
+
+def _days_remaining(expiry_ts: float, now_ts: Optional[float] = None) -> int:
+    """Whole days remaining, rounding partial days up.
+
+    Any positive remainder counts as a full day so 23h59m left reports
+    1 rather than 0. Expired timestamps report 0.
+    """
+    if now_ts is None:
+        now_ts = datetime.now(timezone.utc).timestamp()
+    remaining = expiry_ts - now_ts
+    if remaining <= 0:
+        return 0
+    return math.ceil(remaining / 86400)
 
 
 class LicenseKey(BaseModel):
@@ -92,10 +112,8 @@ async def get_license_status(request: Request):
         expiry_date = None
         days_remaining = None
         if expiry_ts:
-            expiry_date = datetime.fromtimestamp(expiry_ts).isoformat()
-            days_remaining = max(
-                0, int((expiry_ts - datetime.now().timestamp()) / 86400)
-            )
+            expiry_date = _expiry_date_iso(expiry_ts)
+            days_remaining = _days_remaining(expiry_ts)
 
         validation_result = licensing_module.get_validation_result()
 
