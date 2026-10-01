@@ -17,6 +17,81 @@ from .protocol import DatabaseProtocol
 
 router = APIRouter()
 
+# Column order for each report table, used to map tuple rows (drivers that
+# do not expose column keys) back into a dict. These must match the table
+# definitions in ``src/core/reports/schema.py`` exactly; the previous single
+# list described the ``reports`` table but was also applied to message_reports
+# and user_reports rows, and mislabelled every field after ``priority``.
+_REPORT_COLUMNS = (
+    "id",
+    "reporter_id",
+    "report_type",
+    "target_id",
+    "channel_id",
+    "server_id",
+    "reason",
+    "category",
+    "details",
+    "evidence_ids",
+    "message_content",
+    "reported_user_id",
+    "status",
+    "priority",
+    "assigned_to",
+    "admin_notes",
+    "resolution",
+    "resolved_at",
+    "resolved_by",
+    "reviewed_at",
+    "reviewed_by",
+    "escalated_at",
+    "created_at",
+    "updated_at",
+)
+_MESSAGE_REPORT_COLUMNS = (
+    "id",
+    "message_id",
+    "channel_id",
+    "server_id",
+    "reporter_id",
+    "reported_user_id",
+    "reason",
+    "category",
+    "details",
+    "message_content",
+    "evidence_urls",
+    "priority",
+    "status",
+    "reported_at",
+    "reviewed_at",
+    "reviewed_by",
+    "admin_notes",
+    "action_taken",
+    "assigned_to",
+    "escalated_at",
+    "resolution",
+)
+_USER_REPORT_COLUMNS = (
+    "id",
+    "reported_user_id",
+    "reporter_id",
+    "reason",
+    "category",
+    "details",
+    "evidence_message_ids",
+    "evidence_urls",
+    "priority",
+    "status",
+    "reported_at",
+    "reviewed_at",
+    "reviewed_by",
+    "admin_notes",
+    "action_taken",
+    "assigned_to",
+    "escalated_at",
+    "resolution",
+)
+
 ENHANCED_REPORT_RATE_LIMIT = 10
 ENHANCED_REPORT_RATE_WINDOW = 60
 VALID_REPORT_CATEGORIES = {
@@ -447,44 +522,23 @@ async def get_report_details(
 
     rid = report_id
 
+    # Each table has a different column order; keep the matching table's
+    # column names alongside its row so a tuple row is labelled correctly.
     row = db.fetch_one("SELECT * FROM reports WHERE id = ?", (rid,))
+    row_columns = _REPORT_COLUMNS
     if not row:
         row = db.fetch_one("SELECT * FROM message_reports WHERE id = ?", (rid,))
+        row_columns = _MESSAGE_REPORT_COLUMNS
     if not row:
         row = db.fetch_one("SELECT * FROM user_reports WHERE id = ?", (rid,))
+        row_columns = _USER_REPORT_COLUMNS
     if not row:
         raise_not_found("Report not found")
 
     if isinstance(row, dict):
         data = row
     else:
-        columns = (
-            "id",
-            "reporter_id",
-            "report_type",
-            "target_id",
-            "channel_id",
-            "server_id",
-            "reason",
-            "category",
-            "details",
-            "evidence_ids",
-            "message_content",
-            "reported_user_id",
-            "status",
-            "priority",
-            "created_at",
-            "updated_at",
-            "admin_notes",
-            "reviewed_by",
-            "reviewed_at",
-            "action_taken",
-            "resolution",
-            "resolved_by",
-            "escalated_at",
-            "assigned_to",
-        )
-        data = dict(zip(columns, row))
+        data = dict(zip(row_columns, row))
     is_reporter = data.get("reporter_id") == current_user.user_id
     is_admin = db.fetch_one(
         "SELECT id FROM admin_users WHERE id = ?", (current_user.user_id,)

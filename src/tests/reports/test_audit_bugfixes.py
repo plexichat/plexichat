@@ -256,6 +256,108 @@ class TestRep345EnhancedReportValidation:
         assert "INSERT INTO reports" in db.executed[0][0]
 
 
+class _TupleReportsDB:
+    """Driver stub that returns positional rows for each report table."""
+
+    def __init__(self, reports=None, message_reports=None, user_reports=None):
+        self._rows = {
+            "reports": reports,
+            "message_reports": message_reports,
+            "user_reports": user_reports,
+        }
+
+    def fetch_one(self, query, params=None):
+        if "FROM admin_users" in query:
+            return None
+        for table, row in self._rows.items():
+            if f"FROM {table} " in query:
+                return row
+        return None
+
+    def execute(self, query, params=None):
+        return None
+
+
+def _tuple_for(table, **overrides):
+    """Build a positional row for `table` from named overrides."""
+    from src.api.routes.features.reports import (
+        _REPORT_COLUMNS,
+        _MESSAGE_REPORT_COLUMNS,
+        _USER_REPORT_COLUMNS,
+    )
+
+    columns = {
+        "reports": _REPORT_COLUMNS,
+        "message_reports": _MESSAGE_REPORT_COLUMNS,
+        "user_reports": _USER_REPORT_COLUMNS,
+    }[table]
+    values = {name: None for name in columns}
+    values.update(overrides)
+    return tuple(values[name] for name in columns)
+
+
+class TestRepReportDetailsTupleRows:
+    """Tuple rows must be labelled with the matching table's column order."""
+
+    def test_reports_tuple_row_maps_lifecycle_fields(self, monkeypatch):
+        # ``priority``, ``reviewed_at`` and ``assigned_to`` sit at different
+        # offsets in the reports table than the old single column list used.
+        row = _tuple_for(
+            "reports",
+            id=42,
+            reporter_id=1,
+            status="investigating",
+            priority="high",
+            assigned_to=7,
+            reviewed_at=111,
+            created_at=222,
+            updated_at=333,
+        )
+        db = _TupleReportsDB(reports=row)
+        _patch_api(monkeypatch, db, None)
+        # Viewer is the reporter, so admin-only fields are stripped; assert on
+        # the non-admin fields that were previously mislabelled.
+        result = asyncio.run(get_report_details(42, _FakeUser(1)))["report"]
+        assert result["status"] == "investigating"
+        assert result["priority"] == "high"
+        assert result["updated_at"] == 333
+        assert "assigned_to" not in result
+
+    def test_message_report_tuple_row_maps_reported_user(self, monkeypatch):
+        row = _tuple_for(
+            "message_reports",
+            id=9,
+            message_id=100,
+            reporter_id=1,
+            reported_user_id=5,
+            status="pending",
+            priority="low",
+            reported_at=444,
+        )
+        db = _TupleReportsDB(message_reports=row)
+        _patch_api(monkeypatch, db, None)
+        result = asyncio.run(get_report_details(9, _FakeUser(1)))["report"]
+        assert result["reported_user_id"] == 5
+        assert result["status"] == "pending"
+        assert result["priority"] == "low"
+
+    def test_user_report_tuple_row_maps_reported_user(self, monkeypatch):
+        row = _tuple_for(
+            "user_reports",
+            id=11,
+            reported_user_id=8,
+            reporter_id=1,
+            status="pending",
+            priority="medium",
+            reported_at=555,
+        )
+        db = _TupleReportsDB(user_reports=row)
+        _patch_api(monkeypatch, db, None)
+        result = asyncio.run(get_report_details(11, _FakeUser(1)))["report"]
+        assert result["reported_user_id"] == 8
+        assert result["status"] == "pending"
+
+
 class TestRep6MissingReportNotFound:
     """REP-6: a missing enhanced report returns 404, not 400."""
 
