@@ -401,6 +401,7 @@ async def submit_enhanced_report(
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
         403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
     },
 )
 async def update_report_status(
@@ -426,6 +427,12 @@ async def update_report_status(
         raise_bad_request(
             f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
         )
+
+    # The response must reflect persisted state: updating a report that does
+    # not exist previously returned success with the requested status because
+    # the UPDATE matched no rows. Report the stored state honestly (404).
+    if not db.fetch_one("SELECT id FROM reports WHERE id = ?", (rid,)):
+        raise_not_found("Report not found")
 
     import time
 

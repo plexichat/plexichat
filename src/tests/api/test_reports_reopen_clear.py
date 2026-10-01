@@ -141,3 +141,20 @@ def test_escalate_transition_sets_escalated_at(monkeypatch):
     assert row["status"] == "escalated"
     assert row["escalated_at"] is not None, "escalating must stamp escalated_at"
     assert row["escalated_at"] != 3333, "escalating must refresh a stale stamp"
+
+
+def test_unknown_report_returns_404(monkeypatch):
+    # The UPDATE matches no rows for an unknown id; the endpoint must not echo
+    # the requested status back as a success.
+    import pytest
+    from fastapi import HTTPException
+
+    db = _make_db()
+    monkeypatch.setattr(reports_route.api, "get_db", lambda: db)
+    body = ReportStatusUpdateRequest(status="resolved")
+    current_user = SimpleNamespace(user_id=ADMIN_ID)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_report_status("999", body, current_user))
+
+    assert exc.value.status_code == 404
