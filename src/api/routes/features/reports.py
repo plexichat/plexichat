@@ -220,20 +220,31 @@ async def submit_enhanced_report(
             raise_bad_request("You cannot report yourself")
 
     # Return the existing open report for this reporter/target rather than
-    # creating another moderation-queue entry.
+    # creating another moderation-queue entry. The stored priority/status
+    # are returned so a duplicate submission cannot spoof the moderation
+    # queue state by echoing the request body.
     existing = db.fetch_one(
-        "SELECT id FROM reports WHERE reporter_id = ? AND report_type = ? "
+        "SELECT id, priority, status FROM reports WHERE reporter_id = ? AND report_type = ? "
         "AND target_id = ? AND status IN ('open', 'investigating') "
         "ORDER BY created_at DESC LIMIT 1",
         (current_user.user_id, body.target_type, target_id),
     )
     if existing:
-        existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+        if isinstance(existing, dict):
+            existing_id = existing["id"]
+            stored_priority = existing.get("priority") or body.priority
+            stored_status = existing.get("status") or "open"
+        else:
+            existing_id = existing[0]
+            stored_priority = (
+                existing[1] if len(existing) > 1 and existing[1] else body.priority
+            )
+            stored_status = existing[2] if len(existing) > 2 and existing[2] else "open"
         return {
             "success": True,
             "report_id": str(existing_id),
-            "status": "open",
-            "priority": body.priority,
+            "status": stored_status,
+            "priority": stored_priority,
             "message": "Report already submitted",
         }
 
@@ -279,18 +290,29 @@ async def submit_enhanced_report(
         # concurrent request won the insert, return that existing report as an
         # idempotent success rather than exposing a database error.
         existing = db.fetch_one(
-            "SELECT id FROM reports WHERE reporter_id = ? AND report_type = ? "
+            "SELECT id, priority, status FROM reports WHERE reporter_id = ? AND report_type = ? "
             "AND target_id = ? AND status IN ('open', 'investigating') "
             "ORDER BY created_at DESC LIMIT 1",
             (current_user.user_id, body.target_type, target_id),
         )
         if existing:
-            existing_id = existing["id"] if isinstance(existing, dict) else existing[0]
+            if isinstance(existing, dict):
+                existing_id = existing["id"]
+                stored_priority = existing.get("priority") or body.priority
+                stored_status = existing.get("status") or "open"
+            else:
+                existing_id = existing[0]
+                stored_priority = (
+                    existing[1] if len(existing) > 1 and existing[1] else body.priority
+                )
+                stored_status = (
+                    existing[2] if len(existing) > 2 and existing[2] else "open"
+                )
             return {
                 "success": True,
                 "report_id": str(existing_id),
-                "status": "open",
-                "priority": body.priority,
+                "status": stored_status,
+                "priority": stored_priority,
                 "message": "Report already submitted",
             }
         logger.error("Failed to submit enhanced report", exc_info=True)

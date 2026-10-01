@@ -181,6 +181,72 @@ class TestRep345EnhancedReportValidation:
         assert result["message"] == "Report already submitted"
         assert db.executed == []
 
+    def test_duplicate_returns_stored_priority_and_status(self, monkeypatch):
+        # A duplicate submission must reflect the stored moderation state,
+        # not echo the incoming request body.
+        db = _FakeDB(
+            user_exists=True,
+            report_row={"id": 42, "priority": "low", "status": "investigating"},
+        )
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            priority="critical",
+        )
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["success"] is True
+        assert result["report_id"] == "42"
+        assert result["priority"] == "low"
+        assert result["status"] == "investigating"
+        assert result["message"] == "Report already submitted"
+        assert db.executed == []
+
+    def test_duplicate_tuple_row_returns_stored_fields(self, monkeypatch):
+        db = _FakeDB(user_exists=True, report_row=(42, "high", "open"))
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            priority="critical",
+        )
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["priority"] == "high"
+        assert result["status"] == "open"
+
+    def test_insert_race_returns_stored_report(self, monkeypatch):
+        # The check-then-insert race fallback must also return stored fields.
+        class _RaceDB(_FakeDB):
+            def execute(self, query, params=None):
+                raise RuntimeError("unique constraint hit")
+
+        db = _RaceDB(
+            user_exists=True,
+            report_row={"id": 7, "priority": "low", "status": "open"},
+        )
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            priority="critical",
+        )
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["report_id"] == "7"
+        assert result["priority"] == "low"
+        assert result["status"] == "open"
+
     def test_valid_user_report_accepted(self, monkeypatch):
         db = _FakeDB(user_exists=True)
         _patch_api(monkeypatch, db, None)
