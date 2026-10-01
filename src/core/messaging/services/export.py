@@ -29,6 +29,42 @@ from src.core.base import SnowflakeID
 _EXPORT_ID_RE = re.compile(r"^export_[A-Za-z0-9_-]{16,}$")
 
 
+def _resolve_date_zone(tz_name: Optional[str]):
+    """Resolve an IANA timezone name for export date bounds.
+
+    Falls back to UTC when the name is absent or not recognised, so an
+    unusable timezone can never silently reintroduce server-local
+    interpretation of the date bounds.
+    """
+    if not tz_name or tz_name.upper() == "UTC":
+        return timezone.utc
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(tz_name)
+    except Exception:
+        logger.warning(f"Transcript export: unknown timezone '{tz_name}'; using UTC")
+        return timezone.utc
+
+
+def _parse_iso_date_bound(value: str, tz_name: Optional[str]) -> int:
+    """Parse an ISO-8601 date/datetime into epoch milliseconds.
+
+    A value carrying no explicit UTC offset is interpreted in ``tz_name``
+    (default UTC), matching the request's documented "timezone for dates"
+    contract and the UTC-millis storage of ``created_at``. The previous
+    implementation called ``.timestamp()`` on the naive value, which the
+    platform resolves in the SERVER's local zone -- so the same request
+    filtered differently depending on the host's TZ.
+
+    Raises ``ValueError`` for an unparseable value.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_resolve_date_zone(tz_name))
+    return int(parsed.timestamp() * 1000)
+
+
 class TranscriptExportService(BaseService):
     """Service for chat transcript export."""
 
@@ -202,7 +238,12 @@ class TranscriptExportService(BaseService):
             max_messages = export_config.get("max_messages_per_export", 10000)
 
             messages = self._get_messages_for_export(
-                user_id, conversation_id, from_date, to_date, max_messages
+                user_id,
+                conversation_id,
+                from_date,
+                to_date,
+                max_messages,
+                timezone,
             )
 
             if export_format == "json":
@@ -449,6 +490,7 @@ class TranscriptExportService(BaseService):
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
         max_messages: int = 10000,
+        tz_name: Optional[str] = "UTC",
     ) -> List[Dict[str, Any]]:
         """Get messages for export with optional date filtering.
 
@@ -475,19 +517,13 @@ class TranscriptExportService(BaseService):
 
         if from_date:
             try:
-                from_ts = int(
-                    __import__("datetime").datetime.fromisoformat(from_date).timestamp()
-                    * 1000
-                )
+                from_ts = _parse_iso_date_bound(from_date, tz_name)
             except ValueError:
                 raise ValueError(f"Invalid from_date format: {from_date}")
 
         if to_date:
             try:
-                to_ts = int(
-                    __import__("datetime").datetime.fromisoformat(to_date).timestamp()
-                    * 1000
-                )
+                to_ts = _parse_iso_date_bound(to_date, tz_name)
             except ValueError:
                 raise ValueError(f"Invalid to_date format: {to_date}")
 
