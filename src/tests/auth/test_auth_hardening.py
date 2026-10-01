@@ -485,3 +485,48 @@ class TestCookieAndOauthHttp:
         assert "state cookie" in r_cb2.json()["error"]["message"], r_cb2.json()[
             "error"
         ]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Frozen-account deletion notice uses UTC
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def non_utc_host(monkeypatch):
+    """Run the test as if the server lived in a non-UTC timezone."""
+    import time
+
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    yield
+    # monkeypatch restores TZ afterwards; re-sync the C library clock.
+    time.tzset()
+
+
+class TestFrozenAccountDeletionNotice:
+    def test_deletion_notice_renders_utc(self, db, auth_manager, non_utc_host):
+        """The scheduled-deletion notice must render UTC, not server-local time."""
+        from datetime import datetime, timezone
+
+        username = _register(auth_manager)
+        row = db.fetch_one("SELECT id FROM auth_users WHERE username = ?", (username,))
+        user_id = row["id"] if isinstance(row, dict) else row[0]
+
+        deletion_at = int(
+            datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc).timestamp() * 1000
+        )
+        db.execute(
+            "UPDATE auth_users SET deletion_status = 'frozen', deletion_at = ? "
+            "WHERE id = ?",
+            (deletion_at, user_id),
+        )
+
+        with patch("src.utils.encryption.verify_password", return_value=True):
+            with pytest.raises(AccountLockedError) as exc:
+                auth_manager.login(username, "TestPass123!")
+
+        expected = datetime.fromtimestamp(deletion_at / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        assert expected in str(exc.value)

@@ -107,3 +107,54 @@ def test_stats_counts_bucketed_by_action_family():
 def test_tz_fixture_restores_utc():
     """Guard: the non-UTC fixture above must not leak TZ into other tests."""
     assert os.environ.get("TZ") != "America/New_York"
+
+
+class _ExportDB:
+    """Fake DB returning a fixed audit row for the CSV export."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetch_all(self, query, params=None):
+        return self._rows
+
+
+def test_export_csv_timestamp_is_utc(non_utc_host):
+    """The CSV Timestamp column must be UTC-aware, not naive server-local."""
+    from datetime import datetime
+
+    from src.api.routes.admin import audit as audit_routes
+
+    epoch_ms = int(datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    row = {
+        "id": 1,
+        "admin_id": 2,
+        "action": "role.grant",
+        "target_type": "admin_user",
+        "target_id": "3",
+        "details": "",
+        "ip_address": "1.2.3.4",
+        "user_agent": "ua",
+        "status": "success",
+        "created_at": epoch_ms,
+    }
+    fake_db = _ExportDB([row])
+
+    app = FastAPI()
+    app.include_router(audit_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    ctx = (
+        patch.object(audit_routes, "check_host_restriction"),
+        patch.object(audit_routes, "require_admin_permission"),
+        patch("src.api.get_db", return_value=fake_db),
+    )
+    for c in ctx:
+        c.start()
+    try:
+        response = client.get("/api/v1/admin/audit/logs/export?format=csv")
+        assert response.status_code == 200
+        # UTC noon; on the America/New_York host this is 08:00 local.
+        assert "2026-06-15T12:00:00+00:00" in response.text
+    finally:
+        for c in reversed(ctx):
+            c.stop()

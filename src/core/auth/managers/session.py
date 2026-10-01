@@ -190,9 +190,11 @@ class SessionMixin(AuthManagerProtocol):
                 # Comparing ms against a seconds bound (or passing ms to
                 # fromtimestamp) always fell through to "a future date".
                 if deletion_at and deletion_at < 32536799999 * 1000:
-                    dt = datetime.datetime.fromtimestamp(deletion_at / 1000).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
+                    # Render the deletion deadline in UTC so the notice is
+                    # identical regardless of the server's local timezone.
+                    dt = datetime.datetime.fromtimestamp(
+                        deletion_at / 1000, tz=datetime.timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S UTC")
                 else:
                     dt = "a future date"
             except (ValueError, OSError, OverflowError):

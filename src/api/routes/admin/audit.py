@@ -308,7 +308,9 @@ async def export_audit_logs(
 
         for log in logs:
             timestamp = (
-                datetime.fromtimestamp(log["created_at"] / 1000).isoformat()
+                datetime.fromtimestamp(
+                    log["created_at"] / 1000, tz=timezone.utc
+                ).isoformat()
                 if log.get("created_at")
                 else ""
             )
