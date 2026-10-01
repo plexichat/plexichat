@@ -11,7 +11,7 @@ import shutil
 import base64
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -42,7 +42,7 @@ class KeyringMigration(KEKMigrationProtocol):
         self.dry_run = dry_run
         self.backup_path = (
             keyring_path.parent
-            / f"{keyring_path.stem}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}{keyring_path.suffix}"
+            / f"{keyring_path.stem}_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}{keyring_path.suffix}"
         )
         self.temp_path = (
             keyring_path.parent / f"{keyring_path.stem}_temp{keyring_path.suffix}"
@@ -329,7 +329,7 @@ class KeyringMigration(KEKMigrationProtocol):
     ) -> None:
         """Save migration metadata for rollback and audit purposes."""
         metadata = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "keyring_path": str(self.keyring_path),
             "backup_path": str(self.backup_path),
             "old_kek_hash": hashlib.sha256(old_kek).hexdigest(),
