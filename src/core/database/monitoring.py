@@ -1,7 +1,7 @@
 import threading
 import time
 from typing import Any, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import utils.config as config
 import utils.logger as logger
 
@@ -95,7 +95,10 @@ class DatabaseMonitor:
                 "old_connections": [],
                 "status": engine_stats.get("status", "healthy"),
                 "database_type": self.db_type,
-                "timestamp": datetime.now().isoformat(),
+                # Pool stats are returned verbatim by
+                # GET /admin/database/pool-health; stamp UTC so the admin
+                # surface matches the other UTC timestamps.
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
             # Acquisition time metrics

@@ -201,7 +201,9 @@ def build_footer_html(conf: DocsConfig) -> str:
     if conf.features.show_last_updated:
         import datetime
 
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        now = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
         parts.append(f"<span>Generated: {now}</span>")
 
     footer_content = " | ".join(parts) if parts else ""

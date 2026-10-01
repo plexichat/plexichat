@@ -14,7 +14,7 @@ import pytest
 import time
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import utils.config as config
@@ -82,13 +82,19 @@ class TestPoolStatistics:
         assert "max_acquisition_time" in stats
 
     def test_timestamp_in_iso_format(self, test_db):
-        """Test that timestamp is in ISO format."""
+        """Test that timestamp is an ISO-8601 UTC stamp.
+
+        The value is returned verbatim by GET /admin/database/pool-health,
+        so it must be tz-aware UTC rather than naive server-local.
+        """
         stats = test_db.get_pool_stats()
         timestamp = stats["timestamp"]
 
         # Should parse as ISO format
         dt = datetime.fromisoformat(timestamp)
         assert isinstance(dt, datetime)
+        assert dt.tzinfo is not None
+        assert dt.utcoffset() == timedelta(0)
 
     def test_pool_stats_database_type(self, test_db):
         """Test that pool stats correctly identify database type."""

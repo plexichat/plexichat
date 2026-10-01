@@ -8,6 +8,7 @@ import secrets
 import string
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -171,7 +172,7 @@ def _save_admin_credentials(password: str) -> None:
     home_dir.mkdir(parents=True, exist_ok=True)
     content = f"""Plexichat Admin Credentials
 ============================
-Generated: {time.strftime("%Y-%m-%d %H:%M:%S")}
+Generated: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
 Username: admin
 Password: {password}

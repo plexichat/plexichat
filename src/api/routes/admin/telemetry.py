@@ -4,7 +4,7 @@ Admin telemetry routes.
 
 from fastapi import APIRouter, Request, HTTPException, Response
 from typing import Optional
-import time
+from datetime import datetime, timezone
 import csv
 import io
 from src.api.schemas.admin import (
@@ -199,7 +199,9 @@ async def export_telemetry_stats(
         if not telemetry.is_setup():
             raise HTTPException(status_code=500, detail="Telemetry not setup")
         stats = telemetry.get_endpoint_stats(hours=hours)
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        # Render the export stamp in UTC, not server-local, so the exported
+        # figure is the same instant on every host.
+        ts = datetime.now(timezone.utc).isoformat()
 
         if format == "json":
             import json
