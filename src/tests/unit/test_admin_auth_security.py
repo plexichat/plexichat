@@ -142,3 +142,85 @@ class TestAdminAuthSecurity:
         assert success is False
         assert codes == []
         assert "Enable OTP" in message
+
+    def test_disable_otp_decrypts_encrypted_secret_round_trip(self, mocker):
+        """The stored admin secret is sealed and opened with the same AAD.
+
+        The existing tests only cover the plaintext fallback. This exercises
+        the real encrypt/decrypt path so a context drift between
+        ``begin_otp_setup`` and ``disable_otp`` is caught here instead of in
+        production.
+        """
+        from src.core.admin import auth as admin_auth
+        from src.utils.encryption import encrypt_data
+
+        admin_id = 7
+        mock_db = MagicMock()
+        mock_db.fetch_one.return_value = {
+            "totp_secret": None,
+            "totp_secret_encrypted": encrypt_data(
+                "ROUNDTRIPSECRET", context=f"admin_totp:{admin_id}"
+            ),
+            "totp_enabled": 1,
+            "backup_codes": None,
+            "backup_codes_hash": None,
+        }
+        mocker.patch(
+            "src.core.admin.auth.otp_setup_mixin._verify_admin_password",
+            return_value=(True, {"username": "admin"}, ""),
+        )
+        mocker.patch(
+            "src.core.admin.auth.helpers._check_otp_attempt_limit",
+            return_value=True,
+        )
+        fake_totp = MagicMock()
+        fake_totp.verify.return_value = True
+        mocker.patch(
+            "src.core.admin.auth.otp_setup_mixin.pyotp.TOTP",
+            return_value=fake_totp,
+        )
+
+        class Cursor:
+            rowcount = 1
+
+        mock_db.execute.return_value = Cursor()
+        success, message = admin_auth.disable_otp(
+            mock_db, admin_id, "CurrentPass123!", "123456"
+        )
+
+        assert success is True
+        assert message == "OTP disabled"
+
+    def test_disable_otp_fails_closed_when_secret_context_mismatches(self, mocker):
+        """A secret sealed under a different admin id must not be usable."""
+        from src.core.admin import auth as admin_auth
+        from src.utils.encryption import encrypt_data
+
+        admin_id = 7
+        mock_db = MagicMock()
+        mock_db.fetch_one.return_value = {
+            "totp_secret": None,
+            # Sealed under the wrong admin id: decryption must fail rather
+            # than silently downgrade to the plaintext column.
+            "totp_secret_encrypted": encrypt_data(
+                "ROUNDTRIPSECRET", context=f"admin_totp:{admin_id + 1}"
+            ),
+            "totp_enabled": 1,
+            "backup_codes": None,
+            "backup_codes_hash": None,
+        }
+        mocker.patch(
+            "src.core.admin.auth.otp_setup_mixin._verify_admin_password",
+            return_value=(True, {"username": "admin"}, ""),
+        )
+        mocker.patch(
+            "src.core.admin.auth.helpers._check_otp_attempt_limit",
+            return_value=True,
+        )
+
+        success, message = admin_auth.disable_otp(
+            mock_db, admin_id, "CurrentPass123!", "123456"
+        )
+
+        assert success is False
+        assert message == "OTP unavailable"
