@@ -34,9 +34,11 @@ class DeletionMixin(AuthManagerProtocol):
             if not totp_code:
                 raise TwoFactorInvalidError("2FA code required")
 
-            secret = self.crypto.decrypt_data(
-                row["totp_secret_encrypted"], context=str(user_id)
-            )
+            # The secret is stored by ``setup_2fa`` via
+            # ``totp_module.encrypt_totp_secret`` (no AAD context); decrypt it
+            # through the same helper. Passing ``context=str(user_id)`` here
+            # failed the GCM integrity check for every 2FA user.
+            secret = totp_module.decrypt_totp_secret(row["totp_secret_encrypted"])
             if not totp_module.verify_totp_code(
                 secret,
                 totp_code,

@@ -283,6 +283,35 @@ class TestTwoFactorAuth:
         with pytest.raises(InvalidCredentialsError):
             auth_manager.disable_2fa(user.id, "WrongPassword!", totp.now())
 
+    def test_schedule_account_deletion_with_2fa(self, db, auth_manager):
+        """Scheduling deletion must accept a valid step-up TOTP code.
+
+        The stored TOTP secret is encrypted without an AAD context, so
+        decrypting it with ``context=str(user_id)`` failed the GCM integrity
+        check and raised before the code was ever verified, making account
+        deletion impossible for 2FA users.
+        """
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "del2fa_test",
+                "del2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
+        totp = pyotp.TOTP(setup.secret)
+        auth_manager.confirm_2fa(user.id, totp.now())
+
+        assert (
+            auth_manager.schedule_account_deletion(user.id, "TestPass123!", totp.now())
+            is True
+        )
+        row = db.fetch_one(
+            "SELECT deletion_status FROM auth_users WHERE id = ?", (user.id,)
+        )
+        assert row["deletion_status"] == "frozen"
+
     def test_regenerate_backup_codes(self, db, auth_manager):
         """Test regenerating backup codes."""
         from src.utils import encryption
