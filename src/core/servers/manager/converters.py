@@ -282,13 +282,27 @@ def _row_to_invite(row: Dict[str, Any]) -> Invite:
 
 
 def _row_to_ban(row: Dict[str, Any]) -> Ban:
-    """Convert database row to Ban model."""
+    """Convert database row to Ban model.
+
+    ``reason_encrypted`` is the source of truth; the plaintext ``reason``
+    column is a compatibility mirror. Decrypt with the row id the reason
+    was sealed under, falling back to the mirror if decryption fails so a
+    reason is never silently dropped.
+    """
+    reason = row.get("reason")
+    if row.get("reason_encrypted"):
+        try:
+            from src.utils.encryption import decrypt_data
+
+            reason = decrypt_data(row["reason_encrypted"], context=f"ban:{row['id']}")
+        except Exception as e:
+            logger.warning(f"Failed to decrypt ban reason for {row['id']}: {e}")
     return Ban(
         id=row["id"],
         server_id=row["server_id"],
         user_id=row["user_id"],
         banned_by=row["banned_by"],
-        reason=row["reason"],
+        reason=reason,
         created_at=row["created_at"],
     )
 

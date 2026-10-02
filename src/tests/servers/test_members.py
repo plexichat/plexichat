@@ -316,6 +316,50 @@ class TestGetBans:
         assert len(bans) >= 1
         assert any(b.user_id == member_user.id for b in bans)
 
+    def test_get_bans_prefers_encrypted_reason(self, server_with_members):
+        """The sealed reason is the source of truth over the plaintext mirror."""
+        server, owner, _, member_user, _, _, servers = server_with_members
+
+        servers.ban_member(owner.id, server.id, member_user.id, reason="secret-reason")
+        ban = next(
+            b
+            for b in servers.get_bans(owner.id, server.id)
+            if b.user_id == member_user.id
+        )
+        # Simulate a stale plaintext mirror; the decrypted value must win.
+        servers._db.execute(
+            "UPDATE srv_bans SET reason = ? WHERE id = ?", ("stale", ban.id)
+        )
+
+        refreshed = next(
+            b
+            for b in servers.get_bans(owner.id, server.id)
+            if b.user_id == member_user.id
+        )
+        assert refreshed.reason == "secret-reason"
+
+    def test_get_bans_falls_back_to_plaintext_reason(self, server_with_members):
+        """Corrupt ciphertext falls back to the plaintext mirror, not dropped."""
+        server, owner, _, member_user, _, _, servers = server_with_members
+
+        servers.ban_member(owner.id, server.id, member_user.id, reason="kept")
+        ban = next(
+            b
+            for b in servers.get_bans(owner.id, server.id)
+            if b.user_id == member_user.id
+        )
+        servers._db.execute(
+            "UPDATE srv_bans SET reason_encrypted = ? WHERE id = ?",
+            ("ENC:1:bm90LXJlYWw=", ban.id),
+        )
+
+        refreshed = next(
+            b
+            for b in servers.get_bans(owner.id, server.id)
+            if b.user_id == member_user.id
+        )
+        assert refreshed.reason == "kept"
+
     def test_get_bans_without_permission_fails(self, server_with_members):
         """Test that getting bans without permission fails."""
         server, owner, admin_user, member_user, _, _, servers = server_with_members
