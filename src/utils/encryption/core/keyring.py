@@ -443,7 +443,10 @@ class Keyring:
             )
             key = self.keys.get(v)
             if not key:
-                raise ValueError(f"Key version {v} not found in keyring")
+                raise ValueError(
+                    f"Key version {v} not found in keyring "
+                    f"(loaded versions: {sorted(self.keys)})"
+                )
             return v, key
 
         return self._with_file_lock(_get_key_impl)
