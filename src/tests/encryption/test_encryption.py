@@ -273,6 +273,30 @@ class TestDataEncryption:
         with pytest.raises(ValueError):
             decrypt_data(encrypted, key2)
 
+    def test_encrypt_decrypt_with_context(self, setup_encryption):
+        """A matching AAD context round-trips."""
+        data = "bound to a record"
+        encrypted = encrypt_data(data, context="row:42")
+        assert decrypt_data(encrypted, context="row:42") == data
+
+    def test_decrypt_with_mismatched_context_fails(self, setup_encryption):
+        """A different AAD context must fail the GCM integrity check.
+
+        This is the invariant behind the account-deletion regression: the
+        TOTP secret was stored without a context but read with one, so every
+        decryption failed. Guarding it here keeps callers from silently
+        drifting out of sync.
+        """
+        encrypted = encrypt_data("secret", context="row:42")
+        with pytest.raises(ValueError):
+            decrypt_data(encrypted, context="row:43")
+
+    def test_decrypt_with_missing_context_fails(self, setup_encryption):
+        """Decrypting context-bound data without the context must fail."""
+        encrypted = encrypt_data("secret", context="row:42")
+        with pytest.raises(ValueError):
+            decrypt_data(encrypted)
+
     def test_decrypt_malformed_data(self, setup_encryption):
         """Test decrypting malformed data."""
         with pytest.raises(ValueError):
