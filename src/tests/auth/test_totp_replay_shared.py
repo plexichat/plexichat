@@ -130,3 +130,98 @@ class TestTOTPReplaySharedValkey:
         ):
             assert worker_a.check_and_mark(8, "654321", purpose="login") is True
             assert worker_b.check_and_mark(8, "654321", purpose="disable_2fa") is True
+
+
+class TestVerifyTotpPurposeIsolation:
+    """End-to-end through verify_totp_code: one code, two purposes.
+
+    ``complete_2fa`` (purpose="login") and ``schedule_account_deletion``
+    (purpose="delete_account") used to share the bare ``user_id`` replay
+    scope, so completing a login consumed the code for a deletion (and vice
+    versa). Distinct purposes must claim independently; the same purpose
+    must still block the replay.
+    """
+
+    def _isolated_global_cache(self, totp_module):
+        """Detach shared backends so the global cache uses its local dict."""
+        cache = totp_module._replay_cache
+        saved = (
+            dict(cache._used_codes),
+            cache._db,
+            cache._db_table_ready,
+        )
+        cache._used_codes.clear()
+        cache._db = None
+        cache._db_table_ready = False
+        return cache, saved
+
+    def test_login_and_delete_account_scopes_are_isolated(self):
+        from src.core.auth import totp as totp_module
+
+        cache, saved = self._isolated_global_cache(totp_module)
+        try:
+            with _no_shared_cache():
+                secret = totp_module.generate_totp_secret()
+                user_id = 987654321
+                code = totp_module.get_current_totp_code(secret)
+                assert (
+                    totp_module.verify_totp_code(
+                        secret,
+                        code,
+                        user_id=user_id,
+                        purpose="login",
+                        acting_user_id=user_id,
+                    )
+                    is True
+                )
+                # Same code, different privileged purpose -> accepted.
+                assert (
+                    totp_module.verify_totp_code(
+                        secret,
+                        code,
+                        user_id=user_id,
+                        purpose="delete_account",
+                        acting_user_id=user_id,
+                    )
+                    is True
+                )
+        finally:
+            cache._used_codes.clear()
+            cache._used_codes.update(saved[0])
+            cache._db = saved[1]
+            cache._db_table_ready = saved[2]
+
+    def test_same_purpose_replay_is_still_blocked(self):
+        from src.core.auth import totp as totp_module
+
+        cache, saved = self._isolated_global_cache(totp_module)
+        try:
+            with _no_shared_cache():
+                secret = totp_module.generate_totp_secret()
+                user_id = 987654322
+                code = totp_module.get_current_totp_code(secret)
+                assert (
+                    totp_module.verify_totp_code(
+                        secret,
+                        code,
+                        user_id=user_id,
+                        purpose="login",
+                        acting_user_id=user_id,
+                    )
+                    is True
+                )
+                assert (
+                    totp_module.verify_totp_code(
+                        secret,
+                        code,
+                        user_id=user_id,
+                        purpose="login",
+                        acting_user_id=user_id,
+                    )
+                    is False
+                )
+        finally:
+            cache._used_codes.clear()
+            cache._used_codes.update(saved[0])
+            cache._db = saved[1]
+            cache._db_table_ready = saved[2]

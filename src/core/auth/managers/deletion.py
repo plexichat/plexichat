@@ -37,7 +37,13 @@ class DeletionMixin(AuthManagerProtocol):
             secret = self.crypto.decrypt_data(
                 row["totp_secret_encrypted"], context=str(user_id)
             )
-            if not totp_module.verify_totp_code(secret, totp_code, user_id=user_id):
+            if not totp_module.verify_totp_code(
+                secret,
+                totp_code,
+                user_id=user_id,
+                purpose="delete_account",
+                acting_user_id=user_id,
+            ):
                 raise TwoFactorInvalidError("Invalid 2FA code")
 
         grace_days = self._config.get("account_deletion", {}).get(

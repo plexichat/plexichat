@@ -201,7 +201,13 @@ class TwoFactorMixin(AuthManagerProtocol):
         secret = totp_module.decrypt_totp_secret(user_row["totp_secret_encrypted"])
 
         try:
-            is_totp_valid = totp_module.verify_totp_code(secret, code, user_id=user_id)
+            is_totp_valid = totp_module.verify_totp_code(
+                secret,
+                code,
+                user_id=user_id,
+                purpose="login",
+                acting_user_id=user_id,
+            )
         except TypeError:
             is_totp_valid = totp_module.verify_totp_code(secret, code)
 
@@ -327,7 +333,13 @@ class TwoFactorMixin(AuthManagerProtocol):
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
         self._check_and_record_2fa_attempt(user_id)
         try:
-            ok = totp_module.verify_totp_code(secret, code, user_id=f"setup:{user_id}")
+            ok = totp_module.verify_totp_code(
+                secret,
+                code,
+                user_id=user_id,
+                purpose="setup_2fa",
+                acting_user_id=user_id,
+            )
         except TypeError:
             ok = totp_module.verify_totp_code(secret, code)
         if not ok:
@@ -370,7 +382,11 @@ class TwoFactorMixin(AuthManagerProtocol):
         self._check_and_record_2fa_attempt(user_id)
         try:
             ok = totp_module.verify_totp_code(
-                secret, code, user_id=f"disable:{user_id}"
+                secret,
+                code,
+                user_id=user_id,
+                purpose="disable_2fa",
+                acting_user_id=user_id,
             )
         except TypeError:
             ok = totp_module.verify_totp_code(secret, code)
