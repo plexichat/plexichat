@@ -104,3 +104,64 @@ def test_ratchet_snapshot_serializes_snowflakes_as_strings():
     assert out["created_at"] == 123
     # The caller's dict must not be mutated in place.
     assert payload["interval_id"] == 1234567890123456789
+
+
+def test_ratchet_intervals_endpoint_resolves_a_rotated_interval(monkeypatch):
+    """A rotation the client never observed must still be resolvable.
+
+    When the server rotates an interval, an envelope naming the previous
+    interval can no longer be decrypted from the active snapshot alone. The
+    client falls back to ``GET /channels/{id}/ratchet/intervals``, so the
+    endpoint must surface every interval (newest first) with stringified
+    ids and the wrapped start key the client needs to derive keys.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from src.api.routes.channels import ratchet as ratchet_module
+
+    rotated_out = {
+        "interval_id": 1234567890123456789,
+        "conversation_id": 42,
+        "start_message_id": 1,
+        "end_message_id": 100,
+        "start_key": "b2xkLWtleQ==",
+        "context_tag": "plexichat.channel-message.v3",
+    }
+    active = {
+        "interval_id": 2234567890123456788,
+        "conversation_id": 42,
+        "start_message_id": 100,
+        "end_message_id": None,
+        "start_key": "bmV3LWtleQ==",
+        "context_tag": "plexichat.channel-message.v3",
+    }
+
+    class _StubManager:
+        def snapshot_list(self, cid):
+            assert cid == 42
+            return [active, rotated_out]
+
+    monkeypatch.setattr(ratchet_module, "_require_channel_access", lambda *a, **k: None)
+    monkeypatch.setattr(ratchet_module, "_resolve_db", lambda: object())
+    monkeypatch.setattr(ratchet_module, "_resolve_manager", lambda db: _StubManager())
+    monkeypatch.setattr(ratchet_module, "ratchet_encryption_licensed", lambda: True)
+
+    result = asyncio.run(
+        ratchet_module.get_channel_ratchet_intervals(
+            "42", current_user=SimpleNamespace(user_id=7)
+        )
+    )
+
+    assert result["channel_id"] == "42"
+    assert result["enabled"] is True
+    intervals = result["intervals"]
+    assert [i["interval_id"] for i in intervals] == [
+        str(active["interval_id"]),
+        str(rotated_out["interval_id"]),
+    ]
+    # The rotated-out interval is present (resolvable) with its start key.
+    old = intervals[1]
+    assert old["end_message_id"] == "100"
+    assert old["start_key"] == "b2xkLWtleQ=="
+    assert old["context_tag"] == "plexichat.channel-message.v3"
