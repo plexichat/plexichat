@@ -284,10 +284,14 @@ class VoiceHandler:
             # The answer is an SDPMessage dataclass holding an SDPType enum,
             # which plain json.dumps cannot serialize — build the payload
             # explicitly with the SDP as a plain string.
+            # Snowflake ids exceed 2^53 — serialize as strings so JS clients
+            # JSON.parse them losslessly (matches VOICE_SPEAKING and the
+            # DISPATCH backstop; this reply bypasses _build_dispatch_payload
+            # via gateway.py send_json).
             return (
                 int(GatewayOpcode.VOICE_SDP_ANSWER),
                 {
-                    "from_user_id": connection.user_id,
+                    "from_user_id": str(connection.user_id),
                     "sdp": answer.sdp,
                     "type": getattr(answer.sdp_type, "value", "answer"),
                 },
