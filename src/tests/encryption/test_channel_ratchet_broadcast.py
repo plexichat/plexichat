@@ -99,9 +99,11 @@ class TestBroadcastRatchetUpdate:
         payload = conn1.send_json.call_args[0][0]
         assert payload["op"] == int(GatewayOpcode.RATCHET_UPDATE)
         assert payload["t"] == "RATCHET_UPDATE"
-        assert payload["d"]["conversation_id"] == 42
+        # Id fields cross the wire as strings so JS clients do not round a
+        # 64-bit snowflake and then derive a mismatched ratchet key.
+        assert payload["d"]["conversation_id"] == "42"
         assert payload["d"]["reason"] == "rotation"
-        assert payload["d"]["new_interval_id"] == 99
+        assert payload["d"]["new_interval_id"] == "99"
 
         # F9 regression: every frame carries a per-connection sequence
         # number and is recorded against the session so a rotation is
@@ -113,7 +115,7 @@ class TestBroadcastRatchetUpdate:
             body = call.args[1]
             assert body["op"] == int(GatewayOpcode.RATCHET_UPDATE)
             assert "s" in body
-            assert body["d"]["conversation_id"] == 42
+            assert body["d"]["conversation_id"] == "42"
 
     @pytest.mark.asyncio
     async def test_broadcast_empty_when_no_connections(self, dispatcher):

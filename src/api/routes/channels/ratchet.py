@@ -24,16 +24,9 @@ import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from src.utils.encryption.channel_ratchet import ChannelRatchetManager
 from src.utils.encryption.channel_ratchet.gate import ratchet_encryption_licensed
-
-# Snowflake fields in the ratchet payload that must be serialized as strings.
-_SNOWFLAKE_FIELDS = (
-    "interval_id",
-    "conversation_id",
-    "start_message_id",
-    "end_message_id",
-)
 
 
 def _resolve_manager(db: Any) -> Optional[ChannelRatchetManager]:
@@ -57,17 +50,12 @@ def _resolve_manager(db: Any) -> Optional[ChannelRatchetManager]:
 def _stringify_ids(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Return a copy with snowflake fields serialized as decimal strings.
 
-    A JavaScript ``Number`` cannot represent a 64-bit snowflake exactly, so
-    an ``interval_id`` served as a JSON number is rounded by the client and
-    every derived ratchet key/AAD then mismatches the server. Emit these
-    fields as strings (the project-wide snowflake convention) so the client
-    derives keys from the exact id.
+    Delegates to the shared gateway serializer so the ratchet payload cannot
+    drift from every other event: a JavaScript ``Number`` cannot represent a
+    64-bit snowflake exactly, so serving id fields as JSON numbers makes the
+    client derive mismatched ratchet keys.
     """
-    out = dict(payload)
-    for field in _SNOWFLAKE_FIELDS:
-        if out.get(field) is not None:
-            out[field] = str(out[field])
-    return out
+    return stringify_snowflake_ids(payload)
 
 
 def _parse_channel_id(channel_id: str) -> int:

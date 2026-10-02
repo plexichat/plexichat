@@ -9,6 +9,7 @@ import threading
 import utils.logger as logger
 
 from src.core.events.models import Event
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 from .opcodes import GatewayOpcode
 from .connection import Connection
@@ -408,7 +409,9 @@ class GatewayDispatcher:
             "op": int(GatewayOpcode.DISPATCH),
             "t": event.event_type.value,
             "s": seq,
-            "d": event.data,
+            # Central backstop: every id that crosses the wire is a decimal
+            # string, regardless of how the event was built.
+            "d": stringify_snowflake_ids(event.data),
         }
 
         if connection.session_id:
@@ -624,10 +627,12 @@ class GatewayDispatcher:
                 "op": int(GatewayOpcode.RATCHET_UPDATE),
                 "t": "RATCHET_UPDATE",
                 "s": conn.increment_sequence(),
-                "d": {
-                    "conversation_id": int(conversation_id),
-                    **dict(update_data),
-                },
+                "d": stringify_snowflake_ids(
+                    {
+                        "conversation_id": int(conversation_id),
+                        **dict(update_data),
+                    }
+                ),
             }
             if conn.session_id:
                 self._session_manager.record_event(conn.session_id, payload)

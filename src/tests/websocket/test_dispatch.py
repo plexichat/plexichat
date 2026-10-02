@@ -1,12 +1,15 @@
 """Tests for gateway event dispatching."""
 
+import json
+
 import pytest
 from unittest.mock import AsyncMock
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection, ConnectionState
 from src.core import events
-from src.core.events.types import GatewayIntent
+from src.core.events.models import Event
+from src.core.events.types import EventType, GatewayIntent
 
 
 class TestGatewayDispatcher:
@@ -225,6 +228,56 @@ class TestDispatchRaw:
         assert len(events_list) == 1
         assert events_list[0]["t"] == "TEST_EVENT"
         assert events_list[0]["d"] == {"test": "data"}
+
+
+class TestSnowflakeSerialization:
+    """Snowflake ids must be strings on the wire even for hand-built events.
+
+    The dispatcher applies the shared serializer at the wire boundary as a
+    backstop, so an ``Event`` constructed directly (bypassing the emitters)
+    cannot leak a numeric id that a JS client would round.
+    """
+
+    def test_build_dispatch_payload_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        event = Event(
+            event_type=EventType.READY,
+            data={
+                "id": 1234567890123456789,
+                "user_id": 1234567890123456789,
+                "channel_id": 2,
+                "message_ids": [3, 4],
+                "count": 5,
+            },
+        )
+
+        payload = dispatcher._build_dispatch_payload(authenticated_connection, event)
+
+        # The payload must survive a real JSON round-trip with string ids.
+        wire = json.loads(json.dumps(payload))
+        data = wire["d"]
+        assert data["id"] == "1234567890123456789"
+        assert data["user_id"] == "1234567890123456789"
+        assert data["channel_id"] == "2"
+        assert data["message_ids"] == ["3", "4"]
+        # Non-id numbers are untouched.
+        assert data["count"] == 5
+
+    def test_dispatch_records_stringified_payload(
+        self, dispatcher, session_manager, authenticated_connection
+    ):
+        """The replay buffer must hold the same string ids the client saw."""
+        event = Event(
+            event_type=EventType.READY,
+            data={"user_id": 1234567890123456789},
+        )
+        dispatcher._build_dispatch_payload(authenticated_connection, event)
+
+        recorded = session_manager.get_replay_events(
+            authenticated_connection.session_id, 0
+        )
+        assert recorded[-1]["d"]["user_id"] == "1234567890123456789"
 
 
 class TestEventCallback:
