@@ -76,3 +76,31 @@ def test_delete_channel_without_auth(test_client):
     """Test that deleting channel without authentication fails."""
     response = test_client.delete("/api/v1/channels/123456789")
     assert response.status_code == 401
+
+
+def test_ratchet_snapshot_serializes_snowflakes_as_strings():
+    """Snowflake fields must be strings so JS clients don't round them.
+
+    A JavaScript Number cannot represent a 64-bit snowflake, so serving the
+    ratchet interval_id as a JSON number makes the client derive a mismatched
+    HKDF salt/AAD. The API layer stringifies them (project-wide convention).
+    """
+    from src.api.routes.channels.ratchet import _stringify_ids
+
+    payload = {
+        "interval_id": 1234567890123456789,
+        "conversation_id": 42,
+        "start_message_id": 1,
+        "end_message_id": None,
+        "created_at": 123,
+        "start_key": "AAAA",
+    }
+    out = _stringify_ids(payload)
+
+    assert out["interval_id"] == "1234567890123456789"
+    assert out["conversation_id"] == "42"
+    assert out["start_message_id"] == "1"
+    assert out["end_message_id"] is None
+    assert out["created_at"] == 123
+    # The caller's dict must not be mutated in place.
+    assert payload["interval_id"] == 1234567890123456789
