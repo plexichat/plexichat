@@ -143,6 +143,99 @@ class TestActions:
         finally:
             automod_manager._servers = original
 
+    def test_system_context_ban_fallback_writes_ban_and_cleans_roles(
+        self, automod_manager, test_server, user_pool, modules, db
+    ):
+        """System-context ban must remove the member, its roles, and record the ban.
+
+        The raw-SQL fallback deleted from ``srv_member_roles`` by
+        ``(server_id, user_id)``, columns that junction table does not have,
+        so the DELETE raised, the ban row was never written, and the removed
+        user could rejoin. Regression test for that fallback path.
+        """
+        server, owner = test_server
+        victim = user_pool.get_user()
+        modules.servers.add_member(server.id, victim.id)
+        role = modules.servers.create_role(owner.id, server.id, name="Temp")
+        modules.servers.assign_role(owner.id, server.id, victim.id, role.id)
+        member_row = db.fetch_one(
+            "SELECT id FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (server.id, victim.id),
+        )
+        assert member_row is not None
+        member_id = member_row["id"] if isinstance(member_row, dict) else member_row[0]
+
+        assert (
+            automod_manager.trigger_action(
+                user_id=owner.id,
+                server_id=server.id,
+                target_user_id=victim.id,
+                action_type=ActionType.BAN_USER,
+                reason="system-context regression",
+            )
+            is True
+        )
+
+        ban = db.fetch_one(
+            "SELECT * FROM srv_bans WHERE server_id = ? AND user_id = ?",
+            (server.id, victim.id),
+        )
+        assert ban is not None
+        assert (
+            db.fetch_one(
+                "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (server.id, victim.id),
+            )
+            is None
+        )
+        assert (
+            db.fetch_one(
+                "SELECT 1 FROM srv_member_roles WHERE member_id = ?", (member_id,)
+            )
+            is None
+        )
+
+    def test_system_context_kick_fallback_cleans_roles(
+        self, automod_manager, test_server, user_pool, modules, db
+    ):
+        """System-context kick must remove the member and its role rows."""
+        server, owner = test_server
+        victim = user_pool.get_user()
+        modules.servers.add_member(server.id, victim.id)
+        role = modules.servers.create_role(owner.id, server.id, name="TempKick")
+        modules.servers.assign_role(owner.id, server.id, victim.id, role.id)
+        member_row = db.fetch_one(
+            "SELECT id FROM srv_members WHERE server_id = ? AND user_id = ?",
+            (server.id, victim.id),
+        )
+        assert member_row is not None
+        member_id = member_row["id"] if isinstance(member_row, dict) else member_row[0]
+
+        assert (
+            automod_manager.trigger_action(
+                user_id=owner.id,
+                server_id=server.id,
+                target_user_id=victim.id,
+                action_type=ActionType.KICK_USER,
+                reason="system-context kick regression",
+            )
+            is True
+        )
+
+        assert (
+            db.fetch_one(
+                "SELECT 1 FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (server.id, victim.id),
+            )
+            is None
+        )
+        assert (
+            db.fetch_one(
+                "SELECT 1 FROM srv_member_roles WHERE member_id = ?", (member_id,)
+            )
+            is None
+        )
+
     def test_invalid_action_type_rejected(self, automod_manager, test_server):
         """Test that invalid action type raises validation error."""
         server, owner = test_server
