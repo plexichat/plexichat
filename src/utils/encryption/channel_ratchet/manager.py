@@ -155,6 +155,22 @@ class ChannelRatchetManager:
         """List intervals for ``conversation_id``, newest first."""
         return self._store.list_for_conversation(conversation_id, limit=limit)
 
+    @staticmethod
+    def _interval_snapshot(interval: RatchetInterval) -> Dict[str, Any]:
+        """Build the JSON-safe client view of one interval.
+
+        Includes the base64 ``start_key`` so an authenticated viewer can
+        decrypt historical messages, plus the HKDF context tag and byte
+        sizes the client needs to reconstruct the per-message key. The
+        raw key is only handed out under the active session.
+        """
+        snap = interval.to_dict()
+        snap["start_key"] = base64.b64encode(interval.start_key).decode("ascii")
+        snap["context_tag"] = CONTEXT_TAG.decode("utf-8")
+        snap["nonce_bytes"] = NONCE_BYTES
+        snap["key_bytes"] = KEY_BYTES
+        return snap
+
     def snapshot(self, conversation_id: SnowflakeID) -> Optional[Dict[str, Any]]:
         """Return a JSON-safe snapshot of the active interval.
 
@@ -166,12 +182,23 @@ class ChannelRatchetManager:
         active = self._store.get_active(conversation_id)
         if active is None:
             return None
-        snap = active.to_dict()
-        snap["start_key"] = base64.b64encode(active.start_key).decode("ascii")
-        snap["context_tag"] = CONTEXT_TAG.decode("utf-8")
-        snap["nonce_bytes"] = NONCE_BYTES
-        snap["key_bytes"] = KEY_BYTES
-        return snap
+        return self._interval_snapshot(active)
+
+    def snapshot_list(
+        self, conversation_id: SnowflakeID, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Return JSON-safe snapshots for every interval of a conversation.
+
+        Newest first. Lets a client that missed a rotation resolve an
+        older envelope's interval (the fallback the client ratchet calls
+        when the cached active interval does not match).
+        """
+        return [
+            self._interval_snapshot(interval)
+            for interval in self._store.list_for_conversation(
+                conversation_id, limit=limit
+            )
+        ]
 
     def encrypt(
         self,

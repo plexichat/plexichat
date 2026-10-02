@@ -478,6 +478,23 @@ class TestChannelRatchetManager:
         assert snap["nonce_bytes"] == 12
         assert snap["key_bytes"] == 32
 
+    def test_snapshot_list_returns_intervals_with_start_keys(self, manager):
+        """The list endpoint must expose every interval, newest first."""
+        manager.encrypt(42, 1001, b"a")
+        # Force a rotation so two intervals exist to enumerate.
+        manager.rotate_if_due(42, last_message_id=1001, now_ms=10**15)
+        manager.encrypt(42, 1002, b"b")
+
+        listed = manager.snapshot_list(42)
+
+        assert len(listed) == 2
+        assert listed[0]["interval_id"] == manager.snapshot(42)["interval_id"]
+        for item in listed:
+            assert item["start_key"]
+            assert item["context_tag"] == "plexichat.channel-message.v3"
+            assert item["nonce_bytes"] == 12
+            assert item["key_bytes"] == 32
+
     def test_continuity_across_intervals(self, manager):
         r1 = manager.encrypt(42, 1001, b"a")
         r2 = manager.encrypt(42, 1002, b"b")
