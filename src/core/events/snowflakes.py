@@ -44,4 +44,8 @@ def stringify_snowflake_ids(value: Any) -> Any:
         return out
     if isinstance(value, list):
         return [stringify_snowflake_ids(item) for item in value]
+    if isinstance(value, tuple):
+        # Tuples serialize as JSON arrays on the wire; normalize to a list
+        # so the replay buffer holds exactly what the client saw.
+        return [stringify_snowflake_ids(item) for item in value]
     return value

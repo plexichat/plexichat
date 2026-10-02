@@ -279,6 +279,64 @@ class TestSnowflakeSerialization:
         )
         assert recorded[-1]["d"]["user_id"] == "1234567890123456789"
 
+    def test_tuple_containers_are_stringified(self):
+        """Tuples serialize as JSON arrays, so ids inside them must convert."""
+        from src.core.events.snowflakes import stringify_snowflake_ids
+
+        out = stringify_snowflake_ids({"members": ({"user_id": 1234567890123456789},)})
+        assert out == {"members": [{"user_id": "1234567890123456789"}]}
+
+    @pytest.mark.asyncio
+    async def test_dispatch_raw_dispatch_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        """A hand-built dispatch_raw frame must not leak numeric snowflakes."""
+        import json
+
+        result = await dispatcher.dispatch_raw(
+            authenticated_connection,
+            GatewayOpcode.DISPATCH,
+            {"user_id": 1234567890123456789, "count": 5},
+            event_type="TEST_EVENT",
+        )
+
+        assert result is True
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        wire = json.loads(json.dumps(call_args))
+        assert wire["d"]["user_id"] == "1234567890123456789"
+        assert wire["d"]["count"] == 5
+
+    @pytest.mark.asyncio
+    async def test_dispatch_raw_non_dispatch_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        """Non-DISPATCH frames (voice opcodes) get the same backstop."""
+        result = await dispatcher.dispatch_raw(
+            authenticated_connection,
+            GatewayOpcode.VOICE_SPEAKING,
+            {"user_id": 1234567890123456789, "speaking": True},
+        )
+
+        assert result is True
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        assert call_args["d"]["user_id"] == "1234567890123456789"
+        assert call_args["d"]["speaking"] is True
+
+    @pytest.mark.asyncio
+    async def test_dispatch_raw_preserves_scalar_data(
+        self, dispatcher, authenticated_connection
+    ):
+        """Scalar payloads (e.g. INVALID_SESSION bool) pass through."""
+        result = await dispatcher.dispatch_raw(
+            authenticated_connection,
+            GatewayOpcode.INVALID_SESSION,
+            True,
+        )
+
+        assert result is True
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        assert call_args["d"] is True
+
 
 class TestEventCallback:
     """Tests for event module callback."""

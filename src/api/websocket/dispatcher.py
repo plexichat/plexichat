@@ -243,12 +243,18 @@ class GatewayDispatcher:
             payload["s"] = connection.increment_sequence()
             if event_type:
                 payload["t"] = event_type
-            payload["d"] = data or {}
+            # Central backstop (matches _build_dispatch_payload): a raw
+            # DISPATCH frame bypasses Event construction, so stringify here
+            # or a hand-built dict leaks a numeric snowflake to JS clients.
+            payload["d"] = stringify_snowflake_ids(data or {})
 
             if connection.session_id:
                 self._session_manager.record_event(connection.session_id, payload)
         else:
-            payload["d"] = data
+            # Non-DISPATCH frames (VOICE_SPEAKING, VOICE_SDP_*, HELLO, ...)
+            # carry ids too; stringify id keys so a future caller cannot
+            # leak a numeric snowflake. Scalars (bool/None) pass through.
+            payload["d"] = stringify_snowflake_ids(data)
 
         return await self._send_to_connection(connection, payload)
 
