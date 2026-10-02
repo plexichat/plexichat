@@ -75,7 +75,7 @@ class TestDeviceTrustOverview:
 
         assert overview["totals"]["users"] >= 1
         assert overview["totals"]["trusted_devices"] >= 1
-        entry = next(u for u in overview["users"] if u["user_id"] == user.id)
+        entry = next(u for u in overview["users"] if u["user_id"] == str(user.id))
         assert entry["trusted_device_count"] == 1
         assert entry["session_count"] >= 1
         # The session was created while the device was already trusted, so it
@@ -94,7 +94,7 @@ class TestDeviceTrustOverview:
         }
 
         overview = get_device_trust_overview(mgr, mgr._config)
-        entry = next(u for u in overview["users"] if u["user_id"] == user.id)
+        entry = next(u for u in overview["users"] if u["user_id"] == str(user.id))
         assert entry["trusted_device_count"] == 0
         assert entry["session_count"] >= 1
         for s in entry["sessions"]:
@@ -115,7 +115,7 @@ class TestDeviceTrustOverview:
 
         overview = get_device_trust_overview(mgr, mgr._config)
         assert overview["policy"]["trusted_override_enabled"] is False
-        entry = next(u for u in overview["users"] if u["user_id"] == user.id)
+        entry = next(u for u in overview["users"] if u["user_id"] == str(user.id))
         for s in entry["sessions"]:
             # Trust exists on the device, but the override is off: default TTL.
             assert s["duration_hours"] == 24

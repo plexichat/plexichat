@@ -133,7 +133,10 @@ def get_device_trust_overview(
 
         device_rows = [
             {
-                "id": d.id,
+                # Snowflake ids are emitted as strings: a JS Number cannot
+                # hold a 64-bit id exactly, so a numeric id would be rounded
+                # by the client and subsequent lookups would miss.
+                "id": str(d.id),
                 "name": d.name,
                 "device_type": d.device_type,
                 "trusted": bool(d.trusted),
@@ -156,8 +159,8 @@ def get_device_trust_overview(
             expired = bool(s.expires_at <= now)
             session_rows.append(
                 {
-                    "id": s.id,
-                    "device_id": s.device_id,
+                    "id": str(s.id),
+                    "device_id": str(s.device_id) if s.device_id is not None else None,
                     "device_trusted": device_trusted,
                     "duration_hours": duration,
                     "policy_kind": kind,
@@ -173,7 +176,7 @@ def get_device_trust_overview(
 
         users.append(
             {
-                "user_id": uid,
+                "user_id": str(uid),
                 "devices": device_rows,
                 "trusted_device_count": len(trusted_devices),
                 "sessions": session_rows,

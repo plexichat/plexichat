@@ -126,8 +126,9 @@ def _require_manage(request: Request, current_user: TokenInfo) -> int:
 def _serialize_join(conn: Dict[str, Any]) -> Dict[str, Any]:
     """Client-contract shape: join.js keys on ``Join_id``."""
     return {
-        "Join_id": conn["id"],
-        "id": conn["id"],
+        # Snowflakes as strings: a JS Number rounds 64-bit ids.
+        "Join_id": str(conn["id"]),
+        "id": str(conn["id"]),
         "remote_instance_id": conn["remote_instance_id"],
         "remote_url": conn["remote_url"],
         "status": conn["status"],
