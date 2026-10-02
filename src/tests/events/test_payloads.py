@@ -446,6 +446,42 @@ class TestWorkbookUpdatePayload:
         assert extra == {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
 
 
+class TestUserUpdatePayload:
+    """USER_UPDATE must carry snowflake ids as strings."""
+
+    def test_user_update_stringifies_ids(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["event_type"] = event_type
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_user_update(
+            {"id": 1234567890123456789, "username": "alice"},
+            exclude_user_id=42,
+        )
+
+        assert captured["event_type"] == EventType.USER_UPDATE
+        assert captured["data"]["user"]["id"] == "1234567890123456789"
+        assert captured["data"]["user"]["username"] == "alice"
+        # Routing keys stay ints, matching the sibling emitters.
+        assert captured["kwargs"]["user_ids"] == [1234567890123456789]
+        assert captured["kwargs"]["exclude_user_ids"] == [42]
+
+
+def test_user_update_does_not_mutate_caller_dict(monkeypatch):
+    from src.core.events import gateway_emit
+
+    monkeypatch.setattr(gateway_emit, "_emit", lambda *a, **k: None)
+    user = {"id": 1234567890123456789, "username": "alice"}
+    gateway_emit.emit_user_update(user)
+    assert user["id"] == 1234567890123456789
+
+
 class TestNonRaisingEmitters:
     """Emitters must never raise into the REST handler (module contract)."""
 

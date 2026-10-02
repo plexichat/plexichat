@@ -74,6 +74,57 @@ def _emit(
         logger.warning(f"gateway_emit: failed to dispatch {event_type.value}: {e}")
 
 
+# Snowflake-id keys that must cross the wire as decimal strings. A JS
+# ``Number`` cannot represent a 64-bit snowflake exactly, so emitting one as
+# a JSON number lets the client round it and then address the wrong entity.
+_SNOWFLAKE_FIELDS = frozenset(
+    {
+        "id",
+        "guild_id",
+        "server_id",
+        "channel_id",
+        "user_id",
+        "owner_id",
+        "parent_id",
+        "thread_id",
+        "role_id",
+        "invite_id",
+        "message_id",
+        "application_id",
+        "target_id",
+        "author_id",
+        "bot_id",
+        "conversation_id",
+        "poll_id",
+        "workbook_id",
+        "actor_id",
+        "session_id",
+        "device_id",
+        "attachment_id",
+    }
+)
+
+
+def _stringify_snowflakes(value: Any) -> Any:
+    """Recursively stringify snowflake-id fields in a gateway payload.
+
+    Used for the dict payloads callers hand us (roles, invites, threads) so
+    their nested ids are strings without every caller having to clone and
+    reshape the object. Called on a copy, so the caller's dict is unchanged.
+    """
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for key, item in value.items():
+            if key in _SNOWFLAKE_FIELDS:
+                out[key] = None if item is None else str(item)
+            else:
+                out[key] = _stringify_snowflakes(item)
+        return out
+    if isinstance(value, list):
+        return [_stringify_snowflakes(item) for item in value]
+    return value
+
+
 # --------------------------------------------------------------------------
 # User / profile
 # --------------------------------------------------------------------------
@@ -85,7 +136,7 @@ def emit_user_update(
     uid = user.get("id")
     _emit(
         EventType.USER_UPDATE,
-        {"user": user},
+        {"user": _stringify_snowflakes(user)},
         user_ids=[int(uid)] if uid is not None else None,
         exclude_user_ids=[exclude_user_id] if exclude_user_id is not None else None,
     )
@@ -267,7 +318,7 @@ def emit_guild_update(
 def emit_guild_role_create(server_id: int, role: Dict[str, Any]) -> None:
     _emit(
         EventType.GUILD_ROLE_CREATE,
-        {"guild_id": server_id, "role": role},
+        {"guild_id": str(server_id), "role": _stringify_snowflakes(role)},
         server_id=server_id,
     )
 
@@ -276,7 +327,7 @@ def emit_guild_role_create(server_id: int, role: Dict[str, Any]) -> None:
 def emit_guild_role_update(server_id: int, role: Dict[str, Any]) -> None:
     _emit(
         EventType.GUILD_ROLE_UPDATE,
-        {"guild_id": server_id, "role": role},
+        {"guild_id": str(server_id), "role": _stringify_snowflakes(role)},
         server_id=server_id,
     )
 
@@ -285,7 +336,7 @@ def emit_guild_role_update(server_id: int, role: Dict[str, Any]) -> None:
 def emit_guild_role_delete(server_id: int, role_id: int) -> None:
     _emit(
         EventType.GUILD_ROLE_DELETE,
-        {"guild_id": server_id, "role_id": role_id},
+        {"guild_id": str(server_id), "role_id": str(role_id)},
         server_id=server_id,
     )
 
@@ -299,7 +350,7 @@ def emit_guild_ban_add(
 ) -> None:
     _emit(
         EventType.GUILD_BAN_ADD,
-        {"guild_id": server_id, "user_id": user_id, "reason": reason},
+        {"guild_id": str(server_id), "user_id": str(user_id), "reason": reason},
         server_id=server_id,
     )
 
@@ -308,7 +359,7 @@ def emit_guild_ban_add(
 def emit_guild_ban_remove(server_id: int, user_id: int) -> None:
     _emit(
         EventType.GUILD_BAN_REMOVE,
-        {"guild_id": server_id, "user_id": user_id},
+        {"guild_id": str(server_id), "user_id": str(user_id)},
         server_id=server_id,
     )
 
@@ -320,7 +371,7 @@ def emit_guild_ban_remove(server_id: int, user_id: int) -> None:
 def emit_invite_create(server_id: int, invite: Dict[str, Any]) -> None:
     _emit(
         EventType.INVITE_CREATE,
-        {"guild_id": server_id, "invite": invite},
+        {"guild_id": str(server_id), "invite": _stringify_snowflakes(invite)},
         server_id=server_id,
     )
 
@@ -329,7 +380,7 @@ def emit_invite_create(server_id: int, invite: Dict[str, Any]) -> None:
 def emit_invite_delete(server_id: int, code: str) -> None:
     _emit(
         EventType.INVITE_DELETE,
-        {"guild_id": server_id, "code": code},
+        {"guild_id": str(server_id), "code": code},
         server_id=server_id,
     )
 
@@ -341,7 +392,10 @@ def emit_invite_delete(server_id: int, code: str) -> None:
 def emit_webhooks_update(server_id: int, channel_id: Optional[int] = None) -> None:
     _emit(
         EventType.WEBHOOKS_UPDATE,
-        {"guild_id": server_id, "channel_id": channel_id},
+        {
+            "guild_id": str(server_id),
+            "channel_id": str(channel_id) if channel_id is not None else None,
+        },
         server_id=server_id,
     )
 
@@ -353,7 +407,7 @@ def emit_webhooks_update(server_id: int, channel_id: Optional[int] = None) -> No
 def emit_thread_create(thread: Dict[str, Any]) -> None:
     _emit(
         EventType.THREAD_CREATE,
-        thread,
+        _stringify_snowflakes(thread),
         channel_id=thread.get("parent_id"),
         server_id=thread.get("guild_id"),
     )
@@ -363,7 +417,7 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
 def emit_thread_update(thread: Dict[str, Any]) -> None:
     _emit(
         EventType.THREAD_UPDATE,
-        thread,
+        _stringify_snowflakes(thread),
         channel_id=thread.get("parent_id"),
         server_id=thread.get("guild_id"),
     )
@@ -377,7 +431,11 @@ def emit_thread_delete(
 ) -> None:
     _emit(
         EventType.THREAD_DELETE,
-        {"id": thread_id, "guild_id": guild_id, "parent_id": parent_id},
+        {
+            "id": str(thread_id),
+            "guild_id": str(guild_id) if guild_id is not None else None,
+            "parent_id": str(parent_id) if parent_id is not None else None,
+        },
         channel_id=parent_id,
         server_id=guild_id,
     )
@@ -434,9 +492,9 @@ def emit_security_alert(
     _emit(
         EventType.SECURITY_ALERT,
         {
-            "user_id": user_id,
+            "user_id": str(user_id),
             "action": action,
-            "detail": detail or {},
+            "detail": _stringify_snowflakes(detail or {}),
         },
         user_ids=[user_id],
     )
