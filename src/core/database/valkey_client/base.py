@@ -416,10 +416,18 @@ class ValkeyClientBase:
     def set(self, key: str, value: ValkeyValue, ttl: Optional[int] = None) -> bool:
         raise NotImplementedError
 
+    def set_nx(self, key: str, value: ValkeyValue, ttl: Optional[int] = None) -> bool:
+        raise NotImplementedError
+
     def get(self, key: str) -> Optional[str]:
         raise NotImplementedError
 
     async def aset(
+        self, key: str, value: ValkeyValue, ttl: Optional[int] = None
+    ) -> bool:
+        raise NotImplementedError
+
+    async def aset_nx(
         self, key: str, value: ValkeyValue, ttl: Optional[int] = None
     ) -> bool:
         raise NotImplementedError

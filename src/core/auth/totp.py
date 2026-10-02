@@ -161,11 +161,16 @@ class TOTPReplayCache:
         full_key = f"totp_replay:{key}"
         try:
             # SET NX + EXPIRE is an atomic claim-and-mark: exactly one worker
-            # wins, every other worker sees the replay.
-            # The project Valkey protocol exposes a small set operation
-            # without keyword arguments; use the atomic SET command options
-            # positionally for compatibility with every backend adapter.
-            claimed = client.set(full_key, "1", ttl_seconds)
+            # wins, every other worker sees the replay. A plain SET would
+            # overwrite the previous claim and accept the replay, so the
+            # conditional variant is load-bearing here.
+            set_nx = getattr(client, "set_nx", None)
+            if not callable(set_nx):  # pragma: no cover - back-compat
+                # Without a conditional SET there is no atomic claim; fall
+                # through to the shared-database claim instead of
+                # overwriting with a plain SET (which would accept replays).
+                return None
+            claimed = set_nx(full_key, "1", ttl_seconds)
             return bool(claimed)
         except ValkeyOperationError:
             logger.warning(

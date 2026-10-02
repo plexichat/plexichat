@@ -36,6 +36,33 @@ class BasicMixin(ValkeyClientBase):
             logger.error(f"GLIDE SET failed for {key}: {e}")
             raise ValkeyOperationError(f"SET failed: {e}")
 
+    def set_nx(self, key: str, value: ValkeyValue, ttl: Optional[int] = None) -> bool:
+        """Set ``key`` only when it does not already exist (SET NX).
+
+        Returns True when this caller won the claim, False when the key
+        was already present. Used for single-winner claims such as TOTP
+        replay protection, where a plain overwrite would accept a replay.
+        """
+        glide_sync = cast(Any, importlib.import_module("glide_sync"))
+
+        self._ensure_connected()
+        full_key = self._prefixed_key(self._sanitize_key(key))
+
+        try:
+            kwargs = self._expiry_kwargs(glide_sync, ttl)
+            result = self._client.set(
+                full_key,
+                encode_scalar(value),
+                conditional_set=glide_sync.ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+                **kwargs,
+            )
+            claimed = result is not None
+            logger.debug(f"GLIDE SET NX: {key} -> {'claimed' if claimed else 'exists'}")
+            return claimed
+        except Exception as e:
+            logger.error(f"GLIDE SET NX failed for {key}: {e}")
+            raise ValkeyOperationError(f"SET NX failed: {e}")
+
     async def aset(
         self, key: str, value: ValkeyValue, ttl: Optional[int] = None
     ) -> bool:
@@ -52,6 +79,32 @@ class BasicMixin(ValkeyClientBase):
         except Exception as e:
             logger.error(f"GLIDE SET (async) failed for {key}: {e}")
             raise ValkeyOperationError(f"SET failed: {e}")
+
+    async def aset_nx(
+        self, key: str, value: ValkeyValue, ttl: Optional[int] = None
+    ) -> bool:
+        """Async counterpart of :meth:`set_nx`."""
+        glide = cast(Any, importlib.import_module("glide"))
+
+        aclient = self._ensure_aconnected()
+        full_key = self._prefixed_key(self._sanitize_key(key))
+
+        try:
+            kwargs = self._expiry_kwargs(glide, ttl)
+            result = await aclient.set(
+                full_key,
+                encode_scalar(value),
+                conditional_set=glide.ConditionalChange.ONLY_IF_DOES_NOT_EXIST,
+                **kwargs,
+            )
+            claimed = result is not None
+            logger.debug(
+                f"GLIDE SET NX (async): {key} -> {'claimed' if claimed else 'exists'}"
+            )
+            return claimed
+        except Exception as e:
+            logger.error(f"GLIDE SET NX (async) failed for {key}: {e}")
+            raise ValkeyOperationError(f"SET NX failed: {e}")
 
     def set_bin(self, key: str, value: bytes, ttl: Optional[int] = None) -> bool:
         glide_sync = cast(Any, importlib.import_module("glide_sync"))

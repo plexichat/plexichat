@@ -76,3 +76,57 @@ class TestTOTPReplaySharedDatabase:
                 totp_module._replay_cache.check_and_mark(42, "333333", purpose="login")
                 is True
             )
+
+
+class TestTOTPReplaySharedValkey:
+    """The Valkey claim must be conditional (SET NX).
+
+    A plain overwrite-SET always reports success, so the second worker
+    would accept the replay. The cache must use the single-winner
+    ``set_nx`` claim instead.
+    """
+
+    def test_replay_blocked_across_workers_on_shared_cache(self):
+        claimed_keys: dict = {}
+
+        class _FakeValkey:
+            def set_nx(self, key, value, ttl=None):
+                if key in claimed_keys:
+                    return False
+                claimed_keys[key] = value
+                return True
+
+        worker_a = TOTPReplayCache(ttl_seconds=90)
+        worker_b = TOTPReplayCache(ttl_seconds=90)
+        with (
+            patch(
+                "src.core.database.valkey_client.get_client",
+                return_value=_FakeValkey(),
+            ),
+            patch("src.core.database.valkey_client.is_available", return_value=True),
+        ):
+            assert worker_a.check_and_mark(7, "123456", purpose="login") is True
+            # Same code, second worker, same shared cache -> replay.
+            assert worker_b.check_and_mark(7, "123456", purpose="login") is False
+
+    def test_scope_isolation_on_shared_cache(self):
+        claimed_keys: dict = {}
+
+        class _FakeValkey:
+            def set_nx(self, key, value, ttl=None):
+                if key in claimed_keys:
+                    return False
+                claimed_keys[key] = value
+                return True
+
+        worker_a = TOTPReplayCache(ttl_seconds=90)
+        worker_b = TOTPReplayCache(ttl_seconds=90)
+        with (
+            patch(
+                "src.core.database.valkey_client.get_client",
+                return_value=_FakeValkey(),
+            ),
+            patch("src.core.database.valkey_client.is_available", return_value=True),
+        ):
+            assert worker_a.check_and_mark(8, "654321", purpose="login") is True
+            assert worker_b.check_and_mark(8, "654321", purpose="disable_2fa") is True
