@@ -485,6 +485,7 @@ class Keyring:
         """Reverse of :meth:`wrap`."""
         if not wrapped.startswith("ENC:"):
             raise KeyringDecryptionError("wrapped value is missing the ENC: prefix")
+        version: Optional[int] = None
         try:
             parts = wrapped.split(":", 2)
             version = int(parts[1])
@@ -493,4 +494,6 @@ class Keyring:
             nonce, ciphertext = blob[:12], blob[12:]
             return AESGCM(key).decrypt(nonce, ciphertext, None)
         except Exception as exc:
-            raise KeyringDecryptionError(f"failed to unwrap value: {exc}") from exc
+            raise KeyringDecryptionError(
+                f"failed to unwrap value (key version {version}): {exc}"
+            ) from exc

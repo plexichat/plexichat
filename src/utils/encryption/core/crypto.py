@@ -67,7 +67,14 @@ class CryptoMixin(EncryptionCoreProtocol):
         if not key:
             _, key = self.keyring.get_key(version)
         if key is None:
-            raise ValueError(f"No encryption key available for version {version}")
+            # Surface what was actually tried: a rotated-out version or an
+            # incomplete keyring otherwise fails with no actionable detail.
+            try:
+                available = sorted(self.keyring.keys)
+            except Exception:
+                available = []
+            hint = f"; loaded versions: {available}" if available else ""
+            raise ValueError(f"No encryption key available for version {version}{hint}")
 
         aesgcm = AESGCM(key)
         try:
@@ -88,5 +95,6 @@ class CryptoMixin(EncryptionCoreProtocol):
                 f"Decryption failed for version {version} with context {context}: {repr(e)}"
             )
             raise ValueError(
-                "Integrity check failed: Data may have been tampered with."
-            )
+                "Integrity check failed: Data may have been tampered with "
+                f"(key version {version}, context {context!r})."
+            ) from e

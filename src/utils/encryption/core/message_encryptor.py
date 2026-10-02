@@ -43,6 +43,7 @@ class MessageEncryptor:
         """Decrypt message content, handling non-encrypted (legacy) content."""
         if not encrypted_content.startswith("ENC:"):
             return encrypted_content
+        version: Optional[int] = None
         try:
             parts = encrypted_content.split(":", 2)
             version = int(parts[1])
@@ -52,8 +53,13 @@ class MessageEncryptor:
             nonce, ciphertext = combined[:12], combined[12:]
             aad = str(message_id).encode() if message_id else None
             return aesgcm.decrypt(nonce, ciphertext, aad).decode("utf-8")
-        except Exception:
-            raise ValueError("Decryption failed")
+        except Exception as e:
+            # Name the key version and the id bound as AAD so a rotated-out
+            # key is distinguishable from a wrong-message-id integrity miss.
+            raise ValueError(
+                f"Decryption failed (key version {version}, "
+                f"message_id {message_id!r}): {e}"
+            ) from e
 
     def is_encrypted(self, content: str) -> bool:
         """Check if content has the encryption prefix."""

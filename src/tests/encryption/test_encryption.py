@@ -288,8 +288,13 @@ class TestDataEncryption:
         drifting out of sync.
         """
         encrypted = encrypt_data("secret", context="row:42")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as exc_info:
             decrypt_data(encrypted, context="row:43")
+        # The failure must name the version and context tried so a rotated
+        # key is distinguishable from a context drift.
+        message = str(exc_info.value)
+        assert "row:43" in message
+        assert "key version" in message
 
     def test_decrypt_with_missing_context_fails(self, setup_encryption):
         """Decrypting context-bound data without the context must fail."""
@@ -856,8 +861,11 @@ class TestMessageEncryption:
 
         encrypted = encryptor.encrypt_message(content, message_id)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as exc_info:
             encryptor.decrypt_message(encrypted, wrong_id)
+        message = str(exc_info.value)
+        assert str(wrong_id) in message
+        assert "key version" in message
 
     def test_message_legacy_plaintext_passthrough(self):
         """Test that legacy plaintext messages are returned unchanged."""
