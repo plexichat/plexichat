@@ -445,6 +445,32 @@ class TestWorkbookUpdatePayload:
         # The caller's dict is not mutated.
         assert extra == {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
 
+    def test_workbook_update_stringifies_nested_id_extras(self, monkeypatch):
+        """Nested snowflakes inside ``data`` extras must not leak as numbers."""
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["data"] = data
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        extra = {
+            "kind": "comment",
+            "comment": {"id": 1234567890123456789, "row": 3},
+            "mentioned_user_ids": [1234567890123456789],
+            "like_count": 5,
+        }
+        gateway_emit.emit_workbook_update(42, 7, 99, extra)
+
+        data = captured["data"]
+        assert data["comment"] == {"id": "1234567890123456789", "row": 3}
+        assert data["mentioned_user_ids"] == ["1234567890123456789"]
+        assert data["like_count"] == 5
+        assert data["revision"] == 7
+        # The caller's dict is not mutated.
+        assert extra["comment"] == {"id": 1234567890123456789, "row": 3}
+
 
 class TestUserUpdatePayload:
     """USER_UPDATE must carry snowflake ids as strings."""

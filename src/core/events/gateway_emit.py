@@ -422,7 +422,10 @@ def emit_workbook_update(
     payload["actor_id"] = str(actor_id)
     _emit(
         EventType.WORKBOOK_UPDATE,
-        payload,
+        # ``data`` carries opaque extras (comment bodies, mention targets);
+        # stringify id-shaped keys so a nested snowflake cannot leak as a
+        # JSON number. ``revision`` and other non-id numerics pass through.
+        stringify_snowflake_ids(payload),
         user_ids=user_ids,
         exclude_user_ids=exclude_user_ids,
     )

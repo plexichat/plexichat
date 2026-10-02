@@ -1221,6 +1221,41 @@ def test_sum_comments_crud_and_viewport_markers(db, two_users, server_manager):
     assert manager.list_comments(owner.id, int(workbook["id"]), int(sheet_id)) == []
 
 
+def test_sum_comment_mention_payload_uses_string_ids(
+    db, two_users, server_manager, monkeypatch
+):
+    """WORKBOOK_UPDATE mention targets must be strings, not JSON numbers."""
+    from src.core.events import gateway_emit
+    from src.core.events.types import EventType
+
+    owner, other = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Mentions")
+    sheet_id = workbook["sheets"][0]["id"]
+
+    captured = {}
+
+    def fake_emit(event_type, data, **kwargs):
+        captured["event_type"] = event_type
+        captured["data"] = data
+
+    monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+    manager.add_comment(
+        owner.id,
+        int(workbook["id"]),
+        int(sheet_id),
+        0,
+        0,
+        f"Hey @{other.username} look here",
+    )
+
+    assert captured["event_type"] == EventType.WORKBOOK_UPDATE
+    # A numeric id past 2^53 would lose precision in JS clients, so the
+    # workspace mention toast could never match it against the viewer id.
+    assert captured["data"]["mentions"] == [str(other.id)]
+    assert captured["data"]["kind"] == "comment"
+
+
 def test_sum_presence_heartbeat_and_prune(db, two_users, server_manager):
     owner, other = two_users
     manager = _sum_manager(db, server_manager)

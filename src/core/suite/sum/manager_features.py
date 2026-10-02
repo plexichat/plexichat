@@ -511,7 +511,12 @@ class SumManagerFeatures(SumManagerProtocol):
                                 "column": column_index,
                                 "body": body[:120],
                             },
-                            "mentions": mentioned,
+                            # The wire key is ``mentions`` (read by the
+                            # workspace toast), which is not id-shaped, so
+                            # the gateway snowflake backstop skips it:
+                            # stringify here or JS clients lose precision
+                            # past 2^53 and the mention toast never matches.
+                            "mentions": [str(uid) for uid in mentioned],
                         },
                     )
             except Exception as exc:

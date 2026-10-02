@@ -213,12 +213,16 @@ class SumManagerBase(SumManagerProtocol):
         comment: Dict[str, Any],
         workbook: Dict[str, Any],
     ) -> List[int]:
-        """Create mention notifications for @usernames in a comment body.
+        """Resolve @usernames in a comment body to user ids.
 
-        Resolves usernames to user ids, writes rows to ``notif_notifications``
-        (so the bell/API lists them), dispatches a NOTIFICATION_CREATE realtime
-        event, and returns the mentioned ids so the WORKBOOK_UPDATE event can
-        carry them for in-workspace toasts. Best-effort and non-raising.
+        Returns the mentioned ids so the WORKBOOK_UPDATE event can carry them
+        for in-workspace toasts. That realtime carry is the delivery channel:
+        ``notif_notifications`` requires a backing chat message
+        (``message_id``/``conversation_id`` are NOT NULL foreign keys to the
+        msg tables, and ``UNIQUE(user_id, message_id)`` collides on any
+        message-less placeholder), which a workbook comment has no way to
+        satisfy -- so no bell row is written here. Best-effort and
+        non-raising.
         """
         mentioned_ids: List[int] = []
         try:
@@ -227,65 +231,17 @@ class SumManagerBase(SumManagerProtocol):
                 return mentioned_ids
             placeholders = ",".join("?" for _ in usernames)
             rows = self._db.fetch_all(
-                f"SELECT id FROM users WHERE LOWER(username) IN ({placeholders}) "
-                "AND deleted = 0",
+                f"SELECT id FROM auth_users WHERE LOWER(username) IN ({placeholders}) "
+                "AND deletion_status = 'active'",
                 [name.lower() for name in usernames],
             )
             author_id = int(comment.get("author_id") or 0)
-            now = int(time.time() * 1000)
-            preview = (str(comment.get("body") or ""))[:120]
-            from src.core.events.types import EventType
-            from src.core import events
 
             for row in rows:
                 target_id = int(row["id"])
                 if target_id == author_id:
                     continue
                 mentioned_ids.append(target_id)
-                notif_id = self._generate_id()
-                self._db.execute(
-                    "INSERT INTO notif_notifications "
-                    "(id, user_id, sender_id, message_id, conversation_id, server_id, "
-                    "channel_id, thread_id, mention_type, content_preview, "
-                    "content_preview_encrypted, read, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?)",
-                    (
-                        notif_id,
-                        target_id,
-                        author_id,
-                        0,
-                        0,
-                        workbook.get("server_id"),
-                        0,
-                        0,
-                        "user",
-                        preview,
-                        now,
-                    ),
-                )
-                try:
-                    events.dispatch(
-                        events.Event(
-                            event_type=EventType.NOTIFICATION_CREATE,
-                            data={
-                                "id": str(notif_id),
-                                "user_id": str(target_id),
-                                "sender_id": str(author_id),
-                                "message_id": None,
-                                "conversation_id": None,
-                                "server_id": str(workbook.get("server_id"))
-                                if workbook.get("server_id")
-                                else None,
-                                "mention_type": "user",
-                                "content_preview": preview,
-                                "read": False,
-                                "created_at": now,
-                            },
-                        ),
-                        user_ids=[target_id],
-                    )
-                except Exception:
-                    pass
         except Exception:
             import utils.logger as logger
 
