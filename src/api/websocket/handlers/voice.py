@@ -14,6 +14,21 @@ if TYPE_CHECKING:
     from src.core.servers.manager import ServerManager
 
 
+def _present_bool(payload: Dict[str, Any], key: str) -> Optional[bool]:
+    """Return the payload's boolean for ``key``, or ``None`` when absent.
+
+    An absent field is not ``False``: ``VOICE_STATE_UPDATE`` carries several
+    independent toggles and a frame may update only one of them. The recording
+    consent dialog, for example, sends just ``channel_id`` + ``consented``; a
+    ``False`` default would silently unmute, undeafen and stop video/streaming
+    for the sender. ``voice.update_voice_state`` treats ``None`` as "leave
+    unchanged", so presence is what decides.
+    """
+    if key not in payload:
+        return None
+    return bool(payload[key])
+
+
 def _clamp_volume(raw: Any) -> float:
     """Coerce a client-reported level into a renderable ``0.0``-``1.0`` float.
 
@@ -57,10 +72,11 @@ class VoiceHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         channel_id = data.get("channel_id")
-        self_mute = data.get("self_mute", False)
-        self_deaf = data.get("self_deaf", False)
-        self_video = data.get("self_video", False)
-        self_stream = data.get("self_stream", False)
+        # Presence-sensitive: a frame that omits a toggle must leave it alone.
+        self_mute = _present_bool(data, "self_mute")
+        self_deaf = _present_bool(data, "self_deaf")
+        self_video = _present_bool(data, "self_video")
+        self_stream = _present_bool(data, "self_stream")
         # Recording consent rides on this opcode: the client's dialog answers
         # ``consented: true`` for yes and ``consented: false`` for no. The
         # field used to be dropped on the floor while

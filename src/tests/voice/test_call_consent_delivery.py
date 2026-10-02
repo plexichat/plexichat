@@ -148,6 +148,73 @@ async def test_a_consent_failure_does_not_fail_the_state_update(monkeypatch) -> 
     assert result == (None, None, None)
 
 
+@pytest.mark.asyncio
+async def test_a_consent_only_frame_does_not_reset_audio_toggles(monkeypatch) -> None:
+    """The dialog's ``{channel_id, consented}`` frame must not touch mute/deaf.
+
+    Every audio toggle is presence-sensitive; coercing the absent fields to
+    ``False`` previously unmuted, undeafened and stopped video/streaming for
+    anyone who answered the recording-consent dialog.
+    """
+    import src.core.voice as voice
+
+    captured = {}
+
+    def _update(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(channel_id=55, self_mute=False, self_deaf=False)
+
+    monkeypatch.setattr(voice, "update_voice_state", _update)
+    monkeypatch.setattr(
+        voice, "record_call_consent", MagicMock(return_value=True), raising=False
+    )
+
+    handler = VoiceHandler(servers_module=None)
+    handler._dispatch_voice_state_update = AsyncMock()
+
+    await handler.handle_voice_state_update(
+        _connection(), {"channel_id": 55, "consented": True}
+    )
+
+    assert captured["self_mute"] is None
+    assert captured["self_deaf"] is None
+    assert captured["video"] is None
+    assert captured["streaming"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_audio_toggle_is_still_forwarded(monkeypatch) -> None:
+    """A full state frame carries real booleans through unchanged."""
+    import src.core.voice as voice
+
+    captured = {}
+
+    def _update(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(channel_id=55, self_mute=True, self_deaf=False)
+
+    monkeypatch.setattr(voice, "update_voice_state", _update)
+
+    handler = VoiceHandler(servers_module=None)
+    handler._dispatch_voice_state_update = AsyncMock()
+
+    await handler.handle_voice_state_update(
+        _connection(),
+        {
+            "channel_id": 55,
+            "self_mute": True,
+            "self_deaf": False,
+            "self_video": True,
+            "self_stream": True,
+        },
+    )
+
+    assert captured["self_mute"] is True
+    assert captured["self_deaf"] is False
+    assert captured["video"] is True
+    assert captured["streaming"] is True
+
+
 # === the voice-manager helper ==============================================
 
 
