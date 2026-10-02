@@ -88,6 +88,10 @@ requests==2.34.2
 urllib3==2.8.0
 # idna pinned to 3.15+ clears PYSEC-2026-215 (pip-audit)
 idna==3.15
+# anyio pinned to 4.14.2+ clears PYSEC-2026-4024, PYSEC-2026-4025 (pip-audit);
+# it is a transitive dependency of httpx, starlette, valkey-glide and
+# watchfiles, so it is pinned here to keep a later resolution from regressing it.
+anyio==4.14.2
 # aiohttp is no longer imported by our code — the SFU adapters make their
 # outbound calls with httpx — but pywebpush requires it at runtime, so it stays
 # in the tree. Pinned so a future transitive bump cannot reintroduce an
