@@ -200,16 +200,13 @@ class TwoFactorMixin(AuthManagerProtocol):
         user_id = user_row["id"]
         secret = totp_module.decrypt_totp_secret(user_row["totp_secret_encrypted"])
 
-        try:
-            is_totp_valid = totp_module.verify_totp_code(
-                secret,
-                code,
-                user_id=user_id,
-                purpose="login",
-                acting_user_id=user_id,
-            )
-        except TypeError:
-            is_totp_valid = totp_module.verify_totp_code(secret, code)
+        is_totp_valid = totp_module.verify_totp_code(
+            secret,
+            code,
+            user_id=user_id,
+            purpose="login",
+            acting_user_id=user_id,
+        )
 
         if not is_totp_valid:
             backup_hashes = (
@@ -332,16 +329,13 @@ class TwoFactorMixin(AuthManagerProtocol):
             raise AuthError("2FA not initiated")
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
         self._check_and_record_2fa_attempt(user_id)
-        try:
-            ok = totp_module.verify_totp_code(
-                secret,
-                code,
-                user_id=user_id,
-                purpose="setup_2fa",
-                acting_user_id=user_id,
-            )
-        except TypeError:
-            ok = totp_module.verify_totp_code(secret, code)
+        ok = totp_module.verify_totp_code(
+            secret,
+            code,
+            user_id=user_id,
+            purpose="setup_2fa",
+            acting_user_id=user_id,
+        )
         if not ok:
             raise TwoFactorInvalidError("Invalid code")
 
@@ -380,16 +374,13 @@ class TwoFactorMixin(AuthManagerProtocol):
             raise InvalidCredentialsError("Invalid password")
         secret = totp_module.decrypt_totp_secret(user["totp_secret_encrypted"])
         self._check_and_record_2fa_attempt(user_id)
-        try:
-            ok = totp_module.verify_totp_code(
-                secret,
-                code,
-                user_id=user_id,
-                purpose="disable_2fa",
-                acting_user_id=user_id,
-            )
-        except TypeError:
-            ok = totp_module.verify_totp_code(secret, code)
+        ok = totp_module.verify_totp_code(
+            secret,
+            code,
+            user_id=user_id,
+            purpose="disable_2fa",
+            acting_user_id=user_id,
+        )
         if not ok:
             raise TwoFactorInvalidError("Invalid code")
         self._db.execute(

@@ -369,7 +369,9 @@ class TestAuthManagerTwoFactor:
         from src.utils import encryption
         import src.core.auth.totp as totp
 
-        monkeypatch.setattr(totp, "verify_totp_code", lambda secret, code: True)
+        monkeypatch.setattr(
+            totp, "verify_totp_code", lambda secret, code, *args, **kwargs: True
+        )
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user = auth_manager.register("testuser", "test@example.com", "Password123!")
@@ -387,7 +389,9 @@ class TestAuthManagerTwoFactor:
         import src.core.auth.totp as totp
 
         monkeypatch.setattr(
-            totp, "verify_totp_code", lambda secret, code: code == "correct"
+            totp,
+            "verify_totp_code",
+            lambda secret, code, *args, **kwargs: code == "correct",
         )
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
