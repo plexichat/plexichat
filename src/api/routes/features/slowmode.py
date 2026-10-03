@@ -91,7 +91,10 @@ async def set_channel_slowmode(
         )
         return {
             "success": True,
-            "channel_id": cid,
+            # Snowflake ids are emitted as strings: a JS Number cannot
+            # hold a 64-bit id exactly, so a numeric id would be rounded
+            # by the client and subsequent lookups would miss.
+            "channel_id": str(cid),
             "slowmode_seconds": interval_seconds,
         }
     except Exception as e:
@@ -148,7 +151,7 @@ async def get_channel_slowmode(
         raise_forbidden("Channel access denied")
 
     slowmode_seconds = row["slowmode_seconds"] if isinstance(row, dict) else row[2]
-    return {"channel_id": cid, "slowmode_seconds": slowmode_seconds or 0}
+    return {"channel_id": str(cid), "slowmode_seconds": slowmode_seconds or 0}
 
 
 @router.put(

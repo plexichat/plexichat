@@ -105,9 +105,12 @@ class ThreadSlowmode:
         )
 
         return {
-            "thread_id": thread_id,
+            # Snowflake ids are emitted as strings: a JS Number cannot
+            # hold a 64-bit id exactly, so a numeric id would be rounded
+            # by the client and subsequent lookups would miss.
+            "thread_id": str(thread_id),
             "interval_ms": interval_ms,
-            "updated_by": user_id,
+            "updated_by": str(user_id) if user_id is not None else None,
             "updated_at": now,
         }
 
@@ -126,11 +129,13 @@ class ThreadSlowmode:
         )
 
         result = {
-            "thread_id": thread_id,
+            "thread_id": str(thread_id),
             "interval_ms": row["slowmode_interval_ms"]
             if row and row["slowmode_interval_ms"]
             else 0,
-            "updated_by": row["slowmode_updated_by"] if row else None,
+            "updated_by": str(row["slowmode_updated_by"])
+            if row and row["slowmode_updated_by"] is not None
+            else None,
             "updated_at": row["slowmode_updated_at"] if row else None,
         }
 

@@ -65,10 +65,17 @@ class TestChannelSlowmodeAuthorization:
         body = response.json()
         assert body["success"] is True
         assert body["slowmode_seconds"] == 5
+        # Snowflake ids cross the wire as strings: a JS Number cannot
+        # hold a 64-bit id exactly, so a numeric channel_id would be
+        # rounded by the client and subsequent lookups would miss.
+        assert body["channel_id"] == str(setup["channel"].id)
+        assert isinstance(body["channel_id"], str)
 
         fetched = test_client.get(url, headers=headers)
         assert fetched.status_code == 200, fetched.text
         assert fetched.json()["slowmode_seconds"] == 5
+        assert fetched.json()["channel_id"] == str(setup["channel"].id)
+        assert isinstance(fetched.json()["channel_id"], str)
 
     def test_plain_member_is_forbidden(self, test_client, channel_setup):
         setup = channel_setup
@@ -109,3 +116,52 @@ class TestChannelSlowmodeValidation:
 
         response = test_client.put(url, json={"interval_ms": 5000}, headers=headers)
         assert response.status_code == 404, response.text
+
+
+class TestThreadSlowmodeSnowflakeSerialization:
+    def test_get_slowmode_stringifies_ids(self, monkeypatch):
+        """Thread slowmode ids must cross the wire as strings.
+
+        A JS Number cannot represent a 64-bit snowflake exactly, so a
+        numeric ``thread_id``/``updated_by`` would be rounded by the
+        client. ``interval_ms``/``updated_at`` stay numeric.
+        """
+        from unittest.mock import MagicMock
+
+        from src.core.threads.slowmode import ThreadSlowmode
+
+        monkeypatch.setattr("src.core.threads.slowmode.cache_get", lambda *a, **k: None)
+        monkeypatch.setattr("src.core.threads.slowmode.cache_set", lambda *a, **k: None)
+
+        db = MagicMock()
+        db.fetch_one.return_value = {
+            "slowmode_interval_ms": 5000,
+            "slowmode_updated_by": 1234567890123456789,
+            "slowmode_updated_at": 1700000000000,
+        }
+        result = ThreadSlowmode(db).get_slowmode(1234567890123456789)
+
+        assert result["thread_id"] == "1234567890123456789"
+        assert isinstance(result["thread_id"], str)
+        assert result["updated_by"] == "1234567890123456789"
+        assert isinstance(result["updated_by"], str)
+        assert result["interval_ms"] == 5000
+        assert result["updated_at"] == 1700000000000
+
+    def test_set_slowmode_stringifies_ids(self):
+        """The set path must return the same string-id shape as the get path."""
+        from unittest.mock import MagicMock
+
+        from src.core.threads.slowmode import ThreadSlowmode
+
+        db = MagicMock()
+        db.fetch_one.return_value = {"id": 1234567890123456789}
+        result = ThreadSlowmode(db).set_slowmode(
+            1234567890123456789, 5000, 9876543210987654321, can_manage=True
+        )
+
+        assert result["thread_id"] == "1234567890123456789"
+        assert isinstance(result["thread_id"], str)
+        assert result["updated_by"] == "9876543210987654321"
+        assert isinstance(result["updated_by"], str)
+        assert result["interval_ms"] == 5000
