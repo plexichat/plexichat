@@ -338,6 +338,41 @@ class TestSnowflakeSerialization:
         assert call_args["d"] is True
 
 
+class TestBroadcastServerStatus:
+    """SERVER_STATUS frames get the same snowflake backstop as every other path.
+
+    Regression guard: ``broadcast_server_status`` built its payload from the
+    caller-supplied dict verbatim while ``_build_dispatch_payload``,
+    ``dispatch_raw`` and ``broadcast_ratchet_update`` all stringify id-shaped
+    keys. Any future id key (e.g. ``server_id``) would have crossed the wire
+    as a JSON number that JS clients round.
+    """
+
+    @pytest.mark.asyncio
+    async def test_broadcast_server_status_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        """Id-shaped keys are strings; non-id numerics pass through."""
+        import json
+
+        count = await dispatcher.broadcast_server_status(
+            {
+                "state": "maintenance",
+                "message": "restarting",
+                "server_id": 1234567890123456789,
+                "estimated_downtime_seconds": 10,
+            },
+            connections=[authenticated_connection],
+        )
+
+        assert count == 1
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        wire = json.loads(json.dumps(call_args))
+        assert wire["d"]["server_id"] == "1234567890123456789"
+        assert wire["d"]["state"] == "maintenance"
+        assert wire["d"]["estimated_downtime_seconds"] == 10
+
+
 class TestEventCallback:
     """Tests for event module callback."""
 

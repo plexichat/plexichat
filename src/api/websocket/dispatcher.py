@@ -557,7 +557,11 @@ class GatewayDispatcher:
             if conn.is_authenticated:
                 payload = {
                     "op": int(GatewayOpcode.SERVER_STATUS),
-                    "d": status_data,
+                    # Central backstop (matches _build_dispatch_payload and
+                    # dispatch_raw): status_data is caller-built, so stringify
+                    # id-shaped keys here or a future key such as server_id
+                    # leaks as a JSON number that JS clients round.
+                    "d": stringify_snowflake_ids(status_data),
                 }
                 tasks.append(self._send_to_connection(conn, payload))
 
