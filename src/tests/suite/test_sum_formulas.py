@@ -1077,6 +1077,55 @@ def test_find_and_search_report_value_error_when_text_is_missing():
     assert _eval('SEARCH("x", "abc")') == VALUE_ERROR
 
 
+def test_find_and_search_truncate_a_fractional_start_num():
+    """Excel truncates start_num toward zero, so FIND("", "", 1.5) is 1.
+
+    The raw fraction leaked into the past-the-end check and answered #VALUE!
+    where Excel and the client engine return 1; a start that truncates below
+    1 is still #VALUE!.
+    """
+    assert _eval('FIND("", "", 1.5)') == 1.0
+    assert _eval('SEARCH("", "", 1.5)') == 1.0
+    assert _eval('FIND("b", "abc", 2.5)') == 2.0
+    assert _eval('FIND("b", "abc", 0.5)') == VALUE_ERROR
+    assert _eval('FIND("b", "abc", -0.5)') == VALUE_ERROR
+
+
+def test_sumproduct_propagates_an_error_past_a_non_numeric_slot():
+    """The error propagates even when a non-numeric slot folds first.
+
+    The product short-circuits on a blank or non-numeric entry, so scanning
+    the error cells only as the fold reached them let SUMPRODUCT("", A5)
+    answer 0 instead of A5's #DIV/0!, which Excel and the client engine return.
+    """
+    cells = {
+        ("1", 4, 0): {"value_type": "formula", "value": None, "formula": "1/0"},
+    }
+    resolver = _resolver(cells)
+    assert _eval('SUMPRODUCT("", A5)', resolver) == DIV_ZERO
+    assert _eval('SUMPRODUCT("", A5, "")', resolver) == DIV_ZERO
+
+
+def test_a_criteria_range_shorter_than_the_spine_never_matches():
+    """A position past a short criteria range has no entry, so it cannot match.
+
+    The criteria range is one scalar cell while the sum range is three;
+    reading the missing positions as a blank let the empty-string criteria
+    match them (SUMIFS answered 5 where Excel and the client engine say 0).
+    """
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 2, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 3, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval('SUMIFS(A1:A3, 0, "")', resolver) == 0.0
+    assert _eval('SUMIFS(A1:A3, 0, "=0")', resolver) == 1.0
+    assert _eval('SUMIFS(A1:A3, "", "")', resolver) == 1.0
+    assert _eval('AVERAGEIFS(A1:A3, 0, "")', resolver) == DIV_ZERO
+    assert _eval('AVERAGEIFS(A1:A3, "", "")', resolver) == 1.0
+
+
 def test_rept_is_bounded_against_multi_gb_allocations():
     """Agent 30 M3: REPT must cap the allocation like ROUND caps digits.
 

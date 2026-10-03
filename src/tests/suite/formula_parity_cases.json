@@ -6138,6 +6138,46 @@
     {
       "formula": "MID(\"abcdef\",2.9,2.9)",
       "expected": "text:bc"
+    },
+    {
+      "formula": "FIND(\"\",\"\",1.5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SEARCH(\"\",\"\",1.5)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "FIND(\"b\",\"abc\",2.5)",
+      "expected": "number:2"
+    },
+    {
+      "formula": "SUMPRODUCT(\"\",A5)",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMPRODUCT(\"\",A5,\"\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "SUMIFS(A1:A3,0,\"\")",
+      "expected": "number:0"
+    },
+    {
+      "formula": "SUMIFS(A1:A3,0,\"=0\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "SUMIFS(A1:A3,\"\",\"\")",
+      "expected": "number:1"
+    },
+    {
+      "formula": "AVERAGEIFS(A1:A3,0,\"\")",
+      "expected": "error:#DIV/0!"
+    },
+    {
+      "formula": "AVERAGEIFS(A1:A3,\"\",\"\")",
+      "expected": "number:1"
     }
   ]
 }
