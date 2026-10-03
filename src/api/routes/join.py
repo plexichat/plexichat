@@ -234,7 +234,18 @@ async def request_join(
             (remote_instance_id,),
         )
         if existing:
-            return {"success": True, "Join_id": existing["id"], "existing": True}
+            # Snowflakes as strings (matches _serialize_join): a JS Number
+            # rounds 64-bit ids, and the list endpoint already serves these
+            # ids as strings, so a numeric id here would split the client's
+            # Map keys ("1" vs 1) and break lookups.
+            existing_id = str(existing["id"])
+            return {
+                "success": True,
+                "Join_id": existing_id,
+                "id": existing_id,
+                "connection_id": existing_id,
+                "existing": True,
+            }
 
         connection = manager.create_connection(
             remote_instance_id=remote_instance_id,
@@ -247,10 +258,15 @@ async def request_join(
         )
 
         delivery = await manager.send_join_request(connection["id"])
+        # Snowflakes as strings (matches _serialize_join and the existing
+        # path above): serving these as JSON numbers splits the client's
+        # Map keys ("1" vs 1) and breaks lookups.
+        created_id = str(connection["id"])
         return {
             "success": True,
-            "Join_id": connection["id"],
-            "connection_id": connection["id"],
+            "Join_id": created_id,
+            "id": created_id,
+            "connection_id": created_id,
             "delivered": bool(delivery.get("success")),
         }
     except JoinApiError:
