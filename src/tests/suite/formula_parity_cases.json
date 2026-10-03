@@ -6178,6 +6178,26 @@
     {
       "formula": "AVERAGEIFS(A1:A3,\"\",\"\")",
       "expected": "number:1"
+    },
+    {
+      "formula": "DB(0,0,1,0)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "DB(0,100,5,1)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "XLOOKUP(0,1,0,A1:A3)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "XLOOKUP(0,1,0,A1)",
+      "expected": "number:1"
+    },
+    {
+      "formula": "XLOOKUP(0,1,0,SUM(A1:A3))",
+      "expected": "number:6"
     }
   ]
 }

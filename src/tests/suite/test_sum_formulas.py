@@ -1091,6 +1091,31 @@ def test_find_and_search_truncate_a_fractional_start_num():
     assert _eval('FIND("b", "abc", -0.5)') == VALUE_ERROR
 
 
+def test_db_rejects_a_zero_cost():
+    """A zero cost leaves ``salvage / cost`` undefined, so Excel answers #NUM!.
+
+    The client engine had to gain this guard: a period below one skipped its
+    depreciation loop and answered 0 where this engine answers #NUM!.
+    """
+    assert _eval("DB(0, 0, 1, 0)") == NUM_ERROR
+    assert _eval("DB(0, 100, 5, 1)") == NUM_ERROR
+    # A zero *period* with a real cost is a plain zero, not an error.
+    assert _eval("DB(1000, 100, 5, 0)") == 0.0
+
+
+def test_xlookup_reads_a_range_if_not_found_through_the_scalar_slot():
+    """if_not_found is one value, so a multi-cell range is #VALUE!."""
+    cells = {
+        ("1", 0, 0): {"value_type": "number", "value": 1, "formula": None},
+        ("1", 1, 0): {"value_type": "number", "value": 2, "formula": None},
+        ("1", 2, 0): {"value_type": "number", "value": 3, "formula": None},
+    }
+    resolver = _resolver(cells)
+    assert _eval("XLOOKUP(0, 1, 0, A1:A3)", resolver) == VALUE_ERROR
+    assert _eval("XLOOKUP(0, 1, 0, A1)", resolver) == 1.0
+    assert _eval("XLOOKUP(0, 1, 0, SUM(A1:A3))", resolver) == 6.0
+
+
 def test_sumproduct_propagates_an_error_past_a_non_numeric_slot():
     """The error propagates even when a non-numeric slot folds first.
 
