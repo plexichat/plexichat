@@ -8,6 +8,7 @@ from ._formula_core import FormulaEvaluatorCore
 from ._formula_shared import (
     DIV_ZERO,
     ERROR_CODES,
+    MAX_BLOCK_CELLS,
     MAX_DATE_SERIAL,
     MAX_LOOP_ITERATIONS,
     MIN_DATE_SERIAL,
@@ -1375,6 +1376,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             # (``c < col + width`` in the client engine), not one.
             height = math.ceil(height)
             width = math.ceil(width)
+            # Bound the materialised block before the loops run: the spans are
+            # unrestricted doubles, so OFFSET(A1,0,0,1e9,1e9) used to build a
+            # 10^18-cell block and stall the thread.
+            if height * width > MAX_BLOCK_CELLS:
+                return NUM_ERROR
             block = []
             for r in range(r1 + rows, r1 + rows + height):
                 row_values = []

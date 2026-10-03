@@ -6198,6 +6198,14 @@
     {
       "formula": "XLOOKUP(0,1,0,SUM(A1:A3))",
       "expected": "number:6"
+    },
+    {
+      "formula": "OFFSET(A1,0,0,100000,100000)",
+      "expected": "error:#NUM!"
+    },
+    {
+      "formula": "OFFSET(A1,0,0,1e9,1e9)",
+      "expected": "error:#NUM!"
     }
   ]
 }

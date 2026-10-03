@@ -60,6 +60,12 @@ MAX_WORKDAY_OFFSET_DAYS = 100_000
 # doubles, so without this a single formula could drive the loop for hours; a
 # value past the cap is #NUM!. Shared with the client engine.
 MAX_LOOP_ITERATIONS = 100_000
+# Largest block a function may materialise, in cells. A row/span argument is
+# an unrestricted double, so without a bound OFFSET(A1,0,0,1e9,1e9) builds a
+# 10^18-cell block and stalls the evaluating thread. Excel caps a sheet at
+# 2^20 rows, so a block past that is #NUM! rather than an allocation the
+# engine cannot honour. Shared with the client engine.
+MAX_BLOCK_CELLS = 1_048_576
 # The span of serials a date can name: 0001-01-01 .. 9999-12-31. The serial's
 # integer part is the date and its fraction is a time of day, so the check is
 # on the truncated serial, not the raw one -- 2958465.5 still names 9999-12-31.

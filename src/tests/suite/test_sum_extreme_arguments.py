@@ -54,6 +54,13 @@ _CASES = [
     ("PERMUT(1000000000,500000000)", "error:#NUM!"),
     ("MULTINOMIAL(1000000000,1000000000)", "error:#NUM!"),
     ("COMBINA(1000000000,1000000000)", "error:#NUM!"),
+    # OFFSET's height and width are loop bounds too, and unrestricted doubles:
+    # a huge span used to build a block of 10^18 cells and stall the thread.
+    # A span past the shared MAX_BLOCK_CELLS is #NUM!, the same answer the
+    # client engine gives.
+    ("OFFSET(A1,0,0,100000,100000)", "error:#NUM!"),
+    ("OFFSET(A1,0,0,1e9,1e9)", "error:#NUM!"),
+    ("OFFSET(A1,0,0,1e9,1)", "error:#NUM!"),
 ]
 
 

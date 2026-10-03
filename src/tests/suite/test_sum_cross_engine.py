@@ -533,6 +533,12 @@ def _groups() -> "OrderedDict[str, List[str]]":
         "PERMUT(1000000000,500000000)",
         "MULTINOMIAL(1000000000,1000000000)",
         "COMBINA(1000000000,1000000000)",
+        # OFFSET's height and width are loop bounds too: a span past the shared
+        # MAX_BLOCK_CELLS is #NUM! on both engines rather than a block of 10^18
+        # cells. The span is a double, so a huge one is untrusted input.
+        "OFFSET(A1,0,0,100000,100000)",
+        "OFFSET(A1,0,0,1e9,1e9)",
+        "OFFSET(A1,0,0,1e9,1)",
     ]
     groups["lookup XLOOKUP if_not_found"] = [
         f"XLOOKUP({a},{b},{c},{d})"

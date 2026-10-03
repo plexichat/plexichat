@@ -449,6 +449,13 @@ client engine computes in doubles and turns an `Infinity`/`NaN` into `#NUM!`,
 so `GAMMAINV`/`BETAINV` do the same where a denominator rounds away or a factor
 leaves the doubles.
 
+**A materialised block is bounded.** `OFFSET`'s `height` and `width` are loop
+bounds and unrestricted doubles, so without a bound `OFFSET(A1, 0, 0, 1e9,
+1e9)` built a 10^18-cell block and stalled the evaluating thread. The span is
+capped at the shared `MAX_BLOCK_CELLS` cells, and a span past it is `#NUM!` --
+the answer the client engine gives -- rather than an allocation the engine
+cannot honour.
+
 ### Known divergences from Excel
 
 Deliberate, and shared with the client engine unless noted:
