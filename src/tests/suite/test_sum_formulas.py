@@ -1103,6 +1103,19 @@ def test_text_positions_count_utf16_units():
     assert _eval('CODE("😀")') == 55357.0
 
 
+def test_replace_rejects_a_negative_count():
+    """REPLACE's num_chars must not be negative, as in Excel.
+
+    LEFT/RIGHT/MID already reject a negative count, but REPLACE fed it
+    straight into the cut ``start_num - 1 + num_chars``, which fell below the
+    insertion point and duplicated the untouched prefix: REPLACE("hello", 2,
+    -1, "X") answered "hXhello" instead of #VALUE!.
+    """
+    assert _eval('REPLACE("hello", 2, 3, "XY")') == "hXYo"
+    assert _eval('REPLACE("hello", 2, -1, "X")') == VALUE_ERROR
+    assert _eval('REPLACE("hello", 2, -0.5, "X")') == VALUE_ERROR
+
+
 def test_and_or_evaluate_every_argument():
     """AND/OR propagate an error anywhere, with no short-circuit.
 

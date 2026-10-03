@@ -1120,6 +1120,14 @@
       "expected": "error:#DIV/0!"
     },
     {
+      "formula": "REPLACE(\"hello\",2,-1,\"X\")",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "REPLACE(\"hello\",2,-0.5,\"X\")",
+      "expected": "error:#VALUE!"
+    },
+    {
       "formula": "REPT(\"ab\",3)",
       "expected": "text:ababab"
     },

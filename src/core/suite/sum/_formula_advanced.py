@@ -1745,13 +1745,19 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             new_text = _slot_text(values[3])
             if start_number < 1:
                 return VALUE_ERROR
+            # Excel rejects a negative num_chars with #VALUE!, the same rule
+            # LEFT/RIGHT/MID already apply above. Without the check the cut
+            # ``start_num - 1 + num_chars`` fell below the insertion point and
+            # the untouched prefix was duplicated: REPLACE("hello", 2, -1,
+            # "X") answered "hXhello".
+            if count_number < 0:
+                return VALUE_ERROR
             # Unit-based like the slices: cutting inside an astral character
             # keeps the surviving half, as Excel and the client engine do.
             #
-            # The cut is the client's ``start_num - 1 + num_chars`` truncated
-            # as one sum, not each part truncated first: JavaScript truncates
-            # the slice bound, so a negative fractional count shortens the
-            # tail rather than collapsing to zero.
+            # The cut is ``start_num - 1 + num_chars`` truncated as one sum,
+            # not each part truncated first, so the two engines agree on a
+            # fractional count.
             start = int(start_number) - 1
             cut = int(start_number - 1 + count_number)
             return (
