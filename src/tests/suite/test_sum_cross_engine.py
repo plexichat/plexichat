@@ -32,6 +32,7 @@ answers, and a legitimate difference belongs in the shared case table, where
 both engines are then held to it.
 """
 
+import itertools
 import json
 import math
 import os
@@ -336,6 +337,21 @@ def _product(alphabet: str, length: int) -> List[Tuple[str, ...]]:
 #
 # TODAY and NOW read the clock, so the two engines cannot be compared on them.
 _FAMILY_ALPHABET = ["0", "1", "2", "0.5", "-1", '"2"', "TRUE", "Z1"]
+
+# The arity-four alphabet for the adopted families: a zero, a negative, a
+# fraction and a plain number. The single-operand forms only ever repeat one
+# operand in every slot, so a function with a *fourth* argument never met a
+# mixed shape -- the blind spot that hid DB(0, ...) answering 0 where a zero
+# cost is #NUM!.
+_FAMILY_QUAD_ALPHABET = ["0", "-1", "0.5", "1"]
+
+# XLOOKUP's fourth argument is its fallback, a scalar slot: a multi-cell range
+# there reads through the pooled rule (#VALUE!) rather than returning the matrix
+# the raw argument produced. Crossing a small mixed alphabet over all four slots
+# pairs a distinct fallback with a distinct lookup array, which the
+# single-operand forms never did. A1:A3 holds no error cell, so the range shape
+# -- not an error propagation -- is what is under test.
+_XLOOKUP_QUAD_ALPHABET = ["0", "1", "A1:A3"]
 _FAMILIES = (
     ("engineering", engine_core._ENGINEERING_FUNCTIONS),
     ("financial", engine_core._FINANCIAL_FUNCTIONS),
@@ -518,6 +534,10 @@ def _groups() -> "OrderedDict[str, List[str]]":
         "MULTINOMIAL(1000000000,1000000000)",
         "COMBINA(1000000000,1000000000)",
     ]
+    groups["lookup XLOOKUP if_not_found"] = [
+        f"XLOOKUP({a},{b},{c},{d})"
+        for a, b, c, d in itertools.product(_XLOOKUP_QUAD_ALPHABET, repeat=4)
+    ]
     for family, names in _FAMILIES:
         # One group per function, so _missing() can drop just that function.
         for name in sorted(names):
@@ -525,6 +545,12 @@ def _groups() -> "OrderedDict[str, List[str]]":
                 f"{name}({','.join([operand] * arity)})"
                 for arity in (1, 2, 3)
                 for operand in _FAMILY_ALPHABET
+            ]
+            # A second group per function keeps the arity-four battery's
+            # _missing() probe independent of the arity-one-to-three one.
+            groups[f"{family} {name} arity four"] = [
+                f"{name}({','.join(parts)})"
+                for parts in itertools.product(_FAMILY_QUAD_ALPHABET, repeat=4)
             ]
     return groups
 
