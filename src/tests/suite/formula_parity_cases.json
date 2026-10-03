@@ -6106,6 +6106,26 @@
     {
       "formula": "NETWORKDAYS(DATE(2024,1,10),DATE(2024,1,1),DATE(2024,1,2))",
       "expected": "number:-7"
+    },
+    {
+      "formula": "SUBSTITUTE(\"aaaa\",\"a\",\"b\",1.5)",
+      "expected": "text:baaa"
+    },
+    {
+      "formula": "SUBSTITUTE(\"aaaa\",\"a\",\"b\",2.5)",
+      "expected": "text:abaa"
+    },
+    {
+      "formula": "SUBSTITUTE(\"hello world\",\"l\",\"L\",1.9)",
+      "expected": "text:heLlo world"
+    },
+    {
+      "formula": "SUBSTITUTE(\"aaaa\",\"a\",\"b\",0.5)",
+      "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "SUBSTITUTE(\"aaaa\",\"a\",\"b\",-0.5)",
+      "expected": "error:#VALUE!"
     }
   ]
 }

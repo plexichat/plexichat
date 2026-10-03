@@ -844,6 +844,14 @@ def test_text_functions_expanded():
     assert _eval('SUBSTITUTE("hello world", "l", "L")') == "heLLo worLd"
     assert _eval('SUBSTITUTE("hello world", "l", "L", 2)') == "helLo world"
     assert _eval('SUBSTITUTE("hello world", "l", "L", 9)') == "hello world"
+    # Excel truncates a fractional instance_num, and the client engine shares
+    # the rule so the two engines cannot diverge on it.
+    assert _eval('SUBSTITUTE("aaaa", "a", "b", 1.5)') == "baaa"
+    assert _eval('SUBSTITUTE("aaaa", "a", "b", 2.5)') == "abaa"
+    assert _eval('SUBSTITUTE("hello world", "l", "L", 1.9)') == "heLlo world"
+    # A value that truncates below one occurrence is #VALUE!.
+    assert _eval('SUBSTITUTE("aaaa", "a", "b", 0.5)') == VALUE_ERROR
+    assert _eval('SUBSTITUTE("aaaa", "a", "b", -0.5)') == VALUE_ERROR
     assert _eval('EXACT("abc", "abc")') is True
     assert _eval('EXACT("abc", "ABC")') is False
     assert _eval('PROPER("hello world")') == "Hello World"
