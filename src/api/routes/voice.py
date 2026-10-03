@@ -13,7 +13,7 @@ from src.api.schemas.voice import (
     ICEServersResponse,
     VoiceChannelInfoResponse,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 
 router = APIRouter(prefix="/voice", tags=["Voice"])
 
@@ -135,7 +135,7 @@ async def get_voice_channel_info(
                 f"User {current_user.user_id} requested voice info for channel {cid}"
             )
             return VoiceChannelInfoResponse(
-                channel_id=cid,
+                channel_id=SnowflakeID(cid),
                 session_id=info.session_id,
                 ice_servers=ice_servers,
                 bitrate=info.bitrate,

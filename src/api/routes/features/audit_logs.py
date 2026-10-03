@@ -91,12 +91,21 @@ async def get_user_audit_logs(
                 }
             entries.append(
                 {
-                    "id": data.get("id"),
-                    "server_id": data.get("server_id"),
-                    "user_id": data.get("user_id"),
+                    # Snowflake ids are emitted as strings: a JS Number cannot
+                    # hold a 64-bit id exactly, so a numeric id would be rounded
+                    # by the client and subsequent lookups would miss.
+                    "id": str(data.get("id")) if data.get("id") is not None else None,
+                    "server_id": str(data.get("server_id"))
+                    if data.get("server_id") is not None
+                    else None,
+                    "user_id": str(data.get("user_id"))
+                    if data.get("user_id") is not None
+                    else None,
                     "action": data.get("action"),
                     "target_type": data.get("target_type"),
-                    "target_id": data.get("target_id"),
+                    "target_id": str(data.get("target_id"))
+                    if data.get("target_id") is not None
+                    else None,
                     "changes": data.get("changes"),
                     "reason": data.get("reason"),
                     "created_at": data.get("created_at"),
