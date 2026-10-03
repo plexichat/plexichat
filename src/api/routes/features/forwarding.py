@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -43,4 +44,4 @@ async def forward_message(
         message_id,
         target_conversation_id,
     )
-    return {"success": True, "forward": result}
+    return {"success": True, "forward": stringify_snowflake_ids(result)}

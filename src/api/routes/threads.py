@@ -25,6 +25,7 @@ from src.core.events.gateway_emit import (
     emit_thread_update,
     emit_thread_delete,
 )
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 
 class ThreadMessageRequest(BaseModel):
@@ -859,7 +860,7 @@ async def get_thread_messages(
         msgs = threads_mod.get_messages(
             current_user.user_id, tid, limit=limit, before_id=before, after_id=after
         )
-        return _strip_messages_ciphertext(msgs or [])
+        return stringify_snowflake_ids(_strip_messages_ciphertext(msgs or []))
     except Exception as e:
         mapped = _map_thread_exception(e)
         if mapped:
@@ -897,7 +898,7 @@ async def send_thread_message(
         )
     try:
         msg = threads_mod.send_message(current_user.user_id, tid, str(content))
-        return _strip_message_ciphertext(msg)
+        return stringify_snowflake_ids(_strip_message_ciphertext(msg))
     except Exception as e:
         mapped = _map_thread_exception(e)
         if mapped:

@@ -7,6 +7,7 @@ import asyncio
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import parse_id, raise_internal
 import utils.logger as logger
 
@@ -120,7 +121,7 @@ async def add_bookmark(
     asyncio.create_task(
         _dispatch_bookmark_event("add", current_user.user_id, result or {})
     )
-    return {"success": True, "bookmark": result}
+    return {"success": True, "bookmark": stringify_snowflake_ids(result or {})}
 
 
 @router.delete(
@@ -190,4 +191,4 @@ async def list_bookmarks(
             status_code=404,
             detail={"error": {"code": 404, "message": "Conversation not found"}},
         )
-    return {"bookmarks": results}
+    return {"bookmarks": stringify_snowflake_ids(results or [])}

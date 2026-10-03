@@ -6,6 +6,7 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import raise_bad_request, raise_forbidden, raise_internal
 
 router = APIRouter()
@@ -52,7 +53,7 @@ async def save_last_chat(
             if body.scroll_position is not None
             else 0,
         )
-        return {"success": True, "last_chat": result}
+        return {"success": True, "last_chat": stringify_snowflake_ids(result)}
     except PermissionError:
         raise_forbidden("Access denied")
     except Exception:
@@ -81,7 +82,7 @@ async def get_last_chat(
     result = svc.get_last_chat(current_user.user_id)
     if not result:
         return {"last_chat": None}
-    return {"last_chat": result}
+    return {"last_chat": stringify_snowflake_ids(result)}
 
 
 @router.get(
@@ -104,4 +105,4 @@ async def get_recent_chats(
     svc = LastChatService(db, participant_svc)
 
     results = svc.get_recent_chats(current_user.user_id, limit)
-    return {"recent_chats": results}
+    return {"recent_chats": stringify_snowflake_ids(results or [])}
