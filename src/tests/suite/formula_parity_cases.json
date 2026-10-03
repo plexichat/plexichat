@@ -6126,6 +6126,18 @@
     {
       "formula": "SUBSTITUTE(\"aaaa\",\"a\",\"b\",-0.5)",
       "expected": "error:#VALUE!"
+    },
+    {
+      "formula": "MID(\"hello\",1.9,1.9)",
+      "expected": "text:h"
+    },
+    {
+      "formula": "MID(\"hello\",2.5,1.5)",
+      "expected": "text:e"
+    },
+    {
+      "formula": "MID(\"abcdef\",2.9,2.9)",
+      "expected": "text:bc"
     }
   ]
 }

@@ -873,6 +873,11 @@ def test_left_right_mid_reject_negative_num_chars():
     assert _eval('LEFT("hello", 2)') == "he"
     assert _eval('RIGHT("hello", 2)') == "lo"
     assert _eval('MID("hello", 2, 3)') == "ell"
+    # Excel truncates fractional start_num/num_chars before slicing, which the
+    # client engine now mirrors with Math.trunc.
+    assert _eval('MID("hello", 1.9, 1.9)') == "h"
+    assert _eval('MID("hello", 2.5, 1.5)') == "e"
+    assert _eval('MID("abcdef", 2.9, 2.9)') == "bc"
     # num_chars omitted -> Excel's default of a single character.
     assert _eval('LEFT("hello")') == "h"
     assert _eval('RIGHT("hello")') == "o"
