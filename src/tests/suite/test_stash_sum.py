@@ -1408,6 +1408,61 @@ def test_sum_xlsx_export_and_import(db, two_users, server_manager):
     assert values[(2, 0)] == 3
 
 
+def test_sum_xlsx_import_rejects_a_zip_bomb(db, two_users, server_manager):
+    """A tiny XLSX that declares gigabytes must be rejected before parsing.
+
+    ``openpyxl`` inflates the archive member by member, so without a
+    declared-size check a few hundred kilobytes of upload can stall the
+    worker on a multi-gigabyte worksheet before the row/column caps apply.
+    The ZIP central directory states each member's uncompressed size, so the
+    whole expansion is checked up front.
+    """
+    openpyxl = pytest.importorskip("openpyxl")
+    import base64 as base64_module
+    import io as io_module
+    import zipfile
+
+    owner, _ = two_users
+    manager = _sum_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Bomb target")
+    sheet_id = workbook["sheets"][0]["id"]
+
+    # Start from a real workbook, then swap its worksheet for an oversized
+    # one: the archive stays a valid XLSX shape, only the declared expansion
+    # is implausible.
+    good = io_module.BytesIO()
+    openpyxl.Workbook().save(good)
+    source = zipfile.ZipFile(io_module.BytesIO(good.getvalue()))
+    namespace = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    oversized = (
+        '<?xml version="1.0"?><worksheet '
+        + namespace
+        + '><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>'
+        + ("x" * (80 * 1024 * 1024))
+        + "</t></is></c></row></sheetData></worksheet>"
+    )
+    bomb = io_module.BytesIO()
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for item in source.infolist():
+            if item.filename == "xl/worksheets/sheet1.xml":
+                archive.writestr(item.filename, oversized)
+            else:
+                archive.writestr(item, source.read(item.filename))
+    content = base64_module.b64encode(bomb.getvalue()).decode("ascii")
+    # The upload is well under the 20 MiB request bound, so only the
+    # declared-expansion check can stop it.
+    assert len(bomb.getvalue()) < 20 * 1024 * 1024
+
+    with pytest.raises(SumValidationError, match="too large"):
+        manager.import_xlsx(
+            owner.id,
+            int(workbook["id"]),
+            int(sheet_id),
+            content,
+            int(workbook["current_revision"]),
+        )
+
+
 # ── PlexiSum home surface: pinned workbooks, templates, indexing status ──────
 
 

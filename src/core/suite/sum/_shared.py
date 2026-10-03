@@ -17,6 +17,15 @@ from typing import Any, Dict, Optional, Tuple
 MAX_SNAPSHOT_CELLS = 200_000
 MAX_CSV_ROWS = 10_000
 MAX_CSV_COLUMNS = 100
+
+# An XLSX upload is a ZIP archive, so the request-size bound says nothing
+# about what ``openpyxl`` has to parse: a few hundred kilobytes of deflate
+# stream can declare gigabytes of worksheet XML (a zip bomb) and burn minutes
+# of CPU before the row/column caps ever apply. The central directory
+# the archive itself declares is used to reject an implausible expansion up
+# front.
+MAX_XLSX_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
+MAX_XLSX_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_INDEXES_PER_SHEET = 8
 INDEX_PROMOTION_THRESHOLD = 50
 

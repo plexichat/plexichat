@@ -9,6 +9,8 @@ from .manager_protocol import SumManagerProtocol
 from ._shared import (
     MAX_CSV_COLUMNS,
     MAX_CSV_ROWS,
+    MAX_XLSX_MEMBER_BYTES,
+    MAX_XLSX_UNCOMPRESSED_BYTES,
     SumNotFoundError,
     SumStorageError,
     SumValidationError,
@@ -128,6 +130,7 @@ class SumManagerExchange(SumManagerProtocol):
             raise SumValidationError("XLSX content is not valid base64")
         if len(raw) > 20 * 1024 * 1024:
             raise SumValidationError("XLSX file is too large")
+        self._reject_zip_bomb(raw)
         try:
             import openpyxl
 
@@ -141,6 +144,8 @@ class SumManagerExchange(SumManagerProtocol):
             raise SumValidationError(
                 "XLSX support requires openpyxl; it is not installed"
             )
+        except SumValidationError:
+            raise
         except Exception:
             raise SumValidationError("File is not a valid XLSX workbook")
         cells: List[Dict[str, Any]] = []
@@ -235,6 +240,32 @@ class SumManagerExchange(SumManagerProtocol):
             "rows": row_count,
             "cells": len(cells),
         }
+
+    @staticmethod
+    def _reject_zip_bomb(raw: bytes) -> None:
+        """Reject an XLSX whose declared expansion is implausibly large.
+
+        ``openpyxl`` inflates the archive member by member; a small upload can
+        therefore declare a multi-gigabyte worksheet and stall the worker
+        before the row/column caps apply. The ZIP central directory carries
+        each member's uncompressed size, so the whole expansion is checked
+        from the archive metadata without decompressing anything.
+        """
+        import io as io_module
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(io_module.BytesIO(raw)) as archive:
+                infos = archive.infolist()
+        except zipfile.BadZipFile as exc:
+            raise SumValidationError("File is not a valid XLSX workbook") from exc
+        total = 0
+        for info in infos:
+            if info.file_size > MAX_XLSX_MEMBER_BYTES:
+                raise SumValidationError("XLSX archive member is too large")
+            total += info.file_size
+            if total > MAX_XLSX_UNCOMPRESSED_BYTES:
+                raise SumValidationError("XLSX archive expands to too much data")
 
     @staticmethod
     def _cells_to_csv(cells: List[Dict[str, Any]]) -> str:
