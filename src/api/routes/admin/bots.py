@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from .utils import check_host_restriction, get_admin_from_token
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import applications
 import utils.logger as logger
 
@@ -39,9 +39,9 @@ class BotStatsResponse(BaseModel):
 class AdminBotEntry(BaseModel):
     """A bot entry in the admin panel."""
 
-    id: int
+    id: SnowflakeID
     name: str
-    owner_id: int
+    owner_id: SnowflakeID
     bot_id: Optional[str] = None
     icon_url: Optional[str] = None
     approved_servers: int = 0
@@ -56,7 +56,7 @@ class AdminBotRequestEntry(BaseModel):
     application_id: str
     application_name: str
     server_id: str
-    requester_id: int
+    requester_id: SnowflakeID
     reason: Optional[str] = None
     status: str
     created_at: int

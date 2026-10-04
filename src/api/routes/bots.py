@@ -16,7 +16,7 @@ from src.api.middleware.authentication import (
     get_optional_user,
     TokenInfo,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import applications
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
@@ -42,7 +42,7 @@ router = APIRouter(prefix="/bots", tags=["Bots"])
 class ApprovedBotResponse(BaseModel):
     """Response schema for an approved bot."""
 
-    id: int
+    id: SnowflakeID
     server_id: str
     application_id: str
     approved_by: str
@@ -88,7 +88,7 @@ class BotProfileResponse(BaseModel):
 class AuthorizedAppResponse(BaseModel):
     """Response schema for a user's authorized application."""
 
-    id: int
+    id: SnowflakeID
     application_id: str
     application_name: str
     application_icon: Optional[str] = None
@@ -100,7 +100,7 @@ class AuthorizedAppResponse(BaseModel):
 class BotDirectoryEntry(BaseModel):
     """A bot entry in the directory listing."""
 
-    id: int
+    id: SnowflakeID
     name: str
     description: Optional[str] = None
     icon_url: Optional[str] = None
@@ -722,7 +722,7 @@ async def list_authorized_apps(
         apps = applications.get_user_authorized_apps(current_user.user_id)
         return [
             AuthorizedAppResponse(
-                id=app.id,
+                id=SnowflakeID(app.id),
                 application_id=str(app.application_id),
                 application_name=app.application_name,
                 application_icon=app.application_icon,

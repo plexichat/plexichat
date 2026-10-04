@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import applications
 from src.core.database import check_rate_limit
 from src.core.applications import InteractionResponse, InteractionResponseType
@@ -37,8 +37,8 @@ router = APIRouter(prefix="/applications", tags=["Applications"])
 class ApplicationResponse(BaseModel):
     """Response schema for an application."""
 
-    id: int
-    owner_id: int
+    id: SnowflakeID
+    owner_id: SnowflakeID
     name: str
     description: Optional[str] = None
     icon_emoji: Optional[str] = None
@@ -107,8 +107,8 @@ def _application_to_response(app) -> ApplicationResponse:
     if isinstance(app, dict):
         raw_bot_id = app.get("bot_id")
         return ApplicationResponse(
-            id=app.get("id", 0),
-            owner_id=app.get("owner_id", 0),
+            id=SnowflakeID(app.get("id", 0)),
+            owner_id=SnowflakeID(app.get("owner_id", 0)),
             name=app.get("name", ""),
             description=app.get("description"),
             icon_emoji=None,
@@ -121,8 +121,8 @@ def _application_to_response(app) -> ApplicationResponse:
         )
     raw_bot_id = getattr(app, "bot_id", None)
     return ApplicationResponse(
-        id=getattr(app, "id", 0),
-        owner_id=getattr(app, "owner_id", 0),
+        id=SnowflakeID(getattr(app, "id", 0)),
+        owner_id=SnowflakeID(getattr(app, "owner_id", 0)),
         name=getattr(app, "name", ""),
         description=getattr(app, "description", None),
         icon_emoji=None,
