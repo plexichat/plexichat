@@ -6,6 +6,11 @@ override), per-user aggregation (device trust, session policy kinds), totals,
 and that the admin router exposes the endpoint behind the right scope.
 """
 
+from unittest.mock import patch
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from src.api.routes.admin.device_overview import (
     _sessions_policy,
     get_device_trust_overview,
@@ -170,6 +175,54 @@ class TestAdminRouteRegistered:
 
         source = inspect.getsource(get_device_trust_admin_overview)
         assert 'require_admin_permission(request, "admin.security.devices")' in source
+
+    def test_route_serves_string_snowflake_ids_end_to_end(self, db, auth_manager):
+        """GET /admin/device-trust/overview must emit ids as strings.
+
+        Runs the real route and the real aggregation helper against a seeded
+        user/device/session, pinning the contract at the HTTP boundary (the
+        schema previously coerced the helper's strings back to numbers).
+        """
+        from src.api.routes.admin import device_trust as device_trust_routes
+        from src.api.routes.admin import router as admin_router
+
+        user = _register_and_login(auth_manager, "ov_route", "ov_route_fp")
+        mgr = _mgr(auth_manager)
+        mgr._config["sessions"] = {
+            "expire_hours": 24,
+            "trusted_expire_hours": 720,
+        }
+        assert auth_manager.trust_device(user.id, "ov_route_fp") is True
+
+        app = FastAPI()
+        # The overview is registered directly on the admin router (not via a
+        # prefixed sub-router), so include the full router.
+        app.include_router(admin_router, prefix="/api/v1/admin")
+        client = TestClient(app)
+        patches = (
+            patch.object(device_trust_routes, "check_host_restriction"),
+            patch.object(
+                device_trust_routes, "require_admin_permission", return_value=1
+            ),
+        )
+        for p in patches:
+            p.start()
+        try:
+            response = client.get("/api/v1/admin/device-trust/overview")
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        entry = next(u for u in body["users"] if u["user_id"] == str(user.id))
+        assert isinstance(entry["user_id"], str)
+        assert entry["devices"], "expected the seeded device"
+        assert isinstance(entry["devices"][0]["id"], str)
+        assert entry["sessions"], "expected the seeded session"
+        assert isinstance(entry["sessions"][0]["id"], str)
+        # Timestamps/counts stay numeric.
+        assert isinstance(body["totals"]["users"], int)
 
     def test_schema_importable_from_admin_package(self):
         from src.api.schemas.admin import DeviceTrustOverviewResponse
