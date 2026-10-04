@@ -43,6 +43,7 @@ def _wire_module_graph(
         avatars,
         admin,
         telemetry,
+        applications,
     )
     from src.core.ratelimit.storage import MemoryStorage
 
@@ -114,6 +115,14 @@ def _wire_module_graph(
     avatars.setup(db)
     telemetry.setup(db)
     admin.setup(db, auth_module=auth_manager, features_module=features)
+    # Applications backs the bot/OAuth routes (they read the module-level
+    # singleton). bootstrap/app.py wires it the same way after events.
+    applications.setup(
+        db,
+        auth_module=auth_manager,
+        servers_module=server_manager,
+        events_module=events._manager,
+    )
 
 
 def _reset_wired_module_globals():
@@ -138,6 +147,7 @@ def _reset_wired_module_globals():
         settings,
         events,
         ratelimit,
+        applications,
     )
 
     polls._manager = None
@@ -153,6 +163,8 @@ def _reset_wired_module_globals():
     admin._auth_mod = None
     admin._features = None
     admin._setup_complete = False
+    applications._manager = None
+    applications._setup_complete = False
     telemetry._db = None
     telemetry._setup_complete = False
     # Remaining modules wired by ``_wire_module_graph`` that were previously

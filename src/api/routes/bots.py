@@ -61,9 +61,15 @@ class ApprovedBotResponse(BaseModel):
 
 
 class BotRequestResponse(BaseModel):
-    """Response schema for a bot request."""
+    """Response schema for a bot request.
 
-    id: int
+    ``id`` is a snowflake like every other identifier here, so it must be
+    serialized as a decimal string (a JSON number rounds past 2**53 on the
+    client). It was typed ``int``, which leaked the raw id as a number while
+    the sibling ``*_id`` fields were already strings.
+    """
+
+    id: SnowflakeID
     server_id: str
     application_id: str
     requester_id: str
@@ -99,7 +105,10 @@ class AuthorizedAppResponse(BaseModel):
     application_icon: Optional[str] = None
     scopes: List[str] = []
     authorized_at: int
-    last_used_at: int
+    # A freshly authorized app has never been used, so ``last_used_at`` is
+    # null until its first verified request. It was required, which made the
+    # list endpoint 500 for every never-used grant.
+    last_used_at: Optional[int] = None
 
 
 class BotDirectoryEntry(BaseModel):
