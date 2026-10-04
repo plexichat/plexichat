@@ -249,7 +249,9 @@ async def admin_get_feature_settings(
         raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
     manager = _get_manager()
     settings = manager.get_feature_settings(server_id, feature)
-    return {"server_id": server_id, "feature": feature, "settings": settings}
+    # Snowflake as a decimal string (project convention), even though it echoed
+    # an int-typed path parameter.
+    return {"server_id": str(server_id), "feature": feature, "settings": settings}
 
 
 @router.post(
@@ -287,4 +289,4 @@ async def admin_set_feature_settings(
 
     manager = _get_manager()
     result = manager.set_feature_settings_bulk(server_id, feature, settings)
-    return {"server_id": server_id, "feature": feature, "settings": result}
+    return {"server_id": str(server_id), "feature": feature, "settings": result}

@@ -260,7 +260,9 @@ async def reindex_conversation(
         return {
             "success": True,
             "indexed": indexed,
-            "conversation_id": conversation_id,
+            # Snowflake as a decimal string: a JS Number cannot hold a 64-bit
+            # conversation id exactly, so echoing it numerically is unsafe.
+            "conversation_id": str(conversation_id),
             "incremental": not force,
         }
     except Exception as e:
