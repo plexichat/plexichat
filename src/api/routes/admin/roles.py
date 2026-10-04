@@ -11,6 +11,38 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 
 
+def _serialize_role_row(row) -> dict:
+    """Serialize an ``admin_roles`` row, stringifying its snowflake ids.
+
+    Role ids and the creating admin's id are snowflakes (see
+    ``generate_snowflake_id``); a JS Number cannot hold a 64-bit id exactly,
+    so emitting them as numbers would round them in the admin UI.
+    """
+    if isinstance(row, dict):
+        created_by = row.get("created_by")
+        return {
+            "id": str(row["id"]),
+            "name": row["name"],
+            "description": row["description"],
+            "permissions": row["permissions"],
+            "created_at": row["created_at"],
+            "created_by": str(created_by) if created_by is not None else None,
+            "updated_at": row.get("updated_at"),
+            "is_system": bool(row["is_system"]),
+        }
+    created_by = row[5] if len(row) > 5 else None
+    return {
+        "id": str(row[0]),
+        "name": row[1],
+        "description": row[2],
+        "permissions": row[3],
+        "created_at": row[4],
+        "created_by": str(created_by) if created_by is not None else None,
+        "updated_at": row[6] if len(row) > 6 else None,
+        "is_system": bool(row[7]) if len(row) > 7 else False,
+    }
+
+
 class RoleCreate(BaseModel):
     """Request to create a new admin role."""
 
@@ -64,36 +96,7 @@ async def list_roles(request: Request):
         ORDER BY is_system DESC, name ASC
     """)
 
-    roles = []
-    for row in rows:
-        if isinstance(row, dict):
-            roles.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "description": row["description"],
-                    "permissions": row["permissions"],
-                    "created_at": row["created_at"],
-                    "created_by": row["created_by"],
-                    "updated_at": row.get("updated_at"),
-                    "is_system": bool(row["is_system"]),
-                }
-            )
-        else:
-            roles.append(
-                {
-                    "id": row[0],
-                    "name": row[1],
-                    "description": row[2],
-                    "permissions": row[3],
-                    "created_at": row[4],
-                    "created_by": row[5],
-                    "updated_at": row[6] if len(row) > 6 else None,
-                    "is_system": bool(row[7]) if len(row) > 7 else False,
-                }
-            )
-
-    return {"roles": roles}
+    return {"roles": [_serialize_role_row(row) for row in rows]}
 
 
 @router.get(
@@ -136,28 +139,7 @@ async def get_role(request: Request, role_id: int):
             detail={"error": {"code": 404, "message": "Role not found"}},
         )
 
-    if isinstance(row, dict):
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "description": row["description"],
-            "permissions": row["permissions"],
-            "created_at": row["created_at"],
-            "created_by": row["created_by"],
-            "updated_at": row.get("updated_at"),
-            "is_system": bool(row["is_system"]),
-        }
-    else:
-        return {
-            "id": row[0],
-            "name": row[1],
-            "description": row[2],
-            "permissions": row[3],
-            "created_at": row[4],
-            "created_by": row[5],
-            "updated_at": row[6] if len(row) > 6 else None,
-            "is_system": bool(row[7]) if len(row) > 7 else False,
-        }
+    return _serialize_role_row(row)
 
 
 @router.post(
@@ -742,28 +724,34 @@ async def get_admin_roles(request: Request, admin_id: int):
     roles = []
     for row in rows:
         if isinstance(row, dict):
+            assigned_by = row.get("assigned_by")
             roles.append(
                 {
-                    "id": row["id"],
+                    "id": str(row["id"]),
                     "name": row["name"],
                     "description": row["description"],
                     "permissions": row["permissions"],
                     "is_system": bool(row["is_system"]),
                     "assigned_at": row["assigned_at"],
-                    "assigned_by": row["assigned_by"],
+                    "assigned_by": (
+                        str(assigned_by) if assigned_by is not None else None
+                    ),
                 }
             )
         else:
+            assigned_by = row[6] if len(row) > 6 else None
             roles.append(
                 {
-                    "id": row[0],
+                    "id": str(row[0]),
                     "name": row[1],
                     "description": row[2],
                     "permissions": row[3],
                     "is_system": bool(row[4]),
                     "assigned_at": row[5],
-                    "assigned_by": row[6],
+                    "assigned_by": (
+                        str(assigned_by) if assigned_by is not None else None
+                    ),
                 }
             )
 
-    return {"admin_id": admin_id, "roles": roles}
+    return {"admin_id": str(admin_id), "roles": roles}

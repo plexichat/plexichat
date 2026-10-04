@@ -35,7 +35,9 @@ class SessionDurationPolicy(BaseModel):
 class TrustedDeviceEntry(BaseModel):
     """A known device with its trust state (no raw fingerprint is exposed)."""
 
-    id: int
+    # Snowflake ids are strings: a JS Number cannot hold a 64-bit id exactly,
+    # so a numeric field would round it and subsequent lookups would miss.
+    id: str
     name: Optional[str] = None
     device_type: Optional[str] = None
     trusted: bool
@@ -47,8 +49,8 @@ class TrustedDeviceEntry(BaseModel):
 class TrustedSessionEntry(BaseModel):
     """A live session with its effective duration and which policy applies."""
 
-    id: int
-    device_id: Optional[int] = None
+    id: str
+    device_id: Optional[str] = None
     device_trusted: bool
     duration_hours: int
     policy_kind: str = Field(..., description="'trusted' or 'default'")
@@ -61,7 +63,7 @@ class TrustedSessionEntry(BaseModel):
 class DeviceTrustUserEntry(BaseModel):
     """Per-user device trust + session overview."""
 
-    user_id: int
+    user_id: str
     devices: List[TrustedDeviceEntry] = []
     trusted_device_count: int
     sessions: List[TrustedSessionEntry] = []

@@ -86,7 +86,19 @@ async def get_blocked_ips(request: Request):
     require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
-    return [BlockedIPResponse(**ip) for ip in auth.get_blocked_ips()]
+    # blocked_by is the blocking admin's snowflake id; stringify it so the
+    # response keeps the project-wide "ids are strings in JSON" contract.
+    return [
+        BlockedIPResponse(
+            **{
+                **ip,
+                "blocked_by": (
+                    str(ip["blocked_by"]) if ip.get("blocked_by") is not None else None
+                ),
+            }
+        )
+        for ip in auth.get_blocked_ips()
+    ]
 
 
 @router.post(
