@@ -252,3 +252,52 @@ def test_list_date_from_zero_is_applied():
     finally:
         for c in reversed(ctx):
             c.stop()
+
+
+def test_list_stringifies_target_id_snowflake():
+    """A user/server ``target_id`` must cross the wire as a decimal string.
+
+    ``admin_audit_log.target_id`` holds the target entity's snowflake when the
+    target is a user/server/channel. Served as a JSON number a JS client rounds
+    it above 2^53, so the admin list must stringify it (like the self
+    audit-log endpoint) while leaving the admin-rowid fields numeric.
+    """
+    from src.api.routes.admin import audit as audit_routes
+
+    big = 9007199254740993  # past 2^53: a JSON number would lose precision
+    row = {
+        "id": 1,
+        "admin_id": 2,
+        "action": "user.ban",
+        "target_type": "user",
+        "target_id": big,
+        "details": "",
+        "ip_address": "1.2.3.4",
+        "user_agent": "ua",
+        "status": "success",
+        "created_at": 1700000000000,
+    }
+    fake_db = _ListDB([row])
+
+    app = FastAPI()
+    app.include_router(audit_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    ctx = (
+        patch.object(audit_routes, "check_host_restriction"),
+        patch.object(audit_routes, "require_admin_permission"),
+        patch("src.api.get_db", return_value=fake_db),
+    )
+    for c in ctx:
+        c.start()
+    try:
+        response = client.get("/api/v1/admin/audit/logs")
+        assert response.status_code == 200
+        entry = response.json()["logs"][0]
+        assert entry["target_id"] == str(big)
+        assert isinstance(entry["target_id"], str)
+        # Admin-rowid fields stay numeric.
+        assert entry["id"] == 1
+        assert entry["admin_id"] == 2
+    finally:
+        for c in reversed(ctx):
+            c.stop()

@@ -120,7 +120,14 @@ async def get_audit_logs(
                     "admin_id": log["admin_id"],
                     "action": log["action"],
                     "target_type": log["target_type"],
-                    "target_id": log.get("target_id"),
+                    # target_id is a user/server/channel snowflake whenever the
+                    # target is one of those; emit it as a decimal string so a
+                    # JS Number cannot round it above 2^53. It can be absent for
+                    # non-entity actions, so keep None as None rather than
+                    # stringifying it to "None".
+                    "target_id": str(log["target_id"])
+                    if log.get("target_id") is not None
+                    else None,
                     "details": log.get("details"),
                     "ip_address": log.get("ip_address"),
                     "user_agent": log.get("user_agent"),
