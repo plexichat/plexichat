@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import utils.logger as logger
 import src.api as api
+from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from .common import (
@@ -179,7 +180,7 @@ async def send_voice_message(
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
 
-        return {"success": True, "voice_message": result}
+        return {"success": True, "voice_message": stringify_snowflake_ids(result)}
     except ValueError:
         raise_bad_request("Invalid voice message data")
     except PermissionError:
@@ -318,7 +319,7 @@ async def upload_voice_message(
                     setattr(result, "message_id", msg.id)
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
-        return {"success": True, "voice_message": result}
+        return {"success": True, "voice_message": stringify_snowflake_ids(result)}
     except ValueError:
         raise_bad_request("Invalid voice message data")
     except PermissionError:
