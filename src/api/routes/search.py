@@ -70,9 +70,20 @@ async def search_messages(
             cursor=cursor,
         )
 
-        return MessageSearchPageResponse(
-            results=page.results, next_cursor=page.next_cursor
-        )
+        # Search hits are core ``MessageSearchResult`` records, which carry
+        # ``conversation_id`` (and a null ``channel_id`` for DMs). Coerce them
+        # through the shared message serializer so ``channel_id`` falls back
+        # to the conversation id; coercing the raw record directly left
+        # ``channel_id`` null and raised a validation error, turning every DM
+        # search into a 400.
+        from src.api.routes.messages.helpers import _message_to_response
+
+        results = [
+            _message_to_response(result, viewer_user_id=current_user.user_id)
+            for result in page.results
+        ]
+
+        return MessageSearchPageResponse(results=results, next_cursor=page.next_cursor)
     except ValueError:
         raise HTTPException(
             status_code=400,
