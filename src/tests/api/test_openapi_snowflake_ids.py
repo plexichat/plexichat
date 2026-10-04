@@ -38,6 +38,73 @@ _ALLOWED_NUMERIC_ID_REQUEST_FIELDS: dict[tuple[str, str], str] = {}
 # (method, path, param name).
 _ALLOWED_NUMERIC_ID_PARAMS: dict[tuple[str, str, str], str] = {}
 
+# 2xx JSON responses that declare no properties at all (``Dict[str, Any]`` or
+# a bare ``{"type": "object"}``), so the schema walk above cannot see the
+# ids they carry. Each entry must be justified as carrying no un-stringified
+# snowflake id (rowid-only, boolean/scalar maps, or ids already serialized
+# with ``str(...)`` / ``SnowflakeID``). A *new* free-form response fails the
+# gate until it is either given a response model or allowlisted here — this is
+# what stops a future route from hiding a numeric snowflake behind an opaque
+# dict. Keyed by (method, path) with the justification.
+_ALLOWED_FREEFORM_RESPONSES: dict[tuple[str, str], str] = {
+    ("get", "/api/v1/ready"): "readiness probe: booleans/status only",
+    ("get", "/api/v1/capabilities/artifacts"): "capability map: no ids",
+    (
+        "get",
+        "/api/v1/servers/{server_id}/permissions",
+    ): "boolean permission map",
+    ("delete", "/api/v1/channels/{channel_id}"): "success boolean only",
+    ("delete", "/api/v1/channels/invites/{invite_code}"): "success boolean only",
+    (
+        "get",
+        "/api/v1/channels/{channel_id}/ratchet",
+    ): "channel_id/interval ids already stringified by _stringify_ids",
+    (
+        "get",
+        "/api/v1/channels/{channel_id}/ratchet/intervals",
+    ): "channel_id/interval ids already stringified by _stringify_ids",
+    (
+        "post",
+        "/api/v1/applications/{application_id}/regenerate-secret",
+    ): "new client secret only (no ids)",
+    ("get", "/api/v1/admin/migrations/status"): "migration metadata: no ids",
+    (
+        "post",
+        "/api/v1/admin/migrations/{version}/rollback",
+    ): "migration status booleans: no ids",
+    ("get", "/api/v1/admin/audit/logs/export"): "export rows stringify admin_id",
+    ("get", "/api/v1/admin/capabilities"): "capability map: no ids",
+    (
+        "get",
+        "/api/v1/admin/artifacts",
+    ): "items are ArtifactResponse (SnowflakeID)",
+    ("delete", "/api/v1/admin/artifacts/{artifact_id}"): "success + str(id)",
+    (
+        "get",
+        "/api/v1/admin/artifacts/features/{feature}",
+    ): "server_id emitted as str; settings only",
+    (
+        "post",
+        "/api/v1/admin/artifacts/features/{feature}",
+    ): "server_id emitted as str; settings only",
+    (
+        "get",
+        "/api/v1/artifacts/{artifact_id}/ops",
+    ): "artifact_id emitted as str; ops carry no snowflakes",
+    ("get", "/api/v1/public/license/challenge"): "license challenge: no ids",
+    ("get", "/api/v1/public/license/export"): "license document: no snowflakes",
+    ("get", "/api/v1/public/license/info"): "license info: no snowflakes",
+    ("get", "/api/v1/suite/apps"): "manifest catalog: no device/user ids",
+    ("get", "/api/v1/suite/home/recent"): "item ids stringified in projections",
+    ("get", "/api/v1/suite/home/pinned"): "item ids stringified in projections",
+    ("get", "/api/v1/suite/home/shared"): "item ids stringified in projections",
+    ("get", "/api/v1/suite/home/activity"): "row ids emitted as str(...)",
+    ("get", "/api/v1/suite/search"): "item ids stringified in projections",
+    ("get", "/public/license/challenge"): "license challenge: no ids",
+    ("get", "/public/license/export"): "license document: no snowflakes",
+    ("get", "/public/license/info"): "license info: no snowflakes",
+}
+
 
 def _refs_in(node) -> set[str]:
     """Return every component-schema name referenced anywhere under ``node``."""
@@ -120,6 +187,111 @@ def _numeric_schema_id_fields(schema: dict, schema_names: set[str], allow) -> li
             if _is_numeric_only(types):
                 offenders.append(f"{model_name}.{prop_name} -> {sorted(types)}")
     return offenders
+
+
+def _json_2xx_schemas(schema: dict):
+    """Yield ``(method, path, schema_node)`` for every 2xx JSON response."""
+    for method, path, operation in _operations(schema):
+        for status, resp in (operation.get("responses", {}) or {}).items():
+            if not str(status).startswith("2"):
+                continue
+            js = (resp or {}).get("content", {}).get("application/json")
+            if js is None:
+                continue
+            node = js.get("schema")
+            if node is not None:
+                yield method, path, node
+
+
+def _is_opaque_freeform(node) -> bool:
+    """True when a response node is a property-less object with unconstrained
+    values (``Dict[str, Any]`` renders as ``additionalProperties: true``; a
+    bare ``{"type": "object"}`` leaves it unspecified) — the shape that can
+    smuggle a numeric id past the named-schema walk.
+
+    A *typed* map (``additionalProperties: {"type": "boolean"}``) is not
+    opaque: it cannot carry ids, and a typed value schema is walked by
+    ``_inline_id_offenders`` below.
+    """
+    if not isinstance(node, dict) or node.get("type") != "object":
+        return False
+    if node.get("properties") or node.get("$ref"):
+        return False
+    additional = node.get("additionalProperties")
+    return additional is True or additional is None
+
+
+def _inline_id_offenders(node, allow, path: str = "") -> list[str]:
+    """Recursively flag numeric id fields in an *inline* response node.
+
+    ``test_declared_response_id_fields_are_strings`` only inspects named
+    component schemas reachable via ``$ref``; an inline ``properties`` block
+    or a typed ``additionalProperties`` value schema never reaches it. This
+    walk closes that gap, stopping at ``$ref`` because the named-schema test
+    owns those.
+    """
+    if not isinstance(node, dict):
+        return []
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+        return []
+    offenders: list[str] = []
+    for prop_name, prop in (node.get("properties") or {}).items():
+        where = f"{path}.{prop_name}" if path else prop_name
+        types = _described_types(prop)
+        if (where, prop_name) in allow or (prop_name,) in allow:
+            pass
+        elif is_id_field(prop_name) and _is_numeric_only(types):
+            offenders.append(f"{where} -> {sorted(types)}")
+        offenders += _inline_id_offenders(prop, allow, where)
+    items = node.get("items")
+    if isinstance(items, dict):
+        offenders += _inline_id_offenders(items, allow, f"{path}[]")
+    additional = node.get("additionalProperties")
+    if isinstance(additional, dict):
+        offenders += _inline_id_offenders(additional, allow, f"{path}.*")
+    for key in ("anyOf", "oneOf", "allOf"):
+        for branch in node.get(key, []) or []:
+            offenders += _inline_id_offenders(branch, allow, path)
+    return offenders
+
+
+def test_inline_response_id_fields_are_strings(test_client):
+    """Numeric id fields must also be caught outside named schemas."""
+    schema = test_client.app.openapi()
+    offenders: list[str] = []
+    for method, path, node in _json_2xx_schemas(schema):
+        offenders += _inline_id_offenders(
+            node, _ALLOWED_NUMERIC_ID_FIELDS, f"{method.upper()} {path}"
+        )
+    assert not offenders, (
+        "Inline/returned id fields must serialize as strings; found numeric "
+        "ones:\n" + "\n".join(offenders)
+    )
+
+
+def test_freeform_response_operations_are_allowlisted(test_client):
+    """Opaque ``Dict[str, Any]`` responses must be explicitly allowlisted.
+
+    A property-less response schema gives the id walk nothing to inspect, so
+    each one has to be justified as id-free (see the
+    ``_ALLOWED_FREEFORM_RESPONSES`` table). Without this, a new route
+    returning a bare dict could serve
+    a numeric snowflake and every other check here would stay green.
+    """
+    schema = test_client.app.openapi()
+    offenders: list[str] = []
+    for method, path, node in _json_2xx_schemas(schema):
+        if not _is_opaque_freeform(node):
+            continue
+        if (method, path) in _ALLOWED_FREEFORM_RESPONSES:
+            continue
+        offenders.append(f"{method.upper()} {path} -> {node}")
+    assert not offenders, (
+        "Free-form (property-less) JSON responses bypass the snowflake-id "
+        "schema walk; give them a response model or allowlist them with a "
+        "justification:\n" + "\n".join(offenders)
+    )
 
 
 def test_declared_response_id_fields_are_strings(test_client):
