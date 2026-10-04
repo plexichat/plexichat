@@ -38,6 +38,7 @@ _ALLOWED_NUMERIC_ID_REQUEST_FIELDS: dict[tuple[str, str], str] = {}
 # (method, path, param name).
 _ALLOWED_NUMERIC_ID_PARAMS: dict[tuple[str, str, str], str] = {}
 
+
 # 2xx JSON responses that declare no properties at all (``Dict[str, Any]`` or
 # a bare ``{"type": "object"}``), so the schema walk above cannot see the
 # ids they carry. Each entry must be justified as carrying no un-stringified
@@ -327,6 +328,14 @@ def test_declared_request_body_id_fields_are_strings(test_client):
 
 
 def test_declared_param_id_fields_are_strings(test_client):
+    """Every id path/query param must be able to carry the id as a string.
+
+    A URL segment or query value is always a string, so the param's OpenAPI
+    type must include ``string`` — otherwise the wire format would tell a
+    browser client to coerce a 64-bit id through a JS ``number``. Both
+    ``SnowflakeIDParam`` (``integer|string``) and a plain ``str`` id param
+    satisfy this; a numeric-only or untyped param does not.
+    """
     schema = test_client.app.openapi()
     offenders: list[str] = []
 
@@ -338,11 +347,11 @@ def test_declared_param_id_fields_are_strings(test_client):
             if (method, path, name) in _ALLOWED_NUMERIC_ID_PARAMS:
                 continue
             types = _described_types(param.get("schema", {}))
-            if _is_numeric_only(types):
+            if "string" not in types:
                 offenders.append(f"{method.upper()} {path} {name} -> {sorted(types)}")
 
     assert not offenders, (
-        "Snowflake id path/query params must accept a string (so a browser "
-        "client need not coerce the id through Number); found numeric ones:\n"
+        "Snowflake id path/query params must advertise a string type (so a "
+        "browser client need not coerce the id through Number); found:\n"
         + "\n".join(offenders)
     )
