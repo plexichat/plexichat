@@ -14,6 +14,12 @@ Three surfaces are checked:
 * **path/query params** — likewise, an ``integer`` param invites a client to
   ``Number()`` the id before interpolating it into the URL.
 
+For responses and request bodies the walk also covers two shapes the named
+component-schema check cannot see: **inline** objects (a literal
+``properties`` block) and **opaque** objects (a property-less
+``Dict[str, Any]``), the latter via an explicit allowlist so a new one must be
+justified.
+
 Ids that back an INTEGER PRIMARY KEY rowid rather than a 64-bit snowflake are
 allowlisted below.
 """
@@ -34,6 +40,12 @@ _ALLOWED_NUMERIC_ID_FIELDS: dict[tuple[str, str], str] = {
 # legitimately carry a small numeric rowid.
 _ALLOWED_NUMERIC_ID_REQUEST_FIELDS: dict[tuple[str, str], str] = {}
 
+# Numeric id fields declared *inline* in a request body (never reached by the
+# named-schema walk above). Keyed by ("METHOD /path", field) with the
+# justification. Mirrors ``_ALLOWED_NUMERIC_ID_REQUEST_FIELDS`` for the
+# inline surface.
+_ALLOWED_NUMERIC_ID_INLINE_REQUEST_FIELDS: dict[tuple[str, str], str] = {}
+
 # Path/query params that are rowids rather than snowflakes. Keyed by
 # (method, path, param name).
 _ALLOWED_NUMERIC_ID_PARAMS: dict[tuple[str, str, str], str] = {}
@@ -47,6 +59,22 @@ _ALLOWED_NUMERIC_ID_PARAMS: dict[tuple[str, str, str], str] = {}
 # gate until it is either given a response model or allowlisted here — this is
 # what stops a future route from hiding a numeric snowflake behind an opaque
 # dict. Keyed by (method, path) with the justification.
+# Request bodies that declare no properties at all (``Dict[str, Any]`` / a
+# bare ``{"type": "object"}``). Like the response counterpart, a new opaque
+# request body fails the gate until it declares a model or is allowlisted
+# with a justification — otherwise it could accept a numeric snowflake the
+# schema walk can never see. Keyed by (method, path).
+_ALLOWED_FREEFORM_REQUEST_BODIES: dict[tuple[str, str], str] = {
+    (
+        "put",
+        "/api/v1/users/@me/settings/bulk",
+    ): "settings key/value bag scoped to the session user; no request ids",
+    (
+        "post",
+        "/api/v1/admin/artifacts/features/{feature}",
+    ): "feature settings map; server_id accepted as int|str (int()-coerced)",
+}
+
 _ALLOWED_FREEFORM_RESPONSES: dict[tuple[str, str], str] = {
     ("get", "/api/v1/ready"): "readiness probe: booleans/status only",
     ("get", "/api/v1/capabilities/artifacts"): "capability map: no ids",
@@ -190,6 +218,20 @@ def _numeric_schema_id_fields(schema: dict, schema_names: set[str], allow) -> li
     return offenders
 
 
+def _json_request_body_schemas(schema: dict):
+    """Yield ``(method, path, schema_node)`` for every JSON request body."""
+    for method, path, operation in _operations(schema):
+        request_body = operation.get("requestBody")
+        if not request_body:
+            continue
+        js = (request_body.get("content", {}) or {}).get("application/json")
+        if js is None:
+            continue
+        node = js.get("schema")
+        if node is not None:
+            yield method, path, node
+
+
 def _json_2xx_schemas(schema: dict):
     """Yield ``(method, path, schema_node)`` for every 2xx JSON response."""
     for method, path, operation in _operations(schema):
@@ -222,17 +264,25 @@ def _is_opaque_freeform(node) -> bool:
     return additional is True or additional is None
 
 
-def _inline_id_offenders(node, allow, path: str = "") -> list[str]:
-    """Recursively flag numeric id fields in an *inline* response node.
+def _inline_id_offenders(
+    node, allow, path: str = "", root: str | None = None
+) -> list[str]:
+    """Recursively flag numeric id fields in an *inline* schema node.
 
-    ``test_declared_response_id_fields_are_strings`` only inspects named
-    component schemas reachable via ``$ref``; an inline ``properties`` block
-    or a typed ``additionalProperties`` value schema never reaches it. This
-    walk closes that gap, stopping at ``$ref`` because the named-schema test
-    owns those.
+    ``test_declared_*_id_fields_are_strings`` only inspect named component
+    schemas reachable via ``$ref``; an inline ``properties`` block or a typed
+    ``additionalProperties`` value schema never reaches them. This walk closes
+    that gap, stopping at ``$ref`` because the named-schema tests own those.
+
+    ``allow`` is keyed by ``(root, field)`` where ``root`` identifies the
+    operation (``"GET /path"``) — the ``path`` argument is the human-readable
+    location used in the failure message, and ``root`` stays constant through
+    recursion so an entry allowlists the field wherever it appears in the tree.
     """
     if not isinstance(node, dict):
         return []
+    if root is None:
+        root = path
     ref = node.get("$ref")
     if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
         return []
@@ -240,20 +290,20 @@ def _inline_id_offenders(node, allow, path: str = "") -> list[str]:
     for prop_name, prop in (node.get("properties") or {}).items():
         where = f"{path}.{prop_name}" if path else prop_name
         types = _described_types(prop)
-        if (where, prop_name) in allow or (prop_name,) in allow:
+        if (root, prop_name) in allow or (where, prop_name) in allow:
             pass
         elif is_id_field(prop_name) and _is_numeric_only(types):
             offenders.append(f"{where} -> {sorted(types)}")
-        offenders += _inline_id_offenders(prop, allow, where)
+        offenders += _inline_id_offenders(prop, allow, where, root)
     items = node.get("items")
     if isinstance(items, dict):
-        offenders += _inline_id_offenders(items, allow, f"{path}[]")
+        offenders += _inline_id_offenders(items, allow, f"{path}[]", root)
     additional = node.get("additionalProperties")
     if isinstance(additional, dict):
-        offenders += _inline_id_offenders(additional, allow, f"{path}.*")
+        offenders += _inline_id_offenders(additional, allow, f"{path}.*", root)
     for key in ("anyOf", "oneOf", "allOf"):
         for branch in node.get(key, []) or []:
-            offenders += _inline_id_offenders(branch, allow, path)
+            offenders += _inline_id_offenders(branch, allow, path, root)
     return offenders
 
 
@@ -292,6 +342,53 @@ def test_freeform_response_operations_are_allowlisted(test_client):
         "Free-form (property-less) JSON responses bypass the snowflake-id "
         "schema walk; give them a response model or allowlist them with a "
         "justification:\n" + "\n".join(offenders)
+    )
+
+
+def test_freeform_request_body_operations_are_allowlisted(test_client):
+    """Opaque ``Dict[str, Any]`` request bodies must be explicitly allowlisted.
+
+    A property-less request-body schema gives the id walk nothing to inspect,
+    so each one has to be justified as id-free (see the
+    ``_ALLOWED_FREEFORM_REQUEST_BODIES`` table). Without this, a new route
+    accepting a bare dict could take a numeric snowflake (already rounded by
+    the browser before it was sent) and every other check here would stay
+    green.
+    """
+    schema = test_client.app.openapi()
+    offenders: list[str] = []
+    for method, path, node in _json_request_body_schemas(schema):
+        if not _is_opaque_freeform(node):
+            continue
+        if (method, path) in _ALLOWED_FREEFORM_REQUEST_BODIES:
+            continue
+        offenders.append(f"{method.upper()} {path} -> {node}")
+    assert not offenders, (
+        "Free-form (property-less) JSON request bodies bypass the snowflake-id "
+        "schema walk; give them a request model or allowlist them with a "
+        "justification:\n" + "\n".join(offenders)
+    )
+
+
+def test_inline_request_body_id_fields_are_strings(test_client):
+    """Numeric id fields declared inline in a request body must be strings.
+
+    ``test_declared_request_body_id_fields_are_strings`` only sees named
+    component schemas reachable via ``$ref``; an inline ``properties`` block
+    (or a typed ``additionalProperties`` value schema) never reaches it. This
+    closes the request-side gap, mirroring the response-side inline walk.
+    """
+    schema = test_client.app.openapi()
+    offenders: list[str] = []
+    for method, path, node in _json_request_body_schemas(schema):
+        key = f"{method.upper()} {path}"
+        offenders += _inline_id_offenders(
+            node, _ALLOWED_NUMERIC_ID_INLINE_REQUEST_FIELDS, key, key
+        )
+    assert not offenders, (
+        "Inline request-body id fields must accept a string so a browser "
+        "client can send the id without rounding it; found numeric ones:\n"
+        + "\n".join(offenders)
     )
 
 
