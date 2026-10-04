@@ -318,8 +318,10 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
             if isinstance(row, dict):
                 entries.append(
                     {
+                        # ``id`` is the audit row's rowid; ``admin_id`` is the
+                        # acting admin's snowflake and is emitted as a string.
                         "id": row["id"],
-                        "admin_id": row["admin_id"],
+                        "admin_id": str(row["admin_id"]),
                         "username": row.get("username") or f"admin#{row['admin_id']}",
                         "details": row.get("details"),
                         "ip_address": row.get("ip_address"),
@@ -331,7 +333,7 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
                 entries.append(
                     {
                         "id": row[0],
-                        "admin_id": row[1],
+                        "admin_id": str(row[1]),
                         "username": row[2] or f"admin#{row[1]}",
                         "details": row[3],
                         "ip_address": row[4],

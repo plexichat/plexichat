@@ -47,6 +47,42 @@ def _parse_approved_by(raw) -> List[int]:
     return ids
 
 
+def _serialize_approval_row(row) -> dict:
+    """Serialize an ``admin_approvals`` row, stringifying snowflake ids.
+
+    ``id`` (the approval's own snowflake), ``requested_by`` and ``rejected_by``
+    (admin ids) are 64-bit snowflakes; served as JSON numbers a JS Number
+    rounds them above 2^53. ``approved_by`` is stored as a JSON-encoded string
+    of admin ids, so it is already a string.
+    """
+
+    def get(key, index):
+        if isinstance(row, dict):
+            return row.get(key)
+        return row[index] if len(row) > index else None
+
+    requested_by = get("requested_by", 1)
+    target_id = get("target_id", 4)
+    rejected_by = get("rejected_by", 10)
+    return {
+        "id": str(get("id", 0)),
+        "requested_by": str(requested_by) if requested_by is not None else None,
+        "action_type": get("action_type", 2),
+        "target_type": get("target_type", 3),
+        "target_id": str(target_id) if target_id is not None else None,
+        "action_details": get("action_details", 5),
+        "status": get("status", 6),
+        "required_approvals": get("required_approvals", 7),
+        "current_approvals": get("current_approvals", 8),
+        "approved_by": get("approved_by", 9),
+        "rejected_by": str(rejected_by) if rejected_by is not None else None,
+        "rejection_reason": get("rejection_reason", 11),
+        "expires_at": get("expires_at", 12),
+        "created_at": get("created_at", 13),
+        "updated_at": get("updated_at", 14),
+    }
+
+
 class ApprovalRequest(BaseModel):
     """Request to create an approval request."""
 
@@ -116,52 +152,7 @@ async def list_approvals(
 
     rows = db.fetch_all(query, params)
 
-    approvals = []
-    for row in rows:
-        if isinstance(row, dict):
-            approvals.append(
-                {
-                    "id": row["id"],
-                    "requested_by": row["requested_by"],
-                    "action_type": row["action_type"],
-                    "target_type": row["target_type"],
-                    "target_id": str(row["target_id"])
-                    if row["target_id"] is not None
-                    else None,
-                    "action_details": row["action_details"],
-                    "status": row["status"],
-                    "required_approvals": row["required_approvals"],
-                    "current_approvals": row["current_approvals"],
-                    "approved_by": row["approved_by"],
-                    "rejected_by": row["rejected_by"],
-                    "rejection_reason": row["rejection_reason"],
-                    "expires_at": row["expires_at"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                }
-            )
-        else:
-            approvals.append(
-                {
-                    "id": row[0],
-                    "requested_by": row[1],
-                    "action_type": row[2],
-                    "target_type": row[3],
-                    "target_id": str(row[4]) if row[4] is not None else None,
-                    "action_details": row[5],
-                    "status": row[6],
-                    "required_approvals": row[7],
-                    "current_approvals": row[8],
-                    "approved_by": row[9],
-                    "rejected_by": row[10],
-                    "rejection_reason": row[11],
-                    "expires_at": row[12],
-                    "created_at": row[13],
-                    "updated_at": row[14],
-                }
-            )
-
-    return {"approvals": approvals}
+    return {"approvals": [_serialize_approval_row(row) for row in rows]}
 
 
 @router.get(
@@ -206,44 +197,7 @@ async def get_approval(request: Request, approval_id: int):
             detail={"error": {"code": 404, "message": "Approval request not found"}},
         )
 
-    if isinstance(row, dict):
-        return {
-            "id": row["id"],
-            "requested_by": row["requested_by"],
-            "action_type": row["action_type"],
-            "target_type": row["target_type"],
-            "target_id": str(row["target_id"])
-            if row["target_id"] is not None
-            else None,
-            "action_details": row["action_details"],
-            "status": row["status"],
-            "required_approvals": row["required_approvals"],
-            "current_approvals": row["current_approvals"],
-            "approved_by": row["approved_by"],
-            "rejected_by": row["rejected_by"],
-            "rejection_reason": row["rejection_reason"],
-            "expires_at": row["expires_at"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
-    else:
-        return {
-            "id": row[0],
-            "requested_by": row[1],
-            "action_type": row[2],
-            "target_type": row[3],
-            "target_id": str(row[4]) if row[4] is not None else None,
-            "action_details": row[5],
-            "status": row[6],
-            "required_approvals": row[7],
-            "current_approvals": row[8],
-            "approved_by": row[9],
-            "rejected_by": row[10],
-            "rejection_reason": row[11],
-            "expires_at": row[12],
-            "created_at": row[13],
-            "updated_at": row[14],
-        }
+    return _serialize_approval_row(row)
 
 
 @router.post(
@@ -927,12 +881,14 @@ async def get_approval_comments(request: Request, approval_id: int):
         (approval_id,),
     )
 
+    # The echoed approval id, each comment's own snowflake id, and its author
+    # admin id must all be strings for the same 2^53 reason.
     return {
-        "approval_id": approval_id,
+        "approval_id": str(approval_id),
         "comments": [
             {
-                "id": c["id"],
-                "admin_id": c["admin_id"],
+                "id": str(c["id"]),
+                "admin_id": str(c["admin_id"]) if c["admin_id"] is not None else None,
                 "comment": c["comment"],
                 "created_at": c["created_at"],
             }

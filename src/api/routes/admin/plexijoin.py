@@ -358,7 +358,10 @@ async def list_requests(
                     "status": req["status"],
                     "requested_at": req["requested_at"],
                     "reviewed_at": req.get("reviewed_at"),
-                    "reviewed_by": req.get("reviewed_by"),
+                    # reviewed_by is the reviewing admin's snowflake (or None).
+                    "reviewed_by": str(req["reviewed_by"])
+                    if req.get("reviewed_by") is not None
+                    else None,
                 }
             )
 

@@ -221,3 +221,93 @@ def test_blocked_ips_stringifies_blocked_by():
         assert blocked["blocked_at"] == 1
     finally:
         _stop(patchers)
+
+
+def test_cross_worker_tuning_audit_stringifies_admin_id():
+    """The acting admin id in the tuning audit trail is a snowflake."""
+    from src.api.routes.admin import dashboard as dashboard_routes
+
+    class _AuditDB:
+        def fetch_all(self, query, params=None):
+            return [
+                {
+                    "id": 7,
+                    "admin_id": BIG,
+                    "username": None,
+                    "details": "{}",
+                    "ip_address": "1.2.3.4",
+                    "status": "success",
+                    "created_at": 1700000000000,
+                }
+            ]
+
+    app = FastAPI()
+    app.include_router(dashboard_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    patchers = (
+        patch.object(dashboard_routes, "check_host_restriction"),
+        patch.object(dashboard_routes, "get_admin_from_token", return_value=1),
+        patch("src.api.get_db", return_value=_AuditDB()),
+    )
+    for p in patchers:
+        p.start()
+    try:
+        response = client.get("/api/v1/admin/dashboard/cross-worker-tuning/audit")
+        assert response.status_code == 200
+        entry = response.json()["entries"][0]
+        assert entry["admin_id"] == str(BIG)
+        assert isinstance(entry["admin_id"], str)
+        # Audit row id (rowid) stays numeric.
+        assert entry["id"] == 7
+    finally:
+        _stop(patchers)
+
+
+def test_plexijoin_listed_reviewed_by_is_string():
+    """``reviewed_by`` is the reviewing admin's snowflake."""
+    from src.api.routes.admin import plexijoin as plexijoin_routes
+
+    class _Manager:
+        def list_requests(self, status=None, page=1, per_page=50):
+            return {
+                "requests": [
+                    {
+                        "id": 5,
+                        "remote_instance_id": "remote-1",
+                        "remote_url": "https://remote",
+                        "requested_by": "remote-1",
+                        "note": None,
+                        "status": "approved",
+                        "requested_at": 1,
+                        "reviewed_at": 2,
+                        "reviewed_by": BIG,
+                    }
+                ],
+                "total": 1,
+                "page": 1,
+                "per_page": 50,
+                "pages": 1,
+            }
+
+    app = FastAPI()
+    app.include_router(plexijoin_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    patchers = (
+        patch.object(plexijoin_routes, "check_host_restriction"),
+        patch.object(plexijoin_routes, "get_admin_from_token", return_value=1),
+        patch.object(
+            plexijoin_routes, "_get_plexijoin_manager", lambda request: _Manager()
+        ),
+    )
+    for p in patchers:
+        p.start()
+    try:
+        response = client.get("/api/v1/admin/plexijoin/requests")
+        assert response.status_code == 200, response.text
+        req = response.json()["requests"][0]
+        assert req["reviewed_by"] == str(BIG)
+        assert isinstance(req["reviewed_by"], str)
+        # Rowid ids stay numeric.
+        assert req["id"] == 5
+    finally:
+        _stop(patchers)

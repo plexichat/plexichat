@@ -260,7 +260,8 @@ def test_list_stringifies_target_id_snowflake():
     ``admin_audit_log.target_id`` holds the target entity's snowflake when the
     target is a user/server/channel. Served as a JSON number a JS client rounds
     it above 2^53, so the admin list must stringify it (like the self
-    audit-log endpoint) while leaving the admin-rowid fields numeric.
+    audit-log endpoint). The acting ``admin_id`` is a snowflake too; only the
+    audit row's own rowid stays numeric.
     """
     from src.api.routes.admin import audit as audit_routes
 
@@ -295,9 +296,11 @@ def test_list_stringifies_target_id_snowflake():
         entry = response.json()["logs"][0]
         assert entry["target_id"] == str(big)
         assert isinstance(entry["target_id"], str)
-        # Admin-rowid fields stay numeric.
+        # The acting admin's id is a snowflake too and must be a string.
+        assert entry["admin_id"] == "2"
+        assert isinstance(entry["admin_id"], str)
+        # The audit row's own rowid stays numeric.
         assert entry["id"] == 1
-        assert entry["admin_id"] == 2
     finally:
         for c in reversed(ctx):
             c.stop()

@@ -116,8 +116,13 @@ async def get_audit_logs(
         for log in logs:
             formatted_logs.append(
                 {
+                    # ``id`` is the audit row's INTEGER PRIMARY KEY rowid and
+                    # stays numeric; ``admin_id`` is the acting admin's 64-bit
+                    # snowflake, so it is emitted as a decimal string.
                     "id": log["id"],
-                    "admin_id": log["admin_id"],
+                    "admin_id": str(log["admin_id"])
+                    if log.get("admin_id") is not None
+                    else None,
                     "action": log["action"],
                     "target_type": log["target_type"],
                     # target_id is a user/server/channel snowflake whenever the
@@ -298,8 +303,18 @@ async def export_audit_logs(
         if format == "json":
             from fastapi.responses import JSONResponse
 
+            # Snowflake columns (the acting admin and the entity target) are
+            # stringified in the JSON export too, matching the list endpoint.
+            export_rows = []
+            for log in logs:
+                row = dict(log)
+                for key in ("admin_id", "target_id", "target_user_id"):
+                    if row.get(key) is not None:
+                        row[key] = str(row[key])
+                export_rows.append(row)
+
             return JSONResponse(
-                content={"logs": [dict(log) for log in logs]},
+                content={"logs": export_rows},
                 headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
             )
 
