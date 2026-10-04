@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from typing import Optional
 import ipaddress
 import socket
@@ -75,12 +76,19 @@ def _validate_voice_metadata(
         raise_bad_request("Invalid storage URL")
     if parsed.username or parsed.password:
         raise_bad_request("Invalid storage URL")
+    # The DNS + IP screening is deliberately NOT done here: see
+    # _assert_public_storage_host, which the route awaits off the event loop.
+
+
+def _assert_public_storage_host(hostname: str) -> None:
+    """Resolve `hostname` and reject any non-public address.
+
+    Separate from the metadata checks because it performs blocking I/O.
+    """
     try:
         addresses = [
             ipaddress.ip_address(info[4][0])
-            for info in socket.getaddrinfo(
-                parsed.hostname, None, type=socket.SOCK_STREAM
-            )
+            for info in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
         ]
     except (OSError, ValueError):
         raise_bad_request("Invalid storage URL")
@@ -96,6 +104,25 @@ def _validate_voice_metadata(
         raise_bad_request("Invalid storage URL")
     # External URLs are accepted only after DNS/IP safety checks. This keeps
     # legacy JSON clients working while preventing loopback/private targets.
+
+
+async def _validate_voice_storage_url(url: str) -> None:
+    """Run the storage-URL safety checks without blocking the event loop.
+
+    ``socket.getaddrinfo`` is a synchronous syscall that can block for the
+    full resolver timeout. Calling it directly from this module's ``async def``
+    route stalled the entire worker for every concurrent request whenever the
+    hostname was slow to resolve -- and the hostname is supplied by the
+    client, so a handful of requests pointing at a black-hole DNS name was
+    enough to stall a worker. Offloading to the threadpool keeps the loop
+    responsive; the media proxy already uses this pattern for the same reason.
+    """
+    candidate = url.strip()
+    if not candidate or candidate.startswith(ALLOWED_URL_PREFIXES):
+        return
+    parsed = urlparse(candidate)
+    if parsed.hostname:
+        await run_in_threadpool(_assert_public_storage_host, parsed.hostname)
 
 
 class VoiceMessageRequest(BaseModel):
@@ -125,6 +152,9 @@ async def send_voice_message(
         duration_ms=body.duration_ms,
         url=body.url,
     )
+
+    # DNS-backed SSRF screening, run off the event loop.
+    await _validate_voice_storage_url(body.url)
 
     db = api.get_db()
     messaging = api.get_messaging()

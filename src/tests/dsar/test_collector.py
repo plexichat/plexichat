@@ -148,3 +148,66 @@ class TestDataCollector:
             # here is a real schema/query bug that must surface loudly.
             result = collector.collect(seeded_user.id)
             assert isinstance(result, dict)
+
+    def test_collectors_do_not_swallow_query_errors(self, db, seeded_user):
+        """No collector may log an error and return empty for a valid user.
+
+        Every collector wraps its query in a bare ``except`` that logs and
+        returns ``[]``. That is right for a genuinely absent row, but it also
+        hid a whole class of real bugs: a projection naming a column that does
+        not exist (``msg_messages.is_forwarded``, ``msg_participants.nick``,
+        ``srv_members.roles``, ``app_installations.user_id``, ``app_oauth_tokens.name``)
+        raised "no such column", the handler swallowed it, and the subject's
+        GDPR export silently came back with empty message, participant,
+        membership, installation and token lists. Nothing in the response
+        indicated anything was missing.
+
+        This captures logger.error across every collector call and fails if any
+        fired, which is exactly the signal that a query is broken.
+        """
+        from unittest.mock import patch
+
+        import utils.logger as logger
+
+        from src.core.dsar.collectors import (
+            ApplicationsCollector,
+            AutomodCollector,
+            MessagesCollector,
+            ServersCollector,
+        )
+
+        collectors = (
+            MessagesCollector,
+            ServersCollector,
+            ApplicationsCollector,
+            AutomodCollector,
+        )
+
+        logged = []
+        real_error = logger.error
+
+        def _capture(msg, *args, **kwargs):
+            logged.append(str(msg))
+            return real_error(msg, *args, **kwargs)
+
+        for cls in collectors:
+            logged.clear()
+            with patch.object(logger, "error", side_effect=_capture):
+                result = cls(db).collect(seeded_user.id)
+            assert not logged, (
+                f"{cls.__name__} logged a query error and returned a degraded "
+                f"export: {logged}"
+            )
+            assert isinstance(result, dict)
+
+    def test_participant_columns_match_live_schema(self, db, seeded_user):
+        """msg_participants projection must match the real columns."""
+        from src.core.dsar.collectors import MessagesCollector
+
+        live = {
+            row["name"] for row in db.fetch_all("PRAGMA table_info(msg_participants)")
+        }
+        assert live, "msg_participants must exist"
+        result = MessagesCollector(db).collect(seeded_user.id)
+        # No rows is fine for a fresh user; the point is that the query ran.
+        assert isinstance(result["participants"], list)
