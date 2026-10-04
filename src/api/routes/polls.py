@@ -14,7 +14,8 @@ from src.api.schemas.polls import (
     PollResultsResponse,
     PollOptionResponse,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse, SnowflakeID
+from typing import List
 from src.core.polls import (
     PollResultsVisibility,
     PollNotFoundError,
@@ -258,6 +259,68 @@ async def get_poll_results(
         raise
     except Exception as e:
         logger.error(f"Failed to get poll results {poll_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/{poll_id}/voters",
+    response_model=List[SnowflakeID],
+    summary="Get poll voters",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid poll ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Poll not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_poll_voters(
+    poll_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> List[SnowflakeID]:
+    """
+    Retrieve the discrete voter roster for a specific poll.
+
+    Only the poll creator (or a moderator with
+    ``admin.polls.view_voters``) may view the roster. The response honors
+    the poll's results-visibility setting: ``AFTER_VOTE`` polls never
+    expose voters, and ``AFTER_END`` polls only once ended. Voter ids are
+    serialized as decimal strings so a browser client never rounds them.
+    """
+    polls_module = api.get_polls()
+    if not polls_module:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Polls module not available"}},
+        )
+    try:
+        pid = int(poll_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
+        )
+
+    try:
+        voters = polls_module.get_voters(pid, current_user.user_id)
+        return [SnowflakeID(str(v)) for v in voters]
+    except PollNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Internal server error"}},
+        )
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Internal server error"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get poll voters {poll_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},

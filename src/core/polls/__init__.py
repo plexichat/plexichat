@@ -68,6 +68,7 @@ __all__ = [
     "get_results",
     "close_poll",
     "delete_poll",
+    "get_voters",
     "check_expired_polls",
 ]
 
@@ -158,6 +159,17 @@ def close_poll(user_id: int, poll_id: int) -> Poll:
 def delete_poll(user_id: int, poll_id: int) -> bool:
     """Delete a poll (creator only)."""
     return _get_manager().delete_poll(user_id, poll_id)
+
+
+def get_voters(poll_id: int, user_id: int) -> List[int]:
+    """Return the discrete voter roster for a poll.
+
+    Creator- or moderator-gated and visibility-aware (see
+    :meth:`PollManager.get_voters`); raises :class:`PollNotFoundError`
+    for unknown polls and :class:`PermissionDeniedError` for callers
+    outside the roster's permission boundary.
+    """
+    return _get_manager().get_voters(poll_id, user_id)
 
 
 def check_expired_polls() -> int:
