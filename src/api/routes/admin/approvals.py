@@ -125,7 +125,9 @@ async def list_approvals(
                     "requested_by": row["requested_by"],
                     "action_type": row["action_type"],
                     "target_type": row["target_type"],
-                    "target_id": row["target_id"],
+                    "target_id": str(row["target_id"])
+                    if row["target_id"] is not None
+                    else None,
                     "action_details": row["action_details"],
                     "status": row["status"],
                     "required_approvals": row["required_approvals"],
@@ -145,7 +147,7 @@ async def list_approvals(
                     "requested_by": row[1],
                     "action_type": row[2],
                     "target_type": row[3],
-                    "target_id": row[4],
+                    "target_id": str(row[4]) if row[4] is not None else None,
                     "action_details": row[5],
                     "status": row[6],
                     "required_approvals": row[7],
@@ -210,7 +212,9 @@ async def get_approval(request: Request, approval_id: int):
             "requested_by": row["requested_by"],
             "action_type": row["action_type"],
             "target_type": row["target_type"],
-            "target_id": row["target_id"],
+            "target_id": str(row["target_id"])
+            if row["target_id"] is not None
+            else None,
             "action_details": row["action_details"],
             "status": row["status"],
             "required_approvals": row["required_approvals"],
@@ -228,7 +232,7 @@ async def get_approval(request: Request, approval_id: int):
             "requested_by": row[1],
             "action_type": row[2],
             "target_type": row[3],
-            "target_id": row[4],
+            "target_id": str(row[4]) if row[4] is not None else None,
             "action_details": row[5],
             "status": row[6],
             "required_approvals": row[7],
