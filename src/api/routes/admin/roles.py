@@ -3,7 +3,12 @@ Admin role management routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from src.api.schemas.common import SuccessResponse, ErrorResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeID,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from .utils import check_host_restriction, require_admin_permission
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -62,8 +67,8 @@ class RoleUpdate(BaseModel):
 class RoleAssignment(BaseModel):
     """Request to assign a role to an admin."""
 
-    admin_id: int
-    role_id: int
+    admin_id: SnowflakeID
+    role_id: SnowflakeID
 
 
 @router.get(
@@ -108,7 +113,7 @@ async def list_roles(request: Request):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_role(request: Request, role_id: int):
+async def get_role(request: Request, role_id: SnowflakeIDParam):
     """
     Get details of a specific role.
     """
@@ -278,7 +283,9 @@ async def create_role(request: Request, role_data: RoleCreate):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
+async def update_role(
+    request: Request, role_id: SnowflakeIDParam, role_data: RoleUpdate
+):
     """
     Update an existing admin role.
     """
@@ -405,7 +412,7 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def delete_role(request: Request, role_id: int):
+async def delete_role(request: Request, role_id: SnowflakeIDParam):
     """
     Delete an admin role.
     """
@@ -507,6 +514,8 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     """
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "admin.roles")
+    target_admin_id = int(assignment.admin_id)
+    target_role_id = int(assignment.role_id)
 
     import src.api as api
 
@@ -522,9 +531,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     now = int(time.time() * 1000)
 
     # Check if role exists
-    role = db.fetch_one(
-        "SELECT id FROM admin_roles WHERE id = ?", (assignment.role_id,)
-    )
+    role = db.fetch_one("SELECT id FROM admin_roles WHERE id = ?", (target_role_id,))
     if not role:
         raise HTTPException(
             status_code=404,
@@ -532,9 +539,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         )
 
     # Check if admin exists
-    admin = db.fetch_one(
-        "SELECT id FROM admin_users WHERE id = ?", (assignment.admin_id,)
-    )
+    admin = db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (target_admin_id,))
     if not admin:
         raise HTTPException(
             status_code=404,
@@ -544,7 +549,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     # Enforce hierarchy: can only assign roles if you can manage the target admin AND the role
     from src.core.admin.permissions import can_manage_admin, can_manage_role
 
-    if not can_manage_admin(db, admin_id, assignment.admin_id):
+    if not can_manage_admin(db, admin_id, target_admin_id):
         raise HTTPException(
             status_code=403,
             detail={
@@ -554,7 +559,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
                 }
             },
         )
-    if not can_manage_role(db, admin_id, assignment.role_id):
+    if not can_manage_role(db, admin_id, target_role_id):
         raise HTTPException(
             status_code=403,
             detail={
@@ -568,7 +573,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     # Check if assignment already exists
     existing = db.fetch_one(
         "SELECT admin_id FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",
-        (assignment.admin_id, assignment.role_id),
+        (target_admin_id, target_role_id),
     )
     if existing:
         raise HTTPException(
@@ -583,7 +588,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
         VALUES (?, ?, ?, ?)
     """,
-        (assignment.admin_id, assignment.role_id, now, admin_id),
+        (target_admin_id, target_role_id, now, admin_id),
     )
 
     # Log the action
@@ -594,8 +599,8 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         admin_id,
         "role.assign",
         "admin_user",
-        assignment.admin_id,
-        {"role_id": assignment.role_id},
+        target_admin_id,
+        {"role_id": target_role_id},
         request.client.host if request.client else "unknown",
     )
 
@@ -613,7 +618,9 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def revoke_role(request: Request, admin_id: int, role_id: int):
+async def revoke_role(
+    request: Request, admin_id: SnowflakeIDParam, role_id: SnowflakeIDParam
+):
     """
     Revoke a role from an admin.
     """
@@ -694,7 +701,7 @@ async def revoke_role(request: Request, admin_id: int, role_id: int):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_admin_roles(request: Request, admin_id: int):
+async def get_admin_roles(request: Request, admin_id: SnowflakeIDParam):
     """
     Get all roles assigned to a specific admin.
     """

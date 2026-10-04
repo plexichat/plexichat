@@ -5,6 +5,8 @@ Admin authentication schemas.
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+from src.api.schemas.common import SnowflakeID
+
 
 class AdminLoginRequest(BaseModel):
     """Admin login request."""
@@ -46,7 +48,7 @@ class OTPVerifyRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    admin_id: int = Field(..., description="Admin ID")
+    admin_id: SnowflakeID = Field(..., description="Admin ID")
     code: str = Field(..., min_length=6, max_length=8, description="OTP code")
     is_setup: bool = Field(False, description="Whether this is for initial setup")
     challenge_token: str = Field(

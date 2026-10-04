@@ -11,7 +11,7 @@ import io
 from pydantic import BeforeValidator
 
 from .utils import check_host_restriction, require_admin_permission
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
 import utils.logger as logger
 
 router = APIRouter()
@@ -46,7 +46,9 @@ async def get_audit_logs(
     request: Request,
     action_family: Optional[str] = Query(None, description="Filter by action family"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    admin_id: Annotated[NullableInt, Query(description="Filter by admin ID")] = None,
+    admin_id: Annotated[
+        NullableSnowflakeIDParam, Query(description="Filter by admin ID")
+    ] = None,
     target_type: Optional[str] = Query(None, description="Filter by target type"),
     date_from: Annotated[NullableInt, Query(description="Start timestamp (ms)")] = None,
     date_to: Annotated[NullableInt, Query(description="End timestamp (ms)")] = None,
@@ -244,7 +246,7 @@ async def export_audit_logs(
     request: Request,
     action_family: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    admin_id: Annotated[NullableInt, Query()] = None,
+    admin_id: Annotated[NullableSnowflakeIDParam, Query()] = None,
     target_type: Optional[str] = Query(None),
     date_from: Annotated[NullableInt, Query()] = None,
     date_to: Annotated[NullableInt, Query()] = None,

@@ -6,7 +6,7 @@ from fastapi import HTTPException, Depends
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import SnowflakeIDParam, SuccessResponse
 from src.core.relationships.exceptions import (
     FriendRequestNotFoundError,
     NotBlockedError,
@@ -20,7 +20,7 @@ import utils.logger as logger
 class DeletionMixin:
     async def delete_relationship(
         self: RelationshipBaseProtocol,
-        user_id: int,
+        user_id: SnowflakeIDParam,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> SuccessResponse:
         """

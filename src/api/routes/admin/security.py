@@ -25,7 +25,7 @@ from src.api.schemas.admin import (
     AccessTokenUsageIPResponse,
     AccessTokenUsagePathResponse,
 )
-from src.api.schemas.common import SuccessResponse, ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam, SuccessResponse
 from .utils import (
     check_host_restriction,
     require_admin_permission,
@@ -206,7 +206,9 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     },
 )
 async def get_access_token_detail(
-    request: Request, token_id: int, recent_limit: int = 100
+    request: Request,
+    token_id: SnowflakeIDParam,
+    recent_limit: int = 100,
 ):
     """Get detailed usage and policy information for a specific API access token."""
     check_host_restriction(request)
@@ -260,7 +262,7 @@ async def get_access_token_detail(
 )
 async def update_access_token(
     request: Request,
-    token_id: int,
+    token_id: SnowflakeIDParam,
     body: AccessTokenUpdateRequest,
 ):
     """Update metadata, expiry, or scope mode for a specific API access token."""
@@ -303,7 +305,7 @@ async def update_access_token(
 )
 async def rotate_access_token(
     request: Request,
-    token_id: int,
+    token_id: SnowflakeIDParam,
     body: AccessTokenRotateRequest,
 ):
     """Rotate an API access token, cloning policy and scopes into a replacement.
@@ -368,7 +370,7 @@ async def rotate_access_token(
 )
 async def add_access_token_scope(
     request: Request,
-    token_id: int,
+    token_id: SnowflakeIDParam,
     body: AccessTokenScopeCreateRequest,
 ):
     """Add an IP or CIDR scope rule to an API access token."""
@@ -406,7 +408,9 @@ async def add_access_token_scope(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def remove_access_token_scope(request: Request, token_id: int, scope_id: int):
+async def remove_access_token_scope(
+    request: Request, token_id: SnowflakeIDParam, scope_id: SnowflakeIDParam
+):
     """Remove an IP or CIDR scope rule from an API access token."""
     check_host_restriction(request)
     require_admin_permission(request, "admin.security.tokens")
@@ -431,7 +435,7 @@ async def remove_access_token_scope(request: Request, token_id: int, scope_id: i
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def revoke_access_token(request: Request, token_id: int):
+async def revoke_access_token(request: Request, token_id: SnowflakeIDParam):
     """
     Revoke a specific API access token.
     """
@@ -475,7 +479,7 @@ async def revoke_access_token(request: Request, token_id: int):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def unrevoke_access_token(request: Request, token_id: int):
+async def unrevoke_access_token(request: Request, token_id: SnowflakeIDParam):
     """
     Unrevoke a previously revoked API access token.
     """
@@ -584,7 +588,7 @@ async def add_banned_username(request: Request, body: BannedUsernameCreate):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def remove_banned_username(request: Request, pattern_id: int):
+async def remove_banned_username(request: Request, pattern_id: SnowflakeIDParam):
     """
     Remove a pattern from the list of banned usernames.
     """

@@ -35,7 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 
 router = APIRouter()
 
@@ -291,7 +291,7 @@ async def request_join(
 )
 async def send_join_message(
     request: Request,
-    join_id: int,
+    join_id: SnowflakeIDParam,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Send a federated message over a Join (client contract for
@@ -340,7 +340,7 @@ async def send_join_message(
 )
 async def break_join(
     request: Request,
-    join_id: int,
+    join_id: SnowflakeIDParam,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Break (delete) a Join (client contract for ``POST /Join/{id}/break``).
@@ -382,7 +382,7 @@ async def break_join(
 )
 async def approve_join(
     request: Request,
-    join_id: int,
+    join_id: SnowflakeIDParam,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Approve an inbound Join request (client contract for
@@ -441,7 +441,7 @@ async def approve_join(
 )
 async def reject_join(
     request: Request,
-    join_id: int,
+    join_id: SnowflakeIDParam,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Reject an inbound Join request (client contract for

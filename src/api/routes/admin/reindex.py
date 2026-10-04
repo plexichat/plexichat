@@ -6,7 +6,7 @@ from .utils import (
     require_admin_permission,
     require_approved_request,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 import src.core.search as search_module
 import utils.logger as logger
 import threading
@@ -248,7 +248,9 @@ async def reindex_status(request: Request):
     },
 )
 async def reindex_conversation(
-    request: Request, conversation_id: int, body: ReindexRequest | None = None
+    request: Request,
+    conversation_id: SnowflakeIDParam,
+    body: ReindexRequest | None = None,
 ):
     check_host_restriction(request)
     require_admin_permission(request, "admin.data.reindex")

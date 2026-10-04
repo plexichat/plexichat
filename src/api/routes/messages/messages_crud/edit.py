@@ -9,6 +9,7 @@ from fastapi import HTTPException, Depends
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.common import SnowflakeIDParam
 from src.api.schemas.messages import MessageUpdateRequest, MessageResponse
 from src.core.messaging.exceptions import (
     MessageNotFoundError,
@@ -35,7 +36,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
     async def edit_message(
         self,
         channel_id: str,
-        message_id: int,
+        message_id: SnowflakeIDParam,
         body: MessageUpdateRequest,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> MessageResponse:

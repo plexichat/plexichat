@@ -15,7 +15,7 @@ from src.api.schemas.auth import (
     PasskeyRenameRequest,
     LoginResponse,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID, SuccessResponse
 from .helpers import _user_to_response
 from .cookies import (
     set_session_cookie,
@@ -409,7 +409,7 @@ async def list_passkeys(
 )
 @(rate_limit(requests=10, window_seconds=60) if rate_limit else lambda f: f)
 async def revoke_passkey(
-    passkey_id: int,
+    passkey_id: SnowflakeID,
     request: Request,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
@@ -425,7 +425,7 @@ async def revoke_passkey(
     try:
         result = auth.revoke_passkey(
             user_id=current_user.user_id,
-            passkey_id=passkey_id,
+            passkey_id=int(passkey_id),
             ip_address=ip_address,
         )
 
@@ -447,7 +447,7 @@ async def revoke_passkey(
 
 
 @router.patch(
-    "/passkeys/{passkey_id:int}",
+    "/passkeys/{passkey_id}",
     response_model=SuccessResponse,
     summary="Rename a passkey",
     responses={
@@ -458,7 +458,7 @@ async def revoke_passkey(
 )
 @(rate_limit(requests=20, window_seconds=60) if rate_limit else lambda f: f)
 async def rename_passkey(
-    passkey_id: int,
+    passkey_id: SnowflakeID,
     body: PasskeyRenameRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
@@ -472,7 +472,7 @@ async def rename_passkey(
     try:
         result = auth.rename_passkey(
             user_id=current_user.user_id,
-            passkey_id=passkey_id,
+            passkey_id=int(passkey_id),
             new_name=body.name,
         )
 

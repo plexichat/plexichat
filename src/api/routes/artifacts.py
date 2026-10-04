@@ -21,7 +21,11 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from src.core.artifacts.models import ArtifactType, ArtifactStatus
 from src.api.schemas.artifacts import (
     ArtifactCreateRequest,
@@ -863,7 +867,7 @@ async def get_artifact(
     },
 )
 async def update_artifact(
-    artifact_id: int,
+    artifact_id: SnowflakeIDParam,
     body: ArtifactUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactResponse:

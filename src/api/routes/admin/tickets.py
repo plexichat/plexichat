@@ -10,7 +10,11 @@ from src.api.schemas.admin import (
     NoteResponse,
     InternalNoteCreate,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from .utils import check_host_restriction, require_admin_permission
 import utils.logger as logger
 
@@ -74,7 +78,7 @@ async def get_tickets(
         404: {"model": ErrorResponse, "description": "Ticket not found"},
     },
 )
-async def get_ticket(ticket_id: int, request: Request):
+async def get_ticket(ticket_id: SnowflakeIDParam, request: Request):
     """
     Retrieve detailed information for a specific feedback ticket.
     """
@@ -112,7 +116,9 @@ async def get_ticket(ticket_id: int, request: Request):
     },
 )
 async def update_ticket_status(
-    ticket_id: int, update: TicketStatusUpdate, request: Request
+    ticket_id: SnowflakeIDParam,
+    update: TicketStatusUpdate,
+    request: Request,
 ):
     """
     Update the processing status of a feedback ticket.
@@ -139,7 +145,7 @@ async def update_ticket_status(
         404: {"model": ErrorResponse, "description": "Ticket not found"},
     },
 )
-async def get_ticket_notes(ticket_id: int, request: Request):
+async def get_ticket_notes(ticket_id: SnowflakeIDParam, request: Request):
     """
     Retrieve all internal administrator notes associated with a ticket.
     """
@@ -176,7 +182,9 @@ async def get_ticket_notes(ticket_id: int, request: Request):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def add_ticket_note(ticket_id: int, note: InternalNoteCreate, request: Request):
+async def add_ticket_note(
+    ticket_id: SnowflakeIDParam, note: InternalNoteCreate, request: Request
+):
     """
     Add a new internal administrator note to a ticket.
     """

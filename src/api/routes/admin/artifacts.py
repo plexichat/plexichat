@@ -23,7 +23,7 @@ from src.api.schemas.artifacts import (
     ServerRetentionRequest,
     ServerRetentionResponse,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 
 
 ALLOWED_FEATURES = {"plexiscribe", "plexiscript", "plexiboard", "whiteboard", "voice"}
@@ -239,7 +239,7 @@ async def admin_set_server_retention(
 )
 async def admin_get_feature_settings(
     feature: str,
-    server_id: int,
+    server_id: SnowflakeIDParam,
     request: Request,
 ) -> Dict[str, Any]:
     """Get per-server override settings for a feature."""

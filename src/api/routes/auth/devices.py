@@ -75,7 +75,7 @@ async def list_devices(
 
 
 @router.patch(
-    "/devices/{device_id:int}",
+    "/devices/{device_id}",
     response_model=SuccessResponse,
     summary="Rename a device",
     responses={
@@ -86,12 +86,12 @@ async def list_devices(
     },
 )
 async def rename_device(
-    device_id: int,
+    device_id: SnowflakeID,
     body: RenameDeviceRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     auth, _ = _get_devices(current_user.user_id)
-    if not auth.rename_device(current_user.user_id, device_id, body.name):
+    if not auth.rename_device(current_user.user_id, int(device_id), body.name):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Device not found"}},
@@ -100,7 +100,7 @@ async def rename_device(
 
 
 @router.delete(
-    "/devices/{device_id:int}",
+    "/devices/{device_id}",
     response_model=SuccessResponse,
     summary="Revoke (forget) a device",
     description=(
@@ -115,11 +115,11 @@ async def rename_device(
     },
 )
 async def revoke_device(
-    device_id: int,
+    device_id: SnowflakeID,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     auth, _ = _get_devices(current_user.user_id)
-    if not auth.revoke_device(current_user.user_id, device_id):
+    if not auth.revoke_device(current_user.user_id, int(device_id)):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Device not found"}},

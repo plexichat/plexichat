@@ -27,7 +27,11 @@ from src.api.schemas.admin import (
     AutomodConfigResponse,
     AutomodConfigUpdateRequest,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from .utils import (
     check_host_restriction,
     get_admin_from_token,
@@ -210,7 +214,9 @@ async def get_hash_report_counts(request: Request):
     },
 )
 async def review_hash_report(
-    report_id: int, review: HashReportReviewRequest, request: Request
+    report_id: SnowflakeIDParam,
+    review: HashReportReviewRequest,
+    request: Request,
 ):
     """
     Submit a review for a specific content hash report.
@@ -374,7 +380,9 @@ async def get_enhanced_report_counts(request: Request):
     },
 )
 async def review_message_report(
-    report_id: int, review: ModerationReportReviewRequest, request: Request
+    report_id: SnowflakeIDParam,
+    review: ModerationReportReviewRequest,
+    request: Request,
 ):
     """Review a specific message report."""
     check_host_restriction(request)
@@ -455,7 +463,9 @@ async def get_user_report_counts(request: Request):
     },
 )
 async def review_user_report(
-    report_id: int, review: ModerationReportReviewRequest, request: Request
+    report_id: SnowflakeIDParam,
+    review: ModerationReportReviewRequest,
+    request: Request,
 ):
     """Review a specific user report."""
     check_host_restriction(request)
@@ -790,7 +800,9 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     },
 )
 async def update_automod_rule(
-    rule_id: int, body: AutomodRuleUpdateRequest, request: Request
+    rule_id: SnowflakeIDParam,
+    body: AutomodRuleUpdateRequest,
+    request: Request,
 ):
     """
     Update an existing AutoMod rule.
@@ -855,7 +867,7 @@ async def update_automod_rule(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def delete_automod_rule(rule_id: int, request: Request):
+async def delete_automod_rule(rule_id: SnowflakeIDParam, request: Request):
     """
     Permanently delete an AutoMod rule.
     """

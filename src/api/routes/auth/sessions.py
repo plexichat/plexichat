@@ -248,7 +248,7 @@ async def get_sessions_list(
 
 
 @router.delete(
-    "/sessions/{session_id:int}",
+    "/sessions/{session_id}",
     response_model=SuccessResponse,
     summary="Revoke session",
     responses={
@@ -259,7 +259,7 @@ async def get_sessions_list(
     },
 )
 async def revoke_session(
-    session_id: int, current_user: TokenInfo = Depends(get_current_user)
+    session_id: SnowflakeID, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     auth = api.get_auth()
     if not auth:
@@ -270,7 +270,7 @@ async def revoke_session(
         )
 
     try:
-        auth.revoke_session(current_user.user_id, session_id)
+        auth.revoke_session(current_user.user_id, int(session_id))
         logger.info(f"User {current_user.user_id} revoked session {session_id}")
         return SuccessResponse(success=True, message=None)
     except UserNotFoundError:

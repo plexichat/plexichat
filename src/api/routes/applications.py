@@ -82,7 +82,7 @@ class BotTokenResponse(BaseModel):
 class InteractionCallbackRequest(BaseModel):
     """Request to respond to an interaction."""
 
-    application_id: int
+    application_id: SnowflakeID
     type: InteractionResponseType
     data: Optional[Dict[str, Any]] = None
 
@@ -468,7 +468,7 @@ async def respond_to_interaction(
         applications.create_interaction_response(
             interaction_token=interaction_token,
             response=response,
-            application_id=body.application_id,
+            application_id=int(body.application_id),
         )
     except HTTPException:
         raise

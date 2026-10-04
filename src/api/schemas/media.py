@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 
+from src.api.schemas.common import SnowflakeID
+
 
 class HashReportRequest(BaseModel):
     """Report a file hash for content moderation."""
@@ -22,8 +24,10 @@ class HashReportRequest(BaseModel):
     phash_value: Optional[str] = Field(
         None, max_length=64, description="Perceptual hash (for images)"
     )
-    uploader_id: Optional[int] = Field(None, description="User ID of the uploader")
-    message_id: Optional[int] = Field(
+    uploader_id: Optional[SnowflakeID] = Field(
+        None, description="User ID of the uploader"
+    )
+    message_id: Optional[SnowflakeID] = Field(
         None, description="Message ID containing the attachment"
     )
     attachment_url: Optional[str] = Field(

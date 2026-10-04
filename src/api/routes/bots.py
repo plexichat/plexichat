@@ -16,7 +16,12 @@ from src.api.middleware.authentication import (
     get_optional_user,
     TokenInfo,
 )
-from src.api.schemas.common import ErrorResponse, SnowflakeID
+from src.api.schemas.common import (
+    ErrorResponse,
+    NullableSnowflakeIDParam,
+    SnowflakeID,
+    SnowflakeIDParam,
+)
 from src.core import applications
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
@@ -496,7 +501,7 @@ async def approve_bot(
 )
 async def review_bot_request(
     server_id: str,
-    request_id: int,
+    request_id: SnowflakeIDParam,
     body: ReviewBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
@@ -542,7 +547,7 @@ async def review_bot_request(
     },
 )
 async def get_bot_profile(
-    application_id: int,
+    application_id: SnowflakeIDParam,
     current_user: Optional[TokenInfo] = Depends(get_optional_user),
 ):
     """Get a bot's public profile.
@@ -657,7 +662,7 @@ async def update_bot_profile(
 )
 async def list_bot_directory(
     server_id: Annotated[
-        NullableInt,
+        NullableSnowflakeIDParam,
         Query(description="Filter out bots already approved on this server"),
     ] = None,
     q: Optional[str] = Query(None, description="Search query"),
@@ -751,7 +756,7 @@ async def list_authorized_apps(
     },
 )
 async def revoke_authorized_app(
-    token_id: int,
+    token_id: SnowflakeIDParam,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Revoke an authorized application's access."""

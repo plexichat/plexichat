@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse, SnowflakeID
+from src.api.schemas.common import ErrorResponse, SnowflakeID, SnowflakeIDParam
 from src.core.database.cache.decorators import cached
 from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import raise_bad_request
@@ -227,7 +227,7 @@ def _safe_validation_message(e: ValueError) -> str:
 
 
 @router.get(
-    "/users/{user_id:int}/profile",
+    "/users/{user_id}/profile",
     summary="Get user profile",
     responses={
         200: {
@@ -245,7 +245,7 @@ def _safe_validation_message(e: ValueError) -> str:
     },
 )
 async def get_user_profile(
-    user_id: int, current_user: TokenInfo = Depends(get_current_user)
+    user_id: SnowflakeIDParam, current_user: TokenInfo = Depends(get_current_user)
 ) -> dict:
     uid = user_id
 

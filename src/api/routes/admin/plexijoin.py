@@ -10,7 +10,7 @@ from .utils import (
     get_admin_from_token,
     require_admin_permission,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 import utils.logger as logger
 
 router = APIRouter()
@@ -151,7 +151,7 @@ async def list_connections(
         503: {"model": ErrorResponse, "description": "Service unavailable"},
     },
 )
-async def get_connection(request: Request, connection_id: int):
+async def get_connection(request: Request, connection_id: SnowflakeIDParam):
     """Get a specific connection by ID."""
     check_host_restriction(request)
     _admin = get_admin_from_token(request)
@@ -264,7 +264,7 @@ async def create_connection(request: Request):
         503: {"model": ErrorResponse, "description": "Service unavailable"},
     },
 )
-async def delete_connection(request: Request, connection_id: int):
+async def delete_connection(request: Request, connection_id: SnowflakeIDParam):
     """Disconnect and delete an outbound connection."""
     check_host_restriction(request)
     _admin = require_admin_permission(request, "admin.plexijoin.manage")
@@ -306,7 +306,7 @@ async def delete_connection(request: Request, connection_id: int):
         503: {"model": ErrorResponse, "description": "Service unavailable"},
     },
 )
-async def test_connection(request: Request, connection_id: int):
+async def test_connection(request: Request, connection_id: SnowflakeIDParam):
     """Test connectivity to a remote instance."""
     check_host_restriction(request)
     _admin = require_admin_permission(request, "admin.plexijoin.manage")
@@ -399,7 +399,7 @@ async def list_requests(
         503: {"model": ErrorResponse, "description": "Service unavailable"},
     },
 )
-async def approve_request(request: Request, request_id: int):
+async def approve_request(request: Request, request_id: SnowflakeIDParam):
     """Approve an inbound federation request."""
     check_host_restriction(request)
     _admin = require_admin_permission(request, "admin.plexijoin.manage")
@@ -441,7 +441,7 @@ async def approve_request(request: Request, request_id: int):
         503: {"model": ErrorResponse, "description": "Service unavailable"},
     },
 )
-async def deny_request(request: Request, request_id: int):
+async def deny_request(request: Request, request_id: SnowflakeIDParam):
     """Deny an inbound federation request."""
     check_host_restriction(request)
     _admin = require_admin_permission(request, "admin.plexijoin.manage")

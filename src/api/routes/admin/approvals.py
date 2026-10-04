@@ -3,7 +3,12 @@ Admin approval workflow routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeID,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from .utils import (
     check_host_restriction,
     require_admin_permission,
@@ -88,7 +93,7 @@ class ApprovalRequest(BaseModel):
 
     action_type: str = Field(..., max_length=100)
     target_type: Optional[str] = Field(None, max_length=50)
-    target_id: Optional[int] = None
+    target_id: Optional[SnowflakeID] = None
     action_details: Optional[str] = Field(None, max_length=1000)
 
 
@@ -164,7 +169,7 @@ async def list_approvals(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_approval(request: Request, approval_id: int):
+async def get_approval(request: Request, approval_id: SnowflakeIDParam):
     """
     Get details of a specific approval request.
     """
@@ -290,7 +295,7 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
             admin_id,
             approval_data.action_type,
             approval_data.target_type,
-            approval_data.target_id,
+            int(approval_data.target_id) if approval_data.target_id else None,
             approval_data.action_details,
             required_approvals,
             expires_at,
@@ -306,7 +311,7 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         admin_id,
         "approval.request",
         approval_data.target_type or "system",
-        approval_data.target_id or 0,
+        int(approval_data.target_id) if approval_data.target_id else 0,
         {"action_type": approval_data.action_type, "approval_id": str(approval_id)},
         request.client.host if request.client else "unknown",
     )
@@ -345,7 +350,7 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def approve_request(request: Request, approval_id: int):
+async def approve_request(request: Request, approval_id: SnowflakeIDParam):
     """
     Approve an approval request.
     """
@@ -564,7 +569,9 @@ async def approve_request(request: Request, approval_id: int):
     },
 )
 async def reject_request(
-    request: Request, approval_id: int, decision: ApprovalDecision
+    request: Request,
+    approval_id: SnowflakeIDParam,
+    decision: ApprovalDecision,
 ):
     """
     Reject an approval request.
@@ -681,7 +688,7 @@ async def reject_request(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def cancel_approval(request: Request, approval_id: int):
+async def cancel_approval(request: Request, approval_id: SnowflakeIDParam):
     """
     Cancel a pending approval request. Only the requester or a super admin can cancel.
     """
@@ -790,7 +797,9 @@ class ApprovalCommentModel(BaseModel):
     },
 )
 async def add_approval_comment(
-    request: Request, approval_id: int, body: ApprovalCommentModel
+    request: Request,
+    approval_id: SnowflakeIDParam,
+    body: ApprovalCommentModel,
 ):
     """
     Add a comment to an approval request for discussion.
@@ -855,7 +864,7 @@ async def add_approval_comment(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_approval_comments(request: Request, approval_id: int):
+async def get_approval_comments(request: Request, approval_id: SnowflakeIDParam):
     """
     Get all comments for an approval request.
     """

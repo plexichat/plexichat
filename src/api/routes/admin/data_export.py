@@ -21,7 +21,11 @@ from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 import utils.logger as logger
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from .utils import require_admin_permission
 from src.core.dsar import (
     get_admin_requests,
@@ -114,7 +118,7 @@ async def list_data_exports(
 
 
 @router.get("/data-export/{request_id}")
-async def get_data_export(request: Request, request_id: int):
+async def get_data_export(request: Request, request_id: SnowflakeIDParam):
     """View detailed information about a specific DSAR request."""
     require_admin_permission(request, "data_export.read")
     try:
@@ -128,7 +132,7 @@ async def get_data_export(request: Request, request_id: int):
 
 
 @router.post("/data-export/{request_id}/approve")
-async def approve_data_export(request: Request, request_id: int):
+async def approve_data_export(request: Request, request_id: SnowflakeIDParam):
     """Approve a pending DSAR request so the harvester can process it."""
     admin_id = require_admin_permission(request, "data_export.process")
     _get_request_or_404(int(request_id))
@@ -150,7 +154,9 @@ async def approve_data_export(request: Request, request_id: int):
 
 
 @router.post("/data-export/{request_id}/deny")
-async def deny_data_export(request: Request, request_id: int, body: DenyBody):
+async def deny_data_export(
+    request: Request, request_id: SnowflakeIDParam, body: DenyBody
+):
     """Deny a pending DSAR request with a reason."""
     admin_id = require_admin_permission(request, "data_export.process")
     _get_request_or_404(int(request_id))
@@ -174,7 +180,7 @@ async def deny_data_export(request: Request, request_id: int, body: DenyBody):
 
 
 @router.post("/data-export/{request_id}/generate")
-async def generate_data_export(request: Request, request_id: int):
+async def generate_data_export(request: Request, request_id: SnowflakeIDParam):
     """Manually trigger export generation for a pending/approved request."""
     admin_id = require_admin_permission(request, "data_export.process")
     _get_request_or_404(int(request_id))

@@ -7,7 +7,7 @@ import src.api as api
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.api.middleware.authentication import TokenInfo, get_current_user
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
 from src.api.schemas.stash import (
     StashCollectionCreateRequest,
     StashCollectionGrantListResponse,
@@ -227,7 +227,7 @@ async def list_items(
     search: Optional[str] = Query(None, max_length=200),
     scope: Optional[str] = Query(None, pattern="^(personal|server)$"),
     server_id: Optional[str] = Query(None),
-    collection_id: Optional[int] = Query(None, ge=1),
+    collection_id: NullableSnowflakeIDParam = None,
     pinned: Optional[bool] = Query(None),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> StashItemListResponse:

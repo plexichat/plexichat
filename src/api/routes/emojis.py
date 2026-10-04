@@ -15,7 +15,11 @@ from src.api.schemas.emojis import (
     EmojiCountsResponse,
     EmojiUpdateRequest,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 
 router = APIRouter(tags=["Emojis"])
 
@@ -561,7 +565,7 @@ async def create_emoji(
 )
 async def update_emoji(
     server_id: str,
-    emoji_id: int,
+    emoji_id: SnowflakeIDParam,
     body: EmojiUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> EmojiResponse:

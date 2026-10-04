@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from typing import Optional, List
 
 import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 from .common import (
     parse_id,
     raise_bad_request,
@@ -186,6 +187,18 @@ def _is_safe_url(url: str) -> bool:
         return False
 
 
+async def _is_safe_url_async(url: str) -> bool:
+    """Async wrapper around `_is_safe_url` that keeps DNS off the event loop.
+
+    `_is_safe_url` calls `socket.getaddrinfo`, a blocking syscall bounded by
+    the resolver timeout. It is reached from the `async def` report handler
+    with a client-supplied evidence URL, so a request naming a slow-resolving
+    host stalled the whole worker. Same fix as the media proxy: run it in the
+    threadpool.
+    """
+    return await run_in_threadpool(_is_safe_url, url)
+
+
 class EnhancedReportRequest(BaseModel):
     target_type: str = Field(..., description="'message' or 'user'")
     target_id: str = Field(..., description="ID of the reported message or user")
@@ -253,7 +266,7 @@ async def submit_enhanced_report(
     # REP-5: evidence URLs must be well-formed http(s) links
     if body.evidence_urls:
         for url in body.evidence_urls:
-            if not _is_safe_url(url):
+            if not await _is_safe_url_async(url):
                 raise_bad_request(f"Invalid evidence URL: {url}")
 
     now = int(time.time() * 1000)
@@ -528,7 +541,7 @@ async def update_report_status(
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )
 async def get_report_details(
-    report_id: int, current_user: TokenInfo = Depends(get_current_user)
+    report_id: SnowflakeIDParam, current_user: TokenInfo = Depends(get_current_user)
 ):
     db: DatabaseProtocol | None = api.get_db()
     if not db:

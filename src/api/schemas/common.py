@@ -2,8 +2,8 @@
 Common schemas - Shared Pydantic models.
 """
 
-from typing import Optional, List, Any, Generic, TypeVar
-from pydantic import BaseModel, Field, ConfigDict, GetCoreSchemaHandler
+from typing import Optional, List, Any, Generic, TypeVar, Annotated
+from pydantic import BaseModel, BeforeValidator, Field, ConfigDict, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
 T = TypeVar("T")
@@ -44,6 +44,62 @@ class SnowflakeID(str):
             except ValueError:
                 raise ValueError("Invalid snowflake ID: must be numeric string")
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
+
+
+class SnowflakeIDParam(int):
+    """A snowflake id for a path/query param that yields a plain ``int``.
+
+    URL path segments and query values are always strings, and Python ints
+    are arbitrary precision, so a handler that receives the value as an
+    ``int`` loses nothing. Accepting a numeric string as well as an int keeps
+    the generated OpenAPI schema honest (``integer|string``) so a client is
+    never told to coerce a 64-bit id through a JS ``number``.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls._validate,
+            core_schema.union_schema(
+                [
+                    core_schema.int_schema(),
+                    core_schema.str_schema(),
+                ]
+            ),
+        )
+
+    @classmethod
+    def _validate(cls, v: Any) -> int:
+        if isinstance(v, bool):
+            raise ValueError("Invalid snowflake ID")
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                raise ValueError("Invalid snowflake ID: must be numeric string")
+        raise ValueError(f"Invalid snowflake ID type: {type(v)}")
+
+
+def _coerce_nullable_int(value: Any) -> Any:
+    """Coerce ``null``/``none``/empty query values for optional int params."""
+    if (
+        value is None
+        or value == ""
+        or (isinstance(value, str) and value.strip().lower() == "null")
+    ):
+        return None
+    return value
+
+
+# Optional snowflake id query param: accepts a decimal string, yields an int
+# (or ``None`` for a null/empty value).
+NullableSnowflakeIDParam = Annotated[
+    Optional[SnowflakeIDParam], BeforeValidator(_coerce_nullable_int)
+]
 
 
 class ErrorDetail(BaseModel):

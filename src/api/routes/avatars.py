@@ -15,7 +15,11 @@ from fastapi import (
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.avatars import AvatarUploadResponse, IconUploadResponse
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 import utils.logger as logger
 
 import hashlib
@@ -211,7 +215,7 @@ def _invalidate_server_icon_cache(server_id: int) -> None:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_user_avatar(user_id: int, request: Request):
+async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
     """
     Get user avatar image.
 
@@ -586,7 +590,7 @@ async def delete_my_avatar(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_server_icon(server_id: int, request: Request):
+async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
     """
     Get server icon image.
 

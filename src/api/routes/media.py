@@ -70,8 +70,8 @@ async def report_content_hash(
             reason=report.reason,
             details=report.details,
             phash_value=report.phash_value,
-            uploader_id=report.uploader_id,
-            message_id=report.message_id,
+            uploader_id=int(report.uploader_id) if report.uploader_id else None,
+            message_id=int(report.message_id) if report.message_id else None,
             attachment_url=report.attachment_url,
             block_uploader=report.block_uploader,
         )

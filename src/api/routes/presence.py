@@ -10,7 +10,7 @@ import src.api as api
 from src.core.database import cached
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.presence import PresenceUpdate, PresenceResponse
-from src.api.schemas.common import SnowflakeID, ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID, SnowflakeIDParam
 import utils.logger as logger
 
 router = APIRouter(tags=["Presence"])
@@ -345,7 +345,7 @@ def _can_view_presence(viewer_id: int, target_id: int) -> bool:
 
 
 @router.get(
-    "/users/{user_id:int}/presence",
+    "/users/{user_id}/presence",
     response_model=PresenceResponse,
     summary="Get user presence",
     responses={
@@ -356,7 +356,7 @@ def _can_view_presence(viewer_id: int, target_id: int) -> bool:
     },
 )
 def get_user_presence(
-    user_id: int, current_user: TokenInfo = Depends(get_current_user)
+    user_id: SnowflakeIDParam, current_user: TokenInfo = Depends(get_current_user)
 ) -> PresenceResponse:
     """
     Get a user's presence.
