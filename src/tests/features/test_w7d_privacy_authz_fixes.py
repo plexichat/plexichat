@@ -70,7 +70,7 @@ class TestProfileVisibility:
         alice, alice_tok = trio["alice"]
         bob, _ = trio["bob"]
         profile = self._get_profile(test_client, alice_tok, bob)
-        assert profile["user_id"] == bob.id
+        assert profile["user_id"] == str(bob.id)
         assert "location" in profile
         assert "timezone" in profile
 
@@ -80,7 +80,7 @@ class TestProfileVisibility:
         settings_module.set_setting(bob.id, "profile_visibility", "friends")
 
         profile = self._get_profile(test_client, alice_tok, bob)
-        assert profile["user_id"] == bob.id
+        assert profile["user_id"] == str(bob.id)
         # Quasi-identifying fields must be stripped for non-friends.
         assert "location" not in profile
         assert "timezone" not in profile
@@ -108,7 +108,7 @@ class TestProfileVisibility:
         settings_module.set_setting(bob.id, "profile_visibility", "private")
 
         profile = self._get_profile(test_client, alice_tok, bob)
-        assert profile["user_id"] == bob.id
+        assert profile["user_id"] == str(bob.id)
         assert "bio" not in profile
         assert "location" not in profile
         assert len(profile) <= 2
@@ -137,7 +137,7 @@ class TestProfileVisibility:
         bob, _ = trio["bob"]
         settings_module.set_setting(bob.id, "profile_visibility", "everyone")
         profile = self._get_profile(test_client, alice_tok, bob)
-        assert profile["user_id"] == bob.id
+        assert profile["user_id"] == str(bob.id)
         assert "location" in profile
         assert "timezone" in profile
 
@@ -146,7 +146,7 @@ class TestProfileVisibility:
         bob, _ = trio["bob"]
         settings_module.set_setting(bob.id, "profile_visibility", "none")
         profile = self._get_profile(test_client, alice_tok, bob)
-        assert profile["user_id"] == bob.id
+        assert profile["user_id"] == str(bob.id)
         assert "bio" not in profile
         assert len(profile) <= 2
 

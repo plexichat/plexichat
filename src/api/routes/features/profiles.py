@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core.database.cache.decorators import cached
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import raise_bad_request
 import utils.logger as logger
 
@@ -75,8 +76,8 @@ class ProfileUpdateRequest(BaseModel):
 class FullProfile(BaseModel):
     """Complete profile (self, or viewer within the owner's visibility scope)."""
 
-    id: Optional[int] = None
-    user_id: int
+    id: Optional[SnowflakeID] = None
+    user_id: SnowflakeID
     bio: Optional[str] = None
     banner_url: Optional[str] = None
     social_links: List[dict] = []
@@ -94,8 +95,8 @@ class LimitedProfile(BaseModel):
     """Limited projection (non-friend viewers under friends-only, shared-server
     denial, or any unrecognized visibility value — fail closed)."""
 
-    id: Optional[int] = None
-    user_id: int
+    id: Optional[SnowflakeID] = None
+    user_id: SnowflakeID
     bio: Optional[str] = None
     banner_url: Optional[str] = None
     custom_status_text: Optional[str] = None
@@ -108,7 +109,7 @@ class LimitedProfile(BaseModel):
 class PrivateProfile(BaseModel):
     """Minimal identity (visibility ``none``)."""
 
-    user_id: int
+    user_id: SnowflakeID
     created_at: int
 
 
@@ -198,6 +199,16 @@ def _project_profile(profile: dict, fields) -> dict:
     return projected
 
 
+def _profile_payload(profile: dict) -> dict:
+    """Wrap a profile dict, emitting its snowflake ids as decimal strings.
+
+    The profile's ``id`` (profile row) and ``user_id`` are snowflakes, and a
+    JS ``Number`` cannot hold a 64-bit id exactly, so serving them as JSON
+    numbers would let the client round them.
+    """
+    return {"profile": stringify_snowflake_ids(profile)}
+
+
 # Known validation failures raised by the profile manager, mapped to static
 # client-safe messages (the raw ValueError text is internal detail).
 _PROFILE_VALIDATION_MESSAGES = (
@@ -245,15 +256,15 @@ async def get_user_profile(
 
     result = svc.get_profile(uid)
     if not result:
-        return {"profile": {"user_id": uid, "bio": None, "social_links": []}}
+        return _profile_payload({"user_id": uid, "bio": None, "social_links": []})
 
     # Self-reads are always complete.
     if uid == current_user.user_id:
-        return {"profile": result}
+        return _profile_payload(result)
 
     visibility = _get_profile_visibility(uid)
     if visibility == "private":
-        return {"profile": _project_profile(result, _PRIVATE_PROFILE_FIELDS)}
+        return _profile_payload(_project_profile(result, _PRIVATE_PROFILE_FIELDS))
     if visibility in ("friends", "shared-servers", _FAIL_CLOSED_VISIBILITY):
         allowed = False
         if visibility == "friends":
@@ -261,8 +272,8 @@ async def get_user_profile(
         elif visibility == "shared-servers":
             allowed = _shares_server_with(current_user.user_id, uid)
         if not allowed:
-            return {"profile": _project_profile(result, _LIMITED_PROFILE_FIELDS)}
-    return {"profile": result}
+            return _profile_payload(_project_profile(result, _LIMITED_PROFILE_FIELDS))
+    return _profile_payload(result)
 
 
 @router.patch(
@@ -301,7 +312,7 @@ async def update_own_profile(
             svc.set_custom_status(user_id=current_user.user_id, **extra)
             result = svc.get_profile(current_user.user_id)
 
-        return {"success": True, "profile": result}
+        return {"success": True, "profile": stringify_snowflake_ids(result)}
     except ValueError as exc:
         logger.debug("Profile validation failed for %s", current_user.user_id)
         raise_bad_request(_safe_validation_message(exc))
