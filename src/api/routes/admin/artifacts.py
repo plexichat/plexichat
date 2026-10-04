@@ -286,6 +286,16 @@ async def admin_set_feature_settings(
                 "error": {"code": 400, "message": "server_id and settings are required"}
             },
         )
+    # Accept a decimal-string snowflake (the admin UI sends ids as strings to
+    # avoid Number() rounding) as well as an int, then bind a real int so the
+    # query works on both SQLite and Postgres.
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server_id"}},
+        )
 
     manager = _get_manager()
     result = manager.set_feature_settings_bulk(server_id, feature, settings)

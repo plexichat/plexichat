@@ -2121,7 +2121,9 @@ async function renderFeatureSettings() {
       try {
         const result = await api('/api/v1/admin/artifacts/features/' + feature, {
           method: 'POST',
-          body: JSON.stringify({ server_id: Number(serverId), settings }),
+          // Snowflake id as a string: Number() would round a 64-bit id onto
+          // a different server.
+          body: JSON.stringify({ server_id: String(serverId).trim(), settings }),
         });
         const resultEl = form.querySelector('.feature-settings-result');
         if (resultEl) {
@@ -2243,8 +2245,9 @@ async function saveServerRetention(e) {
     const serverId = idEl.value.trim();
     const daysRaw = daysEl.value.trim();
     if (serverId === '') { showToast('Server ID is required', 'error'); return; }
-    const body = { server_id: Number(serverId), retention_days: daysRaw === '' ? null : Number(daysRaw) };
-    if (Number.isNaN(body.server_id)) { showToast('Server ID must be a number', 'error'); return; }
+    // Keep the snowflake as a string: Number() would round a 64-bit id.
+    const body = { server_id: String(serverId).trim(), retention_days: daysRaw === '' ? null : Number(daysRaw) };
+    if (!/^\d+$/.test(body.server_id)) { showToast('Server ID must be a number', 'error'); return; }
     if (daysRaw !== '' && Number.isNaN(body.retention_days)) { showToast('Retention days must be a number', 'error'); return; }
     try {
         const d = await api('/api/v1/admin/artifacts/retention/server', { method: 'POST', body: JSON.stringify(body) });

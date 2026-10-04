@@ -87,3 +87,34 @@ def test_set_feature_settings_stringifies_server_id(monkeypatch):
 
     assert body["server_id"] == str(BIG)
     assert isinstance(body["server_id"], str)
+
+
+def test_set_feature_settings_accepts_decimal_string_server_id(monkeypatch):
+    """The admin UI sends snowflake ids as strings, so the route must coerce."""
+    from src.api.routes.admin import artifacts as artifact_routes
+
+    seen = {}
+
+    class _Manager:
+        def set_feature_settings_bulk(self, server_id, feature, settings):
+            seen["server_id"] = server_id
+            return {}
+
+    monkeypatch.setattr(artifact_routes, "check_host_restriction", lambda request: None)
+    monkeypatch.setattr(
+        artifact_routes, "require_admin_permission", lambda request, perm: 1
+    )
+    monkeypatch.setattr(artifact_routes, "_get_manager", lambda: _Manager())
+
+    body = asyncio.run(
+        artifact_routes.admin_set_feature_settings(
+            feature="voice",
+            body={"server_id": str(BIG), "settings": {}},
+            request=SimpleNamespace(),
+        )
+    )
+
+    # The manager gets a real int; the response carries a decimal string.
+    assert seen["server_id"] == BIG
+    assert body["server_id"] == str(BIG)
+    assert isinstance(body["server_id"], str)
