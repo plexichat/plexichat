@@ -2,11 +2,13 @@
 Search routes - Unified search and discovery endpoints.
 """
 
+from dataclasses import asdict
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.schemas.search import (
     MessageSearchPageResponse,
     UserSearchPageResponse,
@@ -369,7 +371,12 @@ async def list_public_servers(
             limit=limit,
             offset=offset,
         )
-        return {"results": results, "next_cursor": None}
+        # ServerListing is a core dataclass whose ``id``/``server_id`` are
+        # integer snowflakes. FastAPI would serialize those as JSON numbers,
+        # which a JS client rounds above 2^53; emit them as decimal strings to
+        # match the SnowflakeID convention the search schemas already follow.
+        listings = [stringify_snowflake_ids(asdict(listing)) for listing in results]
+        return {"results": listings, "next_cursor": None}
     except Exception as e:
         logger.error(f"List public servers failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal search error")
