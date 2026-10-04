@@ -851,7 +851,7 @@ async def get_artifact(
 
 
 @router.patch(
-    "/{artifact_id:int}",
+    "/{artifact_id}",
     response_model=ArtifactResponse,
     summary="Update an artifact",
     responses={

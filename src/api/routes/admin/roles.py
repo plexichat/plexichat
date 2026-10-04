@@ -273,7 +273,7 @@ async def create_role(request: Request, role_data: RoleCreate):
 
 
 @router.put(
-    "/roles/{role_id:int}",
+    "/roles/{role_id}",
     response_model=SuccessResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid request data"},

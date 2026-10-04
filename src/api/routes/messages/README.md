@@ -10,7 +10,7 @@ The `__init__.py` file is the public entry point. It does not define handlers it
 
 | Path | Purpose | Key routes |
 |------|---------|------------|
-| `messages_crud/` | Create, retrieve, edit, delete, and bulk-delete messages | `POST /channels/{channel_id}/messages`, `GET /channels/{channel_id}/messages/{message_id}`, `PATCH /channels/{channel_id}/messages/{message_id:int}`, `DELETE /channels/{channel_id}/messages/{message_id}`, `POST /channels/{channel_id}/messages/bulk-delete` |
+| `messages_crud/` | Create, retrieve, edit, delete, and bulk-delete messages | `POST /channels/{channel_id}/messages`, `GET /channels/{channel_id}/messages/{message_id}`, `PATCH /channels/{channel_id}/messages/{message_id}`, `DELETE /channels/{channel_id}/messages/{message_id}`, `POST /channels/{channel_id}/messages/bulk-delete` |
 | `messages_list.py` | List messages and pinned messages | `GET /channels/{channel_id}/messages`, `GET /channels/{channel_id}/pins` |
 | `pins.py` | Pin and unpin messages | `PUT /channels/{channel_id}/pins/{message_id}`, `DELETE /channels/{channel_id}/pins/{message_id}` |
 | `search.py` | Full-text search within a channel | `GET /channels/{channel_id}/messages/search?content=...` |
@@ -40,7 +40,7 @@ See `helpers.py:40` for the full mapping logic.
 |--------|------|-------------|
 | `POST` | `/channels/{channel_id}/messages` | Send a message. Body must contain `content`, `attachments`, `embeds`, or `poll`. |
 | `GET` | `/channels/{channel_id}/messages/{message_id}` | Get a single message. Returns `404` if the message is not in the addressed channel. |
-| `PATCH` | `/channels/{channel_id}/messages/{message_id:int}` | Edit a message. Supports optimistic concurrency via `expected_edited_at` (`409` on conflict). |
+| `PATCH` | `/channels/{channel_id}/messages/{message_id}` | Edit a message. Supports optimistic concurrency via `expected_edited_at` (`409` on conflict). |
 | `DELETE` | `/channels/{channel_id}/messages/{message_id}` | Delete a message. Broadcasts both a tombstone `MESSAGE_UPDATE` and `MESSAGE_DELETE`. |
 | `POST` | `/channels/{channel_id}/messages/bulk-delete` | Bulk-delete up to 100 messages. Request body is `BulkDeleteRequest` (`message_ids: List[SnowflakeID]`). Only eligible messages are removed; the response indicates partial success. |
 
@@ -144,5 +144,5 @@ GET /channels/123/messages?limit=50&before=999&after=100
 
 * Cached endpoints use `prefix="messages_api"` (`ttl=10`) and `prefix="channel_pins_api"` (`ttl=120`). See `messages_list.py:39`.
 * `read_by` uses `ReaderInfo` objects (`id`, `username`, `avatar_url`), not bare user IDs. See `src/api/schemas/messages.py:84`.
-* `PATCH /channels/{channel_id}/messages/{message_id:int}` requires the `:int` path converter; non-integer IDs return `400` before the handler runs.
+* `PATCH /channels/{channel_id}/messages/{message_id}` takes `message_id: SnowflakeIDParam`, matching the sibling GET/DELETE routes; malformed IDs fail validation with `422`.
 * Broadcasts filter recipients by `channels.view` permission so private-channel content does not leak. See `messages_crud/broadcast.py:26`.

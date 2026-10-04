@@ -39,7 +39,7 @@ OPEN_ROUTES: set[tuple[str, str]] = {
     ("src/api/routes/auth/password.py", "GET /password-requirements"),
     ("src/api/routes/auth/password.py", "POST /password-reset/request"),
     ("src/api/routes/avatars.py", "GET /servers/{server_id}"),
-    ("src/api/routes/avatars.py", "GET /users/{user_id:int}"),
+    ("src/api/routes/avatars.py", "GET /users/{user_id}"),
     ("src/api/routes/bots.py", "GET /directory"),
     ("src/api/routes/config.py", "GET /capabilities"),
     ("src/api/routes/health.py", "GET /health"),

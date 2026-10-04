@@ -161,7 +161,7 @@ async def list_approvals(
 
 
 @router.get(
-    "/approvals/{approval_id:int}",
+    "/approvals/{approval_id}",
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Insufficient permissions"},

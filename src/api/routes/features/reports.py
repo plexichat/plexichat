@@ -536,7 +536,7 @@ async def update_report_status(
 
 
 @router.get(
-    "/reports/{report_id:int}",
+    "/reports/{report_id}",
     summary="Get report details",
     responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
 )

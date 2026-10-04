@@ -197,7 +197,7 @@ def _invalidate_server_icon_cache(server_id: int) -> None:
 
 
 @router.get(
-    "/users/{user_id:int}",
+    "/users/{user_id}",
     summary="Get user avatar",
     responses={
         200: {

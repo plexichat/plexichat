@@ -15,7 +15,7 @@ relationships/
 ├── listing.py           # ListingMixin — GET /@me (list all relationships)
 ├── friend_requests.py   # FriendRequestMixin — POST "" (create), PUT /{user_id}/accept
 ├── blocking.py          # BlockingMixin — POST /block
-├── deletion.py          # DeletionMixin — DELETE /{user_id:int}
+├── deletion.py          # DeletionMixin — DELETE /{user_id}
 ├── composer.py          # RelationshipsRouter — combines all mixins and calls register_routes()
 ├── helpers.py           # Schema helpers (pre-existing, unchanged)
 └── README.md            # This file
@@ -42,7 +42,7 @@ RelationshipsRouter
 | `POST` | `` | `FriendRequestMixin.create_relationship()` | Create a friend request |
 | `PUT` | `/{user_id}/accept` | `FriendRequestMixin.accept_friend_request()` | Accept a pending friend request |
 | `POST` | `/block` | `BlockingMixin.block_user()` | Block a user |
-| `DELETE` | `/{user_id:int}` | `DeletionMixin.delete_relationship()` | Remove a friend, cancel a request, or unblock |
+| `DELETE` | `/{user_id}` | `DeletionMixin.delete_relationship()` | Remove a friend, cancel a request, or unblock |
 
 The prefix `/relationships` is applied by the parent router mount, so the full paths are `/relationships/@me`, `/relationships`, and so on. `__init__.py:12` creates `router = APIRouter(tags=["Relationships"])` and calls `RelationshipsRouter().register_routes(router)` once at import time.
 
@@ -62,7 +62,7 @@ The response is `List[DetailedRelationshipInfo]` where each item contains:
 * `presence` — `PresenceInfo(status)` (`online`, `idle`, `dnd`, `offline`)
 * `message` and `created_at` — present for pending requests
 
-`DELETE /{user_id:int}` uses the `:int` FastAPI path converter. Non-integer IDs are rejected before the handler runs.
+`DELETE /{user_id}` takes `user_id: SnowflakeIDParam`, matching the other snowflake-id routes. Malformed IDs fail Pydantic validation with `422`.
 
 ## Key design decisions
 

@@ -551,7 +551,7 @@ async def create_emoji(
 
 
 @router.patch(
-    "/{server_id}/emojis/{emoji_id:int}",
+    "/{server_id}/emojis/{emoji_id}",
     response_model=EmojiResponse,
     summary="Update custom emoji",
     responses={
@@ -564,7 +564,7 @@ async def create_emoji(
     },
 )
 async def update_emoji(
-    server_id: str,
+    server_id: SnowflakeIDParam,
     emoji_id: SnowflakeIDParam,
     body: EmojiUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),

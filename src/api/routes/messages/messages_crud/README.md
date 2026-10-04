@@ -41,7 +41,7 @@ Concrete mixins come first. `BroadcastMixin` (fire-and-forget WebSocket dispatch
 |--------|------|---------|---------|
 | `POST` | `/channels/{channel_id}/messages` | `SendMixin.send_channel_message()` | Send message |
 | `GET` | `/channels/{channel_id}/messages/{message_id}` | `RetrieveMixin.get_message()` | Get message |
-| `PATCH` | `/channels/{channel_id}/messages/{message_id:int}` | `EditMixin.edit_message()` | Edit message |
+| `PATCH` | `/channels/{channel_id}/messages/{message_id}` | `EditMixin.edit_message()` | Edit message |
 | `DELETE` | `/channels/{channel_id}/messages/{message_id}` | `DeleteMixin.delete_message()` | Delete message |
 | `POST` | `/channels/{channel_id}/messages/bulk-delete` | `DeleteMixin.bulk_delete_messages()` | Bulk-delete messages |
 
@@ -65,7 +65,7 @@ Concrete mixins come first. `BroadcastMixin` (fire-and-forget WebSocket dispatch
 
 * `POST /channels/{channel_id}/messages` accepts `MessageCreateRequest` (`content`, `reply_to_id`, `attachments`, `embeds`, `poll`). At least one of `content`, `attachments`, `embeds`, or `poll` is required. Returns `MessageResponse`.
 * `POST /channels/{channel_id}/messages/bulk-delete` accepts `BulkDeleteRequest` (`message_ids: List[SnowflakeID]`, `max_length=100`). The handler returns `400` when you send more than 100 IDs and `SuccessResponse(success=False)` when no eligible messages are deleted (`delete.py:218`).
-* `PATCH /channels/{channel_id}/messages/{message_id:int}` accepts `MessageUpdateRequest` (`content`, `expected_edited_at`). When `expected_edited_at` is stale you receive `409 EDIT_CONFLICT`; when the edit window has expired you receive `403 EDIT_WINDOW_EXPIRED`.
+* `PATCH /channels/{channel_id}/messages/{message_id}` accepts `MessageUpdateRequest` (`content`, `expected_edited_at`). When `expected_edited_at` is stale you receive `409 EDIT_CONFLICT`; when the edit window has expired you receive `403 EDIT_WINDOW_EXPIRED`.
 
 ## How you add a new route
 

@@ -94,7 +94,7 @@ class RelationshipsRouter(
         )(self.accept_friend_request)
 
         router.delete(
-            "/{user_id:int}",
+            "/{user_id}",
             response_model=SuccessResponse,
             summary="Remove a relationship",
             responses={
