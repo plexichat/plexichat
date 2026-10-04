@@ -117,7 +117,10 @@ async def list_connections(
                     "last_activity": conn.get("last_activity"),
                     "note": conn.get("note"),
                     "created_at": conn["created_at"],
-                    "created_by": conn["created_by"],
+                    # created_by is the creating admin's snowflake.
+                    "created_by": str(conn["created_by"])
+                    if conn.get("created_by") is not None
+                    else None,
                 }
             )
 
@@ -174,7 +177,10 @@ async def get_connection(request: Request, connection_id: int):
             "last_activity": connection.get("last_activity"),
             "note": connection.get("note"),
             "created_at": connection["created_at"],
-            "created_by": connection["created_by"],
+            # created_by is the creating admin's snowflake.
+            "created_by": str(connection["created_by"])
+            if connection.get("created_by") is not None
+            else None,
         }
     except HTTPException:
         raise
