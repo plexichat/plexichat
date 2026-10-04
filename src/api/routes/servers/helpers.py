@@ -56,38 +56,6 @@ def _channel_to_response(channel) -> ChannelResponse:
     )
 
 
-def _server_to_dict(server) -> dict:
-    default_channel_id = getattr(server, "default_channel_id", None)
-    return {
-        "id": server.id,
-        "name": server.name,
-        "description": getattr(server, "description", None),
-        "icon_url": getattr(server, "icon_url", None),
-        "owner_id": server.owner_id,
-        "member_count": getattr(server, "member_count", 0),
-        "default_channel_id": default_channel_id,
-        "created_at": server.created_at,
-    }
-
-
-def _channel_to_dict(channel) -> dict:
-    channel_type = getattr(channel, "channel_type", None)
-    if channel_type is not None and hasattr(channel_type, "value"):
-        channel_type = channel_type.value
-    return {
-        "id": channel.id,
-        "server_id": channel.server_id,
-        "name": channel.name,
-        "channel_type": channel_type or "text",
-        "topic": getattr(channel, "topic", None),
-        "position": getattr(channel, "position", 0),
-        "category_id": getattr(channel, "category_id", None),
-        "nsfw": getattr(channel, "nsfw", False),
-        "slowmode_seconds": getattr(channel, "slowmode_seconds", 0),
-        "created_at": channel.created_at,
-    }
-
-
 def _automod_rule_to_response(rule) -> AutomodRuleResponse:
     return AutomodRuleResponse(
         id=SnowflakeID(rule.id),
