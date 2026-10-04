@@ -4,6 +4,7 @@ from ..models import Notification, PushPayload, MentionType
 from typing import Optional
 
 import utils.logger as logger
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 from .protocol import NotificationProtocol
 
@@ -246,19 +247,28 @@ class PushMixin(NotificationProtocol):
 
         unread = self.get_unread_count(notification.user_id)
 
+        # Ids must cross to the device as decimal strings. FCM and APNs
+        # coerce ``data`` values with ``str(...)``, but the Web Push path
+        # ``json.dumps`` the dict verbatim, so a numeric snowflake would be
+        # handed to a browser service worker as a JSON number and rounded
+        # past 2**53 — addressing the wrong message/channel when the
+        # notification is tapped. Stringify centrally so every platform
+        # agrees; ``mention_type`` is left as its string value.
         return PushPayload(
             user_id=notification.user_id,
             title=title,
             body=notification.content_preview,
-            data={
-                "notification_id": notification.id,
-                "message_id": notification.message_id,
-                "conversation_id": notification.conversation_id,
-                "server_id": notification.server_id,
-                "channel_id": notification.channel_id,
-                "thread_id": notification.thread_id,
-                "mention_type": notification.mention_type.value,
-            },
+            data=stringify_snowflake_ids(
+                {
+                    "notification_id": notification.id,
+                    "message_id": notification.message_id,
+                    "conversation_id": notification.conversation_id,
+                    "server_id": notification.server_id,
+                    "channel_id": notification.channel_id,
+                    "thread_id": notification.thread_id,
+                    "mention_type": notification.mention_type.value,
+                }
+            ),
             badge_count=unread.mention_count,
             sound="default",
             priority="high",
