@@ -21,6 +21,7 @@ import json
 import threading
 
 import utils.logger as logger
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
@@ -244,7 +245,9 @@ async def relay_artifact_op(
         d["seq"] = int(seq)
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_OP),
-        "d": d,
+        # ``connection.send_json`` bypasses the dispatcher backstop, so
+        # stringify the nested ``op`` dict's ids here as well.
+        "d": stringify_snowflake_ids(d),
     }
 
     sent = 0
@@ -370,16 +373,21 @@ async def send_artifact_sync(
 
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_SYNC),
-        "d": {
-            # String ids: see note in relay_artifact_op about 2^53 precision.
-            "artifact_id": str(artifact_id),
-            "snapshot": snapshot,
-            "ops": ops or [],
-            # L36: True when the payload was omitted because it exceeded the
-            # snapshot cap; the client must fetch the body over REST.
-            "snapshot_truncated": bool(snapshot_truncated),
-            "rev": rev if rev is not None else 0,
-        },
+        # The caller-provided ``snapshot`` body and replay ``ops`` carry ids
+        # (whiteboard element ids, op ``actor_id``/``block_id``); this path
+        # bypasses the dispatcher backstop, so stringify them here.
+        "d": stringify_snowflake_ids(
+            {
+                # String ids: see note in relay_artifact_op about 2^53.
+                "artifact_id": str(artifact_id),
+                "snapshot": snapshot,
+                "ops": ops or [],
+                # L36: True when the payload was omitted because it exceeded
+                # the snapshot cap; the client must fetch the body over REST.
+                "snapshot_truncated": bool(snapshot_truncated),
+                "rev": rev if rev is not None else 0,
+            }
+        ),
     }
     try:
         return await connection.send_json(payload)
@@ -418,13 +426,15 @@ async def send_artifact_ack(
     actor_id = getattr(connection, "user_id", None)
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_OP),
-        "d": {
-            # String ids: see note in relay_artifact_op about 2^53 precision.
-            "artifact_id": str(artifact_id),
-            "actor_id": str(actor_id) if actor_id is not None else None,
-            "seq": int(seq),
-            "op": op,
-        },
+        "d": stringify_snowflake_ids(
+            {
+                # String ids: see note in relay_artifact_op about 2^53.
+                "artifact_id": str(artifact_id),
+                "actor_id": str(actor_id) if actor_id is not None else None,
+                "seq": int(seq),
+                "op": op,
+            }
+        ),
     }
     try:
         return await connection.send_json(payload)
@@ -460,12 +470,14 @@ async def send_artifact_op_rejected(
 
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_OP_REJECTED),
-        "d": {
-            "artifact_id": str(artifact_id),
-            "reason": reason,
-            "current_rev": int(current_rev),
-            "op": op,
-        },
+        "d": stringify_snowflake_ids(
+            {
+                "artifact_id": str(artifact_id),
+                "reason": reason,
+                "current_rev": int(current_rev),
+                "op": op,
+            }
+        ),
     }
     try:
         return await connection.send_json(payload)

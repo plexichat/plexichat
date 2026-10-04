@@ -21,6 +21,7 @@ import threading
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 import utils.logger as logger
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
@@ -209,15 +210,22 @@ async def relay_sum_op(
     if not connections:
         return 0
 
+    # This helper sends through ``connection.send_json`` directly, bypassing
+    # the dispatcher's ``stringify_snowflake_ids`` backstop, so the *nested*
+    # op dict must be stringified here too: its ``sheet_id``/``actor_id``/
+    # ``client_id`` fields would otherwise cross the wire as JSON numbers and
+    # be rounded by the client past 2^53.
     payload = {
         "op": int(GatewayOpcode.SUM_OP),
-        "d": {
-            # Snowflake ids exceed 2^53 — serialize as strings so JS clients
-            # JSON.parse them losslessly (matches the REST convention).
-            "workbook_id": str(workbook_id),
-            "actor_id": str(actor_id),
-            "op": op,
-        },
+        "d": stringify_snowflake_ids(
+            {
+                # Snowflake ids exceed 2^53 — serialize as strings so JS
+                # clients JSON.parse them losslessly (matches REST).
+                "workbook_id": str(workbook_id),
+                "actor_id": str(actor_id),
+                "op": op,
+            }
+        ),
     }
 
     sent = 0
@@ -283,14 +291,19 @@ async def send_sum_sync(
         logger.debug(f"Sum sync rate limited for connection {connection.connection_id}")
         return False
 
+    # ``ops`` entries carry ``actor_id`` and a nested ``op`` dict with
+    # ``sheet_id``; stringify the whole frame (idempotent on the top-level
+    # strings) since this bypasses the dispatcher backstop.
     payload = {
         "op": int(GatewayOpcode.SUM_SYNC),
-        "d": {
-            # String id: see note in relay_sum_op about 2^53 precision.
-            "workbook_id": str(workbook_id),
-            "revision": int(revision),
-            "ops": ops or [],
-        },
+        "d": stringify_snowflake_ids(
+            {
+                # String id: see note in relay_sum_op about 2^53 precision.
+                "workbook_id": str(workbook_id),
+                "revision": int(revision),
+                "ops": ops or [],
+            }
+        ),
     }
     try:
         return await connection.send_json(payload)
