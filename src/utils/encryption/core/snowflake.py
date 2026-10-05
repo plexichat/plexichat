@@ -123,7 +123,14 @@ class SnowflakeGenerator:
                 | self.sequence
             )
 
-    def parse(self, snowflake_id: int) -> Dict[str, int]:
+    def parse(self, snowflake_id: int | str) -> Dict[str, int]:
+        if isinstance(snowflake_id, bool):
+            raise ValueError("Invalid snowflake ID")
+        if isinstance(snowflake_id, str):
+            try:
+                snowflake_id = int(snowflake_id)
+            except ValueError:
+                raise ValueError("Invalid snowflake ID: must be numeric string")
         return {
             "timestamp": (snowflake_id >> 22) + self.epoch,
             "datacenter_id": (snowflake_id >> 17) & 0x1F,

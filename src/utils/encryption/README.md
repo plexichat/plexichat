@@ -160,7 +160,7 @@ Generate a unique 64-bit Snowflake ID.
 unique_id = encryption.generate_snowflake_id()
 ```
 
-#### parse_snowflake_id(snowflake_id: int) -> dict
+#### parse_snowflake_id(snowflake_id: int | str) -> dict
 
 Parse a Snowflake ID into its components.
 

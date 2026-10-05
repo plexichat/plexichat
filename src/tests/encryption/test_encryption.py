@@ -551,6 +551,21 @@ class TestSnowflakeIDs:
         assert parsed["worker_id"] == 1
         assert parsed["datacenter_id"] == 1
 
+    def test_parse_snowflake_accepts_numeric_string(self, setup_encryption):
+        """An id that crossed JSON as a string must parse identically."""
+        snowflake_id = generate_snowflake_id()
+        assert parse_snowflake_id(str(snowflake_id)) == parse_snowflake_id(snowflake_id)
+
+    def test_parse_snowflake_rejects_non_numeric_string(self, setup_encryption):
+        """A non-numeric string is not a snowflake id."""
+        with pytest.raises(ValueError):
+            parse_snowflake_id("not-an-id")
+
+    def test_parse_snowflake_rejects_bool(self, setup_encryption):
+        """``bool`` is an ``int`` subclass but not a valid id."""
+        with pytest.raises(ValueError):
+            parse_snowflake_id(True)
+
     def test_snowflake_generator_bounds(self):
         """Test Snowflake generator with boundary values."""
         gen = SnowflakeGenerator(worker_id=0, datacenter_id=0)

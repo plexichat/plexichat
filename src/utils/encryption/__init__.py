@@ -350,12 +350,13 @@ def generate_snowflake_id() -> int:
     return _get_snowflake().generate()
 
 
-def parse_snowflake_id(snowflake_id: int) -> dict:
+def parse_snowflake_id(snowflake_id: int | str) -> dict:
     """
     Parse a Snowflake ID into its components.
 
     Args:
-        snowflake_id (int): The Snowflake ID to parse.
+        snowflake_id (int | str): The Snowflake ID to parse. Numeric strings
+            are accepted because IDs serialize as strings in JSON.
 
     Returns:
         dict: Dictionary with timestamp, datacenter_id, worker_id, and sequence.
