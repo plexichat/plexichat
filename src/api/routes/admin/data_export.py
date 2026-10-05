@@ -26,6 +26,7 @@ from src.api.schemas.common import (
     SnowflakeIDParam,
     SuccessResponse,
 )
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .utils import require_admin_permission
 from src.core.dsar import (
     get_admin_requests,
@@ -57,7 +58,12 @@ REQUEST_RESPONSE_COLUMNS = (
 
 def _serialize_request(row: dict) -> dict:
     record = dict(row or {})
-    return {key: record.get(key) for key in REQUEST_RESPONSE_COLUMNS}
+    serialized = {key: record.get(key) for key in REQUEST_RESPONSE_COLUMNS}
+    # ``dsar_requests`` ids are 64-bit snowflakes (``generate_snowflake_id``),
+    # so ``id``/``user_id``/``admin_id`` must cross the wire as decimal
+    # strings — a JS Number rounds them past 2**53 and the admin UI would
+    # then address the wrong request. Timestamps stay numeric.
+    return stringify_snowflake_ids(serialized)
 
 
 class DenyBody(BaseModel):
