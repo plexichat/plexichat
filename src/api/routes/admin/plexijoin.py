@@ -244,7 +244,7 @@ async def create_connection(request: Request):
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin create connection error: {e}", exc_info=True)
@@ -420,7 +420,7 @@ async def approve_request(request: Request, request_id: SnowflakeIDParam):
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin approve request error: {e}", exc_info=True)
@@ -462,7 +462,7 @@ async def deny_request(request: Request, request_id: SnowflakeIDParam):
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin deny request error: {e}", exc_info=True)

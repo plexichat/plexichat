@@ -141,17 +141,17 @@ async def create_poll(
     ):
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except MessageNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except PermissionDeniedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
@@ -203,7 +203,7 @@ async def get_poll(
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except HTTPException:
         raise
@@ -253,7 +253,7 @@ async def get_poll_results(
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except HTTPException:
         raise
@@ -310,12 +310,12 @@ async def get_poll_voters(
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except PermissionDeniedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
@@ -376,17 +376,17 @@ async def vote_on_poll(
     ):
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except PermissionDeniedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
@@ -446,12 +446,12 @@ async def change_vote_on_poll(
     ):
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except HTTPException:
         raise
@@ -502,17 +502,17 @@ async def close_poll(
     except (PollEndedError, InvalidPollDurationError):
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except PermissionDeniedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
@@ -563,12 +563,12 @@ async def delete_poll(
     except PollNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except PermissionDeniedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise

@@ -244,12 +244,12 @@ async def add_reaction(
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Internal server error"}},
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
             elif "Invalid" in exc_name or "Limit" in exc_name:
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": {"code": 400, "message": "Internal server error"}},
+                    detail={"error": {"code": 400, "message": "Invalid request"}},
                 )
             elif "Blocked" in exc_name:
                 raise HTTPException(
@@ -393,7 +393,7 @@ async def clear_reactions_for_emoji(
         if "Invalid" in exc_name or "Limit" in exc_name:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Internal server error"}},
+                detail={"error": {"code": 400, "message": "Invalid request"}},
             )
         logger.error(
             f"Failed to remove emoji reactions for message {mid}: {e}", exc_info=True
@@ -532,7 +532,7 @@ async def remove_reaction(
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": "Internal server error"}},
+                    detail={"error": {"code": 403, "message": "Access denied"}},
                 )
             elif "Blocked" in exc_name:
                 raise HTTPException(

@@ -91,7 +91,7 @@ async def get_server_bans(
         elif "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(f"Failed to get bans for server {server_id}: {e}", exc_info=True)
@@ -232,7 +232,7 @@ async def unban_member(
         elif "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(

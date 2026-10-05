@@ -273,7 +273,7 @@ async def update_server_member(
         elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
@@ -354,7 +354,7 @@ async def kick_member(
         elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
@@ -437,12 +437,12 @@ async def assign_role_to_member(
         elif "Permission" in exc_name or "Hierarchy" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
         elif "InvalidPermissionKey" in exc_name:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Internal server error"}},
+                detail={"error": {"code": 400, "message": "Invalid request"}},
             )
         elif "Exists" in exc_name:
             return SuccessResponse(success=True, message=None)
@@ -529,7 +529,7 @@ async def remove_role_from_member(
         ):
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(

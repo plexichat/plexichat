@@ -142,12 +142,12 @@ async def confirm_password_reset(body: PasswordResetConfirm) -> SuccessResponse:
     except TokenInvalidError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": "Internal server error"}},
+            detail={"error": {"code": 401, "message": "Authentication required"}},
         )
     except WeakPasswordError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"Password reset confirmation failed: {e}", exc_info=True)

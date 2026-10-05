@@ -271,12 +271,12 @@ async def update_application(
     except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")
@@ -309,12 +309,12 @@ async def delete_application(
     except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")
@@ -355,7 +355,7 @@ async def create_bot(
     except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except ApplicationAccessDeniedError:
         # Bot already exists — indicate this so frontend can show proper message
@@ -400,12 +400,12 @@ async def regenerate_secret(
     except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")
@@ -475,27 +475,27 @@ async def respond_to_interaction(
     except InteractionNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": "Internal server error"}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except InteractionExpiredError:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
-            detail={"error": {"code": 410, "message": "Internal server error"}},
+            detail={"error": {"code": 410, "message": "Resource is archived"}},
         )
     except InteractionAlreadyRespondedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"error": {"code": 409, "message": "Internal server error"}},
+            detail={"error": {"code": 409, "message": "Resource already exists"}},
         )
     except InteractionValidationError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception:
         logger.exception("Unhandled error in applications API")

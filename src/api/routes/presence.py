@@ -275,14 +275,14 @@ async def update_presence(
             if "Invalid" in exc_name:
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": {"code": 400, "message": "Internal server error"}},
+                    detail={"error": {"code": 400, "message": "Invalid request"}},
                 )
             if "NotFound" in exc_name:
                 # A target user id may have been soft-deleted; surface a clean
                 # 404 instead of a 500 (P2).
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": 404, "message": "Internal server error"}},
+                    detail={"error": {"code": 404, "message": "Resource not found"}},
                 )
 
             logger.error(

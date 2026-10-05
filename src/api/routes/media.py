@@ -271,7 +271,7 @@ async def upload_chunk(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(
@@ -564,13 +564,13 @@ async def get_proxied_content(
         logger.warning(f"Proxy fetch failed for {url}: {e}")
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except (ProxyError, MediaError) as e:
         logger.warning(f"Proxy error for {url}: {e}")
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(

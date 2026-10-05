@@ -69,7 +69,7 @@ async def get_server_webhooks(
         elif "Permission" in exc_name:
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": "Internal server error"}},
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(

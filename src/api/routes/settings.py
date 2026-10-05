@@ -436,7 +436,7 @@ async def set_setting(
             )
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": 400, "message": "Internal server error"}},
+                detail={"error": {"code": 400, "message": "Invalid request"}},
             )
 
         logger.info(f"Set setting '{key}' for user {current_user.user_id}")

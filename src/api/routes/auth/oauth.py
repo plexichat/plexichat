@@ -732,7 +732,7 @@ async def oauth_callback(
             logger.error(f"OAuth login failed for {provider}:{external_id}: {e}")
             raise HTTPException(
                 status_code=401,
-                detail={"error": {"code": 401, "message": "Internal server error"}},
+                detail={"error": {"code": 401, "message": "Authentication required"}},
             )
 
         if result.status == AuthStatus.FAILED:

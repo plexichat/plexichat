@@ -183,7 +183,7 @@ def _map_thread_exception(e: Exception) -> Optional[HTTPException]:
     ):
         return HTTPException(
             status_code=409,
-            detail={"error": {"code": 409, "message": "Internal server error"}},
+            detail={"error": {"code": 409, "message": "Thread is unavailable"}},
         )
     if name in ("ThreadMemberNotFoundError",):
         return HTTPException(
@@ -203,7 +203,7 @@ def _map_thread_exception(e: Exception) -> Optional[HTTPException]:
     if name == "RateLimitError":
         return HTTPException(
             status_code=429,
-            detail={"error": {"code": 429, "message": "Internal server error"}},
+            detail={"error": {"code": 429, "message": "Rate limit exceeded"}},
         )
     return None
 

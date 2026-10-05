@@ -200,7 +200,7 @@ async def passkey_register(
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Internal server error"}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except RuntimeError as e:
         logger.warning(f"Passkey registration unavailable: {e}")
@@ -328,17 +328,17 @@ async def passkey_authenticate(
     except InvalidCredentialsError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": "Internal server error"}},
+            detail={"error": {"code": 401, "message": "Authentication required"}},
         )
     except AccountLockedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": "Internal server error"}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except ValueError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": "Internal server error"}},
+            detail={"error": {"code": 401, "message": "Authentication required"}},
         )
     except RuntimeError as e:
         logger.warning(f"Passkey authentication unavailable: {e}")
