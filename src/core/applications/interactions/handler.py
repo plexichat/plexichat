@@ -7,6 +7,7 @@ import json
 from typing import Optional, Dict, Any
 
 import utils.logger as logger
+from src.core.events.snowflakes import stringify_snowflake_ids
 from src.utils.encryption import generate_snowflake_id, encrypt_data, decrypt_data
 
 from ..models import (
@@ -432,7 +433,12 @@ class InteractionHandler:
 
         event = Event(
             event_type=EventType.INTERACTION_CREATE,
-            data=event_data,
+            # The interaction body nests ids a bot reads directly (``data.id``,
+            # ``data.target_id``, ``resolved`` users/members/channels/roles,
+            # option values). Stringify the whole payload at the emitter so the
+            # bot never receives a rounded 64-bit id even on a delivery path
+            # that bypasses the websocket dispatcher backstop.
+            data=stringify_snowflake_ids(event_data),
             server_id=interaction.server_id,
             channel_id=interaction.channel_id,
             user_id=interaction.user_id,
