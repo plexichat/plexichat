@@ -15,6 +15,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
+from src.core.events.snowflakes import stringify_snowflake_ids
 from src.core.webhooks.url_safety import validate_delivery_endpoint
 
 
@@ -95,6 +96,15 @@ class WebhookRetryQueue:
         validate_delivery_endpoint(
             endpoint_url, allow_private_network=allow_private_network
         )
+
+        # Serialize snowflake ids as decimal strings at the wire boundary.
+        # A webhook receiver is an external HTTP consumer (almost always
+        # JavaScript), and a JS ``Number`` cannot hold a 64-bit snowflake
+        # exactly, so a numeric id would be silently rounded. Normalize
+        # BEFORE signing below: the Ed25519/HMAC signature covers the JSON
+        # body we actually deliver, so stringifying after signing would
+        # make every receiver reject the delivery.
+        payload = stringify_snowflake_ids(payload)
 
         # Validate payload size
         payload_json = json.dumps(payload, sort_keys=True)
