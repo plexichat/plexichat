@@ -685,7 +685,32 @@ class PollManager(BaseManager):
         # Both deletes run in ONE transaction: a crash between them must
         # never leave the user de-voted but still registered as a voter
         # (which would block re-voting) or vice versa.
-        deleted = 0
+        # Pre-delete existence is the fallback when a driver reports an
+        # unknown rowcount (None/-1) or lacks ``rowcount`` entirely: the
+        # DELETEs below already succeeded at that point, so prior
+        # existence implies rows were removed.
+        had_voter_row = self._has_voted(user_id, poll_id)
+        had_vote_rows = bool(
+            self._db.fetch_one(
+                "SELECT 1 FROM poll_votes WHERE poll_id = ? AND user_id = ? LIMIT 1",
+                (poll_id, user_id),
+            )
+        )
+
+        def _deleted_count(cursor) -> Optional[int]:
+            try:
+                rowcount = cursor.rowcount
+            except Exception:
+                return None
+            if rowcount is None or rowcount == -1:
+                return None
+            try:
+                return int(rowcount)
+            except (TypeError, ValueError):
+                return None
+
+        votes_deleted: Optional[int] = None
+        voters_deleted: Optional[int] = None
         try:
             self._db.begin_transaction()
             cursor = self._db.execute(
@@ -693,37 +718,41 @@ class PollManager(BaseManager):
                 (poll_id, user_id),
                 auto_commit=False,
             )
-            try:
-                deleted = cursor.rowcount
-            except Exception:
-                # Database drivers without rowcount support still delete.
-                deleted = 0
+            votes_deleted = _deleted_count(cursor)
             try:
                 cursor.close()
             except Exception:
                 pass
 
             # De-register the voter slot so the user can vote again on this poll.
-            self._db.execute(
+            voters_cursor = self._db.execute(
                 "DELETE FROM poll_voters WHERE poll_id = ? AND user_id = ?",
                 (poll_id, user_id),
                 auto_commit=False,
             )
+            voters_deleted = _deleted_count(voters_cursor)
+            try:
+                voters_cursor.close()
+            except Exception:
+                pass
             self._db.commit()
         except Exception:
             self._db.rollback()
             raise
 
         logger.debug(
-            "User %s vote(s) on poll %s cleared (%d row(s))",
+            "User %s vote(s) on poll %s cleared (%s/%s row(s))",
             user_id,
             poll_id,
-            deleted,
+            votes_deleted if votes_deleted is not None else "?",
+            voters_deleted if voters_deleted is not None else "?",
         )
 
         self._emit_poll_update(poll, user_id, "remove")
 
-        return deleted > 0
+        if votes_deleted is not None and voters_deleted is not None:
+            return (votes_deleted > 0) or (voters_deleted > 0)
+        return bool(had_voter_row or had_vote_rows)
 
     def get_voters(
         self, poll_id: SnowflakeID, user_id: SnowflakeID
