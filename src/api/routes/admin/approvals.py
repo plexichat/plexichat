@@ -325,7 +325,7 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
             {
                 "approval_id": str(approval_id),
                 "action_type": approval_data.action_type,
-                "requested_by": admin_id,
+                "requested_by": str(admin_id),
             },
             source="approvals",
             severity="info",
@@ -530,7 +530,7 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
                 "approval_approved",
                 {
                     "approval_id": str(approval_id),
-                    "approved_by": admin_id,
+                    "approved_by": str(admin_id),
                     "current_approvals": new_current_approvals,
                     "required_approvals": required_approvals,
                 },
@@ -543,7 +543,7 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
                 "approval_voted",
                 {
                     "approval_id": str(approval_id),
-                    "voted_by": admin_id,
+                    "voted_by": str(admin_id),
                     "current_approvals": new_current_approvals,
                     "required_approvals": required_approvals,
                 },
@@ -664,7 +664,7 @@ async def reject_request(
             "approval_rejected",
             {
                 "approval_id": str(approval_id),
-                "rejected_by": admin_id,
+                "rejected_by": str(admin_id),
                 "reason": decision.reason,
             },
             source="approvals",

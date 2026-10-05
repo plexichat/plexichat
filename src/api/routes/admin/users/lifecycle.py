@@ -161,7 +161,7 @@ class LifecycleMixin(AdminUsersRouterProtocol):
 
                 record_system_alert(
                     "user_purged",
-                    {"user_id": str(uid), "purged_by": admin_id},
+                    {"user_id": str(uid), "purged_by": str(admin_id)},
                     source="admin",
                     severity="warning",
                     target_path="#users",

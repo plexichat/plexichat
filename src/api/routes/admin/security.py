@@ -346,7 +346,7 @@ async def rotate_access_token(
 
         record_system_alert(
             "token_rotated",
-            {"token_id": token_id, "rotated_by": admin_id},
+            {"token_id": str(token_id), "rotated_by": str(admin_id)},
             source="admin",
             severity="info",
         )
@@ -456,7 +456,7 @@ async def revoke_access_token(request: Request, token_id: SnowflakeIDParam):
 
         record_system_alert(
             "token_revoked",
-            {"token_id": token_id, "revoked_by": admin_id},
+            {"token_id": str(token_id), "revoked_by": str(admin_id)},
             source="admin",
             severity="warning",
         )
@@ -505,7 +505,7 @@ async def unrevoke_access_token(request: Request, token_id: SnowflakeIDParam):
 
         record_system_alert(
             "token_unrevoked",
-            {"token_id": token_id, "unrevoked_by": admin_id},
+            {"token_id": str(token_id), "unrevoked_by": str(admin_id)},
             source="admin",
             severity="info",
         )
@@ -642,7 +642,7 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
 
             record_system_alert(
                 "user_sessions_killed",
-                {"user_id": str(uid), "initiated_by": admin_id},
+                {"user_id": str(uid), "initiated_by": str(admin_id)},
                 source="admin",
                 severity="warning",
                 target_path=f"#user-{uid}",
@@ -703,7 +703,7 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
                 {
                     "user_id": str(uid),
                     "duration_seconds": body.duration_seconds,
-                    "suspended_by": admin_id,
+                    "suspended_by": str(admin_id),
                 },
                 source="admin",
                 severity="warning",
@@ -782,7 +782,7 @@ async def logout_all_users(request: Request):
 
         record_system_alert(
             "global_session_purge",
-            {"initiated_by": admin_id},
+            {"initiated_by": str(admin_id)},
             source="admin",
             severity="warning",
         )
