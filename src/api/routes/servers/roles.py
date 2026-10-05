@@ -30,10 +30,15 @@ def _invalidate_roles_listing_cache() -> None:
 
 
 def role_to_dict(role, server_id: int) -> dict:
-    """Serialize a server role object into a gateway-safe dict."""
+    """Serialize a server role object into a gateway-safe dict.
+
+    Snowflake ids are decimal strings: a JSON number past 2**53 would be
+    rounded by JS clients.
+    """
+    role_id = getattr(role, "id", None)
     return {
-        "id": getattr(role, "id", None),
-        "server_id": server_id,
+        "id": None if role_id is None else str(role_id),
+        "server_id": str(server_id),
         "name": getattr(role, "name", None),
         "color": getattr(role, "color", None),
         "position": getattr(role, "position", 0),

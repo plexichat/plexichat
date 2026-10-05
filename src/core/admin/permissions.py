@@ -588,9 +588,9 @@ def get_admin_permissions_summary(db, admin_id: int) -> Dict[str, Any]:
         has_wildcard = all_permissions.get("*", False)
 
         return {
-            "admin_id": admin_id,
+            "admin_id": str(admin_id),
             "roles": [
-                {"id": r.id, "name": r.name, "description": r.description}
+                {"id": str(r.id), "name": r.name, "description": r.description}
                 for r in roles
             ],
             "permissions": all_permissions,
@@ -601,7 +601,7 @@ def get_admin_permissions_summary(db, admin_id: int) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting admin permissions summary: {e}")
         return {
-            "admin_id": admin_id,
+            "admin_id": str(admin_id),
             "roles": [],
             "permissions": {},
             "has_wildcard": False,

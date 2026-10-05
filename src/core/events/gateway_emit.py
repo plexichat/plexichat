@@ -79,6 +79,21 @@ def _emit(
 # ``events.snowflakes`` so this rule cannot drift between emitters.
 
 
+def _coerce_routing_id(value: Any) -> Optional[int]:
+    """Coerce a routing id back to int for DB-backed dispatch routing.
+
+    Gateway payload builders carry ids as decimal strings (JS-safe), but
+    routing queries need ints. ``None`` stays ``None``; unparseable values
+    return ``None`` so routing falls back to event-scoped defaults.
+    """
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
 # --------------------------------------------------------------------------
 # User / profile
 # --------------------------------------------------------------------------
@@ -362,8 +377,8 @@ def emit_thread_create(thread: Dict[str, Any]) -> None:
     _emit(
         EventType.THREAD_CREATE,
         stringify_snowflake_ids(thread),
-        channel_id=thread.get("parent_id"),
-        server_id=thread.get("guild_id"),
+        channel_id=_coerce_routing_id(thread.get("parent_id")),
+        server_id=_coerce_routing_id(thread.get("guild_id")),
     )
 
 
@@ -372,8 +387,8 @@ def emit_thread_update(thread: Dict[str, Any]) -> None:
     _emit(
         EventType.THREAD_UPDATE,
         stringify_snowflake_ids(thread),
-        channel_id=thread.get("parent_id"),
-        server_id=thread.get("guild_id"),
+        channel_id=_coerce_routing_id(thread.get("parent_id")),
+        server_id=_coerce_routing_id(thread.get("guild_id")),
     )
 
 

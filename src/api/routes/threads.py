@@ -68,17 +68,25 @@ def _thread_to_response(thread) -> ThreadResponse:
 
 
 def _thread_to_dict(thread) -> dict:
-    """Gateway-safe dict for THREAD_* dispatch payloads."""
+    """Gateway-safe dict for THREAD_* dispatch payloads.
+
+    Snowflake ids are decimal strings so a JSON number past 2**53 is never
+    rounded by JS clients. Routing ids stay available as ints via the
+    gateway emitters, which coerce back with ``int()``.
+    """
+    parent_message_id = getattr(thread, "parent_message_id", None)
     return {
-        "id": thread.id,
-        "channel_id": thread.channel_id,
-        "parent_id": thread.channel_id,
-        "guild_id": thread.server_id,
-        "owner_id": thread.owner_id,
+        "id": str(thread.id),
+        "channel_id": str(thread.channel_id),
+        "parent_id": str(thread.channel_id),
+        "guild_id": str(thread.server_id),
+        "owner_id": str(thread.owner_id),
         "name": thread.name,
         "thread_type": getattr(thread.thread_type, "value", thread.thread_type),
         "state": getattr(thread.state, "value", thread.state),
-        "parent_message_id": thread.parent_message_id,
+        "parent_message_id": None
+        if parent_message_id is None
+        else str(parent_message_id),
         "message_count": thread.message_count,
         "member_count": thread.member_count,
         "created_at": thread.created_at,

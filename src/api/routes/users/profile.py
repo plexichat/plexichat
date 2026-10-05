@@ -276,7 +276,7 @@ class ProfileMixin:
 
                 emit_user_update(
                     {
-                        "id": user.id,
+                        "id": str(user.id),
                         "username": user.username,
                         "avatar_url": getattr(user, "avatar_url", None),
                         "email": getattr(user, "email", None),

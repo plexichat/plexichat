@@ -460,7 +460,7 @@ async def upload_my_avatar(
 
             emit_user_update(
                 {
-                    "id": current_user.user_id,
+                    "id": str(current_user.user_id),
                     "username": "",
                     "avatar_url": result["url"],
                 },
@@ -543,7 +543,7 @@ async def delete_my_avatar(
 
             emit_user_update(
                 {
-                    "id": current_user.user_id,
+                    "id": str(current_user.user_id),
                     "username": "",
                     "avatar_url": "",
                 },
