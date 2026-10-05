@@ -91,7 +91,7 @@ def _described_types(prop: dict) -> set:
 def _value_for(param: dict, id_value: str) -> str:
     """A plausible value for a non-id param so it cannot itself 422."""
     if is_id_field(param.get("name", "")):
-        return "not-an-id"  # SABOTAGE
+        return id_value
     types = _described_types(param.get("schema", {}))
     if "integer" in types and "string" not in types:
         return "1"
@@ -111,6 +111,23 @@ def _request_url(path: str, operation: dict, id_value: str) -> str:
             sep = "&" if "?" in url else "?"
             url += f"{sep}{name}={id_value}"
     return url
+
+
+def _id_param_rejected(response, name: str) -> bool:
+    """True only when a 422 error is actually about the id param.
+
+    A missing request body or another required query param also produces a
+    422, so a bare status check would misattribute it to the id param.
+    """
+    if response.status_code != 422:
+        return False
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return False
+    if not isinstance(detail, list):
+        return False
+    return any(name in (err.get("loc") or []) for err in detail)
 
 
 def _id_params(schema: dict):
@@ -134,11 +151,12 @@ def test_non_admin_id_params_accept_decimal_string(module_path):
 
     offenders = []
     for method, path, operation, param in _id_params(schema):
+        name = param["name"]
         url = _request_url(path, operation, str(BIG))
         response = client.request(method.upper(), url)
-        if response.status_code == 422:
+        if _id_param_rejected(response, name):
             offenders.append(
-                f"{method.upper()} {path} {param['name']} -> 422 {response.text[:200]}"
+                f"{method.upper()} {path} {name} -> 422 {response.text[:200]}"
             )
 
     assert not offenders, (
