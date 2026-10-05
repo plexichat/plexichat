@@ -7,6 +7,7 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import (
     parse_id,
     raise_bad_request,
@@ -589,4 +590,4 @@ async def get_report_details(
         )
         data = {k: v for k, v in data.items() if k not in admin_only_fields}
 
-    return {"report": data}
+    return {"report": stringify_snowflake_ids(data)}

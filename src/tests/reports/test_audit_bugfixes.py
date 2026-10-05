@@ -299,12 +299,14 @@ def _tuple_for(table, **overrides):
 class TestRepReportDetailsTupleRows:
     """Tuple rows must be labelled with the matching table's column order."""
 
+    BIG = 9007199254740993  # past 2**53: a JSON number would lose precision
+
     def test_reports_tuple_row_maps_lifecycle_fields(self, monkeypatch):
         # ``priority``, ``reviewed_at`` and ``assigned_to`` sit at different
         # offsets in the reports table than the old single column list used.
         row = _tuple_for(
             "reports",
-            id=42,
+            id=self.BIG,
             reporter_id=1,
             status="investigating",
             priority="high",
@@ -317,17 +319,20 @@ class TestRepReportDetailsTupleRows:
         _patch_api(monkeypatch, db, None)
         # Viewer is the reporter, so admin-only fields are stripped; assert on
         # the non-admin fields that were previously mislabelled.
-        result = asyncio.run(get_report_details(42, _FakeUser(1)))["report"]
+        result = asyncio.run(get_report_details(self.BIG, _FakeUser(1)))["report"]
         assert result["status"] == "investigating"
         assert result["priority"] == "high"
         assert result["updated_at"] == 333
         assert "assigned_to" not in result
+        # Snowflake ids cross the wire as decimal strings.
+        assert result["id"] == str(self.BIG)
+        assert isinstance(result["id"], str)
 
     def test_message_report_tuple_row_maps_reported_user(self, monkeypatch):
         row = _tuple_for(
             "message_reports",
             id=9,
-            message_id=100,
+            message_id=self.BIG,
             reporter_id=1,
             reported_user_id=5,
             status="pending",
@@ -337,7 +342,11 @@ class TestRepReportDetailsTupleRows:
         db = _TupleReportsDB(message_reports=row)
         _patch_api(monkeypatch, db, None)
         result = asyncio.run(get_report_details(9, _FakeUser(1)))["report"]
-        assert result["reported_user_id"] == 5
+        assert result["reported_user_id"] == "5"
+        assert isinstance(result["reported_user_id"], str)
+        assert result["message_id"] == str(self.BIG)
+        assert isinstance(result["message_id"], str)
+        assert result["id"] == "9"
         assert result["status"] == "pending"
         assert result["priority"] == "low"
 
@@ -345,7 +354,7 @@ class TestRepReportDetailsTupleRows:
         row = _tuple_for(
             "user_reports",
             id=11,
-            reported_user_id=8,
+            reported_user_id=self.BIG,
             reporter_id=1,
             status="pending",
             priority="medium",
@@ -354,7 +363,8 @@ class TestRepReportDetailsTupleRows:
         db = _TupleReportsDB(user_reports=row)
         _patch_api(monkeypatch, db, None)
         result = asyncio.run(get_report_details(11, _FakeUser(1)))["report"]
-        assert result["reported_user_id"] == 8
+        assert result["reported_user_id"] == str(self.BIG)
+        assert isinstance(result["reported_user_id"], str)
         assert result["status"] == "pending"
 
 
