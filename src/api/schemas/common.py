@@ -20,13 +20,15 @@ class SnowflakeID(str):
         cls, source_type: Any, handler: GetCoreSchemaHandler
     ) -> CoreSchema:
         """Define how Pydantic should validate this type."""
-        return core_schema.no_info_after_validator_function(
+        # A plain validator receives the raw value (so ``bool``/negative
+        # inputs can be rejected), but on its own emits no JSON schema. The
+        # ``json_schema_input_schema`` keeps the declared OpenAPI type honest:
+        # ``anyOf: [integer, string]``, so a generated client knows the id may
+        # arrive as a string.
+        return core_schema.no_info_plain_validator_function(
             cls._validate,
-            core_schema.union_schema(
-                [
-                    core_schema.int_schema(),
-                    core_schema.str_schema(),
-                ]
+            json_schema_input_schema=core_schema.union_schema(
+                [core_schema.int_schema(), core_schema.str_schema()]
             ),
             serialization=core_schema.to_string_ser_schema(),
         )
@@ -34,15 +36,21 @@ class SnowflakeID(str):
     @classmethod
     def _validate(cls, v: Any) -> str:
         """Validate and convert to string."""
+        if isinstance(v, bool):
+            raise ValueError("Invalid snowflake ID")
         if isinstance(v, int):
+            if v < 0:
+                raise ValueError("Invalid snowflake ID: must be non-negative")
             return cls(str(v))
         if isinstance(v, str):
-            # Validate it's a valid number string
+            text = v.strip()
             try:
-                int(v)
-                return cls(v)
+                numeric = int(text)
             except ValueError:
                 raise ValueError("Invalid snowflake ID: must be numeric string")
+            if numeric < 0:
+                raise ValueError("Invalid snowflake ID: must be non-negative")
+            return cls(text)
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
 
 
@@ -60,13 +68,13 @@ class SnowflakeIDParam(int):
     def __get_pydantic_core_schema__(
         cls, source_type: Any, handler: GetCoreSchemaHandler
     ) -> CoreSchema:
-        return core_schema.no_info_after_validator_function(
+        # See ``SnowflakeID``: a plain validator for the raw-value checks plus
+        # an explicit JSON-schema input so the param declares ``integer|string``
+        # rather than coming out untyped.
+        return core_schema.no_info_plain_validator_function(
             cls._validate,
-            core_schema.union_schema(
-                [
-                    core_schema.int_schema(),
-                    core_schema.str_schema(),
-                ]
+            json_schema_input_schema=core_schema.union_schema(
+                [core_schema.int_schema(), core_schema.str_schema()]
             ),
         )
 
@@ -75,12 +83,17 @@ class SnowflakeIDParam(int):
         if isinstance(v, bool):
             raise ValueError("Invalid snowflake ID")
         if isinstance(v, int):
+            if v < 0:
+                raise ValueError("Invalid snowflake ID: must be non-negative")
             return v
         if isinstance(v, str):
             try:
-                return int(v)
+                numeric = int(v.strip())
             except ValueError:
                 raise ValueError("Invalid snowflake ID: must be numeric string")
+            if numeric < 0:
+                raise ValueError("Invalid snowflake ID: must be non-negative")
+            return numeric
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
 
 
@@ -172,6 +185,8 @@ def snowflake_to_str(v: Any) -> Optional[str]:
     """Convert snowflake ID to string."""
     if v is None:
         return None
+    if isinstance(v, bool):
+        raise ValueError("Invalid snowflake ID")
     return str(v)
 
 
@@ -179,6 +194,8 @@ def snowflake_from_str(v: Any) -> Optional[int]:
     """Convert string to snowflake ID."""
     if v is None:
         return None
+    if isinstance(v, bool):
+        raise ValueError("Invalid snowflake ID")
     if isinstance(v, int):
         return v
     if isinstance(v, str):
