@@ -178,15 +178,18 @@ async def create_role(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server not found"}},
             )
-        elif "Permission" in exc_name or "Hierarchy" in exc_name:
-            raise HTTPException(
-                status_code=403,
-                detail={"error": {"code": 403, "message": "Access denied"}},
-            )
+        # Must precede the generic "Permission" match: "InvalidPermissionKeyError"
+        # contains "Permission", so the 400 branch was otherwise unreachable and
+        # an unknown permission key surfaced as a misleading 403.
         elif "InvalidPermissionKey" in exc_name:
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": "Invalid request"}},
+            )
+        elif "Permission" in exc_name or "Hierarchy" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
         elif "Limit" in exc_name:
             raise HTTPException(
