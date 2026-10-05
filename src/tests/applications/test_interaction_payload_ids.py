@@ -19,6 +19,7 @@ from src.core.applications.models import (
     InteractionData,
     InteractionType,
 )
+from src.core.events.snowflakes import is_id_field
 
 BIG = 9007199254740993  # past 2**53: a JSON number would lose precision
 
@@ -50,7 +51,7 @@ def _id_values(node, key=""):
     elif isinstance(node, list):
         for value in node:
             yield from _id_values(value, key)
-    elif key == "id" or key.endswith("_id") or key.endswith("_ids"):
+    elif is_id_field(key):
         yield key, node
 
 

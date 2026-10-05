@@ -18,6 +18,7 @@ from typing import Any, Dict
 
 import pytest
 
+from src.core.events.snowflakes import is_id_field
 from src.core.webhooks.delivery import WebhookDeliverer, process_due_retries
 from src.core.webhooks.retry import WebhookRetryQueue
 
@@ -79,7 +80,7 @@ def _walk_id_values(node, key=""):
     elif isinstance(node, list):
         for index, value in enumerate(node):
             yield from _walk_id_values(value, key)
-    elif key == "id" or key.endswith("_id") or key.endswith("_ids"):
+    elif is_id_field(key):
         yield key, node
 
 

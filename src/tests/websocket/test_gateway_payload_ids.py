@@ -19,7 +19,7 @@ from typing import Any, Dict, get_args, get_origin
 import pytest
 
 from src.core.events import gateway_emit, payloads
-from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.events.snowflakes import is_id_field, stringify_snowflake_ids
 
 # Greater than 2**53: a JS ``Number`` cannot hold it exactly.
 BIG = 1234567890123456789
@@ -77,9 +77,9 @@ def _is_dict(annotation: Any) -> bool:
 
 
 def _value_for(name: str, annotation: Any, *, stringify_containers: bool) -> Any:
-    if name.endswith("_ids"):
+    if name.endswith("_ids") or name.endswith("Ids"):
         return [BIG, BIG2]
-    if name == "id" or name.endswith("_id"):
+    if is_id_field(name):
         # ``session_id`` is a string-shaped id (never a JSON number), so a
         # numeric value here would be a false positive.
         return "sess-1" if name == "session_id" else BIG

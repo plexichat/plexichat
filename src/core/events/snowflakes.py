@@ -13,21 +13,35 @@ hand-built ``Event`` cannot leak a numeric id.
 
 from typing import Any, Dict
 
-# Explicit id keys that do not match the ``*_id``/``*_ids`` suffix rule.
+# Explicit id keys that do not match the suffix rules below.
 _ID_FIELDS = frozenset({"id"})
 
 
 def is_id_field(key: str) -> bool:
-    """Return True when a payload key carries a snowflake id value."""
-    return key in _ID_FIELDS or key.endswith("_id") or key.endswith("_ids")
+    """Return True when a payload key carries a snowflake id value.
+
+    Besides ``id`` and snake_case ``*_id``/``*_ids``, camelCase ``*Id``/
+    ``*Ids`` keys match: client-facing projections serve those too (e.g.
+    the suite launcher's ``channelId``/``serverId``/``conversationId``).
+    The capital ``I`` keeps plain words ending in lowercase ``id`` (such
+    as ``valid`` or ``grid``) from matching.
+    """
+    return (
+        key in _ID_FIELDS
+        or key.endswith("_id")
+        or key.endswith("_ids")
+        or key.endswith("Id")
+        or key.endswith("Ids")
+    )
 
 
 def stringify_snowflake_ids(value: Any) -> Any:
     """Recursively convert snowflake-id fields to decimal strings.
 
-    ``id``, ``*_id`` and ``*_ids`` keys are stringified; a ``*_ids`` list has
-    each element stringified individually. Non-id keys and their values are
-    preserved (numbers such as timestamps, flags and counts stay numeric).
+    ``id``, ``*_id``/``*_ids`` and camelCase ``*Id``/``*Ids`` keys are
+    stringified; an ``*_ids``/``*Ids`` list has each element stringified
+    individually. Non-id keys and their values are preserved (numbers such
+    as timestamps, flags and counts stay numeric).
 
     Dicts and lists are rebuilt, so the caller's object is never mutated.
     """
