@@ -14,7 +14,7 @@ from src.api.schemas.feedback import (
     FeedbackResponse,
     FeedbackStatusResponse,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import ratelimit
 
 
@@ -127,7 +127,9 @@ async def submit_feedback(
 
         logger.info(f"Feedback {feedback_id} submitted by user {user_id}")
 
-        return FeedbackResponse(id=feedback_id, message="Thank you for your feedback!")
+        return FeedbackResponse(
+            id=SnowflakeID(feedback_id), message="Thank you for your feedback!"
+        )
     except HTTPException:
         raise
     except Exception as e:

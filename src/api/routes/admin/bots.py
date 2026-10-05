@@ -52,7 +52,7 @@ class AdminBotEntry(BaseModel):
 class AdminBotRequestEntry(BaseModel):
     """A bot request in the admin panel."""
 
-    id: int
+    id: SnowflakeID
     application_id: str
     application_name: str
     server_id: str

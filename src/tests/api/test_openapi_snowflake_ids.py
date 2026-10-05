@@ -30,10 +30,7 @@ from src.core.events.snowflakes import is_id_field
 # counter), so a numeric JSON representation is correct. Keyed by
 # (schema name, field name) with the justification.
 _ALLOWED_NUMERIC_ID_FIELDS: dict[tuple[str, str], str] = {
-    ("FeedbackResponse", "id"): "feedback row id is an INTEGER PRIMARY KEY",
     ("BannedUsernameResponse", "id"): "username_blacklist rowid",
-    ("BotRequestResponse", "id"): "app_bot_requests rowid",
-    ("AdminBotRequestEntry", "id"): "app_bot_requests rowid",
 }
 
 # Request-body id fields backed by an INTEGER PRIMARY KEY rowid; the body may
