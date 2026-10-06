@@ -5,6 +5,7 @@ from typing import Optional
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import raise_bad_request
 from src.core.push.exceptions import PermissionDeniedError
 
@@ -47,10 +48,15 @@ async def register_push_token(
             auth=body.auth,
         )
         # SECURITY: never echo the raw token / Web Push keys back.
-        return {
-            "success": True,
-            "token_record": PushManager._sanitize_token_record(result),
-        }
+        # The row is opaque to the OpenAPI walk, so stringify its snowflake
+        # ids here: ``id`` is a generated snowflake and ``user_id`` the
+        # owner's, and a JS Number would round both past 2**53.
+        return stringify_snowflake_ids(
+            {
+                "success": True,
+                "token_record": PushManager._sanitize_token_record(result),
+            }
+        )
     except ValueError:
         raise_bad_request("Invalid push token data")
     except PermissionDeniedError:
@@ -74,8 +80,11 @@ async def list_push_tokens(
     svc = PushManager(db)
     tokens = svc.get_user_tokens(current_user.user_id)
     # SECURITY: get_user_tokens returns decrypted credentials for delivery
-    # use only; strip them before serialising to the client.
-    return {"tokens": [PushManager._sanitize_token_record(t) for t in tokens]}
+    # use only; strip them before serialising to the client. The opaque dict
+    # also bypasses the OpenAPI id walk, so stringify the snowflake ids here.
+    return stringify_snowflake_ids(
+        {"tokens": [PushManager._sanitize_token_record(t) for t in tokens]}
+    )
 
 
 @router.delete(

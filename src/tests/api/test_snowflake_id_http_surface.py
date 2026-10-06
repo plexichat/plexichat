@@ -64,6 +64,33 @@ class TestPathParamStringIds:
         assert profile["user_id"] == str(uid)
 
 
+class TestPushTokenIds:
+    """The push-token CRUD endpoints return opaque dicts, so they are not
+    visible to the OpenAPI id walk; pin the wire format over HTTP."""
+
+    def test_registered_and_listed_token_ids_are_strings(
+        self, test_client, auth_headers
+    ):
+        reg = test_client.post(
+            "/api/v1/features/push/tokens",
+            headers=auth_headers,
+            json={"token": "test-fcm-token-abcdef123456", "platform": "android"},
+        )
+        assert reg.status_code == 200, reg.text
+        record = reg.json()["token_record"]
+        # id is a generated snowflake; user_id is the owner's snowflake.
+        assert isinstance(record["id"], str)
+        assert isinstance(record["user_id"], str)
+
+        listed = test_client.get("/api/v1/features/push/tokens", headers=auth_headers)
+        assert listed.status_code == 200, listed.text
+        tokens = listed.json()["tokens"]
+        assert tokens
+        for token in tokens:
+            assert isinstance(token["id"], str)
+            assert isinstance(token["user_id"], str)
+
+
 class TestRequestBodyStringIds:
     def test_hash_report_accepts_string_uploader_and_message_id(
         self, test_client, auth_headers, test_user_with_token
