@@ -56,7 +56,16 @@ def test_snowflake_id_param_rejects_negative(value):
 
 @pytest.mark.parametrize(
     "value,expected",
-    [(123, "123"), ("123", "123"), ("  123  ", "123")],
+    [
+        (123, "123"),
+        ("123", "123"),
+        ("  123  ", "123"),
+        ("00123", "123"),
+        ("  00123  ", "123"),
+        ("+123", "123"),
+        ("00", "0"),
+        ("-0", "0"),
+    ],
 )
 def test_snowflake_id_normalises_to_string(value, expected):
     assert TypeAdapter(SnowflakeID).validate_python(value) == expected

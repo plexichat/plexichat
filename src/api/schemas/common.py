@@ -50,7 +50,7 @@ class SnowflakeID(str):
                 raise ValueError("Invalid snowflake ID: must be numeric string")
             if numeric < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
-            return cls(text)
+            return cls(str(numeric))
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
 
 
