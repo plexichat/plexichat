@@ -97,6 +97,10 @@ anyio==4.14.2
 # in the tree. Pinned so a future transitive bump cannot reintroduce an
 # advisory: 3.14.1+ clears CVE-2026-54273..54280 (pip-audit).
 aiohttp==3.14.3
+# multidict is a transitive dependency of aiohttp/yarl; pinned to 6.9.1+ to
+# clear CVE-2026-104874 (pip-audit). Pinned here so a later resolution cannot
+# regress the patched version.
+multidict==6.9.1
 
 # WebSocket
 websockets==16.1.1
