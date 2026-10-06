@@ -13,7 +13,12 @@ It also pins the raw-value checks the plain validator exists for. The previous
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from src.api.schemas.common import SnowflakeID, SnowflakeIDParam
+from src.api.schemas.common import (
+    SnowflakeID,
+    SnowflakeIDParam,
+    snowflake_from_str,
+    snowflake_to_str,
+)
 
 
 def _declared_types(schema: dict) -> set:
@@ -74,3 +79,81 @@ def test_snowflake_id_normalises_to_string(value, expected):
 @pytest.mark.parametrize("value,expected", [(123, 123), ("123", 123)])
 def test_snowflake_id_param_normalises_to_int(value, expected):
     assert TypeAdapter(SnowflakeIDParam).validate_python(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (123, 123),
+        ("123", 123),
+        ("  123  ", 123),
+        ("00123", 123),
+        ("  00123  ", 123),
+        ("+123", 123),
+        ("00", 0),
+        ("-0", 0),
+    ],
+)
+def test_snowflake_id_param_normalises_non_canonical_strings(value, expected):
+    assert TypeAdapter(SnowflakeIDParam).validate_python(value) == expected
+
+
+@pytest.mark.parametrize("value", [123, "00123", "  123  "])
+def test_snowflake_id_param_preserves_type(value):
+    """The validator must yield ``SnowflakeIDParam``, not a plain ``int``.
+
+    ``_validate`` used to return the raw ``int``, so the validated param
+    lost its type and any ``isinstance`` check against ``SnowflakeIDParam``
+    failed even though validation had run.
+    """
+    result = TypeAdapter(SnowflakeIDParam).validate_python(value)
+    assert isinstance(result, SnowflakeIDParam)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_snowflake_id_param_rejects_bool(value):
+    with pytest.raises(ValidationError):
+        TypeAdapter(SnowflakeIDParam).validate_python(value)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (123, "123"),
+        ("123", "123"),
+        ("  123  ", "123"),
+        ("00123", "123"),
+        (0, "0"),
+        (None, None),
+    ],
+)
+def test_snowflake_to_str_normalises(value, expected):
+    assert snowflake_to_str(value) == expected
+
+
+@pytest.mark.parametrize("value", [True, False, -1, "-5", "abc", "12.5", 3.5, b"123"])
+def test_snowflake_to_str_rejects_invalid(value):
+    with pytest.raises(ValueError):
+        snowflake_to_str(value)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (123, 123),
+        ("123", 123),
+        ("  123  ", 123),
+        ("00123", 123),
+        ("+123", 123),
+        ("-0", 0),
+        (None, None),
+    ],
+)
+def test_snowflake_from_str_normalises(value, expected):
+    assert snowflake_from_str(value) == expected
+
+
+@pytest.mark.parametrize("value", [True, False, -1, "-5", "abc", "12.5", 3.5])
+def test_snowflake_from_str_rejects_invalid(value):
+    with pytest.raises(ValueError):
+        snowflake_from_str(value)

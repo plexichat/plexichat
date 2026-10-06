@@ -548,12 +548,25 @@ async def execute_webhook(
                     requires_signature = False
 
             if x_signature and x_timestamp:
+                # Canonicalize the thread id to its decimal string so the
+                # signed bytes agree no matter which source won above: ``tid``
+                # is an int (query param or parsed body) while
+                # ``body.thread_id`` is a ``SnowflakeID`` str. Signing
+                # ``123`` vs ``"123"`` yields different JSON bytes, so a
+                # caller that signed the string form would fail verification
+                # when the int form won here (and vice versa).
+                if tid is not None:
+                    thread_str: Optional[str] = str(tid)
+                elif body.thread_id and str(body.thread_id).strip().lower() != "null":
+                    thread_str = str(int(str(body.thread_id).strip()))
+                else:
+                    thread_str = None
                 payload = {
                     "content": body.content,
                     "username": body.username,
                     "avatar_url": body.avatar_url,
                     "embeds": body.embeds,
-                    "thread_id": tid or body.thread_id,
+                    "thread_id": thread_str,
                 }
                 if not webhooks.verify_payload(wid, payload, x_signature, x_timestamp):
                     logger.warning(

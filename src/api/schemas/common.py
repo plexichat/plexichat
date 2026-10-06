@@ -85,7 +85,7 @@ class SnowflakeIDParam(int):
         if isinstance(v, int):
             if v < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
-            return v
+            return cls(v)
         if isinstance(v, str):
             try:
                 numeric = int(v.strip())
@@ -93,7 +93,7 @@ class SnowflakeIDParam(int):
                 raise ValueError("Invalid snowflake ID: must be numeric string")
             if numeric < 0:
                 raise ValueError("Invalid snowflake ID: must be non-negative")
-            return numeric
+            return cls(numeric)
         raise ValueError(f"Invalid snowflake ID type: {type(v)}")
 
 
@@ -182,25 +182,53 @@ class RootResponse(BaseModel):
 
 
 def snowflake_to_str(v: Any) -> Optional[str]:
-    """Convert snowflake ID to string."""
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        raise ValueError("Invalid snowflake ID")
-    return str(v)
+    """Convert snowflake ID to its canonical decimal string.
 
-
-def snowflake_from_str(v: Any) -> Optional[int]:
-    """Convert string to snowflake ID."""
+    Mirrors :class:`SnowflakeID`: rejects ``bool``, negative ints and
+    non-numeric strings, and normalizes (``" 00123 "`` -> ``"123"``) so a
+    caller mixing this helper with ``SnowflakeID`` cannot smuggle an
+    invalid or non-canonical id through.
+    """
     if v is None:
         return None
     if isinstance(v, bool):
         raise ValueError("Invalid snowflake ID")
     if isinstance(v, int):
+        if v < 0:
+            raise ValueError("Invalid snowflake ID: must be non-negative")
+        return str(v)
+    if isinstance(v, str):
+        try:
+            numeric = int(v.strip())
+        except ValueError:
+            raise ValueError("Invalid snowflake ID: must be numeric string")
+        if numeric < 0:
+            raise ValueError("Invalid snowflake ID: must be non-negative")
+        return str(numeric)
+    raise ValueError("Invalid snowflake ID type")
+
+
+def snowflake_from_str(v: Any) -> Optional[int]:
+    """Convert a canonical snowflake ID to int.
+
+    Mirrors :class:`SnowflakeIDParam`: rejects ``bool`` and negatives and
+    strips/normalizes strings, so the result always agrees with what the
+    validators accept.
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        raise ValueError("Invalid snowflake ID")
+    if isinstance(v, int):
+        if v < 0:
+            raise ValueError("Invalid snowflake ID: must be non-negative")
         return v
     if isinstance(v, str):
         try:
-            return int(v)
+            numeric = int(v.strip())
         except ValueError:
             raise ValueError("Invalid snowflake ID")
+        if numeric < 0:
+            raise ValueError("Invalid snowflake ID: must be non-negative")
+        return numeric
     raise ValueError("Invalid snowflake ID type")
