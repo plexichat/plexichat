@@ -420,7 +420,7 @@ async def submit_enhanced_report(
     },
 )
 async def update_report_status(
-    report_id: str,
+    report_id: SnowflakeIDParam,
     body: ReportStatusUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
@@ -435,7 +435,7 @@ async def update_report_status(
     if not admin_row:
         raise_forbidden("Admin access required")
 
-    rid = parse_id(report_id, "report ID")
+    rid = report_id
 
     if body.status not in VALID_REPORT_STATUSES:
         raise_bad_request(

@@ -91,7 +91,7 @@ def _call(db, monkeypatch, status: str):
     monkeypatch.setattr(reports_route.api, "get_db", lambda: db)
     body = ReportStatusUpdateRequest(status=status)
     current_user = SimpleNamespace(user_id=ADMIN_ID)
-    return asyncio.run(update_report_status("1", body, current_user))
+    return asyncio.run(update_report_status(1, body, current_user))
 
 
 def _row(db):
@@ -155,7 +155,7 @@ def test_unknown_report_returns_404(monkeypatch):
     current_user = SimpleNamespace(user_id=ADMIN_ID)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(update_report_status("999", body, current_user))
+        asyncio.run(update_report_status(999, body, current_user))
 
     assert exc.value.status_code == 404
 
@@ -169,7 +169,7 @@ def test_invalid_priority_returns_400_and_keeps_stored_value(monkeypatch):
     current_user = SimpleNamespace(user_id=ADMIN_ID)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(update_report_status("1", body, current_user))
+        asyncio.run(update_report_status(1, body, current_user))
 
     assert exc.value.status_code == 400
     assert _row(db)["priority"] == "high"
@@ -181,7 +181,7 @@ def test_valid_priority_update_is_stored(monkeypatch):
     body = ReportStatusUpdateRequest(status="investigating", priority="critical")
     current_user = SimpleNamespace(user_id=ADMIN_ID)
 
-    result = asyncio.run(update_report_status("1", body, current_user))
+    result = asyncio.run(update_report_status(1, body, current_user))
 
     assert result["status"] == "investigating"
     assert _row(db)["priority"] == "critical"
