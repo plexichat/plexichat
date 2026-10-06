@@ -35,7 +35,7 @@ Relationship events are dispatched via WebSocket so clients can update contact l
 | `status` | string | Relationship status. See the statuses table. |
 | `presence` | object or null | Current presence, with a `status` of `online`, `idle`, `dnd`, or `offline`. Blocked users always return `offline` to avoid leaking presence. |
 | `message` | string or null | Optional message from the original friend request. Present for pending requests. |
-| `created_at` | integer or null | Unix timestamp in seconds when the relationship was created. |
+| `created_at` | integer or null | Unix timestamp in milliseconds when the relationship was created. |
 
 ### Relationship statuses
 

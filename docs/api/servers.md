@@ -39,7 +39,7 @@ You must authenticate with `Authorization: Bearer <token>` for all server endpoi
 | `verification_level` | integer | Verification level required to join, `0`–`4`. |
 | `default_message_notifications` | integer | Default notification level: `0` = all messages, `1` = mentions only. |
 | `max_reactions_per_message` | integer | Maximum distinct reactions per message, `1`–`200`, default `20`. |
-| `created_at` | integer | Unix timestamp in seconds when the server was created. |
+| `created_at` | integer | Unix timestamp in milliseconds when the server was created. |
 
 Additional fields that may be set on update:
 

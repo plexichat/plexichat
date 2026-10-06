@@ -84,44 +84,37 @@ The generator in `snowflake.py:parse` decodes an ID as:
 
 ## Timestamps
 
-Plexichat uses two timestamp encodings. Check the field you are reading.
+Plexichat uses one timestamp encoding: Unix time in **milliseconds**. The
+REST API and the gateway live events carry the same integer.
 
 | Context | Encoding | Example |
 | --- | --- | --- |
-| REST API (`created_at`, `edited_at` in most JSON responses) | Unix time in **seconds** (integer) | `1704067200` |
+| REST API (`created_at`, `edited_at` in most JSON responses) | Unix time in **milliseconds** (integer) | `1704067200000` |
 | Gateway live events (`created_at`, `edited_at` in `MESSAGE_CREATE` etc.) | Unix time in **milliseconds** (integer) | `1705314600000` |
 
 The Snowflake timestamp is also in milliseconds since the Plexichat epoch (so milliseconds since the Unix epoch after you add `1704067200000`).
 
-### Converting REST timestamps
+### Converting timestamps
 
 ```python
 from datetime import datetime, timezone
 
-# Unix seconds → datetime
-dt = datetime.fromtimestamp(1704067200, tz=timezone.utc)
+# Unix milliseconds → datetime
+dt = datetime.fromtimestamp(1704067200000 / 1000, tz=timezone.utc)
 
-# datetime → Unix seconds
-timestamp = int(dt.timestamp())
+# datetime → Unix milliseconds
+timestamp = int(dt.timestamp() * 1000)
 ```
 
 ```javascript
-// Unix seconds → Date
-const date = new Date(1704067200 * 1000);
-
-// Date → Unix seconds
-const timestamp = Math.floor(date.getTime() / 1000);
-```
-
-### Converting gateway timestamps
-
-```javascript
-// Gateway milliseconds → Date
+// Unix milliseconds → Date
 const date = new Date(1705314600000);
 
-// Date → gateway milliseconds
-const ms = date.getTime();
+// Date → Unix milliseconds
+const timestamp = date.getTime();
 ```
+
+The same conversion applies to gateway events.
 
 ## Nullable fields
 
@@ -257,11 +250,11 @@ Booleans are JSON booleans:
   "id": "123456789012345678",
   "username": "johndoe",
   "avatar_url": "https://...",
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
-`created_at` is Unix time in seconds. For the precise creation time, decode the Snowflake ID.
+`created_at` is Unix time in milliseconds. For the precise creation time, decode the Snowflake ID.
 
 ### Server object
 
@@ -273,7 +266,7 @@ Booleans are JSON booleans:
   "icon_url": "https://...",
   "owner_id": "123456789012345678",
   "member_count": 150,
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 

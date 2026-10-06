@@ -45,7 +45,7 @@ channel type.
 | `nsfw` | boolean | Whether the channel is marked as NSFW. |
 | `slowmode_seconds` | integer | Slowmode delay in seconds (`0` = disabled, `1`–`21600`). |
 | `read_receipts_enabled` | boolean | Whether read receipts are tracked in this channel. |
-| `created_at` | integer | Unix timestamp in seconds when the channel was created. |
+| `created_at` | integer | Unix timestamp in milliseconds when the channel was created. |
 | `recipient_id` | string or null | DM only: ID of the other participant. |
 | `recipient` | object or null | DM only: Public profile of the recipient. |
 

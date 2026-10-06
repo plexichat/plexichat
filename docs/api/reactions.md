@@ -54,7 +54,7 @@ A reaction aggregates users who reacted with the same emoji.
 | Field | Type | Description |
 | --- | --- | --- |
 | `user_id` | string | Snowflake ID of the user who reacted. |
-| `reacted_at` | integer | Unix timestamp in seconds when the reaction was added. |
+| `reacted_at` | integer | Unix timestamp in milliseconds when the reaction was added. |
 
 ### Emoji format
 
