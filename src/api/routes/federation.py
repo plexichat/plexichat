@@ -272,7 +272,9 @@ async def join_request_inbound(request: Request):
         requested_by=payload.get("requested_by"),
         note=payload.get("note"),
     )
-    return {"ok": True, "request_id": row["id"]}
+    # Snowflakes as strings (matches the admin and client /Join contracts):
+    # a JS Number rounds 64-bit ids.
+    return {"ok": True, "request_id": str(row["id"])}
 
 
 @router.post(

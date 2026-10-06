@@ -16,6 +16,51 @@ import utils.logger as logger
 router = APIRouter()
 
 
+def _serialize_connection(conn) -> dict:
+    """Admin-contract shape: snowflake ids as decimal strings.
+
+    Mirrors the client ``/Join`` contract (``src/api/routes/join.py``):
+    a JS ``Number`` rounds 64-bit ids, so serving ``id`` as a JSON number
+    splits the client's ``Map`` keys (``"1"`` vs ``1``) and breaks lookups.
+    """
+    return {
+        # Snowflakes as strings: a JS Number rounds 64-bit ids.
+        "id": str(conn["id"]),
+        "remote_instance_id": conn["remote_instance_id"],
+        "remote_url": conn["remote_url"],
+        "status": conn["status"],
+        "connected_at": conn.get("connected_at"),
+        "messages_in": conn.get("messages_in", 0),
+        "messages_out": conn.get("messages_out", 0),
+        "last_activity": conn.get("last_activity"),
+        "note": conn.get("note"),
+        "created_at": conn["created_at"],
+        # created_by is the creating admin's snowflake.
+        "created_by": str(conn["created_by"])
+        if conn.get("created_by") is not None
+        else None,
+    }
+
+
+def _serialize_inbound_request(req) -> dict:
+    """Admin-contract shape for inbound requests: ids as decimal strings."""
+    return {
+        # Snowflakes as strings (see _serialize_connection).
+        "id": str(req["id"]),
+        "remote_instance_id": req["remote_instance_id"],
+        "remote_url": req["remote_url"],
+        "requested_by": req.get("requested_by"),
+        "note": req.get("note"),
+        "status": req["status"],
+        "requested_at": req["requested_at"],
+        "reviewed_at": req.get("reviewed_at"),
+        # reviewed_by is the reviewing admin's snowflake (or None).
+        "reviewed_by": str(req["reviewed_by"])
+        if req.get("reviewed_by") is not None
+        else None,
+    }
+
+
 def _get_plexijoin_manager(request):
     """Get PlexiJoin manager instance."""
     import src.api as api_mod
@@ -105,24 +150,7 @@ async def list_connections(
 
         connections_data = []
         for conn in result["connections"]:
-            connections_data.append(
-                {
-                    "id": conn["id"],
-                    "remote_instance_id": conn["remote_instance_id"],
-                    "remote_url": conn["remote_url"],
-                    "status": conn["status"],
-                    "connected_at": conn.get("connected_at"),
-                    "messages_in": conn.get("messages_in", 0),
-                    "messages_out": conn.get("messages_out", 0),
-                    "last_activity": conn.get("last_activity"),
-                    "note": conn.get("note"),
-                    "created_at": conn["created_at"],
-                    # created_by is the creating admin's snowflake.
-                    "created_by": str(conn["created_by"])
-                    if conn.get("created_by") is not None
-                    else None,
-                }
-            )
+            connections_data.append(_serialize_connection(conn))
 
         return {
             "connections": connections_data,
@@ -166,22 +194,7 @@ async def get_connection(request: Request, connection_id: SnowflakeIDParam):
                 detail={"error": {"code": 404, "message": "Connection not found"}},
             )
 
-        return {
-            "id": connection["id"],
-            "remote_instance_id": connection["remote_instance_id"],
-            "remote_url": connection["remote_url"],
-            "status": connection["status"],
-            "connected_at": connection.get("connected_at"),
-            "messages_in": connection.get("messages_in", 0),
-            "messages_out": connection.get("messages_out", 0),
-            "last_activity": connection.get("last_activity"),
-            "note": connection.get("note"),
-            "created_at": connection["created_at"],
-            # created_by is the creating admin's snowflake.
-            "created_by": str(connection["created_by"])
-            if connection.get("created_by") is not None
-            else None,
-        }
+        return _serialize_connection(connection)
     except HTTPException:
         raise
     except Exception as e:
@@ -238,7 +251,9 @@ async def create_connection(request: Request):
             user_agent=request.headers.get("user-agent"),
         )
 
-        return {"success": True, "connection_id": connection["id"]}
+        # Snowflakes as strings (matches _serialize_connection and the
+        # client /Join contract): a JS Number rounds 64-bit ids.
+        return {"success": True, "connection_id": str(connection["id"])}
     except HTTPException:
         raise
     except ValueError:
@@ -354,22 +369,7 @@ async def list_requests(
 
         requests_data = []
         for req in result["requests"]:
-            requests_data.append(
-                {
-                    "id": req["id"],
-                    "remote_instance_id": req["remote_instance_id"],
-                    "remote_url": req["remote_url"],
-                    "requested_by": req.get("requested_by"),
-                    "note": req.get("note"),
-                    "status": req["status"],
-                    "requested_at": req["requested_at"],
-                    "reviewed_at": req.get("reviewed_at"),
-                    # reviewed_by is the reviewing admin's snowflake (or None).
-                    "reviewed_by": str(req["reviewed_by"])
-                    if req.get("reviewed_by") is not None
-                    else None,
-                }
-            )
+            requests_data.append(_serialize_inbound_request(req))
 
         return {
             "requests": requests_data,
@@ -414,7 +414,7 @@ async def approve_request(request: Request, request_id: SnowflakeIDParam):
             user_agent=request.headers.get("user-agent"),
         )
 
-        return {"success": True, "request": result}
+        return {"success": True, "request": _serialize_inbound_request(result)}
     except HTTPException:
         raise
     except ValueError:
@@ -456,7 +456,7 @@ async def deny_request(request: Request, request_id: SnowflakeIDParam):
             user_agent=request.headers.get("user-agent"),
         )
 
-        return {"success": True, "request": result}
+        return {"success": True, "request": _serialize_inbound_request(result)}
     except HTTPException:
         raise
     except ValueError:
