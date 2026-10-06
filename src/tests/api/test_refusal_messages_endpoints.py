@@ -116,3 +116,22 @@ class TestServerRefusals:
         )
         assert response.status_code == 400, response.text
         assert _message(response) == "Invalid request"
+
+    def test_unknown_permission_key_on_update_reports_invalid_request(
+        self, test_client, auth_headers, test_user_with_token, modules
+    ):
+        owner = test_user_with_token["user"]
+        server = modules.servers.create_server(
+            owner.id, f"Roles {uuid.uuid4().hex[:6]}"
+        )
+        role = modules.servers.create_role(owner.id, server.id, "Refusal Update Role")
+
+        # The same 400-before-403 ordering must hold on PATCH: an unknown
+        # permission key is client input error, not a permission refusal.
+        response = test_client.patch(
+            f"/api/v1/servers/{server.id}/roles/{role.id}",
+            headers=auth_headers,
+            json={"permissions": {"not.a.real.permission": True}},
+        )
+        assert response.status_code == 400, response.text
+        assert _message(response) == "Invalid request"
