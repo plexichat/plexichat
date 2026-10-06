@@ -379,13 +379,28 @@ class MessageStatusService(BaseService):
             return 0
 
         # Determine target message ID for new last_read
-        target_msg_id = up_to_message_id
-        if not target_msg_id:
-            # Get the message right before the most recent one
+        target_msg_id: SnowflakeID
+        if up_to_message_id:
+            # Roll back to the message *before* the given one, not the given
+            # one itself. Normalize str-like SnowflakeIDs for the comparison.
+            try:
+                anchor_id: SnowflakeID = int(up_to_message_id)  # type: ignore[arg-type]
+            except Exception:
+                anchor_id = up_to_message_id
+            prev_id = self._message_repo.get_previous_id_in_conversation(
+                conversation_id, anchor_id
+            )
+            target_msg_id = prev_id if prev_id is not None else 0
+        else:
+            # Roll back to the message before the most recent one. Snowflake
+            # IDs are sparse, so max_id - 1 does not address a real message.
             max_id = self._message_repo.get_max_id_in_conversation(conversation_id)
             if not max_id:
                 return 0
-            target_msg_id = max_id - 1  # One before latest
+            prev_id = self._message_repo.get_previous_id_in_conversation(
+                conversation_id, max_id
+            )
+            target_msg_id = prev_id if prev_id is not None else 0
 
         now = self._get_timestamp()
 

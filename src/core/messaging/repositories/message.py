@@ -420,6 +420,23 @@ class MessageRepository(BaseRepository[Message]):
         )
         return row["max_id"] if row else None
 
+    def get_previous_id_in_conversation(
+        self, conversation_id: SnowflakeID, message_id: SnowflakeID
+    ) -> Optional[SnowflakeID]:
+        """Get the greatest message ID below ``message_id`` in a conversation.
+
+        Snowflake IDs are not sequential (successive IDs differ by ``1 << 22``
+        per millisecond, not ``1``), so ``max_id - 1`` never addresses a real
+        message. Query the actual predecessor instead.
+        """
+        row = self._fetch_one(
+            "SELECT MAX(id) as prev_id FROM msg_messages WHERE conversation_id = ? AND id < ? AND deleted = 0",
+            (conversation_id, message_id),
+        )
+        if not row:
+            return None
+        return row["prev_id"]
+
     def invalidate_conversation_cache(self, conversation_id: SnowflakeID) -> None:
         """Invalidate all message list caches for a conversation."""
         try:
