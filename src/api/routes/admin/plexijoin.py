@@ -17,15 +17,16 @@ router = APIRouter()
 
 
 def _serialize_connection(conn) -> dict:
-    """Admin-contract shape: snowflake ids as decimal strings.
+    """Admin-contract shape: snowflakes as decimal strings, rowids numeric.
 
-    Mirrors the client ``/Join`` contract (``src/api/routes/join.py``):
-    a JS ``Number`` rounds 64-bit ids, so serving ``id`` as a JSON number
-    splits the client's ``Map`` keys (``"1"`` vs ``1``) and breaks lookups.
+    ``id`` is the connection's ``INTEGER PRIMARY KEY`` rowid, so it stays a
+    JSON number (a rowid can never reach JS's 2**53 rounding threshold).
+    ``created_by`` is the creating admin's 64-bit snowflake, which must be a
+    decimal string or a JS ``Number`` would round it.
     """
     return {
-        # Snowflakes as strings: a JS Number rounds 64-bit ids.
-        "id": str(conn["id"]),
+        # Rowid: stays numeric (see docstring).
+        "id": conn["id"],
         "remote_instance_id": conn["remote_instance_id"],
         "remote_url": conn["remote_url"],
         "status": conn["status"],
@@ -43,10 +44,15 @@ def _serialize_connection(conn) -> dict:
 
 
 def _serialize_inbound_request(req) -> dict:
-    """Admin-contract shape for inbound requests: ids as decimal strings."""
+    """Admin-contract shape for inbound requests.
+
+    As in :func:`_serialize_connection`, ``id`` is an ``INTEGER PRIMARY KEY``
+    rowid and stays numeric; ``reviewed_by`` is an admin snowflake and becomes
+    a decimal string.
+    """
     return {
-        # Snowflakes as strings (see _serialize_connection).
-        "id": str(req["id"]),
+        # Rowid: stays numeric (see docstring).
+        "id": req["id"],
         "remote_instance_id": req["remote_instance_id"],
         "remote_url": req["remote_url"],
         "requested_by": req.get("requested_by"),
@@ -251,9 +257,9 @@ async def create_connection(request: Request):
             user_agent=request.headers.get("user-agent"),
         )
 
-        # Snowflakes as strings (matches _serialize_connection and the
-        # client /Join contract): a JS Number rounds 64-bit ids.
-        return {"success": True, "connection_id": str(connection["id"])}
+        # ``connection_id`` is the row's INTEGER PRIMARY KEY rowid and stays
+        # numeric, matching _serialize_connection.
+        return {"success": True, "connection_id": connection["id"]}
     except HTTPException:
         raise
     except ValueError:

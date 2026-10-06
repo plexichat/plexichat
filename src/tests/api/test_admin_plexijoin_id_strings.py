@@ -1,10 +1,12 @@
-"""Admin PlexiJoin + federation inbound ids must be decimal strings.
+"""Admin PlexiJoin + federation inbound id serialization.
 
-The client ``/Join`` contract (``src/api/routes/join.py``) already
-stringifies snowflake ids because a JS ``Number`` rounds 64-bit ids. The
-admin ``/admin/plexijoin/*`` surface and the federation ``/join-request``
-inbound route returned raw DB integers instead, splitting the client's
-``Map`` keys (``"1"`` vs ``1``) for the same Join.
+The connection and inbound-request ``id`` values are ``INTEGER PRIMARY KEY``
+rowids (``src/core/plexijoin/schema.py``) and stay numeric. The
+``created_by``/``reviewed_by`` columns hold 64-bit admin snowflakes, which are
+served as decimal strings because a JS ``Number`` cannot hold them exactly.
+The federation ``/join-request`` reply carries the new row's rowid, so it is
+numeric too. These tests pin both halves of that contract over HTTP-shaped
+calls to the real handlers.
 """
 
 import pytest
@@ -64,7 +66,10 @@ class _FakeManager:
         return self._request_row
 
 
-_BIG = 1234567890123456789
+# INTEGER PRIMARY KEY rowid (stays numeric).
+ROWID = 7
+# 2**53-ish admin snowflake (must be a decimal string).
+BIG_ADMIN = 987654321098765432
 
 
 def _patch_admin(monkeypatch, manager):
@@ -80,7 +85,7 @@ def _patch_admin(monkeypatch, manager):
 
 def _connection_row():
     return {
-        "id": _BIG,
+        "id": ROWID,
         "remote_instance_id": "remote:example",
         "remote_url": "https://remote.example",
         "status": "pending",
@@ -90,13 +95,13 @@ def _connection_row():
         "last_activity": None,
         "note": None,
         "created_at": 123,
-        "created_by": 987654321098765432,
+        "created_by": BIG_ADMIN,
     }
 
 
 def _request_row():
     return {
-        "id": _BIG,
+        "id": ROWID,
         "remote_instance_id": "remote:example",
         "remote_url": "https://remote.example",
         "requested_by": "someone",
@@ -109,26 +114,24 @@ def _request_row():
 
 
 @pytest.mark.asyncio
-async def test_admin_list_connections_serves_string_ids(monkeypatch):
+async def test_admin_list_connections_keeps_rowid_numeric(monkeypatch):
     _patch_admin(monkeypatch, _FakeManager(connection=_connection_row()))
     result = await admin_plexijoin.list_connections(_FakeRequest())
     conn = result["connections"][0]
-    assert conn["id"] == str(_BIG)
-    assert conn["created_by"] == "987654321098765432"
+    assert conn["id"] == ROWID
+    assert conn["created_by"] == str(BIG_ADMIN)
 
 
 @pytest.mark.asyncio
-async def test_admin_get_connection_serves_string_ids(monkeypatch):
+async def test_admin_get_connection_keeps_rowid_numeric(monkeypatch):
     _patch_admin(monkeypatch, _FakeManager(connection=_connection_row()))
-    result = await admin_plexijoin.get_connection(
-        _FakeRequest(), connection_id=str(_BIG)
-    )
-    assert result["id"] == str(_BIG)
-    assert result["created_by"] == "987654321098765432"
+    result = await admin_plexijoin.get_connection(_FakeRequest(), connection_id=ROWID)
+    assert result["id"] == ROWID
+    assert result["created_by"] == str(BIG_ADMIN)
 
 
 @pytest.mark.asyncio
-async def test_admin_create_connection_serves_string_id(monkeypatch):
+async def test_admin_create_connection_keeps_rowid_numeric(monkeypatch):
     _patch_admin(monkeypatch, _FakeManager(connection=_connection_row()))
     request = _FakeRequest(
         {
@@ -138,11 +141,11 @@ async def test_admin_create_connection_serves_string_id(monkeypatch):
         }
     )
     result = await admin_plexijoin.create_connection(request)
-    assert result["connection_id"] == str(_BIG)
+    assert result["connection_id"] == ROWID
 
 
 @pytest.mark.asyncio
-async def test_admin_list_requests_serves_string_ids(monkeypatch):
+async def test_admin_list_requests_keeps_rowid_numeric(monkeypatch):
     row = _request_row()
     pending = dict(row, status="pending", reviewed_by=None, reviewed_at=None)
     manager = _FakeManager(
@@ -157,30 +160,31 @@ async def test_admin_list_requests_serves_string_ids(monkeypatch):
     _patch_admin(monkeypatch, manager)
     result = await admin_plexijoin.list_requests(_FakeRequest())
     req = result["requests"][0]
-    assert req["id"] == str(_BIG)
+    assert req["id"] == ROWID
     assert req["reviewed_by"] is None
 
 
 @pytest.mark.asyncio
-async def test_admin_approve_deny_serve_string_ids(monkeypatch):
+async def test_admin_approve_deny_keep_rowid_numeric(monkeypatch):
     _patch_admin(monkeypatch, _FakeManager(request_row=_request_row()))
     for handler in (admin_plexijoin.approve_request, admin_plexijoin.deny_request):
-        result = await handler(_FakeRequest(), request_id=str(_BIG))
+        result = await handler(_FakeRequest(), request_id=ROWID)
         req = result["request"]
-        assert req["id"] == str(_BIG)
+        assert req["id"] == ROWID
         assert req["reviewed_by"] == "777"
 
 
-def test_serialize_helpers_serve_string_ids():
+def test_serialize_helpers_keep_rowids_numeric():
     conn = admin_plexijoin._serialize_connection(_connection_row())
-    assert conn["id"] == str(_BIG)
+    assert conn["id"] == ROWID
+    assert conn["created_by"] == str(BIG_ADMIN)
     req = admin_plexijoin._serialize_inbound_request(_request_row())
-    assert req["id"] == str(_BIG)
+    assert req["id"] == ROWID
     assert req["reviewed_by"] == "777"
 
 
 @pytest.mark.asyncio
-async def test_federation_join_request_inbound_serves_string_id(monkeypatch):
+async def test_federation_join_request_inbound_keeps_rowid_numeric(monkeypatch):
     manager = _FakeManager()
 
     async def _fake_body(request):
@@ -209,5 +213,5 @@ async def test_federation_join_request_inbound_serves_string_id(monkeypatch):
     )
     result = await federation_module.join_request_inbound(_InboundRequest())
     assert result["ok"] is True
-    assert result["request_id"] == str(_BIG)
+    assert result["request_id"] == ROWID
     assert submitted["remote_instance_id"] == "remote:example"

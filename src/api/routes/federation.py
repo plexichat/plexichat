@@ -272,9 +272,9 @@ async def join_request_inbound(request: Request):
         requested_by=payload.get("requested_by"),
         note=payload.get("note"),
     )
-    # Snowflakes as strings (matches the admin and client /Join contracts):
-    # a JS Number rounds 64-bit ids.
-    return {"ok": True, "request_id": str(row["id"])}
+    # ``request_id`` is the ``plexijoin_inbound_requests`` INTEGER PRIMARY KEY
+    # rowid, so it stays numeric (only 64-bit snowflakes need stringifying).
+    return {"ok": True, "request_id": row["id"]}
 
 
 @router.post(
