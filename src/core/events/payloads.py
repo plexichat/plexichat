@@ -84,7 +84,7 @@ def create_message_create(
         "pinned": pinned,
         "type": 0,
     }
-    if server_id:
+    if server_id is not None:
         sid = _str_id(server_id)
         # Canonical scope key is ``server_id``; ``guild_id`` is kept as a
         # legacy alias so older client readers keep working.
@@ -127,7 +127,7 @@ def create_message_update(
         data["content"] = content
     if author:
         data["author"] = author
-    if server_id:
+    if server_id is not None:
         # Canonical ``server_id`` with legacy ``guild_id`` alias.
         sid = _str_id(server_id)
         data["server_id"] = sid
@@ -160,7 +160,7 @@ def create_message_delete(
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
     }
-    if server_id:
+    if server_id is not None:
         sid = _str_id(server_id)
         data["server_id"] = sid
         data["guild_id"] = sid
@@ -189,7 +189,7 @@ def create_presence_update(
         "activities": activities or [],
         "client_status": client_status or {"desktop": status},
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
 
     return PresenceEvent(
@@ -216,7 +216,7 @@ def create_typing_start(
         "channel_id": _str_id(channel_id),
         "timestamp": ts,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if member:
         data["member"] = member
@@ -248,13 +248,13 @@ def create_channel_create(
         "position": position,
         "nsfw": nsfw,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if name:
         data["name"] = name
     if topic:
         data["topic"] = topic
-    if parent_id:
+    if parent_id is not None:
         data["parent_id"] = _str_id(parent_id)
 
     return ChannelEvent(
@@ -288,13 +288,13 @@ def create_channel_update(
         "position": position,
         "nsfw": nsfw,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if name:
         data["name"] = name
     if topic:
         data["topic"] = topic
-    if parent_id:
+    if parent_id is not None:
         data["parent_id"] = _str_id(parent_id)
 
     return ChannelEvent(
@@ -322,7 +322,7 @@ def create_channel_delete(
         "id": _str_id(channel_id),
         "type": channel_type,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if name:
         data["name"] = name
@@ -383,7 +383,7 @@ def create_guild_update(
     data = {"id": _str_id(server_id)}
     if name:
         data["name"] = name
-    if owner_id:
+    if owner_id is not None:
         data["owner_id"] = _str_id(owner_id)
     if icon:
         data["icon"] = icon
@@ -423,7 +423,7 @@ def create_guild_member_add(
         "roles": [_str_id(r) for r in (roles or [])],
         "joined_at": ts,
     }
-    if nick:
+    if nick is not None:
         data["nick"] = nick
 
     return GuildMemberEvent(
@@ -504,7 +504,7 @@ def create_voice_state_update(
         "deaf": deaf,
         "suppress": False,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if session_id:
         data["session_id"] = session_id
@@ -540,7 +540,7 @@ def create_reaction_add(
         "channel_id": _str_id(channel_id),
         "emoji": emoji,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if member:
         data["member"] = member
@@ -571,7 +571,7 @@ def create_reaction_remove(
         "channel_id": _str_id(channel_id),
         "emoji": emoji,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
 
     return ReactionEvent(

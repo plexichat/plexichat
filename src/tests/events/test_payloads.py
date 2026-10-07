@@ -578,3 +578,146 @@ class TestExplicitZeroTimestamps:
         )
         assert event.joined_at == 0
         assert event.data["joined_at"] == 0
+
+
+class TestExplicitZeroIds:
+    """Explicit ``0`` ids must survive instead of being treated as absent.
+
+    The payload factories guarded their optional id scope keys with truthiness
+    (``if server_id:``), so a caller that passed ``0`` silently lost the
+    scope keys from ``data``. The sibling ``gateway_emit`` helpers already
+    guard with ``is not None``; these tests pin the same contract on the
+    Discord-style factories.
+    """
+
+    def test_message_create_preserves_zero_server_id(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["server_id"] == "0"
+        assert event.data["guild_id"] == "0"
+
+    def test_message_update_preserves_zero_server_id(self):
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            content="Updated content",
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["server_id"] == "0"
+        assert event.data["guild_id"] == "0"
+
+    def test_message_delete_preserves_zero_server_id(self):
+        event = events.create_message_delete(
+            message_id=123,
+            channel_id=456,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["server_id"] == "0"
+        assert event.data["guild_id"] == "0"
+
+    def test_presence_update_preserves_zero_server_id(self):
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_typing_start_preserves_zero_server_id(self):
+        event = events.create_typing_start(
+            user_id=123,
+            channel_id=456,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_channel_create_preserves_zero_ids(self):
+        event = events.create_channel_create(
+            channel_id=123,
+            channel_type=0,
+            server_id=0,
+            parent_id=0,
+        )
+        assert event.server_id == 0
+        assert event.parent_id == 0
+        assert event.data["guild_id"] == "0"
+        assert event.data["parent_id"] == "0"
+
+    def test_channel_update_preserves_zero_ids(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+            server_id=0,
+            parent_id=0,
+        )
+        assert event.server_id == 0
+        assert event.parent_id == 0
+        assert event.data["guild_id"] == "0"
+        assert event.data["parent_id"] == "0"
+
+    def test_channel_delete_preserves_zero_server_id(self):
+        event = events.create_channel_delete(
+            channel_id=123,
+            channel_type=0,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_guild_update_preserves_zero_owner_id(self):
+        event = events.create_guild_update(
+            server_id=123,
+            owner_id=0,
+        )
+        assert event.owner_id == 0
+        assert event.data["owner_id"] == "0"
+
+    def test_guild_member_add_preserves_empty_nick(self):
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            nick="",
+        )
+        assert event.nick == ""
+        assert event.data["nick"] == ""
+
+    def test_voice_state_update_preserves_zero_server_id(self):
+        event = events.create_voice_state_update(
+            user_id=123,
+            channel_id=456,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_reaction_add_preserves_zero_server_id(self):
+        event = events.create_reaction_add(
+            user_id=123,
+            message_id=456,
+            channel_id=789,
+            emoji={"name": "thumbsup", "id": None},
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_reaction_remove_preserves_zero_server_id(self):
+        event = events.create_reaction_remove(
+            user_id=123,
+            message_id=456,
+            channel_id=789,
+            emoji={"name": "thumbsup", "id": None},
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
