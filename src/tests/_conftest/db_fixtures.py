@@ -104,6 +104,70 @@ def _isolate_decorator_cache():
         mem_cache_clear_pattern("*")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_process_globals():
+    """Reset process-global module graphs pinned to a previous test's DB.
+
+    ``src.api.setup`` stores the entire module graph in module globals, and
+    the suite domain ``setup`` helpers keep a single process-wide manager
+    (``src.core.suite.sum._manager`` / ``src.core.suite.stash._manager``).
+    Both are bound to whichever database was current when they ran, so a test
+    that installs them — directly, or implicitly through a route's
+    ``setup`` fallback — leaves every later test in the same worker holding a
+    manager over that test's deleted temp database. That is the source of the
+    intermittent "Auth module not available" (a standalone app ran
+    ``api.setup(db=db)`` with no auth module, pinning ``api._auth`` to
+    ``None`` with ``_setup_complete`` true so the lazy import fallback in
+    ``api.get_auth()`` never ran) and "no such table: artifacts" (a stale
+    PlexiSum manager) failures. Reset them after each test so the next one
+    starts from the same un-setup state a fresh process would.
+    """
+    try:
+        yield
+    finally:
+        import sys
+
+        import src.api as api
+
+        api._setup_complete = False
+        api._internal_secret = None
+        for name in (
+            "_db",
+            "_auth",
+            "_messaging",
+            "_servers",
+            "_relationships",
+            "_presence",
+            "_reactions",
+            "_embeds",
+            "_notifications",
+            "_webhooks",
+            "_threads",
+            "_media",
+            "_settings",
+            "_features",
+            "_avatars",
+            "_reports",
+            "_feedback",
+            "_admin",
+            "_search",
+            "_events",
+            "_polls",
+            "_stickers",
+            "_soundboard",
+            "_telemetry",
+            "_applications",
+        ):
+            setattr(api, name, None)
+
+        # Suite domain managers. Only reset the modules that are already
+        # imported so the ~10k tests that never touch the suite pay nothing.
+        for module_name in ("src.core.suite.sum", "src.core.suite.stash"):
+            domain = sys.modules.get(module_name)
+            if domain is not None:
+                domain._manager = None
+
+
 # =============================================================================
 # Database Fixture (Function-Scoped for Isolation)
 # =============================================================================
