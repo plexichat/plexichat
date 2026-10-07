@@ -381,11 +381,14 @@ def create_guild_update(
 ) -> GuildEvent:
     """Create a GUILD_UPDATE event."""
     data = {"id": _str_id(server_id)}
-    if name:
+    # ``is not None`` (not truthiness) so callers can explicitly clear a
+    # field (e.g. ``icon=""`` when a server icon is deleted), matching
+    # ``gateway_emit.emit_guild_update``.
+    if name is not None:
         data["name"] = name
     if owner_id is not None:
         data["owner_id"] = _str_id(owner_id)
-    if icon:
+    if icon is not None:
         data["icon"] = icon
 
     return GuildEvent(

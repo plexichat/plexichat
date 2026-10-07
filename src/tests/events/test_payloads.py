@@ -721,3 +721,37 @@ class TestExplicitZeroIds:
         )
         assert event.server_id == 0
         assert event.data["guild_id"] == "0"
+
+
+class TestExplicitEmptyClears:
+    """Explicit ``""`` clears must survive instead of being dropped.
+
+    The GUILD_UPDATE factory guarded ``name``/``icon`` with truthiness,
+    so a caller that passed ``""`` (e.g. clearing a server icon) silently
+    produced a payload without the key. ``gateway_emit.emit_guild_update``
+    already guards with ``is not None`` for exactly this reason; these
+    tests pin the same contract on the payload factory.
+    """
+
+    def test_guild_update_preserves_empty_name(self):
+        event = events.create_guild_update(
+            server_id=123,
+            name="",
+        )
+        assert event.name == ""
+        assert event.data["name"] == ""
+
+    def test_guild_update_preserves_empty_icon(self):
+        event = events.create_guild_update(
+            server_id=123,
+            icon="",
+        )
+        assert event.icon == ""
+        assert event.data["icon"] == ""
+
+    def test_guild_update_omits_unset_name_and_icon(self):
+        event = events.create_guild_update(
+            server_id=123,
+        )
+        assert "name" not in event.data
+        assert "icon" not in event.data
