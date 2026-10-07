@@ -67,7 +67,7 @@ def create_message_create(
     timestamp: Optional[int] = None,
 ) -> MessageEvent:
     """Create a MESSAGE_CREATE event."""
-    ts = timestamp or _get_timestamp()
+    ts = timestamp if timestamp is not None else _get_timestamp()
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
@@ -121,7 +121,7 @@ def create_message_update(
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "edited_timestamp": edited_timestamp or ts,
+        "edited_timestamp": edited_timestamp if edited_timestamp is not None else ts,
     }
     if content is not None:
         data["content"] = content
@@ -142,7 +142,7 @@ def create_message_update(
         message_id=message_id,
         content=content,
         author=author,
-        edited_timestamp=edited_timestamp or ts,
+        edited_timestamp=edited_timestamp if edited_timestamp is not None else ts,
     )
 
 
@@ -416,7 +416,7 @@ def create_guild_member_add(
     joined_at: Optional[int] = None,
 ) -> GuildMemberEvent:
     """Create a GUILD_MEMBER_ADD event."""
-    ts = joined_at or _get_timestamp()
+    ts = joined_at if joined_at is not None else _get_timestamp()
     data = {
         "guild_id": _str_id(server_id),
         "user": user or {"id": _str_id(user_id)},

@@ -536,3 +536,45 @@ class TestNonRaisingEmitters:
 
         # str() coercion inside the helper must also stay non-raising.
         assert gateway_emit.emit_channel_pins_update(BadStr()) is None
+
+
+class TestExplicitZeroTimestamps:
+    """Explicit ``0`` timestamps must survive instead of falling back to now.
+
+    The payload factories used ``value or now`` for their optional timestamp
+    defaults, so a caller that passed ``0`` (epoch, or a backfill sentinel)
+    silently received the current clock instead. The flat message builder
+    (``message_events.build_flat_message_create``) already guards with
+    ``is not None``; these tests pin the same contract on the
+    Discord-style factories.
+    """
+
+    def test_message_create_preserves_zero_timestamp(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            timestamp=0,
+        )
+        assert event.timestamp == 0
+        assert event.data["timestamp"] == 0
+
+    def test_message_update_preserves_zero_edited_timestamp(self):
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            content="Updated content",
+            edited_timestamp=0,
+        )
+        assert event.edited_timestamp == 0
+        assert event.data["edited_timestamp"] == 0
+
+    def test_guild_member_add_preserves_zero_joined_at(self):
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            joined_at=0,
+        )
+        assert event.joined_at == 0
+        assert event.data["joined_at"] == 0
