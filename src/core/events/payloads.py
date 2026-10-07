@@ -290,9 +290,12 @@ def create_channel_update(
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if name:
+    # ``is not None`` (not truthiness) so callers can explicitly clear a
+    # field (e.g. ``topic=""`` when a channel topic is removed), matching
+    # ``create_guild_update`` and ``gateway_emit.emit_guild_update``.
+    if name is not None:
         data["name"] = name
-    if topic:
+    if topic is not None:
         data["topic"] = topic
     if parent_id is not None:
         data["parent_id"] = _str_id(parent_id)

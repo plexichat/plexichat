@@ -755,3 +755,29 @@ class TestExplicitEmptyClears:
         )
         assert "name" not in event.data
         assert "icon" not in event.data
+
+    def test_channel_update_preserves_empty_name(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+            name="",
+        )
+        assert event.name == ""
+        assert event.data["name"] == ""
+
+    def test_channel_update_preserves_empty_topic(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+            topic="",
+        )
+        assert event.topic == ""
+        assert event.data["topic"] == ""
+
+    def test_channel_update_omits_unset_name_and_topic(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+        )
+        assert "name" not in event.data
+        assert "topic" not in event.data
