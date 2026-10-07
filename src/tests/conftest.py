@@ -25,6 +25,7 @@ from src.tests._conftest.config_env import (  # noqa: F401
 from src.tests._conftest.db_fixtures import *  # noqa: F401,F403
 from src.tests._conftest.db_fixtures import (  # noqa: F401
     _isolate_global_config,
+    _isolate_decorator_cache,
 )
 from src.tests._conftest.manager_fixtures import *  # noqa: F401,F403
 from src.tests._conftest.user_fixtures import *  # noqa: F401,F403
@@ -73,6 +74,7 @@ __all__ = [
     "address_whitelisted",
     "_test_always_valid_email",
     "_isolate_global_config",
+    "_isolate_decorator_cache",
     "pytest_configure",
     "pytest_collection_modifyitems",
     "pytest_sessionfinish",

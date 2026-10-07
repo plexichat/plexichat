@@ -78,6 +78,32 @@ def _isolate_global_config(_global_singleton_guard):
             _config_loader._invalidate_cache()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_decorator_cache():
+    """Clear the ``@cached`` in-memory tier around every test.
+
+    ``@cached`` keeps its L1 results in the module-global ``_mem_cache``
+    (``src/core/database/cache/base.py``) keyed by the decorated method's
+    arguments with the bound instance dropped so entries are shared across
+    instances. The ``db`` fixture hands every test a fresh copy of the
+    migrated database, but that shared L1 survives across tests — unlike the
+    per-instance ``Database._query_cache`` the ``db`` fixture already clears.
+    A row cached from one test's database is then served to the next test
+    whose fresh copy no longer contains it (e.g. ``member_data`` for a
+    (server, user) pair the previous test created, which made a later
+    "cannot use another server's sticker" assertion see a phantom member).
+    Clearing the L1 around each test keeps cached reads from leaking across
+    the per-test databases.
+    """
+    from src.core.database.cache.base import mem_cache_clear_pattern
+
+    mem_cache_clear_pattern("*")
+    try:
+        yield
+    finally:
+        mem_cache_clear_pattern("*")
+
+
 # =============================================================================
 # Database Fixture (Function-Scoped for Isolation)
 # =============================================================================
