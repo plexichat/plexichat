@@ -26,6 +26,34 @@ from .serialization import generate_cache_key, ensure_serializable, reconstruct_
 
 _cache_stats: dict = {"hits": 0, "misses": 0, "errors": 0}
 
+# First-parameter names that mark the decorated callable as a method. The
+# bound instance is part of every call's ``args`` but must not participate in
+# the default cache key: its ``repr`` carries the object's memory address, so
+# including it pins each key to one instance (no cross-instance hits) and
+# mints a fresh, never-reused key per instance (key explosion in Valkey).
+_METHOD_SELF_NAMES = frozenset({"self", "cls", "mcs"})
+
+
+def _drops_first_arg(func: Callable[..., Any]) -> bool:
+    """Return True when the decorated callable is a method.
+
+    Detected via the conventional first-parameter name (``self``/``cls``).
+    Plain functions keep every argument in the key; only methods drop the
+    bound instance, which carries no request identity (callers partition by
+    arguments such as the authenticated user instead).
+    """
+    try:
+        params = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    if not params:
+        return False
+    first = params[0]
+    return first.name in _METHOD_SELF_NAMES and first.kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+
 
 def cached(
     ttl: Optional[int] = None,
@@ -40,10 +68,23 @@ def cached(
         prefix: Custom key prefix. Defaults to function name.
         key_builder: Custom function to build cache key from arguments.
         skip_cache_if: Function that returns True to skip caching for this call.
+
+    When applied to a method (first parameter named ``self``/``cls``), the
+    bound instance is excluded from the default cache key so that cache
+    entries are shared across instances instead of being pinned to one
+    object's memory address. Custom ``key_builder`` callables always receive
+    the full original arguments.
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         is_async = inspect.iscoroutinefunction(func)
+        # Bound-method detection happens once, at decoration time.
+        _drop_first = _drops_first_arg(func)
+
+        def _key_args(args: tuple) -> tuple:
+            if _drop_first and args:
+                return args[1:]
+            return args
 
         @wraps(func)
         async def async_wrapper(*args, **kwargs) -> Any:
@@ -60,7 +101,7 @@ def cached(
             if key_builder:
                 cache_key = key_builder(*args, **kwargs)
             else:
-                cache_key = generate_cache_key(key_prefix, *args, **kwargs)
+                cache_key = generate_cache_key(key_prefix, *_key_args(args), **kwargs)
 
             if valkey_ready:
                 assert client is not None
@@ -124,7 +165,7 @@ def cached(
             if key_builder:
                 cache_key = key_builder(*args, **kwargs)
             else:
-                cache_key = generate_cache_key(key_prefix, *args, **kwargs)
+                cache_key = generate_cache_key(key_prefix, *_key_args(args), **kwargs)
 
             if valkey_ready:
                 assert client is not None
@@ -182,7 +223,9 @@ def cached(
         wrapper_any.invalidate = lambda *args, **kwargs: invalidate_cached(
             key_builder(*args, **kwargs)
             if key_builder
-            else generate_cache_key(wrapper_any.cache_key_prefix, *args, **kwargs)
+            else generate_cache_key(
+                wrapper_any.cache_key_prefix, *_key_args(args), **kwargs
+            )
         )
 
         return final_wrapper
