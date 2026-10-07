@@ -282,7 +282,7 @@ Booleans are JSON booleans:
   "position": 0,
   "nsfw": false,
   "slowmode_seconds": 0,
-  "created_at": 1704067200
+  "created_at": 1704067200000
 }
 ```
 
@@ -294,7 +294,7 @@ Booleans are JSON booleans:
   "channel_id": "123456789012345678",
   "author_id": "123456789012345678",
   "content": "Hello, world!",
-  "created_at": 1704067200,
+  "created_at": 1704067200000,
   "edited_at": null,
   "attachments": [],
   "embeds": [],

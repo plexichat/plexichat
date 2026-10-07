@@ -382,7 +382,7 @@ All identifier fields on live message events are strings.
     "channel_id": "123456789012345678",
     "guild_id": "987654321098765432",
     "user_id": "111222333444555666",
-    "timestamp": 1705314600,
+    "timestamp": 1705314600000,
     "member": {
       "user": { "id": "111222333444555666", "username": "johndoe" },
       "nick": "John",

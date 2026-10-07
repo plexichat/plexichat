@@ -214,7 +214,7 @@ def create_typing_start(
     data = {
         "user_id": _str_id(user_id),
         "channel_id": _str_id(channel_id),
-        "timestamp": ts // 1000,
+        "timestamp": ts,
     }
     if server_id:
         data["guild_id"] = _str_id(server_id)

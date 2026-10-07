@@ -110,6 +110,11 @@ class TestPresencePayloads:
         assert event.channel_id == 456
         assert event.data["user_id"] == "123"
         assert event.data["channel_id"] == "456"
+        # Timestamps are Unix milliseconds (same contract as REST and the
+        # other gateway live events): the payload value must match the
+        # event timestamp instead of truncating to seconds.
+        assert event.data["timestamp"] == event.timestamp
+        assert event.data["timestamp"] >= 1_700_000_000_000
 
     def test_create_typing_start_with_server(self):
         """Test TYPING_START with server ID."""
