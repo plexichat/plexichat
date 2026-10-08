@@ -12,6 +12,7 @@ measured workloads (``sum_statistics`` drives ``sum_indexes``).
 """
 
 import sqlite3
+import time
 from typing import Any
 
 from src.core.database.core.schema_splitter import split_sql_statements
@@ -673,7 +674,7 @@ def create_workbook_file(path: str, workbook_id: Any = None) -> None:
             )
         connection.execute(
             "INSERT OR REPLACE INTO sum_meta (key, value) VALUES (?, ?)",
-            ("created_at", str(int(__import__("time").time() * 1000))),
+            ("created_at", str(int(time.time() * 1000))),
         )
         connection.commit()
         raw_bytes = connection.serialize()

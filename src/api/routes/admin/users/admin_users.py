@@ -2,6 +2,8 @@
 Admin user management mixin - CRUD and status toggle for admin accounts.
 """
 
+import time
+
 from fastapi import Request, HTTPException
 from pydantic import BaseModel
 
@@ -153,7 +155,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                 from src.utils.encryption import generate_snowflake_id
 
                 role_id = generate_snowflake_id()
-                now_ms = int(__import__("time").time() * 1000)
+                now_ms = int(time.time() * 1000)
                 db.execute(
                     """INSERT INTO admin_roles
                        (id, name, description, permissions, created_at, created_by, is_system, position)
@@ -213,8 +215,6 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             password_hash = _row_value(password_row, "password_hash", 0)
             if not password_hash:
                 raise RuntimeError("Created admin has no password hash")
-
-            import time
 
             now_ms = int(time.time() * 1000)
             db.execute(
@@ -353,8 +353,6 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                             }
                         },
                     )
-                import time
-
                 db.execute(
                     "DELETE FROM admin_role_assignments WHERE admin_id = ?", (uid,)
                 )

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import json
 import csv
+import html
 import io
 import os
 import secrets
@@ -650,9 +651,7 @@ class TranscriptExportService(BaseService):
             parts.append(
                 f"<div class='meta'>User {author} <span class='timestamp'>{time_str}</span></div>"
             )
-            parts.append(
-                f"<div class='content'>{__import__('html').escape(content)}</div>"
-            )
+            parts.append(f"<div class='content'>{html.escape(content)}</div>")
             parts.append("</div>")
 
         parts.append("</div></body></html>")

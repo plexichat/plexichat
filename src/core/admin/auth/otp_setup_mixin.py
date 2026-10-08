@@ -4,6 +4,7 @@ OTP setup management mixin providing begin_otp_setup, disable_otp, and regenerat
 
 import json
 import secrets
+import time
 from typing import Any, List, Tuple
 
 import pyotp
@@ -110,7 +111,7 @@ class OTPSetupMixin:
 
         # TOTP disable must honor the same single-use replay rule as login.
         if secret and pyotp.TOTP(secret).verify(code, valid_window=1):
-            now_ms = int(__import__("time").time() * 1000)
+            now_ms = int(time.time() * 1000)
             cursor = self._db.execute(
                 "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ? "
                 "WHERE id = ? AND (otp_last_used_code IS NULL OR otp_last_used_code <> ?)",

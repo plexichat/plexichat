@@ -2,6 +2,8 @@
 Message export routes - Chat transcript export endpoints.
 """
 
+import time
+
 from fastapi import APIRouter, HTTPException, Depends
 from starlette.responses import FileResponse
 
@@ -384,7 +386,7 @@ async def download_transcript_export(
             detail={"error": {"code": 404, "message": "Export not found"}},
         )
 
-    if status.get("expires_at", 0) < __import__("time").time():
+    if status.get("expires_at", 0) < time.time():
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Export has expired"}},
