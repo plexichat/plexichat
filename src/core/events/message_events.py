@@ -138,7 +138,11 @@ def build_flat_message_create(
         "embeds": [],
         "pinned": False,
         "mentions": list(mentions or []),
-        "author_username": author_username or f"User {aid}",
+        # ``is not None`` (not truthiness) so an explicit empty username
+        # (``""``) survives instead of collapsing to the fallback.
+        "author_username": author_username
+        if author_username is not None
+        else f"User {aid}",
         "author_avatar_url": author_avatar_url,
         "reactions": [],
         "metadata": dict(metadata) if metadata is not None else None,

@@ -924,3 +924,101 @@ class TestFlatMessageBuilderExplicitEmpties:
             metadata={"artifact_id": "7"},
         )
         assert event.data["metadata"] == {"artifact_id": "7"}
+
+
+class TestExplicitEmptyAuthorUserFallbacks:
+    """Explicit ``{}`` author/user/client_status must survive the defaults.
+
+    The message/presence/member factories fell back with ``value or
+    default``, so an explicit empty dict collapsed to the synthesized
+    ``{"id": ...}`` (or ``{"desktop": status}``) default. The sibling
+    optional-field factories already guard with ``is not None``; these
+    tests pin the same contract here. The flat message builder's
+    ``author_username`` had the same shape (``or f"User {aid}"``), so an
+    explicit ``""`` collapsed to the fallback.
+    """
+
+    def test_message_create_preserves_empty_author(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            author={},
+        )
+        assert event.author == {}
+        assert event.data["author"] == {}
+
+    def test_message_create_omits_unset_author_default(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+        )
+        assert event.data["author"] == {"id": "789"}
+
+    def test_presence_update_preserves_empty_user_and_client_status(self):
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            user={},
+            client_status={},
+        )
+        assert event.data["user"] == {}
+        assert event.data["client_status"] == {}
+
+    def test_presence_update_omits_unset_user_default(self):
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+        )
+        assert event.data["user"] == {"id": "123"}
+        assert event.data["client_status"] == {"desktop": "online"}
+
+    def test_guild_member_add_preserves_empty_user(self):
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            user={},
+        )
+        assert event.data["user"] == {}
+
+    def test_guild_member_remove_preserves_empty_user(self):
+        event = events.create_guild_member_remove(
+            server_id=123,
+            user_id=456,
+            user={},
+        )
+        assert event.data["user"] == {}
+
+    def test_guild_member_update_preserves_empty_user(self):
+        event = events.create_guild_member_update(
+            server_id=123,
+            user_id=456,
+            user={},
+        )
+        assert event.data["user"] == {}
+
+    def test_flat_message_create_preserves_empty_author_username(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+            author_username="",
+        )
+        assert event.data["author_username"] == ""
+
+    def test_flat_message_create_falls_back_unset_author_username(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+        )
+        assert event.data["author_username"] == "User 3"

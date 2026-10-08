@@ -68,10 +68,11 @@ def create_message_create(
 ) -> MessageEvent:
     """Create a MESSAGE_CREATE event."""
     ts = timestamp if timestamp is not None else _get_timestamp()
+    default_author = {"id": _str_id(author_id)}
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "author": author or {"id": _str_id(author_id)},
+        "author": author if author is not None else default_author,
         "content": content,
         "timestamp": ts,
         "edited_timestamp": None,
@@ -100,7 +101,7 @@ def create_message_create(
         user_id=author_id,
         message_id=message_id,
         content=content,
-        author=author or {"id": _str_id(author_id)},
+        author=author if author is not None else default_author,
         attachments=attachments or [],
         embeds=embeds or [],
         mentions=mentions or [],
@@ -183,11 +184,14 @@ def create_presence_update(
     user: Optional[Dict[str, Any]] = None,
 ) -> PresenceEvent:
     """Create a PRESENCE_UPDATE event."""
+    default_user = {"id": _str_id(user_id)}
     data = {
-        "user": user or {"id": _str_id(user_id)},
+        "user": user if user is not None else default_user,
         "status": status,
         "activities": activities or [],
-        "client_status": client_status or {"desktop": status},
+        "client_status": client_status
+        if client_status is not None
+        else {"desktop": status},
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
@@ -429,7 +433,7 @@ def create_guild_member_add(
     ts = joined_at if joined_at is not None else _get_timestamp()
     data = {
         "guild_id": _str_id(server_id),
-        "user": user or {"id": _str_id(user_id)},
+        "user": user if user is not None else {"id": _str_id(user_id)},
         "roles": [_str_id(r) for r in (roles or [])],
         "joined_at": ts,
     }
@@ -458,7 +462,7 @@ def create_guild_member_remove(
         event_type=EventType.GUILD_MEMBER_REMOVE,
         data={
             "guild_id": _str_id(server_id),
-            "user": user or {"id": _str_id(user_id)},
+            "user": user if user is not None else {"id": _str_id(user_id)},
         },
         server_id=server_id,
         user_id=user_id,
@@ -476,7 +480,7 @@ def create_guild_member_update(
     """Create a GUILD_MEMBER_UPDATE event."""
     data = {
         "guild_id": _str_id(server_id),
-        "user": user or {"id": _str_id(user_id)},
+        "user": user if user is not None else {"id": _str_id(user_id)},
         "roles": [_str_id(r) for r in (roles or [])],
     }
     if nick is not None:
