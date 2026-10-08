@@ -15,6 +15,8 @@ break the underlying REST/CRUD operation that triggered it.
 
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
+import functools
+
 import utils.logger as logger
 
 from .snowflakes import stringify_snowflake_ids
@@ -33,7 +35,6 @@ def _non_raising(fn: F) -> F:
     contract. The decorator keeps the guarantee for current and future
     helpers: log at WARNING (so breakage is visible) and return None.
     """
-    import functools
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> None:

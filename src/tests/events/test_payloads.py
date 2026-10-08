@@ -1022,3 +1022,84 @@ class TestExplicitEmptyAuthorUserFallbacks:
             content="hi",
         )
         assert event.data["author_username"] == "User 3"
+
+
+class TestPayloadListCopies:
+    """List args must be copied, never aliased, by payload factories.
+
+    The factories built ``data``/model fields with ``arg or []``, so the
+    event held the caller's list object: mutating the caller's list after
+    the build corrupted the already-built event, and ``data`` and model
+    fields shared one object. Each field must be an independent copy.
+    """
+
+    def test_message_create_copies_mentions_attachments_embeds(self):
+        mentions = [{"id": "1"}]
+        attachments = [{"id": "a"}]
+        embeds = [{"type": "rich"}]
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="hi",
+            mentions=mentions,
+            attachments=attachments,
+            embeds=embeds,
+        )
+        assert event.data["mentions"] == mentions
+        assert event.data["mentions"] is not mentions
+        assert event.mentions is not mentions
+        assert event.data["mentions"] is not event.mentions
+        assert event.data["attachments"] is not attachments
+        assert event.data["embeds"] is not embeds
+        mentions.append({"id": "2"})
+        attachments.append({"id": "b"})
+        assert event.data["mentions"] == [{"id": "1"}]
+        assert event.mentions == [{"id": "1"}]
+        assert event.data["attachments"] == [{"id": "a"}]
+
+    def test_presence_update_copies_activities(self):
+        activities = [{"name": "chess"}]
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            activities=activities,
+        )
+        assert event.data["activities"] is not activities
+        assert event.activities is not activities
+        activities.append({"name": "go"})
+        assert event.data["activities"] == [{"name": "chess"}]
+        assert event.activities == [{"name": "chess"}]
+
+    def test_guild_create_copies_channels_roles_members(self):
+        channels = [{"id": "1"}]
+        roles = [{"id": "2"}]
+        members = [{"id": "3"}]
+        event = events.create_guild_create(
+            server_id=123,
+            name="guild",
+            owner_id=456,
+            channels=channels,
+            roles=roles,
+            members=members,
+        )
+        assert event.data["channels"] is not channels
+        assert event.channels is not channels
+        assert event.data["members"] is not members
+        channels.append({"id": "9"})
+        assert event.data["channels"] == [{"id": "1"}]
+        assert event.channels == [{"id": "1"}]
+
+    def test_guild_member_add_copies_roles(self):
+        roles = [1, 2]
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            roles=roles,
+        )
+        assert event.roles is not roles
+        assert event.roles == [1, 2]
+        assert event.data["roles"] == ["1", "2"]
+        roles.append(3)
+        assert event.roles == [1, 2]
+        assert event.data["roles"] == ["1", "2"]

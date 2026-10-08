@@ -69,6 +69,8 @@ def create_message_create(
     """Create a MESSAGE_CREATE event."""
     ts = timestamp if timestamp is not None else _get_timestamp()
     default_author = {"id": _str_id(author_id)}
+    # Copy list args (not ``or []``) so the event never aliases the
+    # caller's list and ``data``/model fields stay independent.
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
@@ -78,10 +80,10 @@ def create_message_create(
         "edited_timestamp": None,
         "tts": False,
         "mention_everyone": False,
-        "mentions": mentions or [],
+        "mentions": list(mentions) if mentions is not None else [],
         "mention_roles": [],
-        "attachments": attachments or [],
-        "embeds": embeds or [],
+        "attachments": list(attachments) if attachments is not None else [],
+        "embeds": list(embeds) if embeds is not None else [],
         "pinned": pinned,
         "type": 0,
     }
@@ -102,9 +104,9 @@ def create_message_create(
         message_id=message_id,
         content=content,
         author=author if author is not None else default_author,
-        attachments=attachments or [],
-        embeds=embeds or [],
-        mentions=mentions or [],
+        attachments=list(attachments) if attachments is not None else [],
+        embeds=list(embeds) if embeds is not None else [],
+        mentions=list(mentions) if mentions is not None else [],
         pinned=pinned,
     )
 
@@ -188,7 +190,7 @@ def create_presence_update(
     data = {
         "user": user if user is not None else default_user,
         "status": status,
-        "activities": activities or [],
+        "activities": list(activities) if activities is not None else [],
         "client_status": client_status
         if client_status is not None
         else {"desktop": status},
@@ -202,7 +204,7 @@ def create_presence_update(
         server_id=server_id,
         user_id=user_id,
         status=status,
-        activities=activities or [],
+        activities=list(activities) if activities is not None else [],
         client_status=client_status,
     )
 
@@ -362,9 +364,9 @@ def create_guild_create(
         "name": name,
         "owner_id": _str_id(owner_id),
         "member_count": member_count,
-        "channels": channels or [],
-        "roles": roles or [],
-        "members": members or [],
+        "channels": list(channels) if channels is not None else [],
+        "roles": list(roles) if roles is not None else [],
+        "members": list(members) if members is not None else [],
     }
     # ``is not None`` (not truthiness) so an explicit empty icon (``""``)
     # survives, matching ``create_guild_update``.
@@ -379,8 +381,8 @@ def create_guild_create(
         icon=icon,
         owner_id=owner_id,
         member_count=member_count,
-        channels=channels or [],
-        roles=roles or [],
+        channels=list(channels) if channels is not None else [],
+        roles=list(roles) if roles is not None else [],
     )
 
 
@@ -434,7 +436,7 @@ def create_guild_member_add(
     data = {
         "guild_id": _str_id(server_id),
         "user": user if user is not None else {"id": _str_id(user_id)},
-        "roles": [_str_id(r) for r in (roles or [])],
+        "roles": [_str_id(r) for r in (roles if roles is not None else [])],
         "joined_at": ts,
     }
     if nick is not None:
@@ -447,7 +449,7 @@ def create_guild_member_add(
         user_id=user_id,
         member_user_id=user_id,
         nick=nick,
-        roles=roles or [],
+        roles=list(roles) if roles is not None else [],
         joined_at=ts,
     )
 
@@ -481,7 +483,7 @@ def create_guild_member_update(
     data = {
         "guild_id": _str_id(server_id),
         "user": user if user is not None else {"id": _str_id(user_id)},
-        "roles": [_str_id(r) for r in (roles or [])],
+        "roles": [_str_id(r) for r in (roles if roles is not None else [])],
     }
     if nick is not None:
         data["nick"] = nick
@@ -493,7 +495,7 @@ def create_guild_member_update(
         user_id=user_id,
         member_user_id=user_id,
         nick=nick,
-        roles=roles or [],
+        roles=list(roles) if roles is not None else [],
     )
 
 
@@ -634,7 +636,9 @@ def create_guild_members_chunk(
             "members": members,
             "chunk_index": chunk_index,
             "chunk_count": chunk_count,
-            "not_found": [_str_id(r) for r in (not_found or [])],
+            "not_found": [
+                _str_id(r) for r in (not_found if not_found is not None else [])
+            ],
         },
         server_id=server_id,
     )
