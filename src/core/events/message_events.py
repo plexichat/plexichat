@@ -89,7 +89,7 @@ def build_message_delete(
         "channel_id": _str(channel_id),
     }
     apply_server_scope(data, server_id)
-    if extra:
+    if extra is not None:
         data.update(extra)
     return Event(
         event_type=EventType.MESSAGE_DELETE,
@@ -141,8 +141,8 @@ def build_flat_message_create(
         "author_username": author_username or f"User {aid}",
         "author_avatar_url": author_avatar_url,
         "reactions": [],
-        "metadata": dict(metadata) if metadata else None,
+        "metadata": dict(metadata) if metadata is not None else None,
     }
-    if extra:
+    if extra is not None:
         data.update(extra)
     return build_message_create(data, channel_id=channel_id, server_id=server_id)

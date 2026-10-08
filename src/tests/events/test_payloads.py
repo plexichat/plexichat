@@ -879,3 +879,48 @@ class TestExplicitEmptyCreateClears:
     def test_gateway_error_omits_unset_message(self):
         event = events.create_gateway_error("guild_members_denied")
         assert "message" not in event.data
+
+
+class TestFlatMessageBuilderExplicitEmpties:
+    """Explicit empty optionals in the flat message builders must survive.
+
+    ``build_flat_message_create`` guarded ``metadata`` with truthiness, so
+    an explicit ``metadata={}`` collapsed to ``None``. The Discord-style
+    factories already guard with ``is not None``; these tests pin the same
+    contract on the flat family.
+    """
+
+    def test_flat_message_create_preserves_empty_metadata(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+            metadata={},
+        )
+        assert event.data["metadata"] == {}
+
+    def test_flat_message_create_omits_unset_metadata_as_none(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+        )
+        assert event.data["metadata"] is None
+
+    def test_flat_message_create_preserves_nonempty_metadata(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+            metadata={"artifact_id": "7"},
+        )
+        assert event.data["metadata"] == {"artifact_id": "7"}
