@@ -125,7 +125,7 @@ def create_message_update(
     }
     if content is not None:
         data["content"] = content
-    if author:
+    if author is not None:
         data["author"] = author
     if server_id is not None:
         # Canonical ``server_id`` with legacy ``guild_id`` alias.
@@ -218,7 +218,7 @@ def create_typing_start(
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if member:
+    if member is not None:
         data["member"] = member
 
     return TypingEvent(
@@ -250,9 +250,11 @@ def create_channel_create(
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if name:
+    # ``is not None`` (not truthiness) so explicit empty values (e.g.
+    # ``topic=""``) survive, matching ``create_channel_update``.
+    if name is not None:
         data["name"] = name
-    if topic:
+    if topic is not None:
         data["topic"] = topic
     if parent_id is not None:
         data["parent_id"] = _str_id(parent_id)
@@ -327,7 +329,7 @@ def create_channel_delete(
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if name:
+    if name is not None:
         data["name"] = name
 
     return ChannelEvent(
@@ -360,7 +362,9 @@ def create_guild_create(
         "roles": roles or [],
         "members": members or [],
     }
-    if icon:
+    # ``is not None`` (not truthiness) so an explicit empty icon (``""``)
+    # survives, matching ``create_guild_update``.
+    if icon is not None:
         data["icon"] = icon
 
     return GuildEvent(
@@ -512,9 +516,9 @@ def create_voice_state_update(
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if session_id:
+    if session_id is not None:
         data["session_id"] = session_id
-    if member:
+    if member is not None:
         data["member"] = member
 
     return VoiceStateEvent(
@@ -548,7 +552,7 @@ def create_reaction_add(
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if member:
+    if member is not None:
         data["member"] = member
 
     return ReactionEvent(
@@ -604,7 +608,7 @@ def create_gateway_error(
     correlate the error with the request that produced it.
     """
     data: Dict[str, Any] = {"code": code}
-    if message:
+    if message is not None:
         data["message"] = message
     if guild_id is not None:
         data["guild_id"] = _str_id(guild_id)

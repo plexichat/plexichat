@@ -781,3 +781,101 @@ class TestExplicitEmptyClears:
         )
         assert "name" not in event.data
         assert "topic" not in event.data
+
+
+class TestExplicitEmptyCreateClears:
+    """Explicit ``""``/``{}`` optionals must survive on the sibling factories.
+
+    ``create_channel_update``/``create_guild_update`` already guard with
+    ``is not None`` so explicit clears are preserved; the create/delete and
+    accessory-field factories guarded with truthiness and silently dropped
+    them. These tests pin the same contract everywhere.
+    """
+
+    def test_channel_create_preserves_empty_name_and_topic(self):
+        event = events.create_channel_create(
+            channel_id=123,
+            channel_type=0,
+            name="",
+            topic="",
+        )
+        assert event.name == ""
+        assert event.topic == ""
+        assert event.data["name"] == ""
+        assert event.data["topic"] == ""
+
+    def test_channel_create_omits_unset_name_and_topic(self):
+        event = events.create_channel_create(
+            channel_id=123,
+            channel_type=0,
+        )
+        assert "name" not in event.data
+        assert "topic" not in event.data
+
+    def test_channel_delete_preserves_empty_name(self):
+        event = events.create_channel_delete(
+            channel_id=123,
+            channel_type=0,
+            name="",
+        )
+        assert event.name == ""
+        assert event.data["name"] == ""
+
+    def test_guild_create_preserves_empty_icon(self):
+        event = events.create_guild_create(
+            server_id=123,
+            name="Test Server",
+            owner_id=456,
+            icon="",
+        )
+        assert event.icon == ""
+        assert event.data["icon"] == ""
+
+    def test_message_update_preserves_empty_author(self):
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            author={},
+        )
+        assert event.author == {}
+        assert event.data["author"] == {}
+
+    def test_typing_start_preserves_empty_member(self):
+        event = events.create_typing_start(
+            user_id=123,
+            channel_id=456,
+            member={},
+        )
+        assert event.data["member"] == {}
+
+    def test_voice_state_update_preserves_empty_session_and_member(self):
+        event = events.create_voice_state_update(
+            user_id=123,
+            channel_id=456,
+            session_id="",
+            member={},
+        )
+        assert event.data["session_id"] == ""
+        assert event.data["member"] == {}
+
+    def test_reaction_add_preserves_empty_member(self):
+        event = events.create_reaction_add(
+            user_id=123,
+            message_id=456,
+            channel_id=789,
+            emoji={"name": "thumbsup", "id": None},
+            member={},
+        )
+        assert event.member == {}
+        assert event.data["member"] == {}
+
+    def test_gateway_error_preserves_empty_message(self):
+        event = events.create_gateway_error(
+            "guild_members_denied",
+            message="",
+        )
+        assert event.data["message"] == ""
+
+    def test_gateway_error_omits_unset_message(self):
+        event = events.create_gateway_error("guild_members_denied")
+        assert "message" not in event.data
