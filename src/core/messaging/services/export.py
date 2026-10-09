@@ -506,13 +506,6 @@ class TranscriptExportService(BaseService):
                 f"conversation {conversation_id}"
             )
 
-        messages = self._message_repo.get_by_conversation(
-            conversation_id, limit=max_messages
-        )
-
-        if not messages:
-            return []
-
         from_ts = None
         to_ts = None
 
@@ -527,6 +520,22 @@ class TranscriptExportService(BaseService):
                 to_ts = _parse_iso_date_bound(to_date, tz_name)
             except ValueError:
                 raise ValueError(f"Invalid to_date format: {to_date}")
+
+        # Apply the date bounds in SQL rather than filtering a capped fetch.
+        # Fetching ``limit`` newest rows (``ORDER BY id DESC``) *before*
+        # filtering meant an older date window returned nothing once a
+        # conversation exceeded ``max_messages``; ASC ordering also yields a
+        # chronological transcript.
+        messages = self._message_repo.get_by_conversation(
+            conversation_id,
+            limit=max_messages,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            ascending=True,
+        )
+
+        if not messages:
+            return []
 
         result = []
         for msg in messages:

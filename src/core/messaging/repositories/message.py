@@ -113,15 +113,30 @@ class MessageRepository(BaseRepository[Message]):
         limit: int = 50,
         before_id: Optional[SnowflakeID] = None,
         after_id: Optional[SnowflakeID] = None,
+        from_ts: Optional[int] = None,
+        to_ts: Optional[int] = None,
+        ascending: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get messages from a conversation with cursor pagination.
 
         Deleted messages are included so clients can render the
         'Message deleted by user' tombstone. The ``deleted`` column drives
         rendering; clients filter/display based on it.
+
+        ``from_ts``/``to_ts`` are optional inclusive epoch-millisecond
+        bounds on ``created_at``; ``ascending`` selects chronological order
+        for the uncursored (no ``before_id``/``after_id``) query. The
+        defaults preserve the original descending, unbounded behaviour.
         """
         query = "SELECT * FROM msg_messages WHERE conversation_id = ?"
         params: List[Any] = [conversation_id]
+
+        if from_ts is not None:
+            query += " AND created_at >= ?"
+            params.append(from_ts)
+        if to_ts is not None:
+            query += " AND created_at <= ?"
+            params.append(to_ts)
 
         if before_id:
             query += " AND id < ?"
@@ -130,6 +145,8 @@ class MessageRepository(BaseRepository[Message]):
         elif after_id:
             query += " AND id > ?"
             params.append(after_id)
+            query += " ORDER BY id ASC"
+        elif ascending:
             query += " ORDER BY id ASC"
         else:
             query += " ORDER BY id DESC"

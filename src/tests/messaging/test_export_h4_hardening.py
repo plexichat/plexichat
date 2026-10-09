@@ -23,7 +23,9 @@ class _StubMessages:
     def __init__(self, msgs):
         self._msgs = msgs
 
-    def get_by_conversation(self, conversation_id, limit=10000):
+    def get_by_conversation(
+        self, conversation_id, limit=10000, from_ts=None, to_ts=None, ascending=False
+    ):
         return list(self._msgs[:limit])
 
 

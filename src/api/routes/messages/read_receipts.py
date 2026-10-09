@@ -445,6 +445,18 @@ async def acknowledge_messages_bulk(
             },
         )
 
+    max_channels = 100
+    if len(body) > max_channels:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": f"Too many channels (max {max_channels})",
+                }
+            },
+        )
+
     try:
         import asyncio
 
@@ -452,7 +464,11 @@ async def acknowledge_messages_bulk(
             try:
                 cid = int(channel_id)
                 mid = int(message_id) if message_id else None
-                marked = msg_manager.mark_read(current_user.user_id, cid, mid)
+                # ``mark_read`` is synchronous; keep it off the event loop so
+                # one request cannot block the whole worker.
+                marked = await run_in_threadpool(
+                    msg_manager.mark_read, current_user.user_id, cid, mid
+                )
                 if not marked:
                     continue
 
