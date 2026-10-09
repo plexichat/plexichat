@@ -8,6 +8,7 @@ Security features:
 """
 
 import json
+import os
 import subprocess
 import shutil
 from typing import Optional
@@ -113,6 +114,25 @@ class VideoProcessor:
         """
         if not self._ffprobe_path:
             raise VideoProcessingError("ffprobe not available", "metadata")
+
+        # Security: Check file size before processing. The bytes path
+        # (``get_metadata_from_bytes``) already enforces ``self._max_size``;
+        # the pipeline only uses that path for files <= the in-memory
+        # threshold, so without this check the configured cap was silently
+        # skipped for every larger (temp-file) upload — the files it exists
+        # to bound.
+        try:
+            size_on_disk = os.path.getsize(file_path)
+        except OSError:
+            size_on_disk = 0
+        if size_on_disk > self._max_size:
+            logger.warning(
+                f"Video too large for metadata extraction: {size_on_disk} > {self._max_size}"
+            )
+            raise VideoProcessingError(
+                f"Video exceeds maximum size for metadata extraction ({self._max_size // (1024 * 1024)}MB)",
+                "metadata",
+            )
 
         try:
             cmd = [
