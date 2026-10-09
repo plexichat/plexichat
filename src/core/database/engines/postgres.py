@@ -315,7 +315,8 @@ class PostgresEngine(BaseEngine):
             raise ImportError(_MISSING_DRIVER)
 
         kwargs = self._connect_kwargs()
-        ssl_context = _build_ssl_context(self._sslmode())
+        mode = self._sslmode().lower()
+        ssl_context = _build_ssl_context(mode)
         if ssl_context is not None:
             kwargs["ssl_context"] = ssl_context
 
@@ -326,7 +327,13 @@ class PostgresEngine(BaseEngine):
             # connect in the clear" — pg8000 never falls back on its own, so
             # a server without TLS (or an unusable certificate) is retried
             # without the SSL context rather than failing the pool.
-            if "ssl" in str(e).lower() and ssl_context is not None:
+            #
+            # This fallback is ONLY valid for the opportunistic ``prefer``
+            # mode. ``require``/``verify-ca``/``verify-full`` demand TLS, so a
+            # handshake failure there must propagate: retrying in the clear
+            # would send the password and every row unencrypted on a
+            # connection the operator explicitly required to be encrypted.
+            if mode == "prefer" and "ssl" in str(e).lower() and ssl_context is not None:
                 logger.warning(
                     f"PostgreSQL TLS handshake failed ({e}); retrying without "
                     "encryption because sslmode=prefer"
