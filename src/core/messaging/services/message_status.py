@@ -63,6 +63,23 @@ class MessageStatusService(BaseService):
         except ImportError:
             return None
 
+    def _invalidate_unread_counts(self, user_id: SnowflakeID) -> None:
+        """Drop the cached ``GET /users/@me/unread`` entry for one user.
+
+        That route is decorated ``@cached(ttl=10, prefix="unread_counts_api")``
+        and its key embeds the caller's ``TokenInfo`` as
+        ``unread_counts_api:current_user:TokenInfo:<user_id>``. Every other
+        read-state cache (``msg_reader_ids:*`` etc.) is invalidated when read
+        state changes; without this one the unread badge kept serving the
+        pre-ack count until the entry's TTL expired.
+        """
+        try:
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern(f"unread_counts_api:current_user:TokenInfo:{user_id}")
+        except Exception:
+            pass
+
     def mark_delivered(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
     ) -> int:
@@ -185,6 +202,10 @@ class MessageStatusService(BaseService):
         self._participant_repo.update_last_read(
             conversation_id, user_id, target_msg_id, now
         )
+
+        # Drop the cached /users/@me/unread counts so the badge reflects the
+        # ack immediately instead of after the 10s TTL.
+        self._invalidate_unread_counts(user_id)
 
         return count
 
@@ -408,6 +429,9 @@ class MessageStatusService(BaseService):
         self._participant_repo.update_last_read(
             conversation_id, user_id, target_msg_id, now
         )
+
+        # Rolling read state back changes the unread badge too.
+        self._invalidate_unread_counts(user_id)
 
         # Recalculate unread count
         new_count = self._repo.get_unread_count(user_id, conversation_id)
