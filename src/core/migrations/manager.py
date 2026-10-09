@@ -458,6 +458,14 @@ class MigrationManager:
         if migration_file is None:
             raise ValueError(f"Migration file for version {version} not found")
 
+        # Serialize single-migration rollbacks with the apply paths (same lock
+        # path). Without this, an admin rollback races an in-flight
+        # apply_all_pending on the shared database and migrations_history.
+        if not self.tracker.acquire_lock():
+            raise Exception(
+                "Could not acquire migration lock - another migration may be in progress"
+            )
+
         try:
             runner = MigrationRunner(self.db, self.tracker)
             runner.validate_migration_file(migration_file)
@@ -481,6 +489,9 @@ class MigrationManager:
         except Exception as e:
             logger.error(f"Rollback of migration {version} failed: {str(e)}")
             raise
+        finally:
+            # Always release the lock we took above.
+            self.tracker.release_lock()
 
     @cached(ttl=15, prefix="migration_status", key_builder=_migration_status_cache_key)
     def get_migration_status(self) -> Dict[str, Any]:
