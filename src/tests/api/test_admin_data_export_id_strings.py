@@ -68,6 +68,7 @@ def test_list_data_exports_stringifies_ids():
 
     client = _client()
     with (
+        patch.object(data_export_routes, "check_host_restriction"),
         patch.object(data_export_routes, "require_admin_permission", return_value=1),
         patch.object(
             data_export_routes,
@@ -95,6 +96,7 @@ def test_get_data_export_stringifies_ids():
 
     client = _client()
     with (
+        patch.object(data_export_routes, "check_host_restriction"),
         patch.object(data_export_routes, "require_admin_permission", return_value=1),
         patch("src.api.get_db", return_value=_FakeDB(_row())),
     ):
@@ -114,6 +116,7 @@ def test_generate_data_export_stringifies_ids():
 
     client = _client()
     with (
+        patch.object(data_export_routes, "check_host_restriction"),
         patch.object(data_export_routes, "require_admin_permission", return_value=1),
         patch("src.api.get_db", return_value=_FakeDB(_row())),
         patch.object(
@@ -128,3 +131,52 @@ def test_generate_data_export_stringifies_ids():
     assert body["request"]["id"] == str(BIG)
     assert isinstance(body["request"]["id"], str)
     assert body["request"]["admin_id"] == str(BIG + 4)
+
+
+def test_host_restriction_is_enforced_on_every_route():
+    """Every DSAR data-export route must run the shared host-level guard.
+
+    ``data_export.py`` was the only module under ``api/routes/admin/`` that
+    skipped ``check_host_restriction``, so the ``admin_ui.enabled`` gate, the
+    proxy-spoofing guard, ``admin_ui.host_restriction.allowed_hosts`` and the
+    provisional-licence host allowlist never applied to the endpoints that
+    list, approve, deny or generate exports of users' personal data.
+    """
+    from src.api.routes.admin import data_export as data_export_routes
+
+    host_checked_paths = []
+
+    def _record_host_check(request):
+        host_checked_paths.append(request.url.path)
+
+    client = _client()
+    with (
+        patch.object(
+            data_export_routes,
+            "check_host_restriction",
+            side_effect=_record_host_check,
+        ),
+        patch.object(data_export_routes, "require_admin_permission", return_value=1),
+        patch.object(data_export_routes, "get_admin_requests", return_value=[_row()]),
+        patch("src.api.get_db", return_value=_FakeDB(_row())),
+        patch.object(data_export_routes, "approve_request"),
+        patch.object(data_export_routes, "deny_request"),
+        patch.object(
+            data_export_routes, "generate_manual", return_value=_row(status="completed")
+        ),
+    ):
+        client.get("/api/v1/admin/data-export")
+        client.get(f"/api/v1/admin/data-export/{BIG}")
+        client.post(f"/api/v1/admin/data-export/{BIG}/approve")
+        client.post(
+            f"/api/v1/admin/data-export/{BIG}/deny", json={"reason": "not warranted"}
+        )
+        client.post(f"/api/v1/admin/data-export/{BIG}/generate")
+
+    assert host_checked_paths == [
+        "/api/v1/admin/data-export",
+        f"/api/v1/admin/data-export/{BIG}",
+        f"/api/v1/admin/data-export/{BIG}/approve",
+        f"/api/v1/admin/data-export/{BIG}/deny",
+        f"/api/v1/admin/data-export/{BIG}/generate",
+    ]

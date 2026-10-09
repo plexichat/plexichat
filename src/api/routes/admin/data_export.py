@@ -27,7 +27,7 @@ from src.api.schemas.common import (
     SuccessResponse,
 )
 from src.core.events.snowflakes import stringify_snowflake_ids
-from .utils import require_admin_permission
+from .utils import check_host_restriction, require_admin_permission
 from src.core.dsar import (
     get_admin_requests,
     approve_request,
@@ -107,6 +107,7 @@ async def list_data_exports(
     offset: int = 0,
 ):
     """List all DSAR export requests with optional status filter."""
+    check_host_restriction(request)
     require_admin_permission(request, "data_export.read")
     try:
         items = get_admin_requests(status=status, limit=limit, offset=offset)
@@ -126,6 +127,7 @@ async def list_data_exports(
 @router.get("/data-export/{request_id}")
 async def get_data_export(request: Request, request_id: SnowflakeIDParam):
     """View detailed information about a specific DSAR request."""
+    check_host_restriction(request)
     require_admin_permission(request, "data_export.read")
     try:
         req_id = int(request_id)
@@ -140,6 +142,7 @@ async def get_data_export(request: Request, request_id: SnowflakeIDParam):
 @router.post("/data-export/{request_id}/approve")
 async def approve_data_export(request: Request, request_id: SnowflakeIDParam):
     """Approve a pending DSAR request so the harvester can process it."""
+    check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
     _get_request_or_404(int(request_id))
     try:
@@ -164,6 +167,7 @@ async def deny_data_export(
     request: Request, request_id: SnowflakeIDParam, body: DenyBody
 ):
     """Deny a pending DSAR request with a reason."""
+    check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
     _get_request_or_404(int(request_id))
     try:
@@ -188,6 +192,7 @@ async def deny_data_export(
 @router.post("/data-export/{request_id}/generate")
 async def generate_data_export(request: Request, request_id: SnowflakeIDParam):
     """Manually trigger export generation for a pending/approved request."""
+    check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
     _get_request_or_404(int(request_id))
     try:
