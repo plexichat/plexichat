@@ -1,7 +1,11 @@
 """Tests for notification unread count tracking."""
 
+import pathlib
+import re
+
 import pytest
 
+from src.core.notifications.manager import unread as unread_module
 from src.core.notifications.models import UnreadCount
 
 
@@ -118,3 +122,59 @@ def test_mark_unread_invalidates_unread_count_cache(
     assert any(
         p.startswith("unread_counts_api") and str(user2.id) in p for p in recorded
     ), f"mark_unread must invalidate the unread-count cache (saw: {recorded})"
+
+
+@pytest.mark.notifications
+class TestUnreadDecrementClamp:
+    """The counter clamp must be engine-portable.
+
+    ``_decrement_*`` used SQLite's two-argument scalar ``MAX(0, x - ?)``,
+    which PostgreSQL parses as the one-argument aggregate and rejects
+    (``function max(integer, integer) does not exist``). ``feed`` commits the
+    read/delete first, so on Postgres the counters were never decremented.
+    """
+
+    def test_decrement_clamps_at_zero(self, notification_manager, test_user):
+        conv_id = 424242
+        notification_manager._update_unread_count(
+            test_user.id, conv_id, None, None, is_mention=True
+        )
+        row = notification_manager._db.fetch_one(
+            "SELECT unread_count, mention_count FROM notif_unread "
+            "WHERE user_id = ? AND conversation_id = ?",
+            (test_user.id, conv_id),
+        )
+        assert row["unread_count"] == 1
+        assert row["mention_count"] == 1
+
+        # Decrement by more than is present: both counters clamp at zero.
+        notification_manager._decrement_unread_count(test_user.id, conv_id, amount=5)
+        notification_manager._decrement_mention_count(test_user.id, conv_id, amount=5)
+
+        clamped = notification_manager._db.fetch_one(
+            "SELECT unread_count, mention_count FROM notif_unread "
+            "WHERE user_id = ? AND conversation_id = ?",
+            (test_user.id, conv_id),
+        )
+        assert clamped["unread_count"] == 0
+        assert clamped["mention_count"] == 0
+
+        # The manager totals agree (no negative leak into the public API).
+        unread = notification_manager.get_unread_count(test_user.id)
+        assert unread.unread_count >= 0
+        assert unread.mention_count >= 0
+
+
+def test_unread_sql_does_not_use_two_argument_max():
+    """Guard: SQL-level ``MAX(0, …)`` is SQLite-only and must not return.
+
+    Matched case-sensitively on the uppercase SQL spelling so the portable
+    Python clamp (``max(0, value - amount)``) in the helpers is not flagged.
+    """
+    source = pathlib.Path(unread_module.__file__).read_text(encoding="utf-8")
+    executable = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert not re.search(r"\bMAX\(\s*0\s*,", executable), (
+        "unread.py must clamp in Python, not with SQLite's two-argument MAX()"
+    )
