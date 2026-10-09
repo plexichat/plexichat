@@ -189,10 +189,21 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 )
 
         if pyotp.TOTP(secret).verify(code, valid_window=1):
-            db.execute(
-                "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ?, last_login = ? WHERE id = ?",
-                (code, int(time.time() * 1000), int(time.time() * 1000), admin_id),
+            # Single-use claim: the pre-check above is racy (two concurrent
+            # logins both read the same "last used" value), so the UPDATE must
+            # itself refuse a code another request already consumed. Mirror
+            # verify_otp_setup/disable_otp and only issue a session when the
+            # claim actually lands.
+            now_ms = int(time.time() * 1000)
+            cursor = db.execute(
+                "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ?, last_login = ? "
+                "WHERE id = ? AND (otp_last_used_code IS NULL OR otp_last_used_code <> ?)",
+                (code, now_ms, now_ms, admin_id, code),
             )
+            if getattr(cursor, "rowcount", 0) != 1:
+                return AdminLoginResult(
+                    success=False, error="Code already used — wait for next code"
+                )
             _consume_otp_challenge(challenge_token)
 
             requires_password_change = self.check_password_change_required(admin_id)

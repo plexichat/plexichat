@@ -82,3 +82,56 @@ def test_dashboard_version_is_stamped_from_the_build():
     assert f"API {VERSION}" in result
     assert "{{ version }}" not in result
     assert "a.1.0-73" not in result
+
+
+def test_admin_login_otp_claim_is_conditional(monkeypatch):
+    """Regression: a lost OTP claim must not mint an admin session.
+
+    ``verify_otp`` marks the TOTP code used with a *conditional* UPDATE and
+    only issues a session when the claim lands (rowcount == 1). Before the fix
+    the UPDATE was unconditional and the rowcount was never checked, so two
+    concurrent replays of one code both received a session.
+    """
+    from src.core.admin.auth import otp_mixin as om
+
+    monkeypatch.setattr(om, "_validate_otp_challenge", lambda *a, **k: True)
+    monkeypatch.setattr(om, "_check_otp_attempt_limit", lambda *a, **k: True)
+    monkeypatch.setattr(om, "_consume_otp_challenge", lambda *a, **k: None)
+
+    class _TOTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def verify(self, *a, **k):
+            return True
+
+    monkeypatch.setattr(om.pyotp, "TOTP", _TOTP)
+
+    class _LostClaimCursor:
+        rowcount = 0  # another request already consumed this code
+
+    db = MagicMock()
+    db.fetch_one.side_effect = [
+        {
+            "totp_secret": "SECRET",
+            "totp_secret_encrypted": None,
+            "backup_codes": None,
+            "backup_codes_hash": None,
+        },
+        {"otp_last_used_code": "000000", "otp_last_used_at": 1},
+    ]
+    db.execute.return_value = _LostClaimCursor()
+
+    mixin = object.__new__(om.OTPMixin)
+    mixin._db = db
+    mixin.create_session = MagicMock()
+    mixin.check_password_change_required = MagicMock(return_value=False)
+
+    result = mixin.verify_otp(1, "123456", "challenge")
+
+    assert result.success is False
+    # The claim itself must carry the single-use guard...
+    claim_sql = db.execute.call_args.args[0]
+    assert "otp_last_used_code IS NULL OR otp_last_used_code <> ?" in claim_sql
+    # ...and a lost claim must not hand out a session.
+    mixin.create_session.assert_not_called()

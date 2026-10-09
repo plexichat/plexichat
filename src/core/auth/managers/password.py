@@ -152,18 +152,20 @@ class PasswordMixin(AuthManagerProtocol):
         pwd_val = validate_pwd(new_password)
         if not pwd_val.valid:
             raise WeakPasswordError(f"Weak: {pwd_val.issues}", pwd_val.issues)
-        self._db.execute(
-            "UPDATE auth_users SET password_hash = ? WHERE id = ?",
-            (self.crypto.hash_password(new_password), rec["user_id"]),
-        )
-        # Atomic single-use consumption prevents concurrent requests from
-        # both resetting the password with the same token.
+        # Claim the single-use token BEFORE applying any credential change. The
+        # conditional UPDATE is what enforces "used exactly once" under
+        # concurrent replays; doing it first means a request that loses the
+        # claim has not already written a new password hash.
         cursor = self._db.execute(
             "UPDATE auth_email_tokens SET used = 1 WHERE id = ? AND used = 0",
             (rec["id"],),
         )
         if getattr(cursor, "rowcount", 0) == 0:
             raise TokenInvalidError("Invalid token")
+        self._db.execute(
+            "UPDATE auth_users SET password_hash = ? WHERE id = ?",
+            (self.crypto.hash_password(new_password), rec["user_id"]),
+        )
         # Revoke all existing sessions so a compromised/reset credential cannot persist.
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE user_id = ?", (rec["user_id"],)
