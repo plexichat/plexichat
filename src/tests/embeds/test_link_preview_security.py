@@ -312,3 +312,115 @@ class TestCaching:
         mock_db.fetch_one.return_value = None
         result = service._get_cached_preview("https://example.com")
         assert result is None
+
+
+class _FakeResponse:
+    """Minimal httpx.Response stand-in for a 200 text/html body."""
+
+    status_code = 200
+    headers = {"content-type": "text/html; charset=utf-8"}
+
+    def __iter__(self):
+        return iter([b"<html><head></head><body></body></html>"])
+
+    def iter_bytes(self):
+        return iter([b"<html><head></head><body></body></html>"])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _RecordingClient:
+    """Captures the URL and headers each request was issued with."""
+
+    def __init__(self):
+        self.calls = []
+
+    def stream(self, method, url, headers=None, follow_redirects=None, extensions=None):
+        self.calls.append({"url": url, "headers": headers or {}})
+        return _FakeResponse()
+
+
+class TestFetchWithRedirectsIPv6:
+    """The resolved IP substituted into the request URL must stay parseable.
+
+    An IPv6 literal has to carry square brackets inside a URL authority.
+    Without them the address and the ``:port`` suffix merge into one
+    ambiguous token and every preview fetch for an IPv6 host is unroutable.
+    """
+
+    @pytest.fixture
+    def service(self):
+        from src.core.embeds.link_preview import LinkPreviewService
+
+        db = Mock()
+        db.fetch_one.return_value = None
+        return LinkPreviewService(db)
+
+    def _run(self, service, hostname, resolved_ip, url):
+        client = _RecordingClient()
+        service._http_client = client
+        service._fetch_with_redirects(url, hostname, resolved_ip)
+        assert len(client.calls) == 1
+        return client.calls[0]
+
+    @pytest.mark.parametrize(
+        ("port", "expected_url", "expected_host"),
+        [
+            # The request URL always carries the explicit port; only the
+            # authority's host token is at issue here.
+            (8443, "https://[2606:4700::1111]:8443/a", "ipv6.example.com:8443"),
+            (443, "https://[2606:4700::1111]:443/a", "ipv6.example.com"),
+        ],
+    )
+    def test_ipv6_resolved_ip_is_bracketed(
+        self, service, port, expected_url, expected_host
+    ):
+        url = f"https://ipv6.example.com:{port}/a"
+        call = self._run(service, "ipv6.example.com", "2606:4700::1111", url)
+        assert call["url"] == expected_url
+        # The Host header keeps the *original* hostname, never the IP.
+        assert call["headers"]["Host"] == expected_host
+
+    def test_ipv6_literal_hostname_is_bracketed_in_host_header(self, service):
+        """An IPv6-literal source URL must bracket the Host header.
+
+        ``urlparse().hostname`` strips the brackets from the authority, so
+        the un-bracketed form would otherwise be emitted into the header.
+        """
+        call = self._run(
+            service,
+            "2606:4700::1111",
+            "2606:4700::1111",
+            "https://[2606:4700::1111]:8443/a",
+        )
+        assert call["url"] == "https://[2606:4700::1111]:8443/a"
+        assert call["headers"]["Host"] == "[2606:4700::1111]:8443"
+
+    def test_ipv6_request_url_roundtrips_through_urlparse(self, service):
+        """The bracketed authority must parse back to the resolved IP."""
+        from urllib.parse import urlparse
+
+        call = self._run(
+            service,
+            "ipv6.example.com",
+            "2606:4700::1111",
+            "https://ipv6.example.com:8443/a",
+        )
+        reparsed = urlparse(call["url"])
+        assert reparsed.hostname == "2606:4700::1111"
+        assert reparsed.port == 8443
+
+    def test_ipv4_request_url_is_unbracketed(self, service):
+        """Bracketing is IPv6-only; IPv4 hosts must be left alone."""
+        call = self._run(
+            service,
+            "example.com",
+            "93.184.216.34",
+            "https://example.com:8443/a",
+        )
+        assert call["url"] == "https://93.184.216.34:8443/a"
+        assert call["headers"]["Host"] == "example.com:8443"

@@ -19,7 +19,7 @@ from urllib.parse import quote, urlparse, urljoin
 
 import utils.logger as logger
 import utils.config as config
-from src.utils.security import URLValidator
+from src.utils.security import URLValidator, bracket_ip_literal
 
 
 # Image magic bytes for validation
@@ -446,7 +446,13 @@ class LinkPreviewService:
                 port = parsed.port or (80 if parsed.scheme == "http" else 443)
             except ValueError as e:
                 raise ValueError(f"Invalid port in URL: {e}")
-            request_url = f"{parsed.scheme}://{current_ip}:{port}{parsed.path or '/'}"
+            # An IPv6 resolved IP must be bracketed inside the authority,
+            # otherwise the address and the ":port" suffix merge into one
+            # ambiguous token and the request goes nowhere.
+            request_url = (
+                f"{parsed.scheme}://{bracket_ip_literal(current_ip)}"
+                f":{port}{parsed.path or '/'}"
+            )
             if parsed.query:
                 request_url += f"?{parsed.query}"
 
@@ -454,7 +460,7 @@ class LinkPreviewService:
             if (parsed.scheme == "http" and port != 80) or (
                 parsed.scheme == "https" and port != 443
             ):
-                host_header = f"{current_hostname}:{port}"
+                host_header = f"{bracket_ip_literal(current_hostname)}:{port}"
 
             headers = {
                 "User-Agent": self._config["user_agent"],

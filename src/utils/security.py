@@ -24,6 +24,22 @@ _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 _NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
 
 
+def bracket_ip_literal(host: str) -> str:
+    """Return ``host`` in the form a URL/``Host`` header requires.
+
+    RFC 3986 section 3.2.2 requires IPv6 literals to carry square brackets
+    inside a URL authority; a bare ``2606:4700::1111:8443`` is ambiguous
+    with the port separator and no HTTP client parses it as intended. IPv4
+    literals and DNS names pass through unchanged, and an already-bracketed
+    host is not double-bracketed.
+    """
+    if ":" not in host:
+        return host
+    if host.startswith("["):
+        return host
+    return f"[{host}]"
+
+
 def generate_csp_nonce() -> str:
     """
     Generate a cryptographically secure nonce for CSP.
@@ -157,11 +173,12 @@ class URLValidator:
         hostname, resolved_ip = self.validate_url_for_request(url)
 
         parsed = urlparse(url)
-        # Replace hostname with resolved IP in the URL
+        # Replace hostname with resolved IP in the URL. An IPv6 literal has
+        # to be bracketed or the reconstructed authority is ambiguous with
+        # the ``:port`` separator and no client parses it as intended.
+        netloc = bracket_ip_literal(resolved_ip)
         if parsed.port:
-            netloc = f"{resolved_ip}:{parsed.port}"
-        else:
-            netloc = resolved_ip
+            netloc = f"{netloc}:{parsed.port}"
 
         safe_url = urlunparse(
             (

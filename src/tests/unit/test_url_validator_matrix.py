@@ -6,10 +6,11 @@ unspecified + CGNAT + documentation ranges).
 """
 
 import socket
+from urllib.parse import urlparse
 
 import pytest
 
-from src.utils.security import URLValidator
+from src.utils.security import URLValidator, bracket_ip_literal
 
 
 # ---------------------------------------------------------------------------
@@ -269,3 +270,73 @@ def test_get_safe_url_matrix(monkeypatch, url, expected_safe):
     assert safe == expected_safe
     assert host == "example.com"
     assert ip == "93.184.216.34"
+
+
+# ---------------------------------------------------------------------------
+# IPv6 resolved IPs must be bracketed inside the reconstructed authority
+# ---------------------------------------------------------------------------
+
+
+def _public_v6_resolver(*a, **k):
+    return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700::1111", 0, 0, 0))]
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_safe"),
+    [
+        # Without brackets the address and the ":port" suffix merge into a
+        # single ambiguous token, so the reconstructed URL is unroutable.
+        ("https://ipv6.example.com/path", "https://[2606:4700::1111]/path"),
+        ("http://ipv6.example.com/a", "http://[2606:4700::1111]/a"),
+        ("https://ipv6.example.com:8443/a", "https://[2606:4700::1111]:8443/a"),
+        (
+            "https://ipv6.example.com:8443/a?b=c#frag",
+            "https://[2606:4700::1111]:8443/a?b=c#frag",
+        ),
+    ],
+)
+def test_get_safe_url_brackets_ipv6(monkeypatch, url, expected_safe):
+    monkeypatch.setattr(socket, "getaddrinfo", _public_v6_resolver)
+    safe, host, ip = URLValidator().get_safe_url(url)
+    assert safe == expected_safe
+    assert host == "ipv6.example.com"
+    assert ip == "2606:4700::1111"
+
+
+def test_get_safe_url_ipv6_roundtrips_through_urlparse(monkeypatch):
+    """The reconstructed URL must parse back to the same host and port."""
+    monkeypatch.setattr(socket, "getaddrinfo", _public_v6_resolver)
+    safe, _, ip = URLValidator().get_safe_url("https://ipv6.example.com:8443/a")
+    reparsed = urlparse(safe)
+    assert reparsed.hostname == ip
+    assert reparsed.port == 8443
+
+
+def test_get_safe_url_ipv4_never_bracketed(monkeypatch):
+    """Bracketing is IPv6-only; an IPv4 literal must stay bare."""
+    monkeypatch.setattr(socket, "getaddrinfo", _public_resolver)
+    safe, _, _ = URLValidator().get_safe_url("https://example.com:8443/a")
+    assert safe == "https://93.184.216.34:8443/a"
+
+
+# ---------------------------------------------------------------------------
+# bracket_ip_literal helper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("2606:4700::1111", "[2606:4700::1111]"),
+        ("::1", "[::1]"),
+        ("fe80::1", "[fe80::1]"),
+        # Already bracketed: must not double up.
+        ("[2606:4700::1111]", "[2606:4700::1111]"),
+        # IPv4 and DNS names pass through untouched.
+        ("93.184.216.34", "93.184.216.34"),
+        ("example.com", "example.com"),
+        ("", ""),
+    ],
+)
+def test_bracket_ip_literal(host, expected):
+    assert bracket_ip_literal(host) == expected

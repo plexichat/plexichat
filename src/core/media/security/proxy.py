@@ -21,7 +21,7 @@ except Exception:
     HTTPSConnectionPool = None
 
 import utils.logger as logger
-from src.utils.security import URLValidator
+from src.utils.security import URLValidator, bracket_ip_literal
 
 from ..models import ProxiedContent
 from ..exceptions import ProxyError, ProxyFetchError, ProxyCacheError
@@ -347,11 +347,15 @@ class ExternalProxy:
         if parsed.query:
             path = f"{path}?{parsed.query}"
 
-        host_header = hostname
+        # ``urlparse().hostname`` strips the brackets from an IPv6 literal,
+        # so put them back: RFC 7230 requires the Host header to carry the
+        # bracketed form, otherwise an IPv6-literal source URL produces an
+        # ambiguous header that the origin cannot route.
+        host_header = bracket_ip_literal(hostname)
         if (parsed.scheme == "http" and port != 80) or (
             parsed.scheme == "https" and port != 443
         ):
-            host_header = f"{hostname}:{port}"
+            host_header = f"{host_header}:{port}"
 
         headers = {
             "User-Agent": self._user_agent,
