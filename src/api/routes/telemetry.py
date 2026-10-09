@@ -16,6 +16,7 @@ from src.core.auth.models import TokenInfo
 from src.api.schemas.telemetry import TelemetrySubmission, TelemetryResponse
 from src.api.schemas.common import ErrorResponse
 from src.core import ratelimit
+from src.utils.net import get_client_ip
 
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
@@ -59,7 +60,13 @@ async def submit_response_times(
 
     Data is stored for analysis of client-perceived performance.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    # Key the bucket on the trusted-proxy-aware client IP, exactly as every
+    # other rate-limited route does. Using the raw socket peer made every
+    # client behind a reverse proxy share one deployment-wide telemetry
+    # bucket, so one noisy client could 429 everyone.
+    client_ip = get_client_ip(request) or (
+        request.client.host if request.client else "unknown"
+    )
 
     rl_result = await ratelimit.acheck_rate_limit(
         ip_address=client_ip,
