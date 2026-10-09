@@ -114,6 +114,18 @@ class ImageProcessor:
                 "validation",
             )
 
+    def _open_validated(self, image_data: bytes):
+        """
+        Open an image and enforce the dimension security limit.
+
+        Security: every decode entry point must run this before touching
+        pixels, so the decompression-bomb guard cannot be skipped by one
+        method drifting from the others.
+        """
+        img = self._Image.open(io.BytesIO(image_data))
+        self._validate_image_dimensions(img)
+        return img
+
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
         """
         Extract metadata from image.
@@ -384,7 +396,7 @@ class ImageProcessor:
             Converted image bytes
         """
         try:
-            img = self._Image.open(io.BytesIO(image_data))
+            img = self._open_validated(image_data)
 
             if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
                 background = self._Image.new("RGB", img.size, (255, 255, 255))
@@ -424,7 +436,7 @@ class ImageProcessor:
             Image bytes without metadata
         """
         try:
-            img = self._Image.open(io.BytesIO(image_data))
+            img = self._open_validated(image_data)
             original_format = img.format
 
             img_no_exif = self._Image.new(img.mode, img.size)
