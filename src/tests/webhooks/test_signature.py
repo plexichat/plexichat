@@ -268,3 +268,66 @@ class TestVerifyPayload:
             )
             is False
         )
+
+    def test_reencoded_signature_still_verifies_when_not_replayed(
+        self, webhook_with_token
+    ):
+        """A non-canonical encoding of a *fresh* signature is still valid.
+
+        Whitespace is discarded by lenient base64 decoding, so a space-padded
+        spelling of the header carries the identical signature bytes and must
+        verify. This pins the baseline that the replay test below relies on:
+        the re-encoded header is rejected there because it is a replay, not
+        because the encoding is broken.
+        """
+        setup = webhook_with_token
+        payload = {"event": "fresh-reencoded"}
+        headers = setup["webhooks"].sign_payload(setup["webhook"].id, payload)
+        signature = headers["X-Plexichat-Signature"]
+        reencoded = signature[:8] + " " + signature[8:]
+        assert reencoded != signature
+
+        assert (
+            setup["webhooks"].verify_payload(
+                setup["webhook"].id,
+                payload,
+                reencoded,
+                headers["X-Plexichat-Timestamp"],
+            )
+            is True
+        )
+
+    def test_verify_rejects_reencoded_replay(self, webhook_with_token):
+        """Regression: replay protection must key on the DECODED signature.
+
+        Base64 admits several encodings of the same bytes. Before the fix the
+        replay cache key hashed the raw header text, so re-encoding one valid
+        signature (inserting whitespace, which lenient base64 discards)
+        produced a *different* key and the replay was accepted inside the
+        ±window. The key now derives from the decoded signature bytes, so
+        every encoding of an already-consumed signature is rejected.
+        """
+        setup = webhook_with_token
+        payload = {"event": "reencoded-replay"}
+        headers = setup["webhooks"].sign_payload(setup["webhook"].id, payload)
+        signature = headers["X-Plexichat-Signature"]
+        timestamp = headers["X-Plexichat-Timestamp"]
+
+        # First delivery consumes the (webhook_id, signature) pair.
+        assert (
+            setup["webhooks"].verify_payload(
+                setup["webhook"].id, payload, signature, timestamp
+            )
+            is True
+        )
+
+        # Same signature BYTES re-encoded as a different header string -> must
+        # still be recognised as the same, already-consumed signature.
+        reencoded = signature[:8] + " " + signature[8:]
+        assert reencoded != signature
+        assert (
+            setup["webhooks"].verify_payload(
+                setup["webhook"].id, payload, reencoded, timestamp
+            )
+            is False
+        )

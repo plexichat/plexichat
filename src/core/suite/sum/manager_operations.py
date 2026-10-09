@@ -401,15 +401,24 @@ class SumManagerOperations(SumManagerProtocol):
         revision = self._write_file_revision(
             workbook_id, user_id, operation_type, updated
         )
+        # ``sum_operations.id`` is a ``BIGINT PRIMARY KEY`` with no default,
+        # so it must be supplied explicitly (PostgreSQL implies NOT NULL;
+        # SQLite happens to tolerate the NULL, which hid this in dev). This
+        # mirrors the durable writer in ``manager_revisions._append_op_durable``.
         self._db.execute(
-            "INSERT INTO sum_operations (operation_id, workbook_id, actor_id, base_revision, result_revision, operation_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sum_operations (id, workbook_id, operation_id, "
+            "actor_id, base_revision, result_revision, operation_type, "
+            "sheet_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?)",
             (
-                str(operation_id),
+                self._generate_id(),
                 int(workbook_id),
+                str(operation_id),
                 user_id,
                 base_revision,
                 revision,
                 operation_type,
+                str(sheet_id),
                 self._json(
                     {
                         "sheet_id": str(sheet_id),

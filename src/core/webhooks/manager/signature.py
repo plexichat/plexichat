@@ -33,9 +33,16 @@ WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 _REPLAY_CACHE_TTL_SECONDS = WEBHOOK_REPLAY_WINDOW_SECONDS * 2
 
 
-def _replay_cache_key(webhook_id: SnowflakeID, signature_header: str) -> str:
-    """Cache-tier key for a seen (webhook_id, signature) pair."""
-    digest = hashlib.sha256(signature_header.encode("utf-8")).hexdigest()
+def _replay_cache_key(webhook_id: SnowflakeID, signature: bytes) -> str:
+    """Cache-tier key for a seen (webhook_id, signature) pair.
+
+    Keyed on the *decoded* signature bytes rather than the raw header text:
+    base64 admits several encodings of the same bytes (URL-safe vs standard
+    alphabet, discarded non-alphabet characters, added whitespace), so
+    hashing the header verbatim would let a re-encoded replay bypass this
+    cache.
+    """
+    digest = hashlib.sha256(signature).hexdigest()
     return f"webhook:signature-seen:{webhook_id}:{digest}"
 
 
@@ -146,25 +153,6 @@ class SignatureMixin(WebhookManagerTrait):
             )
             return False
 
-        # Replay protection: a valid (webhook_id, signature) pair seen
-        # inside the ±window must never be accepted twice. The cache tier
-        # (Valkey with in-memory fallback) records seen pairs with a TTL
-        # covering the whole window.
-        from src.core.database.cache import cache_get, cache_set
-
-        replay_key = _replay_cache_key(webhook_id, signature_header)
-        try:
-            if cache_get(replay_key) is not None:
-                logger.warning(
-                    f"Webhook signature rejected as REPLAY for {webhook_id} "
-                    f"(signature/timestamp pair already used within the "
-                    f"{WEBHOOK_REPLAY_WINDOW_SECONDS}s window)"
-                )
-                return False
-        except Exception as e:  # cache failure must not bypass the check silently
-            logger.error(f"Replay-cache lookup failed for webhook {webhook_id}: {e}")
-            return False
-
         row = self._db.fetch_one(
             "SELECT signing_key_public FROM webhook_webhooks WHERE id = ?",
             (webhook_id,),
@@ -202,6 +190,27 @@ class SignatureMixin(WebhookManagerTrait):
             logger.warning(
                 f"Webhook signature header was not valid base64 for {webhook_id}: {e}"
             )
+            return False
+
+        # Replay protection: a valid (webhook_id, signature) pair seen
+        # inside the ±window must never be accepted twice. The cache tier
+        # (Valkey with in-memory fallback) records seen pairs with a TTL
+        # covering the whole window. The key is derived from the DECODED
+        # signature bytes so alternative base64 encodings of the same
+        # signature share one cache entry.
+        from src.core.database.cache import cache_get, cache_set
+
+        replay_key = _replay_cache_key(webhook_id, signature)
+        try:
+            if cache_get(replay_key) is not None:
+                logger.warning(
+                    f"Webhook signature rejected as REPLAY for {webhook_id} "
+                    f"(signature/timestamp pair already used within the "
+                    f"{WEBHOOK_REPLAY_WINDOW_SECONDS}s window)"
+                )
+                return False
+        except Exception as e:  # cache failure must not bypass the check silently
+            logger.error(f"Replay-cache lookup failed for webhook {webhook_id}: {e}")
             return False
 
         payload_bytes = json.dumps(

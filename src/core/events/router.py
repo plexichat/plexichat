@@ -46,6 +46,9 @@ EVENT_INTENT_MAP = {
     EventType.ARTIFACT_UPDATE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_DELETE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_OP: GatewayIntent.ARTIFACTS,
+    EventType.WORKBOOK_UPDATE: GatewayIntent.SUMS,
+    EventType.SUM_OPERATION: GatewayIntent.SUMS,
+    EventType.SUM_PRESENCE: GatewayIntent.SUMS,
 }
 
 DM_EVENT_INTENT_MAP = {

@@ -288,15 +288,34 @@ class MemberHandler:
         if not member:
             raise MemberNotFoundError("Member not found")
 
-        # Moderation actions (mute/deafen/timeout) applied to ANOTHER member
+        # Changes applied to ANOTHER member (moderation fields OR a nickname)
         # must respect the same hierarchy rules as kick/ban: the actor must be
-        # able to manage the target and the owner can never be targeted. The
-        # system actor (user_id == 0, e.g. AutoMod) is exempt.
+        # able to manage the target and the owner can never be targeted. A
+        # moderator holding only ``members.manage_nicknames`` must not be able
+        # to rename members ranked equal to or above them, so the nickname is
+        # part of this gate rather than exempt from it. The system actor
+        # (user_id == 0, e.g. AutoMod) is exempt.
+        # A nickname change applied to ANOTHER member requires the
+        # manage_nicknames permission. Check it before the hierarchy gate so a
+        # caller who simply lacks the permission gets a permission error, while
+        # a moderator who holds it but is outranked gets the hierarchy error.
+        if nickname is not None and user_id != member_user_id:
+            self.manager.require_permission(
+                user_id, server_id, "members.manage_nicknames"
+            )
+
         moderating_other = (
             user_id != member_user_id
             and user_id != 0
             and any(
-                v is not None for v in (muted, deafened, timeout_until, timeout_reason)
+                v is not None
+                for v in (
+                    muted,
+                    deafened,
+                    timeout_until,
+                    timeout_reason,
+                    nickname,
+                )
             )
         )
         if moderating_other:
@@ -321,10 +340,6 @@ class MemberHandler:
         changes = {}
 
         if nickname is not None:
-            if user_id != member_user_id:
-                self.manager.require_permission(
-                    user_id, server_id, "members.manage_nicknames"
-                )
             updates.append("nickname = ?")
             params.append(nickname if nickname else None)
             changes["nickname"] = {"old": member.nickname, "new": nickname}

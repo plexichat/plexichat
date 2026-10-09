@@ -665,6 +665,51 @@ def test_sum_structural_row_ops_shift_cells(db, two_users, server_manager):
     assert cells[(2, 0)] == "bottom"
 
 
+def test_sum_structural_op_logs_row_with_primary_key(db, two_users, server_manager):
+    """Regression: structural ops must log a non-NULL ``id`` in sum_operations.
+
+    ``sum_operations.id`` is a ``BIGINT PRIMARY KEY`` with no default, so the
+    durable main-database writer must supply it. The structural path used to
+    omit the column; SQLite tolerates the resulting NULL, but PostgreSQL
+    implies NOT NULL and rejected every structural edit. Asserting the logged
+    row carries an id catches the omission on either backend.
+    """
+    owner, _ = two_users
+    create_sum_tables(db)
+    manager = SumManager(db, servers_module=server_manager)
+    workbook = manager.create_workbook(owner.id, "StructuralLog")
+    sheet_id = workbook["sheets"][0]["id"]
+    workbook_id = int(workbook["id"])
+    manager.apply_operation(
+        owner.id,
+        workbook_id,
+        int(sheet_id),
+        "seed",
+        "set_cell",
+        0,
+        [{"row": 0, "column": 0, "value_type": "text", "value": "a"}],
+    )
+    manager.apply_operation(
+        owner.id,
+        workbook_id,
+        int(sheet_id),
+        "ins-log",
+        "insert_rows",
+        1,
+        [{"row": 0, "column": 0, "count": 1}],
+    )
+
+    row = db.fetch_one(
+        "SELECT id, result_revision FROM sum_operations "
+        "WHERE workbook_id = ? AND operation_id = ?",
+        (workbook_id, "ins-log"),
+    )
+    assert row is not None, "structural op must be durably logged"
+    assert row["id"] is not None, (
+        "sum_operations.id must be supplied explicitly; it is NOT NULL on PostgreSQL"
+    )
+
+
 def test_sum_structural_column_ops_shift_cells(db, two_users, server_manager):
     """Inserting/deleting columns shifts cell coordinates."""
     owner, _ = two_users
