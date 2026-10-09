@@ -169,9 +169,10 @@ class ModerationMixin(VoiceProtocol):
 
         # Scope the cleanup to the channel being LEFT so pending speaker
         # requests in unrelated voice channels are preserved.
+        old_channel_id = state.channel_id
         self._db.execute(
             "DELETE FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
-            (target_user_id, state.channel_id),
+            (target_user_id, old_channel_id),
         )
 
         now = self._get_timestamp()
@@ -183,6 +184,14 @@ class ModerationMixin(VoiceProtocol):
                WHERE user_id = ?""",
             (channel_id, server_id, 1 if suppress else 0, now, target_user_id),
         )
+
+        # A moderation move is a leave+join: fire the same call-lifecycle
+        # hooks so the old channel's call is ended (and its participant
+        # snapshot pruned) and the new channel's call starts. Run them AFTER
+        # the UPDATE so each hook observes the new membership.
+        if old_channel_id != channel_id:
+            self._on_member_left(target_user_id, old_channel_id)
+            self._on_member_joined(target_user_id, channel_id)
 
         logger.debug(
             f"User {target_user_id} moved to channel {channel_id} by {moderator_id}"
@@ -216,6 +225,14 @@ class ModerationMixin(VoiceProtocol):
         self._db.execute(
             "DELETE FROM voice_states WHERE user_id = ?", (target_user_id,)
         )
+
+        # Mirror leave_channel: without this the moderation teardown skips the
+        # call-lifecycle hook, so disconnecting the last member left the
+        # channel's call active forever (duration growing, no transcription)
+        # and a later rejoin was seen as an existing membership, bypassing the
+        # recording-consent gate. Run it after the DELETEs so the channel
+        # already reports the user as gone.
+        self._on_member_left(target_user_id, state.channel_id)
 
         logger.debug(f"User {target_user_id} disconnected from voice by {moderator_id}")
 
