@@ -852,7 +852,14 @@ class SessionMixin(AuthManagerProtocol):
         if row["expires_at"] < self._get_timestamp():
             return None
         now = self._get_timestamp()
-        expire_hours = self._config.get("sessions", {}).get("expire_hours", 720)
+        # Trusted-device sessions must keep their longer TTL across a refresh:
+        # resolving the bare ``expire_hours`` here silently shortened a (say)
+        # 30-day trusted session back to the untrusted default on every
+        # refresh, so the trusted duration could never be reached.
+        sessions_config = self._config.get("sessions", {})
+        expire_hours = self._session_expire_hours(
+            row["user_id"], row.get("device_id"), sessions_config
+        )
         new_expires = now + (expire_hours * 3600 * 1000)
         # Token rotation (F3): mint a fresh secret so an intercepted token
         # is only valid until the next refresh. Old token is invalidated

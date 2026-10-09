@@ -17,7 +17,7 @@ from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
 from .cookies import (
     set_session_cookie,
-    session_cookie_max_age,
+    session_expiry_seconds,
     session_token_for_response,
 )
 from src.core.auth.exceptions import (
@@ -153,14 +153,16 @@ async def complete_2fa(
     # HttpOnly cookie; the body carries a marker plus the session
     # lifetime, with the raw token echoed back solely for explicit
     # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
-    set_session_cookie(response, result.token)
+    # Mirror the real session expiry (trusted-device rows are longer-lived).
+    max_age = session_expiry_seconds(result.session)
+    set_session_cookie(response, result.token, max_age=max_age)
     return LoginResponse(
         status=AuthStatus.SUCCESS.value,
         token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,
         methods=None,
-        expires_in=session_cookie_max_age(),
+        expires_in=max_age,
     )
 
 

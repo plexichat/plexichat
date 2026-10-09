@@ -8,7 +8,7 @@ from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
 from .cookies import (
     set_session_cookie,
-    session_cookie_max_age,
+    session_expiry_seconds,
     session_token_for_response,
 )
 from src.core.auth.exceptions import (
@@ -155,10 +155,12 @@ async def register(
     # non-browser clients that opt in with
     # ``X-Plexichat-Token-Mode: bearer``. (This route never returns
     # two_factor_required: a fresh registration has no 2FA yet.)
-    set_session_cookie(response, result.token)
+    # Mirror the real session expiry (trusted-device rows are longer-lived).
+    max_age = session_expiry_seconds(result.session)
+    set_session_cookie(response, result.token, max_age=max_age)
     return LoginResponse(
         status="success",
         token=session_token_for_response(request, result.token),
         user=_user_to_response(user),
-        expires_in=session_cookie_max_age(),
+        expires_in=max_age,
     )

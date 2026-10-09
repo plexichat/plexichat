@@ -565,3 +565,79 @@ class TestTrustedDeviceSessionDurations:
         )
         expected = mgr._get_timestamp() + (24 * 3600 * 1000)
         assert abs(row["expires_at"] - expected) < 5000
+
+    def test_cookie_lifetime_uses_trusted_duration(self, db, auth_manager):
+        """The advertised credential lifetime tracks the session row.
+
+        Before the fix the cookie Max-Age / ``expires_in`` came from the
+        shared ``expire_hours`` default, so a trusted 30-day session was
+        advertised (and expired) as a 24-hour one.
+        """
+        from src.utils import encryption
+        from src.api.routes.auth import cookies as cookie_mod
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_cookie", "dur_cookie_fp"
+        )
+        self._set_session_config(
+            auth_manager, expire_hours=24, trusted_expire_hours=720
+        )
+        assert auth_manager.trust_device(user.id, "dur_cookie_fp") is True
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_cookie",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_cookie_fp"},
+            )
+        assert result.status.value == "success"
+        assert result.session is not None
+        # Derived from the session row (720h), not the configured 24h default.
+        assert cookie_mod.session_expiry_seconds(result.session) == pytest.approx(
+            720 * 3600, abs=5
+        )
+
+    def test_refresh_preserves_trusted_duration(self, db, auth_manager):
+        """A refresh must not shorten a trusted device's session."""
+        from src.utils import encryption
+
+        user = self._register_and_login_with_device(
+            auth_manager, "dur_refresh", "dur_refresh_fp"
+        )
+        mgr = self._mgr(auth_manager)
+        self._set_session_config(
+            auth_manager, expire_hours=24, trusted_expire_hours=720
+        )
+        assert auth_manager.trust_device(user.id, "dur_refresh_fp") is True
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "dur_refresh",
+                "TestPass123!",
+                device_info={"fingerprint": "dur_refresh_fp"},
+            )
+        assert result.status.value == "success"
+
+        new_token = mgr.refresh_session(result.token)
+        assert new_token
+        row = self._session_row(mgr, new_token)
+        # Pre-fix this was ~now + 24h: the trusted duration was lost on refresh.
+        expected = mgr._get_timestamp() + (720 * 3600 * 1000)
+        assert abs(row["expires_at"] - expected) < 5000
+
+    def test_cookie_lifetime_default_without_explicit_expiry(self):
+        """With no session expiry the configured default is used unchanged."""
+        import time
+        from unittest.mock import patch as _patch
+
+        from src.api.routes.auth import cookies as cookie_mod
+
+        with _patch.object(
+            cookie_mod, "_sessions_config", return_value={"expire_hours": 24}
+        ):
+            assert cookie_mod.session_cookie_max_age() == 24 * 3600
+            # An explicit expiry always wins over the configured default.
+            now_ms = int(time.time() * 1000)
+            assert cookie_mod.session_cookie_max_age(
+                now_ms + 5 * 3600 * 1000
+            ) == pytest.approx(5 * 3600, abs=2)

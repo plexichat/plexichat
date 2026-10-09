@@ -65,6 +65,9 @@ def _login_route_ip(request):
         status = AuthStatus.SUCCESS
         token = "tok"
         user = None
+        # Real ``AuthResult`` always carries a ``session`` (Optional[Session]);
+        # the success route derives the cookie Max-Age from it.
+        session = None
         challenge_token = None
         methods = None
         expires_in = None
@@ -132,6 +135,8 @@ def _register_route_ips(request, username="m1reg"):
 
     class _SessResult:
         token = "tok"
+        # Mirrors AuthResult.session (Optional[Session]) — see _Result above.
+        session = None
 
     fake_auth = MagicMock()
 

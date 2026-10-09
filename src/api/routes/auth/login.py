@@ -9,7 +9,7 @@ from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
 from .cookies import (
     set_session_cookie,
-    session_cookie_max_age,
+    session_expiry_seconds,
     session_token_for_response,
 )
 from src.core.auth.exceptions import (
@@ -130,12 +130,15 @@ async def login(
     # echoed back SOLELY for non-browser clients that explicitly opt in
     # with ``X-Plexichat-Token-Mode: bearer``. Browser WebSocket auth uses
     # short-lived single-use wst.* tickets minted via /auth/ws-ticket.
-    set_session_cookie(response, result.token)
+    # The newly created Session carries the real expiry (a trusted device's
+    # row lives trusted_expire_hours, not the shared default).
+    max_age = session_expiry_seconds(result.session)
+    set_session_cookie(response, result.token, max_age=max_age)
     return LoginResponse(
         status=AuthStatus.SUCCESS.value,
         token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,
         methods=None,
-        expires_in=session_cookie_max_age(),
+        expires_in=max_age,
     )

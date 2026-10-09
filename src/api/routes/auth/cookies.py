@@ -19,6 +19,7 @@ honours the cookie for state-changing methods when the client's
 attached cross-origin without a CORS preflight approval).
 """
 
+import time
 from typing import Optional
 
 from fastapi import Request, Response
@@ -43,13 +44,42 @@ def _sessions_config() -> dict:
     return _auth_config().get("sessions", {}) or {}
 
 
-def session_cookie_max_age() -> int:
-    """Cookie lifetime mirrors the configured session expiry (hours -> seconds)."""
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def session_cookie_max_age(expires_at_ms: Optional[int] = None) -> int:
+    """Cookie lifetime in seconds.
+
+    When the caller knows the session's absolute expiry (epoch ms) it MUST
+    pass it: a session on a trusted device lives ``trusted_expire_hours``,
+    which is longer than the shared ``expire_hours`` default, so advertising
+    the default would expire (and delete) a trusted credential early.
+    Without an explicit expiry the configured ``expire_hours`` is used, as
+    before.
+    """
+    if expires_at_ms is not None:
+        try:
+            return max(1, (int(expires_at_ms) - _now_ms()) // 1000)
+        except (TypeError, ValueError):
+            pass
     expire_hours = _sessions_config().get("expire_hours", 720)
     try:
         return max(1, int(expire_hours)) * 3600
     except (TypeError, ValueError):
         return 720 * 3600
+
+
+def session_expiry_seconds(session: Optional[object]) -> int:
+    """Credential lifetime for a freshly created ``Session`` object.
+
+    Auth routes hold the new ``Session`` on the login/register/2FA result;
+    deriving the lifetime from its ``expires_at`` keeps the cookie Max-Age
+    and the body's ``expires_in`` in step with the (possibly trusted-device)
+    row instead of the shared ``expire_hours`` default.
+    """
+    expires_at = getattr(session, "expires_at", None) if session is not None else None
+    return session_cookie_max_age(expires_at)
 
 
 def session_cookie_secure() -> bool:
@@ -107,12 +137,19 @@ def session_token_for_response(
     return token if wants_token_in_body(request) else None
 
 
-def set_session_cookie(response: Response, token: str) -> None:
-    """Attach the HttpOnly session cookie to a successful auth response."""
+def set_session_cookie(
+    response: Response, token: str, max_age: Optional[int] = None
+) -> None:
+    """Attach the HttpOnly session cookie to a successful auth response.
+
+    ``max_age`` should be the session's own remaining lifetime (see
+    :func:`session_expiry_seconds`); omitting it falls back to the
+    configured default.
+    """
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
-        max_age=session_cookie_max_age(),
+        max_age=max_age if max_age is not None else session_cookie_max_age(),
         httponly=True,
         secure=session_cookie_secure(),
         samesite="lax",
@@ -143,6 +180,7 @@ __all__ = [
     "SESSION_COOKIE_NAME",
     "TOKEN_IN_BODY_HEADER",
     "session_cookie_max_age",
+    "session_expiry_seconds",
     "session_cookie_secure",
     "set_session_cookie",
     "clear_session_cookie",

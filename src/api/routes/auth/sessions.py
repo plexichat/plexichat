@@ -173,19 +173,23 @@ async def refresh_session(request: Request, response: Response) -> LoginResponse
             raise TokenInvalidError("Invalid or expired session")
         from .cookies import set_session_cookie as _set_cookie
 
-        _set_cookie(response, new_token)
-        # Verify the freshly minted token to build the response payload
+        # Verify the freshly minted token first so the re-issued cookie's
+        # Max-Age can track the real session expiry (a trusted device's row
+        # outlives the shared expire_hours default).
         token_info = auth.verify_token(new_token, ip_address, user_agent)
 
         user = auth.get_user(token_info.user_id)
         if not user:
             raise UserNotFoundError("User not found")
 
+        max_age = session_cookie_max_age(getattr(token_info, "expires_at", None))
+        _set_cookie(response, new_token, max_age=max_age)
+
         return LoginResponse(
             status="success",
             token=session_token_for_response(request, new_token),
             user=_user_to_response(user),
-            expires_in=session_cookie_max_age(),
+            expires_in=max_age,
         )
     except (TokenInvalidError, TokenExpiredError):
         logger.warning("Session refresh failed: invalid or expired token")

@@ -467,7 +467,12 @@ class AuthenticationMiddleware:
             and scope.get("state", {}).get("cookie_auth")
             and cookie_token
         ):
-            send = self._rolling_cookie_send_wrapper(send, cookie_token)
+            # Track the authenticated session's own expiry (a trusted device's
+            # row is longer-lived than the configured default).
+            rolling_user = scope.get("state", {}).get("user")
+            send = self._rolling_cookie_send_wrapper(
+                send, cookie_token, getattr(rolling_user, "expires_at", None)
+            )
 
         await self.app(scope, receive, send)
 
@@ -520,7 +525,9 @@ class AuthenticationMiddleware:
         return any(c in allowed for c in candidates)
 
     @staticmethod
-    def _rolling_cookie_send_wrapper(send: Send, token_value: str) -> Send:
+    def _rolling_cookie_send_wrapper(
+        send: Send, token_value: str, expires_at_ms: Optional[int] = None
+    ) -> Send:
         from src.api.routes.auth.cookies import (
             SESSION_COOKIE_NAME,
             session_cookie_max_age,
@@ -529,7 +536,7 @@ class AuthenticationMiddleware:
 
         parts = [
             f"{SESSION_COOKIE_NAME}={token_value}",
-            f"Max-Age={session_cookie_max_age()}",
+            f"Max-Age={session_cookie_max_age(expires_at_ms)}",
             "Path=/",
             "HttpOnly",
             "SameSite=Lax",
