@@ -2850,7 +2850,11 @@ class FormulaEvaluatorAdvanced(FormulaEvaluatorCore):
             error, y = _read_number(values[1])
             if error is not None:
                 return error
-            return math.atan2(x, y)
+            # Excel's ATAN2(x_num, y_num) is the angle of the point
+            # (x_num, y_num): mathematically atan2(y_num, x_num). Passing the
+            # arguments through in order returned the reflected angle, so
+            # ATAN2(1, 0) answered pi/2 instead of 0.
+            return math.atan2(y, x)
         if name in ("SINH", "COSH", "TANH"):
             if len(values) != 1:
                 return VALUE_ERROR

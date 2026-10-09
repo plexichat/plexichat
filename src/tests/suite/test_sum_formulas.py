@@ -1543,7 +1543,7 @@ def test_a_name_shaped_like_a_cell_reference_can_still_be_called():
     """
     # ATAN2 and SUMX2MY2 are implemented now, so the call reaches the function
     # instead of a parse error.
-    assert _eval("ATAN2(1, 2)") == math.atan2(1.0, 2.0)
+    assert _eval("ATAN2(1, 2)") == math.atan2(2.0, 1.0)
     assert _eval("SUMXY(A1:A2, A1:A2)") == 125.0
     # The engineering conversions were the same story: BIN2DEC and HEX2DEC are
     # implemented now, so the call reaches the function as well.

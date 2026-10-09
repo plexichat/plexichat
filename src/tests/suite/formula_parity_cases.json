@@ -2341,7 +2341,11 @@
     },
     {
       "formula": "ATAN2(1,0)",
-      "expected": "number:1.5707963267948966"
+      "expected": "number:0"
+    },
+    {
+      "formula": "ATAN2(-1,1)",
+      "expected": "number:2.356194490192345"
     },
     {
       "formula": "ATAN2(1/0,1)",
