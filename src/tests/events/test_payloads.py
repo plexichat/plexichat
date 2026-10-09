@@ -1130,3 +1130,119 @@ class TestPayloadListCopies:
         assert event.data["members"] is not members
         members.append({"id": "m2"})
         assert event.data["members"] == [{"id": "m1"}]
+
+
+class TestCallerDictCopies:
+    """Caller-owned dicts must be copied, never aliased, by the factories.
+
+    ``create_ready_event`` and ``create_guild_members_chunk`` already copy
+    their containers; the message/presence factories must too, so mutating
+    the dict passed in after the build cannot corrupt the already-built
+    event (which may be queued for session replay).
+    """
+
+    def test_message_create_copies_author(self):
+        author = {"id": "789", "username": "alice"}
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="hi",
+            author=author,
+        )
+        assert event.data["author"] == author
+        assert event.data["author"] is not author
+        assert event.author is not author
+        author["username"] = "mallory"
+        assert event.data["author"] == {"id": "789", "username": "alice"}
+        assert event.author == {"id": "789", "username": "alice"}
+
+    def test_message_update_copies_author(self):
+        author = {"id": "789", "username": "alice"}
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            content="edited",
+            author=author,
+        )
+        assert event.data["author"] == author
+        assert event.data["author"] is not author
+        assert event.author is not author
+        author["username"] = "mallory"
+        assert event.data["author"] == {"id": "789", "username": "alice"}
+        assert event.author == {"id": "789", "username": "alice"}
+
+    def test_presence_update_copies_user_and_client_status(self):
+        user = {"id": "123", "username": "bob"}
+        client_status = {"desktop": "online"}
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            user=user,
+            client_status=client_status,
+        )
+        assert event.data["user"] == user
+        assert event.data["user"] is not user
+        assert event.data["client_status"] == client_status
+        assert event.data["client_status"] is not client_status
+        assert event.client_status is not client_status
+        user["username"] = "mallory"
+        client_status["desktop"] = "idle"
+        assert event.data["user"] == {"id": "123", "username": "bob"}
+        assert event.data["client_status"] == {"desktop": "online"}
+        assert event.client_status == {"desktop": "online"}
+
+    def test_typing_start_copies_member(self):
+        member = {"id": "9", "nick": "n"}
+        event = events.create_typing_start(user_id=1, channel_id=2, member=member)
+        assert event.data["member"] == member
+        assert event.data["member"] is not member
+        member["nick"] = "mutated"
+        assert event.data["member"] == {"id": "9", "nick": "n"}
+
+    def test_guild_member_factories_copy_user(self):
+        for factory in (
+            events.create_guild_member_add,
+            events.create_guild_member_remove,
+            events.create_guild_member_update,
+        ):
+            user = {"id": "9", "username": "carol"}
+            event = factory(server_id=1, user_id=9, user=user)
+            assert event.data["user"] == user
+            assert event.data["user"] is not user
+            user["username"] = "mallory"
+            assert event.data["user"] == {"id": "9", "username": "carol"}
+
+    def test_voice_state_update_copies_member(self):
+        member = {"id": "9", "nick": "n"}
+        event = events.create_voice_state_update(user_id=1, channel_id=2, member=member)
+        assert event.data["member"] == member
+        assert event.data["member"] is not member
+        member["nick"] = "mutated"
+        assert event.data["member"] == {"id": "9", "nick": "n"}
+
+    def test_reaction_factories_copy_emoji_and_member(self):
+        emoji = {"id": "1", "name": "thumbsup"}
+        member = {"id": "9", "nick": "n"}
+        event = events.create_reaction_add(
+            user_id=1, message_id=2, channel_id=3, emoji=emoji, member=member
+        )
+        assert event.data["emoji"] == emoji
+        assert event.data["emoji"] is not emoji
+        assert event.emoji is not emoji
+        assert event.data["member"] == member
+        assert event.data["member"] is not member
+        emoji["name"] = "mutated"
+        member["nick"] = "mutated"
+        assert event.data["emoji"] == {"id": "1", "name": "thumbsup"}
+        assert event.emoji == {"id": "1", "name": "thumbsup"}
+        assert event.data["member"] == {"id": "9", "nick": "n"}
+
+        emoji2 = {"id": "1", "name": "thumbsup"}
+        removed = events.create_reaction_remove(
+            user_id=1, message_id=2, channel_id=3, emoji=emoji2
+        )
+        assert removed.data["emoji"] == emoji2
+        assert removed.data["emoji"] is not emoji2
+        emoji2["name"] = "mutated"
+        assert removed.data["emoji"] == {"id": "1", "name": "thumbsup"}

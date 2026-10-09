@@ -76,12 +76,16 @@ def create_message_create(
     """Create a MESSAGE_CREATE event."""
     ts = timestamp if timestamp is not None else _get_timestamp()
     default_author = {"id": _str_id(author_id)}
+    # Copy the caller's author dict too (not ``author or default``): like the
+    # list args below, the event must never hold caller-owned containers, or
+    # mutating the dict after the build corrupts the already-built event.
+    author_copy = dict(author) if author is not None else default_author
     # Copy list args (not ``or []``) so the event never aliases the
     # caller's list and ``data``/model fields stay independent.
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "author": author if author is not None else default_author,
+        "author": dict(author_copy),
         "content": content,
         "timestamp": ts,
         "edited_timestamp": None,
@@ -110,7 +114,7 @@ def create_message_create(
         user_id=author_id,
         message_id=message_id,
         content=content,
-        author=author if author is not None else default_author,
+        author=author_copy,
         attachments=list(attachments) if attachments is not None else [],
         embeds=list(embeds) if embeds is not None else [],
         mentions=list(mentions) if mentions is not None else [],
@@ -128,6 +132,9 @@ def create_message_update(
 ) -> MessageEvent:
     """Create a MESSAGE_UPDATE event."""
     ts = _get_timestamp()
+    # Copy the caller's author dict so the event never aliases caller-owned
+    # containers (mutating it after the build must not corrupt the event).
+    author_copy = dict(author) if author is not None else None
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
@@ -135,8 +142,8 @@ def create_message_update(
     }
     if content is not None:
         data["content"] = content
-    if author is not None:
-        data["author"] = author
+    if author_copy is not None:
+        data["author"] = dict(author_copy)
     if server_id is not None:
         # Canonical ``server_id`` with legacy ``guild_id`` alias.
         sid = _str_id(server_id)
@@ -151,7 +158,7 @@ def create_message_update(
         channel_id=channel_id,
         message_id=message_id,
         content=content,
-        author=author,
+        author=author_copy,
         edited_timestamp=edited_timestamp if edited_timestamp is not None else ts,
     )
 
@@ -194,13 +201,17 @@ def create_presence_update(
 ) -> PresenceEvent:
     """Create a PRESENCE_UPDATE event."""
     default_user = {"id": _str_id(user_id)}
+    # Copy the caller's dicts so the event never aliases caller-owned
+    # containers (mutating them after the build must not corrupt the event).
+    user_copy = dict(user) if user is not None else default_user
+    client_status_copy = (
+        dict(client_status) if client_status is not None else {"desktop": status}
+    )
     data = {
-        "user": user if user is not None else default_user,
+        "user": dict(user_copy),
         "status": status,
         "activities": list(activities) if activities is not None else [],
-        "client_status": client_status
-        if client_status is not None
-        else {"desktop": status},
+        "client_status": dict(client_status_copy),
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
@@ -212,7 +223,7 @@ def create_presence_update(
         user_id=user_id,
         status=status,
         activities=list(activities) if activities is not None else [],
-        client_status=client_status,
+        client_status=dict(client_status_copy) if client_status is not None else None,
     )
 
 
@@ -232,7 +243,7 @@ def create_typing_start(
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if member is not None:
-        data["member"] = member
+        data["member"] = dict(member)
 
     return TypingEvent(
         event_type=EventType.TYPING_START,
@@ -442,7 +453,7 @@ def create_guild_member_add(
     ts = joined_at if joined_at is not None else _get_timestamp()
     data = {
         "guild_id": _str_id(server_id),
-        "user": user if user is not None else {"id": _str_id(user_id)},
+        "user": dict(user) if user is not None else {"id": _str_id(user_id)},
         "roles": [_str_id(r) for r in (roles if roles is not None else [])],
         "joined_at": ts,
     }
@@ -471,7 +482,7 @@ def create_guild_member_remove(
         event_type=EventType.GUILD_MEMBER_REMOVE,
         data={
             "guild_id": _str_id(server_id),
-            "user": user if user is not None else {"id": _str_id(user_id)},
+            "user": dict(user) if user is not None else {"id": _str_id(user_id)},
         },
         server_id=server_id,
         user_id=user_id,
@@ -489,7 +500,7 @@ def create_guild_member_update(
     """Create a GUILD_MEMBER_UPDATE event."""
     data = {
         "guild_id": _str_id(server_id),
-        "user": user if user is not None else {"id": _str_id(user_id)},
+        "user": dict(user) if user is not None else {"id": _str_id(user_id)},
         "roles": [_str_id(r) for r in (roles if roles is not None else [])],
     }
     if nick is not None:
@@ -532,7 +543,7 @@ def create_voice_state_update(
     if session_id is not None:
         data["session_id"] = session_id
     if member is not None:
-        data["member"] = member
+        data["member"] = dict(member)
 
     return VoiceStateEvent(
         event_type=EventType.VOICE_STATE_UPDATE,
@@ -561,12 +572,12 @@ def create_reaction_add(
         "user_id": _str_id(user_id),
         "message_id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "emoji": emoji,
+        "emoji": dict(emoji),
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
     if member is not None:
-        data["member"] = member
+        data["member"] = dict(member)
 
     return ReactionEvent(
         event_type=EventType.MESSAGE_REACTION_ADD,
@@ -575,8 +586,8 @@ def create_reaction_add(
         channel_id=channel_id,
         user_id=user_id,
         message_id=message_id,
-        emoji=emoji,
-        member=member,
+        emoji=dict(emoji),
+        member=dict(member) if member is not None else None,
     )
 
 
@@ -592,7 +603,7 @@ def create_reaction_remove(
         "user_id": _str_id(user_id),
         "message_id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "emoji": emoji,
+        "emoji": dict(emoji),
     }
     if server_id is not None:
         data["guild_id"] = _str_id(server_id)
@@ -604,7 +615,7 @@ def create_reaction_remove(
         channel_id=channel_id,
         user_id=user_id,
         message_id=message_id,
-        emoji=emoji,
+        emoji=dict(emoji),
     )
 
 
