@@ -42,6 +42,39 @@ class TestLinkPreviewService:
 
         assert preview_service._hash_url(url1) == preview_service._hash_url(url2)
 
+    def test_url_hash_preserves_path_case(self, preview_service):
+        """Path case is significant per RFC 3986 and must not collide.
+
+        Lowercasing the whole URL made these two distinct resources share one
+        cache row, so previewing one returned the other's cached metadata.
+        """
+        upper = preview_service._hash_url("https://example.com/ABCDEF")
+        lower = preview_service._hash_url("https://example.com/abcdef")
+
+        assert upper != lower
+
+    def test_url_hash_preserves_query_case(self, preview_service):
+        """Query-string case is significant and must not collide either."""
+        upper = preview_service._hash_url("https://example.com/page?Key=AbC")
+        lower = preview_service._hash_url("https://example.com/page?key=abc")
+
+        assert upper != lower
+
+    def test_url_hash_still_normalizes_scheme_and_host(self, preview_service):
+        """Scheme/host remain case-insensitive, including with a port."""
+        assert preview_service._hash_url("HTTPS://EXAMPLE.com/a") == (
+            preview_service._hash_url("https://example.com/a")
+        )
+        assert preview_service._hash_url("https://Example.com:8443/a") == (
+            preview_service._hash_url("https://example.com:8443/a")
+        )
+
+    def test_url_hash_distinguishes_port(self, preview_service):
+        """A non-default port is part of the origin and must be preserved."""
+        assert preview_service._hash_url("https://example.com:8443/a") != (
+            preview_service._hash_url("https://example.com/a")
+        )
+
     def test_rate_limit_check(self, mock_db, preview_service):
         """Test rate limit checking."""
         # No existing rate limit

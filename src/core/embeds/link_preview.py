@@ -176,8 +176,25 @@ class LinkPreviewService:
         return self._http_client
 
     def _hash_url(self, url: str) -> str:
-        """Generate cache key hash for URL."""
-        return hashlib.sha256(url.lower().encode("utf-8")).hexdigest()[:32]
+        """Generate the cache key hash for a URL.
+
+        Only the parts that RFC 3986 defines as case-insensitive -- the
+        scheme and the host -- are lowercased. The previous implementation
+        lowercased the WHOLE URL, so ``https://host/ABCDEF`` and
+        ``https://host/abcdef`` collided on one ``url_hash``: previewing one
+        returned the other's cached metadata (including the other's ``url``),
+        a stored content-spoofing primitive on any host with case-sensitive
+        paths. Path, query and fragment are preserved exactly.
+        """
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        port = f":{parsed.port}" if parsed.port else ""
+        normalized = f"{parsed.scheme.lower()}://{host}{port}{parsed.path}"
+        if parsed.query:
+            normalized += f"?{parsed.query}"
+        if parsed.fragment:
+            normalized += f"#{parsed.fragment}"
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
 
     def _check_rate_limit(self, user_id: int) -> bool:
         """
