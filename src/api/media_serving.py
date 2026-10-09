@@ -23,6 +23,40 @@ from .schemas.common import ErrorResponse
 _media_metadata_cache = LRUCache(maxsize=1024)
 
 
+def _parse_byte_range(range_header: Optional[str], size: int) -> tuple[int, int, bool]:
+    """Parse a single ``bytes=`` Range header into ``(start, end, is_partial)``.
+
+    ``end`` is inclusive. HTTP suffix ranges (``bytes=-N``) mean the *final* N
+    bytes, not the first N: the previous inline parser read ``bytes=-500`` as
+    ``0-500`` and served the head of the file behind a falsified
+    ``Content-Range``. Anything unsupported or malformed (multi-range,
+    unparsable) falls back to the full body so the caller answers 200,
+    mirroring :func:`src.static_client.router._parse_range`.
+    """
+    full = (0, size - 1, False)
+    if not range_header or not range_header.startswith("bytes="):
+        return full
+    spec = range_header[len("bytes=") :].strip()
+    # Multi-range requests are unsupported: serve the full body.
+    if "," in spec:
+        return full
+    try:
+        if spec.startswith("-"):
+            # Suffix range: the final ``n`` bytes (``bytes=-n``).
+            n = int(spec[1:])
+            if n <= 0 or size <= 0:
+                return full
+            return max(0, size - n), size - 1, True
+        first, _, last = spec.partition("-")
+        start = int(first) if first else 0
+        end = min(int(last) if last else size - 1, size - 1)
+        if start <= end:
+            return start, end, True
+        return full
+    except ValueError:
+        return full
+
+
 def register_attachment_route(app: FastAPI) -> None:
     """Register the attachment-serving endpoint on ``app``."""
     config = get_api_config()
@@ -364,28 +398,7 @@ def register_attachment_route(app: FastAPI) -> None:
                     and hasattr(stream, "tell")
                 )
                 range_header = request.headers.get("Range") if is_seekable else None
-                start = 0
-                end = size - 1
-                is_partial = False
-
-                if range_header and range_header.startswith("bytes="):
-                    try:
-                        range_val = range_header.replace("bytes=", "")
-                        if "-" in range_val:
-                            r_start, r_end = range_val.split("-")
-                            if r_start:
-                                start = int(r_start)
-                            if r_end:
-                                end = int(r_end)
-
-                        # Constrain range
-                        end = min(end, size - 1)
-                        if start <= end:
-                            is_partial = True
-                        else:
-                            start = 0
-                    except Exception:
-                        is_partial = False
+                start, end, is_partial = _parse_byte_range(range_header, size)
 
                 content_length = end - start + 1
                 status_code = 206 if is_partial else 200
