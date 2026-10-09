@@ -185,22 +185,47 @@ class ContentProcessor:
         if user_filter.custom_blocked_words:
             words_to_filter.update(user_filter.custom_blocked_words)
 
-        # Apply filtering based on action
-        for word in words_to_filter:
-            if not word:
-                continue
-            pattern = re.compile(re.escape(word), re.IGNORECASE)
-            if pattern.search(result):
-                filtered_words.append(word)
+        words = [w for w in words_to_filter if w]
+        if not words:
+            return result, filtered_words
 
-                if user_filter.filter_action == FilterAction.CENSOR:
-                    # Replace with asterisks
-                    replacement = "*" * len(word)
-                    result = pattern.sub(replacement, result)
-                elif user_filter.filter_action == FilterAction.SPOILER:
-                    # Wrap in spoiler tags
-                    result = pattern.sub(f"||{word}||", result)
-                # BLOCK and WARN don't modify content
+        # One combined alternation, substituted in a single pass.
+        #
+        # Substituting each word in turn re-scans text this function had
+        # already rewritten, so a later word matched inside the markers an
+        # earlier one had just inserted: blocking "bad" and "badword" turned
+        # "a badword b" into "a ||||bad||word|| b". A single pass cannot feed
+        # replacements back into itself.
+        #
+        # Longest-first ordering makes overlapping entries resolve to the most
+        # specific word instead of whichever alternative the regex engine
+        # happened to try first, and the secondary key on the word itself keeps
+        # the result independent of set iteration order.
+        words.sort(key=lambda w: (-len(w), w))
+        combined = re.compile(
+            "|".join(re.escape(w) for w in words),
+            re.IGNORECASE,
+        )
+
+        # Replacements must be built from the *matched* text and passed as a
+        # callable. Blocked words are attacker-controlled data: a word
+        # containing a backslash would otherwise be parsed as a regex
+        # replacement template (raising on a bad escape such as ``\1``, and
+        # silently expanding a valid one such as ``\g<0>``). Substituting the
+        # configured word rather than the matched text also rewrote casing, so
+        # "SECRET" came back as "||secret||".
+        if user_filter.filter_action == FilterAction.CENSOR:
+            result = combined.sub(lambda m: "*" * len(m.group(0)), result)
+        elif user_filter.filter_action == FilterAction.SPOILER:
+            result = combined.sub(lambda m: f"||{m.group(0)}||", result)
+        # BLOCK and WARN don't modify content
+
+        # Report which configured words were actually matched, in the
+        # deterministic longest-first order rather than set iteration order.
+        matched = {m.group(0).lower() for m in combined.finditer(content)}
+        for word in words:
+            if word.lower() in matched:
+                filtered_words.append(word)
 
         return result, filtered_words
 
