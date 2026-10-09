@@ -92,6 +92,24 @@ def _register_unknown_route(candidate: str, method: str) -> str:
     return f"{method} /unknown/{{overflow-{slot}}}"
 
 
+_DEFAULT_API_PREFIX = "/api/v1"
+
+
+def _resolve_api_prefix() -> str:
+    """Resolve the configurable API prefix, falling back to the default.
+
+    ``extract_route_info``'s route tables are keyed on the default prefix.
+    An operator that renames ``api.api_prefix`` would otherwise miss every
+    strict per-route cap (login/register/2FA/password-reset) and silently
+    fall back to the generic default limit.
+    """
+    try:
+        prefix = config.get("api", {}).get("api_prefix", _DEFAULT_API_PREFIX)
+        return (prefix or _DEFAULT_API_PREFIX).rstrip("/") or _DEFAULT_API_PREFIX
+    except Exception:
+        return _DEFAULT_API_PREFIX
+
+
 # Common routes for fast lookup (without regex)
 COMMON_ROUTES = {
     "/api/v1/auth/login": "POST /auth/login",
@@ -236,6 +254,13 @@ def extract_route_info(path: str, method: str) -> tuple:
     # Hard cap on raw path length before any further processing.
     if len(path) > MAX_ROUTE_LENGTH:
         path = path[:MAX_ROUTE_LENGTH]
+
+    # Normalize a non-default api_prefix back to the canonical prefix the
+    # route tables below are keyed on, so renamed deployments still match
+    # their strict per-route caps.
+    api_prefix = _resolve_api_prefix()
+    if api_prefix != _DEFAULT_API_PREFIX and path.startswith(api_prefix):
+        path = _DEFAULT_API_PREFIX + path[len(api_prefix) :]
 
     # 1. Try fast lookup
     if path in COMMON_ROUTES:

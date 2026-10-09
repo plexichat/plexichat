@@ -265,11 +265,21 @@ class RateLimitManager:
         route: Optional[str],
         is_bot: bool,
         is_webhook: bool,
+        override_config: Optional[RateLimitConfig] = None,
     ) -> RateLimitConfig:
-        """Get the appropriate config for a request."""
-        config = self._route_configs.get(route or "")
-        if config is None:
-            config = get_default_config()
+        """Get the appropriate config for a request.
+
+        ``override_config`` lets a caller (e.g. the ``@rate_limit``
+        decorator) supply its limit directly instead of relying on the shared
+        ``_route_configs`` registry, which a concurrent request can mutate
+        between the caller's await points.
+        """
+        if override_config is not None:
+            config = override_config
+        else:
+            config = self._route_configs.get(route or "")
+            if config is None:
+                config = get_default_config()
 
         if is_bot and is_bot_higher_limit_route(route or ""):
             config = config.with_multiplier(self._bot_multiplier)
@@ -816,6 +826,7 @@ class RateLimitManager:
         is_internal: bool = False,
         webhook_id: Optional[int] = None,
         cost: int = 1,
+        override_config: Optional[RateLimitConfig] = None,
     ) -> RateLimitResult:
         """Awaitable counterpart of :meth:`check_rate_limit`.
 
@@ -850,7 +861,9 @@ class RateLimitManager:
 
         # 3. Route/Resource/Webhook limit
         if route:
-            config = self._get_config_for_request(route, is_bot, is_webhook)
+            config = self._get_config_for_request(
+                route, is_bot, is_webhook, override_config
+            )
             if config.scope == BucketType.RESOURCE and resource_id is not None:
                 checks.append(
                     await self._acheck_resource_limit(

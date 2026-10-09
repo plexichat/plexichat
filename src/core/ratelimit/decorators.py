@@ -102,23 +102,20 @@ def rate_limit(
             method = request.method
             path = request.url.path
             route = f"{method} {path}"
-            manager = ratelimit.get_manager()
-            original_config = manager._route_configs.get(route)
-            manager._route_configs[route] = config
-            try:
-                result = await ratelimit.acheck_rate_limit(
-                    user_id=user_id,
-                    route=route,
-                    resource_id=resource_id,
-                    is_bot=is_bot,
-                    is_admin=is_admin,
-                    is_internal=is_internal,
-                )
-            finally:
-                if original_config:
-                    manager._route_configs[route] = original_config
-                else:
-                    manager._route_configs.pop(route, None)
+            # Pass the decorator's config explicitly instead of publishing it
+            # through the manager's shared ``_route_configs`` and popping it in
+            # ``finally``: the async check reads that map after earlier awaits,
+            # so an overlapping request to the same route could observe the key
+            # already removed and fall back to the generic default limit.
+            result = await ratelimit.acheck_rate_limit(
+                user_id=user_id,
+                route=route,
+                resource_id=resource_id,
+                is_bot=is_bot,
+                is_admin=is_admin,
+                is_internal=is_internal,
+                override_config=config,
+            )
             if not result.allowed:
                 headers = ratelimit.get_headers(result)
                 raise HTTPException(
@@ -195,19 +192,17 @@ def custom_rate_limit(
             if get_bucket_key:
                 custom_key = get_bucket_key(request)
                 route = f"custom:{custom_key}"
-            manager = ratelimit.get_manager()
-            manager._route_configs[route] = config
-            try:
-                result = await ratelimit.acheck_rate_limit(
-                    user_id=user_id,
-                    route=route,
-                    resource_id=resource_id,
-                    is_bot=is_bot,
-                    is_admin=is_admin,
-                    is_internal=is_internal,
-                )
-            finally:
-                manager._route_configs.pop(route, None)
+            # See rate_limit(): pass the config explicitly rather than via the
+            # shared ``_route_configs`` map that is popped in ``finally``.
+            result = await ratelimit.acheck_rate_limit(
+                user_id=user_id,
+                route=route,
+                resource_id=resource_id,
+                is_bot=is_bot,
+                is_admin=is_admin,
+                is_internal=is_internal,
+                override_config=config,
+            )
             if not result.allowed:
                 headers = ratelimit.get_headers(result)
                 raise HTTPException(

@@ -19,6 +19,21 @@ import utils.logger as logger
 security = HTTPBearer(auto_error=False)
 
 
+def _resolve_api_prefix() -> str:
+    """Resolve the configurable API prefix, falling back to the default.
+
+    Request-path comparisons in this middleware must follow
+    ``api.api_prefix``; hardcoded ``/api/v1`` literals break as soon as an
+    operator renames the prefix.
+    """
+    try:
+        from src.api.config import get_api_config
+
+        return get_api_config().api_prefix.rstrip("/") or "/api/v1"
+    except Exception:
+        return "/api/v1"
+
+
 class AuthenticationMiddleware:
     """ASGI middleware for hardened token validation."""
 
@@ -103,13 +118,7 @@ class AuthenticationMiddleware:
             # Skip for admin routes which manage their own sessions, and public status/health routes
             admin_paths = ["/admin"]
             admin_path = "/admin"
-            api_prefix = "/api/v1"
-            try:
-                from src.api.config import get_api_config
-
-                api_prefix = get_api_config().api_prefix.rstrip("/") or "/api/v1"
-            except Exception:
-                api_prefix = "/api/v1"
+            api_prefix = _resolve_api_prefix()
             try:
                 import utils.config as config
 
@@ -650,13 +659,14 @@ async def get_current_user(request: Request) -> TokenInfo:
         )
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
         # Also allow logout
-        is_me_path = path == "/api/v1/users/@me"
+        _api_prefix = _resolve_api_prefix()
+        is_me_path = path == f"{_api_prefix}/users/@me"
         is_allowed_me_method = request.method in ("GET", "PATCH")
 
         allowed = (
             (is_me_path and is_allowed_me_method)
-            or path == "/api/v1/auth/logout"
-            or path.startswith("/api/v1/avatars/")
+            or path == f"{_api_prefix}/auth/logout"
+            or path.startswith(f"{_api_prefix}/avatars/")
         )
 
         if not allowed:

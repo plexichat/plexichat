@@ -5,6 +5,21 @@ Security headers middleware - Adds standard security headers to all responses.
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 
+def _resolve_api_prefix() -> str:
+    """Resolve the configurable API prefix, falling back to the default.
+
+    The CSP scoping below must follow ``api.api_prefix``; hardcoding
+    ``/api/v1`` silently downgraded the strict API policy to the permissive
+    SPA policy on any deployment that renamed the prefix.
+    """
+    try:
+        from src.api.config import get_api_config
+
+        return get_api_config().api_prefix.rstrip("/") or "/api/v1"
+    except Exception:
+        return "/api/v1"
+
+
 class SecurityHeadersMiddleware:
     """ASGI middleware to add security headers to all HTTP responses."""
 
@@ -23,17 +38,18 @@ class SecurityHeadersMiddleware:
                 # Per-path CSP scoping: the API surface is hardened
                 # and only consumes JSON; the static-client bundle +
                 # admin SPA rely on inline scripts/styles to bootstrap.
-                # Emit a strict no-unsafe CSP for /api/v1/* so XSS in a
+                # Emit a strict no-unsafe CSP for API responses so XSS in a
                 # future JSON response can't ``eval``; fall back to the
                 # historically-permissive policy for ``/``/``/admin``
                 # and bundled SPA routes so we don't regress the
                 # admin UI.
                 path = scope.get("path", "")
-                is_api = path.startswith("/api/v1/")
-                is_media = path.startswith("/api/v1/media/")
+                api_prefix = _resolve_api_prefix()
+                is_api = path.startswith(f"{api_prefix}/")
+                is_media = path.startswith(f"{api_prefix}/media/")
                 # User-facing HTML help pages carry inline <style> blocks
                 # and must not inherit the strict API-only CSP.
-                is_help = path.startswith("/api/v1/help/")
+                is_help = path.startswith(f"{api_prefix}/help/")
 
                 # Security Headers
                 security_headers = [

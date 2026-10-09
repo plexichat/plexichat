@@ -330,6 +330,7 @@ async def acheck_rate_limit(
     is_internal: bool = False,
     webhook_id: Optional[int] = None,
     cost: int = 1,
+    override_config: Optional[RateLimitConfig] = None,
 ) -> RateLimitResult:
     """Awaitable counterpart of :func:`check_rate_limit`."""
     _ensure_setup()
@@ -345,6 +346,7 @@ async def acheck_rate_limit(
         is_internal=is_internal,
         webhook_id=webhook_id,
         cost=cost,
+        override_config=override_config,
     )
 
 
