@@ -37,18 +37,25 @@ def create_ready_event(
     resume_gateway_url: str = "",
 ) -> ReadyEvent:
     """Create a READY event."""
+    # Copy (not ``or``/alias) so the event never holds the caller's
+    # containers: mutating ``user``/``guilds`` after the build must not
+    # corrupt the already-built event. ``ReadyEvent.__post_init__``
+    # rebuilds ``data`` from these fields with its own copies so
+    # ``data`` and the model fields stay independent.
+    user_copy = dict(user)
+    guilds_copy = list(guilds)
     return ReadyEvent(
         event_type=EventType.READY,
         data={
             "v": 10,
-            "user": user,
-            "guilds": guilds,
+            "user": dict(user_copy),
+            "guilds": list(guilds_copy),
             "session_id": session_id,
             "resume_gateway_url": resume_gateway_url,
         },
         session_id=session_id,
-        user=user,
-        guilds=guilds,
+        user=user_copy,
+        guilds=guilds_copy,
         resume_gateway_url=resume_gateway_url,
     )
 
@@ -633,7 +640,9 @@ def create_guild_members_chunk(
         event_type=EventType.GUILD_MEMBERS_CHUNK,
         data={
             "guild_id": _str_id(server_id),
-            "members": members,
+            # Copy (not alias) so mutating the caller's list after the
+            # build cannot corrupt the already-built event.
+            "members": list(members),
             "chunk_index": chunk_index,
             "chunk_count": chunk_count,
             "not_found": [

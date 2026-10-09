@@ -1103,3 +1103,30 @@ class TestPayloadListCopies:
         roles.append(3)
         assert event.roles == [1, 2]
         assert event.data["roles"] == ["1", "2"]
+
+    def test_ready_event_copies_user_and_guilds(self):
+        user = {"id": "1", "username": "alice"}
+        guilds = [{"id": "g1"}]
+        event = events.create_ready_event("session-1", user, guilds)
+        assert event.data["user"] == user
+        assert event.data["user"] is not user
+        assert event.user is not user
+        assert event.data["user"] is not event.user
+        assert event.data["guilds"] == guilds
+        assert event.data["guilds"] is not guilds
+        assert event.guilds is not guilds
+        assert event.data["guilds"] is not event.guilds
+        user["username"] = "mallory"
+        guilds.append({"id": "g2"})
+        assert event.data["user"] == {"id": "1", "username": "alice"}
+        assert event.user == {"id": "1", "username": "alice"}
+        assert event.data["guilds"] == [{"id": "g1"}]
+        assert event.guilds == [{"id": "g1"}]
+
+    def test_guild_members_chunk_copies_members(self):
+        members = [{"id": "m1"}]
+        event = events.create_guild_members_chunk(123, members)
+        assert event.data["members"] == members
+        assert event.data["members"] is not members
+        members.append({"id": "m2"})
+        assert event.data["members"] == [{"id": "m1"}]
