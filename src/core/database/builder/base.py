@@ -91,6 +91,21 @@ class Query(ABC, QueryBuilderProtocol):
         if callable(invalidator):
             invalidator()
 
+    def _should_autocommit(self) -> bool:
+        """Whether a builder write should commit (and roll back) locally.
+
+        A write executed inside ``db.begin_transaction()`` must not commit
+        the enclosing transaction early, or a later ``rollback()`` can no
+        longer undo it. This mirrors the guard in ``Database.execute()``
+        (``core/execution.py``: ``if auto_commit and not self.in_transaction``).
+        Standalone builder usage has no facade back-reference and keeps the
+        historical auto-commit behaviour.
+        """
+        db = self.database
+        if db is None:
+            return True
+        return not bool(getattr(db, "in_transaction", False))
+
     @abstractmethod
     def build(self) -> tuple[str, list]:
         """Build the SQL query and return (sql, params)."""
@@ -153,7 +168,8 @@ class Query(ABC, QueryBuilderProtocol):
                     logger.debug(f"Query returned {len(results)} rows")
                     return results
                 else:
-                    self.connection.commit()
+                    if self._should_autocommit():
+                        self.connection.commit()
                     row_count = cursor.rowcount
                     logger.debug(f"Query affected {row_count} rows")
                     cursor.close()
@@ -176,7 +192,8 @@ class Query(ABC, QueryBuilderProtocol):
                         return results
                     else:
                         row_count = cursor.rowcount
-                        self.connection.commit()
+                        if self._should_autocommit():
+                            self.connection.commit()
                         logger.debug(f"Query affected {row_count} rows")
                         self._invalidate_database_query_cache()
                         return row_count
@@ -184,10 +201,13 @@ class Query(ABC, QueryBuilderProtocol):
                     cursor.close()
         except Exception as e:
             logger.error(f"Query execution failed: {str(e)}")
-            try:
-                self.connection.rollback()
-            except Exception:
-                pass
+            # Only roll back when the builder owns the transaction; inside an
+            # enclosing transaction the caller decides whether to abort.
+            if self._should_autocommit():
+                try:
+                    self.connection.rollback()
+                except Exception:
+                    pass
             raise
 
 

@@ -297,7 +297,13 @@ def register_attachment_route(app: FastAPI) -> None:
                     detail={"error": {"code": 404, "message": "File not found"}},
                 )
             scan_status = scan_row["scan_status"] if scan_row else ""
-            if scan_status in ("pending", "infected"):
+            # Positive allowlist: a file is servable only once the scan has
+            # confirmed it CLEAN, or when scanning is disabled by policy and
+            # the file was therefore recorded SKIPPED. Every other state is
+            # blocked. A denylist of ("pending", "infected") previously let
+            # "error" (scan failed) and a stray "skipped" written by an
+            # unreachable scanner fall through and serve unscanned files.
+            if scan_status not in ("clean", "skipped"):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={

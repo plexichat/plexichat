@@ -14,7 +14,6 @@ import hashlib
 from typing import Optional, Tuple, BinaryIO, Dict, Any
 from dataclasses import dataclass
 
-import utils.logger as logger
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .core import Keyring
@@ -31,6 +30,18 @@ KEY_SIZE = 32
 
 # Deprecation warning for legacy format
 _LEGACY_FORMAT_WARNING = "Legacy PXENC format detected. Files will be migrated to PXSTR v2 format on rewrite."
+
+
+class DecryptionError(RuntimeError):
+    """Raised when a streaming decryption cannot complete intact.
+
+    Signals a truncated/early-ending ciphertext: the authenticated stream
+    ended before ``original_size`` bytes were produced. AES-GCM
+    authentication failures propagate as ``cryptography``'s ``InvalidTag``
+    instead, so callers must treat both outcomes as "do not trust the
+    output" rather than as a successful short read.
+    """
+
 
 # Module-level singleton so the convenience functions reuse a single
 # FileEncryptor (and its keyring) instead of constructing a fresh one
@@ -422,6 +433,11 @@ class StreamingFileEncryptor:
     ) -> Dict[str, Any]:
         sha = hashlib.sha256()
         total = 0
+        # ``decrypt_stream_generator`` raises (``InvalidTag`` on a bad tag,
+        # ``DecryptionError`` on an early-ended stream) instead of returning
+        # early, so reaching this point means every chunk authenticated and
+        # the full original length was produced — ``verified`` is therefore
+        # genuinely True rather than a hardcoded claim.
         for chunk in self.decrypt_stream_generator(input_stream, aad):
             output_stream.write(chunk)
             sha.update(chunk)
@@ -431,50 +447,59 @@ class StreamingFileEncryptor:
     def decrypt_stream_generator(
         self, input_stream: BinaryIO, aad: Optional[bytes] = b""
     ):
-        """Bulletproof streaming decryption generator."""
-        try:
-            encryptor = FileEncryptor(self.keyring)
-            header, _ = encryptor.deserialize_header_from_stream(input_stream)
-            dek = encryptor._unwrap_key(header.wrapped_key, header.key_version)
-            cipher = AESGCM(dek)
+        """Streaming decryption generator.
 
-            total_decrypted = 0
-            chunk_index = 0
+        Yields authenticated plaintext chunks. Raises ``InvalidTag`` when a
+        chunk fails AES-GCM authentication (tampered/corrupted ciphertext),
+        and ``DecryptionError`` when the stream ends before
+        ``header.original_size`` bytes are produced. Cryptographic failures
+        are never swallowed: a truncated or modified file must not be served
+        as a successful short decryption.
+        """
+        encryptor = FileEncryptor(self.keyring)
+        header, _ = encryptor.deserialize_header_from_stream(input_stream)
+        dek = encryptor._unwrap_key(header.wrapped_key, header.key_version)
+        cipher = AESGCM(dek)
 
-            while total_decrypted < header.original_size:
-                try:
-                    # Robust reads
-                    chunk_nonce = read_exactly(input_stream, NONCE_SIZE)
-                    if not chunk_nonce:
-                        break
+        total_decrypted = 0
+        chunk_index = 0
 
-                    len_bytes = read_exactly(input_stream, 4)
-                    if not len_bytes:
-                        break
-                    encrypted_len = struct.unpack(">I", len_bytes)[0]
-
-                    encrypted_chunk = read_exactly(input_stream, encrypted_len)
-                    if len(encrypted_chunk) < encrypted_len:
-                        break  # Safety
-
-                    chunk_aad = struct.pack(">Q", chunk_index)
-                    if aad:
-                        chunk_aad = aad + chunk_aad
-
-                    chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
-                    yield chunk
-
-                    total_decrypted += len(chunk)
-                    chunk_index += 1
-                except (EOFError, struct.error):
-                    break  # Clean termination on network drop
-                except Exception as e:
-                    logger.error(f"Decryption error at chunk {chunk_index}: {e}")
+        while total_decrypted < header.original_size:
+            try:
+                # Robust reads
+                chunk_nonce = read_exactly(input_stream, NONCE_SIZE)
+                if not chunk_nonce:
                     break
-        except Exception as e:
-            logger.error(f"Stream startup failed: {e}")
-            # Silent return to avoid ASGI protocol errors if headers were already sent
-            return
+
+                len_bytes = read_exactly(input_stream, 4)
+                if not len_bytes:
+                    break
+                encrypted_len = struct.unpack(">I", len_bytes)[0]
+
+                encrypted_chunk = read_exactly(input_stream, encrypted_len)
+                if len(encrypted_chunk) < encrypted_len:
+                    break  # Safety
+
+                chunk_aad = struct.pack(">Q", chunk_index)
+                if aad:
+                    chunk_aad = aad + chunk_aad
+
+                # ``InvalidTag`` (and any other crypto error) is deliberately
+                # NOT caught here — it must propagate so the caller fails
+                # closed instead of streaming a partially-decrypted file.
+                chunk = cipher.decrypt(chunk_nonce, encrypted_chunk, chunk_aad)
+            except (EOFError, struct.error):
+                break  # Clean termination on a short read / network drop
+
+            yield chunk
+            total_decrypted += len(chunk)
+            chunk_index += 1
+
+        if total_decrypted < header.original_size:
+            raise DecryptionError(
+                "Encrypted stream ended early: decrypted "
+                f"{total_decrypted} of {header.original_size} bytes"
+            )
 
 
 # Convenience

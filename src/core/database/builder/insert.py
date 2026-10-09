@@ -109,7 +109,8 @@ class InsertQuery(TableQuery):
                 # Capture the rowid at INSERT time (before commit/cleanup).
                 lastrowid = int(getattr(cursor, "lastrowid", 0) or 0)
                 self._capture_lastrowid(lastrowid)
-                self.connection.commit()
+                if self._should_autocommit():
+                    self.connection.commit()
                 cursor.close()
                 self._invalidate_database_query_cache()
                 logger.debug(f"INSERT returned lastrowid: {lastrowid}")
@@ -128,7 +129,8 @@ class InsertQuery(TableQuery):
                         cursor.execute(pg_sql, param_values)
                     finally:
                         self._mark_pool_in_flight(self.connection, False)
-                    self.connection.commit()
+                    if self._should_autocommit():
+                        self.connection.commit()
                     row_count = cursor.rowcount
                     cursor.close()
                     self._invalidate_database_query_cache()
@@ -138,8 +140,11 @@ class InsertQuery(TableQuery):
                     cursor.close()
         except Exception as e:
             logger.error(f"INSERT execution failed: {str(e)}")
-            try:
-                self.connection.rollback()
-            except Exception:
-                pass
+            # Only roll back when the builder owns the transaction; inside an
+            # enclosing transaction the caller decides whether to abort.
+            if self._should_autocommit():
+                try:
+                    self.connection.rollback()
+                except Exception:
+                    pass
             raise

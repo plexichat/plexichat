@@ -51,10 +51,39 @@ class _ScanningMixin:
         a WSS MESSAGE_UPDATE so clients drop the attachment.
         """
         try:
-            if not self._scanner or not self._scanner.is_available():
+            if not self._config.get("scanner_enabled", False):
+                # Scanning is intentionally disabled: SKIPPED is the correct
+                # terminal state and the serve gate treats it as servable.
                 self._db.execute(
                     "UPDATE media_files SET scan_status = ? WHERE id = ?",
                     (ScanStatus.SKIPPED.value, file_id),
+                )
+                return
+
+            if not self._scanner:
+                # Scanning is enabled but no scanner object exists: fail
+                # closed (block) rather than serve the file unscanned.
+                logger.error(
+                    f"Background scan: scanner not initialised for file {file_id}"
+                )
+                self._db.execute(
+                    "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                    (ScanStatus.ERROR.value, "scanner not initialised", file_id),
+                )
+                return
+
+            if not self._scanner.is_available():
+                # Scanner is configured but unreachable. Do NOT record
+                # SKIPPED here: the serve gate treats SKIPPED as "scanning
+                # disabled" and would serve the file unscanned. Record ERROR
+                # so the file stays blocked until it is actually scanned.
+                logger.error(
+                    f"Background scan: scanner unreachable for file {file_id}; "
+                    "recording scan ERROR"
+                )
+                self._db.execute(
+                    "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                    (ScanStatus.ERROR.value, "scanner unavailable", file_id),
                 )
                 return
 
