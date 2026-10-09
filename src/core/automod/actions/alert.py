@@ -179,12 +179,29 @@ class AlertModeratorsAction(BaseAction):
         content_preview = self._format_alert_message(violation)
 
         for moderator_id in moderator_ids:
-            if not manager._should_notify_user(
+            # Resolve this moderator's settings and channel override so the
+            # shared eligibility gate can be applied. This previously called a
+            # ``_should_notify_user`` method that does not exist anywhere in
+            # the codebase (the real one is ``_should_notify_user_optimized``),
+            # so every ALERT_MODERATORS action raised AttributeError: no
+            # moderator was ever notified and execute()'s broad handler
+            # skipped ``_log_alert`` as well.
+            settings = manager.get_notification_settings(
+                moderator_id, violation.server_id
+            )
+            override = (
+                manager.get_channel_override(moderator_id, channel_id)
+                if channel_id
+                else None
+            )
+            if not manager._should_notify_user_optimized(
                 moderator_id,
                 violation.user_id,
                 violation.server_id,
                 channel_id,
                 MentionType.USER,
+                settings,
+                override,
             ):
                 continue
 

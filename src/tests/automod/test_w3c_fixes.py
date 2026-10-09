@@ -6,7 +6,17 @@ occurrence semantics (A5), scheme-independent external link matching (A6),
 fail-closed policy helpers (C1) and alert channel resolution (E1).
 """
 
-from src.core.automod.models import Rule, RuleAction, ActionType, RuleType
+import re
+from types import SimpleNamespace
+
+from src.core.automod.models import (
+    Rule,
+    RuleAction,
+    ActionType,
+    RuleType,
+    Violation,
+    ViolationSeverity,
+)
 from src.core.automod.rules.regex import (
     MAX_PATTERN_LENGTH,
     RegexRule,
@@ -300,3 +310,98 @@ class TestAlertChannelResolution:
         source = inspect.getsource(AlertModeratorsAction._get_alert_channel)
         # No SELECT against automod_rules hunting for alert_channel_id.
         assert "FROM automod_rules" not in source
+
+
+class TestAlertModeratorNotifications:
+    """ALERT_MODERATORS must call a notification method that actually exists.
+
+    It previously called ``manager._should_notify_user`` (no such method
+    anywhere in the repo), so ``_send_notifications`` raised AttributeError,
+    ``execute()``'s broad handler swallowed it, no moderator was ever
+    notified, and the automod audit record was skipped too.
+    """
+
+    class _FakeNotificationManager:
+        """Mirrors the real NotificationManager surface the action uses.
+
+        Deliberately does NOT define ``_should_notify_user``: the pre-fix code
+        called that name and must fail here.
+        """
+
+        def __init__(self):
+            self.created = []
+            self.unread_updates = []
+            self.checked = []
+
+        def get_notification_settings(self, user_id, server_id=None):
+            return SimpleNamespace(user_id=user_id, server_id=server_id)
+
+        def get_channel_override(self, user_id, channel_id):
+            return None
+
+        def _should_notify_user_optimized(
+            self,
+            user_id,
+            author_id,
+            server_id,
+            channel_id,
+            mention_type,
+            settings,
+            override,
+        ):
+            self.checked.append((user_id, mention_type))
+            return True
+
+        def _create_notification(self, **kwargs):
+            self.created.append(kwargs)
+            return SimpleNamespace(id=1)
+
+        def _update_unread_count(self, *args, **kwargs):
+            self.unread_updates.append((args, kwargs))
+
+    class _FakeNotifications:
+        def __init__(self, manager):
+            self._manager = manager
+
+        def _get_manager(self):
+            return self._manager
+
+    @staticmethod
+    def _violation():
+        return Violation(
+            id=1,
+            server_id=1,
+            channel_id=None,
+            user_id=42,
+            message_id=None,
+            rule_id=1,
+            rule_type=RuleType.KEYWORD,
+            matched_content="bad",
+            actions_taken=[ActionType.ALERT_MODERATORS],
+            severity=ViolationSeverity.MEDIUM,
+            created_at=0,
+        )
+
+    def test_notifies_each_moderator(self, automod_manager):
+        from src.core.automod.actions.alert import AlertModeratorsAction
+
+        manager = self._FakeNotificationManager()
+        action = AlertModeratorsAction(automod_manager._db)
+        action._notifications = self._FakeNotifications(manager)
+
+        action._send_notifications([7, 8], self._violation(), None)
+
+        assert [c["user_id"] for c in manager.created] == [7, 8]
+        assert len(manager.unread_updates) == 2
+        assert [uid for uid, _ in manager.checked] == [7, 8]
+
+    def test_action_does_not_call_a_missing_notification_method(self):
+        import inspect
+        from src.core.automod.actions.alert import AlertModeratorsAction
+        from src.core.notifications.manager.creator import NotificationCreatorMixin
+
+        # The gate the fix targets really exists...
+        assert hasattr(NotificationCreatorMixin, "_should_notify_user_optimized")
+        # ...and the action must not reach for the non-existent spelling.
+        source = inspect.getsource(AlertModeratorsAction._send_notifications)
+        assert not re.search(r"\._should_notify_user\b", source)
