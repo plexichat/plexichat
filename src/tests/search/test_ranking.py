@@ -166,6 +166,154 @@ class TestMessageRanking:
 
         assert ranked == []
 
+    def test_future_created_at_does_not_raise(self):
+        """A message dated in the future must not crash the ranking pass.
+
+        ``created_at`` can exceed ``now_ms`` (clock skew between nodes,
+        imported rows, a scheduled-message dispatch indexed early). The
+        negative age used to reach ``math.log1p``, whose domain is
+        ``x > -1``, so any message more than 24h ahead raised ValueError
+        and turned the entire search request into a 500.
+        """
+        now_ts = 1_700_000_000_000
+        day_ms = 24 * 60 * 60 * 1000
+
+        results = [
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="barely future",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=now_ts + 1000,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="far future",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=now_ts + 2 * day_ms,
+            ),
+            MessageSearchResult(
+                id=3,
+                message_id=3,
+                content="absurdly future",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=now_ts + 400 * day_ms,
+            ),
+        ]
+
+        parsed = ParsedQuery(raw_query="test", search_terms=["test"])
+        engine = RankingEngine()
+
+        ranked = engine.rank_message_results(results, parsed, now_ms=now_ts)
+
+        assert len(ranked) == 3
+        assert all(r.score > 0 for r in ranked)
+
+    def test_future_created_at_gets_full_recency_boost(self):
+        """A future-dated message scores as brand new, not as a penalty.
+
+        The clamp pins the age at 0, so the recency factor is exactly 1.0
+        (the maximum) rather than the negative value an unclamped age
+        would have produced.
+        """
+        now_ts = 1_700_000_000_000
+        day_ms = 24 * 60 * 60 * 1000
+
+        parsed = ParsedQuery(raw_query="test", search_terms=["test"])
+        engine = RankingEngine()
+
+        just_now = MessageSearchResult(
+            id=1,
+            message_id=1,
+            content="age zero",
+            score=1.0,
+            author_id=1,
+            conversation_id=1,
+            created_at=now_ts,
+        )
+        future = MessageSearchResult(
+            id=2,
+            message_id=2,
+            content="future",
+            score=1.0,
+            author_id=1,
+            conversation_id=1,
+            created_at=now_ts + 3 * day_ms,
+        )
+
+        ranked = engine.rank_message_results([just_now, future], parsed, now_ms=now_ts)
+
+        future_score = next(r for r in ranked if r.content == "future").score
+        now_score = next(r for r in ranked if r.content == "age zero").score
+
+        assert future_score == pytest.approx(now_score)
+
+    def test_one_future_row_does_not_lose_other_results(self):
+        """A single bad row must not take down the rest of the page."""
+        now_ts = 1_700_000_000_000
+        day_ms = 24 * 60 * 60 * 1000
+
+        results = [
+            MessageSearchResult(
+                id=i,
+                message_id=i,
+                content=f"msg {i}",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=now_ts + (i * 2 * day_ms),
+            )
+            for i in range(1, 6)
+        ]
+
+        parsed = ParsedQuery(raw_query="test", search_terms=["test"])
+        engine = RankingEngine()
+
+        ranked = engine.rank_message_results(results, parsed, now_ms=now_ts)
+
+        assert {r.message_id for r in ranked} == {1, 2, 3, 4, 5}
+
+    def test_past_created_at_still_ranked_by_recency(self):
+        """The clamp must not flatten the normal recency ordering."""
+        now_ts = 1_700_000_000_000
+        day_ms = 24 * 60 * 60 * 1000
+
+        results = [
+            MessageSearchResult(
+                id=1,
+                message_id=1,
+                content="old",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=now_ts - 30 * day_ms,
+            ),
+            MessageSearchResult(
+                id=2,
+                message_id=2,
+                content="new",
+                score=1.0,
+                author_id=1,
+                conversation_id=1,
+                created_at=now_ts,
+            ),
+        ]
+
+        parsed = ParsedQuery(raw_query="test", search_terms=["test"])
+        engine = RankingEngine()
+
+        ranked = engine.rank_message_results(results, parsed, now_ms=now_ts)
+
+        assert ranked[0].content == "new"
+        assert ranked[1].content == "old"
+
 
 @pytest.mark.search
 class TestUserRanking:
