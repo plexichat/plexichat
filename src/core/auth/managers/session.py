@@ -870,9 +870,13 @@ class SessionMixin(AuthManagerProtocol):
         parsed = parse_token(token)
         if parsed and parsed["token_type"] == "session":
             row = self._db.fetch_one(
-                "SELECT user_id FROM auth_sessions WHERE id = ?", (parsed["id"],)
+                "SELECT user_id, token_hash FROM auth_sessions WHERE id = ?",
+                (parsed["id"],),
             )
-            if row:
+            # The session secret must be verified, not just the (enumerable)
+            # ID, otherwise anyone who learns a session ID can revoke that
+            # session without ever holding its token. Mirrors refresh_session.
+            if row and verify_token_hash(parsed["secret"], row["token_hash"]):
                 self._db.execute(
                     "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
                 )
