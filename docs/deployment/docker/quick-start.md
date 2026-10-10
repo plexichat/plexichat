@@ -48,7 +48,7 @@ BACKEND_VERSION=a.1.0-132 CLIENT_VERSION=a.1.0-117 docker compose up -d
 
 This command does the following:
 
-- Pulls images from `gitlab.plexichat.com` (or builds `backend` from `plexichat/Dockerfile:1` which uses `python:3.14.6-slim-trixie`).
+- Pulls images from `gitlab.plexichat.com` (or builds `backend` from `plexichat/Dockerfile:1` which uses `python:3.14.8-slim-trixie`).
 - Starts `db`, `valkey`, `rustfs`, `clamav`, `backend`, and `client`.
 - Applies the settings from `.env` and `plexichat/config/docker-config.yaml:1`.
 

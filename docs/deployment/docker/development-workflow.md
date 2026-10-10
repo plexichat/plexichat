@@ -10,7 +10,7 @@ Start all services with development defaults:
 docker compose up -d
 ```
 
-This starts PostgreSQL 18, Valkey 9.1.1, RustFS, ClamAV, the backend, the client, and the backup service. The backend image is `python:3.14.6-slim-trixie` and the health check pings `GET /api/v1/ready`.
+This starts PostgreSQL 18, Valkey 9.1.1, RustFS, ClamAV, the backend, the client, and the backup service. The backend image is `python:3.14.8-slim-trixie` and the health check pings `GET /api/v1/ready`.
 
 Check that all services are healthy:
 

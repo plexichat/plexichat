@@ -24,7 +24,7 @@ Install, configure, and run Plexichat in production. For subsystem-specific opti
 - RAM: 4 GB
 - Disk: 10 GB SSD
 - OS: Linux (Ubuntu 22.04 or later, Debian 12 or later, CentOS Stream 9 or later)
-- Python: 3.14 or later (the server image uses `python:3.14.6-slim-trixie` at `plexichat/Dockerfile:1`; 3.11 and 3.13 are not supported)
+- Python: 3.14 or later (the server image uses `python:3.14.8-slim-trixie` at `plexichat/Dockerfile:1`; 3.11 and 3.13 are not supported)
 
 ### Recommended for production
 
@@ -170,7 +170,7 @@ For containerized deployment, use Docker or Docker Compose. This is the recommen
 ### Quick start with Docker
 
 ```bash
-# Build the image (uses python:3.14.6-slim-trixie)
+# Build the image (uses python:3.14.8-slim-trixie)
 docker build -f plexichat/Dockerfile -t plexichat:latest plexichat
 
 # Run with environment variables

@@ -38,7 +38,7 @@ python main.py
 
 Requirements:
 
-* Python `3.14.6` (see `Dockerfile:1`)
+* Python `3.14.8` (see `Dockerfile:1`)
 * PostgreSQL `18-alpine` and Valkey `9.1.1-alpine` when you use Docker Compose (see `docker-compose.yml:25`, `docker-compose.yml:43`)
 * Node `20+` for the client build
 

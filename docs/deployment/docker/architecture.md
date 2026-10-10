@@ -113,7 +113,7 @@ Scans uploaded files for malware.
 
 Core application logic.
 
-*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}` built from `plexichat/Dockerfile` (`python:3.14.6-slim-trixie`, non-root user `plexichat` UID 10001).
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}` built from `plexichat/Dockerfile` (`python:3.14.8-slim-trixie`, non-root user `plexichat` UID 10001).
 *   **Services:** REST API at `/api/v1/*`, WebSocket gateway at `/gateway`, liveness probe at `GET /api/v1/ready`, deep health at `GET /api/v1/health` and `GET /health`, documentation at `/docs` and `/redoc`, admin UI at `/admin`.
 *   **Environment:** `PLEXICHAT_CONFIG=/app/config/docker-config.yaml`, `PLEXICHAT_PUBLIC_SERVER_URL`, `NO_STRICT_CONFIG=false`, `SCANNER_ENABLED=true`, `SCANNER_HOST=clamav`, `SCANNER_PORT=3310`, `SEARCH_BACKEND=sqlite_fts5` (default).
 *   **Volumes:** `./config/docker-config.yaml:/app/config/docker-config.yaml:ro` and `plexichat_home:/root/.plexichat`.

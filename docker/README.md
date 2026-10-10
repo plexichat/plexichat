@@ -6,7 +6,7 @@ This Compose file orchestrates the full Plexichat deployment.
 
 | Service | Image | Purpose |
 |---|---|---|
-| `backend` | `gitlab.plexichat.com/plexichat/plexichat/backend` | FastAPI server (Python `3.14.6`, see `Dockerfile:1`) |
+| `backend` | `gitlab.plexichat.com/plexichat/plexichat/backend` | FastAPI server (Python `3.14.8`, see `Dockerfile:1`) |
 | `db` | `postgres:18-alpine` | Primary database (`docker-compose.yml:25`) |
 | `valkey` | `valkey/valkey:9.1.1-alpine` | Cache, sessions, and presence (`docker-compose.yml:43`) |
 | `rustfs` | `rustfs/rustfs:1.0.0-rc.3` | S3-compatible object storage |

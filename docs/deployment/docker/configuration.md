@@ -96,7 +96,7 @@ docker compose up -d
 | `CLIENT_VERSION` | `latest` | Tag for the `client` Nginx image |
 | `CI_REGISTRY_IMAGE` | `gitlab.plexichat.com/plexichat/plexichat` | Registry prefix for backend and backup images |
 
-The Dockerfiles pin base images: `python:3.14.6-slim-trixie` for the backend, `nginx:stable-alpine` for the client, `postgres:18-alpine` for the database, `valkey/valkey:9.1.1-alpine` for Valkey, `rustfs/rustfs:1.0.0-rc.3` for storage, `rustfs/rc:v0.1.30` for bucket init, `clamav/clamav:1.5.4` for scanning, and `alpine:3.24` for cert generation.
+The Dockerfiles pin base images: `python:3.14.8-slim-trixie` for the backend, `nginx:stable-alpine` for the client, `postgres:18-alpine` for the database, `valkey/valkey:9.1.1-alpine` for Valkey, `rustfs/rustfs:1.0.0-rc.3` for storage, `rustfs/rc:v0.1.30` for bucket init, `clamav/clamav:1.5.4` for scanning, and `alpine:3.24` for cert generation.
 
 ### Database
 

@@ -104,7 +104,7 @@ cache:
 
 .python_base:
   image: 
-    name: python:3.14.6-slim-trixie
+    name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1
@@ -495,7 +495,7 @@ test:database_backends:
 performance:no_slow_tests:
   stage: performance
   image:
-    name: python:3.14.6-slim-trixie
+    name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
   needs:
     - test:pytest
@@ -522,7 +522,7 @@ performance:no_slow_tests:
 metrics:trend:
   stage: metrics
   image:
-    name: python:3.14.6-slim-trixie
+    name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends git

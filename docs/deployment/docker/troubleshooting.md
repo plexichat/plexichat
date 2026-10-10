@@ -568,7 +568,7 @@ docker compose up -d
 ERROR: failed to solve with frontend dockerfile.v0
 ```
 
-**Cause:** Dependency, network, or Dockerfile syntax error. The backend image uses `python:3.14.6-slim-trixie` (`plexichat/Dockerfile:1`).
+**Cause:** Dependency, network, or Dockerfile syntax error. The backend image uses `python:3.14.8-slim-trixie` (`plexichat/Dockerfile:1`).
 
 **Fix:**
 

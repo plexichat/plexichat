@@ -87,7 +87,7 @@ performs the Web Push (VAPID) payload encryption.
 
 - **Web client** (`plexichat-client/`) — separate notices file, audited with
   `npm run audit:licenses`. That tree is permissive-only.
-- **Base image and services** — the Debian `python:3.14.6-slim-trixie` base, the
+- **Base image and services** — the Debian `python:3.14.8-slim-trixie` base, the
   PostgreSQL/Valkey/Alpine service images and the bundled `ffmpeg` are provided
   by their own upstreams under their own licenses and are not covered by this
   file.
