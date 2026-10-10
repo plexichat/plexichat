@@ -37,6 +37,7 @@ from .exceptions import (
     PermissionDeniedError,
     MessageNotFoundError,
     PollConfigurationError,
+    PollAlreadyExistsError,
 )
 
 __all__ = [
@@ -59,6 +60,7 @@ __all__ = [
     "PermissionDeniedError",
     "MessageNotFoundError",
     "PollConfigurationError",
+    "PollAlreadyExistsError",
     "setup",
     "is_setup",
     "create_poll",

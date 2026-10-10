@@ -13,15 +13,11 @@ from src.api.schemas.messages import (
     MessageCreateRequest,
     MessageResponse,
 )
-from src.core.messaging.exceptions import (
-    MessageNotFoundError,
-)
 from src.core.embeds.exceptions import EmbedError
 from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
     ChannelAccessDeniedError,
-    PermissionDeniedError,
 )
 from src.core.polls import (
     PollResultsVisibility,
@@ -34,6 +30,20 @@ from src.core.polls import (
     InvalidPollDurationError,
     AlreadyVotedError,
     MultipleVoteNotAllowedError,
+    PollAlreadyExistsError,
+)
+
+# ``src.core.polls`` ships its own ``PermissionDeniedError`` /
+# ``MessageNotFoundError``.  They share a name with the servers/messaging
+# ones but descend from a different base (``PollError`` vs ``ServerError``),
+# so they are aliased here: the poll handler below must catch the classes
+# ``polls.create_poll`` actually raises, otherwise every poll authorization
+# or message-missing failure falls through to a generic 500.
+from src.core.polls import (
+    PermissionDeniedError as PollPermissionDeniedError,
+)
+from src.core.polls import (
+    MessageNotFoundError as PollMessageNotFoundError,
 )
 from src.api.routes.messages.helpers import _message_to_response
 from src.api.routes.messages.messages import get_msg_id
@@ -284,8 +294,9 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     InvalidPollDurationError,
                     AlreadyVotedError,
                     MultipleVoteNotAllowedError,
-                    PermissionDeniedError,
-                    MessageNotFoundError,
+                    PollAlreadyExistsError,
+                    PollPermissionDeniedError,
+                    PollMessageNotFoundError,
                 ) as e:
                     if messaging:
                         try:
@@ -299,7 +310,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     if isinstance(
                         e,
                         (
-                            MessageNotFoundError,
+                            PollMessageNotFoundError,
                             ServerNotFoundError,
                             ChannelNotFoundError,
                         ),
@@ -310,10 +321,23 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                                 "error": {"code": 404, "message": "Message not found"}
                             },
                         )
-                    if isinstance(e, (PermissionDeniedError, ChannelAccessDeniedError)):
+                    if isinstance(
+                        e,
+                        (PollPermissionDeniedError, ChannelAccessDeniedError),
+                    ):
                         raise HTTPException(
                             status_code=403,
                             detail={"error": {"code": 403, "message": "Access denied"}},
+                        )
+                    if isinstance(e, PollAlreadyExistsError):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "error": {
+                                    "code": 409,
+                                    "message": "Resource already exists",
+                                }
+                            },
                         )
                     raise HTTPException(
                         status_code=400,

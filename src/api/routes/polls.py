@@ -29,6 +29,7 @@ from src.core.polls import (
     MultipleVoteNotAllowedError,
     PermissionDeniedError,
     MessageNotFoundError,
+    PollAlreadyExistsError,
 )
 
 router = APIRouter(prefix="/polls", tags=["Polls"])
@@ -93,6 +94,7 @@ def _results_to_response(results) -> PollResultsResponse:
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         404: {"model": ErrorResponse, "description": "Message not found"},
+        409: {"model": ErrorResponse, "description": "Message already has a poll"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -142,6 +144,11 @@ async def create_poll(
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except PollAlreadyExistsError:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": {"code": 409, "message": "Resource already exists"}},
         )
     except MessageNotFoundError:
         raise HTTPException(

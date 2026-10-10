@@ -32,6 +32,7 @@ from .exceptions import (
     PermissionDeniedError,
     MessageNotFoundError,
     PollConfigurationError,
+    PollAlreadyExistsError,
 )
 
 
@@ -195,6 +196,7 @@ class PollManager(BaseManager):
             PollOptionLimitError: Invalid number of options
             InvalidPollDurationError: Invalid duration
             MessageNotFoundError: Message not found
+            PollAlreadyExistsError: Message already carries a poll
         """
         messaging = self._require_messaging()
         msg = messaging.get_message(user_id, message_id)
@@ -202,6 +204,20 @@ class PollManager(BaseManager):
             raise MessageNotFoundError("Message not found")
         if msg.author_id != user_id:
             raise PermissionDeniedError("Can only create polls on own messages")
+
+        # ``poll_polls.message_id`` is UNIQUE -- a message may carry at
+        # most one poll.  Report that as a domain error up front so the
+        # route layer can answer 409 instead of letting the raw driver
+        # IntegrityError surface as a 500.  The UNIQUE violation raised
+        # by a poll that lands between this check and our INSERT is
+        # translated to the same error below.
+        existing = self._db.fetch_one(
+            "SELECT id FROM poll_polls WHERE message_id = ?", (message_id,)
+        )
+        if existing:
+            raise PollAlreadyExistsError(
+                f"Message {message_id} already has a poll attached"
+            )
 
         question = self._validate_question(question)
 
@@ -281,8 +297,16 @@ class PollManager(BaseManager):
                 )
 
             self._db.commit()
-        except Exception:
+        except Exception as exc:
             self._db.rollback()
+            # A concurrent create for the same message won the race
+            # between our existence check and this INSERT; the UNIQUE
+            # constraint is the authoritative guard, so map it onto the
+            # same domain error the pre-check raises.
+            if _is_unique_violation(exc):
+                raise PollAlreadyExistsError(
+                    f"Message {message_id} already has a poll attached"
+                ) from exc
             raise
 
         logger.debug(f"Created poll {poll_id} on message {message_id}")
