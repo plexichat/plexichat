@@ -285,6 +285,7 @@ class TestAuthManagerTokenHandling:
         for _ in range(10):
             token_info = auth_manager.verify_token(result.token)
             assert token_info is not None
+            assert token_info.expires_at > 0
 
     def test_verify_token_ip_binding(self, db, auth_manager):
         """Test token IP binding enforcement."""
@@ -300,6 +301,7 @@ class TestAuthManagerTokenHandling:
         # Verify token - should work without IP binding
         token_info = auth_manager.verify_token(result.token)
         assert token_info is not None
+        assert token_info.expires_at > 0
 
     def test_verify_token_user_agent_binding(self, db, auth_manager):
         """Test token user-agent binding enforcement."""
@@ -315,6 +317,7 @@ class TestAuthManagerTokenHandling:
         # Verify token - should work without user-agent binding
         token_info = auth_manager.verify_token(result.token)
         assert token_info is not None
+        assert token_info.expires_at > 0
 
     def test_bot_token_verification(self, db, auth_manager):
         """Test bot token verification."""
@@ -366,7 +369,9 @@ class TestAuthManagerTwoFactor:
         from src.utils import encryption
         import src.core.auth.totp as totp
 
-        monkeypatch.setattr(totp, "verify_totp_code", lambda secret, code: True)
+        monkeypatch.setattr(
+            totp, "verify_totp_code", lambda secret, code, *args, **kwargs: True
+        )
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user = auth_manager.register("testuser", "test@example.com", "Password123!")
@@ -384,7 +389,9 @@ class TestAuthManagerTwoFactor:
         import src.core.auth.totp as totp
 
         monkeypatch.setattr(
-            totp, "verify_totp_code", lambda secret, code: code == "correct"
+            totp,
+            "verify_totp_code",
+            lambda secret, code, *args, **kwargs: code == "correct",
         )
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
@@ -411,8 +418,30 @@ class TestAuthManagerTwoFactor:
             auth_manager.disable_2fa(user.id, "WrongPassword", "123456")
 
     def test_2fa_challenge_expired(self, db, auth_manager):
-        """Test completing expired 2FA challenge."""
-        pass
+        """Test completing an expired 2FA challenge."""
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register("testuser", "test@example.com", "Password123!")
+
+        from src.core.auth.tokens import create_2fa_challenge_token
+        from src.utils.encryption import generate_snowflake_id
+
+        challenge_id = generate_snowflake_id()
+        now = int(time.time() * 1000)
+        # The token and its hash come from a single generation call so the
+        # secret matches the stored hash (reaching the expiry check).
+        full_token, token_hash = create_2fa_challenge_token(challenge_id)
+
+        db.execute(
+            """INSERT INTO auth_2fa_challenges 
+               (id, user_id, token_hash, created_at, expires_at, used)
+               VALUES (?, ?, ?, ?, ?, 0)""",
+            (challenge_id, user.id, token_hash, now, now - 100000),
+        )
+
+        with pytest.raises(TokenExpiredError):
+            auth_manager.complete_2fa(full_token, "123456")
 
     def test_2fa_challenge_used(self, db, auth_manager):
         """Test reusing 2FA challenge."""
@@ -753,6 +782,7 @@ class TestAuthManagerCache:
 
         cached2 = auth_manager.get_user(user.id)
         assert cached2 is not None
+        assert cached2.id == user.id
 
     def test_cache_invalidation_on_update(self, db, auth_manager):
         """Test cache is invalidated on user update."""
@@ -768,6 +798,7 @@ class TestAuthManagerCache:
 
         updated = auth_manager.get_user(user.id)
         assert updated is not None
+        assert updated.id == user.id
 
     def test_bulk_user_fetch_caching(self, db, auth_manager):
         """Test get_users_bulk uses cache."""
@@ -904,7 +935,8 @@ class TestAuthManagerDevices:
             auth_manager.login("testuser", "Password123!", device_info=device_info)
 
         devices = auth_manager.get_devices(user.id)
-        assert len(devices) > 0
+        # Exactly one device was registered during the login
+        assert len(devices) == 1
         assert devices[0].fingerprint == "test_device_123"
 
     def test_rename_device_wrong_user(self, db, auth_manager):
@@ -988,14 +1020,20 @@ class TestAuthManagerAudit:
 
         with patch.object(encryption, "verify_password", return_value=True):
             auth_manager.login("testuser", "Password123!")
-        try:
+        with pytest.raises(Exception):
             with patch.object(encryption, "verify_password", return_value=False):
                 auth_manager.login("testuser", "WrongPassword")
-        except Exception:
-            pass
+
+        from src.core.auth.models import AuditEventType
 
         history = auth_manager.get_login_history(user.id)
-        assert len(history) > 0
+        # One successful login + one failed login => exactly two entries
+        assert len(history) == 2
+        event_types = {e.event_type for e in history}
+        assert event_types == {
+            AuditEventType.LOGIN_SUCCESS,
+            AuditEventType.LOGIN_FAILED,
+        }
 
     def test_audit_security_events(self, db, auth_manager):
         """Test security events audit."""
@@ -1008,8 +1046,16 @@ class TestAuthManagerAudit:
         with patch.object(encryption, "verify_password", return_value=True):
             auth_manager.change_password(user.id, "Password123!", "NewPassword456!")
 
+        from src.core.auth.models import AuditEventType
+
         events = auth_manager.get_security_events(user.id)
-        assert len(events) > 0
+        # register + change_password write exactly one audit row each
+        assert len(events) == 2
+        event_types = {e.event_type for e in events}
+        assert event_types == {
+            AuditEventType.REGISTER,
+            AuditEventType.PASSWORD_CHANGE,
+        }
 
 
 class TestAuthManagerUtilities:
@@ -1048,4 +1094,5 @@ class TestAuthManagerUtilities:
     def test_get_config(self, db, auth_manager):
         """Test config value retrieval."""
         value = config.get("authentication.sessions.max_per_user", 10)
-        assert value is not None
+        assert isinstance(value, int)
+        assert value > 0

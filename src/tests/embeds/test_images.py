@@ -119,7 +119,7 @@ class TestEmbedImage:
         embed = embeds._manager.create_embed(
             user_id=user.id,
             title="HTTPS Image",
-            image={"url": "https://cdn.example.com/images/photo.jpg"},
+            image={"url": "https://example.com/images/photo.jpg"},
         )
 
         assert embed.image.url.startswith("https://")
@@ -364,7 +364,7 @@ class TestImageFormats:
         embed = embeds._manager.create_embed(
             user_id=user.id,
             title="Path URL",
-            image={"url": "https://cdn.example.com/uploads/2025/01/image.png"},
+            image={"url": "https://example.com/uploads/2025/01/image.png"},
         )
 
         assert "/uploads/" in embed.image.url

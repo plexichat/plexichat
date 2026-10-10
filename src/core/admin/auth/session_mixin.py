@@ -8,6 +8,7 @@ from typing import Optional
 
 from typing import Any
 
+
 from .helpers import _hash_admin_token
 
 
@@ -23,7 +24,10 @@ class SessionMixin:
         token = secrets.token_urlsafe(32)
         token_hash = _hash_admin_token(token)
         now = int(time.time())
-        expires = now + (expires_hours * 3600 * 1000)
+        # Admin session timestamps are stored and compared in seconds.
+        # Keep the expiry in the same unit; multiplying by 1000 made an
+        # eight-hour session valid for roughly 333 days.
+        expires = now + (expires_hours * 3600)
         sid = generate_snowflake_id()
         self._db.execute(
             "INSERT INTO admin_sessions (id, admin_id, token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
@@ -40,25 +44,10 @@ class SessionMixin:
             (token_hash, now),
         )
         if not row:
-            legacy_row = self._db.fetch_one(
-                "SELECT id, admin_id, token FROM admin_sessions WHERE token = ? AND expires_at > ?",
-                (token, now),
-            )
-            if legacy_row:
-                if isinstance(legacy_row, dict):
-                    session_id = legacy_row["id"]
-                    admin_id = legacy_row["admin_id"]
-                else:
-                    session_id = legacy_row[0]
-                    admin_id = legacy_row[1]
-                try:
-                    self._db.execute(
-                        "UPDATE admin_sessions SET token = ? WHERE id = ?",
-                        (token_hash, session_id),
-                    )
-                except Exception:
-                    pass
-                return admin_id
+            # Raw bearer values from pre-hardened deployments are deliberately
+            # no longer accepted. They cannot be safely distinguished from a
+            # leaked token at validation time; administrators must sign in
+            # again so a deterministic fingerprint is stored instead.
             return None
 
         if isinstance(row, dict):

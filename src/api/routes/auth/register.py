@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, Response, HTTPException
 
 import src.api as api
 import utils.logger as logger
@@ -6,6 +6,11 @@ from utils.logger import mask_email, mask_string
 from src.api.schemas.auth import RegisterRequest, LoginResponse
 from src.api.schemas.common import ErrorResponse
 from .helpers import _user_to_response
+from .cookies import (
+    set_session_cookie,
+    session_expiry_seconds,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     AuthError,
     UserExistsError,
@@ -13,6 +18,7 @@ from src.core.auth.exceptions import (
     InvalidEmailError,
     WeakPasswordError,
 )
+from src.utils.net import get_client_ip
 
 try:
     import utils.config as config_util
@@ -36,7 +42,9 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def register(request: Request, body: RegisterRequest) -> LoginResponse:
+async def register(
+    request: Request, response: Response, body: RegisterRequest
+) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -45,7 +53,7 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     device_info = {"user_agent": request.headers.get("User-Agent", "unknown")}
 
     age = body.age
@@ -141,6 +149,18 @@ async def register(request: Request, body: RegisterRequest) -> LoginResponse:
             },
         )
 
+    # M9 (same as login): browsers receive the session ONLY via the
+    # HttpOnly cookie; the JSON body carries a status marker plus the
+    # session lifetime, and the raw token is echoed back solely for
+    # non-browser clients that opt in with
+    # ``X-Plexichat-Token-Mode: bearer``. (This route never returns
+    # two_factor_required: a fresh registration has no 2FA yet.)
+    # Mirror the real session expiry (trusted-device rows are longer-lived).
+    max_age = session_expiry_seconds(result.session)
+    set_session_cookie(response, result.token, max_age=max_age)
     return LoginResponse(
-        status="success", token=result.token, user=_user_to_response(user)
+        status="success",
+        token=session_token_for_response(request, result.token),
+        user=_user_to_response(user),
+        expires_in=max_age,
     )

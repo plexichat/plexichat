@@ -67,19 +67,37 @@ class NonceStore:
     def _get_valkey(self):
         """Return the configured Valkey client, or ``None`` if unavailable.
 
-        Result is memoized after the first call.
-        """
-        if self._valkey_checked:
-            return self._valkey
-        self._valkey_checked = True
-        try:
-            from src.core.database.valkey_client import get_client
+        A client is only returned when it is actually usable (enabled and
+        connected on at least one handle). ``get_client()`` returns the
+        process-wide instance even when Valkey is disabled or never
+        connected, so a bare ``is not None`` check would route the
+        single-worker (in-process dict) deployment into the Valkey path
+        and fail every ``issue()`` with 503. Callers follow the same
+        ``get_client()`` + ``is_available()`` pattern used by the cache
+        and rate-limit tiers.
 
-            self._valkey = get_client()
+        The lookup is intentionally live (not memoized): the async handle
+        may open after this store is created, and a memoized ``None`` or
+        disabled handle would pin the wrong backend for the process
+        lifetime.
+        """
+        try:
+            from src.core.database.valkey_client import get_client, is_available
+
+            client = get_client()
+            if client is None:
+                return None
+            try:
+                if not is_available():
+                    return None
+            except Exception:
+                # Availability probe must never break the in-process
+                # fallback; treat probe failure as unavailable.
+                return None
+            return client
         except Exception as e:
             logger.debug(f"Valkey client unavailable for nonce store: {e}")
-            self._valkey = None
-        return self._valkey
+            return None
 
     def _valkey_key(self, nonce: str) -> str:
         return f"{self.NONCE_KEY_PREFIX}{nonce}"
@@ -109,11 +127,23 @@ class NonceStore:
         return nonce, self._ttl_seconds
 
     def consume(self, nonce: str) -> bool:
-        """Atomically validate-and-remove a nonce. Returns True on success."""
+        """Atomically validate-and-remove a nonce. Returns True on success.
+
+        Fails closed like :meth:`issue`: when Valkey is the active backend
+        but the atomic consume errors, an ``HTTPException`` (503) is raised
+        instead of returning ``False``. Returning ``False`` would make the
+        export endpoint report ``401 Invalid nonce`` for an infrastructure
+        outage, misleading the operator and forcing needless re-issues for
+        a nonce that was never actually consumed.
+        """
         if not nonce:
             return False
         valkey_client = self._get_valkey()
         if valkey_client is not None:
+            # Fail closed on Valkey errors: do NOT report the nonce as
+            # invalid. A split-brain answer here would either burn a valid
+            # nonce's retry (if the DEL landed) or blame the client for a
+            # server-side outage (if it did not).
             try:
                 result = valkey_client.eval_lua(
                     _CONSUME_LUA, keys=[self._valkey_key(nonce)], args=[]
@@ -121,7 +151,10 @@ class NonceStore:
                 return bool(int(result))
             except Exception as e:
                 logger.error(f"Valkey EVAL failed for license nonce: {e}")
-                return False
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="License challenge store is unavailable",
+                )
         with self._lock:
             entry = self._nonces.pop(nonce, None)
             if entry is None:
@@ -137,6 +170,25 @@ class NonceStore:
             del self._nonces[k]
 
     def __len__(self) -> int:
+        """Return the number of outstanding (unconsumed) nonces.
+
+        When Valkey is the active backend the authoritative count lives
+        there, so it is read via ``KEYS`` on the nonce prefix (the nonce
+        keyspace is tiny: one key per issued challenge with a short TTL).
+        Any Valkey error falls back to the in-process count rather than
+        raising, since ``__len__`` is a monitoring/debugging helper and
+        must never break request handling.
+        """
+        valkey_client = self._get_valkey()
+        if valkey_client is not None:
+            try:
+                keys_fn = getattr(valkey_client, "keys", None)
+                if callable(keys_fn):
+                    found = keys_fn(f"{self.NONCE_KEY_PREFIX}*")
+                    if isinstance(found, (list, tuple, set)):
+                        return len(found)
+            except Exception as e:
+                logger.debug(f"Valkey KEYS failed for license nonce count: {e}")
         with self._lock:
             return len(self._nonces)
 
@@ -217,11 +269,14 @@ async def get_license_challenge() -> dict:
     summary="Export the active license after verifying a signed challenge",
     responses={
         200: {"description": "The full license document."},
-        400: {"description": "Malformed nonce or signature."},
+        400: {"description": "Malformed nonce."},
         401: {"description": "Missing, unknown, expired, or already-used nonce."},
         403: {"description": "Signature did not verify against the public key."},
         404: {"description": "No license is loaded on this instance (free tier)."},
-        503: {"description": "License public key is not configured on this instance."},
+        503: {
+            "description": "License public key is not configured on this instance, "
+            "or the challenge store is unavailable."
+        },
     },
 )
 async def export_license(
@@ -232,6 +287,7 @@ async def export_license(
         ...,
         min_length=1,
         max_length=_MAX_SIGNATURE_LEN,
+        pattern=r"^[A-Za-z0-9+/]+={0,2}$",
         description="Base64 Ed25519 signature of the nonce",
     ),
 ) -> dict:
@@ -250,13 +306,13 @@ async def export_license(
         sig_bytes = base64.b64decode(signature, validate=True)
     except Exception:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Signature is not valid base64",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signature did not verify against the Plexichat public key",
         )
     if len(sig_bytes) != 64:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Signature must decode to exactly 64 bytes",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Signature did not verify against the Plexichat public key",
         )
 
     public_key_bytes = _get_public_key_bytes()
@@ -349,6 +405,9 @@ async def license_info() -> dict:
             "available": True,
             "free_tier": licensing_module.is_free_tier(),
             "valid": licensing_module.is_valid(),
+            "provisional": licensing_module.is_provisional(),
+            "license_type": licensing_module.get_license_type(),
+            "allowed_hosts": licensing_module.get_allowed_hosts(),
             "has_instance_id": licensing_module.get_instance_id() is not None,
             "public_key_fingerprint": _fingerprint(),
         }

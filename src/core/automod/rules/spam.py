@@ -121,36 +121,29 @@ class MessageSpamRule(BaseRule):
         return None
 
     def _calculate_similarity(self, s1: str, s2: str) -> float:
-        """Calculate simple similarity ratio between two strings."""
+        """Calculate word-level Jaccard similarity between two strings."""
         if not s1 or not s2:
             return 0.0
 
         if s1 == s2:
             return 1.0
 
-        len1, len2 = len(s1), len(s2)
-        if len1 == 0 or len2 == 0:
+        words1 = set(s1.lower().split())
+        words2 = set(s2.lower().split())
+        if not words1 or not words2:
             return 0.0
 
-        max_len = max(len1, len2)
-        min_len = min(len1, len2)
-
-        if min_len / max_len < 0.5:
-            return 0.0
-
-        matches = 0
-        shorter, longer = (s1, s2) if len1 <= len2 else (s2, s1)
-
-        for i, char in enumerate(shorter):
-            if i < len(longer) and char == longer[i]:
-                matches += 1
-
-        return matches / max_len
+        intersection = words1 & words2
+        union = words1 | words2
+        return len(intersection) / len(union)
 
     @classmethod
     def validate_config(cls, config: Dict[str, Any]) -> tuple:
         """Validate spam rule configuration."""
         issues = []
+
+        if "max_messages" not in config:
+            issues.append("max_messages is required")
 
         max_messages = config.get("max_messages", 5)
         if not isinstance(max_messages, int) or max_messages < 1:

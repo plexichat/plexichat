@@ -4,8 +4,35 @@ Shared fixtures for embed tests.
 Uses the session-scoped fixtures from root conftest for efficiency.
 """
 
+import ipaddress
+import socket
+
 import pytest
 import uuid
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_dns(monkeypatch):
+    """Make URL validation deterministic: no real DNS lookups.
+
+    ``validate_url`` -> ``URLValidator.validate_url_for_request`` resolves
+    hostnames via ``socket.getaddrinfo``. Tests must not depend on the
+    network — real lookups are slow and flaky under load or offline (the
+    IDN tests failed intermittently when DNS timed out on a busy box).
+
+    IP literals keep their real address (so private-range / SSRF literal
+    checks still work) while every public hostname resolves to one fixed
+    public IP — making IDN / validation assertions deterministic and fast.
+    """
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        try:
+            ip = ipaddress.ip_address(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (str(ip), 0))]
+        except ValueError:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
 
 def _init_embeds(modules):

@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import raise_bad_request
+from src.core.push.exceptions import PermissionDeniedError
 
 router = APIRouter()
 
@@ -15,6 +17,8 @@ class PushTokenRequest(BaseModel):
     platform: str = Field(..., description="Platform: ios, android, or web")
     device_id: Optional[str] = Field(None, description="Device identifier")
     app_version: Optional[str] = Field(None, description="App version string")
+    p256dh: Optional[str] = Field(None, description="Web Push P-256 public key")
+    auth: Optional[str] = Field(None, description="Web Push auth secret")
 
 
 @router.post(
@@ -40,10 +44,26 @@ async def register_push_token(
             platform=body.platform,
             device_id=body.device_id,
             app_version=body.app_version,
+            p256dh=body.p256dh,
+            auth=body.auth,
         )
-        return {"success": True, "token_record": result}
-    except ValueError as e:
-        raise_bad_request(str(e))
+        # SECURITY: never echo the raw token / Web Push keys back.
+        # The row is opaque to the OpenAPI walk, so stringify its snowflake
+        # ids here: ``id`` is a generated snowflake and ``user_id`` the
+        # owner's, and a JS Number would round both past 2**53.
+        return stringify_snowflake_ids(
+            {
+                "success": True,
+                "token_record": PushManager._sanitize_token_record(result),
+            }
+        )
+    except ValueError:
+        raise_bad_request("Invalid push token data")
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Push token operation denied"}},
+        )
 
 
 @router.get(
@@ -59,7 +79,35 @@ async def list_push_tokens(
 
     svc = PushManager(db)
     tokens = svc.get_user_tokens(current_user.user_id)
-    return {"tokens": tokens}
+    # SECURITY: get_user_tokens returns decrypted credentials for delivery
+    # use only; strip them before serialising to the client. The opaque dict
+    # also bypasses the OpenAPI id walk, so stringify the snowflake ids here.
+    return stringify_snowflake_ids(
+        {"tokens": [PushManager._sanitize_token_record(t) for t in tokens]}
+    )
+
+
+@router.delete(
+    "/push/tokens/id/{token_id}",
+    summary="Unregister push token by id",
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def unregister_push_token_by_id(
+    token_id: str, current_user: TokenInfo = Depends(get_current_user)
+):
+    # Preferred removal flow: list responses expose only the row id plus a
+    # token_hint (raw tokens are sanitized out), so clients unregister by id.
+    try:
+        parsed_token_id = int(token_id)
+    except (TypeError, ValueError):
+        raise_bad_request("Invalid token id")
+
+    db = api.get_db()
+    from src.core.push.manager import PushManager
+
+    svc = PushManager(db)
+    svc.unregister_token_by_id(current_user.user_id, parsed_token_id)
+    return {"success": True}
 
 
 @router.delete(

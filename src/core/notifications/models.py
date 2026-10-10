@@ -114,7 +114,6 @@ class UnreadCount:
     conversation_id: SnowflakeID
     unread_count: int = 0
     mention_count: int = 0
-    total_unread: int = 0
     server_id: Optional[SnowflakeID] = None
     channel_id: Optional[SnowflakeID] = None
     last_read_message_id: Optional[SnowflakeID] = None

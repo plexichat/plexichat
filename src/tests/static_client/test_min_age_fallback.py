@@ -4,14 +4,11 @@ Tests for the static client min_age fallback logic.
 
 from __future__ import annotations
 
-import os
 import tempfile
 from unittest.mock import patch
 
 
-os.environ.setdefault("PLEXICHAT_SYSTEM_KEY", "a" * 64)
-
-from src.static_client.config import (  # noqa: E402
+from src.static_client.config import (
     CacheControlConfig,
     ConfigInjectionConfig,
     GitLabConfig,
@@ -19,12 +16,12 @@ from src.static_client.config import (  # noqa: E402
     StaticClientConfig,
     StaticRateLimitConfig,
 )
-from src.static_client.fetcher import ReleaseAsset  # noqa: E402
-from src.static_client.manager import (  # noqa: E402
+from src.static_client.fetcher import ReleaseAsset
+from src.static_client.manager import (
     InstallResult,
     StaticClientManager,
 )
-from src.utils.common_utils.utils.version.core import parse_version  # noqa: E402
+from src.utils.common_utils.utils.version.core import parse_version
 
 
 def _make_cfg(tmp_path: str, min_age: int) -> StaticClientConfig:
@@ -187,3 +184,106 @@ def test_config_template_does_not_raise_keyerror():
     assert "a.1.0-60" in out
     assert "{origin}" not in out
     assert "{version}" not in out
+
+
+def test_config_injection_defaults_to_empty_public_server_url(monkeypatch):
+    """A stock install must not hard-code localhost:8000.
+
+    ``public_server_url`` defaults to empty so the router falls back to the
+    request's actual origin — the previous default silently pointed every
+    non-localhost deployment's client at http://localhost:8000.
+    """
+    monkeypatch.delenv("PLEXICHAT_PUBLIC_SERVER_URL", raising=False)
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    assert cfg.config_injection.public_server_url == ""
+
+
+def test_config_injection_env_override_is_honoured(monkeypatch):
+    """An explicit env override still wins over the empty default."""
+    monkeypatch.setenv("PLEXICHAT_PUBLIC_SERVER_URL", "https://chat.example.com")
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    assert cfg.config_injection.public_server_url == "https://chat.example.com"
+
+
+def test_security_headers_csp_defaults_are_consistent():
+    """All three CSP defaults must agree: no inline scripts (they are now
+    externalized) while inline styles remain allowed for runtime <style>
+    injection."""
+    from src.static_client.config import SecurityHeadersConfig, get_static_client_config
+
+    dataclass_default = SecurityHeadersConfig().content_security_policy
+    fallback = get_static_client_config().security_headers.content_security_policy
+    assert dataclass_default == fallback
+
+    assert "script-src 'self' https://cdn.jsdelivr.net" in fallback
+    script_src = fallback.split("script-src", 1)[1].split(";", 1)[0]
+    assert "'unsafe-inline'" not in script_src
+    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in fallback
+    # Self-hosted fonts (Phosphor.woff2) and data: media must be allowed.
+    assert "font-src 'self' https://fonts.gstatic.com data:" in fallback
+    assert "media-src 'self' blob: data:" in fallback
+
+
+def test_request_origin_prefers_origin_then_host():
+    """The runtime origin used for config.js must reflect the request."""
+    from src.static_client.router import StaticClientMiddleware
+
+    with_origin = {
+        "scheme": "https",
+        "headers": [
+            (b"origin", b"https://chat.example.com"),
+            (b"host", b"internal:8000"),
+        ],
+    }
+    assert (
+        StaticClientMiddleware._request_origin(with_origin)
+        == "https://chat.example.com"
+    )
+
+    host_only = {
+        "scheme": "http",
+        "headers": [(b"host", b"chat.example.com")],
+    }
+    assert (
+        StaticClientMiddleware._request_origin(host_only) == "http://chat.example.com"
+    )
+
+    assert (
+        StaticClientMiddleware._request_origin({"scheme": "http", "headers": []}) == ""
+    )
+
+
+def test_render_config_js_escapes_host_header_injection():
+    """A malicious Host/Origin header must not break out of the JS string."""
+    from src.static_client.manager import _render_config_js
+
+    template = (
+        'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", version: "{version}" }};'
+    )
+    out = _render_config_js(template, 'http://x";alert(1)//', "a.1.0-60")
+    # The raw unescaped breakout never appears verbatim...
+    assert 'http://x";alert(1)' not in out
+    # ...the quote is escaped, so the string literal never closes...
+    assert '\\"' in out
+    # ...and the payload survives only as inert string content.
+    assert "alert(1)" in out
+
+
+def test_render_config_js_escapes_backslashes_and_newlines():
+    from src.static_client.manager import _render_config_js
+
+    template = 'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}" }};'
+    out = _render_config_js(template, "http://x\n\"'", "v")
+    assert "\n" not in out
+    assert "\\n" in out
+
+
+def test_js_escape_leaves_plain_origin_unchanged():
+    from src.static_client.manager import _js_escape
+
+    assert _js_escape("https://chat.example.com") == "https://chat.example.com"
+    assert _js_escape("") == ""

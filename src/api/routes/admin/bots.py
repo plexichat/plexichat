@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from .utils import check_host_restriction, get_admin_from_token
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import applications
 import utils.logger as logger
 
@@ -39,9 +39,9 @@ class BotStatsResponse(BaseModel):
 class AdminBotEntry(BaseModel):
     """A bot entry in the admin panel."""
 
-    id: int
+    id: SnowflakeID
     name: str
-    owner_id: int
+    owner_id: SnowflakeID
     bot_id: Optional[str] = None
     icon_url: Optional[str] = None
     approved_servers: int = 0
@@ -52,11 +52,11 @@ class AdminBotEntry(BaseModel):
 class AdminBotRequestEntry(BaseModel):
     """A bot request in the admin panel."""
 
-    id: int
+    id: SnowflakeID
     application_id: str
     application_name: str
     server_id: str
-    requester_id: int
+    requester_id: SnowflakeID
     reason: Optional[str] = None
     status: str
     created_at: int
@@ -85,7 +85,7 @@ async def admin_bot_stats(
         logger.error(f"Admin bot stats error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -94,6 +94,7 @@ async def admin_bot_stats(
     response_model=List[AdminBotEntry],
     summary="List all applications for admin",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -114,7 +115,7 @@ async def admin_list_applications(
         logger.error(f"Admin bot applications error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -123,6 +124,7 @@ async def admin_list_applications(
     response_model=List[AdminBotRequestEntry],
     summary="List all bot requests for admin",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
         401: {"model": ErrorResponse, "description": "Unauthorized"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
@@ -146,5 +148,5 @@ async def admin_list_requests(
         logger.error(f"Admin bot requests error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

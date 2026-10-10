@@ -15,6 +15,9 @@ from .common import (
 
 router = APIRouter()
 
+# Matches ThreadSlowmode.MAX_INTERVAL_MS (6 hours).
+MAX_SLOWMODE_SECONDS = 21600
+
 
 class ThreadSlowmodeRequest(BaseModel):
     interval_ms: int = Field(
@@ -38,15 +41,46 @@ async def set_channel_slowmode(
 ):
     cid = parse_id(channel_id, "channel ID")
 
-    servers_mod = api.get_servers()
-    if not servers_mod:
-        raise_internal("Servers module not available")
-
     interval_seconds = max(0, body.interval_ms // 1000)
+    if interval_seconds > MAX_SLOWMODE_SECONDS:
+        raise_bad_request(
+            f"Slowmode interval cannot exceed {MAX_SLOWMODE_SECONDS} seconds"
+        )
 
     db = api.get_db()
     if not db:
         raise_internal("Database not available")
+
+    channel_row = db.fetch_one(
+        "SELECT server_id FROM srv_channels WHERE id = ?",
+        (cid,),
+    )
+    if not channel_row:
+        raise_not_found("Channel not found")
+    server_id_value = (
+        channel_row["server_id"] if isinstance(channel_row, dict) else channel_row[0]
+    )
+    if not server_id_value:
+        raise_not_found("Channel not found")
+    server_id = int(server_id_value)
+
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise_internal("Servers module not available")
+
+    can_manage = False
+    for permission in ("channels.manage", "administrator"):
+        try:
+            if servers_mod.has_permission(
+                current_user.user_id, server_id, permission, cid
+            ):
+                can_manage = True
+                break
+        except Exception:
+            continue
+    if not can_manage:
+        raise_forbidden("Missing permission to manage this channel")
+
     try:
         db.execute(
             "UPDATE srv_channels SET slowmode_seconds = ? WHERE id = ?",
@@ -57,7 +91,10 @@ async def set_channel_slowmode(
         )
         return {
             "success": True,
-            "channel_id": cid,
+            # Snowflake ids are emitted as strings: a JS Number cannot
+            # hold a 64-bit id exactly, so a numeric id would be rounded
+            # by the client and subsequent lookups would miss.
+            "channel_id": str(cid),
             "slowmode_seconds": interval_seconds,
         }
     except Exception as e:
@@ -68,7 +105,11 @@ async def set_channel_slowmode(
 @router.get(
     "/channels/{channel_id}/slowmode",
     summary="Get channel slowmode",
-    responses={401: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 async def get_channel_slowmode(
     channel_id: str, current_user: TokenInfo = Depends(get_current_user)
@@ -79,13 +120,38 @@ async def get_channel_slowmode(
     if not db:
         raise_internal("Database not available")
     row = db.fetch_one(
-        "SELECT id, slowmode_seconds FROM srv_channels WHERE id = ?",
+        "SELECT id, server_id, slowmode_seconds FROM srv_channels WHERE id = ?",
         (cid,),
     )
     if not row:
         raise_not_found("Channel not found")
 
-    return {"channel_id": cid, "slowmode_seconds": row["slowmode_seconds"] or 0}
+    # M4 FIX: reads are gated behind channel view access so an authenticated
+    # user cannot confirm the existence of private cross-server channels.
+    # Fail closed when the servers module is unavailable: without it the gate
+    # cannot be evaluated, and skipping it leaked channel existence/slowmode
+    # for every channel id to any authenticated caller.
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise_internal("Servers module not available")
+
+    can_view = False
+    try:
+        can_view = servers_mod.get_channel(cid, current_user.user_id) is not None
+    except Exception:
+        can_view = False
+    if not can_view:
+        exists = False
+        try:
+            exists = bool(servers_mod.channel_exists(cid))
+        except Exception:
+            exists = False
+        if not exists:
+            raise_not_found("Channel not found")
+        raise_forbidden("Channel access denied")
+
+    slowmode_seconds = row["slowmode_seconds"] if isinstance(row, dict) else row[2]
+    return {"channel_id": str(cid), "slowmode_seconds": slowmode_seconds or 0}
 
 
 @router.put(
@@ -119,16 +185,20 @@ async def set_thread_slowmode(
             tid, body.interval_ms, current_user.user_id, can_manage
         )
         return {"success": True, "slowmode": result}
-    except PermissionError as e:
-        raise_forbidden(str(e))
-    except ValueError as e:
-        raise_bad_request(str(e))
+    except PermissionError:
+        raise_forbidden("Access denied")
+    except ValueError:
+        raise_bad_request("Invalid slowmode configuration")
 
 
 @router.get(
     "/threads/{thread_id}/slowmode",
     summary="Get thread slowmode",
-    responses={401: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
 )
 async def get_thread_slowmode(
     thread_id: str, current_user: TokenInfo = Depends(get_current_user)
@@ -138,6 +208,19 @@ async def get_thread_slowmode(
     db = api.get_db()
     from src.core.threads.slowmode import ThreadSlowmode
 
+    # M4 FIX: gate the read behind thread view access, mirroring the write
+    # path's can_manage_thread gate, so cross-server threads cannot be probed.
+    threads = api.get_threads()
+    if threads is not None:
+        try:
+            can_view = threads.can_view_thread(current_user.user_id, tid)
+        except Exception:
+            can_view = False
+        if not can_view:
+            raise_not_found("Thread not found")
+
     svc = ThreadSlowmode(db)
     result = svc.get_slowmode(tid)
+    if not result:
+        raise_not_found("Thread not found")
     return {"slowmode": result}

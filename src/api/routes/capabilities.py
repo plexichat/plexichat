@@ -3,6 +3,12 @@ Capabilities routes - expose per-feature availability state to clients.
 
 Clients use this to render notices/banners about which artifacts features are
 currently usable (e.g. editor, whiteboard, voice transcription/recording).
+
+``details`` are scrubbed to launcher-safe scalars (see
+``src/core/suite/registry/service.py``): the client only reads
+``state``/``message``, so raw evaluator internals such as the transcription
+``provider`` are dropped here. Admins who need full diagnostics use
+``GET /admin/capabilities``, which intentionally stays raw.
 """
 
 from typing import Dict, Any
@@ -16,12 +22,14 @@ from src.core.artifacts.capabilities import (
     get_artifact_capabilities,
     capability_to_dict,
 )
+from src.core.suite.registry.service import scrub_details
 
-router = APIRouter(prefix="/capabilities", tags=["Capabilities"])
+router = APIRouter(prefix="/capabilities/artifacts", tags=["Capabilities"])
 
 
 @router.get(
     "",
+    operation_id="get_artifact_capabilities_route",
     summary="Get artifact feature capabilities",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
@@ -37,9 +45,12 @@ async def get_capabilities(
     """
     try:
         capabilities = get_artifact_capabilities()
-        return {
-            feature: capability_to_dict(info) for feature, info in capabilities.items()
-        }
+        result = {}
+        for feature, info in capabilities.items():
+            payload = capability_to_dict(info)
+            payload["details"] = scrub_details(payload.get("details"))
+            result[feature] = payload
+        return result
     except Exception as e:
         logger.error(f"Failed to compute capabilities: {e}", exc_info=True)
         raise

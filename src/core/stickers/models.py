@@ -58,6 +58,7 @@ class Sticker:
     pack_id: SnowflakeID
     name: str
     format: StickerFormat = StickerFormat.PNG
+    description: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     related_emoji: Optional[str] = None
     url: str = ""

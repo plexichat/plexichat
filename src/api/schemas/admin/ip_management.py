@@ -22,5 +22,7 @@ class BlockedIPResponse(BaseModel):
     ip_address: str
     reason: Optional[str]
     blocked_at: int
-    blocked_by: Optional[int]
+    # The blocking admin's id is a snowflake; emit it as a string so a JS
+    # Number cannot round it (see admin roles / access-token responses).
+    blocked_by: Optional[str]
     expires_at: Optional[int]

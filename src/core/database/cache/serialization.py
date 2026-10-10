@@ -8,6 +8,7 @@ for the cache module.
 import json
 import hashlib
 import dataclasses
+import typing
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -15,6 +16,51 @@ import utils.logger as logger
 
 # Type registry for reconstruction
 _TYPE_REGISTRY: Dict[str, type] = {}
+
+# Allowlist of fully-qualified names that MAY be reconstructed from cached
+# JSON via the ``__type__`` tag. Cached data lives in Valkey — potentially a
+# shared, cluster-level instance — so anything that can write there must not
+# gain arbitrary-class instantiation (SSRF/RCE gadget) in this process.
+# Only classes explicitly registered through ``register_reconstructable_type``
+# are eligible; everything else reconstructs as a plain dict.
+_ALLOWED_TYPES: set = set()
+
+
+def register_reconstructable_type(*classes: type) -> None:
+    """Allowlist ``classes`` for ``__type__`` reconstruction.
+
+    Registers each class under its ``module.QualName`` key and primes the
+    lookup registry so no dynamic import is ever needed at read time.
+    """
+    for cls in classes:
+        type_name = f"{cls.__module__}.{cls.__qualname__}"
+        _ALLOWED_TYPES.add(type_name)
+        _TYPE_REGISTRY[type_name] = cls
+
+
+def is_reconstructable(type_name: str) -> bool:
+    """Return True if ``type_name`` is on the reconstruction allowlist."""
+    return type_name in _ALLOWED_TYPES
+
+
+def get_type_from_name(type_name: str) -> Optional[type]:
+    """Resolve an allowlisted type name to its class (see above)."""
+    global _TYPE_REGISTRY
+    if not is_reconstructable(type_name):
+        return None
+    if type_name in _TYPE_REGISTRY:
+        return _TYPE_REGISTRY[type_name]
+
+    try:
+        module_path, class_name = type_name.rsplit(".", 1)
+        import importlib
+
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        _TYPE_REGISTRY[type_name] = cls
+        return cls
+    except Exception:
+        return None
 
 
 def generate_cache_key(prefix: str, *args, **kwargs) -> str:
@@ -63,9 +109,17 @@ def ensure_serializable(obj: Any) -> Any:
         return obj.value
 
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        data = ensure_serializable(dataclasses.asdict(obj))
-        if isinstance(data, dict):
-            data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
+        # Recurse field-by-field instead of ``asdict`` so nested dataclass
+        # instances are serialized (and tagged) as objects rather than being
+        # flattened into plain dicts and losing their type on reconstruction.
+        data = {}
+        for field in dataclasses.fields(obj):
+            if isinstance(field.type, dataclasses.InitVar):
+                # InitVar pseudo-fields are not stored as instance
+                # attributes and are not part of the serialized state.
+                continue
+            data[field.name] = ensure_serializable(getattr(obj, field.name))
+        data["__type__"] = f"{obj.__class__.__module__}.{obj.__class__.__name__}"
         return data
 
     if isinstance(obj, (list, tuple, set)):
@@ -95,22 +149,41 @@ def ensure_serializable(obj: Any) -> Any:
     return obj
 
 
-def get_type_from_name(type_name: str) -> Optional[type]:
-    """Dynamically load and cache types for reconstruction."""
-    global _TYPE_REGISTRY
-    if type_name in _TYPE_REGISTRY:
-        return _TYPE_REGISTRY[type_name]
+def _coerce_dataclass_enum_fields(cls: type, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce plain values back into Enum members for dataclass fields.
 
+    Enums serialize to their raw value (a JSON-friendly string), so a cached
+    dataclass such as Channel (``channel_type: ChannelType``) reconstructs
+    with a bare string unless the declared field type is honoured here.
+    Handles direct and Optional[...] Enum fields.
+    """
+    if not dataclasses.is_dataclass(cls):
+        return params
     try:
-        module_path, class_name = type_name.rsplit(".", 1)
-        import importlib
-
-        module = importlib.import_module(module_path)
-        cls = getattr(module, class_name)
-        _TYPE_REGISTRY[type_name] = cls
-        return cls
+        hints = typing.get_type_hints(cls)
     except Exception:
-        return None
+        return params
+
+    for field in dataclasses.fields(cls):
+        if field.name not in params:
+            continue
+        value = params[field.name]
+        ftype = hints.get(field.name)
+        # Unwrap Optional[Enum]/Union[..., None]
+        enum_cls = None
+        for candidate in typing.get_args(ftype) or (ftype,):
+            if isinstance(candidate, type) and issubclass(candidate, Enum):
+                enum_cls = candidate
+                break
+        if enum_cls is not None and not isinstance(value, enum_cls):
+            try:
+                params[field.name] = enum_cls(value)
+            except Exception:
+                logger.debug(
+                    f"Could not coerce field {cls.__name__}.{field.name} "
+                    f"to {enum_cls.__name__} from {value!r}"
+                )
+    return params
 
 
 def reconstruct_object(data: Any) -> Any:
@@ -133,7 +206,14 @@ def reconstruct_object(data: Any) -> Any:
 
             try:
                 if issubclass(cls, Enum):
-                    return cls(reconstructed_params)
+                    # Enums reconstruct from a single value, not kwargs.
+                    if len(reconstructed_params) == 1:
+                        return cls(next(iter(reconstructed_params.values())))
+                    return cls(*reconstructed_params.values())
+                if dataclasses.is_dataclass(cls):
+                    reconstructed_params = _coerce_dataclass_enum_fields(
+                        cls, reconstructed_params
+                    )
                 return cls(**reconstructed_params)
             except Exception as e:
                 logger.debug(f"Failed to reconstruct {type_name}: {e}")

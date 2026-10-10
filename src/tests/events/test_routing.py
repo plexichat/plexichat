@@ -187,6 +187,8 @@ class TestEventRouter:
 
         router = EventRouter()
         assert router is not None
+        assert router.get_recipients(None, user_ids=[1, 2]) == [1, 2]
+        assert router.get_recipients(None, user_ids=[1, 2], exclude_user_ids=[2]) == [1]
 
     def test_get_recipients_with_explicit_user_ids(self):
         """Test get_recipients with explicit user IDs."""

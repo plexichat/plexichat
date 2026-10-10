@@ -4,7 +4,7 @@ import os
 
 # common_utils is now a native package.
 
-from src.utils.email import SMTPEmailSender
+from src.utils.mailer import SMTPEmailSender
 import src.utils.config as config
 
 

@@ -1,321 +1,359 @@
-# Connection Pooling
+# Connection pooling
 
-Understanding and tuning database and Redis connection pools for Plexichat.
+Understand and tune database and Valkey connection pools for Plexichat.
 
-## What is Connection Pooling?
+## What is connection pooling
 
-Without pooling: Each API request creates a new database connection, authenticates, and closes it after the request.
+Without pooling, each API request creates a new database connection, authenticates, and closes it after the request.
 
-With pooling: A fixed number of connections are created and reused across requests, reducing overhead.
+With pooling, a fixed set of connections is created and reused across requests.
 
-**Benefits:**
-- Faster responses (reuse existing connections)
-- Fewer database errors (prevents connection exhaustion)
-- Lower database CPU (fewer handshakes)
-- Better resource utilization
+Benefits:
 
-## PostgreSQL Connection Pool
+*   Faster responses because existing connections are reused
+*   Fewer database errors from connection exhaustion
+*   Lower database CPU usage because fewer handshakes are needed
+*   Better resource utilization
 
-### Default Settings
+## PostgreSQL connection pool
 
-Development:
-```
+### Default settings
+
+The `.env.example` defaults for Docker Compose are:
+
+```text
 min_connections: 5
 max_connections: 20
 ```
 
-Production (high-concurrency):
-```
+For high-concurrency production, set:
+
+```text
 min_connections: 20
-max_connections: 100-200
+max_connections: 100 to 200
 ```
 
-### How Pooling Works
+The built-in fallback in `src/config_defaults.py` is `min_connections: 5` and `max_connections: 100`. The effective value is the one you set in `.env`. See [Configuration](configuration.md).
 
-1. Backend starts with `min_connections` idle connections ready
-2. As requests come in, connections are allocated
-3. Once `max_connections` is reached, new requests wait
-4. When requests finish, connections return to the pool
-5. Idle connections beyond `min_connections` are closed
+### How pooling works
+
+1.  The backend starts with `min_connections` idle connections.
+2.  As requests arrive, connections are allocated from the pool.
+3.  When `max_connections` is reached, new requests wait up to `DB_POOL_CONNECT_TIMEOUT` seconds.
+4.  When a request finishes, the connection returns to the pool.
+5.  Idle connections above `min_connections` are closed after `DB_POOL_MAX_IDLE_TIME` seconds.
+
+The pool also reclaims checked-out connections that stay idle longer than `idle_reclaim_seconds` (5 seconds by default in `config_defaults.py`) instead of blocking for the full connect timeout. This recovers connections that leak into worker-thread storage.
 
 ### Configuration
 
-Set in `.env` or `docker-compose.yml`:
+Set these variables in `.env` or `docker-compose.yml`:
 
 ```bash
 DB_POOL_MIN_CONNECTIONS=5
 DB_POOL_MAX_CONNECTIONS=20
 DB_POOL_CONNECT_TIMEOUT=10
 DB_POOL_MAX_IDLE_TIME=300
+DB_POOL_VALIDATION_INTERVAL=60
+DB_POOL_ENABLE_VALIDATION=true
+DB_POOL_VALIDATION_QUERY="SELECT 1"
 ```
 
-Verify:
+Verify the values:
+
 ```bash
-docker compose exec backend grep "min_connections\|max_connections" config/docker-config.yaml
+docker compose exec backend grep -A 5 "connection_pool" /app/config/docker-config.yaml
+grep DB_POOL .env
 ```
 
-### Tuning Guidelines
+### Tuning guidelines
 
-**For concurrent WebSocket users:**
+#### For concurrent WebSocket users
 
-- 1-10 users: min=5, max=20
-- 10-50 users: min=10, max=50
-- 50-200 users: min=20, max=100
-- 200+ users: min=50, max=200+
+*   1 to 10 users: `min=5`, `max=20`
+*   10 to 50 users: `min=10`, `max=50`
+*   50 to 200 users: `min=20`, `max=100`
+*   More than 200 users: `min=50`, `max=200` or more
 
-**For API-only workload:**
+#### For API-only workloads
 
-- Low traffic: min=3, max=10
-- Medium traffic: min=5, max=30
-- High traffic: min=20, max=100
+*   Low traffic: `min=3`, `max=10`
+*   Medium traffic: `min=5`, `max=30`
+*   High traffic: `min=20`, `max=100`
 
-**Rule of thumb:**
-```
-max_connections = (concurrent_users * 2) + overhead_connections
+#### Rule of thumb
+
+```text
+max_connections = (concurrent_users * 2) + overhead
 min_connections = max_connections / 4
 ```
 
-Example: 50 concurrent users
-```
-max_connections = (50 * 2) + 10 = 110  -> use 100
+Example for 50 concurrent users:
+
+```text
+max_connections = (50 * 2) + 10 = 110, use 100
 min_connections = 100 / 4 = 25
 ```
 
-### Monitoring Connection Pool
+### Monitoring the pool
 
-Check current pool usage:
+Check pool usage from the config:
+
 ```bash
-docker compose exec backend grep -A 20 "connection_pool" config/docker-config.yaml
+docker compose exec backend grep -A 20 "connection_pool" /app/config/docker-config.yaml
 ```
 
-View active connections in database:
+View active connections in PostgreSQL:
+
 ```bash
 docker compose exec db psql -U plexichat -d plexichat -c \
   "SELECT count(*) FROM pg_stat_activity WHERE datname='plexichat';"
 ```
 
-See connection spikes:
+Check for saturation warnings:
+
 ```bash
-docker compose logs backend | grep "pool\|saturation"
+docker compose logs backend | grep -i "pool\|saturation"
 ```
 
-### Connection Pool Saturation
+### Pool saturation
 
-When pool is fully utilized and requests are queuing:
+When the pool is fully used, requests queue:
 
-```
+```text
 [WARNING] DB pool saturation: 95% of connections in use
 ```
 
-**Fix:**
-1. Increase `DB_POOL_MAX_CONNECTIONS`
-2. Reduce query time (add database indexes)
-3. Scale backend to multiple instances
+Fix this by following these steps:
+
+1.  Increase `DB_POOL_MAX_CONNECTIONS`.
+2.  Reduce query time by adding indexes.
+3.  Scale the backend with `docker compose up --scale backend=N` and remove the backend `ports` mappings so Nginx can load-balance.
 
 ### Troubleshooting
 
-**"too many connections" error:**
+#### "Too many connections" error
+
+```text
+FATAL: too many connections for role "plexichat"
 ```
-Check: max_connections in PostgreSQL
-Increase DB_POOL_MAX_CONNECTIONS in .env
+
+Check PostgreSQL `max_connections` and increase `DB_POOL_MAX_CONNECTIONS` or PostgreSQL `max_connections` as needed, then restart:
+
+```bash
 docker compose restart backend
 ```
 
-**Connections hanging:**
-```
-Check query lock: SELECT * FROM pg_stat_activity WHERE state='active';
-Kill stuck query: SELECT pg_terminate_backend(pid);
-Increase DB_POOL_CONNECT_TIMEOUT if network is slow
+#### Connections that hang
+
+```sql
+-- Find active queries
+SELECT pid, state, query FROM pg_stat_activity WHERE state = 'active';
+
+-- Terminate a stuck query
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = 12345;
 ```
 
-**Memory leak (connection count keeps growing):**
-```
-Check for connection leaks in backend code
-Restart backend: docker compose restart backend
-Monitor: docker stats backend
+If the network is slow, increase `DB_POOL_CONNECT_TIMEOUT`.
+
+#### Connection count that keeps growing
+
+This can indicate a leak. Restart the backend and monitor:
+
+```bash
+docker compose restart backend
+docker stats plexichat-backend-1
 ```
 
-## Redis Connection Pool
+If the count grows again, check backend code for connections that are not returned to the pool.
 
-### Default Settings
+## Valkey connection pool
 
-Development:
-```
-max_connections: 50
-```
+### Default settings
 
-Production:
-```
-max_connections: 100-200
+```text
+Development: max_connections: 50
+Production:  max_connections: 100 to 200
 ```
 
 ### Configuration
 
-Set in `.env`:
+Set this variable in `.env`:
 
 ```bash
-REDIS_CONNECTION_POOL=50
+VALKEY_CONNECTION_POOL=50
 ```
 
-Or in environment:
+Or export it before starting Compose:
+
 ```bash
-export REDIS_CONNECTION_POOL=100
-docker compose up
+export VALKEY_CONNECTION_POOL=100
+docker compose up -d
 ```
 
-### Tuning Guidelines
+### Tuning guidelines
 
-Redis connections are typically lighter weight than database connections.
+Valkey connections are lighter than database connections:
 
-- Low traffic: 10-20
-- Medium traffic: 50 (default)
-- High traffic: 100-200
+*   Low traffic: 10 to 20
+*   Medium traffic: 50 (default)
+*   High traffic: 100 to 200
 
-**Monitor Redis:**
+Monitor Valkey clients:
+
 ```bash
-docker compose exec redis redis-cli INFO stats | grep connected_clients
+docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" INFO stats | grep connected_clients
+# Or, using REDISCLI_AUTH so the password does not appear in ps output:
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli INFO stats | grep connected_clients'
 ```
 
-**If hitting max:**
+If the pool is exhausted:
+
+```text
+[ERROR] Valkey pool exhausted: Cannot allocate connection
 ```
-[ERROR] Redis pool exhausted: Cannot allocate connection
-Increase REDIS_CONNECTION_POOL in .env
+
+Increase `VALKEY_CONNECTION_POOL` and restart the backend:
+
+```bash
 docker compose restart backend
 ```
 
-## Connection Timeout
+## Connection timeout
 
 ### DB_POOL_CONNECT_TIMEOUT
 
-Seconds to wait for a connection to become available:
+Seconds to wait for a connection when the pool is full:
 
-```
-DB_POOL_CONNECT_TIMEOUT=10  # Wait up to 10 seconds
+```bash
+DB_POOL_CONNECT_TIMEOUT=10
 ```
 
-**Symptoms of too-low timeout:**
-```
+If this value is too low, you see:
+
+```text
 [ERROR] Failed to acquire database connection within 5 seconds
 ```
 
-**Fix:**
-Increase timeout or max_connections:
-```bash
-DB_POOL_CONNECT_TIMEOUT=15
-DB_POOL_MAX_CONNECTIONS=50
-docker compose restart backend
-```
+Increase `DB_POOL_CONNECT_TIMEOUT` or `DB_POOL_MAX_CONNECTIONS` and restart the backend.
 
 ### DB_POOL_MAX_IDLE_TIME
 
-Seconds before idle connections are closed (reclaim resources):
+Seconds before an idle connection above `min_connections` is closed:
 
+```bash
+DB_POOL_MAX_IDLE_TIME=300
 ```
-DB_POOL_MAX_IDLE_TIME=300  # 5 minutes
-```
 
-Larger timeout = more memory used, but faster for spiky traffic
-Smaller timeout = less memory, but slower warm-up
+*   A larger value keeps more connections warm for spiky traffic but uses more memory.
+*   A smaller value saves memory but requires more time to warm up.
 
-**Typical:** 300 seconds (5 minutes)
+The default is 300 seconds (5 minutes).
 
-## Validation Interval
+## Validation interval
 
 ### DB_POOL_VALIDATION_INTERVAL
 
-Seconds between connection health checks:
+Seconds between health checks for idle connections:
 
-```
-DB_POOL_VALIDATION_INTERVAL=60  # Check every 60 seconds
-```
-
-Ensures idle connections are still alive (network issues, DB restart).
-
-If connection is dead, it's replaced on next request.
-
-**Troubleshooting stale connections:**
-If you see "connection reset" errors:
 ```bash
-Reduce DB_POOL_VALIDATION_INTERVAL=30
+DB_POOL_VALIDATION_INTERVAL=60
+```
+
+This ensures idle connections are still alive after network issues or a database restart. If a connection is dead, it is replaced on the next request.
+
+If you see `connection reset` errors, reduce the interval:
+
+```bash
+DB_POOL_VALIDATION_INTERVAL=30
 docker compose restart backend
 ```
 
-## Performance Impact
+The query for validation is `DB_POOL_VALIDATION_QUERY` (default `SELECT 1`) and you can disable checks with `DB_POOL_ENABLE_VALIDATION=false`, which is not recommended for production.
 
-### Slow Queries Block Pool
+## Performance impact
 
-If queries are slow, connections stay allocated longer:
+### Slow queries block the pool
 
-```
+Slow queries keep connections allocated longer:
+
+```text
 [WARNING] Query took 8.5s - pool saturation risk
 ```
 
-**Fix:**
-1. Optimize slow queries (add indexes)
-2. Increase pool size temporarily while optimizing
-3. Monitor query performance
+Fix this by following these steps:
+
+1.  Optimize slow queries by adding indexes.
+2.  Increase pool size temporarily while you optimize.
+3.  Monitor query performance with `slow_query_threshold_ms` (default 1000 ms in `src/config_defaults.py`).
 
 Check slow queries:
+
 ```bash
-docker compose exec backend grep "slow query" config/docker-config.yaml
-docker compose logs backend | grep "slow"
+docker compose logs backend | grep -i "slow"
+docker compose exec backend grep "slow_query_threshold" /app/config/docker-config.yaml
 ```
 
-### Connection Churn
+### Connection churn
 
-Opening/closing many connections wastes resources:
+Opening and closing many connections wastes resources:
 
-```
+```text
 [DEBUG] Created 150 connections in 10 seconds (high churn)
 ```
 
-**Fix:**
-- Increase `min_connections` to keep more connections warm
-- Reduce traffic spikes with rate limiting
-- Add caching layer
+Fix this by following these steps:
 
-## Monitoring Dashboard
+*   Increase `DB_POOL_MIN_CONNECTIONS` to keep more connections warm.
+*   Reduce traffic spikes with rate limiting.
+*   Add caching with Valkey.
 
-Create a simple monitoring script:
+## Monitoring dashboard
+
+Create a script to watch pool usage:
 
 ```bash
 #!/bin/bash
 watch -n 5 'echo "=== DB Pool ==="; \
-  docker compose exec backend grep "min\|max" config/docker-config.yaml; \
+  docker compose exec backend grep -A 5 "connection_pool" /app/config/docker-config.yaml; \
   echo "=== Active Connections ==="; \
   docker compose exec db psql -U plexichat -d plexichat -c \
     "SELECT count(*) FROM pg_stat_activity WHERE datname='"'"'plexichat'"'"';"; \
-  echo "=== Redis Connections ==="; \
-  docker compose exec redis redis-cli INFO stats | grep connected_clients'
+  echo "=== Valkey Clients ==="; \
+  docker compose exec valkey sh -c '\''REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli INFO stats | grep connected_clients'\''; \
+  echo "=== Valkey Ping ==="; \
+  docker compose exec valkey sh -c '\''REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping'\'';'
 ```
 
-Save as `monitor-pool.sh` and run:
+Save the file as `monitor-pool.sh` and run it:
+
 ```bash
 chmod +x monitor-pool.sh
 ./monitor-pool.sh
 ```
 
-## Best Practices
+## Best practices
 
-1. **Set appropriate defaults** for your user count
-2. **Monitor pool saturation** in production
-3. **Optimize slow queries** before increasing pool size
-4. **Test pool settings** under realistic load
-5. **Document your settings** for your team
-6. **Review periodically** as usage grows
+1.  Set defaults based on your expected concurrent user count.
+2.  Monitor pool saturation in production.
+3.  Optimize slow queries before increasing pool size.
+4.  Test pool settings under realistic load.
+5.  Document your settings for your team.
+6.  Review settings periodically as usage grows.
 
-## Summary Table
+## Summary table
 
-| Setting | Development | Production | Purpose |
-|---------|-------------|-----------|---------|
-| min_connections | 5 | 20 | Initial pool size |
-| max_connections | 20 | 100 | Max concurrent connections |
-| connect_timeout | 10s | 10s | Wait time for available connection |
-| max_idle_time | 300s | 300s | Timeout for idle connections |
-| validation_interval | 60s | 60s | Health check frequency |
+| Setting | Development (.env.example) | Built-in fallback | Production recommendation | Purpose |
+| --- | --- | --- | --- | --- |
+| `min_connections` | `5` | `5` | `20` | Initial pool size |
+| `max_connections` | `20` | `100` | `100` | Maximum concurrent connections |
+| `connect_timeout` | `10s` | `10s` | `10s` | Wait time for a connection |
+| `max_idle_time` | `300s` | `300s` | `300s` | Idle connection timeout |
+| `validation_interval` | `60s` | `60s` | `60s` | Health check frequency |
+| `idle_reclaim_seconds` | `5.0s` | `5.0s` | `5.0s` | Reclaim for leaked checked-out connections |
 
-## Next Steps
+## Next steps
 
-- [Configuration](configuration.md) - All configuration options
-- [Production Setup](production-setup.md) - Production deployment
-- [Troubleshooting](troubleshooting.md) - Debug connection issues
+*   [Configuration](configuration.md) for all configuration options
+*   [Architecture](architecture.md) for service topology
+*   [Troubleshooting](troubleshooting.md) for connection issues

@@ -14,7 +14,11 @@ from ..exceptions import (
     ParticipantLimitError,
     InvalidContentError,
 )
-from .base import BaseService
+from .base import (
+    BaseService,
+    _get_relationships_module,
+    get_encrypt_messages_default,
+)
 from .participant import ParticipantService
 from .user_settings import UserSettingsService
 from .content_filter import ContentFilterService
@@ -60,6 +64,18 @@ class ConversationService(BaseService):
 
         # Check recipient's DM settings
         recipient_settings = self._user_settings_svc.get_message_settings(recipient_id)
+
+        # Enforce relationship-based DM privacy rules (blocks, friends-only).
+        relationships = _get_relationships_module()
+        if relationships is not None:
+            if relationships.is_blocked_by_either(user_id, recipient_id):
+                raise ConversationAccessDeniedError("Recipient does not accept DMs")
+
+            if recipient_settings.allow_dms_from == "friends":
+                friend_ids = relationships.get_friend_ids(recipient_id)
+                if user_id not in {int(fid) for fid in (friend_ids or [])}:
+                    raise ConversationAccessDeniedError("Recipient does not accept DMs")
+
         if recipient_settings.allow_dms_from == "none":
             raise ConversationAccessDeniedError("Recipient does not accept DMs")
 
@@ -93,7 +109,7 @@ class ConversationService(BaseService):
         # Create new DM
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
 
         self._repo.create(
             conv_id,
@@ -107,9 +123,38 @@ class ConversationService(BaseService):
         for uid in [user_id, recipient_id]:
             self._participant_svc.add_participant(conv_id, uid, ParticipantRole.MEMBER)
 
-        # Create DM lookup
+        # Create DM lookup. Two users creating the same DM concurrently both
+        # miss the lookup read above and both insert; the UNIQUE(user1,user2)
+        # constraint makes the loser raise here. H4: previously that escaped
+        # as an unhandled IntegrityError -> HTTP 500 instead of returning the
+        # winner's conversation. Re-query on a unique collision and return the
+        # existing DM (the fresh conversation row is a harmless orphan that
+        # the winner's lookup now supersedes).
         lookup_id = self._generate_id()
-        self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
+        try:
+            self._repo.create_dm_lookup(lookup_id, user_id, recipient_id, conv_id)
+            if valkey_available():
+                cache_set(cache_key, conv_id, ttl=3600)
+        except Exception:
+            # M13: the concurrent-create race surfaces as a driver-specific
+            # IntegrityError whose message text varies across backends
+            # ("UNIQUE constraint failed", "duplicate key", "SQLSTATE 23505",
+            # ...). Sniffing the message is brittle; instead recover by
+            # re-querying the lookup — if a concurrent create won the race the
+            # row exists and its conversation is returned, otherwise the
+            # original error is re-raised unchanged.
+            existing_id = self._repo.get_dm_lookup(user_id, recipient_id)
+            if existing_id and valkey_available():
+                cache_set(cache_key, existing_id, ttl=3600)
+            if existing_id is not None:
+                conv = self.get_conversation(existing_id, user_id)
+                if conv:
+                    logger.debug(
+                        f"DM {existing_id} already existed; returning winner's "
+                        f"conversation for {user_id}/{recipient_id}"
+                    )
+                    return conv
+            raise
 
         logger.debug(
             f"Created DM conversation {conv_id} between {user_id} and {recipient_id}"
@@ -170,7 +215,7 @@ class ConversationService(BaseService):
 
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
 
         self._repo.create(
             conv_id,
@@ -210,7 +255,7 @@ class ConversationService(BaseService):
         # Create new notes conversation
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
 
         self._repo.create(
             conv_id,
@@ -239,7 +284,7 @@ class ConversationService(BaseService):
         """Create a conversation for a server channel."""
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
         metadata = {"server_id": server_id, "channel_id": channel_id}
 
         self._repo.create(
@@ -269,7 +314,7 @@ class ConversationService(BaseService):
         """Create a conversation for a thread."""
         now = self._get_timestamp()
         conv_id = self._generate_id()
-        encrypted = self._get_config("encrypt_messages", False)
+        encrypted = get_encrypt_messages_default()
         metadata = {"server_id": server_id, "channel_id": channel_id}
 
         self._repo.create(
@@ -305,6 +350,10 @@ class ConversationService(BaseService):
             return None
 
         return self._repo.row_to_model(row)
+
+    def conversation_exists(self, conversation_id: SnowflakeID) -> bool:
+        """Membership-agnostic existence probe (mirrors servers channel_exists)."""
+        return self._repo.get_by_id(conversation_id) is not None
 
     def get_conversations(
         self,
@@ -412,12 +461,39 @@ class ConversationService(BaseService):
 
         # For DMs, also remove the lookup entry
         if conv_type == ConversationType.DM.value:
+            # M14 (stale-cache): resolve the TRUE participant pair for the
+            # DM-lookup cache key BEFORE deleting. The previous code keyed
+            # invalidation off (user_id, conv.owner_id), but DMs are created
+            # with owner_id=NULL, so it invalidated the phantom key
+            # dm_lookup:<user>:<user> -- never the real dm_lookup:<u1>:<u2>
+            # entry -- leaving a stale pair->conversation mapping behind that
+            # DM-channel resolution / list-DMs kept reading post-transfer and
+            # resolving to the deleted conversation.
+            try:
+                _dm_user_ids = list(
+                    self._participant_svc.get_participant_ids(conversation_id)
+                )
+            except Exception:
+                _dm_user_ids = []
+            if len(_dm_user_ids) >= 2:
+                _dm_a, _dm_b = _dm_user_ids[0], _dm_user_ids[1]
+            elif len(_dm_user_ids) == 1:
+                _dm_a, _dm_b = user_id, _dm_user_ids[0]
+            else:
+                _dm_a, _dm_b = user_id, (conv.owner_id or user_id)
             self._repo.delete_dm_lookup(conversation_id)
-            # Invalidate DM lookup cache
-            if conv.metadata and "recipient_id" in conv.metadata:
-                # We need user_id and recipient_id. If not in metadata, we might need to fetch participants.
-                # But soft delete already handles lookup table.
-                pass
+            # Invalidate BOTH participant mappings, in EITHER user-pair
+            # ordering (writers key the canonical min:max form, but a
+            # reversed key must never survive either), plus per-user
+            # wildcards so any other DM-lookup key mentioning either
+            # participant is evicted and re-reads fresh from the DB.
+            # NOTE: no local import here — ``invalidate_pattern`` is already
+            # imported at module level; a local import would shadow it for the
+            # whole function and raise UnboundLocalError above.
+            invalidate_pattern(f"dm_lookup:{_dm_a}:{_dm_b}")
+            invalidate_pattern(f"dm_lookup:{_dm_b}:{_dm_a}")
+            invalidate_pattern(f"dm_lookup:*{_dm_a}*")
+            invalidate_pattern(f"dm_lookup:*{_dm_b}*")
 
         logger.debug(f"Deleted conversation {conversation_id}")
         return True
@@ -454,6 +530,11 @@ class ConversationService(BaseService):
                     conversation_id, new_owner, ParticipantRole.OWNER
                 )
                 self._repo.update_owner(conversation_id, new_owner)
+                # M14: the per-user conversation cache (conv_data:<user>:<id>)
+                # captures the resolved owner; promoting a new owner without
+                # invalidating it left the NEW owner (and other participants)
+                # reading the stale previous owner until TTL expiry.
+                invalidate_pattern(f"conv_data:*int:{conversation_id}:*")
             else:
                 return self.delete_conversation(user_id, conversation_id)
 

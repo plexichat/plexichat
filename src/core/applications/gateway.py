@@ -173,6 +173,7 @@ def intent_to_event_map() -> Dict[GatewayIntent, List[str]]:
             "MESSAGE_REACTION_ADD",
             "MESSAGE_REACTION_REMOVE",
             "MESSAGE_REACTION_REMOVE_ALL",
+            "MESSAGE_REACTION_REMOVE_EMOJI",
         ],
         GatewayIntent.GUILD_MESSAGE_TYPING: [
             "TYPING_START",

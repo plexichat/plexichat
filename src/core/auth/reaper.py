@@ -101,10 +101,15 @@ class AccountReaper:
                         f"Reaper: Detected 'zombie' account {user_id} (active in DB but scheduled in log). Re-freezing..."
                     )
 
-                    # Re-apply the freeze
+                    # Re-apply the freeze. The audit-log entry timestamp is
+                    # in SECONDS while the deletion_at column is stored in
+                    # MILLISECONDS, so convert before adding the grace
+                    # period (also expressed in ms).
                     scheduled_at = entry["timestamp"]
                     grace_days = self._config.get("grace_period_days", 30)
-                    deletion_at = scheduled_at + (grace_days * 86400)
+                    deletion_at = self._rollback_deletion_at(
+                        entry, scheduled_at, grace_days
+                    )
 
                     self._db.execute(
                         "UPDATE auth_users SET deletion_status = 'frozen', deletion_at = ? WHERE id = ?",
@@ -118,6 +123,33 @@ class AccountReaper:
                 logger.error(
                     f"Reaper: Rollback protection failed for user {user_id}: {e}"
                 )
+
+    @staticmethod
+    def _rollback_deletion_at(entry: dict, scheduled_at: int, grace_days: int) -> int:
+        """Resolve the ms-epoch ``deletion_at`` for a rollback re-freeze.
+
+        The log entry ``timestamp`` is SECONDS while the ``deletion_at``
+        column is MILLISECONDS. Prefer the authoritative ms ``deletion_at``
+        recorded in the entry metadata (written by ``schedule`` and refreshed
+        by ``DELAYED`` events) so an admin delay survives a DB restore;
+        otherwise derive it from the log timestamp plus the grace period.
+        Seconds-scale values are normalized to ms defensively.
+        """
+        try:
+            metadata = entry.get("metadata") or {}
+        except AttributeError:
+            metadata = {}
+        candidate = metadata.get("deletion_at") if isinstance(metadata, dict) else None
+        if isinstance(candidate, bool):
+            candidate = None
+        if isinstance(candidate, (int, float)):
+            candidate = int(candidate)
+            if 0 < candidate < 100_000_000_000:
+                # Seconds-scale epoch (admin-supplied or legacy) -> ms.
+                candidate *= 1000
+            if candidate > 0:
+                return candidate
+        return (int(scheduled_at) * 1000) + (int(grace_days) * 86400 * 1000)
 
     def _run_forever(self):
         interval = self._reaper_config.get("interval_hours", 24) * 3600
@@ -161,11 +193,14 @@ class AccountReaper:
                 "Reaper: ``harvest()`` called while audit chain is halted; refusing to run."
             )
             return
-        now = int(time.time())
+        # deletion_at is stored in MILLISECONDS (matching
+        # DeletionMixin.schedule_account_deletion); compare in the same unit.
+        now = int(time.time() * 1000)
         batch_size = self._reaper_config.get("batch_size", 50)
 
-        # Clean up expired passkey challenges
+        # Clean up expired passkey challenges and Suite download tickets.
         self._cleanup_passkey_challenges()
+        self._cleanup_suite_tickets()
 
         # Find users ready for purge
         purge_list = self._db.fetch_all(
@@ -181,6 +216,18 @@ class AccountReaper:
         for user in purge_list:
             self.purge_user(user["id"], user["username"])
 
+    def _cleanup_suite_tickets(self):
+        """Remove redeemed/expired PlexiStash tickets when Suite is installed."""
+        try:
+            from src.core.suite.stash import StashManager
+
+            removed = StashManager(self._db).cleanup_expired_tickets()
+            if removed:
+                logger.debug("Reaper: Cleaned up %d expired Suite ticket(s)", removed)
+        except Exception as exc:
+            # Suite is optional and its tables may not exist on older databases.
+            logger.debug("Reaper: Suite ticket cleanup skipped: %s", exc)
+
     def _cleanup_passkey_challenges(self):
         """Clean up expired passkey challenges."""
         try:
@@ -195,6 +242,227 @@ class AccountReaper:
                 )
         except Exception as e:
             logger.error(f"Reaper: Failed to cleanup passkey challenges: {e}")
+
+    def _purge_suite_data(self, user_id: int) -> list:
+        """Erase user-owned Suite rows before removing the auth user.
+
+        Suite tables are optional on older databases, so each statement is
+        isolated. Child rows are removed before their parents for PostgreSQL
+        installations with foreign keys enabled.
+
+        PlexiSum workbook *content* lives in the blob store (``.plexisum``
+        files) rather than the main database, so the Sum manager erases the
+        files and its own metadata via ``purge_user_data`` when the module is
+        initialized; the row-level deletes here are the schema-tolerant
+        fallback for the remaining Suite tables.
+
+        Returns the list of blob paths that could NOT be swept from external
+        storage (empty when the managed purge ran or the user owned no
+        workbooks). A non-empty return MUST be recorded by the caller: the
+        GDPR row erasure still completes, but an operator blob sweep is due.
+        """
+        # Remove .plexisum files and Sum metadata through the manager so
+        # workbook blobs do not leak on the storage adapter. This must run
+        # before the row-level deletes below, which otherwise empty
+        # sum_workbooks first and leave the files orphaned.
+        #
+        # Phase 1 — acquire a manager WITHOUT failing: any acquisition
+        # problem (suite unimportable, manager never initialized, boot-time
+        # setup unavailable) lands in ``manager_error`` and drops to the
+        # row-level fallback. A genuine storage failure from an ACQUIRED
+        # manager (phase 2) still raises so the cycle retries with the blob
+        # pointers intact.
+        sum_domain = None
+        manager = None
+        manager_error: Exception | None = None
+        try:
+            from src.core.suite import sum as sum_domain
+        except Exception as exc:
+            manager_error = exc
+        else:
+            try:
+                manager = sum_domain.get_manager()
+            except Exception:
+                # Initialize through the same compatibility path as normal
+                # boot before erasing any Sum rows.
+                try:
+                    import src.api as api
+
+                    db = api.get_db()
+                    if db is None:
+                        raise RuntimeError("PlexiSum database unavailable")
+                    manager = sum_domain.setup(
+                        db,
+                        servers_module=api.get_servers(),
+                        media=api.get_media(),
+                    )
+                except Exception as exc:
+                    manager = None
+                    manager_error = exc
+
+        if manager is not None and sum_domain is not None:
+            # A configured Sum manager must be able to erase its external
+            # workbook blobs before metadata is removed. Do not continue with
+            # row deletion after a real storage failure, or the blob paths are
+            # lost and the user's .plexisum files become orphaned.
+            try:
+                manager.purge_user_data(user_id)
+            except Exception as exc:
+                logger.error("Reaper: PlexiSum blob purge failed: %s", exc)
+                raise
+            unswept: list = []
+        else:
+            # The Sum manager is not initialized in this process (test,
+            # self-test, or degraded boot) so no storage adapter can sweep
+            # the external .plexisum blobs. Failing the whole GDPR erasure
+            # here would leave the account frozen forever (scheduled
+            # deletions never reaped); instead erase the metadata rows below
+            # and return the blob paths so the caller records an operator
+            # sweep.
+            try:
+                has_sum_tables = self._db.table_exists("sum_workbooks")
+            except Exception as table_exc:
+                # If the database cannot answer, assume the tables MAY exist
+                # and run the (individually guarded, schema-tolerant) row
+                # fallback below rather than skipping Sum erasure entirely.
+                logger.debug(
+                    "Reaper: Sum table probe failed (%s); attempting row fallback",
+                    table_exc,
+                )
+                has_sum_tables = True
+            if not has_sum_tables:
+                logger.debug("Reaper: PlexiSum is not installed; skipping purge")
+                unswept = []
+            else:
+                unswept = self._purge_sum_rows_fallback(
+                    user_id, manager_error or RuntimeError("PlexiSum unavailable")
+                )
+
+        statements = (
+            ("DELETE FROM suite_audit_log WHERE actor_id = ?", (user_id,)),
+            (
+                "DELETE FROM suite_audit_log WHERE resource_id IN "
+                "(SELECT id FROM stash_items WHERE owner_id = ?)",
+                (user_id,),
+            ),
+            ("DELETE FROM stash_download_tickets WHERE subject_id = ?", (user_id,)),
+            (
+                "DELETE FROM stash_grants WHERE created_by = ? OR "
+                "(subject_type = 'user' AND subject_id = ?) OR item_id IN "
+                "(SELECT id FROM stash_items WHERE owner_id = ?)",
+                (user_id, str(user_id), user_id),
+            ),
+            (
+                "DELETE FROM stash_versions WHERE created_by = ? OR item_id IN "
+                "(SELECT id FROM stash_items WHERE owner_id = ?)",
+                (user_id, user_id),
+            ),
+            ("DELETE FROM stash_items WHERE owner_id = ?", (user_id,)),
+            ("DELETE FROM stash_collections WHERE owner_id = ?", (user_id,)),
+        )
+        for query, params in statements:
+            try:
+                self._db.execute(query, params)
+            except Exception as exc:
+                logger.debug("Reaper: optional Suite purge skipped: %s", exc)
+
+        return unswept
+
+    def _purge_sum_rows_fallback(self, user_id: int, cause: Exception) -> list:
+        """Row-level Sum erasure when no Sum manager/storage adapter exists.
+
+        Deletes the user's workbook metadata (child rows cascade from
+        ``sum_workbooks`` via ``ON DELETE CASCADE``) and grants where the
+        user is a subject on other people's workbooks. External ``.plexisum``
+        blobs cannot be swept without the storage adapter, so their paths
+        are collected and returned for an operator sweep (see ``purge_user``,
+        which records them on the PURGED audit event).
+
+        Every statement is individually guarded: the fallback is
+        schema-tolerant across Suite versions and never vetoes the core
+        account erasure.
+        """
+        blob_paths: list = []
+        workbook_ids: list = []
+
+        def _collect(query: str, params: tuple) -> None:
+            try:
+                rows = self._db.fetch_all(query, params)
+            except Exception as exc:
+                logger.debug("Reaper: Sum blob-path probe skipped: %s", exc)
+                return
+            for row in rows or []:
+                try:
+                    path = row.get("blob_path") if isinstance(row, dict) else row[0]
+                except Exception:
+                    continue
+                if path:
+                    blob_paths.append(path)
+
+        try:
+            try:
+                rows = self._db.fetch_all(
+                    "SELECT id, blob_path FROM sum_workbooks WHERE owner_id = ?",
+                    (user_id,),
+                )
+            except Exception as exc:
+                logger.debug("Reaper: Sum workbook probe skipped: %s", exc)
+                rows = []
+            for row in rows or []:
+                try:
+                    if isinstance(row, dict):
+                        workbook_ids.append(row["id"])
+                        if row.get("blob_path"):
+                            blob_paths.append(row["blob_path"])
+                    else:
+                        workbook_ids.append(row[0])
+                        if row[1]:
+                            blob_paths.append(row[1])
+                except Exception:
+                    continue
+            if workbook_ids:
+                placeholders = ",".join("?" * len(workbook_ids))
+                ids = tuple(workbook_ids)
+                _collect(
+                    "SELECT blob_path FROM sum_snapshots WHERE "
+                    f"workbook_id IN ({placeholders})",
+                    ids,
+                )
+                _collect(
+                    "SELECT blob_path FROM sum_revision_blobs WHERE "
+                    f"workbook_id IN ({placeholders})",
+                    ids,
+                )
+        except Exception as exc:
+            logger.debug("Reaper: Sum blob-path collection skipped: %s", exc)
+
+        for query, params in (
+            ("DELETE FROM sum_grants WHERE subject_id = ?", (user_id,)),
+            ("DELETE FROM sum_workbooks WHERE owner_id = ?", (user_id,)),
+        ):
+            try:
+                self._db.execute(query, params)
+            except Exception as exc:
+                logger.debug("Reaper: Sum row fallback skipped: %s", exc)
+
+        if blob_paths or workbook_ids:
+            logger.error(
+                "Reaper: purged user %s without a Sum storage adapter "
+                "(%s); erased %d workbook row(s) but %d external blob(s) "
+                "need an operator sweep: %s",
+                user_id,
+                cause,
+                len(workbook_ids),
+                len(blob_paths),
+                ", ".join(str(p) for p in blob_paths[:10]),
+            )
+        else:
+            logger.debug(
+                "Reaper: Sum row fallback for user %s: no workbooks owned (%s)",
+                user_id,
+                cause,
+            )
+        return blob_paths
 
     def purge_user(self, user_id: int, username: str):
         """
@@ -236,7 +504,11 @@ class AccountReaper:
                 )
 
             # 3. Final Database Erasure
-            # Order matters: child tables before parent tables to respect FK constraints
+            # Order matters: child tables before parent tables to respect FK constraints.
+            # The Suite sweep returns external blob paths it could not delete
+            # (manager-unavailable fallback); they are recorded on the PURGED
+            # audit event below so operators can sweep them.
+            unswept_suite_blobs = self._purge_suite_data(user_id)
             self._db.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
             self._db.execute("DELETE FROM auth_devices WHERE user_id = ?", (user_id,))
             self._db.execute(
@@ -298,19 +570,16 @@ class AccountReaper:
                 "DELETE FROM message_reports WHERE reporter_id = ? OR reported_user_id = ?",
                 (user_id, user_id),
             )
-            try:
-                if self._db.column_exists("admin_audit_log", "target_user_id"):
-                    self._db.execute(
-                        "DELETE FROM admin_audit_log WHERE admin_id = ? OR target_user_id = ?",
-                        (user_id, user_id),
-                    )
-                else:
-                    self._db.execute(
-                        "DELETE FROM admin_audit_log WHERE admin_id = ?",
-                        (user_id,),
-                    )
-            except Exception:
-                pass
+            if self._db.column_exists("admin_audit_log", "target_user_id"):
+                self._db.execute(
+                    "DELETE FROM admin_audit_log WHERE admin_id = ? OR target_user_id = ?",
+                    (user_id, user_id),
+                )
+            else:
+                self._db.execute(
+                    "DELETE FROM admin_audit_log WHERE admin_id = ?",
+                    (user_id,),
+                )
             self._db.execute(
                 "DELETE FROM media_hash_reports WHERE reporter_id = ?", (user_id,)
             )
@@ -320,9 +589,14 @@ class AccountReaper:
             )
 
             # 4. Final Log Entry
-            self._log.log_event(
-                user_id, "PURGED", f"user:{user_id}", {"username": username}
-            )
+            purged_metadata: dict = {"username": username}
+            if unswept_suite_blobs:
+                # Cap the stored paths; the count is authoritative.
+                purged_metadata["suite_blobs_unswept"] = len(unswept_suite_blobs)
+                purged_metadata["suite_blob_paths"] = [
+                    str(p) for p in unswept_suite_blobs[:50]
+                ]
+            self._log.log_event(user_id, "PURGED", f"user:{user_id}", purged_metadata)
 
             logger.info(f"Reaper: Successfully purged user {user_id}")
         except Exception as e:

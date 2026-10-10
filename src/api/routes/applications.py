@@ -4,14 +4,17 @@ Application management API routes.
 Handles user application CRUD, bot token management, and interaction responses.
 """
 
+import hashlib
+import logging
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status
 
 from pydantic import BaseModel
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import applications
+from src.core.database import check_rate_limit
 from src.core.applications import InteractionResponse, InteractionResponseType
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
@@ -23,6 +26,8 @@ from src.core.applications.exceptions import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/applications", tags=["Applications"])
 
 
@@ -32,8 +37,8 @@ router = APIRouter(prefix="/applications", tags=["Applications"])
 class ApplicationResponse(BaseModel):
     """Response schema for an application."""
 
-    id: int
-    owner_id: int
+    id: SnowflakeID
+    owner_id: SnowflakeID
     name: str
     description: Optional[str] = None
     icon_emoji: Optional[str] = None
@@ -77,8 +82,19 @@ class BotTokenResponse(BaseModel):
 class InteractionCallbackRequest(BaseModel):
     """Request to respond to an interaction."""
 
-    type: int
+    application_id: SnowflakeID
+    type: InteractionResponseType
     data: Optional[Dict[str, Any]] = None
+
+
+_INTERACTION_CALLBACK_LIMIT = 30
+_INTERACTION_CALLBACK_WINDOW_SECONDS = 60
+
+
+def _interaction_rate_limit_key(interaction_token: str) -> str:
+    """Build a non-reversible rate-limit key without storing the bearer token."""
+    token_fingerprint = hashlib.sha256(interaction_token.encode("utf-8")).hexdigest()
+    return f"applications:interaction-callback:{token_fingerprint}"
 
 
 # === Helper ===
@@ -91,8 +107,8 @@ def _application_to_response(app) -> ApplicationResponse:
     if isinstance(app, dict):
         raw_bot_id = app.get("bot_id")
         return ApplicationResponse(
-            id=app.get("id", 0),
-            owner_id=app.get("owner_id", 0),
+            id=SnowflakeID(app.get("id", 0)),
+            owner_id=SnowflakeID(app.get("owner_id", 0)),
             name=app.get("name", ""),
             description=app.get("description"),
             icon_emoji=None,
@@ -105,8 +121,8 @@ def _application_to_response(app) -> ApplicationResponse:
         )
     raw_bot_id = getattr(app, "bot_id", None)
     return ApplicationResponse(
-        id=getattr(app, "id", 0),
-        owner_id=getattr(app, "owner_id", 0),
+        id=SnowflakeID(getattr(app, "id", 0)),
+        owner_id=SnowflakeID(getattr(app, "owner_id", 0)),
         name=getattr(app, "name", ""),
         description=getattr(app, "description", None),
         icon_emoji=None,
@@ -138,10 +154,11 @@ async def list_applications(
     try:
         apps = applications.get_user_applications(current_user.user_id)
         return [_application_to_response(app) for app in apps]
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -170,10 +187,11 @@ async def create_application(
             bot_require_code_grant=body.bot_require_code_grant,
         )
         return _application_to_response(app)
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -205,10 +223,21 @@ async def get_application(
         return _application_to_response(app)
     except HTTPException:
         raise
-    except Exception as e:
+    except ApplicationAccessDeniedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "You do not own this application",
+                }
+            },
+        )
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -239,20 +268,21 @@ async def update_application(
             bot_require_code_grant=body.bot_require_code_grant,
         )
         return _application_to_response(app)
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -276,20 +306,21 @@ async def delete_application(
             user_id=current_user.user_id,
             application_id=int(application_id),
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -321,10 +352,10 @@ async def create_bot(
             token=result.get("token", ""),
             bot_id=str(raw_bot_id) if raw_bot_id is not None else None,
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except ApplicationAccessDeniedError:
         # Bot already exists — indicate this so frontend can show proper message
@@ -337,10 +368,11 @@ async def create_bot(
                 }
             },
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -365,20 +397,21 @@ async def regenerate_secret(
             user_id=current_user.user_id,
         )
         return {"secret": result}
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -397,6 +430,20 @@ async def respond_to_interaction(
 ):
     """Respond to an interaction with a callback."""
     try:
+        allowed, _remaining = check_rate_limit(
+            _interaction_rate_limit_key(interaction_token),
+            _INTERACTION_CALLBACK_LIMIT,
+            _INTERACTION_CALLBACK_WINDOW_SECONDS,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {"code": 429, "message": "Too many interaction callbacks"}
+                },
+                headers={"Retry-After": str(_INTERACTION_CALLBACK_WINDOW_SECONDS)},
+            )
+
         response_kwargs = {
             key: value
             for key, value in (body.data or {}).items()
@@ -421,34 +468,38 @@ async def respond_to_interaction(
         applications.create_interaction_response(
             interaction_token=interaction_token,
             response=response,
+            application_id=int(body.application_id),
         )
-    except InteractionNotFoundError as e:
+    except HTTPException:
+        raise
+    except InteractionNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except InteractionExpiredError as e:
+    except InteractionExpiredError:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
-            detail={"error": {"code": 410, "message": str(e)}},
+            detail={"error": {"code": 410, "message": "Resource is archived"}},
         )
-    except InteractionAlreadyRespondedError as e:
+    except InteractionAlreadyRespondedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"error": {"code": 409, "message": str(e)}},
+            detail={"error": {"code": 409, "message": "Resource already exists"}},
         )
-    except InteractionValidationError as e:
+    except InteractionValidationError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Unhandled error in applications API")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

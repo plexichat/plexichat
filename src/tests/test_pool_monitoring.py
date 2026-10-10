@@ -13,12 +13,39 @@ Tests verify:
 import pytest
 import time
 import threading
-from datetime import datetime
+from contextlib import contextmanager
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import utils.config as config
 import utils.logger as logger
 from src.core.database.core import Database
+from src.tests._conftest.waiting import wait_until
+
+
+@contextmanager
+def _temporary_database_config(database_conf: dict):
+    """Temporarily replace the ``database`` config section and restore it after.
+
+    The config module exposes a live :class:`ConfigLoader` (``config.get/set``)
+    rather than a module-level ``config_data`` dict, so the old
+    ``patch.dict(config.config_data, ...)`` pattern no longer applies.
+
+    ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    once, so each config swap must also drop the cached instance — otherwise
+    the next ``Database()`` returns the instance bound to whatever config the
+    FIRST construction saw (engine path, age thresholds, monitor thread) and
+    every test in this file sees stale settings. ``reset()`` tears down the
+    old pool + monitor thread too, so no state leaks between tests.
+    """
+    old = config.get("database")
+    config.set("database", database_conf)
+    Database.reset()
+    try:
+        yield
+    finally:
+        Database.reset()
+        config.set("database", old)
 
 
 class TestPoolStatistics:
@@ -28,15 +55,12 @@ class TestPoolStatistics:
     def test_db(self):
         """Create a test database instance."""
         # Use SQLite for testing since it doesn't require external dependencies
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                    "monitoring": {"log_interval_seconds": 60},
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+                "monitoring": {"log_interval_seconds": 60},
+            }
         ):
             db = Database()
             yield db
@@ -58,13 +82,19 @@ class TestPoolStatistics:
         assert "max_acquisition_time" in stats
 
     def test_timestamp_in_iso_format(self, test_db):
-        """Test that timestamp is in ISO format."""
+        """Test that timestamp is an ISO-8601 UTC stamp.
+
+        The value is returned verbatim by GET /admin/database/pool-health,
+        so it must be tz-aware UTC rather than naive server-local.
+        """
         stats = test_db.get_pool_stats()
         timestamp = stats["timestamp"]
 
         # Should parse as ISO format
         dt = datetime.fromisoformat(timestamp)
         assert isinstance(dt, datetime)
+        assert dt.tzinfo is not None
+        assert dt.utcoffset() == timedelta(0)
 
     def test_pool_stats_database_type(self, test_db):
         """Test that pool stats correctly identify database type."""
@@ -98,18 +128,15 @@ class TestConnectionAgeTracking:
     @pytest.fixture
     def test_db(self):
         """Create a test database instance."""
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                    "connection_pool": {
-                        "max_connection_age_hours": 0.0001  # ~0.36 seconds for testing
-                    },
-                    "monitoring": {"log_interval_seconds": 60},
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+                "connection_pool": {
+                    "max_connection_age_hours": 0.0001  # ~0.36 seconds for testing
+                },
+                "monitoring": {"log_interval_seconds": 60},
+            }
         ):
             db = Database()
             yield db
@@ -120,10 +147,10 @@ class TestConnectionAgeTracking:
         test_db._get_conn()
 
         # Verify metadata is created
-        assert len(test_db._connection_metadata) > 0
+        assert len(test_db.monitor._connection_metadata) > 0
 
         # Metadata should have creation timestamp and thread info
-        for conn_id, metadata in test_db._connection_metadata.items():
+        for conn_id, metadata in test_db.monitor._connection_metadata.items():
             assert "created_at" in metadata
             assert "thread_id" in metadata
             assert "acquired_at" in metadata
@@ -135,14 +162,14 @@ class TestConnectionAgeTracking:
         conn_id = id(conn)
 
         # Manually set creation time to past
-        with test_db._pool_stats_lock:
-            test_db._connection_metadata[conn_id]["created_at"] = (
+        with test_db.monitor._lock:
+            test_db.monitor._connection_metadata[conn_id]["created_at"] = (
                 time.time() - 10
             )  # 10 seconds ago
 
         # Call check which should log warning
         with patch.object(logger, "warning") as mock_warning:
-            test_db._check_connection_age(conn_id)
+            test_db.monitor.check_connection_age(conn_id)
 
             # Should have logged a warning for old connection
             mock_warning.assert_called_once()
@@ -157,7 +184,7 @@ class TestConnectionAgeTracking:
 
         # Call check which should NOT log warning
         with patch.object(logger, "warning") as mock_warning:
-            test_db._check_connection_age(conn_id)
+            test_db.monitor.check_connection_age(conn_id)
 
             # Should NOT have logged a warning for young connection
             # (or should log but not about age)
@@ -168,44 +195,35 @@ class TestConnectionAgeTracking:
     def test_age_threshold_configurable(self):
         """Test that connection age threshold is configurable."""
         # Test with short threshold
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                    "connection_pool": {"max_connection_age_hours": 0.5},  # 30 minutes
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+                "connection_pool": {"max_connection_age_hours": 0.5},  # 30 minutes
+            }
         ):
             db = Database()
             assert db._max_connection_age_seconds == 30 * 60  # 1800 seconds
 
         # Test with longer threshold
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                    "connection_pool": {"max_connection_age_hours": 1.0},  # 1 hour
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+                "connection_pool": {"max_connection_age_hours": 1.0},  # 1 hour
+            }
         ):
             db = Database()
             assert db._max_connection_age_seconds == 60 * 60  # 3600 seconds
 
     def test_age_tracking_disabled_when_threshold_zero(self, test_db):
         """Test that age tracking is disabled when threshold is 0."""
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                    "connection_pool": {"max_connection_age_hours": 0},
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+                "connection_pool": {"max_connection_age_hours": 0},
+            }
         ):
             db = Database()
             assert db._max_connection_age_seconds == 0
@@ -220,16 +238,12 @@ class TestPeriodicLogging:
     @pytest.fixture
     def test_db(self):
         """Create a test database instance."""
-        with patch.dict(
-            config.config_data,
-            {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                    "monitoring": {"log_interval_seconds": 1},  # 1 second for testing
-                }
-            },
-        ):
+        # ``monitoring`` is read from the TOP-LEVEL config section (see
+        # Database.__init__: ``config.get("monitoring", {})``), so it must be
+        # set separately from the ``database`` section. ``_isolate_global_config``
+        # restores it after each test.
+        with _temporary_database_config({"type": "sqlite", "path": ":memory:"}):
+            config.set("monitoring", {"log_interval_seconds": 0.3})
             db = Database()
             yield db
             # Cleanup
@@ -237,53 +251,67 @@ class TestPeriodicLogging:
 
     def test_start_pool_monitoring_creates_thread(self, test_db):
         """Test that starting monitoring creates a background thread."""
-        assert test_db._periodic_logging_thread is None
+        # ``Database()`` auto-starts the pool monitor thread in ``__init__``
+        # (for sqlite/postgres), so it must already exist and be running.
+        assert test_db.monitor._periodic_logging_thread is not None
+        assert test_db.monitor._periodic_logging_thread.is_alive()
+        assert test_db.monitor._periodic_logging_thread.daemon
 
+        # start_pool_monitoring is idempotent: the same thread object is kept.
+        first_thread = test_db.monitor._periodic_logging_thread
         test_db.start_pool_monitoring()
-
-        assert test_db._periodic_logging_thread is not None
-        assert test_db._periodic_logging_thread.is_alive()
-        assert test_db._periodic_logging_thread.daemon
+        assert test_db.monitor._periodic_logging_thread is first_thread
 
     def test_monitoring_thread_name(self, test_db):
         """Test that monitoring thread has proper name."""
         test_db.start_pool_monitoring()
 
-        assert test_db._periodic_logging_thread.name == "DatabasePoolMonitor"
+        assert test_db.monitor._periodic_logging_thread.name == "DatabasePoolMonitor"
 
     def test_stop_pool_monitoring_stops_thread(self, test_db):
         """Test that stopping monitoring stops the background thread."""
         test_db.start_pool_monitoring()
-        assert test_db._periodic_logging_thread.is_alive()
+        assert test_db.monitor._periodic_logging_thread.is_alive()
 
         test_db.stop_pool_monitoring()
 
-        # Give thread time to stop
-        time.sleep(0.1)
-        assert not test_db._periodic_logging_thread.is_alive()
+        # stop() is synchronous: it joins the thread and clears the ref.
+        thread = test_db.monitor._periodic_logging_thread
+        assert thread is None or not thread.is_alive()
 
     def test_start_monitoring_idempotent(self, test_db):
         """Test that starting monitoring multiple times is safe."""
         test_db.start_pool_monitoring()
-        first_thread = test_db._periodic_logging_thread
+        first_thread = test_db.monitor._periodic_logging_thread
 
         # Start again should not create new thread
         test_db.start_pool_monitoring()
-        assert test_db._periodic_logging_thread is first_thread
+        assert test_db.monitor._periodic_logging_thread is first_thread
 
     def test_monitoring_thread_logs_stats(self, test_db):
         """Test that monitoring thread logs pool statistics."""
         with patch.object(logger, "info") as mock_info:
             test_db.start_pool_monitoring()
 
-            # Wait for thread to log stats
-            time.sleep(1.5)
+            def _stats_line_logged() -> bool:
+                for call in mock_info.call_args_list:
+                    if not call.args:
+                        continue
+                    line = str(call.args[0]).lower()
+                    if (
+                        "pool monitoring statistics" in line
+                        and "active_connections=" in line
+                    ):
+                        return True
+                return False
 
-            # Should have logged pool stats
-            info_calls = [call[0][0].lower() for call in mock_info.call_args_list]
-            any("pool stats" in call or "active" in call for call in info_calls)
-            # Note: May not be logged if no activity, so we just check thread is running
-            assert test_db._periodic_logging_thread.is_alive()
+            # The loop logs immediately then every interval; wait for the
+            # first statistics line rather than guessing with a fixed sleep.
+            wait_until(
+                _stats_line_logged,
+                message="pool monitoring never logged a statistics line",
+            )
+            assert test_db.monitor._periodic_logging_thread.is_alive()
 
     def test_stop_monitoring_safe_when_not_running(self, test_db):
         """Test that stopping monitoring when not running is safe."""
@@ -298,14 +326,11 @@ class TestAcquisitionTimeTracking:
     @pytest.fixture
     def test_db(self):
         """Create a test database instance."""
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+            }
         ):
             db = Database()
             yield db
@@ -317,7 +342,7 @@ class TestAcquisitionTimeTracking:
 
         # For SQLite, acquisitions aren't tracked (only for PostgreSQL pool)
         # But metadata should be created
-        assert len(test_db._connection_metadata) > 0
+        assert len(test_db.monitor._connection_metadata) > 0
 
     def test_acquisition_metrics_in_stats(self, test_db):
         """Test that acquisition metrics are included in pool stats."""
@@ -339,14 +364,11 @@ class TestPoolHealthStatus:
     @pytest.fixture
     def test_db(self):
         """Create a test database instance."""
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+            }
         ):
             db = Database()
             yield db
@@ -365,12 +387,12 @@ class TestPoolHealthStatus:
         """Test that connection metadata is cleaned up when connection is closed."""
         # Get and close connection
         test_db._get_conn()
-        initial_count = len(test_db._connection_metadata)
+        initial_count = len(test_db.monitor._connection_metadata)
 
         test_db.close()
 
         # Metadata should be cleaned up
-        assert len(test_db._connection_metadata) < initial_count
+        assert len(test_db.monitor._connection_metadata) < initial_count
 
 
 class TestAdminAPIPoolHealth:
@@ -383,14 +405,11 @@ class TestAdminAPIPoolHealth:
         # For now, test the core functionality
         from src.core.database.core import Database
 
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+            }
         ):
             db = Database()
             stats = db.get_pool_stats()
@@ -405,14 +424,11 @@ class TestAdminAPIPoolHealth:
         """Test that pool stats can be serialized to JSON."""
         import json
 
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+            }
         ):
             db = Database()
             stats = db.get_pool_stats()
@@ -432,14 +448,11 @@ class TestMonitoringEdgeCases:
     @pytest.fixture
     def test_db(self):
         """Create a test database instance."""
-        with patch.dict(
-            config.config_data,
+        with _temporary_database_config(
             {
-                "database": {
-                    "type": "sqlite",
-                    "path": ":memory:",
-                }
-            },
+                "type": "sqlite",
+                "path": ":memory:",
+            }
         ):
             db = Database()
             yield db
@@ -475,7 +488,7 @@ class TestMonitoringEdgeCases:
     def test_monitoring_thread_survives_exceptions(self, test_db):
         """Test that monitoring thread continues despite exceptions."""
         test_db.start_pool_monitoring()
-        initial_thread = test_db._periodic_logging_thread
+        initial_thread = test_db.monitor._periodic_logging_thread
 
         # Let it run for a bit
         time.sleep(0.1)
@@ -488,7 +501,7 @@ class TestMonitoringEdgeCases:
     def test_age_check_with_missing_metadata(self, test_db):
         """Test that age checking is safe when metadata is missing."""
         # Try to check age for non-existent connection
-        result = test_db._check_connection_age(999999)
+        result = test_db.monitor.check_connection_age(999999)
 
         # Should not raise error
         assert result is None

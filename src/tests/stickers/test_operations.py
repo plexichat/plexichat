@@ -143,11 +143,16 @@ class TestStickerErrors:
             "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
-        sticker_manager.create_pack(1, "Pack1", server_id=1, pack_type=PackType.SERVER)
-        sticker_manager.create_pack(1, "Pack2", server_id=1, pack_type=PackType.SERVER)
+        p1 = sticker_manager.create_pack(
+            1, "Pack1", server_id=1, pack_type=PackType.SERVER
+        )
+        p2 = sticker_manager.create_pack(
+            1, "Pack2", server_id=1, pack_type=PackType.SERVER
+        )
 
         packs = sticker_manager.get_server_packs(1, 1)
-        assert len(packs) >= 2
+        assert len(packs) == 2
+        assert {p.id for p in packs} == {p1.id, p2.id}
 
 
 class TestStickerPackManagement:
@@ -208,11 +213,12 @@ class TestStickerPackManagement:
 
     def test_get_user_packs(self, sticker_manager):
         """Get user's personal packs."""
-        sticker_manager.create_pack(1, "Pack1", pack_type=PackType.PERSONAL)
-        sticker_manager.create_pack(1, "Pack2", pack_type=PackType.PERSONAL)
+        p1 = sticker_manager.create_pack(1, "Pack1", pack_type=PackType.PERSONAL)
+        p2 = sticker_manager.create_pack(1, "Pack2", pack_type=PackType.PERSONAL)
 
         packs = sticker_manager.get_user_packs(1)
-        assert len(packs) >= 2
+        assert len(packs) == 2
+        assert {p.id for p in packs} == {p1.id, p2.id}
 
 
 class TestStickerFormats:
@@ -258,6 +264,57 @@ class TestStickerFormats:
         )
 
 
+class TestStickerDescription:
+    """L1: the sticker ``description`` column must actually round-trip.
+
+    The schema declared ``sticker_stickers.description`` but neither the
+    INSERT nor the UPDATE allowlist ever wrote it, so every row came back
+    NULL and the model field was decorative.
+    """
+
+    def test_add_sticker_persists_description(self, sticker_manager):
+        """A description supplied at creation persists and round-trips."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker = sticker_manager.add_sticker(
+            1,
+            pack.id,
+            "sticker",
+            StickerFormat.PNG,
+            "url",
+            1000,
+            description="A fluffy cat",
+        )
+        assert sticker.description == "A fluffy cat"
+
+        fetched = sticker_manager.get_sticker(sticker.id)
+        assert fetched is not None
+        assert fetched.description == "A fluffy cat"
+
+    def test_add_sticker_description_defaults_to_none(self, sticker_manager):
+        """Omitting the description stores NULL, not an empty string."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker = sticker_manager.add_sticker(
+            1, pack.id, "sticker", StickerFormat.PNG, "url", 1000
+        )
+        assert sticker.description is None
+
+    def test_update_sticker_sets_description(self, sticker_manager):
+        """update_sticker can set the description on an existing sticker."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker = sticker_manager.add_sticker(
+            1, pack.id, "sticker", StickerFormat.PNG, "url", 1000
+        )
+
+        updated = sticker_manager.update_sticker(
+            1, sticker.id, description="Renamed description"
+        )
+        assert updated.description == "Renamed description"
+
+        fetched = sticker_manager.get_sticker(sticker.id)
+        assert fetched is not None
+        assert fetched.description == "Renamed description"
+
+
 class TestStickerUsage:
     """Test sticker usage tracking."""
 
@@ -271,7 +328,8 @@ class TestStickerUsage:
         sticker_manager.record_usage(1, sticker.id)
 
         usage_count = sticker_manager.get_usage_count(sticker.id)
-        assert usage_count >= 1
+        # Exactly one usage was recorded
+        assert usage_count == 1
 
     def test_get_popular_stickers(self, sticker_manager):
         """Get popular stickers."""
@@ -288,7 +346,10 @@ class TestStickerUsage:
         sticker_manager.record_usage(1, s2.id)
 
         popular = sticker_manager.get_popular_stickers(limit=5)
-        assert len(popular) > 0
+        # Both stickers have usage; s1 leads the ordering (2 uses vs 1)
+        assert len(popular) == 2
+        assert popular[0].id == s1.id
+        assert popular[1].id == s2.id
 
     def test_get_recent_stickers(self, sticker_manager):
         """Get recently used stickers."""
@@ -300,7 +361,8 @@ class TestStickerUsage:
         sticker_manager.record_usage(1, sticker.id)
 
         recent = sticker_manager.get_recent_stickers(1, limit=5)
-        assert len(recent) > 0
+        assert len(recent) == 1
+        assert recent[0].id == sticker.id
 
 
 class TestStickerSearch:
@@ -317,7 +379,8 @@ class TestStickerSearch:
         )
 
         results = sticker_manager.search_stickers("happy")
-        assert len(results) >= 1
+        assert len(results) == 1
+        assert results[0].name == "happy_face"
 
     def test_search_stickers_by_tags(self, sticker_manager):
         """Search stickers by tags."""
@@ -333,12 +396,13 @@ class TestStickerSearch:
         )
 
         results = sticker_manager.search_stickers("emoji")
-        assert len(results) >= 0
+        assert len(results) == 1
+        assert results[0].tags == ["emoji", "happy"]
 
     def test_search_stickers_empty_query(self, sticker_manager):
         """Search with empty query."""
         results = sticker_manager.search_stickers("")
-        assert len(results) >= 0
+        assert len(results) == 0
 
 
 class TestStickerSuggestions:
@@ -346,7 +410,8 @@ class TestStickerSuggestions:
 
     def test_get_suggestions_for_text(self, sticker_manager):
         """Get sticker suggestions for text."""
-        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        # Suggestions only surface DEFAULT/SERVER packs, so use a default pack.
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.DEFAULT)
         sticker_manager.add_sticker(
             1,
             pack.id,
@@ -357,13 +422,16 @@ class TestStickerSuggestions:
             tags=["approve", "yes"],
         )
 
-        suggestions = sticker_manager.get_suggestions("yes")
-        assert len(suggestions) >= 0
+        suggestions = sticker_manager.get_suggestions("yes", user_id=1)
+        assert len(suggestions) == 1
+        assert suggestions[0].sticker.name == "thumbs_up"
+        assert "yes" in suggestions[0].matched_keywords
 
     def test_get_trending_stickers(self, sticker_manager):
         """Get trending stickers."""
         trending = sticker_manager.get_trending_stickers(limit=10)
-        assert len(trending) >= 0
+        assert isinstance(trending, list)
+        assert len(trending) <= 10
 
 
 class TestStickerPermissions:
@@ -386,7 +454,7 @@ class TestStickerPermissions:
         )
 
         can_use = sticker_manager.can_use_sticker(2, sticker.id)
-        assert can_use
+        assert can_use is True
 
     def test_cannot_use_sticker_from_other_server(self, sticker_manager, test_db):
         """Cannot use sticker from server not member of."""
@@ -415,7 +483,7 @@ class TestStickerPermissions:
         )
 
         can_use = sticker_manager.can_use_sticker(1, sticker.id)
-        assert can_use
+        assert can_use is True
 
 
 class TestStickerUpdates:
@@ -469,8 +537,13 @@ class TestStickerUpdates:
     def test_get_pack_stickers(self, sticker_manager):
         """Get all stickers in pack."""
         pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
-        sticker_manager.add_sticker(1, pack.id, "s1", StickerFormat.PNG, "url1", 1000)
-        sticker_manager.add_sticker(1, pack.id, "s2", StickerFormat.PNG, "url2", 1000)
+        s1 = sticker_manager.add_sticker(
+            1, pack.id, "s1", StickerFormat.PNG, "url1", 1000
+        )
+        s2 = sticker_manager.add_sticker(
+            1, pack.id, "s2", StickerFormat.PNG, "url2", 1000
+        )
 
         stickers = sticker_manager.get_pack_stickers(pack.id)
-        assert len(stickers) >= 2
+        assert len(stickers) == 2
+        assert {s.id for s in stickers} == {s1.id, s2.id}

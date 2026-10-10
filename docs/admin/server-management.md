@@ -1,174 +1,191 @@
-# Server Management
+# Manage servers
 
-This guide covers server administration operations in the Plexichat admin panel.
+This guide describes how to manage servers in the Plexichat admin panel, including viewing servers, editing settings, managing members, and handling moderation.
 
-## Overview
+## View servers
 
-Server management allows admins to:
-- View and manage servers
-- Configure server settings
-- Manage server members
-- Handle server moderation
-- Monitor server activity
+### List servers
 
-## Viewing Servers
+Go to **Server management** to view all servers. The list shows:
 
-### Server List
-
-Navigate to Server Management to view all servers:
 - Server name and ID
 - Member count
 - Owner information
 - Creation date
 - Activity status
 
-### Server Details
+Required permission: `servers.read`.
 
-Click on any server to view:
+### View server details
+
+Select a server to view:
+
 - Basic server information
 - Member list and roles
 - Server settings
 - Activity metrics
 - Moderation history
 
-## Server Operations
+Required permission: `servers.read`.
 
-### Editing Server Settings
+## Edit server settings
 
-1. Open server details
-2. Click "Edit Settings"
-3. Modify server configuration
-4. Save changes
-5. Changes take effect immediately
+1.  Open the server details page.
+2.  Click **Edit settings**.
+3.  Modify the server configuration.
+4.  Save your changes.
 
-**Required Permissions**: `servers.edit`
+Changes take effect immediately.
 
-### Deleting Servers
+Required permission: `servers.edit`.
 
-**WARNING: DANGEROUS OPERATION** - This cannot be undone!
+## Delete a server
 
-1. Open server details
-2. Click "Delete Server"
-3. Provide reason
-4. Confirm action
-5. Server and all data are deleted
+> **Warning:** This operation deletes the server and all its data and cannot be undone.
 
-**Required Permissions**: `servers.delete` (typically requires approval)
+1.  Open the server details page.
+2.  Click **Delete server**.
+3.  Enter a reason.
+4.  Confirm the action.
 
-## Member Management
+Required permission: `servers.delete`. This action often requires approval — see the [RBAC guide](rbac.md) for approval workflows.
 
-### Viewing Members
+## Manage members
 
-Server member list shows:
-- Member username and ID
-- Member roles
+### View members
+
+The member list shows:
+
+- Username and user ID
+- Roles
 - Join date
 - Activity status
 
-### Managing Member Roles
+Required permission: `servers.read` to view, `servers.edit` to change roles.
 
-1. Open server details
-2. Go to Members tab
-3. Select member
-4. Click "Edit Roles"
-5. Add/remove roles
-6. Save changes
+### Change member roles
 
-**Required Permissions**: `servers.edit`
+1.  Open the server details page.
+2.  Go to the **Members** tab.
+3.  Select the member.
+4.  Click **Edit roles**.
+5.  Add or remove roles.
+6.  Save your changes.
 
-### Banning Members
+Required permission: `servers.edit`.
 
-1. Open server details
-2. Go to Members tab
-3. Select member
-4. Click "Ban"
-5. Provide reason and duration
-6. Confirm action
-7. Member is banned from server
+### Ban a member
 
-**Required Permissions**: `servers.ban`
+1.  Open the server details page.
+2.  Go to the **Members** tab.
+3.  Select the member.
+4.  Click **Ban**.
+5.  Enter a reason and duration.
+6.  Confirm the action.
 
-### Unbanning Members
+Required permission: `admin.moderation.bans`.
 
-1. Open server details
-2. Go to Members tab
-3. Select banned member
-4. Click "Unban"
-5. Confirm action
-6. Member ban is removed
+There is no `servers.ban` scope. Server member bans are managed under platform-wide moderation. The API is `POST /api/v1/admin/blocked-users` and requires `admin.moderation.bans` (`src/api/routes/admin/moderation.py` and `src/core/admin/permissions.py:42`). The same scope is required to unban.
 
-**Required Permissions**: `servers.ban`
+### Unban a member
 
-## Server Moderation
+1.  Open the server details page.
+2.  Go to the **Members** tab.
+3.  Select the banned member.
+4.  Click **Unban**.
+5.  Confirm the action.
 
-### Moderation Queue
+Required permission: `admin.moderation.bans` (`DELETE /api/v1/admin/blocked-users/{user_id}`).
+
+## Moderate servers
+
+### Use the moderation queue
 
 View and handle moderation items:
+
 - Reported messages
 - Flagged content
-- Automod actions
+- AutoMod actions
 - Member reports
 
-### Handling Reports
+### Handle reports
 
-1. Go to Moderation tab
-2. Select report
-3. Review content and context
-4. Choose action:
-   - Dismiss (no action)
-   - Warn user
-   - Delete content
-   - Ban user
-5. Add notes if needed
-6. Confirm action
+1.  Go to the **Moderation** tab.
+2.  Select the report.
+3.  Review the content and context.
+4.  Choose an action:
+    - Dismiss (no action)
+    - Warn the user
+    - Delete the content
+    - Ban the user
+5.  Add notes if needed.
+6.  Confirm the action.
 
-**Required Permissions**: `reports.resolve`
+Required permission: `reports.action`.
 
-## Server Analytics
+There is no `reports.resolve` scope. Use `reports.action` to review hash reports (`POST /api/v1/admin/hash-reports/{id}/review`), message reports (`POST /api/v1/admin/message-reports/{id}/review`), and user reports (`POST /api/v1/admin/user-reports/{id}/review`) — see `src/api/routes/admin/moderation.py` and `src/core/admin/permissions.py:42`.
 
-### Activity Metrics
+### Manage AutoMod
+
+- View rules: `GET /api/v1/admin/automod/rules?server_id={id}` (any authenticated admin).
+- Create a rule: `POST /api/v1/admin/automod/rules` requires `admin.moderation.rules`.
+- Update or delete a rule: `PATCH` or `DELETE /api/v1/admin/automod/rules/{id}` requires `admin.moderation.rules`.
+- View or update global config: `GET` or `PUT /api/v1/admin/automod/config` (update requires `admin.moderation.config`).
+
+### Manage blocked hashes
+
+- List blocked hashes: `GET /api/v1/admin/blocked-hashes`.
+- Block a hash: `POST /api/v1/admin/blocked-hashes` requires `admin.moderation.hashes`.
+- Unblock a hash: `DELETE /api/v1/admin/blocked-hashes/{hash}` requires `admin.moderation.hashes`.
+
+## View analytics
+
+### Check activity metrics
 
 View server performance:
+
 - Active member count
 - Message volume
-- Join/leave rates
+- Join and leave rates
 - Moderation actions
 
-### Export Reports
+Required permission: `servers.read` or `metrics.read` for system-wide metrics.
 
-Generate server activity reports:
-1. Open server details
-2. Click "Generate Report"
-3. Select date range
-4. Choose report type
-5. Generate and export
+### Export reports
 
-**Required Permissions**: `servers.read`
+1.  Open the server details page.
+2.  Click **Generate report**.
+3.  Select a date range.
+4.  Choose a report type.
+5.  Generate and export the report.
 
-## Troubleshooting
+Required permission: `servers.read`.
 
-### Server Not Loading
-- Check server ID is correct
-- Verify server exists
-- Check for system errors
-- Refresh the page
+To export audit evidence for server actions, use `GET /api/v1/admin/audit/logs?target_type=server` or `GET /api/v1/admin/audit/logs/export?format=csv` with `admin.audit.read`. The path is `/audit/logs`, not `/audit-log` (`src/api/routes/admin/audit.py:34`).
 
-### Cannot Modify Server
-- Verify required permissions
-- Check if approval workflow is blocking
-- Server may be protected
-- Review audit logs
+## Troubleshoot
 
-### Member Changes Not Applying
-- Refresh member list
-- Check for system errors
-- Verify action completed
-- Member may need to rejoin
+### A server does not load
 
-## Best Practices
+- Verify that the server ID is correct and the server exists.
+- Check for system errors and refresh the page.
 
-1. **Document Changes**: Always provide reasons for server modifications
-2. **Regular Reviews**: Periodically review server settings and members
-3. **Communication**: Notify server owners of significant changes
-4. **Backup**: Export important server data before deletion
-5. **Monitoring**: Regularly monitor server activity and moderation queue
+### You cannot modify a server
+
+- Verify that you have the required permission (`servers.edit` or `servers.delete`).
+- Check whether an approval workflow is blocking the action.
+- Review the audit log at `GET /api/v1/admin/audit/logs` for details.
+
+### Member changes do not apply
+
+- Refresh the member list.
+- Check for system errors and verify that the action completed.
+- The member may need to rejoin.
+
+## Best practices
+
+- **Document changes.** Always provide a reason for server modifications. The audit log records these reasons.
+- **Review regularly.** Periodically review server settings, members, and moderation queues.
+- **Communicate.** Notify server owners of significant changes.
+- **Back up before deletion.** Export important server data before you delete a server.
+- **Monitor activity.** Regularly check server activity and the moderation queue.

@@ -3,9 +3,8 @@ Saved searches service - Business logic for saved search queries.
 """
 
 from typing import Optional, List, Dict, Any
-import time
 
-from src.core.base import SnowflakeID
+from src.core.base import SnowflakeID, timestamp_ms, generate_id
 import utils.logger as logger
 
 
@@ -14,7 +13,7 @@ class SavedSearchesService:
 
     def __init__(self, db: Any) -> None:
         """Initialize saved searches service."""
-        from .repositories.saved_searches import SavedSearchesRepository  # type: ignore
+        from ..repositories.saved_searches import SavedSearchesRepository
 
         self._db = db
         self._repo = SavedSearchesRepository(db)
@@ -56,7 +55,7 @@ class SavedSearchesService:
         if count >= 50:
             raise ValueError("Maximum saved searches limit reached (50)")
 
-        now = int(time.time() * 1000)
+        now = timestamp_ms()
         search_id = self._generate_id()
 
         self._repo.create(
@@ -173,6 +172,4 @@ class SavedSearchesService:
 
     def _generate_id(self) -> SnowflakeID:
         """Generate a new Snowflake ID."""
-        from src.utils.encryption import generate_snowflake_id
-
-        return generate_snowflake_id()
+        return generate_id()

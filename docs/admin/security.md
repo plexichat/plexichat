@@ -1,12 +1,46 @@
-# Admin Security Best Practices
+# Admin security
 
-This guide covers security best practices for administering Plexichat systems.
+This guide describes security best practices for Plexichat administrators. Apply these settings to protect admin accounts, enforce access controls, and maintain auditability.
 
-## Authentication Security
+## Secure authentication
 
-### Password Policies
+### Bootstrap administrator credentials
 
-Configure strong password policies in your configuration:
+On the very first start of a fresh installation, Plexichat creates the
+built-in `admin` account with a randomly generated password. That plaintext
+password is shown **exactly once**, printed to the server console (stdout) at
+the moment of generation:
+
+```text
+============================================================
+PLEXICHAT FIRST BOOT: generated admin credentials
+  Username: admin
+  Password: <generated password>
+  Store this password NOW - it is not shown again and
+  is not written to disk unless you opted in via
+  PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1.
+============================================================
+```
+
+By design the password is **never persisted to disk in plaintext**: it exists
+only in the Argon2id hash inside the database and wherever the operator saved
+it. It is also never written to log files — logs at most reference the
+credential file path, never credential contents.
+
+Headless installs that cannot capture console output may explicitly set
+`PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1` in the environment before first boot to
+opt in to a `~/.plexichat/admin_credentials.txt` file. The file is written
+with mode `0600` via an atomic create-and-replace, and a failed write is
+fatal (startup refuses to continue) so the password can never be silently
+lost or exposed through a permissive fallback. Delete the file after noting
+the credentials.
+
+Whichever way you capture it, change the generated password immediately
+after first login and enable 2FA when prompted.
+
+### Enforce password policies
+
+Configure strong password policies:
 
 ```yaml
 admin_ui:
@@ -21,16 +55,18 @@ admin_ui:
       change_interval_days: 90
 ```
 
-### Two-Factor Authentication (2FA)
+Require admins to rotate passwords when the policy interval expires, and do not reuse shared accounts. There is no `users.force_password_change` scope — to force a username change use `users.force_username_change`; to lock an account or force logout, use `admin.security.sessions` and `admin.security.logout_all`.
 
-**Always enable 2FA for admin accounts:**
+### Require two-factor authentication
 
-1. Require OTP setup on first login
-2. Use authenticator apps (not SMS when possible)
-3. Generate and securely store backup codes
-4. Regularly rotate OTP secrets
+Require 2FA for every admin account:
 
-### Session Management
+1.  Require OTP setup on first login.
+2.  Use authenticator apps (avoid SMS when possible).
+3.  Generate and store backup codes securely.
+4.  Rotate OTP secrets periodically.
+
+### Manage sessions
 
 Configure secure session settings:
 
@@ -43,11 +79,13 @@ admin_ui:
   session_timeout_minutes: 480
 ```
 
-## Access Control
+Use `admin.security.sessions` to force logout (`POST /api/v1/admin/security/force-logout`) or lock a user (`POST /api/v1/admin/security/lock-user`), and `admin.security.logout_all` to invalidate every session (`POST /api/v1/admin/security/logout-all`). These actions require their respective scopes — do not use a non-existent `users.force_password_change` scope for session management.
 
-### Host Restrictions
+## Control access
 
-Restrict admin panel access to specific hosts:
+### Restrict hosts
+
+Restrict admin-panel access to specific hosts:
 
 ```yaml
 admin_ui:
@@ -60,7 +98,9 @@ admin_ui:
       - "admin.yourdomain.com"
 ```
 
-### IP Whitelisting
+The server checks `allowed_hosts` on every admin request. Requests from other hosts are rejected before permission checks.
+
+### Block IP addresses
 
 Block suspicious IP addresses:
 
@@ -71,9 +111,15 @@ admin_ui:
     - "198.51.100.0/24"
 ```
 
-### Rate Limiting
+At runtime, use the IP-block API with `admin.security.ipblock`:
 
-Implement rate limiting to prevent brute force attacks:
+- `GET /api/v1/admin/security/blocked-ips` — list blocked IPs
+- `POST /api/v1/admin/security/block-ip` — block an IP
+- `DELETE /api/v1/admin/security/unblock-ip/{ip}` — unblock an IP
+
+### Limit login attempts
+
+Apply rate limiting to prevent brute-force attacks:
 
 ```yaml
 admin_ui:
@@ -83,156 +129,178 @@ admin_ui:
     lockout_seconds: 900
 ```
 
-## RBAC Security
+## Harden RBAC
 
-### Principle of Least Privilege
+### Follow the principle of least privilege
 
-- Assign minimum required permissions
-- Use specific roles rather than wildcard permissions
-- Regularly review and audit role assignments
-- Remove unused roles and permissions
+- Assign the minimum permissions needed for each role.
+- Prefer specific scopes over broad families. For example, grant `reports.action` to allow reviewing reports rather than a non-existent `reports.resolve`, and grant `users.force_username_change` rather than a non-existent `users.force_password_change`.
+- Remove unused roles and permissions.
 
-### Role Management
+Valid scopes are defined in `src/core/admin/permissions.py:42` (`PERMISSION_SCOPES`). Common mistakes include:
 
-- Create specific roles for specific functions
-- Avoid using super_admin role for daily operations
-- Implement separation of duties for critical operations
-- Document role purposes and permissions
+| Incorrect (does not exist) | Use instead |
+|----------------------------|-------------|
+| `users.force_password_change` | `users.force_username_change` (force username change) or `admin.security.sessions` / `admin.security.logout_all` (force logout or lock) |
+| `servers.ban` | `admin.moderation.bans` (ban or unban users platform-wide) |
+| `reports.resolve` | `reports.action` (take action on reports) |
 
-### Permission Auditing
+The server returns `400 Invalid or non-delegable permission scope` for unknown scopes.
 
-Regularly audit:
-- Who has access to what
-- What permissions each role has
-- Recent permission changes
-- Unusual permission assignments
+### Manage roles securely
 
-## Data Protection
+- Create roles for specific functions; avoid using the super-admin role for daily work.
+- Enforce separation of duties for critical operations (for example, separate the roles that can delete servers and purge users).
+- Document the purpose of each role and review assignments regularly.
+- Remember hierarchy: you can only manage roles and admins at a lower position than your own highest position. See the [RBAC guide](rbac.md).
 
-### Encryption
+### Audit permissions
 
-- Enable database encryption for sensitive fields
-- Use TLS for all admin panel connections
-- Encrypt backup files
-- Secure encryption keys properly
+Review regularly:
 
-### Audit Logging
+- Who has access to what.
+- What each role can do.
+- Recent permission changes (query `GET /api/v1/admin/audit/logs? action_family=admin` or `action_family=role` with `admin.audit.read`).
+- Unusual assignments.
 
-- Enable comprehensive audit logging
-- Log both successful and failed actions
-- Regularly review audit logs
-- Implement log alerting for suspicious activities
+The audit log endpoints are `GET /api/v1/admin/audit/logs`, `GET /api/v1/admin/audit/logs/stats`, and `GET /api/v1/admin/audit/logs/export`. The path is `/audit/logs`, not `/audit-log`. See `src/api/routes/admin/audit.py:34`.
 
-### Backup Security
+## Protect data
 
-- Encrypt admin database backups
-- Store backups in secure locations
-- Regularly test backup restoration
-- Implement backup retention policies
+### Encrypt sensitive data
 
-## Operational Security
+- Enable database encryption for sensitive fields.
+- Use TLS for all admin-panel connections.
+- Encrypt backup files and store encryption keys securely.
 
-### Admin Account Management
+### Log admin actions
 
-- Use individual admin accounts (no shared accounts)
-- Disable unused admin accounts
-- Regular password rotation (enforced by policy)
-- Immediate account termination for departed staff
+- Enable comprehensive audit logging for both successful and failed actions.
+- Review audit logs regularly. Retrieve them with:
 
-### System Updates
+  ```bash
+  curl "/api/v1/admin/audit/logs?page=1&per_page=50" \
+    -H "Authorization: Bearer <token>"
+  ```
 
-- Keep Plexichat updated to latest version
-- Regularly update dependencies
-- Test updates in staging environment first
-- Monitor security advisories
+- Set up alerting for suspicious activities.
 
-### Monitoring
+### Secure backups
 
-- Monitor failed login attempts
-- Alert on suspicious admin activities
-- Track unusual permission usage
-- Monitor system performance metrics
+- Encrypt admin database backups and store them in a secure location.
+- Test backup restoration regularly.
+- Enforce retention policies.
 
-## Incident Response
+## Operate securely
 
-### Security Incident Checklist
+### Manage admin accounts
 
-1. **Identify** - Determine scope and impact
-2. **Contain** - Limit further damage
-3. **Eradicate** - Remove threat
-4. **Recover** - Restore normal operations
-5. **Lessons Learned** - Document and improve
+- Use individual admin accounts; never share accounts.
+- Disable unused admin accounts promptly.
+- Enforce password rotation through policy.
+- Revoke access immediately when staff leave.
 
-### Common Security Incidents
+### Keep the system updated
 
-#### Compromised Admin Account
-1. Immediately disable the account
-2. Force password change for all admins
-3. Review audit logs for suspicious activity
-4. Rotate all secrets and keys
-5. Notify affected users if necessary
+- Keep Plexichat and its dependencies up to date.
+- Test updates in staging before production.
+- Monitor security advisories.
 
-#### Unauthorized Access Attempt
-1. Block offending IP addresses
-2. Review audit logs for patterns
-3. Implement additional rate limiting
-4. Consider enabling CAPTCHA
-5. Monitor for continued attempts
+### Monitor activity
 
-#### Data Breach
-1. Identify compromised data
-2. Assess impact and scope
-3. Notify affected parties
-4. Implement additional security measures
-5. Review and improve security practices
+- Monitor failed login attempts.
+- Alert on suspicious admin activities and unusual permission usage.
+- Track system performance metrics.
 
-## Compliance Considerations
+## Respond to incidents
 
-### GDPR Compliance
-- Implement data minimization
-- Enable right to be forgotten
-- Maintain audit trails
-- Implement data breach notification procedures
+Follow this checklist:
 
-### SOC 2 Compliance
-- Document security procedures
-- Implement access controls
-- Enable comprehensive logging
-- Regular security assessments
+1.  **Identify** — Determine scope and impact.
+2.  **Contain** — Limit further damage.
+3.  **Eradicate** — Remove the threat.
+4.  **Recover** — Restore normal operations.
+5.  **Learn** — Document findings and improve controls.
 
-### HIPAA Compliance
-- Implement access logging
-- Enable encryption at rest and in transit
-- Business associate agreements
-- Regular security training
+### Compromised admin account
 
-## Security Checklist
+1.  Disable the account immediately.
+2.  Force logout of affected sessions (`admin.security.sessions` or `admin.security.logout_all`).
+3.  Review audit logs at `GET /api/v1/admin/audit/logs` for suspicious activity.
+4.  Rotate secrets and keys.
+5.  Notify affected users if necessary.
+
+### Unauthorized access attempt
+
+1.  Block offending IP addresses (`admin.security.ipblock`).
+2.  Review audit logs for patterns.
+3.  Apply additional rate limiting.
+4.  Consider enabling CAPTCHA.
+5.  Monitor for continued attempts.
+
+### Data breach
+
+1.  Identify compromised data and assess scope.
+2.  Notify affected parties.
+3.  Apply additional security measures.
+4.  Review and improve security practices.
+
+## Meet compliance requirements
+
+### GDPR
+
+- Minimize data collection.
+- Support the right to be forgotten.
+- Maintain audit trails.
+- Follow data-breach notification procedures.
+
+### SOC 2
+
+- Document security procedures.
+- Enforce access controls.
+- Enable comprehensive logging.
+- Run regular security assessments.
+
+### HIPAA
+
+- Enable access logging.
+- Encrypt data at rest and in transit.
+- Maintain business-associate agreements.
+- Provide regular security training.
+
+## Follow the security checklist
 
 ### Daily
-- [ ] Review failed login attempts
-- [ ] Check for unusual admin activity
-- [ ] Verify system performance
+
+- Review failed login attempts.
+- Check for unusual admin activity.
+- Verify system performance.
 
 ### Weekly
-- [ ] Review audit logs
-- [ ] Check for security updates
-- [ ] Verify backup integrity
-- [ ] Review role assignments
+
+- Review audit logs (`GET /api/v1/admin/audit/logs`).
+- Check for security updates.
+- Verify backup integrity.
+- Review role assignments.
 
 ### Monthly
-- [ ] Security assessment
-- [ ] Access review
-- [ ] Password rotation check
-- [ ] Compliance verification
+
+- Run a security assessment.
+- Review access.
+- Check password-rotation compliance.
+- Verify compliance status.
 
 ### Quarterly
-- [ ] Full security audit
-- [ ] Penetration testing
-- [ ] Security training
-- [ ] Policy review
 
-## Resources
+- Run a full security audit.
+- Perform penetration testing.
+- Provide security training.
+- Review policies.
+
+## Related resources
 
 - [OWASP Security Guidelines](https://owasp.org/)
 - [NIST Cybersecurity Framework](https://www.nist.gov/cyberframework)
 - [CIS Controls](https://www.cisecurity.org/controls/)
+- [RBAC guide](rbac.md) — permission scopes and hierarchy
+- [Operations guide](operations.md) — daily and weekly security tasks

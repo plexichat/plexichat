@@ -30,8 +30,12 @@ __all__ = [
     "setup",
     "get_setting",
     "set_setting",
+    "set_server_setting",
+    "set_many",
     "delete_setting",
     "get_all_settings",
+    "get_setting_limit",
+    "get_config",
     "UserSetting",
     "SettingsConfig",
 ]
@@ -75,6 +79,30 @@ def set_setting(user_id: int, key: str, value: str) -> UserSetting:
     return _manager.set(user_id, key, value)
 
 
+def set_server_setting(user_id: int, key: str, value: str) -> UserSetting:
+    """Persist a server-semantics (reserved ``_`` namespace) setting.
+
+    Only intended for dedicated server paths such as presence sync.
+    """
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.set_server_setting(user_id, key, value)
+
+
+def set_many(user_id: int, items: Dict[str, str]) -> Dict[str, UserSetting]:
+    """Atomically write multiple settings in a single transaction."""
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.set_many(user_id, items)
+
+
+def get_config() -> SettingsConfig:
+    """Return the active settings configuration."""
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.config
+
+
 def delete_setting(user_id: int, key: str) -> bool:
     """Delete a setting for a user."""
     _ensure_setup()
@@ -87,6 +115,20 @@ def get_all_settings(user_id: int) -> Dict[str, str]:
     _ensure_setup()
     assert _manager is not None
     return _manager.get_all(user_id)
+
+
+def get_setting_limit() -> int:
+    """Return the maximum number of settings allowed per user."""
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.config.max_settings_per_user
+
+
+def get_one(user_id: int, key: str) -> Optional[UserSetting]:
+    """Get a single setting as a ``UserSetting`` using a targeted query."""
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.get_one(user_id, key)
 
 
 def get_settings_list(user_id: int) -> List[UserSetting]:

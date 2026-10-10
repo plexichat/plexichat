@@ -1,493 +1,309 @@
-# Docker Architecture
+# Docker architecture
 
-System design, networks, and data flows in Plexichat Docker deployment.
+System design, networks, and data flows for the Plexichat Docker deployment.
 
-## System Overview
+## System overview
 
-```
+```text
 EXTERNAL
   |
-  | HTTP/HTTPS (80, 443)
+  | HTTPS (443, 80 redirects to 443)
   v
 +-------------------+
-|    Nginx Client   |
-|  (Reverse Proxy)  |
+| Client (Nginx)    |
+| Reverse proxy     |
 +-------------------+
   |
-  | Internal Network (plexichat-frontend)
-  |
+  | Docker default bridge network (plexichat_default)
   v
 +-------------------+
-| FastAPI Backend   | <--+
-|   (REST + WS)     |    |
+| Backend (FastAPI) | <--+
+| REST + WebSocket  |    |
 +-------------------+    |
   |                      |
-  | Internal Network (plexichat-backend)
-  |
-  +------> +-----------+ <-- PostgreSQL Database
-  |        | Database  |
-  |        | Connection|
-  |        | Pool      |
+  +------> +-----------+ <-- PostgreSQL database
+  |        | PostgreSQL|
+  |        | 18-alpine |
   +------> +-----------+
            |
            +------> +--------+
-                    | Redis  |
-                    | Cache  |
+                    | Valkey |
+                    |9.1.1   |
+                    |alpine  |
                     +--------+
                     |
                     +------> +---------+
-                             | MinIO   |
-                             | Storage |
+                             | RustFS  |
+                             | 1.0.0-  |
+                             | rc.3    |
                              +---------+
 ```
+
+`docker-compose.yml` defines a single default bridge network (`plexichat_default`).
+All services resolve each other by service name. No custom networks are defined.
 
 ## Containers
 
 ### 1. Database (PostgreSQL)
 
-**Purpose:** Store all application data
+Stores all application data.
 
-**Services:**
-- SQL database engine
-- Connection pooling
-- Query optimization
+*   **Image:** `postgres:18-alpine`
+*   **Data:** User accounts, messages, servers, and media metadata.
+*   **Volume:** `postgres_data` (persistent) mounted at `/var/lib/postgresql/data`.
+*   **Environment:** `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (required). Compose fails fast if `POSTGRES_PASSWORD` is unset.
+*   **Network:** Default bridge network. Backend connects at `db:5432`.
+*   **Connection pooling:** 5 to 20 connections for development (the `.env.example` defaults), 20 to 100+ for production. See [Connection pooling](connection-pooling.md).
+*   **Health check:** `pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}` every 10 seconds, timeout 5 seconds, 10 retries.
 
-**Data:**
-- User accounts, messages, servers, media metadata
-- Volume: `db-data` (persistent)
+### 2. Valkey (cache and session store)
 
-**Connections:**
-- Backend (pooled: 5-20 development, 20-100 production)
-- Network: `plexichat-backend`
+High-speed caching, session storage, and cross-worker event dispatch.
 
-**Health Check:**
-- `pg_isready` command
-- Interval: 10 seconds
-- Timeout: 5 seconds
+*   **Image:** `valkey/valkey:9.1.1-alpine`
+*   **Data:** Sessions, presence status, pending events, and rate-limit counters. Volume `valkey_data` at `/data` with `--appendonly yes`. Keys expire by TTL.
+*   **Authentication:** Started with `--requirepass ${VALKEY_PASSWORD}`. Compose fails fast if `VALKEY_PASSWORD` is unset. Health check authenticates with `REDISCLI_AUTH`.
+*   **Network:** Default bridge network. Backend connects at `valkey:6379` with a 50-connection pool by default (`VALKEY_CONNECTION_POOL`).
+*   **Pub/Sub:** Channel `plexichat:events:cross_worker` forwards WebSocket events between backend replicas.
+*   **Health check:** `REDISCLI_AUTH="..." redis-cli ping | grep PONG` every 10 seconds, timeout 5 seconds, 10 retries.
 
-### 2. Redis (Cache)
+### 3. RustFS (S3-compatible object storage)
 
-**Purpose:** High-speed caching and session storage
+Stores media files.
 
-**Services:**
-- In-memory key-value store
-- Session cache (WebSocket connections)
-- Rate limiting counters
-- Pub/Sub for real-time events
+*   **Image:** `rustfs/rustfs:1.0.0-rc.3`
+*   **Services:** S3 API on port 9000 and web console on port 9001.
+*   **Data:** Uploaded files and thumbnails. Volume `rustfs_data` at `/data`.
+*   **Configuration:** `RUSTFS_ADDRESS` (default `0.0.0.0:9000`), `RUSTFS_CONSOLE_ADDRESS` (`0.0.0.0:9001`), `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` (mapped from `S3_ACCESS_KEY` / `S3_SECRET_KEY`, both required), `RUSTFS_VOLUMES` (`/data/rustfs`), and `RUSTFS_CORS_ALLOWED_ORIGINS` (empty by default, keep private).
+*   **Network:** Default bridge network. Backend connects at `rustfs:9000`. Ports 9000 and 9001 are exposed internally, not published to the host.
+*   **File ownership:** RustFS runs as UID/GID `10001:10001`. The `rustfs-perms` init container (`alpine:3.24`) runs `chown -R 10001:10001 /data` before RustFS starts.
+*   **Health check:** `curl -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9001/rustfs/console/health` every 15 seconds, timeout 10 seconds, 10 retries, start period 40 seconds.
 
-**Data:**
-- Sessions, presence status, pending events
-- Volume: `redis-data` (persistent)
-- TTL: Keys expire automatically
+### 4. RustFS-Init (one-time setup)
 
-**Connections:**
-- Backend (pooled: 50)
-- Network: `plexichat-backend`
+Creates the S3 bucket.
 
-**Health Check:**
-- `redis-cli ping` command
-- Returns `PONG` when healthy
+*   **Image:** `rustfs/rc:v0.1.30`
+*   **Behavior:** Waits for RustFS to be healthy, runs `rc alias set` and `rc mb local/${S3_BUCKET}`, then exits. Uses `restart: "no"`.
+*   **Dependency:** `rustfs` with `condition: service_healthy`.
+*   **Bucket:** `${S3_BUCKET}` (default `plexichat-media`).
 
-### 3. MinIO (Object Storage)
+### 5. Cert-Init (one-time setup)
 
-**Purpose:** S3-compatible storage for media files
+Generates TLS certificates for development.
 
-**Services:**
-- Media file storage (avatars, attachments)
-- Deduplication and cleanup
-- Access control
-- REST API compatible with AWS S3
+*   **Image:** `alpine:3.24`
+*   **Behavior:** Installs `openssl` and creates self-signed `/certs/fullchain.pem` and `/certs/privkey.pem` if they do not exist. Exits after completion. Uses `restart: "no"`.
+*   **Volume:** `certs` mounted at `/certs` inside this container and at `/etc/nginx/certs` inside the client container.
+*   **Dependency:** None. The client waits for this container with `condition: service_completed_successfully` to avoid a race on first boot.
 
-**Data:**
-- Uploaded files, media metadata
-- Volume: `minio-data` (persistent)
+### 6. ClamAV (malware scanner)
 
-**Connections:**
-- Backend (HTTP to port 9000)
-- Network: `plexichat-backend`
+Scans uploaded files for malware.
 
-**Health Check:**
-- HTTP health endpoint
-- Interval: 10 seconds
+*   **Image:** `clamav/clamav:1.5.4`
+*   **Services:** `clamd` on TCP 3310 and `freshclam` for signature updates. Limits: `StreamMaxLength`, `MaxScanSize`, and `MaxFileSize` are 600 MB, `MaxScanTime` is 300,000 ms.
+*   **Volume:** `clamav_db` at `/var/lib/clamav` (persists signatures).
+*   **Sidecar:** `clamav-unofficial-sigs` (`ghcr.io/extremeshok/clamav-unofficial-sigs:latest`, mode `updater`, every 2 hours) shares `clamav_db`.
+*   **Network:** Default bridge network. Backend connects at `clamav:3310` (`SCANNER_HOST` / `SCANNER_PORT`).
+*   **Health check:** `echo PING | nc -w 2 localhost 3310 | grep PONG` every 30 seconds, timeout 10 seconds, 5 retries, start period 120 seconds.
+*   **Dependencies:** None.
 
-### 4. MinIO-Init (One-time setup)
+### 7. Backend (FastAPI server)
 
-**Purpose:** Create S3 buckets
+Core application logic.
 
-**Services:**
-- Waits for MinIO to be ready
-- Creates `plexichat-media` bucket
-- Sets bucket policies
-- Exits when complete
-
-**Dependencies:**
-- Depends on: MinIO healthcheck
-- Waits for: `service_completed_successfully`
-
-**Exit Status:** Success
-
-### 5. Cert-Init (One-time setup)
-
-**Purpose:** Generate or verify TLS certificates
-
-**Services:**
-- Creates self-signed certificates on first run
-- Generates `/etc/nginx/certs/fullchain.pem` and `privkey.pem`
-- Uses OpenSSL
-- Exits when complete
-
-**Data:**
-- Volume: `nginx-certs` (persistent)
-
-**Exit Status:** Success
-
-### 6. ClamAV (Malware Scanner)
-
-**Purpose:** Scan uploaded files for malware using ClamAV
-
-**Services:**
-- `clamd` — anti-virus daemon (TCP 3310)
-- `freshclam` — automatic signature updates (every 2 hours)
-
-**Dependencies:**
-- None (standalone)
-
-**Resources:**
-- RAM: 4 GB limit, 2 GB reservation (signatures spike during daily reload)
-- Volume: `clamav_db` (persists signature databases)
-- Additional sigs via `clamav-unofficial-sigs` sidecar (Sanesecurity, FOXHOLE, URLhaus, etc.)
-
-**Connections:**
-- Backend connects via `clamav:3310` (TCP, internal network)
-
-### 7. Backend (FastAPI Server)
-
-**Purpose:** Core application logic
-
-**Services:**
-- REST API (`/api/v1/*`)
-- WebSocket gateway (`/gateway`)
-- Health checks (`/health`)
-- Documentation (`/docs`, `/redoc`)
-- Admin UI (`/admin`)
-
-**Dependencies:**
-- Depends on: Database, Redis, MinIO-Init, ClamAV
-
-**Connections:**
-- Database (pooled): `db:5432`
-- Redis: `redis:6379`
-- MinIO: `minio:9000`
-- Networks: `plexichat-backend`, `plexichat-frontend`
-
-**Volumes:**
-- Config: `./config/docker-config.yaml` (mounted)
-- Source code: `./src` (mounted for hot reload)
-- Data: `backend-data`, `backend-logs`, `backend-media`, `backend-temp`
-
-**Health Check:**
-- `curl http://localhost:8000/health`
-- Interval: 10 seconds
-- Start period: 30 seconds
-
-**Ports:**
-- API: 8000/TCP
-- WebRTC: 30000-30100/UDP
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}` built from `plexichat/Dockerfile` (`python:3.14.8-slim-trixie`, non-root user `plexichat` UID 10001).
+*   **Services:** REST API at `/api/v1/*`, WebSocket gateway at `/gateway`, liveness probe at `GET /api/v1/ready`, deep health at `GET /api/v1/health` and `GET /health`, documentation at `/docs` and `/redoc`, admin UI at `/admin`.
+*   **Environment:** `PLEXICHAT_CONFIG=/app/config/docker-config.yaml`, `PLEXICHAT_PUBLIC_SERVER_URL`, `NO_STRICT_CONFIG=false`, `SCANNER_ENABLED=true`, `SCANNER_HOST=clamav`, `SCANNER_PORT=3310`, `SEARCH_BACKEND=sqlite_fts5` (default).
+*   **Volumes:** `./config/docker-config.yaml:/app/config/docker-config.yaml:ro` and `plexichat_home:/root/.plexichat`.
+*   **Network:** Default bridge network.
+    *   Database at `db:5432`
+    *   Valkey at `valkey:6379`
+    *   RustFS at `rustfs:9000`
+    *   ClamAV at `clamav:3310`
+*   **Dependencies:** `db` (`service_healthy`), `valkey` (`service_healthy`), `rustfs-init` (`service_completed_successfully`), `clamav` (`service_healthy`).
+*   **Ports (single-replica mode):** `8000:8000` (TCP) and `30000-30100:30000-30100/udp` for WebRTC. When you scale with `docker compose up --scale backend=N`, remove both `ports` mappings and rely on the client Nginx proxy, which load-balances to `backend:8000` with `ip_hash` sticky sessions.
+*   **Health check:** `curl -sf http://localhost:8000/api/v1/ready` every 15 seconds, timeout 5 seconds, 3 retries, start period 10 seconds. This is a pure liveness probe that returns `{"status": "ready"}` as soon as the HTTP server is bound. The same probe is defined in the Dockerfile `HEALTHCHECK`. Use `GET /health` or `GET /api/v1/health` for the deeper check that includes EventManager metrics and cross-worker listener status.
 
 ### 8. Client (Nginx)
 
-**Purpose:** Frontend web server and reverse proxy
+Frontend and reverse proxy.
 
-**Services:**
-- Static file serving (Vite-built web app)
-- Reverse proxy to backend
-- TLS termination
-- HTTP -> HTTPS redirect
-
-**Dependencies:**
-- Depends on: Backend, Cert-Init
-
-**Connections:**
-- Backend: `http://backend:8000/api`
-- Networks: `plexichat-frontend`
-
-**Volumes:**
-- TLS certs: `nginx-certs` (read-only)
-- Config: `docker/nginx/default.conf`
-- Client runtime config: `client-runtime`
-
-**Ports:**
-- HTTP: 80/TCP
-- HTTPS: 443/TCP
-
-**Health Check:**
-- HTTP on port 80
-- Interval: 10 seconds
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:-latest}` built from `plexichat-client/Dockerfile` (`nginx:stable-alpine` with `curl`, Vite build staged from `node:20-alpine`).
+*   **Services:** Serves the Vite-built static app, reverse-proxies `/api/`, `/docs`, `/openapi.json`, `/redoc`, `/admin`, and `/gateway` to the backend upstream (`backend:8000` with `ip_hash`), terminates TLS, and redirects HTTP to HTTPS.
+*   **Upstream behavior:** `client_max_body_size 10m` matches the backend body limit so uploads are not rejected at the proxy.
+*   **Dependencies:** `backend` (`service_started`) and `cert-init` (`service_completed_successfully`).
+*   **Volumes:** `certs:/etc/nginx/certs` and `./docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro`.
+*   **Ports:** `80:80` and `443:443`.
+*   **Health check:** No Docker health check is defined for this service. Verify it with `curl http://localhost/` or `curl -k https://localhost/`.
+*   **Network:** Default bridge network. Reaches the backend as `http://backend:8000`.
 
 ### 9. Backup (Restic)
 
-**Purpose:** Automated encrypted, deduplicated backups
+Automated encrypted and deduplicated backups.
 
-**Services:**
-- Daily scheduled backups via supercronic (default 2 AM)
-- PostgreSQL dump + file backup via restic
-- Snapshot management with configurable retention
-- Optional secondary/off-site repository replication
+*   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backup:${BACKEND_VERSION:-latest}` built from `plexichat/docker/backup/Dockerfile` (`alpine:3.24` with `postgresql-client`, `restic`, `supercronic 0.2.33`, `bash`, `tzdata`, `curl`, `gzip`).
+*   **Schedule:** Supercronic runs `BACKUP_SCHEDULE` (default `0 2 * * *`, 2 AM) and applies retention (`BACKUP_KEEP_DAILY=7`, `BACKUP_KEEP_WEEKLY=4`, `BACKUP_KEEP_MONTHLY=6`, `BACKUP_KEEP_YEARLY=0`).
+*   **Repository:** `backup_repo` at `/repo` plus optional `BACKUP_SECONDARY_REPO` for off-site replication. Requires `BACKUP_RESTIC_PASSWORD` (compose fails fast if unset).
+*   **Source volumes (read-only):** `postgres_data:/var/lib/postgresql/data`, `plexichat_home:/plexichat-home`, `rustfs_data:/rustfs-data`.
+*   **Dependencies:** `db` (`service_healthy`).
+*   **Health check:** `/scripts/healthcheck.sh` every 5 minutes, timeout 10 seconds, 3 retries, start period 2 minutes. The script verifies supercronic is running and a recent successful backup exists.
+*   **CLI:**
+    ```bash
+    docker exec backup /scripts/backup.sh list
+    docker exec backup /scripts/backup.sh restore-db
+    docker exec backup /scripts/backup.sh restore <snapshot>
+    ```
 
-**Data:**
-- Restic repository: `backup-repo` volume (persistent)
+### 10. Optional profile-gated services
 
-**Dependencies:**
-- Depends on: Database (healthy)
+These services start only with `--profile`.
 
-**Volumes (read-only):**
-- `postgres_data` — pg_dump source
-- `plexichat_home` — config, keyrings, `.machine_key`
-- `minio_data` — uploaded media
-
-**Configuration:**
-- All options via `.env` (`BACKUP_*` variables)
-- See [`docker/README.md`](../../../docker/README.md) for full reference
-
-**CLI:**
-```bash
-docker exec backup /scripts/backup.sh list           # list snapshots
-docker exec backup /scripts/backup.sh restore-db      # restore database
-docker exec backup /scripts/backup.sh restore <snap>  # restore files
-```
+*   **Shieldstral (AI moderation):** Profile `ai`. Image `ghcr.io/ggml-org/llama.cpp:server-b10614`, model at `/models/shieldstral/Shieldstral-1.0-3B-Q4_K_M.gguf` (configurable via `SHIELDSTRAL_MODEL`, `SHIELDSTRAL_MMPROJ`, `SHIELDSTRAL_CONTEXT`, `SHIELDSTRAL_GPU_LAYERS`). Health check `curl -sf http://localhost:8080/health`.
+*   **Meilisearch:** Profiles `search` and `search-meilisearch`. Image `getmeili/meilisearch:v1.12` at `meilisearch:7700` (`MEILI_MASTER_KEY` from `MEILISEARCH_API_KEY`). Health check `wget`/`curl` on `/health`.
+*   **Elasticsearch:** Profile `search-elastic`. Image `docker.elastic.co/elasticsearch/elasticsearch:8.15.0` at `elasticsearch:9200` (`ES_JAVA_OPTS`, single-node, security disabled). Health check `curl -sf http://localhost:9200/_cluster/health`.
 
 ## Networks
 
-### plexichat-backend (Internal)
+`docker-compose.yml` defines a single default bridge network. All services communicate by service name:
 
-**Services:**
-- Database
-- Redis
-- MinIO
-- Backend
-- Backup
-- MinIO-Init
-- Cert-Init
+*   Backend reaches the database at `db:5432`
+*   Backend reaches Valkey at `valkey:6379`
+*   Backend reaches RustFS at `rustfs:9000`
+*   Backend reaches ClamAV at `clamav:3310`
+*   Client reaches the backend at `backend:8000`
 
-**Purpose:** Isolated internal network for data tier
-
-**Communication:**
-- All services on this network reach each other by hostname
-- Example: Backend reaches DB as `http://db:5432`
-- External access: None (no published ports except backend:8000)
-
-**Security:** Services can't be reached from outside
-
-### plexichat-frontend (External)
-
-**Services:**
-- Backend
-- Client
-
-**Purpose:** Frontend communication network
-
-**Communication:**
-- Client reaches Backend as `http://backend:8000`
-- External users reach Client on port 80/443
-
-**Security:**
-- HTTP/HTTPS exposed to internet (ports 80, 443)
-- Backend API on 8000 (internal only)
+Only `client` (80, 443) and, in single-replica mode, `backend` (8000/TCP and 30000-30100/UDP) publish host ports. `rustfs` ports 9000 and 9001 are exposed internally, not published. When you scale the backend, remove the backend `ports` section and rely on the client proxy.
 
 ## Volumes
 
-| Volume | Owner | Purpose | Persistent |
-|--------|-------|---------|-----------|
-| `db-data` | PostgreSQL | Database files | Yes |
-| `redis-data` | Redis | Cache dump | Yes |
-| `minio-data` | MinIO | Media files | Yes |
-| `backend-data` | Backend | Application state | Yes |
-| `backend-logs` | Backend | Log files | Yes |
-| `backend-media` | Backend | Uploaded media cache | Yes |
-| `backend-temp` | Backend | Temporary files | Yes |
-| `nginx-certs` | Nginx | TLS certificates | Yes |
-| `client-runtime` | Deploy Script | Client JS config | Yes |
-| `backup-repo` | Backup | Restic repository | Yes |
+| Volume | Used by | Purpose | Persistent |
+| --- | --- | --- | --- |
+| `postgres_data` | PostgreSQL, Backup (ro) | Database files | Yes |
+| `valkey_data` | Valkey | Cache dump and AOF | Yes |
+| `rustfs_data` | RustFS, Backup (ro), rustfs-perms | Media objects | Yes |
+| `plexichat_home` | Backend, Backup (ro) | Application state at `/root/.plexichat` | Yes |
+| `certs` | Cert-Init, Client | TLS certificates | Yes |
+| `backup_repo` | Backup | Restic repository at `/repo` | Yes |
+| `clamav_db` | ClamAV, clamav-unofficial-sigs | ClamAV signatures | Yes |
+| `meilisearch_data` | Meilisearch (profile) | Search index | Yes |
+| `elasticsearch_data` | Elasticsearch (profile) | Search index | Yes |
 
-**Data Loss Risk:**
-- `docker compose down -v` deletes ALL volumes including the restic repository
-- The restic repo is intended for local fast recovery; configure a
-  `BACKUP_SECONDARY_REPO` for off-site protection
+**Data loss risk:** `docker compose down -v` deletes all volumes, including the Restic repository. The repository is for fast local recovery. Configure `BACKUP_SECONDARY_REPO` for off-site protection.
 
-## Data Flows
+## Data flows
 
-### 1. REST API Request
+### 1. REST API request
 
-```
-Client (Browser)
-  |
-  | HTTPS (443)
-  v
-Nginx (Reverse Proxy)
-  | --proxies to-->
-  | HTTP (8000)
-  v
-Backend (FastAPI)
-  |
-  | Query
-  v
-Database (PostgreSQL)
-  |
-  | Result
-  v
-Backend (serializes to JSON)
-  |
-  v
-Nginx (response)
-  |
-  v
-Client (Browser)
+```text
+Browser --HTTPS (443)--> Nginx --HTTP (backend:8000)--> Backend --SQL--> PostgreSQL
+                                           |
+                                           v
+                                    Backend (JSON) --> Nginx --> Browser
 ```
 
-### 2. WebSocket Connection
+### 2. WebSocket connection
 
-```
-Client (Browser)
-  |
-  | WebSocket (wss://443)
-  v
-Nginx (passes through)
-  | ws:// (8000)
-  v
-Backend (WebSocket Handler)
-  |
-  | Store in Redis
-  v
-Redis (Session state)
-  |
-  | Broadcast event
-  v
-Connected Clients
+```text
+Browser --wss (443)--> Nginx --ws (backend:8000)--> Backend --store--> Valkey (session)
+                                                  --pub/sub--> Valkey --> Other backends --> Clients
 ```
 
-### 3. Media Upload
+When the backend is scaled, Valkey pub/sub on `plexichat:events:cross_worker` ensures every replica receives each event.
 
-```
-Client (Browser)
-  |
-  | POST /api/v1/media/upload
-  |     (file data)
-  v
-Nginx (Reverse Proxy)
-  |
-  v
-Backend (Media Handler)
-  |
-  | 1. Validate & encrypt
-  | 2. Store in MinIO
-  | 3. Save metadata in DB
-  v
-MinIO (Object Storage)
-  |
-  | File stored
-  v
-Backend (returns URL)
-  |
-  v
-Client (can access via /api/v1/media/attachments/...)
+### 3. Media upload
+
+```text
+Browser --POST /api/v1/media/upload--> Nginx --> Backend
+                                           |
+                                           +--> ClamAV (scan at clamav:3310)
+                                           +--> Validate, encrypt, store in RustFS (rustfs:9000)
+                                           +--> Save metadata in PostgreSQL
+                                           v
+                                    Backend returns /api/v1/media/attachments/... URL
 ```
 
-### 4. Message Flow
+### 4. Message flow
 
-```
-User A (sends message)
-  |
-  | WebSocket message
-  v
-Backend (message handler)
-  |
-  | 1. Validate
-  | 2. Encrypt (AES-GCM)
-  | 3. Store in Database
-  | 4. Publish to Redis (pub/sub)
-  v
-Redis Subscription
-  |
-  | Broadcast to connected users
-  v
-User B (receives via WebSocket)
-User C (receives via WebSocket)
+```text
+User A --WebSocket--> Backend --validate--> encrypt (AES-GCM) --> store in PostgreSQL
+                                  |
+                                  +--> publish to Valkey pub/sub --> User B, User C via WebSocket
 ```
 
-## Startup Sequence
+## Startup sequence
 
-1. Deploy script generates `.env`, `docker-config.yaml`, and `client-config.js`
-2. Docker Compose parses configuration
-3. Database, Redis, MinIO services start in parallel
-4. MinIO-Init waits for MinIO health, creates bucket, exits
-5. Cert-Init generates TLS certs, exits
-6. Backend waits for all dependencies to be healthy, then starts
-7. Client waits for Backend to be healthy, then starts
-8. All services report `healthy` in `docker compose ps`
+1.  The deploy script generates `.env`, `config/docker-config.yaml`, and `docker/runtime/client-config.js`.
+2.  Docker Compose parses the configuration.
+3.  `db`, `valkey`, `rustfs`, `clamav`, and `rustfs-perms` start in parallel.
+4.  `rustfs-perms` fixes volume ownership and exits.
+5.  `rustfs-init` waits for `rustfs` to be healthy, creates the bucket, and exits.
+6.  `cert-init` generates certificates if missing and exits.
+7.  The backend waits for `db` and `valkey` to be healthy, `rustfs-init` to complete, and `clamav` to be healthy, then starts.
+8.  The client waits for `cert-init` to complete and the backend to start, then starts.
+9.  `backup` waits for `db` to be healthy, then starts supercronic.
 
-**Timeline:** ~20-40 seconds from `docker compose up`
+Typical startup time is 20 to 40 seconds from `docker compose up`.
 
-## Resource Usage
+## Resource usage
 
 ### Memory
 
-- Backend: 500MB-2GB (depends on users)
-- Database: 200MB-1GB
-- Redis: 100MB-500MB
-- Client: 20MB
-- MinIO: 100MB
+*   Backend: 500 MB to 2 GB depending on users and `BACKEND_REPLICAS`
+*   Database: 200 MB to 1 GB
+*   Valkey: 100 MB to 500 MB
+*   RustFS: ~100 MB
+*   ClamAV: ~1 to 2 GB after signatures load
+*   Client (Nginx): ~20 MB
+*   Meilisearch (if enabled): ~150 to 512 MB
+*   Elasticsearch (if enabled): ~1 to 2 GB
 
-**Total:** 1-4GB typical
+Typical total without search is 1 to 4 GB.
 
 ### CPU
 
-- Idle: Minimal (<5% per core)
-- Active: 10-50% per core (depends on load)
+*   Idle: Less than 5% per core
+*   Active: 10% to 50% per core depending on load
 
 ### Disk
 
-- Database: Grows with messages, files, activity
-- MinIO: Grows with uploaded files
-- Typical: 10GB-100GB+
+*   Database grows with messages and activity
+*   RustFS grows with uploaded files
+*   Typical total: 10 GB to 100 GB or more
 
-## Security Model
+## Security model
 
-### Network Isolation
+### Network isolation
 
-- External internet can only reach ports 80, 443
-- Database, Redis, MinIO are on internal network only
-- Services communicate by hostname (DNS resolution in docker network)
+External clients reach only published ports (80, 443, and optionally 8000 and 30000-30100/UDP in single-replica mode). Database, Valkey, RustFS, ClamAV, backup, and search services are reachable only inside the Docker network.
 
 ### Authentication
 
-- Frontend -> Backend: JWT token in header/cookie
-- Backend -> Database: Username/password (hardcoded in config)
-- Backend -> Redis: Password (in config)
-- Backend -> MinIO: Access key/secret (in config)
+*   Frontend to backend: JWT in header or cookie
+*   Backend to PostgreSQL: `POSTGRES_USER` and `POSTGRES_PASSWORD` from `.env`
+*   Backend to Valkey: `VALKEY_PASSWORD` from `.env`
+*   Backend to RustFS: `S3_ACCESS_KEY` and `S3_SECRET_KEY` from `.env`
+*   Backend to Meilisearch: `MEILISEARCH_API_KEY` if configured
 
 ### Encryption
 
-- TLS/HTTPS: All external communication encrypted
-- Message encryption: E2E encryption in database (AES-GCM)
-- Database: Passwords stored hashed (Argon2)
+*   External traffic uses TLS/HTTPS (certificates in the `certs` volume)
+*   Messages are encrypted at rest in the database (AES-GCM)
+*   Passwords are hashed with Argon2
 
-## Monitoring Points
+## Monitoring points
 
-### Health Checks
+*   **Liveness:** `GET /api/v1/ready` returns `{"status": "ready"}`. Used by the Docker health check for both the Dockerfile and `docker-compose.yml`.
+*   **Deep health:** `GET /api/v1/health` and `GET /health` return `status`, `version`, `events_metrics`, `is_queue_recreate_pending`, and `cross_worker_listener`.
+*   **Database:** `pg_isready`
+*   **Valkey:** `redis-cli ping` with `REDISCLI_AUTH`
+*   **RustFS:** `GET /health` and `GET /rustfs/console/health`
+*   **ClamAV:** `PING` over TCP 3310
+*   **Backup:** `/scripts/healthcheck.sh`
 
-- Backend: `GET /health`
-- Database: `pg_isready`
-- Redis: `redis-cli ping`
-- MinIO: HTTP health endpoint
+## Next steps
 
-### Metrics
-
-- Backend: `GET /metrics` (Prometheus format)
-- Docker: `docker stats`
-- Logs: `docker compose logs`
-
-## Next Steps
-
-- [Production Setup](production-setup.md) - Production deployment
-- [Development Workflow](development-workflow.md) - Development setup
-- [Troubleshooting](troubleshooting.md) - Debug issues
+*   [Production setup](production-setup.md) for hardening
+*   [Development workflow](development-workflow.md) for local iteration
+*   [Troubleshooting](troubleshooting.md) for common issues

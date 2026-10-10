@@ -1,239 +1,135 @@
-# Database Configuration
+# Database configuration
 
-This guide covers database configuration for deploying Plexichat in production. Database settings directly impact performance, scalability, reliability, and operational complexity. Carefully review each section and choose the appropriate configuration for your deployment scale and requirements.
+This guide describes how to configure the database for Plexichat.
 
-## Configuration Location
+## Configuration keys
 
-All database settings are nested under the `database` key in your configuration file:
-
-```yaml
-database:
-  # All database settings go here
-```
-
-## Database Type Selection
-
-Choose between PostgreSQL (recommended for production) or SQLite (development/small deployments).
-
-### Configuration
+All database settings are under the `database` key:
 
 ```yaml
 database:
-  type: "sqlite"  # or "postgres"
+  # All database settings go here.
 ```
 
-### Deployment Considerations
+## Database type
 
-**Why This Matters**
+Choose `sqlite` for development or small single-server deployments, and
+`postgres` for production.
 
-The database engine choice determines your deployment's scalability, performance characteristics, and operational requirements. This is one of the most critical infrastructure decisions you will make.
+```yaml
+database:
+  type: sqlite  # or postgres
+```
 
 **SQLite**
 
-**When to Use**
+Use SQLite when you have fewer than 100 concurrent users and you run a
+single server process.
 
-- Development and testing environments
-- Small deployments with fewer than 100 concurrent users
-- Single-server deployments without horizontal scaling requirements
-- Scenarios where operational simplicity is prioritized over scalability
+* Single-writer concurrency. Only one process can write at a time.
+* File-based storage. Place the file on an SSD when possible.
+* No built-in replication or high availability.
+* Do not use SQLite with multiple workers.
 
-**Limitations**
-
-- Single-writer concurrency (only one process can write at a time)
-- File-based storage requires filesystem I/O performance
-- No built-in replication or high availability
-- Not suitable for multi-worker deployments (multiple server processes)
-
-**Operational Notes**
-
-- SQLite uses Write-Ahead Logging (WAL) mode for improved concurrency
-- Foreign key constraints are enforced by default
-- Busy timeout of 30 seconds allows handling temporary locks
-- Database file is created automatically if it doesn't exist
+SQLite uses WAL mode, enforces foreign keys, and has a busy timeout that
+retries lock contention automatically.
 
 **PostgreSQL**
 
-**When to Use**
+Use PostgreSQL for production, for multi-worker deployments, and for
+horizontal scaling or high availability.
 
-- Production deployments of any scale
-- Multi-worker deployments (multiple server processes sharing the same database)
-- For high-availability requirements (with PostgreSQL replication). See [Deployment Guide](../getting-started.md#horizontal-scaling) for horizontal scaling strategies.
-- Large user bases (hundreds to thousands of concurrent users)
-- Deployments requiring advanced database features
+* True multi-writer concurrency.
+* Replication and high availability.
+* Connection pooling.
 
-**Advantages**
+PostgreSQL requires a separate server. See the
+[Valkey configuration](config-valkey.md) for caching that reduces database
+load.
 
-- True multi-writer concurrency
-- Mature replication and high availability options
-- Advanced indexing and query optimization
-- Connection pooling for efficient resource utilization
-- Better performance for complex queries
-
-**Operational Notes**
-
-- Requires separate PostgreSQL server installation and maintenance. PostgreSQL connection pooling is essential for performance. See [Redis Configuration](config-redis.md) for caching configuration that can reduce database load.
-- Requires monitoring of connection counts and query performance
-- Backup and restore procedures differ from SQLite
-
----
-
-## SQLite Configuration
-
-Settings for SQLite database (used when `database.type` is "sqlite").
-
-### Configuration
+## SQLite configuration
 
 ```yaml
 database:
-  type: "sqlite"
-  path: "data/plexichat.db"
+  type: sqlite
+  path: /root/.plexichat/data/plexichat.db
 ```
 
-### Deployment Considerations
+The default path is `~/.plexichat/data/plexichat.db`. For production, use
+an absolute path such as `/var/lib/plexichat/plexichat.db` and ensure the
+application user can read and write the directory.
 
-**File Path**
+Automatically applied SQLite pragmas:
 
-- **Default**: `data/plexichat.db` relative to the application directory
-- **Production Recommendation**: Use an absolute path to a dedicated data directory (e.g., `/var/lib/plexichat/plexichat.db`)
-- **Permissions**: Ensure the application user has read/write permissions to the directory and parent directories
-- **Filesystem**: Place on a filesystem with good I/O performance (SSD preferred for production)
+* `journal_mode=WAL`
+* `synchronous=NORMAL`
+* `busy_timeout` derived from connection handling (retried automatically)
+* `foreign_keys=ON`
 
-**SQLite PRAGMA Settings (Automatically Applied)**
+Monitor the database file size and WAL size. Run
+`PRAGMA wal_checkpoint(TRUNCATE)` if the WAL grows large, and consider
+periodic `VACUUM`. Use `pytest src/tests/test_sqlite_load.py` to validate
+concurrency before production.
 
-The following SQLite settings are applied automatically and should not need adjustment:
+**Backups**
 
-- **journal_mode=WAL**: Write-Ahead Logging allows concurrent readers and writers
-- **synchronous=NORMAL**: Balances data safety with performance (commits are durable but may be delayed slightly)
-- **busy_timeout=30000**: Waits up to 30 seconds for database locks before failing
-- **foreign_keys=ON**: Enforces referential integrity for foreign key constraints
+Copy the file during a maintenance window or use the SQLite online backup
+API for zero-downtime backups.
 
-**Performance Considerations**
-
-- WAL mode significantly improves read concurrency but doubles disk space usage temporarily
-- Consider running periodic `VACUUM` operations to reclaim space (not currently automated)
-- Monitor filesystem I/O wait times during peak usage
-- For high write throughput, consider placing the database on a dedicated disk
-
-**Monitoring SQLite**
-
-SQLite provides limited built-in monitoring compared to PostgreSQL. The following metrics are available through the admin panel:
-
-- **Database Size**: Total size of the database file in bytes
-- **WAL Size**: Size of the Write-Ahead Log file (if WAL mode is enabled)
-- **Page Count**: Number of database pages
-- **Page Size**: Size of each database page (typically 4096 bytes)
-
-**Monitoring Recommendations**
-
-- Monitor database file growth over time to detect unexpected data accumulation
-- Check WAL file size - if it grows large, consider running `PRAGMA wal_checkpoint(TRUNCATE)` to reclaim space
-- Monitor filesystem I/O wait times during peak usage periods
-- Track lock contention by monitoring busy timeout occurrences in application logs
-- Use the provided load testing suite (`pytest src/tests/test_sqlite_load.py`) to validate concurrency limits before production deployment
-
-**Operational Readiness**
-
-SQLite is operationally adequate for:
-- Development and testing environments
-- Small deployments with fewer than 100 concurrent users
-- Single-server deployments without horizontal scaling requirements
-
-SQLite is **not suitable** for:
-- Production deployments with high write volume (>10 writes/sec)
-- Multi-worker deployments (multiple server processes)
-- Large user bases (hundreds to thousands of concurrent users)
-- Deployments requiring high availability or horizontal scaling
-
-**When to Migrate to PostgreSQL**
-
-Consider migrating to PostgreSQL if you observe:
-- Frequent database lock timeouts in application logs
-- Degraded performance during peak usage hours
-- Need for horizontal scaling (multiple server instances)
-- Requirement for advanced database features (full-text search, complex indexes, etc.)
-
-**Backup Strategy**
-
-- SQLite backups are simple file copies, but must be taken while the database is not being written
-- Use the SQLite backup API or copy the file during maintenance windows
-- Consider using SQLite's online backup feature for zero-downtime backups
-
----
-
-## PostgreSQL Configuration
-
-Settings for PostgreSQL database (used when `database.type` is "postgres").
-
-### Configuration
+## PostgreSQL configuration
 
 ```yaml
 database:
-  type: "postgres"
+  type: postgres
   postgres:
-    host: "localhost"
+    host: ${POSTGRES_HOST:-localhost}
     port: 5432
-    user: "postgres"
-    password: ""
-    dbname: "plexichat"
-    sslmode: "prefer"
+    user: ${POSTGRES_USER:-postgres}
+    password: ${POSTGRES_PASSWORD:-}
+    dbname: ${POSTGRES_DBNAME:-plexichat}
+    sslmode: ${POSTGRES_SSLMODE:-prefer}
 ```
 
-### Deployment Considerations
+You can also set these values with environment variables or a
+`DATABASE_URL`:
 
-**Connection Parameters**
+* `DATABASE_URL=postgres://user:password@host:5432/plexichat?sslmode=require`
+* `DATABASE_URL=sqlite:///var/lib/plexichat/plexichat.db`
+* Individual overrides: `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`,
+  `POSTGRES_PASSWORD`, `POSTGRES_DBNAME`, `POSTGRES_SSLMODE`
 
-**Host and Port**
+If `DATABASE_URL` is set, it takes precedence over the individual
+`postgres` keys. See `src/server/config_loader.py` for the exact
+precedence.
 
-- **Localhost**: Appropriate for single-server deployments where PostgreSQL runs on the same machine
-- **Remote Host**: Use for dedicated database servers or cloud database services (AWS RDS, Google Cloud SQL, etc.)
-- **Port**: Default 5432 is standard. Change only if your PostgreSQL server uses a non-standard port
+**Connection parameters**
 
-**User and Password**
+* Create a dedicated PostgreSQL user for Plexichat with limited
+  permissions.
+* Never commit passwords to version control. Use environment variables or
+  your secrets manager.
+* Create the database before first boot, or grant `CREATE DATABASE` to the
+  user.
 
-- **Dedicated User**: Create a dedicated PostgreSQL user for Plexichat with limited permissions
-- **Password Security**: Use strong, randomly generated passwords. Store securely (environment variables, secrets management)
-- **Never Hardcode**: Never commit passwords to version control. Use environment variables or configuration management tools
+**SSL modes**
 
-**Database Name**
+* `disable` - No encryption. Never use in production.
+* `allow` - Try SSL, fall back to plain text.
+* `prefer` - Try SSL, fall back if the server does not support it.
+  Suitable for local development.
+* `require` - Require SSL.
+* `verify-ca` - Require SSL and verify the CA.
+* `verify-full` - Require SSL, verify the CA, and verify the hostname.
 
-- Create the database manually before first deployment, or allow Plexichat to create it if the user has CREATE DATABASE permissions
-- Use a descriptive name to identify the application database
+For production, use `require` or higher. Use `verify-full` with public CA
+certificates and `verify-ca` with self-signed certificates.
 
-**SSL Mode**
+Automatically applied keepalive settings:
 
-- **disable**: No encryption (never use in production)
-- **allow**: Try SSL, accept unencrypted connection if SSL fails (not recommended for production)
-- **prefer**: Try SSL, accept unencrypted if server doesn't support SSL (appropriate for local development)
-- **require**: Require SSL, fail if SSL not available (recommended for production)
-- **verify-ca**: Require SSL and verify CA certificate (recommended for production with self-signed certs)
-- **verify-full**: Require SSL, verify CA certificate, and verify hostname (recommended for production with public CA certs)
+* `keepalives=1`, `keepalives_idle=60`, `keepalives_interval=10`,
+  `keepalives_count=5`, `tcp_user_timeout=30000`
 
-**Production SSL Recommendations**
-
-- Use `require` or higher for all production deployments
-- Use `verify-full` when using certificates from a trusted CA (Let's Encrypt, commercial CAs)
-- Use `verify-ca` when using self-signed certificates with a known CA
-- Ensure your PostgreSQL server is configured to accept SSL connections
-
-**PostgreSQL Keepalive Settings (Automatically Applied)**
-
-The following TCP keepalive settings are applied automatically to detect dead connections:
-
-- **keepalives=1**: Enable TCP keepalives
-- **keepalives_idle=60**: Send first keepalive after 60 seconds of inactivity
-- **keepalives_interval=10**: Send keepalive probes every 10 seconds
-- **keepalives_count=5**: Declare connection dead after 5 missed keepalives (50 seconds total)
-- **tcp_user_timeout=30000**: TCP user timeout of 30 seconds
-
-These settings help detect network failures and stale connections without waiting for TCP timeouts.
-
----
-
-## Connection Pool
-
-Connection pool settings for PostgreSQL (ignored for SQLite).
-
-### Configuration
+## Connection pool
 
 ```yaml
 database:
@@ -241,67 +137,45 @@ database:
     min_connections: 5
     max_connections: 100
     connect_timeout: 10
+    cache_size_kb: -32000
+    mmap_size: 268435456
+    journal_size_limit: 67108864
+    temp_store: MEMORY
+    idle_reclaim_seconds: 5.0
 ```
 
-### Deployment Considerations
+* `min_connections` and `max_connections` apply to both PostgreSQL and
+  SQLite.
+* `connect_timeout` is the time to wait for a connection before failing
+  (default 10 seconds).
+* `cache_size_kb`, `mmap_size`, `journal_size_limit`, and `temp_store`
+  are per-connection SQLite memory settings.
+* `idle_reclaim_seconds` (default 5.0) reclaims leaked thread-local
+  connections when the pool is exhausted instead of blocking for the full
+  timeout. A connection owned by the calling thread is never reclaimed.
+  The connection monitor also reaps connections idle longer than 60 seconds.
 
-**Why Connection Pooling Matters**
+You can override pool sizes with environment variables: `DB_POOL_MIN_CONNECTIONS`,
+`DB_POOL_MAX_CONNECTIONS`, `DB_POOL_CONNECT_TIMEOUT`, `DB_POOL_MAX_IDLE_TIME`,
+`DB_POOL_VALIDATION_INTERVAL`, `DB_POOL_ENABLE_VALIDATION`, and
+`DB_POOL_VALIDATION_QUERY` (only `SELECT 1`, `SELECT 1;`, or
+`SELECT version();` are accepted).
 
-Creating new database connections is expensive (requires network round-trip, authentication, memory allocation). Connection pooling reuses existing connections, significantly improving performance.
+Size your pool based on expected concurrent requests, average query
+duration, and your PostgreSQL `max_connections`:
 
-**Minimum Connections**
+| Deployment | Min connections | Max connections | Notes |
+|------------|----------------|-----------------|-------|
+| Development | 1 | 5 | Single user |
+| Small (<100 users) | 5 | 10 | Low concurrency |
+| Medium (100-1000 users) | 5 | 30 | Moderate concurrency |
+| Large (1000+ users) | 10 | 100 | High concurrency; consider read replicas |
 
-- **Default**: 5 connections
-- **Small Deployment**: 2-5 connections sufficient for low-traffic deployments
-- **Medium Deployment**: 5-10 connections for moderate traffic
-- **Large Deployment**: 10-20 connections to handle baseline load
-
-**Rationale**: Minimum connections are always kept open, ready for immediate use. Too few causes connection setup delays during traffic spikes. Too many wastes resources.
-
-**Maximum Connections**
-
-- **Default**: 100 connections
-- **Small Deployment**: 10-20 connections
-- **Medium Deployment**: 20-50 connections
-- **Large Deployment**: 50-100 connections (ensure PostgreSQL max_connections is configured higher)
-
-**Rationale**: Maximum connections limit resource usage and prevent overwhelming the database server. Calculate based on:
-- Expected concurrent requests
-- Average query duration
-- PostgreSQL server capacity
-- Other applications sharing the database server
-
-**Formula**: `max_connections = (expected_concurrent_requests / average_queries_per_connection) + safety_margin`
-
-**Connection Timeout**
-
-- **Default**: 10 seconds
-- **Production**: 5-10 seconds is appropriate
-- **High-Latency Networks**: Increase to 15-20 seconds for geographically distributed deployments
-
-**Rationale**: Timeout prevents indefinite waiting when database is unavailable or overloaded. Too short causes unnecessary failures during brief load spikes. Too long delays error reporting.
-
-**Pool Sizing Guidelines**
-
-- Deployment Scale: Development | Min Connections: 1 | Max Connections: 5 | Notes: Single user, minimal load
-- Deployment Scale: Small (<100 users) | Min Connections: 5 | Max Connections: 10 | Notes: Low concurrency
-- Deployment Scale: Medium (100-1000 users) | Min Connections: 5 | Max Connections: 30 | Notes: Moderate concurrency
-- Deployment Scale: Large (1000+ users) | Min Connections: 10 | Max Connections: 100 | Notes: High concurrency, consider read replicas
-
-**Operational Notes**
-
-- Monitor pool utilization metrics (active, idle, waiting connections)
-- Increase max_connections if you see frequent connection wait times
-- Decrease max_connections if you see database connection limit errors
-- Consider PgBouncer for very high-connection scenarios (thousands of connections)
-
----
+Monitor active, idle, and waiting counts. Increase `max_connections` if
+requests frequently wait, or decrease it if the database reports connection
+limits. For thousands of connections, consider PgBouncer.
 
 ## Monitoring
-
-Database performance monitoring thresholds.
-
-### Configuration
 
 ```yaml
 database:
@@ -310,195 +184,37 @@ database:
     alert_on_slow_queries: true
 ```
 
-### Deployment Considerations
+Queries slower than `slow_query_threshold_ms` are logged for investigation.
+Review slow query logs regularly, add indexes for frequent slow queries, and
+track execution time trends.
 
-**Why Monitoring Matters**
-
-Database performance directly impacts user experience. Slow queries indicate performance issues that need investigation before they become critical.
-
-**Slow Query Threshold**
-
-- **Default**: 1000 milliseconds (1 second)
-- **Standard Deployment**: 1000ms is appropriate for most applications
-- **High-Performance Deployment**: Reduce to 500ms to catch performance regressions earlier
-- **Complex Queries**: Increase to 2000-5000ms if you have inherently complex operations
-
-**Rationale**: Threshold determines what constitutes a "slow" query requiring investigation. Too low generates noise. Too high misses real issues.
-
-**Alert on Slow Queries**
-
-- **Enable** for production to log slow queries for analysis
-- **Disable** temporarily if generating excessive log volume during troubleshooting
-- Logs include query text, execution time, and context for optimization
-
-**Operational Notes**
-
-- Regularly review slow query logs to identify optimization opportunities
-- Add database indexes for frequently slow queries
-- Consider query rewriting or schema changes for persistent performance issues
-- Monitor query execution time trends over time
-
----
-
-## Migration Settings
-
-Database migration configuration.
-
-### Configuration
+## Migrations
 
 ```yaml
 database:
   migrations:
     auto_migrate: true
-    migration_dir: "migrations"
+    migration_dir: /root/.plexichat/migrations
+    irreversible_migration_delay_days: 7
 ```
 
-### Deployment Considerations
+* `auto_migrate` - Apply pending migrations on startup. Keep enabled for
+  development. Disable for blue-green deployments and run migrations
+  manually.
+* `migration_dir` - Directory that contains migration files.
+* `irreversible_migration_delay_days` - Delay before applying irreversible
+  migrations (default 7 days).
 
-**Why Migrations Matter**
+Best practices for production:
 
-Database schema evolves over time. Migrations ensure your database schema stays synchronized with the application code.
+1. Back up the database before migrating.
+2. Test migrations in staging.
+3. Run migrations during low-traffic periods.
+4. Verify the schema and run smoke tests after.
 
-**Auto-Migrate**
+## Related documentation
 
-- **Default**: Enabled
-- **Development**: Keep enabled for convenience
-- **Production**: Consider disabling for manual control over schema changes
-- **Blue-Green Deployments**: Disable and run migrations manually during deployment
-
-**Rationale**: Auto-migrate ensures schema is always up-to-date but can cause unexpected downtime if migrations fail. Manual control allows planning and rollback.
-
-**Migration Directory**
-
-- **Default**: `migrations` relative to application directory
-- **Custom**: Specify absolute path if using a centralized migration repository
-- **Version Control**: Keep migration files in version control alongside application code
-
-**Operational Notes**
-
-- Always test migrations on a staging database before production deployment
-- Review migration SQL files before deployment to understand schema changes
-- Have a rollback plan for each migration (reverse migration SQL)
-- For critical deployments, create database backups before running migrations
-- Consider using transactional migrations (all-or-nothing) when possible
-
-**Production Migration Best Practices**
-
-1. **Backup First**: Always create a database backup before running migrations
-2. **Test in Staging**: Verify migrations work on a staging environment first
-3. **Schedule Maintenance**: Run migrations during low-traffic periods
-4. **Monitor Logs**: Watch migration logs for errors or warnings
-5. **Verify Schema**: Confirm schema changes are applied correctly
-6. **Application Testing**: Run smoke tests to ensure application works with new schema
-
----
-
-## Scaling Considerations
-
-### Vertical Scaling (Single Server)
-
-**When to Use**
-
-- Deployments with fewer than 10,000 users
-- Simpler operational requirements
-- Limited budget for multiple servers
-
-**Configuration Tips**
-
-- Use PostgreSQL for better performance under load
-- Increase connection pool size based on CPU cores and memory
-- Enable query monitoring to identify bottlenecks
-- Consider read replicas for read-heavy workloads
-
-### Horizontal Scaling (Multiple Servers)
-
-**When to Use**
-
-- Deployments with more than 10,000 users
-- High availability requirements
-- Geographic distribution
-
-**Configuration Tips**
-
-- Use PostgreSQL (SQLite cannot scale horizontally)
-- Place database on dedicated server or managed service
-- Use connection pooling to limit database connections
-- Consider database proxy (PgBouncer) for connection management
-- Implement read replicas for read-heavy queries
-- Monitor database replication lag
-
-### Database as a Service
-
-**Options**
-
-- AWS RDS PostgreSQL
-- Google Cloud SQL
-- Azure Database for PostgreSQL
-- DigitalOcean Managed Databases
-
-**Configuration Tips**
-
-- Use connection strings provided by the service
-- Enable SSL/TLS for all connections
-- Configure connection pool based on service tier limits
-- Use service-provided backups and point-in-time recovery
-- Monitor service metrics through provider dashboard
-
----
-
-## Backup and Recovery
-
-### SQLite Backups
-
-**Strategy**
-
-- Simple file copy during maintenance window
-- Use SQLite online backup API for zero-downtime backups
-- Store backups in multiple locations (local, remote)
-
-**Procedure**
-
-1. Stop application or ensure no write operations
-2. Copy database file to backup location
-3. Verify backup integrity
-4. Store backup with timestamp
-
-**Recovery**
-
-1. Stop application
-2. Replace database file with backup
-3. Verify file permissions
-4. Start application
-
-### PostgreSQL Backups
-
-**Strategy**
-
-- Use `pg_dump` for logical backups
-- Use physical backups (WAL archiving) for point-in-time recovery
-- Leverage managed service backups if using database as a service
-
-**Procedure (pg_dump)**
-
-```bash
-pg_dump -h localhost -U plexichat -d plexichat > backup.sql
-```
-
-**Procedure (WAL Archiving)**
-
-Configure PostgreSQL to archive WAL files to a remote location for point-in-time recovery.
-
-**Recovery**
-
-```bash
-psql -h localhost -U plexichat -d plexichat < backup.sql
-```
-
----
-
-## Related Documentation
-
-- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [Authentication Configuration](config-authentication.md) - Session storage and user data
-- [Redis Configuration](config-redis.md) - Caching to reduce database load
-- [Deployment Guide](../getting-started.md) - Production deployment and scaling
+* [Default configuration reference](../../default-config.md)
+* [Authentication configuration](config-authentication.md)
+* [Valkey configuration](config-valkey.md)
+* [Getting started](../getting-started.md)

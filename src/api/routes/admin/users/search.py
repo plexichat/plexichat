@@ -50,7 +50,8 @@ class SearchMixin(AdminUsersRouterProtocol):
         except Exception as e:
             logger.error(f"User search error: {e}", exc_info=True)
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "User search failed"}},
             )
 
     async def admin_list_scheduled_deletions(self, request: Request):
@@ -67,24 +68,32 @@ class SearchMixin(AdminUsersRouterProtocol):
             "SELECT id, username, deletion_at FROM auth_users WHERE deletion_status = 'frozen' ORDER BY deletion_at ASC"
         )
 
-        now = int(time.time())
+        # Account lifecycle timestamps are stored in milliseconds. Keep all
+        # calculations in that unit and support both database row adapters.
+        now_ms = int(time.time() * 1000)
+        grace_ms = grace_days * 86400 * 1000
         deletions = []
         for row in rows:
-            deletion_at = row["deletion_at"]
+            if isinstance(row, dict):
+                user_id = row["id"]
+                username = row["username"]
+                deletion_at = row["deletion_at"]
+            else:
+                user_id, username, deletion_at = row[0], row[1], row[2]
             if deletion_at is None:
-                logger.warning(f"User {row['id']} has frozen status but no deletion_at")
+                logger.warning(f"User {user_id} has frozen status but no deletion_at")
                 continue
-            scheduled_at = deletion_at - (grace_days * 86400)
-            days_left = max(0, (deletion_at - now) // 86400)
+            scheduled_at = deletion_at - grace_ms
+            days_left = max(0, (deletion_at - now_ms) // (86400 * 1000))
 
             logger.info(
-                f"Scheduled deletion: user={row['username']}, deletion_at={deletion_at}, scheduled_at={scheduled_at}, days_left={days_left}"
+                f"Scheduled deletion: user={username}, deletion_at={deletion_at}, scheduled_at={scheduled_at}, days_left={days_left}"
             )
 
             deletions.append(
                 ScheduledDeletionResponse(
-                    user_id=str(row["id"]),
-                    username=row["username"],
+                    user_id=str(user_id),
+                    username=username,
                     scheduled_at=scheduled_at,
                     deletion_at=deletion_at,
                     days_left=days_left,

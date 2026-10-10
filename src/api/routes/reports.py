@@ -13,8 +13,44 @@ from src.api.schemas.reports import (
     ReportResponse,
 )
 from src.api.schemas.common import ErrorResponse
+from src.core.reports import ReportCategory
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
+
+# Maximum reports a single user may submit per rolling minute.
+REPORT_RATE_LIMIT = 10
+
+
+def _check_report_rate_limit(user_id: int) -> None:
+    """Atomically throttle report submissions in the shared cache tier."""
+    try:
+        from src.core.database import check_rate_limit
+
+        allowed, _remaining = check_rate_limit(
+            f"reports:submit:{user_id}", REPORT_RATE_LIMIT, 60
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.error(f"Report rate-limit unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": 503,
+                    "message": "Report submission temporarily unavailable",
+                }
+            },
+        )
+
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many reports submitted. Please slow down.",
+                }
+            },
+        )
 
 
 # ==================== Message Reports ====================
@@ -48,6 +84,15 @@ async def report_message(
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
+    _check_report_rate_limit(current_user.user_id)
+
+    # Category must be a recognised value (lowercase enum names).
+    if body.category not in {c.value for c in ReportCategory}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid report category"}},
+        )
+
     try:
         try:
             message_id = int(body.message_id)
@@ -66,16 +111,65 @@ async def report_message(
         reported_user_id = None
         message_content = None
 
+        # Fail closed when the messaging boundary is unavailable: without it
+        # the reported message/author cannot be verified, so accepting the
+        # report would store attacker-supplied IDs (F-AUTHZ-1).
+        if not messaging:
+            logger.error("Reports module cannot verify message: messaging unavailable")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": {
+                        "code": 503,
+                        "message": "Report submission temporarily unavailable",
+                    }
+                },
+            )
+
         if messaging:
             try:
                 msg = messaging.get_message(current_user.user_id, message_id)
-                if msg:
-                    reported_user_id = msg.author_id
-                    message_content = msg.content[:500] if msg.content else None
             except Exception as e:
                 logger.debug(
                     f"Failed to fetch message {message_id} details for report: {e}"
                 )
+                msg = None
+            # If the messaging boundary is wired we must be able to actually
+            # see the message; otherwise a reporter could fabricate reports
+            # against arbitrary message/channel ids they cannot access.
+            if msg is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Message not found or not accessible",
+                        }
+                    },
+                )
+            reported_user_id = msg.author_id
+            message_content = msg.content[:500] if msg.content else None
+            # A user may not report their own message.
+            if reported_user_id == current_user.user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Cannot report your own message",
+                        }
+                    },
+                )
+
+        # De-duplicate: an identical still-pending report is returned as a
+        # success instead of creating a second queue entry.
+        existing = reports.find_open_message_report(current_user.user_id, message_id)
+        if existing is not None:
+            return ReportResponse(
+                success=True,
+                report_id=str(existing.id),
+                message="Report already submitted",
+            )
 
         try:
             report = reports.report_message(
@@ -154,6 +248,14 @@ async def report_user(
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
+    _check_report_rate_limit(current_user.user_id)
+
+    if body.category not in {c.value for c in ReportCategory}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid report category"}},
+        )
+
     try:
         try:
             reported_user_id = int(body.user_id)
@@ -174,15 +276,52 @@ async def report_user(
                 detail={"error": {"code": 400, "message": "Cannot report yourself"}},
             )
 
+        # The reported user must actually exist (fail closed when the DB
+        # is unavailable — otherwise arbitrary IDs are accepted).
+        db = api.get_db()
+        if db is None:
+            logger.error("Reports module cannot verify user: database unavailable")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": {
+                        "code": 503,
+                        "message": "Report submission temporarily unavailable",
+                    }
+                },
+            )
+        user_row = db.fetch_one(
+            "SELECT id FROM auth_users WHERE id = ?", (reported_user_id,)
+        )
+        if not user_row:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Reported user not found"}},
+            )
+
         evidence_ids = None
         if body.evidence_message_ids:
             try:
                 evidence_ids = [int(mid) for mid in body.evidence_message_ids]
             except ValueError:
-                logger.debug(
-                    f"User {current_user.user_id} provided invalid evidence message IDs: {body.evidence_message_ids}"
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Invalid evidence message ID",
+                        }
+                    },
                 )
-                pass
+
+        # De-duplicate pending reports against the same user.
+        existing = reports.find_open_user_report(current_user.user_id, reported_user_id)
+        if existing is not None:
+            return ReportResponse(
+                success=True,
+                report_id=str(existing.id),
+                message="Report already submitted",
+            )
 
         try:
             report = reports.report_user(

@@ -36,6 +36,50 @@ class MessageStatusService(BaseService):
         self._participant_svc = participant_service
         self._user_settings_svc = user_settings_service
 
+    def _get_servers_module(self):
+        """Return the servers module without importing the whole API app.
+
+        Importing ``src.api`` pulls in the full FastAPI application (every
+        router, schema and the gateway) — a ~2.5s import cost on first use
+        per worker. When ``src.api`` has already been imported we return its
+        configured object (exactly what ``api.get_servers()`` returned
+        before); otherwise we fall back to the light ``src.core.servers``
+        import, which is the same fallback ``api.get_servers()`` itself
+        uses. This preserves identical semantics in every context.
+        """
+        import sys
+
+        api_mod = sys.modules.get("src.api")
+        if api_mod is not None:
+            get_servers = getattr(api_mod, "get_servers", None)
+            if get_servers is not None:
+                servers = get_servers()
+                if servers:
+                    return servers
+        try:
+            from src.core import servers
+
+            return servers
+        except ImportError:
+            return None
+
+    def _invalidate_unread_counts(self, user_id: SnowflakeID) -> None:
+        """Drop the cached ``GET /users/@me/unread`` entry for one user.
+
+        That route is decorated ``@cached(ttl=10, prefix="unread_counts_api")``
+        and its key embeds the caller's ``TokenInfo`` as
+        ``unread_counts_api:current_user:TokenInfo:<user_id>``. Every other
+        read-state cache (``msg_reader_ids:*`` etc.) is invalidated when read
+        state changes; without this one the unread badge kept serving the
+        pre-ack count until the entry's TTL expired.
+        """
+        try:
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern(f"unread_counts_api:current_user:TokenInfo:{user_id}")
+        except Exception:
+            pass
+
     def mark_delivered(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
     ) -> int:
@@ -46,10 +90,13 @@ class MessageStatusService(BaseService):
         now = self._get_timestamp()
 
         # Filter to messages user can access and didn't author
+        # Also skip system messages (author_id == 0)
         valid_ids: List[SnowflakeID] = []
         for msg_id in message_ids:
             msg_row = self._message_repo.get_by_id(msg_id)
             if not msg_row or msg_row["author_id"] == user_id:
+                continue
+            if msg_row["author_id"] == 0:
                 continue
             if not self._participant_svc.is_participant(
                 msg_row["conversation_id"], user_id
@@ -107,9 +154,7 @@ class MessageStatusService(BaseService):
         channel_receipts_enabled = True
         try:
             # We need to find if this is a server channel and check its setting
-            import src.api as api
-
-            servers_mod = api.get_servers()
+            servers_mod = self._get_servers_module()
             if servers_mod:
                 # messaging conversation_id might be different from server channel_id
                 # but servers_mod.get_channel usually handles the lookup
@@ -141,12 +186,14 @@ class MessageStatusService(BaseService):
                     invalidate_pattern("msg_reader_ids:*")
                     invalidate_pattern("msg_status_batch:*")
 
-                    # ALSO invalidate the individual message object caches since they contain read counts and status
-                    invalidate_pattern("msg:obj:*")
+                    # Invalidate the individual message object caches for
+                    # messages in this conversation only
+                    invalidate_pattern(f"msg:obj:*:{conversation_id}:*")
                     # And the recent messages list cache
                     invalidate_pattern(f"msg:recent:{conversation_id}")
 
-                    # ALSO invalidate the message list caches for the API and internal repo
+                    # ALSO invalidate the message list caches for the API
+                    # and internal repo
                     self._message_repo.invalidate_conversation_cache(conversation_id)
                 except Exception:
                     pass
@@ -156,13 +203,9 @@ class MessageStatusService(BaseService):
             conversation_id, user_id, target_msg_id, now
         )
 
-        # Invalidate unread counts cache
-        try:
-            # from src.core.database import invalidate_cached
-            self.get_unread_count.invalidate(self, user_id, conversation_id)  # type: ignore
-            self.get_unread_count.invalidate(self, user_id, None)  # type: ignore
-        except Exception:
-            pass
+        # Drop the cached /users/@me/unread counts so the badge reflects the
+        # ack immediately instead of after the 10s TTL.
+        self._invalidate_unread_counts(user_id)
 
         return count
 
@@ -174,12 +217,12 @@ class MessageStatusService(BaseService):
             # Normalize IDs for SQLite bindings; in some call paths these can be
             # str-like SnowflakeIDs which may not match integer columns.
             try:
-                conv_id_norm: SnowflakeID = int(conversation_id)  # type: ignore[arg-type]
+                conv_id_norm: SnowflakeID = int(conversation_id)
             except Exception:
                 conv_id_norm = conversation_id
 
             try:
-                user_id_norm: SnowflakeID = int(user_id)  # type: ignore[arg-type]
+                user_id_norm: SnowflakeID = int(user_id)
             except Exception:
                 user_id_norm = user_id
 
@@ -235,7 +278,7 @@ class MessageStatusService(BaseService):
             return {}
 
         # Get message rows to verify ownership
-        msg_rows = self._message_repo.get_batch_by_ids(message_ids)
+        msg_rows = self._message_repo.get_batch_by_ids(list(message_ids))
 
         # Filter for messages where user is the author
         owned_message_ids = [
@@ -271,9 +314,7 @@ class MessageStatusService(BaseService):
 
         # Cache for channel settings
         channel_settings_cache = {}  # {conv_id: bool}
-        import src.api as api
-
-        servers_mod = api.get_servers()
+        servers_mod = self._get_servers_module()
 
         result: Dict[SnowflakeID, Dict[str, Any]] = {}
         for mid in message_ids:
@@ -359,13 +400,28 @@ class MessageStatusService(BaseService):
             return 0
 
         # Determine target message ID for new last_read
-        target_msg_id = up_to_message_id
-        if not target_msg_id:
-            # Get the message right before the most recent one
+        target_msg_id: SnowflakeID
+        if up_to_message_id:
+            # Roll back to the message *before* the given one, not the given
+            # one itself. Normalize str-like SnowflakeIDs for the comparison.
+            try:
+                anchor_id: SnowflakeID = int(up_to_message_id)  # type: ignore[arg-type]
+            except Exception:
+                anchor_id = up_to_message_id
+            prev_id = self._message_repo.get_previous_id_in_conversation(
+                conversation_id, anchor_id
+            )
+            target_msg_id = prev_id if prev_id is not None else 0
+        else:
+            # Roll back to the message before the most recent one. Snowflake
+            # IDs are sparse, so max_id - 1 does not address a real message.
             max_id = self._message_repo.get_max_id_in_conversation(conversation_id)
             if not max_id:
                 return 0
-            target_msg_id = max_id - 1  # One before latest
+            prev_id = self._message_repo.get_previous_id_in_conversation(
+                conversation_id, max_id
+            )
+            target_msg_id = prev_id if prev_id is not None else 0
 
         now = self._get_timestamp()
 
@@ -374,15 +430,11 @@ class MessageStatusService(BaseService):
             conversation_id, user_id, target_msg_id, now
         )
 
+        # Rolling read state back changes the unread badge too.
+        self._invalidate_unread_counts(user_id)
+
         # Recalculate unread count
         new_count = self._repo.get_unread_count(user_id, conversation_id)
-
-        # Invalidate caches
-        try:
-            self.get_unread_count.invalidate(self, user_id, conversation_id)  # type: ignore
-            self.get_unread_count.invalidate(self, user_id, None)  # type: ignore
-        except Exception:
-            pass
 
         return new_count
 
@@ -395,9 +447,7 @@ class MessageStatusService(BaseService):
 
         Returns the number of channels marked.
         """
-        import src.api as api
-
-        servers_mod = api.get_servers()
+        servers_mod = self._get_servers_module()
         if not servers_mod:
             return 0
 

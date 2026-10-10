@@ -7,9 +7,9 @@ import os
 import hashlib
 import base64
 import uuid
-import time
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 
 import utils.config as config
@@ -52,6 +52,8 @@ class _StorageSetupMixin:
             }
         if "auto_route_to_database" not in cfg:
             cfg["auto_route_to_database"] = {"enabled": False}
+        if "processing_threads" not in cfg:
+            cfg["processing_threads"] = 8
         return cfg
 
     # -- primary storage ---------------------------------------------------------
@@ -178,7 +180,9 @@ class _StorageSetupMixin:
         ext = os.path.splitext(filename)[1].lower() or ".bin"
         unique_id = uuid.uuid4().hex[:16]
         type_dir = media_type.value
-        date_dir = time.strftime("%Y/%m/%d")
+        # UTC date directory so uploads land in the same day-bucket on every
+        # host regardless of each server's local zone.
+        date_dir = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         return f"{type_dir}/{date_dir}/{unique_id}{ext}"
 
     def _compute_checksum(self, data: bytes) -> str:

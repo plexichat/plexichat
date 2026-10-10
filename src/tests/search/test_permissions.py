@@ -45,7 +45,7 @@ class TestMessageSearchPermissions:
 
         results = search.search_messages(user1.id, unique_id)
 
-        assert len(results) >= 0
+        assert any(r.id == msg.id for r in results)
 
     def test_user_cannot_search_others_dms(
         self, auth_manager, messaging_manager, search_manager
@@ -156,7 +156,9 @@ class TestDiscoveryPermissions:
             user_id=owner.id, server_id=server.id, category="gaming"
         )
 
-        assert listing is not None
+        assert listing.server_id == server.id
+        assert listing.name == f"List Perm Server {unique_id}"
+        assert listing.category == "gaming"
 
     def test_member_can_bump_server(self, auth_manager, server_manager, search_manager):
         """Test server member can bump server."""

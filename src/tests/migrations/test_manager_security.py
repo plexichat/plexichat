@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.migrations.manager import Migration
+from src.core.migrations.manager import Migration, MigrationManager
 
 
 @pytest.mark.migrations
@@ -71,3 +71,58 @@ class TestManagerSecurity:
         result = migration_manager.apply_all_pending(dry_run=True)
         assert result["dry_run"] is True
         # Applied count should not change from dry run
+
+
+@pytest.mark.migrations
+class TestRollbackSerialization:
+    """Rollback must take the same migration lock as the apply paths.
+
+    ``apply_migration`` and ``apply_all_pending`` acquire the migration lock
+    (fail closed) and release it in a ``finally``; a rollback that skips the
+    lock can interleave its DDL and ``migrations_history`` writes with an
+    in-flight batch apply on the shared database.
+    """
+
+    _SOURCE = (
+        "def up(db):\n"
+        '    db.execute("CREATE TABLE IF NOT EXISTS rb_lock_ok '
+        '(id INTEGER PRIMARY KEY)")\n'
+        "\n"
+        "\n"
+        "def down(db):\n"
+        '    db.execute("DROP TABLE IF EXISTS rb_lock_ok")\n'
+    )
+
+    def _manager_with_completed_migration(self, migration_manager, temp_migrations_dir):
+        (temp_migrations_dir / "089_rb_lock.py").write_text(self._SOURCE)
+        manager = MigrationManager(migration_manager.db)
+        manager.migrations_dir = temp_migrations_dir
+        tracker = manager.tracker
+        tracker.ensure_table_exists()
+        tracker.record_migration_start("089", "rb_lock", "checksum")
+        tracker.record_migration_success("089", 1, None)
+        return manager
+
+    def test_rollback_refuses_when_the_lock_is_held(
+        self, migration_manager, temp_migrations_dir, monkeypatch
+    ):
+        manager = self._manager_with_completed_migration(
+            migration_manager, temp_migrations_dir
+        )
+        tracker = manager.tracker
+
+        # Simulate another run holding the lock: acquisition fails closed.
+        real_acquire = tracker.acquire_lock
+        monkeypatch.setattr(tracker, "acquire_lock", lambda *a, **k: False)
+
+        with pytest.raises(Exception, match="Could not acquire migration lock"):
+            manager.rollback_migration("089")
+
+        # The blocked attempt ran no DDL and left the record untouched.
+        assert tracker.get_migration_status("089")["status"] == "completed"
+
+        # Non-vacuity: with the lock free the same rollback succeeds.
+        monkeypatch.setattr(tracker, "acquire_lock", real_acquire)
+        result = manager.rollback_migration("089")
+        assert result["success"] is True
+        assert tracker.get_migration_status("089")["status"] == "rolled_back"

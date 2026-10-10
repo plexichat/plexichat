@@ -2,7 +2,52 @@
 Tests for server moderation actions (server mute/deaf, move, disconnect).
 """
 
+from unittest.mock import patch
+
 import pytest
+
+
+class _FakeCall:
+    def __init__(
+        self,
+        call_id,
+        channel_id,
+        server_id=None,
+        initiator_id=None,
+        conversation_id=None,
+    ):
+        self.id = call_id
+        self.channel_id = channel_id
+        self.server_id = server_id
+        self.initiator_id = initiator_id
+        self.conversation_id = conversation_id
+        self.duration_seconds = 1
+
+
+class _FakeCallManager:
+    """Minimal VoiceCallManager surface used by the call-lifecycle hooks."""
+
+    def __init__(self):
+        self._active = {}
+        self.participants = {}
+
+    def get_active_by_channel(self, channel_id):
+        return self._active.get(channel_id)
+
+    def start_call(self, **kwargs):
+        call = _FakeCall(call_id=kwargs["channel_id"], **kwargs)
+        self._active[call.channel_id] = call
+        self.participants.setdefault(call.id, set()).add(kwargs["initiator_id"])
+        return call
+
+    def add_participant(self, call_id, user_id):
+        self.participants.setdefault(call_id, set()).add(user_id)
+
+    def remove_participant(self, call_id, user_id):
+        self.participants.setdefault(call_id, set()).discard(user_id)
+
+    def end_call(self, call_id):
+        return self._active.pop(call_id, None)
 
 
 class TestServerMute:
@@ -191,6 +236,37 @@ class TestMoveMember:
 
         assert state.channel_id == voice_channel2.id
 
+    def test_move_member_fires_call_lifecycle_hooks(self, server_with_moderator):
+        """A moderation move is a leave+join and must run both hooks."""
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
+
+        voice_channel2 = servers.create_channel(
+            owner.id,
+            server.id,
+            "voice-move-hooks",
+            channel_type=servers.ChannelType.VOICE,
+        )
+
+        voice.join_channel(member.id, voice_channel.id)
+
+        with (
+            patch.object(voice, "_on_member_left") as left,
+            patch.object(voice, "_on_member_joined") as joined,
+        ):
+            voice.move_member(moderator.id, member.id, voice_channel2.id)
+
+        left.assert_called_once_with(member.id, voice_channel.id)
+        joined.assert_called_once_with(member.id, voice_channel2.id)
+
     def test_move_member_without_permission(self, server_with_voice):
         """Test moving member without permission raises error."""
         (
@@ -327,6 +403,55 @@ class TestDisconnectMember:
 
         with pytest.raises(voice.UserNotInChannelError):
             voice.disconnect_member(moderator.id, member.id, server.id)
+
+    def test_disconnect_member_fires_member_left_hook(self, server_with_moderator):
+        """A moderation disconnect must run the call-lifecycle leave hook.
+
+        ``leave_channel`` ends an emptied channel's call and prunes the
+        participant snapshot through ``_on_member_left``; the moderation path
+        skipped it, so the call stayed active for an empty channel and a
+        rejoin bypassed the recording-consent gate.
+        """
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
+
+        voice.join_channel(member.id, voice_channel.id)
+
+        with patch.object(voice, "_on_member_left") as left:
+            voice.disconnect_member(moderator.id, member.id, server.id)
+
+        left.assert_called_once_with(member.id, voice_channel.id)
+
+    def test_disconnect_member_ends_empty_channel_call(self, server_with_moderator):
+        """The leave hook must actually end the call once the channel empties."""
+        (
+            owner,
+            moderator,
+            member,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_moderator
+
+        calls = _FakeCallManager()
+        voice.set_voice_call_manager(calls)
+
+        voice.join_channel(member.id, voice_channel.id)
+        assert calls.get_active_by_channel(voice_channel.id) is not None
+
+        voice.disconnect_member(moderator.id, member.id, server.id)
+
+        assert calls.get_active_by_channel(voice_channel.id) is None
 
     def test_disconnect_clears_speaker_request(self, server_with_moderator):
         """Test disconnecting clears speaker requests."""

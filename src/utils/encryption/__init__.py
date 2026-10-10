@@ -60,8 +60,8 @@ def setup(
     Setup the encryption utilities. Optional - uses defaults if not called.
 
     Args:
-        worker_id (int): Worker ID for Snowflake generation (0-1023).
-        datacenter_id (int): Datacenter ID for Snowflake generation (0-1023).
+        worker_id (int): Worker ID for Snowflake generation (0-31, 5-bit).
+        datacenter_id (int): Datacenter ID for Snowflake generation (0-31, 5-bit).
         epoch_timestamp (int): Custom epoch timestamp in milliseconds.
         argon2_time_cost (int): Time cost for Argon2 (iterations).
         argon2_memory_cost (int): Memory cost for Argon2 in KiB.
@@ -82,6 +82,14 @@ def setup(
     )
 
     _setup_called = True
+    # Argon2 params changed -> cached pepper store may hold stale dummy
+    # state; refresh lazily on next use.
+    try:
+        from .pepper import reset_pepper_store
+
+        reset_pepper_store()
+    except Exception:
+        pass
 
 
 def _get_manager() -> EncryptionManager:
@@ -224,6 +232,22 @@ def verify_password(password: str, hash_str: str) -> bool:
     return _get_manager().verify_password(password, hash_str)
 
 
+def needs_password_rehash(hash_str: str) -> bool:
+    """True when a stored hash should be upgraded (stale pepper/params)."""
+    try:
+        return bool(_get_manager().needs_rehash(hash_str))
+    except Exception:
+        return False
+
+
+def password_pepper_id(hash_str: str) -> Optional[str]:
+    """Pepper id for a peppered hash, else None (legacy)."""
+    try:
+        return _get_manager().get_password_pepper_id(hash_str)
+    except Exception:
+        return None
+
+
 def encrypt_data(
     data: str, key: Optional[bytes] = None, context: Optional[str] = None
 ) -> str:
@@ -326,12 +350,13 @@ def generate_snowflake_id() -> int:
     return _get_snowflake().generate()
 
 
-def parse_snowflake_id(snowflake_id: int) -> dict:
+def parse_snowflake_id(snowflake_id: int | str) -> dict:
     """
     Parse a Snowflake ID into its components.
 
     Args:
-        snowflake_id (int): The Snowflake ID to parse.
+        snowflake_id (int | str): The Snowflake ID to parse. Numeric strings
+            are accepted because IDs serialize as strings in JSON.
 
     Returns:
         dict: Dictionary with timestamp, datacenter_id, worker_id, and sequence.
@@ -510,6 +535,8 @@ __all__ = [
     "setup",
     "hash_password",
     "verify_password",
+    "needs_password_rehash",
+    "password_pepper_id",
     "encrypt_data",
     "decrypt_data",
     "generate_key_pair",

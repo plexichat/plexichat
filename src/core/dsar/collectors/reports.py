@@ -35,7 +35,18 @@ class ReportsCollector(BaseCollector):
         """Collect all rows from a table with a WHERE clause."""
         try:
             rows = self._db.fetch_all(f"SELECT * FROM {table} WHERE {where}", params)
-            return [dict(row) for row in rows]
+            result = []
+            for row in rows:
+                item = dict(row)
+                # When exporting a subject's report history, reporter_id is
+                # another person's personal data. Preserve the fact and
+                # report metadata, but do not disclose that person's identity.
+                if "reported_user_id = ?" in where:
+                    for key in ("reporter_id", "reporter_username", "reporter_email"):
+                        if key in item:
+                            item[key] = "[redacted]"
+                result.append(item)
+            return result
         except Exception as e:
             import utils.logger as logger
 

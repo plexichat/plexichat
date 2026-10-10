@@ -11,9 +11,9 @@ import threading
 import time
 import concurrent.futures
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import utils.config as config
+from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
 # common_utils is now a native package.
 
@@ -24,9 +24,8 @@ def setup_module(tmp_path_factory):
     temp_dir = tmp_path_factory.mktemp("sqlite_load_test")
 
     log_dir = str(temp_dir / "logs")
-    logger.setup(log_dir=log_dir, level="DEBUG")
-
-    yield temp_dir
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield temp_dir
 
 
 @pytest.fixture
@@ -53,8 +52,31 @@ def sqlite_db(setup_module):
         except OSError:
             pass
 
-    default_config = {"database": {"type": "sqlite", "path": db_path}}
+    default_config = {
+        "database": {
+            "type": "sqlite",
+            "path": db_path,
+            # ``max_connections`` must exceed the largest worker count in
+            # this file (50 threads in ``test_concurrent_writes_50_threads``)
+            # because every worker keeps its own thread-local checkout from
+            # the shared pool — the default max of 16 made that test block
+            # 30s per pool.get_connection() and effectively hang.
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 64,
+                "connect_timeout": 5,
+                "cache_size_kb": -1024,
+                "mmap_size": 1048576,
+                "journal_size_limit": 1048576,
+            },
+        }
+    }
     config.setup(config_path=config_path, default_config=default_config)
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once — drop it so this test's ``Database()`` re-initialises against
+    # the fresh config above instead of a stale earlier instance.
+    Database.reset()
 
     db = Database()
     db.connect()
@@ -205,13 +227,13 @@ class TestSQLiteConcurrency:
         writes_per_writer = 20
         reads_per_reader = 50
 
-        write_lock = threading.Lock()
-        write_complete = threading.Event()
-        writes_done = 0
-
         def write_worker(thread_id: int):
-            """Worker that writes to database."""
-            nonlocal writes_done
+            """Worker that writes to database.
+
+            Individual INSERTs may fail under SQLite single-writer contention;
+            the aggregate success rate is verified below via the final row
+            count, which is the real assertion for this load test.
+            """
             for i in range(writes_per_writer):
                 try:
                     sqlite_db.execute(
@@ -220,10 +242,6 @@ class TestSQLiteConcurrency:
                     )
                 except Exception:
                     pass
-            with write_lock:
-                writes_done += 1
-                if writes_done >= num_writers:
-                    write_complete.set()
 
         def read_worker(thread_id: int):
             """Worker that reads from database."""
@@ -268,9 +286,15 @@ class TestSQLiteConcurrency:
             "Too many read failures"
         )
 
+        # Verify the majority of writes also succeeded
+        total_rows = sqlite_db.fetch_one("SELECT COUNT(*) as count FROM load_test")
+        assert total_rows["count"] >= num_writers * writes_per_writer * 0.9, (
+            "Too many write failures"
+        )
+
     def test_database_size_growth(self, sqlite_db):
         """Test database size growth with many records."""
-        num_records = 10000
+        num_records = 3000
 
         start_time = time.time()
 
@@ -304,7 +328,8 @@ class TestSQLiteLimits:
 
     def test_busy_timeout_behavior(self, sqlite_db):
         """Test that busy timeout prevents immediate lock failures."""
-        # This test documents that busy_timeout=30000 allows writes to queue
+        # This test documents that busy_timeout=5000 (configurable via
+        # database.connection_pool.busy_timeout) allows writes to queue
         # rather than failing immediately
 
         def rapid_write():

@@ -1048,7 +1048,7 @@ async function loadSecurity() {
         setText('admin-security-otp-status', sec?.otp_enabled ? 'Enabled' : (sec?.must_setup_otp ? 'Setup Required' : 'Disabled'));
         setText('admin-security-backup-count', String(sec?.backup_codes_remaining||0));
 
-        document.getElementById('blocked-ips-tbody').innerHTML = (ips||[]).map(i => `<tr><td class="font-mono">${esc(i.ip_address)}</td><td class="text-muted">${esc(i.reason||'')}</td><td class="text-muted">${ts(i.blocked_at)}</td><td>${i.expires_at === 'Permanent' ? '<span class="badge badge-danger">Permanent</span>' : ts(i.expires_at)}</td><td class="text-muted">${esc(i.blocked_by||'')}</td><td class="text-right"><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${esc(i.ip_address)}">Unblock</button></td></tr>`).join('');
+        document.getElementById('blocked-ips-tbody').innerHTML = (ips||[]).map(i => `<tr><td class="font-mono">${esc(i.ip_address)}</td><td class="text-muted">${esc(i.reason||'')}</td><td class="text-muted">${ts(i.blocked_at)}</td><td>${i.expires_at == null ? '<span class="badge badge-danger">Permanent</span>' : ts(i.expires_at)}</td><td class="text-muted">${esc(i.blocked_by||'')}</td><td class="text-right"><button class="btn btn-outline btn-sm" data-click="unblockIP" data-val="${esc(i.ip_address)}">Unblock</button></td></tr>`).join('');
         document.getElementById('banned-usernames-tbody').innerHTML = (bans||[]).map(b => `<tr><td class="font-mono">${esc(b.pattern)}</td><td><span class="badge badge-outline">${b.is_regex ? 'regex' : 'wildcard'}</span></td><td class="text-muted">${esc(b.reason||'')}</td><td class="text-muted">${esc(b.created_by||'')}</td><td class="text-right"><button class="btn btn-outline btn-sm" data-click="removeBan" data-id="${esc(b.id)}" ${b.created_by === 'system' ? 'disabled' : ''}>Remove</button></td></tr>`).join('');
         renderAccessTokens(tokens);
         if (selectedAccessTokenId) loadAccessTokenDetail(selectedAccessTokenId);
@@ -1436,7 +1436,7 @@ async function loadAutomodConfig() {
     try {
         const cfg = await api('/api/v1/admin/automod/config');
         document.getElementById('automod-enabled').checked = cfg.enabled !== false;
-        const o = cfg.ai?.openai||{}, p = cfg.ai?.perspective||{}, c = cfg.ai?.custom||{};
+        const o = cfg.ai?.openai||{}, p = cfg.ai?.perspective||{}, c = cfg.ai?.custom||{}, s = cfg.ai?.shieldstral||{};
         document.getElementById('automod-openai-key').value = o.api_key||'';
         document.getElementById('automod-openai-model').value = o.model||'';
         document.getElementById('automod-openai-url').value = o.api_url||'';
@@ -1444,6 +1444,9 @@ async function loadAutomodConfig() {
         document.getElementById('automod-perspective-key').value = p.api_key||'';
         document.getElementById('automod-perspective-threshold').value = p.threshold??'';
         document.getElementById('automod-perspective-attributes').value = (p.attributes||[]).join(', ');
+        document.getElementById('automod-shieldstral-endpoint').value = s.endpoint_url||'';
+        document.getElementById('automod-shieldstral-threshold').value = s.threshold??'';
+        document.getElementById('automod-shieldstral-policy').value = s.policy_query||'';
         document.getElementById('automod-custom-endpoint').value = c.endpoint_url||'';
         document.getElementById('automod-custom-key').value = c.api_key||'';
         document.getElementById('automod-custom-auth-header').value = c.auth_header||'';
@@ -1468,6 +1471,11 @@ async function saveAutomodConfig() {
                 api_key: document.getElementById('automod-perspective-key').value || null,
                 threshold: parseFloat(document.getElementById('automod-perspective-threshold').value) || null,
                 attributes: document.getElementById('automod-perspective-attributes').value.split(',').map(s=>s.trim()).filter(Boolean)
+            },
+            shieldstral: {
+                endpoint_url: document.getElementById('automod-shieldstral-endpoint').value || null,
+                threshold: parseFloat(document.getElementById('automod-shieldstral-threshold').value) || null,
+                policy_query: document.getElementById('automod-shieldstral-policy').value || null
             },
             custom: {
                 endpoint_url: document.getElementById('automod-custom-endpoint').value || null,
@@ -2113,7 +2121,9 @@ async function renderFeatureSettings() {
       try {
         const result = await api('/api/v1/admin/artifacts/features/' + feature, {
           method: 'POST',
-          body: JSON.stringify({ server_id: Number(serverId), settings }),
+          // Snowflake id as a string: Number() would round a 64-bit id onto
+          // a different server.
+          body: JSON.stringify({ server_id: String(serverId).trim(), settings }),
         });
         const resultEl = form.querySelector('.feature-settings-result');
         if (resultEl) {
@@ -2235,8 +2245,9 @@ async function saveServerRetention(e) {
     const serverId = idEl.value.trim();
     const daysRaw = daysEl.value.trim();
     if (serverId === '') { showToast('Server ID is required', 'error'); return; }
-    const body = { server_id: Number(serverId), retention_days: daysRaw === '' ? null : Number(daysRaw) };
-    if (Number.isNaN(body.server_id)) { showToast('Server ID must be a number', 'error'); return; }
+    // Keep the snowflake as a string: Number() would round a 64-bit id.
+    const body = { server_id: String(serverId).trim(), retention_days: daysRaw === '' ? null : Number(daysRaw) };
+    if (!/^\d+$/.test(body.server_id)) { showToast('Server ID must be a number', 'error'); return; }
     if (daysRaw !== '' && Number.isNaN(body.retention_days)) { showToast('Retention days must be a number', 'error'); return; }
     try {
         const d = await api('/api/v1/admin/artifacts/retention/server', { method: 'POST', body: JSON.stringify(body) });

@@ -3,26 +3,55 @@ Admin audit log routes for querying and exporting audit records.
 """
 
 from fastapi import APIRouter, Request, HTTPException, Query
-from typing import Optional
-from datetime import datetime
+from typing import Optional, Annotated
+from datetime import datetime, timezone
 import csv
 import io
 
-from .utils import check_host_restriction
+from pydantic import BeforeValidator
+
+from .utils import check_host_restriction, require_admin_permission
+from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/audit/logs")
+def _coerce_nullable_int(value):
+    """Coerce ``null``/empty query values for optional int params to None."""
+    if (
+        value is None
+        or value == ""
+        or (isinstance(value, str) and value.strip().lower() == "null")
+    ):
+        return None
+    return value
+
+
+NullableInt = Annotated[Optional[int], BeforeValidator(_coerce_nullable_int)]
+
+
+@router.get(
+    "/audit/logs",
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid filter or pagination parameter",
+        },
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Database not available"},
+    },
+)
 async def get_audit_logs(
     request: Request,
     action_family: Optional[str] = Query(None, description="Filter by action family"),
     status: Optional[str] = Query(None, description="Filter by status"),
-    admin_id: Optional[int] = Query(None, description="Filter by admin ID"),
+    admin_id: Annotated[
+        NullableSnowflakeIDParam, Query(description="Filter by admin ID")
+    ] = None,
     target_type: Optional[str] = Query(None, description="Filter by target type"),
-    date_from: Optional[int] = Query(None, description="Start timestamp (ms)"),
-    date_to: Optional[int] = Query(None, description="End timestamp (ms)"),
+    date_from: Annotated[NullableInt, Query(description="Start timestamp (ms)")] = None,
+    date_to: Annotated[NullableInt, Query(description="End timestamp (ms)")] = None,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=200, description="Items per page"),
 ):
@@ -30,6 +59,7 @@ async def get_audit_logs(
     Retrieve paginated audit log entries with optional filters.
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as api
@@ -50,7 +80,7 @@ async def get_audit_logs(
             conditions.append("status = ?")
             params.append(status)
 
-        if admin_id:
+        if admin_id is not None:
             conditions.append("admin_id = ?")
             params.append(admin_id)
 
@@ -58,11 +88,13 @@ async def get_audit_logs(
             conditions.append("target_type = ?")
             params.append(target_type)
 
-        if date_from:
+        # ``_coerce_nullable_int`` maps null/empty to None, so a present 0 is a
+        # real bound (epoch) and must not be dropped as falsy.
+        if date_from is not None:
             conditions.append("created_at >= ?")
             params.append(date_from)
 
-        if date_to:
+        if date_to is not None:
             conditions.append("created_at <= ?")
             params.append(date_to)
 
@@ -86,18 +118,33 @@ async def get_audit_logs(
         for log in logs:
             formatted_logs.append(
                 {
+                    # ``id`` is the audit row's INTEGER PRIMARY KEY rowid and
+                    # stays numeric; ``admin_id`` is the acting admin's 64-bit
+                    # snowflake, so it is emitted as a decimal string.
                     "id": log["id"],
-                    "admin_id": log["admin_id"],
+                    "admin_id": str(log["admin_id"])
+                    if log.get("admin_id") is not None
+                    else None,
                     "action": log["action"],
                     "target_type": log["target_type"],
-                    "target_id": log.get("target_id"),
+                    # target_id is a user/server/channel snowflake whenever the
+                    # target is one of those; emit it as a decimal string so a
+                    # JS Number cannot round it above 2^53. It can be absent for
+                    # non-entity actions, so keep None as None rather than
+                    # stringifying it to "None".
+                    "target_id": str(log["target_id"])
+                    if log.get("target_id") is not None
+                    else None,
                     "details": log.get("details"),
                     "ip_address": log.get("ip_address"),
                     "user_agent": log.get("user_agent"),
                     "status": log["status"],
                     "created_at": log["created_at"],
+                    # created_at is UTC millis; render UTC so the list, the
+                    # stats day boundary, and the CSV export agree on the
+                    # instant regardless of the server's local zone.
                     "timestamp": datetime.fromtimestamp(
-                        log["created_at"] / 1000
+                        log["created_at"] / 1000, tz=timezone.utc
                     ).isoformat()
                     if log.get("created_at")
                     else None,
@@ -113,7 +160,7 @@ async def get_audit_logs(
         }
     except Exception as e:
         logger.error(f"Audit logs retrieval error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/audit/logs/stats")
@@ -122,6 +169,7 @@ async def get_audit_stats(request: Request):
     Retrieve summary statistics for audit logs (today's totals by action family).
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as api
@@ -130,8 +178,10 @@ async def get_audit_stats(request: Request):
         if db is None:
             raise HTTPException(status_code=503, detail="Database not available")
 
+        # created_at is stored as UTC millis (time.time() * 1000), so the
+        # day boundary must also be UTC midnight, not server-local midnight.
         today_start = int(
-            datetime.now()
+            datetime.now(timezone.utc)
             .replace(hour=0, minute=0, second=0, microsecond=0)
             .timestamp()
             * 1000
@@ -174,24 +224,39 @@ async def get_audit_stats(request: Request):
         return stats
     except Exception as e:
         logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/audit/logs/export")
+@router.get(
+    "/audit/logs/export",
+    responses={
+        200: {
+            "description": "The exported audit log file",
+            "content": {
+                "text/csv": {"schema": {"type": "string"}},
+                "application/json": {"schema": {"type": "object"}},
+            },
+        },
+        400: {"model": ErrorResponse, "description": "Invalid filter parameter"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Database not available"},
+    },
+)
 async def export_audit_logs(
     request: Request,
     action_family: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    admin_id: Optional[int] = Query(None),
+    admin_id: Annotated[NullableSnowflakeIDParam, Query()] = None,
     target_type: Optional[str] = Query(None),
-    date_from: Optional[int] = Query(None),
-    date_to: Optional[int] = Query(None),
+    date_from: Annotated[NullableInt, Query()] = None,
+    date_to: Annotated[NullableInt, Query()] = None,
     format: str = Query("csv", pattern="^(csv|json)$"),
 ):
     """
     Export audit logs as CSV or JSON.
     """
     check_host_restriction(request)
+    require_admin_permission(request, "admin.audit.read")
 
     try:
         import src.api as api
@@ -212,7 +277,7 @@ async def export_audit_logs(
             conditions.append("status = ?")
             params.append(status)
 
-        if admin_id:
+        if admin_id is not None:
             conditions.append("admin_id = ?")
             params.append(admin_id)
 
@@ -220,11 +285,13 @@ async def export_audit_logs(
             conditions.append("target_type = ?")
             params.append(target_type)
 
-        if date_from:
+        # ``_coerce_nullable_int`` maps null/empty to None, so a present 0 is a
+        # real bound (epoch) and must not be dropped as falsy.
+        if date_from is not None:
             conditions.append("created_at >= ?")
             params.append(date_from)
 
-        if date_to:
+        if date_to is not None:
             conditions.append("created_at <= ?")
             params.append(date_to)
 
@@ -238,8 +305,18 @@ async def export_audit_logs(
         if format == "json":
             from fastapi.responses import JSONResponse
 
+            # Snowflake columns (the acting admin and the entity target) are
+            # stringified in the JSON export too, matching the list endpoint.
+            export_rows = []
+            for log in logs:
+                row = dict(log)
+                for key in ("admin_id", "target_id", "target_user_id"):
+                    if row.get(key) is not None:
+                        row[key] = str(row[key])
+                export_rows.append(row)
+
             return JSONResponse(
-                content={"logs": [dict(log) for log in logs]},
+                content={"logs": export_rows},
                 headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
             )
 
@@ -262,7 +339,9 @@ async def export_audit_logs(
 
         for log in logs:
             timestamp = (
-                datetime.fromtimestamp(log["created_at"] / 1000).isoformat()
+                datetime.fromtimestamp(
+                    log["created_at"] / 1000, tz=timezone.utc
+                ).isoformat()
                 if log.get("created_at")
                 else ""
             )
@@ -292,4 +371,4 @@ async def export_audit_logs(
         )
     except Exception as e:
         logger.error(f"Audit export error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

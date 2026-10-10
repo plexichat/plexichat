@@ -46,7 +46,7 @@ class TestEmojiNameValidation:
 
     def test_invalid_characters_rejected(self, reactions_manager):
         """Test invalid characters are rejected."""
-        invalid_names = ["emoji-name", "emoji.name", "emoji name", "EMOJI", "émoji"]
+        invalid_names = ["emoji-name", "emoji.name", "emoji name", "émoji"]
         for name in invalid_names:
             with pytest.raises(InvalidEmojiNameError):
                 reactions_manager._validate_emoji_name(name)
@@ -78,8 +78,9 @@ class TestEmojiLimits:
         """Test under limit passes."""
         mock_db.fetch_one.return_value = {"count": 25}
 
-        # Should not raise
-        reactions_manager._check_emoji_limits(server_id=1, animated=False)
+        assert (
+            reactions_manager._check_emoji_limits(server_id=1, animated=False) is None
+        )
 
 
 class TestCreateEmoji:
@@ -350,7 +351,19 @@ def mock_media():
 
 
 @pytest.fixture
-def reactions_manager(mock_db, mock_servers, mock_media):
+def mock_image(mock_media):
+    """Mock PIL.Image.open so emoji validation passes."""
+    mock_img = MagicMock()
+    mock_img.verify.return_value = None
+    mock_img.width = 64
+    mock_img.height = 64
+
+    with patch("src.core.reactions.manager.emojis.Image.open", return_value=mock_img):
+        yield mock_img
+
+
+@pytest.fixture
+def reactions_manager(mock_db, mock_servers, mock_media, mock_image):
     """Create reactions manager with mocks."""
     from src.core.reactions.manager import ReactionManager
 

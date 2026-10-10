@@ -62,6 +62,7 @@ class TestEdgeCases:
             content_type="image/png",
         )
         assert result is not None
+        assert result.filename == "test file (1).png"
 
     def test_get_file_data_nonexistent(self, media_manager):
         """Test getting file data for nonexistent file raises error."""

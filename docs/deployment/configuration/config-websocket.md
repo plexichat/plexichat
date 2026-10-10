@@ -1,17 +1,17 @@
-# WebSocket Configuration
+# WebSocket configuration
 
-This guide covers WebSocket gateway configuration for deploying Plexichat in production. WebSocket settings directly impact real-time communication reliability, resource consumption, and security. Carefully review each section and adjust values according to your expected concurrent connection count and network conditions.
+This guide describes how to configure the WebSocket gateway for Plexichat in production. WebSocket settings affect real-time reliability, resource use, and security.
 
-## Configuration Location
+## Configuration location
 
-All WebSocket settings are nested under the `websocket` key in your configuration file:
+Add WebSocket settings to your `config.yaml` file under the `websocket` key (`src/config_defaults.py:164`):
 
 ```yaml
 websocket:
-  # All WebSocket settings go here
+  # WebSocket settings
 ```
 
-## Core Settings
+## Core settings
 
 ### Configuration
 
@@ -27,68 +27,62 @@ websocket:
   allowed_origins: []
 ```
 
-### Deployment Considerations
+Defaults are defined in `src/config_defaults.py:164`. The gateway uses them in `src/api/websocket/__init__.py:141`.
 
-**Heartbeat Interval (45 seconds default)**
+### Deployment considerations
 
-- The key is `heartbeat_interval_ms`, not `heartbeat_interval_seconds`. The value is in **milliseconds**.
-- Controls how frequently the server sends heartbeat packets to connected clients. Clients must respond with a heartbeat ACK within the session timeout window.
-- **Standard Deployment**: 45 seconds provides reliable connection monitoring without excessive overhead.
-- **High-Concurrency Deployment**: Increase to 60,000-90,000 ms (60-90 seconds) to reduce per-connection overhead when serving thousands of concurrent connections.
-- **Low-Latency Deployment**: Decrease to 15,000-30,000 ms (15-30 seconds) to detect dead connections faster, at the cost of more network traffic.
+**Heartbeat interval (`heartbeat_interval_ms`)**
 
-**Session Timeout (60 seconds default)**
+*   The value is in milliseconds, not seconds.
+*   The server sends a heartbeat and the client must reply with an ACK within `session_timeout_ms`.
+*   Default is `45000` ms (45 seconds).
+*   For high concurrency (thousands of connections), increase to `60000`–`90000` to reduce overhead.
+*   For low latency, decrease to `15000`–`30000` to detect dead connections faster.
 
-- How long the server waits for a heartbeat ACK before terminating the connection. Must be greater than `heartbeat_interval_ms`.
-- If a client fails to respond within this window, the connection is dropped and the session is invalidated.
-- **Standard Deployment**: 60 seconds (1.5x heartbeat) provides adequate tolerance for network jitter.
-- **Unstable Networks**: Increase to 90,000-120,000 ms for users on mobile networks or high-latency connections.
-- **Stable Networks**: Can decrease to 45,000 ms for datacenter-to-datacenter communication.
+**Session timeout (`session_timeout_ms`)**
 
-**Maximum Connections Per User (5 default)**
+*   How long the server waits for a heartbeat ACK before it closes the connection.
+*   The value must be greater than `heartbeat_interval_ms`.
+*   Default is `60000` ms (60 seconds, 1.5x the heartbeat).
+*   For unstable mobile networks, increase to `90000`–`120000`.
+*   For stable datacenter links, you can use `45000`.
 
-- Limits how many simultaneous WebSocket connections a single user can maintain. When exceeded, the oldest connection is dropped.
-- **Standard Deployment**: 5 connections accommodates a user with multiple devices (phone, tablet, desktop, browser tab).
-- **Power Users**: Consider increasing to 10 for communities where users frequently use multiple clients.
-- **Resource-Constrained**: Decrease to 3 to limit per-user resource consumption on small servers.
+**Maximum connections per user (`max_connections_per_user`)**
 
-**Rate Limit Per Minute (120 default)**
+*   Limits simultaneous WebSocket connections for one user. When the limit is reached, the oldest connection closes.
+*   Default is `5`, which covers multiple devices and browser tabs.
+*   Increase to `10` for power users or decrease to `3` on resource-constrained hosts.
 
-- Maximum number of messages a single WebSocket connection can send per minute. Applies to all message types (events, heartbeats, etc.).
-- **Standard Deployment**: 120 messages/minute is generous for normal usage.
-- **Bot-Heavy Communities**: Bots may need higher limits. Consider increasing to 180-240 for developer-friendly deployments.
-- **Spam Prevention**: Decrease to 60-80 to limit potential for spam through compromised accounts.
+**Rate limit per minute (`rate_limit_per_minute`)**
 
----
+*   Maximum messages that one WebSocket connection can send per minute.
+*   Default is `120`.
+*   Increase to `180`–`240` for bot-heavy deployments. Decrease to `60`–`80` to reduce spam risk.
 
-## Message Size Limits
+## Message size limits
 
 ### Configuration
 
 ```yaml
 websocket:
-  max_message_size: 65536
-  max_decompressed_size: 262144
+  max_message_size: 65536      # 64 KB. Defined in src/config_defaults.py:169
+  max_decompressed_size: 262144  # 256 KB. Defined in src/config_defaults.py:170
 ```
 
-### Deployment Considerations
+### Deployment considerations
 
-**Max Message Size (65536 bytes / 64KB default)**
+**Max message size (`max_message_size`)**
 
-- Maximum size of a single WebSocket frame in bytes. Messages exceeding this are rejected and the connection may be terminated.
-- This is significantly lower than the 1MB some documentation previously claimed. The 64KB limit protects against memory exhaustion and denial-of-service attacks.
-- **Standard Deployment**: 64KB is sufficient for all normal messages, including rich embeds and attachments metadata.
-- **Large Embeds**: If your clients send very large embed payloads, increase to 131072 (128KB). Do not exceed 524288 (512KB).
-- **Minimal**: Decrease to 32768 (32KB) for maximum security on public-facing servers.
+*   Maximum size of one WebSocket frame in bytes. Plexichat rejects larger frames and may close the connection.
+*   Default is `65536` (64 KB). This is lower than an earlier 1 MB claim — the 64 KB cap protects against memory exhaustion and denial-of-service attacks.
+*   Use `65536` for standard chat, including rich embeds.
+*   Increase to `131072` (128 KB) only if you send very large embeds. Do not exceed `524288` (512 KB).
 
-**Max Decompressed Size (262144 bytes / 256KB default)**
+**Max decompressed size (`max_decompressed_size`)**
 
-- Maximum size of a decompressed WebSocket message after decompression. Messages that decompress beyond this limit are rejected.
-- This prevents zip-bomb attacks where a small compressed payload expands to an enormous size.
-- **Standard Deployment**: 256KB is 4x the max message size, providing adequate room for compression.
-- **Do not increase** unless you have a specific use case that requires it and you have sufficient server memory.
-
----
+*   Maximum size after decompression when `compression_enabled` is `true`. This mitigates zip-bomb attacks.
+*   Default is `262144` (256 KB, 4x `max_message_size`).
+*   Do not increase this value without a specific need and sufficient server memory.
 
 ## Compression
 
@@ -96,61 +90,51 @@ websocket:
 
 ```yaml
 websocket:
-  compression_enabled: true
+  compression_enabled: true   # Default in src/config_defaults.py:171
 ```
 
-### Deployment Considerations
+### Deployment considerations
 
-**Why Compression Matters**
+`compression_enabled` controls per-message deflate (`RFC 7692`).
 
-WebSocket compression (per-message deflate, RFC 7692) significantly reduces bandwidth usage for text-heavy real-time communication. However, compression has CPU and memory costs.
+*   Keep compression enabled for most deployments. Chat messages typically compress by 60–80%.
+*   Disable it (`false`) when the host is CPU-bound rather than bandwidth-bound. Compression adds about 5–15% CPU overhead per connection.
+*   Each compressed connection keeps a compression context (about 64–256 KB). For 10,000 connections, expect 0.6–2.5 GB of extra memory.
+*   When compression is enabled, `max_decompressed_size` is your defense against decompression bombs. Keep it at `262144` or lower.
 
-**Production Recommendations**
-
-- **Enable Compression**: Keep enabled for most deployments. Bandwidth savings of 60-80% are typical for chat messages.
-- **CPU-Bound Servers**: Disable (`compression_enabled: false`) if your server is CPU-constrained rather than bandwidth-constrained. Compression adds ~5-15% CPU overhead per connection.
-- **High-Concurrency**: Monitor memory usage. Each compressed connection maintains a compression context (typically 64-256KB). With 10,000 connections, this adds 0.6-2.5GB of memory.
-
-**Security Considerations**
-
-- The `max_decompressed_size` setting is critical when compression is enabled. Without it, a malicious client could send a tiny compressed payload that decompresses to gigabytes.
-- Keep `max_decompressed_size` at 256KB or lower. This is your defense against compression-based denial-of-service.
-
----
-
-## Allowed Origins
+## Allowed origins
 
 ### Configuration
 
 ```yaml
 websocket:
-  allowed_origins: []
+  allowed_origins: []   # Default is empty (allow all). Defined in src/config_defaults.py:172
 ```
 
-### Deployment Considerations
+### Deployment considerations
 
-**Origin Validation**
+*   When the list is empty, Plexichat accepts connections from any origin. Use this only for development.
+*   In production, list every origin that hosts your web client:
 
-- When `allowed_origins` is empty (default), all origins are accepted. This is appropriate for development but risky for production.
-- **Production Deployment**: Explicitly list your allowed client origins:
-  ```yaml
-  websocket:
-    allowed_origins:
-      - "https://app.plexichat.com"
-      - "https://plexichat.com"
-  ```
-- **Multi-Tenant**: Include all domains that host your web client.
-- **Development**: Keep empty to allow `localhost` connections.
+    ```yaml
+    websocket:
+      allowed_origins:
+        - "https://app.plexichat.com"
+        - "https://plexichat.com"
+    ```
 
-**Security Trade-offs**
+*   Wildcards are not supported. List each origin explicitly.
+*   An empty list is compatible with `localhost` development but exposes you to cross-site WebSocket hijacking (CSWSH).
 
-- **Empty Origins**: Maximum compatibility, no origin validation, vulnerable to cross-site WebSocket hijacking (CSWSH).
-- **Explicit Origins**: Prevents unauthorized websites from making WebSocket connections to your server. Recommended for production.
-- **Wildcard**: Not supported - explicitly list each allowed origin.
+The gateway validates the `Origin` header in `src/api/websocket/gateway.py`.
 
----
+## Cross-worker scaling with Valkey
 
-## Complete Production Example
+When you run multiple gateway workers, enable Valkey (`valkey.enabled: true`). The gateway starts a dedicated pub/sub listener on `{key_prefix}events:cross_worker` (`src/api/websocket/__init__.py:342`). The listener uses exponential backoff and you can inspect its health at `src/api/websocket/__init__.py:100` with `cross_worker_listener_status()`.
+
+Without Valkey, presence and events are limited to a single worker.
+
+## Complete production example
 
 ```yaml
 websocket:
@@ -166,20 +150,20 @@ websocket:
     - "https://plexichat.com"
 ```
 
----
+## Key name accuracy
 
-## Key Name Accuracy
+The following keys use milliseconds and have smaller defaults than some older documentation claimed:
 
-- ``heartbeat_interval_seconds`` (`heartbeat_interval_ms`): Uses milliseconds, not seconds
-- ``heartbeat_timeout_seconds`` (`session_timeout_ms`): Uses milliseconds, not seconds
-- ``max_message_size: 1048576`` (`max_message_size: 65536`): Default is 64KB, not 1MB
-- ``max_decompressed_size: 10485760`` (`max_decompressed_size: 262144`): Default is 256KB, not 10MB
+| Outdated key or value | Correct key and default | Source |
+| --- | --- | --- |
+| `heartbeat_interval_seconds` | `heartbeat_interval_ms: 45000` | `src/config_defaults.py:165` |
+| `heartbeat_timeout_seconds` | `session_timeout_ms: 60000` | `src/config_defaults.py:166` |
+| `max_message_size: 1048576` (1 MB) | `max_message_size: 65536` (64 KB) | `src/config_defaults.py:169` |
+| `max_decompressed_size: 10485760` (10 MB) | `max_decompressed_size: 262144` (256 KB) | `src/config_defaults.py:170` |
 
----
+## Related documentation
 
-## Related Documentation
-
-- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [API & Server Configuration](deployment/configuration/config-api.md) - CORS, proxies, debug mode
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) - Global, user, IP limits
-- [Security Best Practices](../../security.md) - WebSocket security considerations
+*   [Default configuration reference](../../default-config.md)
+*   [API and server configuration](config-api.md)
+*   [Rate limiting configuration](config-rate-limiting.md)
+*   [Security best practices](../../security.md)

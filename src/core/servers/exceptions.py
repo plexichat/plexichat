@@ -107,6 +107,22 @@ class InviteMaxUsesError(ServerError):
         self.current_uses = current_uses
 
 
+class InviteRateLimitedError(ServerError):
+    """Invite creation rate limit exceeded for this user."""
+
+    def __init__(self, message: str, retry_after_seconds: int = 60):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class InviteLimitReachedError(ServerError):
+    """Active-invite quota reached (per user or per server)."""
+
+    def __init__(self, message: str, limit: int = 0):
+        super().__init__(message)
+        self.limit = limit
+
+
 class BanExistsError(ServerError):
     """User is already banned from this server."""
 
@@ -131,6 +147,18 @@ class InvalidServerNameError(ServerError):
     def __init__(self, message: str, name: str = ""):
         super().__init__(message)
         self.name = name
+
+
+class ServerLimitReachedError(ServerError):
+    """Per-user server creation limit reached (license or configuration)."""
+
+    def __init__(self, message: str, limit: int = 0):
+        super().__init__(message)
+        self.limit = limit
+
+
+class InvalidChannelSettingError(ServerError):
+    """A channel setting value is outside its allowed range."""
 
 
 class InvalidChannelNameError(ServerError):
@@ -224,5 +252,19 @@ class OnboardingStepNotFoundError(ServerError):
 
 class OnboardingError(ServerError):
     """Error with onboarding operation."""
+
+    pass
+
+
+class InvalidPermissionKeyError(ValueError, ServerError):
+    """A role permission dict contains an unknown key or a wildcard."""
+
+    def __init__(self, message: str, permission: str = ""):
+        super().__init__(message)
+        self.permission = permission
+
+
+class BanPurgeNotSupportedError(ServerError):
+    """Message purging on ban (delete_message_days > 0) is not supported."""
 
     pass

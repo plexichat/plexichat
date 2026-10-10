@@ -106,7 +106,7 @@ class EmbedManagerBase(BaseManager):
         ]
 
         footer = None
-        if row["footer_text"]:
+        if row["footer_text"] or row["footer_icon_url"]:
             footer = EmbedFooter(
                 text=row["footer_text"], icon_url=row["footer_icon_url"]
             )
@@ -139,9 +139,18 @@ class EmbedManagerBase(BaseManager):
         if row["provider_name"] or row["provider_url"]:
             provider = EmbedProvider(name=row["provider_name"], url=row["provider_url"])
 
+        try:
+            embed_type = EmbedType(row["embed_type"])
+        except (ValueError, KeyError):
+            logger.warning(
+                f"Unknown embed_type {row['embed_type']!r} on embed {row['id']}; "
+                "falling back to RICH"
+            )
+            embed_type = EmbedType.RICH
+
         return Embed(
             id=row["id"],
-            embed_type=EmbedType(row["embed_type"]),
+            embed_type=embed_type,
             title=row["title"],
             description=row["description"],
             url=row["url"],
@@ -200,7 +209,14 @@ class EmbedManagerBase(BaseManager):
     ) -> bool:
         """Check if user has embed_links permission in server."""
         if not self._servers:
-            return True
+            # The servers module is required to make an authoritative
+            # permission decision. Failing open here would let any caller
+            # attach link embeds regardless of permissions, so deny instead.
+            logger.warning(
+                "embed_links permission check requested but the servers "
+                "module is unavailable; denying by default"
+            )
+            return False
         return self._servers.has_permission(
             user_id, server_id, "messages.embed_links", channel_id
         )

@@ -1,133 +1,125 @@
-# Applications Module
+# Applications
 
-Application platform for Plexichat supporting OAuth2 authorization, slash commands, interactions, and component builders.
+Build and manage bot applications with OAuth2 authorization, slash commands, interactions, and message components.
 
-## Features
+## Overview
 
-- OAuth2 authorization flows (authorization code grant, bot auth flow)
-- Application registration and management
-- Slash command registration (global and per-server)
-- Command option types (string, integer, boolean, user, channel, role, mentionable, number, attachment)
-- Autocomplete support for command options
-- Interaction handling (slash commands, buttons, select menus, modals, context menus)
-- Interaction response types (channel message, ephemeral, deferred, modal, autocomplete)
-- Component builders with validation
-- Webhook-based interaction endpoint for serverless bots
-- Rate limiting per application
-- Application installation tracking per server
+The applications module provides a platform for registering external applications, authorizing users through OAuth2, registering global and guild-specific slash commands, handling user interactions (commands, buttons, selects, modals), and tracking installations on servers. You initialize the module once during server startup and then use its public API throughout the codebase.
 
-## Setup
+The module stores client secrets, tokens, and authorization codes as hashes. It validates redirect URIs against a registered allowlist and encrypts interaction payloads at rest.
+
+## Before you begin
+
+Ensure you have:
+
+* A connected `Database` instance.
+* An `auth` module if you create bot accounts.
+* A `servers` module if you track application installations.
+* An `events` module if you dispatch `INTERACTION_CREATE` events.
+
+## Set up the module
+
+Initialize the module once in your server entry point:
 
 ```python
 from src.core.database import Database
 from src.core import auth, servers, events, applications
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize dependencies
 auth.setup(db)
 servers.setup(db, auth)
 events.setup()
 
-# Initialize applications
 applications.setup(db, auth, servers, events)
 ```
 
-## Usage
+## Use the module
 
-### Application Management
+### Manage an application
 
 ```python
 from src.core import applications
 
-# Create an application
+# Create an application. The client secret is shown only once.
 app = applications.create_application(
     owner_id=user_id,
     name="My Bot",
     description="A cool bot",
     redirect_uris=["https://mybot.com/callback"],
 )
-print(f"Client ID: {app.id}")
-print(f"Client Secret: {app.client_secret}")  # Only shown once!
+print(app.id)
+print(app.client_secret)
 
-# Get application
+# Retrieve and update an application
 app = applications.get_application(app_id)
-
-# Update application
 app = applications.update_application(
     user_id=owner_id,
     application_id=app_id,
     name="Updated Name",
-    description="New description",
 )
 
-# Delete application
-applications.delete_application(owner_id, app_id)
-
-# Regenerate client secret
+# Regenerate the client secret and delete an application
 new_secret = applications.regenerate_client_secret(owner_id, app_id)
+applications.delete_application(owner_id, app_id)
 ```
 
-### Bot Account
+### Create a bot account
 
 ```python
-# Create bot for application
 bot_info = applications.create_bot_for_application(
     user_id=owner_id,
     application_id=app_id,
-    permissions={"messages.send": True, "messages.read": True},
+    permissions={"messages.send": True},
 )
-print(f"Bot Token: {bot_info['token']}")  # Only shown once!
+print(bot_info["token"])  # Shown only once
 ```
 
-### OAuth2 Authorization
+### Authorize with OAuth2
 
 ```python
-# Generate authorization URL
+# Generate the authorization URL
 url = applications.generate_oauth_url(
     application_id=app_id,
     redirect_uri="https://mybot.com/callback",
     scopes=["identify", "guilds", "bot"],
     state="random_state",
-    permissions="8",  # Administrator for bot
+    permissions="8",
 )
 
-# Exchange code for tokens
+# Exchange an authorization code for tokens
 tokens = applications.exchange_code(
     application_id=app_id,
     client_secret=client_secret,
     code=authorization_code,
     redirect_uri="https://mybot.com/callback",
 )
-print(f"Access Token: {tokens['access_token']}")
-print(f"Refresh Token: {tokens['refresh_token']}")
 
-# Refresh token
+# Refresh and revoke tokens
 new_tokens = applications.refresh_token(
     application_id=app_id,
     client_secret=client_secret,
-    refresh_token=tokens['refresh_token'],
+    refresh_token=tokens["refresh_token"],
 )
-
-# Revoke token
-applications.revoke_token(tokens['access_token'])
+applications.revoke_token(tokens["access_token"])
 ```
 
-### Slash Commands
+Authorization codes are single-use and bound to the redirect URI and application. Access tokens expire after `token_expiry_seconds` (default 7 days) and refresh tokens are revoked after use.
+
+### Register slash commands
 
 ```python
 from src.core.applications import CommandType, CommandOptionType
 
-# Register global command
+# Register a global chat-input command
 cmd = applications.register_command(
     application_id=app_id,
     name="ping",
     description="Check bot latency",
 )
 
-# Register command with options
+# Register a command with options
 cmd = applications.register_command(
     application_id=app_id,
     name="echo",
@@ -139,16 +131,10 @@ cmd = applications.register_command(
             "type": CommandOptionType.STRING,
             "required": True,
         },
-        {
-            "name": "ephemeral",
-            "description": "Only visible to you",
-            "type": CommandOptionType.BOOLEAN,
-            "required": False,
-        },
     ],
 )
 
-# Register guild-specific command
+# Register a guild-specific command
 cmd = applications.register_command(
     application_id=app_id,
     name="serverinfo",
@@ -156,7 +142,7 @@ cmd = applications.register_command(
     server_id=server_id,
 )
 
-# Register context menu command
+# Register a context-menu command. Names preserve original casing.
 cmd = applications.register_command(
     application_id=app_id,
     name="Report Message",
@@ -164,32 +150,19 @@ cmd = applications.register_command(
     command_type=CommandType.MESSAGE,
 )
 
-# Update command
-cmd = applications.update_command(
-    command_id=cmd.id,
-    description="Updated description",
-)
-
-# Delete command
+# Update, list, and delete commands
+cmd = applications.update_command(cmd.id, description="Updated description")
+commands = applications.get_commands(app_id, server_id=server_id)
 applications.delete_command(cmd.id)
-
-# Get all commands
-commands = applications.get_commands(app_id)
-guild_commands = applications.get_commands(app_id, server_id=server_id)
 ```
 
-### Interactions
+Chat-input names are lowercased on write and must match `^[\w-]{1,32}$`. Context-menu names may include spaces and must match `^[\w\s-]{1,32}$`. See `commands/validation.py:11` for limits: 32 characters for names, 100 characters for descriptions, 25 options per command.
+
+### Handle interactions
 
 ```python
-from src.core.applications import (
-    InteractionType,
-    create_message_response,
-    create_deferred_response,
-    create_modal_response,
-    create_autocomplete_response,
-)
+from src.core.applications import InteractionType, create_message_response, create_deferred_response
 
-# Handle incoming interaction
 interaction = applications.handle_interaction(
     application_id=app_id,
     interaction_type=InteractionType.APPLICATION_COMMAND,
@@ -199,107 +172,47 @@ interaction = applications.handle_interaction(
     channel_id=channel_id,
 )
 
-# Respond with message
-response = create_message_response(
-    content="Pong!",
-    ephemeral=False,
-)
+# Reply with a message
+response = create_message_response(content="Pong!", ephemeral=False)
 applications.create_interaction_response(interaction.token, response)
 
-# Respond with ephemeral message
-response = create_message_response(
-    content="Only you can see this!",
-    ephemeral=True,
-)
-
-# Deferred response (for long operations)
+# Defer a reply for long-running work
 response = create_deferred_response(ephemeral=False)
 applications.create_interaction_response(interaction.token, response)
-# ... do work ...
-# Then edit the original response via webhook
-
-# Modal response
-response = create_modal_response(
-    custom_id="feedback_modal",
-    title="Submit Feedback",
-    components=[
-        {
-            "type": 1,
-            "components": [
-                {
-                    "type": 4,
-                    "custom_id": "feedback_text",
-                    "label": "Your Feedback",
-                    "style": 2,
-                    "required": True,
-                }
-            ]
-        }
-    ],
-)
-
-# Autocomplete response
-response = create_autocomplete_response(
-    choices=[
-        {"name": "Option 1", "value": "opt1"},
-        {"name": "Option 2", "value": "opt2"},
-    ]
-)
 ```
 
-### Components
+Interaction tokens expire after 15 minutes (`interaction_timeout` in `interactions/handler.py:35`). Responding a second time raises `InteractionAlreadyRespondedError`.
+
+### Build message components
 
 ```python
-from src.core.applications import (
-    build_button,
-    build_select_menu,
-    build_action_row,
-    ButtonStyle,
-    ComponentType,
-)
+from src.core.applications import build_button, build_select_menu, build_action_row, ButtonStyle, ComponentType
 
-# Build buttons
 primary_btn = build_button(
     style=ButtonStyle.PRIMARY,
     label="Click Me",
     custom_id="btn_click",
 )
-
 link_btn = build_button(
     style=ButtonStyle.LINK,
     label="Visit Website",
     url="https://example.com",
 )
-
-# Build select menu
 select = build_select_menu(
     custom_id="color_select",
     component_type=ComponentType.STRING_SELECT,
     placeholder="Choose a color",
     options=[
-        {"label": "Red", "value": "red", "emoji": {"name": "red_circle"}},
+        {"label": "Red", "value": "red"},
         {"label": "Blue", "value": "blue"},
-        {"label": "Green", "value": "green"},
     ],
 )
-
-# Build action row
 row = build_action_row([primary_btn, link_btn])
-
-# Send message with components
-response = create_message_response(
-    content="Choose an option:",
-    components=[
-        {"type": 1, "components": [primary_btn.__dict__]},
-        {"type": 1, "components": [select.__dict__]},
-    ],
-)
 ```
 
-### Installation Tracking
+### Track installations
 
 ```python
-# Install application on server
 installation = applications.install_application(
     application_id=app_id,
     server_id=server_id,
@@ -308,44 +221,84 @@ installation = applications.install_application(
     scopes=["bot", "applications.commands"],
 )
 
-# Get installations
-app_installations = applications.get_installations(application_id=app_id)
-server_installations = applications.get_installations(server_id=server_id)
-
-# Uninstall application
+# List and remove installations
+app_installs = applications.get_installations(application_id=app_id)
+server_installs = applications.get_installations(server_id=server_id)
 applications.uninstall_application(app_id, server_id, user_id)
 ```
 
-### Webhook Verification
+## OAuth2 scopes
+
+Scopes are space-separated strings. The module validates scopes against `VALID_SCOPES` in `oauth/scopes.py:8` and returns an error when the set contains unknown scopes or is empty.
+
+| Scope | Description | Notes |
+|---|---|---|
+| `identify` | Access username, avatar, and banner. | — |
+| `email` | Access email address. | — |
+| `guilds` | Know which servers the user is in. | — |
+| `guilds.join` | Join servers on the user's behalf. | — |
+| `guilds.members.read` | Read the user's member information in servers. | Privileged |
+| `bot` | Add a bot to a server. | Required when you request bot permissions |
+| `applications.commands` | Create commands in servers the user manages. | — |
+| `applications.commands.update` | Update application commands. | — |
+| `messages.read` | Read the user's messages. | Privileged |
+| `webhook.incoming` | Create webhooks in channels the user manages. | — |
+
+* **Privileged scopes** are defined in `oauth/scopes.py:36` as `guilds.members.read` and `messages.read`. Only approved applications can request privileged scopes.
+* **Bot scopes** – When you include `bot` in the authorization request, you can also pass `permissions`. The `bot` scope is tracked in `BOT_REQUIRED_SCOPES` in `oauth/scopes.py:34`.
+* **Validation** – `validate_scopes` in `oauth/scopes.py:42` requires at least one scope and rejects invalid scopes. `parse_scopes` and `scopes_to_string` normalize scope sets.
+
+To parse or serialize scopes:
 
 ```python
-# Verify incoming webhook request
-try:
-    applications.verify_webhook_signature(
-        body=request.body,
-        signature=request.headers["X-Signature-Ed25519"],
-        timestamp=request.headers["X-Signature-Timestamp"],
-    )
-except applications.WebhookSignatureError:
-    return Response(status=401)
+from src.core.applications import parse_scopes, scopes_to_string, validate_scopes
+
+scopes = parse_scopes("identify guilds bot")
+valid, issues = validate_scopes(scopes)
+scope_string = scopes_to_string(scopes)  # Sorted, space-joined
 ```
 
-### Rate Limiting
+## Command option types
 
-```python
-try:
-    applications.check_rate_limit(app_id)
-    # Process request
-except applications.RateLimitError as e:
-    return Response(
-        status=429,
-        headers={"Retry-After": str(e.retry_after)},
-    )
-```
+| Type | Value | Description |
+|---|---|---|
+| `SUB_COMMAND` | `1` | Sub-command |
+| `SUB_COMMAND_GROUP` | `2` | Sub-command group |
+| `STRING` | `3` | String input |
+| `INTEGER` | `4` | Integer input |
+| `BOOLEAN` | `5` | Boolean choice |
+| `USER` | `6` | User mention |
+| `CHANNEL` | `7` | Channel mention |
+| `ROLE` | `8` | Role mention |
+| `MENTIONABLE` | `9` | User or role mention |
+| `NUMBER` | `10` | Decimal number |
+| `ATTACHMENT` | `11` | File attachment |
+
+## Interaction types
+
+| Type | Value | Description |
+|---|---|---|
+| `PING` | `1` | Webhook ping |
+| `APPLICATION_COMMAND` | `2` | Slash command |
+| `MESSAGE_COMPONENT` | `3` | Button or select interaction |
+| `APPLICATION_COMMAND_AUTOCOMPLETE` | `4` | Autocomplete request |
+| `MODAL_SUBMIT` | `5` | Modal form submission |
+
+## Response types
+
+| Type | Value | Description |
+|---|---|---|
+| `PONG` | `1` | Respond to a ping |
+| `CHANNEL_MESSAGE_WITH_SOURCE` | `4` | Send a message |
+| `DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE` | `5` | Acknowledge and send later |
+| `DEFERRED_UPDATE_MESSAGE` | `6` | Acknowledge a component and update later |
+| `UPDATE_MESSAGE` | `7` | Update the component message |
+| `APPLICATION_COMMAND_AUTOCOMPLETE_RESULT` | `8` | Return autocomplete choices (maximum 25) |
+| `MODAL` | `9` | Show a modal dialog |
 
 ## Configuration
 
-Add to `config/config.yaml`:
+Add the following keys to `config/config.yaml`:
 
 ```yaml
 applications:
@@ -355,6 +308,7 @@ applications:
     code_expiry_seconds: 600  # 10 minutes
     refresh_enabled: true
     allowed_redirect_uri_pattern: "^https?://"
+    authorization_endpoint: "/oauth2/authorize"
   command_limits:
     max_commands_per_app: 100
     max_options_per_command: 25
@@ -365,120 +319,72 @@ applications:
   webhook_signature_secret: "your-secret-key"
 ```
 
-## OAuth2 Scopes
-
-| Scope | Description |
-|-------|-------------|
-| identify | Access username, avatar, and banner |
-| email | Access email address |
-| guilds | Know what servers user is in |
-| guilds.join | Join servers on user's behalf |
-| guilds.members.read | Read member info in servers |
-| bot | Add a bot to a server |
-| applications.commands | Create commands in managed servers |
-| applications.commands.update | Update application commands |
-| messages.read | Read user's messages |
-| webhook.incoming | Create webhooks in managed channels |
-
-## Command Option Types
-
-| Type | Value | Description |
-|------|-------|-------------|
-| SUB_COMMAND | 1 | Sub-command |
-| SUB_COMMAND_GROUP | 2 | Sub-command group |
-| STRING | 3 | String input |
-| INTEGER | 4 | Integer input |
-| BOOLEAN | 5 | Boolean choice |
-| USER | 6 | User mention |
-| CHANNEL | 7 | Channel mention |
-| ROLE | 8 | Role mention |
-| MENTIONABLE | 9 | User or role mention |
-| NUMBER | 10 | Decimal number |
-| ATTACHMENT | 11 | File attachment |
-
-## Interaction Types
-
-| Type | Value | Description |
-|------|-------|-------------|
-| PING | 1 | Webhook ping |
-| APPLICATION_COMMAND | 2 | Slash command |
-| MESSAGE_COMPONENT | 3 | Button/select interaction |
-| APPLICATION_COMMAND_AUTOCOMPLETE | 4 | Autocomplete request |
-| MODAL_SUBMIT | 5 | Modal form submission |
-
-## Response Types
-
-| Type | Value | Description |
-|------|-------|-------------|
-| PONG | 1 | Respond to ping |
-| CHANNEL_MESSAGE_WITH_SOURCE | 4 | Send message |
-| DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE | 5 | Acknowledge, send later |
-| DEFERRED_UPDATE_MESSAGE | 6 | Acknowledge component, update later |
-| UPDATE_MESSAGE | 7 | Update component message |
-| APPLICATION_COMMAND_AUTOCOMPLETE_RESULT | 8 | Autocomplete choices |
-| MODAL | 9 | Show modal dialog |
-
-## Error Handling
+## Error handling
 
 ```python
 from src.core.applications import (
     ApplicationError,
-    ApplicationNotFoundError,
     CommandValidationError,
     InteractionExpiredError,
-    OAuth2Error,
-    InvalidClientError,
+    InvalidScopeError,
     RateLimitError,
 )
 
 try:
     applications.create_interaction_response(token, response)
 except InteractionExpiredError:
-    print("Interaction token expired")
-except ApplicationError as e:
-    print(f"Application error: {e}")
+    print("Interaction token expired (15 minute window)")
+except InvalidScopeError as exc:
+    print(f"Invalid scopes: {exc}")
+except ApplicationError as exc:
+    print(f"Application error: {exc}")
 ```
 
-## WebSocket Events
+All OAuth errors inherit from `OAuth2Error`. Command validation errors include an `issues` list with human-readable details.
 
-The module dispatches `INTERACTION_CREATE` events via the WebSocket gateway:
+## WebSocket events
+
+The module dispatches `INTERACTION_CREATE` events through the gateway when an interaction is created:
 
 ```json
 {
-    "op": 0,
-    "t": "INTERACTION_CREATE",
-    "s": 42,
-    "d": {
-        "id": "123456789",
-        "application_id": "987654321",
-        "type": 2,
-        "data": {
-            "id": "111222333",
-            "name": "ping",
-            "type": 1
-        },
-        "guild_id": "444555666",
-        "channel_id": "777888999",
-        "user": {"id": "123123123"},
-        "token": "interaction_token",
-        "version": 1
-    }
+  "op": 0,
+  "t": "INTERACTION_CREATE",
+  "s": 42,
+  "d": {
+    "id": "123456789",
+    "application_id": "987654321",
+    "type": 2,
+    "data": {
+      "id": "111222333",
+      "name": "ping",
+      "type": 1
+    },
+    "guild_id": "444555666",
+    "channel_id": "777888999",
+    "user": {"id": "123123123"},
+    "token": "interaction_token",
+    "version": 1
+  }
 }
 ```
 
 ## Testing
 
+Run the application tests with `pytest`:
+
 ```bash
 pytest src/tests/applications/ -v
 ```
 
-## Database Schema
+## Database schema
 
-Tables (prefixed with `app_`):
-- `app_applications` - Application metadata
-- `app_commands` - Registered commands
-- `app_installations` - Server installations
-- `app_oauth_codes` - Authorization codes
-- `app_oauth_tokens` - Access/refresh tokens
-- `app_interactions` - Interaction records
-- `app_webhook_deliveries` - Webhook delivery logs
+Tables are prefixed with `app_` and are defined in `schema.py:10`:
+
+* `app_applications` – Application metadata and hashed client secrets.
+* `app_commands` – Registered commands with a `UNIQUE(application_id, name, server_id)` constraint.
+* `app_installations` – Server installations.
+* `app_oauth_codes` – Authorization codes (hashed, single-use).
+* `app_oauth_tokens` – Access and refresh token hashes.
+* `app_interactions` – Interaction records with encrypted payloads.
+* `app_webhook_deliveries` – Webhook delivery logs.

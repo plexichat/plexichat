@@ -43,7 +43,6 @@ class TestDispatch:
         event = Event(
             event_type=EventType.MESSAGE_CREATE,
             data={"content": "test"},
-            user_ids=[123],
         )
         events_module._manager.dispatch(event, user_ids=[123])
 

@@ -13,6 +13,7 @@ from src.core.database import cached
 import utils.logger as logger
 
 from .base import ChannelBase
+from ..exception_mapping import raise_mapped
 
 
 class ChannelCRUDMixin(ChannelBase):
@@ -62,7 +63,11 @@ class ChannelCRUDMixin(ChannelBase):
             },
         )
 
-    @cached(ttl=30, prefix="channel_api")
+    # F6 FIX: the 30s per-user cache served stale (pre-revocation) channel
+    # representations for up to half a minute after a kick/ban/downgrade.
+    # A short TTL keeps the read hot-path benefit while bounding the
+    # revocation-staleness window to seconds.
+    @cached(ttl=5, prefix="channel_api")
     async def _get_channel(
         self, channel_id: str, current_user: TokenInfo = Depends(get_current_user)
     ) -> ChannelResponse:
@@ -115,18 +120,11 @@ class ChannelCRUDMixin(ChannelBase):
                                     },
                                 )
                             return ch
-                        # TODO(404-vs-403 parity): messaging_mod exposes
-                        # only the membership-aware ``get_conversation``,
-                        # so a non-participant who happens to know a
-                        # real conversation id here sees 404 instead of
-                        # 403. This mirrors the original code's
-                        # behaviour and is left for a follow-up that
-                        # adds a membership-agnostic
-                        # ``messaging_mod.conversation_exists`` probe
-                        # (the parallel of ``servers_mod.channel_exists``
-                        # used above). Tracked but not fixed in this
-                        # pass to keep the bounded change scoped to
-                        # server-channel routes per the selftest intent.
+                        # 404-vs-403 parity for conversations: a
+                        # non-participant who knows a real conversation id
+                        # must receive 403, not 404. Use the
+                        # membership-agnostic ``conversation_exists`` probe
+                        # (the parallel of ``servers_mod.channel_exists``).
                         messaging_mod = api_module.get_messaging()
                         if messaging_mod:
                             ch = messaging_mod.get_conversation(
@@ -134,6 +132,16 @@ class ChannelCRUDMixin(ChannelBase):
                             )
                             if ch:
                                 return ch
+                            if messaging_mod.conversation_exists(cid):
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail={
+                                        "error": {
+                                            "code": 403,
+                                            "message": "Channel access denied",
+                                        }
+                                    },
+                                )
                         return None
                     finally:
                         if db:
@@ -150,27 +158,11 @@ class ChannelCRUDMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Access" in exc_name or "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied access to channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": "Access denied"}},
-                    )
-
-                logger.error(
-                    f"Failed to get channel {cid} for user {current_user.user_id}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Access denied",
+                    invalid_message="Invalid request",
                 )
         except HTTPException:
             raise
@@ -179,7 +171,13 @@ class ChannelCRUDMixin(ChannelBase):
                 f"Unexpected error in get_channel for {channel_id}: {e}", exc_info=True
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _update_channel(
@@ -300,27 +298,11 @@ class ChannelCRUDMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to update channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to update channel {cid} for user {current_user.user_id}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Channel access denied",
+                    invalid_message="Invalid channel data",
                 )
         except HTTPException:
             raise
@@ -330,7 +312,13 @@ class ChannelCRUDMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )
 
     async def _delete_channel(
@@ -414,27 +402,11 @@ class ChannelCRUDMixin(ChannelBase):
             except HTTPException:
                 raise
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to delete channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to delete channel {cid} for user {current_user.user_id}: {e}",
-                    exc_info=True,
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Channel access denied",
+                    invalid_message="Invalid request",
                 )
         except HTTPException:
             raise
@@ -444,5 +416,11 @@ class ChannelCRUDMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )

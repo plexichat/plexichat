@@ -10,12 +10,19 @@ from src.core.base import SnowflakeID
 from src.core.webhooks.models import WebhookMessage
 from src.core.webhooks.exceptions import (
     EmbedLimitError,
+    ContentTooLongError,
     InvalidContentError,
+    InvalidWebhookContentError,
     InvalidWebhookTokenError,
+    RateLimitError,
 )
 
 from .base import WebhookManagerTrait
 from .constants import MAX_EMBEDS_PER_MESSAGE, USERNAME_OVERRIDE_MAX_LENGTH
+
+# F12 fail-safe default: applied when ``rate_limit_per_minute`` is absent
+# or unparseable so a config regression can never disable limiting.
+DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE = 30
 
 
 class WebhookExecutionMixin(WebhookManagerTrait):
@@ -32,7 +39,12 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         thread_id: Optional[SnowflakeID] = None,
         wait: bool = False,
     ) -> Optional[WebhookMessage]:
-        """Execute a webhook to send a message."""
+        """Execute a webhook to send a message.
+
+        ``wait=False`` (the default, matching the HTTP API) queues the
+        message and returns ``None`` immediately; ``wait=True`` blocks
+        until the message is created and returns it.
+        """
         full_token = token
         if not token.startswith("webhook."):
             full_token = self._format_webhook_token(webhook_id, token)
@@ -46,25 +58,61 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         )
 
         if not row:
-            raise InvalidWebhookTokenError("Webhook not found")
+            # Do not disclose whether a webhook id exists to an unauthenticated
+            # caller presenting a token. Treat both cases identically.
+            raise InvalidWebhookTokenError("Invalid webhook token")
 
         if not self._verify_token(parsed["secret"], row["token_hash"]):
             raise InvalidWebhookTokenError("Invalid webhook token")
 
         if not content and not embeds:
-            raise InvalidContentError(
+            raise InvalidWebhookContentError(
                 "Message must have content or embeds", ["empty_message"]
             )
+
+        # F12: the per-webhook execution rate limit must fail SAFE. An
+        # absent/invalid/unset config previously disabled limiting entirely
+        # (0 = unlimited); a sane default is applied instead so a config
+        # regression can never expose webhooks to unbounded floods. An
+        # explicit 0/negative is an operator opt-out: honored, but logged.
+        rate_limit_raw = self._config.get("rate_limit_per_minute")
+        rate_limit: int
+        explicitly_disabled = False
+        if isinstance(rate_limit_raw, int):
+            rate_limit = rate_limit_raw
+            explicitly_disabled = rate_limit <= 0
+        else:
+            try:
+                rate_limit = int(str(rate_limit_raw))
+            except (TypeError, ValueError):
+                rate_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
+        if explicitly_disabled:
+            logger.warning(
+                f"Webhook {webhook_id} execution rate limiting is DISABLED "
+                "(explicit rate_limit_per_minute <= 0); this is not recommended."
+            )
+        elif rate_limit <= 0:
+            rate_limit = DEFAULT_WEBHOOK_RATE_LIMIT_PER_MINUTE
+        if rate_limit > 0:
+            from src.core.database.cache import check_rate_limit
+
+            allowed, _remaining = check_rate_limit(
+                f"webhook:{webhook_id}:execute", int(rate_limit), 60
+            )
+            if not allowed:
+                raise RateLimitError("Webhook execution rate limit exceeded")
 
         if content:
             max_length = self._config.get("max_message_length", 2000)
             if len(content) > max_length:
-                raise InvalidContentError(
+                raise ContentTooLongError(
                     f"Content exceeds maximum length of {max_length}",
                     ["content_too_long"],
                 )
 
         if embeds:
+            if not isinstance(embeds, list):
+                raise InvalidContentError("Embeds must be a list", ["invalid_embeds"])
             max_embeds = self._config.get(
                 "max_embeds_per_message", MAX_EMBEDS_PER_MESSAGE
             )
@@ -94,11 +142,35 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         if channel_row and channel_row["conversation_id"]:
             conversation_id = channel_row["conversation_id"]
 
+        if thread_id:
+            thread_row = self._db.fetch_one(
+                "SELECT conversation_id FROM srv_channels WHERE id = ?",
+                (thread_id,),
+            )
+            if thread_row and thread_row["conversation_id"]:
+                conversation_id = thread_row["conversation_id"]
+
         now = self._get_timestamp()
         message_id = self._generate_id()
 
         display_name = username or row["name"]
         display_avatar = avatar_url or row["avatar_url"]
+
+        # SECURITY: strip persistence-routing keys from webhook-supplied
+        # embed dicts. A malicious ``message_id`` (or ``id``) key must
+        # never influence which message an embed is attached to; embeds
+        # are persisted ONLY via the messaging metadata path below,
+        # attached to the message this execution creates.
+        safe_embeds: Optional[List[Dict[str, Any]]] = None
+        if embeds:
+            safe_embeds = [
+                (
+                    {k: v for k, v in e.items() if k not in ("message_id", "id")}
+                    if isinstance(e, dict)
+                    else e
+                )
+                for e in embeds
+            ]
 
         if self._messaging:
             try:
@@ -106,7 +178,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                     user_id=row["creator_id"],
                     conversation_id=conversation_id,
                     content=content or "",
-                    embeds=embeds,
+                    embeds=safe_embeds,
                     webhook_id=webhook_id,
                 )
                 message_id = msg.id
@@ -114,6 +186,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                 logger.error(
                     f"Failed to send webhook message via messaging module: {e}"
                 )
+                fallback_id = self._generate_id()
                 try:
                     self._db.execute(
                         """INSERT INTO msg_messages
@@ -121,7 +194,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                             deleted, edited, webhook_id)
                            VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)""",
                         (
-                            message_id,
+                            fallback_id,
                             conversation_id,
                             row["creator_id"],
                             content or "",
@@ -130,21 +203,10 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                             webhook_id,
                         ),
                     )
-                except Exception:
-                    self._db.execute(
-                        """INSERT INTO msg_messages
-                           (id, conversation_id, author_id, content, created_at, updated_at,
-                            deleted, edited)
-                           VALUES (?, ?, ?, ?, ?, ?, 0, 0)""",
-                        (
-                            message_id,
-                            conversation_id,
-                            row["creator_id"],
-                            content or "",
-                            now,
-                            now,
-                        ),
-                    )
+                    message_id = fallback_id
+                except Exception as fe:
+                    logger.error(f"Fallback webhook message insert also failed: {fe}")
+                    raise
 
         self._db.execute(
             """INSERT INTO webhook_messages
@@ -163,16 +225,14 @@ class WebhookExecutionMixin(WebhookManagerTrait):
             ),
         )
 
-        if embeds and self._embeds:
-            for embed_data in embeds:
-                try:
-                    embed = self._embeds.create_embed(row["creator_id"], **embed_data)
-                    self._embeds.attach_embed_to_message(
-                        row["creator_id"], message_id, embed.id
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create embed for webhook message: {e}")
-
+        # NOTE: embeds are intentionally NOT replayed through
+        # ``self._embeds.create_embed`` here. The messaging metadata path
+        # above is the single source of truth for webhook embeds; the
+        # previous dual-persistence replay raised TypeError on
+        # client-style keys (type/invite_code/color:int) that was then
+        # swallowed, so the core copy silently never happened — and a
+        # webhook-supplied ``message_id`` could flow into
+        # ``attach_embed_to_message`` for an arbitrary message.
         logger.debug(f"Webhook {webhook_id} executed, message {message_id} created")
 
         if wait:
@@ -183,7 +243,7 @@ class WebhookExecutionMixin(WebhookManagerTrait):
                 content=content,
                 username=display_name,
                 avatar_url=display_avatar,
-                embeds=embeds or [],
+                embeds=safe_embeds or [],
                 thread_id=thread_id,
                 created_at=now,
             )
@@ -201,7 +261,9 @@ class WebhookExecutionMixin(WebhookManagerTrait):
         wait: bool = False,
     ) -> Optional[WebhookMessage]:
         """Execute a webhook using its URL."""
-        match = re.match(r"^/?webhooks/(\d+)/(.+)$", webhook_url)
+        # The token segment is the full ``webhook.{id}.{secret}`` token
+        # (dots included), so the char class must allow ``.`` as well.
+        match = re.match(r"^/?webhooks/(\d+)/([A-Za-z0-9_.-]+)$", webhook_url)
         if not match:
             raise InvalidWebhookTokenError("Invalid webhook URL format")
 

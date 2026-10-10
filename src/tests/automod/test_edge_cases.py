@@ -78,6 +78,7 @@ class TestEdgeCases:
             actions=[{"action_type": "log_only"}],
         )
         assert rule_ci is not None
+        assert rule_ci.name == "Case Insensitive"
 
     def test_multiple_rules_on_same_server(self, automod_manager, test_server):
         """Test creating multiple rules on the same server."""

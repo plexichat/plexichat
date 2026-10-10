@@ -27,11 +27,19 @@ def path_segment(value: str, field: str = "identifier") -> str:
 
 
 def safe_filename_component(value: str, field: str = "identifier") -> str:
-    """Return a filesystem-safe component without changing its identity silently."""
+    """Return a filesystem-safe component that preserves the original identity.
+
+    Dangerous path separators and control characters are stripped; the
+    remaining characters are kept intact so the original value is still
+    recognisable in logs and directory listings.
+    """
     if not isinstance(value, str) or not value or len(value) > 512:
         raise ValueError(f"Invalid {field}")
-    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
-    return digest
+    sanitised = re.sub(r"[^A-Za-z0-9._-]", "_", value)
+    if not sanitised:
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+        return digest
+    return sanitised
 
 
 def stable_numeric_id(value: str, namespace: str) -> int:

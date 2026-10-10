@@ -65,6 +65,9 @@ class IpBlacklistMixin(AuthManagerProtocol):
 
     @cached(ttl=300, prefix="ip_blocked")
     def is_ip_blocked(self, ip_address: str) -> bool:
+        # Fail OPEN on DB/crypto/cache errors: a transient outage must not
+        # turn into a site-wide lockout. Listed IPs are still blocked via
+        # the normal DB path below; only the error path returns False.
         try:
             ip_index = self.crypto.fast_blind_index(ip_address, "ip_address")
             legacy_index = self.crypto.legacy_fast_blind_index(ip_address, "ip_address")
@@ -82,7 +85,10 @@ class IpBlacklistMixin(AuthManagerProtocol):
                 return False
 
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                f"is_ip_blocked: failed to check IP blacklist for {ip_address}: {e}"
+            )
             return False
 
     def get_blocked_ips(self) -> List[Dict[str, Any]]:

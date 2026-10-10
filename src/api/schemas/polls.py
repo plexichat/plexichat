@@ -2,10 +2,12 @@
 Poll schemas - Request/response models for poll endpoints.
 """
 
-from typing import Optional, List
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
+
+ResultsVisibility = Literal["always", "after_vote", "after_end"]
 
 
 class PollInlineCreateRequest(BaseModel):
@@ -25,7 +27,7 @@ class PollInlineCreateRequest(BaseModel):
     allow_multiple_choice: bool = Field(
         False, description="Whether multiple options can be selected"
     )
-    results_visibility: str = Field(
+    results_visibility: ResultsVisibility = Field(
         "always", description="When results are visible (always, after_vote, after_end)"
     )
 
@@ -79,7 +81,7 @@ class PollResponse(BaseModel):
     options: List[PollOptionResponse] = Field(
         default_factory=list, description="Poll options"
     )
-    total_votes: int = Field(0, description="Total votes")
+    total_votes: Optional[int] = Field(None, description="Total votes")
     is_ended: bool = Field(False, description="Whether poll has ended")
 
 
@@ -92,7 +94,7 @@ class PollResultsResponse(BaseModel):
     options: List[PollOptionResponse] = Field(
         default_factory=list, description="Options with counts"
     )
-    total_votes: int = Field(0, description="Total votes")
+    total_votes: Optional[int] = Field(None, description="Total votes")
     user_voted: bool = Field(False, description="Whether user voted")
     user_votes: List[SnowflakeID] = Field(
         default_factory=list, description="Option IDs voted by user"

@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi.responses import Response
 
 import src.api as api
 import utils.logger as logger
@@ -9,14 +10,21 @@ from src.api.schemas.auth import (
     SessionResponse,
     RevokeAllSessionsRequest,
     RevokeAllSessionsResponse,
+    WsTicketResponse,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
+from .cookies import (
+    clear_session_cookie,
+    session_cookie_max_age,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
     UserNotFoundError,
 )
+from src.utils.net import get_client_ip
 
 router = APIRouter()
 
@@ -31,6 +39,7 @@ router = APIRouter()
     },
 )
 async def logout(
+    response: Response,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
     auth = api.get_auth()
@@ -52,7 +61,60 @@ async def logout(
                 f"Failed to revoke session {current_user.session_id} during logout: {e}"
             )
 
+    # Always clear the HttpOnly cookie so the browser forgets the credential.
+    clear_session_cookie(response)
+
     return SuccessResponse(success=True, message=None)
+
+
+@router.post(
+    "/ws-ticket",
+    response_model=WsTicketResponse,
+    summary="Mint a single-use WebSocket gateway ticket",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        409: {"model": ErrorResponse, "description": "No underlying session"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def create_ws_ticket(
+    current_user: TokenInfo = Depends(get_current_user),
+) -> WsTicketResponse:
+    """Issue a short-lived, single-use ticket for the gateway handshake.
+
+    Lets the browser authenticate the WebSocket without exposing its
+    long-lived bearer token; the ticket is consumed on first use.
+    """
+    auth = api.get_auth()
+    if not auth:
+        logger.error("Auth module not available")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Auth module not available"}},
+        )
+
+    if not current_user.session_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": 409,
+                    "message": "Tickets are only issued for interactive sessions",
+                }
+            },
+        )
+
+    try:
+        ticket, expires_in = auth.create_ws_ticket_for_session(
+            current_user.user_id, current_user.session_id
+        )
+    except Exception as e:
+        logger.error(f"Failed to mint WS ticket for {current_user.user_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Failed to mint gateway ticket"}},
+        )
+    return WsTicketResponse(ticket=ticket, expires_in=expires_in)
 
 
 @router.post(
@@ -64,7 +126,7 @@ async def logout(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def refresh_session(request: Request) -> LoginResponse:
+async def refresh_session(request: Request, response: Response) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -74,37 +136,72 @@ async def refresh_session(request: Request) -> LoginResponse:
         )
 
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    cookie_token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        # Cookie-based sessions carry no Authorization header. Cookies are
+        # attached automatically, so apply the same CSRF rule as the auth
+        # middleware: mutating requests must carry the client marker header.
+        from .cookies import get_session_token_from_cookies
+
+        token = cookie_token = get_session_token_from_cookies(request.cookies)
+        if cookie_token and request.headers.get("X-Plexichat-Request") != "1":
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "CSRF validation failed"}},
+            )
+    if not token:
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": 401, "message": "Missing authentication token"}},
         )
 
-    token = auth_header[7:]
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
     try:
-        token_info = auth.verify_token(token, ip_address, user_agent)
+        # Rotation (F3): mint a fresh token and invalidate the old one.
+        # The response re-issues the HttpOnly cookie (F4) so the browser
+        # and JS storage stay in sync. M9: the rotated token is echoed in
+        # the body SOLELY for explicit non-browser opt-in
+        # (``X-Plexichat-Token-Mode: bearer``); cookie flows get only the
+        # marker plus the session lifetime, with the credential in the
+        # re-issued HttpOnly cookie.
+        new_token = auth.refresh_session(token)
+        if not new_token:
+            raise TokenInvalidError("Invalid or expired session")
+        from .cookies import set_session_cookie as _set_cookie
+
+        # Verify the freshly minted token first so the re-issued cookie's
+        # Max-Age can track the real session expiry (a trusted device's row
+        # outlives the shared expire_hours default).
+        token_info = auth.verify_token(new_token, ip_address, user_agent)
 
         user = auth.get_user(token_info.user_id)
         if not user:
             raise UserNotFoundError("User not found")
 
+        max_age = session_cookie_max_age(getattr(token_info, "expires_at", None))
+        _set_cookie(response, new_token, max_age=max_age)
+
         return LoginResponse(
             status="success",
-            token=token,
+            token=session_token_for_response(request, new_token),
             user=_user_to_response(user),
+            expires_in=max_age,
         )
-    except (TokenInvalidError, TokenExpiredError) as e:
-        logger.warning(f"Session refresh failed: {e}")
+    except (TokenInvalidError, TokenExpiredError):
+        logger.warning("Session refresh failed: invalid or expired token")
         raise HTTPException(
-            status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid or expired session"}},
         )
     except Exception as e:
         logger.error(f"Unexpected error in refresh_session: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -149,7 +246,8 @@ async def get_sessions_list(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -165,7 +263,7 @@ async def get_sessions_list(
     },
 )
 async def revoke_session(
-    session_id: str, current_user: TokenInfo = Depends(get_current_user)
+    session_id: SnowflakeID, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
     auth = api.get_auth()
     if not auth:
@@ -176,20 +274,13 @@ async def revoke_session(
         )
 
     try:
-        sid = int(session_id)
-    except ValueError:
-        logger.warning(f"Invalid session ID format: {session_id}")
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid session ID"}},
-        )
-
-    try:
-        auth.revoke_session(current_user.user_id, sid)
-        logger.info(f"User {current_user.user_id} revoked session {sid}")
+        auth.revoke_session(current_user.user_id, int(session_id))
+        logger.info(f"User {current_user.user_id} revoked session {session_id}")
         return SuccessResponse(success=True, message=None)
     except UserNotFoundError:
-        logger.warning(f"Session {sid} not found for user {current_user.user_id}")
+        logger.warning(
+            f"Session {session_id} not found for user {current_user.user_id}"
+        )
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Session not found"}},
@@ -200,7 +291,8 @@ async def revoke_session(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -214,7 +306,9 @@ async def revoke_session(
     },
 )
 async def revoke_all_sessions(
-    body: RevokeAllSessionsRequest, current_user: TokenInfo = Depends(get_current_user)
+    body: RevokeAllSessionsRequest,
+    response: Response,
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> RevokeAllSessionsResponse:
     auth = api.get_auth()
     if not auth:
@@ -243,6 +337,9 @@ async def revoke_all_sessions(
         logger.info(
             f"User {current_user.user_id} revoked {revoked} sessions (except_current={except_current})"
         )
+        if not except_current or not current_user.session_id:
+            # The current session was revoked — drop the browser cookie too.
+            clear_session_cookie(response)
         return RevokeAllSessionsResponse(success=True, revoked_count=revoked)
     except Exception as e:
         logger.error(
@@ -250,5 +347,6 @@ async def revoke_all_sessions(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

@@ -130,6 +130,17 @@ class RankingEngine:
 
         if self._now_ms > 0 and result.created_at > 0:
             age_hours = (self._now_ms - result.created_at) / (1000 * 60 * 60)
+            # Clamp to zero: ``created_at`` can legitimately sit in the
+            # future relative to ``now_ms`` (clock skew between the node
+            # that indexed the message and the one serving the search,
+            # imported/backfilled rows, a scheduled-message dispatch that
+            # ran against a stale index). Left unclamped the negative age
+            # reaches ``math.log1p``, whose domain is ``x > -1``: once the
+            # timestamp is more than 24h ahead the call raises ValueError
+            # and the whole search request 500s on a single bad row.
+            # Semantically a not-yet-born message is simply brand new, so
+            # an age of 0 gives it the maximum recency boost.
+            age_hours = max(age_hours, 0.0)
             recency_factor = 1.0 / (1.0 + math.log1p(age_hours / 24))
             score += recency_factor * self.weights.recency
 

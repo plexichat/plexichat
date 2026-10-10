@@ -27,6 +27,23 @@ class TestHasPermission:
             servers.has_permission(member_user.id, server.id, "messages.read") is True
         )
 
+    def test_member_has_artifact_permissions(self, server_with_members):
+        """Every member can use the collaborative suite artifacts in a server."""
+        server, _, _, member_user, _, _, servers = server_with_members
+
+        assert (
+            servers.has_permission(member_user.id, server.id, "artifact.view") is True
+        )
+        assert (
+            servers.has_permission(member_user.id, server.id, "artifact.create") is True
+        )
+        assert (
+            servers.has_permission(member_user.id, server.id, "artifact.edit") is True
+        )
+        assert (
+            servers.has_permission(member_user.id, server.id, "artifact.delete") is True
+        )
+
     def test_member_lacks_admin_permissions(self, server_with_members):
         """Test that member lacks admin permissions."""
         server, _, _, member_user, _, _, servers = server_with_members
@@ -94,8 +111,7 @@ class TestRequirePermission:
         """Test require_permission when user has permission."""
         server, owner, _, _, _, _, servers = server_with_members
 
-        # Should not raise
-        servers.require_permission(owner.id, server.id, "server.manage")
+        assert servers.require_permission(owner.id, server.id, "server.manage") is None
 
     def test_require_permission_failure(self, server_with_members):
         """Test require_permission when user lacks permission."""
@@ -383,3 +399,137 @@ class TestPermissionHierarchy:
             )
             is True
         )
+
+
+class TestBackfillDefaultRolePermissions:
+    """Tests for merging newly-added default permissions into existing roles."""
+
+    @staticmethod
+    def _set_everyone_permissions(db, server_id, perms):
+        import json
+
+        db.execute(
+            "UPDATE srv_roles SET permissions = ? WHERE server_id = ? AND is_default = 1",
+            (json.dumps(perms), server_id),
+        )
+
+    @staticmethod
+    def _get_everyone_permissions(db, server_id):
+        import json
+
+        row = db.fetch_one(
+            "SELECT permissions FROM srv_roles WHERE server_id = ? AND is_default = 1",
+            (server_id,),
+        )
+        raw = row["permissions"]
+        return json.loads(raw) if isinstance(raw, str) else raw
+
+    def test_backfill_adds_missing_artifact_permissions(self, modules, db, user_pool):
+        """Legacy @everyone roles gain the new artifact permissions."""
+        from src.core import servers as servers_module
+
+        owner = user_pool.get_user()
+        server = modules.servers.create_server(owner_id=owner.id, name="Legacy Server")
+
+        # Simulate a pre-artifact role: strip the artifact.* keys.
+        legacy = {
+            "channels.view": True,
+            "messages.send": True,
+            "messages.read": True,
+        }
+        self._set_everyone_permissions(db, server.id, legacy)
+
+        updated = servers_module.backfill_default_role_permissions(db)
+        assert updated >= 1
+
+        perms = self._get_everyone_permissions(db, server.id)
+        assert perms.get("artifact.view") is True
+        assert perms.get("artifact.create") is True
+        assert perms.get("artifact.edit") is True
+        assert perms.get("artifact.delete") is True
+
+    def test_backfill_preserves_explicit_false(self, modules, db, user_pool):
+        """An explicit False is never re-granted by the backfill."""
+        from src.core import servers as servers_module
+
+        owner = user_pool.get_user()
+        server = modules.servers.create_server(owner_id=owner.id, name="Denied Server")
+
+        denied = {"messages.send": True, "artifact.create": False}
+        self._set_everyone_permissions(db, server.id, denied)
+
+        servers_module.backfill_default_role_permissions(db)
+
+        perms = self._get_everyone_permissions(db, server.id)
+        assert perms.get("artifact.create") is False
+        # Missing keys are still added.
+        assert perms.get("artifact.view") is True
+
+    def test_backfill_is_idempotent(self, modules, db, user_pool):
+        """Running the backfill twice does not change anything the second time."""
+        from src.core import servers as servers_module
+
+        owner = user_pool.get_user()
+        server = modules.servers.create_server(
+            owner_id=owner.id, name="Idempotent Server"
+        )
+
+        legacy = {"messages.send": True}
+        self._set_everyone_permissions(db, server.id, legacy)
+
+        servers_module.backfill_default_role_permissions(db)
+        first = self._get_everyone_permissions(db, server.id)
+        servers_module.backfill_default_role_permissions(db)
+        second = self._get_everyone_permissions(db, server.id)
+
+        assert first == second
+
+
+class TestChannelOverrideHierarchy:
+    """M1: role channel overrides apply LOWEST position first so a higher
+    role's deny beats a lower role's allow (Discord hierarchy semantics)."""
+
+    def test_high_role_deny_beats_low_role_allow(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        low_role = {"allow": {"messages.send": True}, "deny": {}}
+        high_role = {"allow": {}, "deny": {"messages.send": True}}
+        result = apply_channel_overrides(base, [low_role, high_role], None)
+        assert result["messages.send"] is False
+
+    def test_low_role_allow_beats_base_deny(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": False}
+        low_role = {"allow": {"messages.send": True}, "deny": {}}
+        high_role = {"allow": {}, "deny": {}}
+        result = apply_channel_overrides(base, [low_role, high_role], None)
+        assert result["messages.send"] is True
+
+    def test_highest_role_wins_conflicting_overrides(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        mid_role = {"allow": {}, "deny": {"messages.send": True}}
+        high_role = {"allow": {"messages.send": True}, "deny": {}}
+        result = apply_channel_overrides(base, [mid_role, high_role], None)
+        assert result["messages.send"] is True
+
+    def test_member_override_beats_all_roles(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        high_role = {"allow": {}, "deny": {"messages.send": True}}
+        member = {"allow": {"messages.send": True}, "deny": {}}
+        result = apply_channel_overrides(base, [high_role], member)
+        assert result["messages.send"] is True
+
+    def test_json_string_allow_deny_still_parsed(self):
+        from src.core.servers.permission_utils import apply_channel_overrides
+
+        base = {"messages.send": True}
+        low_role = {"allow": '{"messages.send": true}', "deny": "{}"}
+        high_role = {"allow": "{}", "deny": '{"messages.send": true}'}
+        result = apply_channel_overrides(base, [low_role, high_role], None)
+        assert result["messages.send"] is False

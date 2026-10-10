@@ -29,6 +29,17 @@ class SettingsResponse(BaseModel):
     limit: int = Field(..., description="Max number of settings allowed")
 
 
+class BulkSettingsResponse(BaseModel):
+    """Response for a bulk settings update."""
+
+    success: bool = Field(..., description="Whether all updates succeeded")
+    updated: int = Field(..., description="Number of settings updated")
+    failed: int = Field(..., description="Number of settings that failed to update")
+    failures: Dict[str, str] = Field(
+        default_factory=dict, description="Per-key failure reasons"
+    )
+
+
 class BulkSettingsRequest(RootModel[Dict[str, Any]]):
     """Request body for bulk setting updates."""
 

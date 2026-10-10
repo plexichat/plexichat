@@ -4,6 +4,7 @@ ICE handling - ICE candidate parsing, validation, and relay.
 Implements ICE candidate handling per RFC 5245.
 """
 
+import ipaddress
 import re
 from typing import Dict, List, Optional, Any
 
@@ -59,7 +60,7 @@ class ICECandidateParser:
             raise ICECandidateError("Empty candidate string", candidate=candidate_str)
 
         # Handle end-of-candidates
-        if candidate_str == "" or "end-of-candidates" in candidate_str.lower():
+        if "end-of-candidates" in candidate_str.lower():
             return {"type": "end-of-candidates"}
 
         match = ICE_CANDIDATE_PATTERN.match(candidate_str)
@@ -89,6 +90,10 @@ class ICECandidateParser:
             parsed["generation"] = int(match.group(11))
         if match.group(12):
             parsed["ufrag"] = match.group(12)
+            if not re.fullmatch(r"[a-zA-Z0-9+/_-]+", parsed["ufrag"]):
+                raise ICECandidateError(
+                    "Invalid ufrag value", candidate=candidate_str[:100]
+                )
         if match.group(13):
             parsed["network_id"] = int(match.group(13))
         if match.group(14):
@@ -174,11 +179,44 @@ class ICECandidateValidator:
         if not address:
             raise ICECandidateError("Missing address", candidate=str(parsed))
 
-        # Basic IP validation (IPv4 or IPv6)
-        if not self._is_valid_ip(address):
+        if address in self.BLOCKED_ADDRESSES:
+            raise ICECandidateError(
+                f"Blocked address: {address}", candidate=str(parsed)
+            )
+
+        # Reject loopback, multicast, link-local, and unspecified addresses
+        # outright (prevents SSRF-style ICE candidate abuse).
+        try:
+            parsed_addr = ipaddress.ip_address(address)
+        except ValueError:
+            parsed_addr = None
+        if parsed_addr is not None and (
+            parsed_addr.is_loopback
+            or parsed_addr.is_multicast
+            or parsed_addr.is_link_local
+            or parsed_addr.is_unspecified
+        ):
+            raise ICECandidateError(
+                f"Blocked address: {address}", candidate=str(parsed)
+            )
+
+        ctype = parsed.get("type", "host")
+        if ctype != "relay" and not self._is_valid_ip(address):
             raise ICECandidateError(
                 f"Invalid IP address: {address}", candidate=str(parsed)
             )
+
+        # Hostnames are only acceptable for relay candidates (e.g. TURN DNS)
+        if ctype == "relay" and not (
+            self._is_valid_ip(address) or self._is_valid_hostname(address)
+        ):
+            raise ICECandidateError(
+                f"Invalid relay address: {address}", candidate=str(parsed)
+            )
+
+    BLOCKED_ADDRESSES = frozenset(
+        {"0.0.0.0", "255.255.255.255", "::", "0:0:0:0:0:0:0:0"}
+    )
 
     def _validate_port(self, parsed: Dict[str, Any]) -> None:
         """Validate port number."""
@@ -195,18 +233,15 @@ class ICECandidateValidator:
             )
 
     def _is_valid_ip(self, address: str) -> bool:
-        """Check if address is valid IPv4 or IPv6."""
-        # IPv4
-        ipv4_pattern = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
-        if ipv4_pattern.match(address):
-            parts = address.split(".")
-            return all(0 <= int(p) <= 255 for p in parts)
-
-        # IPv6 (simplified check)
-        if ":" in address:
+        """Check if address is a valid IPv4 or IPv6 address."""
+        try:
+            ipaddress.ip_address(address)
             return True
+        except ValueError:
+            return False
 
-        # Hostname (for relay candidates)
+    def _is_valid_hostname(self, address: str) -> bool:
+        """Check if address is a valid DNS hostname (relay candidates only)."""
         hostname_pattern = re.compile(
             r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$"
         )

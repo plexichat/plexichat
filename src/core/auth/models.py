@@ -9,6 +9,8 @@ from typing import Optional, Dict, List, Any
 from enum import Enum
 from src.core.base import SnowflakeID
 
+from src.core.database.cache.serialization import register_reconstructable_type
+
 
 class AccountType(Enum):
     """Type of account."""
@@ -22,7 +24,7 @@ class AuthStatus(Enum):
     """Authentication result status."""
 
     SUCCESS = "success"
-    TWO_FACTOR_REQUIRED = "2fa_required"
+    TWO_FACTOR_REQUIRED = "two_factor_required"
     VERIFICATION_REQUIRED = "verification_required"
     FAILED = "failed"
 
@@ -45,6 +47,8 @@ class AuditEventType(Enum):
     TWO_FACTOR_BACKUP_REGENERATED = "2fa_backup_regenerated"
     SESSION_REVOKED = "session_revoked"
     DEVICE_REVOKED = "device_revoked"
+    DEVICE_TRUSTED = "device_trusted"
+    DEVICE_UNTRUSTED = "device_untrusted"
     BOT_CREATED = "bot_created"
     BOT_DELETED = "bot_deleted"
     BOT_TOKEN_REGENERATED = "bot_token_regenerated"
@@ -96,6 +100,11 @@ class User:
     password_hash: Optional[str] = field(default=None, repr=False)
     totp_secret_encrypted: Optional[str] = field(default=None, repr=False)
     backup_codes_hash: Optional[str] = field(default=None, repr=False)
+
+
+# User objects flow through cached lookups (profile tiers); they must
+# reconstruct as real User instances (with an AccountType enum), not dicts.
+register_reconstructable_type(User)
 
 
 @dataclass
@@ -166,8 +175,10 @@ class Device:
     fingerprint: str
     name: Optional[str]
     device_type: Optional[str]
-    first_seen_at: int
-    last_seen_at: int
+    trusted: bool = False
+    trusted_at: Optional[int] = None
+    first_seen_at: int = 0
+    last_seen_at: int = 0
 
 
 @dataclass

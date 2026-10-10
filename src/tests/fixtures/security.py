@@ -449,7 +449,10 @@ class SecurityAssertions:
 
         content_lower = content.lower()
         for pattern in dangerous_patterns:
-            assert pattern not in content_lower or content != original, (
+            # Strict: stored content must not contain the dangerous pattern at
+            # all. (The old `or content != original` escape let partially
+            # sanitised content that still contained the pattern pass.)
+            assert pattern not in content_lower, (
                 f"Potentially dangerous pattern '{pattern}' found in content"
             )
 
@@ -460,7 +463,8 @@ class SecurityAssertions:
             sql_keywords = ["SELECT", "DROP", "DELETE", "UPDATE", "INSERT", "UNION"]
             result_upper = result.upper()
             for keyword in sql_keywords:
-                assert keyword not in result_upper or payload.upper() == result_upper, (
+                # Strict: SQL keywords in a result indicate injection succeeded.
+                assert keyword not in result_upper, (
                     f"SQL keyword '{keyword}' found in result"
                 )
 
@@ -599,13 +603,28 @@ def test_xss_vectors(
 
             test_xss_vectors(send_msg, xss_payloads, security_assert)
     """
+    checked = 0
+    rejected = 0
     for payload in xss_payloads.all():
         try:
             result = target_fn(payload)
-            if hasattr(result, "content"):
-                security_assert.assert_no_xss(result.content, payload)
         except Exception:
-            pass
+            # Payload rejected outright — acceptable XSS defense.
+            rejected += 1
+            continue
+        if hasattr(result, "content"):
+            security_assert.assert_no_xss(result.content, payload)
+            checked += 1
+        else:
+            pytest.fail(
+                f"XSS payload {payload!r} was accepted but the result has "
+                "no content attribute to verify"
+            )
+    # Every payload must yield a verdict (rejected or verified) — a run with
+    # zero checks means the function never processed the inputs at all.
+    assert checked + rejected == len(xss_payloads.all()), (
+        "Not every XSS payload was processed"
+    )
 
 
 def test_sql_injection(
@@ -649,12 +668,15 @@ def test_input_validation(
                 lambda i: auth_manager.register(i, "test@test.com", "Pass123!"),
                 malformed_inputs
             )
+
+    Contract: ``target_fn`` must reject malformed input by raising. This
+    helper is only for raising validators — a sanitizing/normalising
+    validator (one that accepts and transforms input) does not fit.
     """
     for malformed in malformed_inputs.all():
-        try:
+        # A validator must reject malformed input, never accept it.
+        with pytest.raises(Exception):
             target_fn(malformed)
-        except Exception:
-            pass
 
 
 class SecurityTestHelper:
@@ -671,31 +693,52 @@ class SecurityTestHelper:
         for payload in xss_payloads.all():
             try:
                 result = create_fn(**{field_name: payload})
-                field_value = getattr(result, field_name, None)
-                if field_value:
-                    assert "<script" not in field_value.lower()
             except Exception:
-                pass
+                # Field-level rejection — acceptable XSS defense.
+                continue
+            if isinstance(result, dict):
+                field_value = result.get(field_name)
+            else:
+                field_value = getattr(result, field_name, None)
+            # A created object must carry the field so it can be verified;
+            # a missing field means the create accepted the payload without
+            # exposing it for inspection — fail loudly instead of passing.
+            assert field_value is not None, (
+                f"XSS payload {payload!r} accepted but field {field_name!r} "
+                "is missing from the result"
+            )
+            assert "<script" not in str(field_value).lower(), (
+                f"XSS payload {payload!r} survived in field {field_name!r}"
+            )
 
     def test_field_sql_injection(
         self, query_fn: Callable, sql_payloads: SQLInjectionPayloads
     ) -> None:
         """Test SQL injection prevention in queries."""
+        total = len(sql_payloads.all())
+        processed = 0
         for payload in sql_payloads.all():
             try:
-                query_fn(payload)
+                result = query_fn(payload)
             except Exception:
-                pass
+                # Query rejected — acceptable SQLi defense.
+                processed += 1
+                continue
+            # A correctly parameterised query treats the payload as a plain
+            # value and returns no rows; any truthy result means the payload
+            # executed as SQL and data came back.
+            assert not result, f"SQLi payload {payload!r} executed and returned data"
+            processed += 1
+        # Every payload must have been either rejected or executed safely — a
+        # run that never processed the payloads is a vacuous pass.
+        assert processed == total, "Not every SQLi payload was processed"
 
     def test_authorization(
         self, resource_fn: Callable, owner_id: int, unauthorized_id: int
     ) -> None:
         """Test that unauthorized users cannot access resources."""
-        try:
+        with pytest.raises(Exception):
             resource_fn(unauthorized_id)
-            pytest.fail("Unauthorized access should be prevented")
-        except Exception:
-            pass
 
     def test_parameter_tampering(
         self, update_fn: Callable, protected_fields: List[str]
@@ -704,9 +747,16 @@ class SecurityTestHelper:
         for field_name in protected_fields:
             try:
                 result = update_fn(**{field_name: "tampered_value"})
-                assert getattr(result, field_name, None) != "tampered_value"
             except Exception:
-                pass
+                # Update rejected — acceptable tamper defense.
+                continue
+            if isinstance(result, dict):
+                field_value = result.get(field_name)
+            else:
+                field_value = getattr(result, field_name, None)
+            assert field_value != "tampered_value", (
+                f"Protected field {field_name!r} accepted a tampered value"
+            )
 
 
 @pytest.fixture

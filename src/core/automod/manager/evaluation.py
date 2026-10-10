@@ -6,6 +6,7 @@ from src.core.base import SnowflakeID
 from ..models import (
     Rule,
     RuleMatch,
+    RuleType,
     ActionType,
     CheckResult,
     AICheckResult,
@@ -25,7 +26,17 @@ class EvaluationMixin(AutoModProtocol):
         content: str,
         message_id: Optional[SnowflakeID] = None,
         context: Optional[Dict[str, Any]] = None,
+        rule_scope: str = "all",
     ) -> CheckResult:
+        """Evaluate rules against a message.
+
+        ``rule_scope`` controls which rules run:
+          - ``"all"``: every enabled rule (legacy behaviour).
+          - ``"fast"``: every rule except AI moderation. Used synchronously
+            before a message is broadcast so cheap rules can block the send.
+          - ``"ai"``: only AI-moderation rules. Used asynchronously after a
+            message has been broadcast.
+        """
         logger.debug(f"AutoMod checking message from {user_id} in server {server_id}")
         if not self._config.get("enabled", True):
             return CheckResult(passed=True, violations=[], actions_to_take=[])
@@ -43,7 +54,14 @@ class EvaluationMixin(AutoModProtocol):
         rules = self._get_server_rules(server_id, enabled_only=True)
         rules.sort(key=lambda r: r.priority, reverse=True)
 
-        logger.debug(f"Checking {len(rules)} rules for server {server_id}")
+        if rule_scope == "fast":
+            rules = [r for r in rules if r.rule_type != RuleType.AI_MODERATION]
+        elif rule_scope == "ai":
+            rules = [r for r in rules if r.rule_type == RuleType.AI_MODERATION]
+
+        logger.debug(
+            f"Checking {len(rules)} rules (scope={rule_scope}) for server {server_id}"
+        )
 
         violations = []
         actions_to_take = []
@@ -93,6 +111,46 @@ class EvaluationMixin(AutoModProtocol):
             should_delete=should_delete,
             should_timeout=should_timeout,
             timeout_duration=timeout_duration,
+        )
+
+    def check_message_fast(
+        self,
+        server_id: SnowflakeID,
+        channel_id: SnowflakeID,
+        user_id: SnowflakeID,
+        content: str,
+        message_id: Optional[SnowflakeID] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> CheckResult:
+        """Run only the cheap (non-AI) rules. Synchronous, used pre-send."""
+        return self.check_message(
+            server_id,
+            channel_id,
+            user_id,
+            content,
+            message_id,
+            context,
+            rule_scope="fast",
+        )
+
+    def check_ai_rules(
+        self,
+        server_id: SnowflakeID,
+        channel_id: SnowflakeID,
+        user_id: SnowflakeID,
+        content: str,
+        message_id: Optional[SnowflakeID] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> CheckResult:
+        """Run only the AI-moderation rules. Used async after broadcast."""
+        return self.check_message(
+            server_id,
+            channel_id,
+            user_id,
+            content,
+            message_id,
+            context,
+            rule_scope="ai",
         )
 
     def _evaluate_rule(
@@ -183,7 +241,7 @@ class EvaluationMixin(AutoModProtocol):
     def check_ai(
         self,
         content: str,
-        backend: str = "openai",
+        backend: str = "shieldstral",
         context: Optional[Dict[str, Any]] = None,
     ) -> AICheckResult:
         adapter = self._ai_adapters.get(backend)

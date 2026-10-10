@@ -45,4 +45,4 @@ def test_500_internal_server_error(test_client):
     # We can't easily trigger a real 500 error, but we can test the format
     response = test_client.get("/api/v1/nonexistent-endpoint")
     # Just verify the error handling is in place
-    assert response.status_code in [404, 500]
+    assert response.status_code == 404

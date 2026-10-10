@@ -92,6 +92,7 @@ from .sessions import (
     logout_all_users,
     get_sessions,
     revoke_session,
+    create_ws_ticket_for_session,
     schedule_account_deletion,
     cancel_account_deletion,
     delay_account_deletion,
@@ -118,6 +119,7 @@ from .passkeys import (
 )
 from .passwords import (
     change_password,
+    verify_user_password,
     request_password_reset,
     reset_password,
     validate_password,
@@ -151,6 +153,9 @@ from .devices import (
     get_devices,
     rename_device,
     revoke_device,
+    is_trusted_device,
+    trust_device,
+    untrust_device,
 )
 from .ip_blacklist import (
     block_ip,
@@ -288,6 +293,7 @@ __all__ = [
     "logout_all_users",
     "get_sessions",
     "revoke_session",
+    "create_ws_ticket_for_session",
     "schedule_account_deletion",
     "cancel_account_deletion",
     "delay_account_deletion",
@@ -308,6 +314,7 @@ __all__ = [
     "rename_passkey",
     # Password
     "change_password",
+    "verify_user_password",
     "request_password_reset",
     "reset_password",
     "validate_password",
@@ -336,6 +343,9 @@ __all__ = [
     "is_api_access_token_required",
     # Devices
     "get_devices",
+    "is_trusted_device",
+    "trust_device",
+    "untrust_device",
     "rename_device",
     "revoke_device",
     # IP Blacklist

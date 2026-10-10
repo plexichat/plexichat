@@ -34,6 +34,7 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
         self,
         user_id: SnowflakeID,
         title: Optional[str] = None,
+        message_id: Optional[SnowflakeID] = None,
         description: Optional[str] = None,
         url: Optional[str] = None,
         timestamp: Optional[str] = None,
@@ -51,6 +52,7 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
 
         Args:
             user_id: ID of user creating embed
+            message_id: Optional message to attach the embed to
             title: Embed title (max 256 chars)
             description: Embed description (max 4096 chars)
             url: URL for title hyperlink
@@ -176,6 +178,24 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
 
         result = self.get_embed(embed_id)
         assert result is not None
+
+        if message_id:
+            try:
+                self.attach_embed_to_message(user_id, message_id, embed_id)
+            except Exception:
+                # Attachment failed (e.g. missing permission / authorship).
+                # Roll the embed back so we never leave an orphaned embed row
+                # detached from any message.
+                logger.warning(
+                    f"Rolling back embed {embed_id}: attach to message "
+                    f"{message_id} failed"
+                )
+                self._db.execute(
+                    "DELETE FROM embed_fields WHERE embed_id = ?", (embed_id,)
+                )
+                self._db.execute("DELETE FROM embed_embeds WHERE id = ?", (embed_id,))
+                raise
+
         return result
 
     def update_embed(
@@ -192,6 +212,8 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
         thumbnail: Optional[Dict[str, Any]] = None,
         author: Optional[Dict[str, Any]] = None,
         fields: Optional[List[Dict[str, Any]]] = None,
+        provider: Optional[Dict[str, Any]] = None,
+        embed_type: Optional[EmbedType] = None,
     ) -> Embed:
         """
         Update an existing embed.
@@ -199,6 +221,8 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
         Args:
             user_id: ID of user updating embed
             embed_id: ID of embed to update
+            provider: Provider dict with name and optional url
+            embed_type: Type of embed
             Other args same as create_embed
 
         Returns:
@@ -270,7 +294,25 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
                 {"name": f.name, "value": f.value, "inline": f.inline}
                 for f in embed.fields
             ],
+            "provider": provider
+            if provider is not None
+            else (
+                {"name": embed.provider.name, "url": embed.provider.url}
+                if embed.provider
+                else None
+            ),
         }
+
+        if embed_type is None:
+            embed_type = embed.embed_type
+        elif isinstance(embed_type, str):
+            try:
+                embed_type = EmbedType(embed_type)
+            except (ValueError, KeyError):
+                raise EmbedValidationError(
+                    "Embed validation failed",
+                    ["embed_type must be one of the supported embed types"],
+                )
 
         validation = self._validate_embed_data(embed_data)
         if not validation.valid:
@@ -279,13 +321,16 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
         sanitized = validation.sanitized_data
         assert sanitized is not None
 
+        assert isinstance(embed_type, EmbedType)
+
         self._db.execute(
             """UPDATE embed_embeds SET
                title = ?, description = ?, url = ?, timestamp = ?, color = ?,
                footer_text = ?, footer_icon_url = ?,
                image_url = ?, image_width = ?, image_height = ?,
                thumbnail_url = ?, thumbnail_width = ?, thumbnail_height = ?,
-               author_name = ?, author_url = ?, author_icon_url = ?
+               author_name = ?, author_url = ?, author_icon_url = ?,
+               provider_name = ?, provider_url = ?, embed_type = ?
                WHERE id = ?""",
             (
                 sanitized.get("title"),
@@ -326,6 +371,13 @@ class EmbedCRUDMixin(EmbedManagerProtocol):
                 sanitized.get("author", {}).get("icon_url")
                 if sanitized.get("author")
                 else None,
+                sanitized.get("provider", {}).get("name")
+                if sanitized.get("provider")
+                else None,
+                sanitized.get("provider", {}).get("url")
+                if sanitized.get("provider")
+                else None,
+                embed_type.value,
                 embed_id,
             ),
         )

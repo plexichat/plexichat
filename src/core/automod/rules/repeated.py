@@ -33,39 +33,42 @@ class RepeatedCharsRule(BaseRule):
         channel_id: int,
         context: Optional[Dict[str, Any]] = None,
     ) -> RuleMatch:
-        """Check for excessive repeated characters."""
-        matches = self._pattern.findall(content)
+        """Check for excessive repeated characters.
 
-        if not matches:
-            return self._no_match()
-
+        ``min_occurrences`` counts OCCURRENCES, not distinct runs: every
+        character of a run beyond ``max_repeats`` counts as one occurrence.
+        A single "a" * 20 run with max_repeats=5 therefore contributes 15
+        occurrences and triggers min_occurrences=3 on its own.
+        """
         violations = []
-        for char in matches:
+        examples = []
+        total_occurrences = 0
+
+        for m in self._pattern.finditer(content):
+            char = m.group(1)
             if self._ignore_whitespace and char.isspace():
                 continue
             if self._ignore_numbers and char.isdigit():
                 continue
-            violations.append(char)
 
-        if len(violations) < self._min_occurrences:
-            return self._no_match()
+            total_occurrences += max(0, len(m.group()) - self._max_repeats)
 
-        full_matches = self._pattern.finditer(content)
-        examples = []
-        for m in full_matches:
             matched_text = m.group()
             if len(matched_text) > 10:
                 matched_text = matched_text[:10] + "..."
-            examples.append(matched_text)
-            if len(examples) >= 3:
-                break
+            if len(examples) < 3:
+                examples.append(matched_text)
+            violations.append(char)
+
+        if total_occurrences < self._min_occurrences:
+            return self._no_match()
 
         return self._create_match(
             matched=True,
             matched_content=", ".join(examples),
             details={
                 "repeated_chars": violations,
-                "occurrence_count": len(violations),
+                "occurrence_count": total_occurrences,
                 "max_allowed": self._max_repeats,
                 "examples": examples,
             },

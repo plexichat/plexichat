@@ -366,9 +366,13 @@ class TemplateManager:
 
     def delete_template(self, user_id: int, code: str) -> bool:
         """Delete a template."""
-        template = self.get_template(code, user_id)
-        if not template:
+        row = self._db.fetch_one(
+            "SELECT * FROM srv_templates WHERE code = ?",
+            (code,),
+        )
+        if not row:
             raise TemplateNotFoundError("Template not found")
+        template = self._row_to_template(row)
 
         if template.creator_id != user_id:
             raise PermissionDeniedError(
@@ -400,9 +404,13 @@ class TemplateManager:
         is_public: Optional[bool] = None,
     ) -> ServerTemplate:
         """Update template metadata."""
-        template = self.get_template(code, user_id)
-        if not template:
+        row = self._db.fetch_one(
+            "SELECT * FROM srv_templates WHERE code = ?",
+            (code,),
+        )
+        if not row:
             raise TemplateNotFoundError("Template not found")
+        template = self._row_to_template(row)
 
         if template.creator_id != user_id:
             raise PermissionDeniedError(
@@ -428,63 +436,33 @@ class TemplateManager:
             params.append(1 if is_public else 0)
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
-            params.append(template.id)
-
-            # Whitelist of allowed column names for UPDATE
+            # Only these columns are ever appended to ``updates`` above, so
+            # the allow-list stays in sync with the builder by construction.
             allowed_columns = {
                 "name",
                 "description",
-                "server_id",
-                "category_id",
-                "enabled",
+                "is_public",
             }
-            # Validate all column names in updates
-            for update in updates:
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
-
-            # Avoid dynamic UPDATE to satisfy bandit - use if-else for each possible column
+                set_columns.append(col_name)
+                set_params.append(value)
             now = self._get_timestamp()
-            for update in updates:
-                if "name = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_templates SET name = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, template.id),
-                    )
-                elif "description = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_templates SET description = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, template.id),
-                    )
-                elif "server_id = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_templates SET server_id = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, template.id),
-                    )
-                elif "category_id = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_templates SET category_id = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, template.id),
-                    )
-                elif "enabled = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_templates SET enabled = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, template.id),
-                    )
-                elif "is_public = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE srv_templates SET is_public = ?, updated_at = ? WHERE id = ?",
-                        (params[idx], now, template.id),
-                    )
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_templates SET " + set_clause + " WHERE id = ?"
+            self._db.execute(query, (*set_params, template.id))
 
         result = self.get_template(code, user_id)
         assert result is not None  # Should exist since we just updated it

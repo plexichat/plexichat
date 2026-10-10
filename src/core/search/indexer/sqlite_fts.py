@@ -5,6 +5,7 @@ This is the default indexer that works out of the box with no external dependenc
 """
 
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
@@ -19,6 +20,39 @@ from ..models import (
     ServerSearchResult,
 )
 from ..exceptions import SearchIndexError, SearchBackendError
+
+# Column layout the indexer expects for each FTS5 table. A pre-existing
+# table with a different layout (e.g. created by an older schema) cannot be
+# altered in place by CREATE VIRTUAL TABLE IF NOT EXISTS, so it is detected
+# at bootstrap and reported as an actionable, once-per-startup failure.
+_FTS_EXPECTED_COLUMNS = {
+    "search_messages_fts": [
+        "message_id",
+        "content",
+        "author_id",
+        "author_username",
+        "conversation_id",
+        "server_id",
+        "channel_id",
+        "created_at",
+        "has_attachments",
+        "has_embeds",
+        "has_links",
+        "mentions",
+        "is_pinned",
+        "attachment_types",
+    ],
+    "search_users_fts": ["user_id", "username", "display_name", "is_bot"],
+    "search_servers_fts": [
+        "server_id",
+        "name",
+        "description",
+        "tags",
+        "category",
+        "member_count",
+        "is_public",
+    ],
+}
 
 
 class SQLiteFTS5Indexer(BaseIndexer):
@@ -43,6 +77,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
             return False
 
         try:
+            # Initialization must be idempotent and must not destroy indexed
+            # data when a manager is recreated during startup or a worker
+            # reload. Schema changes belong in migrations, not in initialize().
             self._db.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_messages_fts USING fts5(
                     message_id UNINDEXED,
@@ -58,6 +95,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     has_links UNINDEXED,
                     mentions UNINDEXED,
                     is_pinned UNINDEXED,
+                    attachment_types UNINDEXED,
                     tokenize='porter unicode61'
                 )
             """)
@@ -84,6 +122,26 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     tokenize='porter unicode61'
                 )
             """)
+
+            # CREATE VIRTUAL TABLE IF NOT EXISTS silently keeps a
+            # pre-existing table with an incompatible legacy layout. Probe
+            # the live columns once here and fail loud with a rebuild
+            # pointer instead of failing every later insert with cryptic
+            # mismatch errors.
+            mismatched = self._probe_fts_schema()
+            if mismatched is not None:
+                logger.error(
+                    f"FTS5 table '{mismatched}' exists with an incompatible "
+                    "legacy schema; the search index must be rebuilt. Run the "
+                    "search-index rebuild migration (DROP the stale "
+                    "search_*_fts tables and reindex all content) before the "
+                    "SQLite FTS5 indexer can start."
+                )
+                raise SearchBackendError(
+                    f"Incompatible legacy FTS5 schema on '{mismatched}'; "
+                    "rebuild the search index via the rebuild migration",
+                    backend="sqlite_fts5",
+                )
 
             self._initialized = True
             logger.info("SQLite FTS5 indexer initialized")
@@ -114,16 +172,16 @@ class SQLiteFTS5Indexer(BaseIndexer):
             mentions_json = json.dumps(message.mentions) if message.mentions else "[]"
 
             self._db.execute(
-                """INSERT INTO search_messages_fts 
+                """INSERT INTO search_messages_fts
                    (message_id, content, author_id, author_username, conversation_id,
                     server_id, channel_id, created_at, has_attachments, has_embeds,
-                    has_links, mentions, is_pinned)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    has_links, mentions, is_pinned, attachment_types)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(message.message_id),
                     message.content or "",
                     str(message.author_id),
-                    "",
+                    message.author_username or "",
                     str(message.conversation_id),
                     str(message.server_id) if message.server_id else "",
                     str(message.channel_id) if message.channel_id else "",
@@ -133,6 +191,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     "1" if message.has_links else "0",
                     mentions_json,
                     "1" if message.is_pinned else "0",
+                    " ".join(message.attachment_types)
+                    if message.attachment_types
+                    else "",
                 ),
             )
 
@@ -192,9 +253,10 @@ class SQLiteFTS5Indexer(BaseIndexer):
             fts_query = self._build_fts_query(query)
 
             sql = """
-                SELECT message_id, content, author_id, conversation_id,
-                       server_id, channel_id, created_at, has_attachments,
-                       is_pinned, rank
+                SELECT message_id, content, author_id, author_username,
+                       conversation_id, server_id, channel_id, created_at,
+                       has_attachments, has_embeds, has_links, is_pinned,
+                       attachment_types, rank
                 FROM search_messages_fts
                 WHERE search_messages_fts MATCH ?
             """
@@ -232,6 +294,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     message_id=int(row["message_id"]),
                     content=row["content"] or "",
                     author_id=int(row["author_id"]) if row["author_id"] else 0,
+                    author_username=row["author_username"] or "",
                     conversation_id=int(row["conversation_id"])
                     if row["conversation_id"]
                     else 0,
@@ -239,6 +302,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
                     channel_id=int(row["channel_id"]) if row["channel_id"] else None,
                     created_at=int(row["created_at"]) if row["created_at"] else 0,
                     has_attachments=row["has_attachments"] == "1",
+                    has_embeds=row["has_embeds"] == "1",
+                    has_links=row["has_links"] == "1",
+                    attachment_types=list((row["attachment_types"] or "").split()),
                     is_pinned=row["is_pinned"] == "1",
                     score=abs(float(row["rank"])) if row["rank"] else 0.0,
                 )
@@ -246,9 +312,15 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"SQLite FTS5 message search failed: {e}",
+                backend="sqlite_fts5",
+                original_error=e,
+            )
 
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
@@ -327,9 +399,15 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"User search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"SQLite FTS5 user search failed: {e}",
+                backend="sqlite_fts5",
+                original_error=e,
+            )
 
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
@@ -431,9 +509,15 @@ class SQLiteFTS5Indexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Server search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"SQLite FTS5 server search failed: {e}",
+                backend="sqlite_fts5",
+                original_error=e,
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""
@@ -470,21 +554,56 @@ class SQLiteFTS5Indexer(BaseIndexer):
         if not self._initialized:
             self.initialize()
 
+    def _probe_fts_schema(self) -> Optional[str]:
+        """Return the first FTS5 table whose live columns don't match the
+        expected schema, or None when every table lines up."""
+        for table, expected in _FTS_EXPECTED_COLUMNS.items():
+            try:
+                rows = self._db.fetch_all(f"PRAGMA table_info({table})")
+            except Exception:
+                return table
+            live = []
+            for row in rows or []:
+                if isinstance(row, dict):
+                    live.append(str(row.get("name", "")))
+                elif isinstance(row, (list, tuple)) and row:
+                    live.append(str(row[1]))
+                else:
+                    live.append(str(row))
+            if sorted(live) != sorted(expected):
+                return table
+        return None
+
     def _build_fts_query(self, query: str) -> str:
         """Build FTS5 query from user query."""
         query = query.strip()
 
-        special_chars = ['"', "'", "(", ")", "*", ":", "-", "+", "^", "~"]
+        special_chars = ["(", ")", "*", ":", "-", "+", "^", "~"]
         clean_query = query
         for char in special_chars:
             clean_query = clean_query.replace(char, " ")
 
-        terms = [t.strip() for t in clean_query.split() if t.strip()]
+        phrases = []
+        for match in re.finditer(r'"([^"]+)"', clean_query):
+            phrases.append(match.group(1))
 
-        if not terms:
+        remaining = re.sub(r'"[^"]*"', "", clean_query)
+        terms = [t.strip() for t in remaining.split() if t.strip()]
+
+        all_tokens = []
+        for phrase in phrases:
+            safe_phrase = phrase.replace('"', "")
+            if safe_phrase:
+                all_tokens.append(f'"{safe_phrase}"')
+        for term in terms:
+            safe_term = term.replace('"', "")
+            if safe_term:
+                all_tokens.append(f'"{safe_term}"*')
+
+        if not all_tokens:
             return '""'
 
-        if len(terms) == 1:
-            return f'"{terms[0]}"*'
+        if len(all_tokens) == 1:
+            return all_tokens[0]
 
-        return " OR ".join(f'"{term}"*' for term in terms)
+        return " OR ".join(all_tokens)

@@ -12,6 +12,10 @@ every artifact interaction is wrapped so that a failure there never breaks the
 voice pipeline (voice must keep working even when the artifacts feature is off).
 """
 
+import random
+import threading
+import time
+
 import utils.logger as logger
 import utils.config as config
 from typing import Any, Dict, List, Optional
@@ -27,13 +31,48 @@ from .capabilities import CapabilityState, get_capability
 from .repository import (
     create_voice_call,
     get_voice_call,
+    get_voice_call_uncached,
+    get_channel_voice_user_ids,
     get_active_voice_call_by_channel,
+    get_active_voice_calls,
     update_voice_call,
 )
 
 
 class VoiceCallManager(BaseManager):
     """Manager for voice-call domain logic and linked artifacts."""
+
+    # Fragments of error messages that signal a TRANSIENT database condition
+    # (pool exhaustion under burst load, SQLite lock contention, brief
+    # connect timeouts) rather than an authoritative answer. A membership
+    # lookup that hits one of these is retried instead of being treated as
+    # "nobody is in the channel": an empty roster is a subset of every
+    # consent set, so a false-empty read both rejects live members with a
+    # bogus "not currently in voice channel" error AND can fail recording
+    # OPEN (unanimity trivially holds over an empty set).
+    _TRANSIENT_DB_ERROR_FRAGMENTS = (
+        "pool exhausted",
+        "no available connections",
+        "database is locked",
+        "database table is locked",
+        "database is busy",
+        "connection timeout",
+        "timed out",
+        "timeout",
+        "busy",
+        "locked",
+        "connection refused",
+        "connection reset",
+        "connection closed",
+        "broken pipe",
+        "lost connection",
+        "no connection",
+    )
+
+    # How many times a membership lookup retries a transient failure, and
+    # the base backoff between attempts (exponential with jitter).
+    _ROSTER_LOOKUP_ATTEMPTS = 6
+    _ROSTER_LOOKUP_BACKOFF_BASE_S = 0.005
 
     def __init__(
         self,
@@ -61,6 +100,15 @@ class VoiceCallManager(BaseManager):
         # store, while this snapshot lets duplicate join callbacks be
         # distinguished from a real join after someone has departed.
         self._voice_call_participants: Dict[int, set[int]] = {}
+        # M13: guard every read-modify-write on _voice_call_participants.
+        # Join/leave callbacks arrive on SFU/event-loop threads; without this
+        # lock two concurrent joins both read a stale set and the last writer
+        # silently drops the other participant, so recording can start on an
+        # incomplete roster. The lock is held only around the in-memory
+        # snapshot update (plus the live-membership read that feeds it, so a
+        # stale view can never overwrite a fresher one) — never across DB
+        # writes or recording-manager calls.
+        self._participants_lock = threading.Lock()
 
     def set_recording_manager(self, recording_manager: Any) -> None:
         """Attach a RecordingManager (may be ``None`` to disable recording)."""
@@ -73,9 +121,10 @@ class VoiceCallManager(BaseManager):
         process-local snapshot only records identities seen by join callbacks,
         so a later rejoin can correctly require fresh recording consent.
         """
-        participants = self._voice_call_participants.get(int(call_id))
-        if participants is not None:
-            participants.discard(int(user_id))
+        with self._participants_lock:
+            participants = self._voice_call_participants.get(int(call_id))
+            if participants is not None:
+                participants.discard(int(user_id))
 
     # === Config helpers ===
 
@@ -112,6 +161,14 @@ class VoiceCallManager(BaseManager):
         now = self._get_timestamp()
         call_id = self._generate_id()
 
+        # Distinct identity roster observed at call start (initiator always
+        # included even when the live lookup fails). Persisted on the linked
+        # artifact payload so post-call consent checks can require every
+        # DISTINCT participant to have consented, immune to member churn.
+        initial_roster = sorted(
+            self._current_participant_ids(channel_id) | {int(initiator_id)}
+        )
+
         artifact_id: Optional[SnowflakeID] = None
         artifacts_capability = get_capability(
             "artifacts", self._artifacts_config or config.get("artifacts", {}) or {}
@@ -138,6 +195,7 @@ class VoiceCallManager(BaseManager):
                         "voice_call_id": call_id,
                         "channel_id": channel_id,
                         "participant_count": 1,
+                        "participant_ids": initial_roster,
                     },
                 )
                 artifact_id = artifact.id
@@ -163,9 +221,10 @@ class VoiceCallManager(BaseManager):
             recorded=recorded,
         )
         result = create_voice_call(self._db, call)
-        self._voice_call_participants[int(call_id)] = self._current_participant_ids(
-            channel_id
-        )
+        with self._participants_lock:
+            self._voice_call_participants[int(call_id)] = self._current_participant_ids(
+                channel_id
+            )
 
         # Fire-and-forget: request recording via RecordingManager.  When
         # consent is required the manager intentionally keeps this pending
@@ -201,6 +260,11 @@ class VoiceCallManager(BaseManager):
             len(participant_ids) if participant_ids else call.participant_count
         )
 
+        # Persist any caller-supplied final roster onto the artifact payload
+        # BEFORE completion so the merged completion payload keeps it.
+        if participant_ids:
+            self._merge_participant_roster(call, set(int(p) for p in participant_ids))
+
         updated = update_voice_call(
             self._db,
             call_id,
@@ -214,16 +278,22 @@ class VoiceCallManager(BaseManager):
 
         if self._artifact_manager is not None and updated.artifact_id is not None:
             try:
+                existing = self._artifact_manager.get(updated.artifact_id)
+                completion_payload = {
+                    "voice_call_id": updated.id,
+                    "channel_id": updated.channel_id,
+                    "participant_count": participant_count,
+                    "duration_seconds": duration,
+                }
+                if existing is not None and isinstance(existing.payload, dict):
+                    merged_payload = {**existing.payload, **completion_payload}
+                else:
+                    merged_payload = completion_payload
                 self._artifact_manager.update(
                     updated.artifact_id,
                     status=ArtifactStatus.COMPLETED,
                     updated_at=ended_at,
-                    payload={
-                        "voice_call_id": updated.id,
-                        "channel_id": updated.channel_id,
-                        "participant_count": participant_count,
-                        "duration_seconds": duration,
-                    },
+                    payload=merged_payload,
                 )
             except Exception as exc:
                 logger.warning(
@@ -233,7 +303,8 @@ class VoiceCallManager(BaseManager):
         # Fire-and-forget: stop recording via RecordingManager
         if updated.recorded and self._recording_manager is not None:
             self._recording_manager.stop_call_recording(call_id)
-        self._voice_call_participants.pop(int(call_id), None)
+        with self._participants_lock:
+            self._voice_call_participants.pop(int(call_id), None)
 
         return updated
 
@@ -263,26 +334,98 @@ class VoiceCallManager(BaseManager):
             raise ValueError(f"Voice call {call.id} has no channel ID")
         return call.channel_id
 
+    @classmethod
+    def _is_transient_db_error(cls, exc: BaseException) -> bool:
+        """True when ``exc`` looks like a transient DB condition worth retrying."""
+        err = str(exc).lower()
+        if type(exc).__name__ == "TimeoutError":
+            return True
+        return any(fragment in err for fragment in cls._TRANSIENT_DB_ERROR_FRAGMENTS)
+
+    def _lookup_participant_ids_strict(
+        self, channel_id: SnowflakeID
+    ) -> Optional[set[int]]:
+        """Return the live roster, or ``None`` when it could not be determined.
+
+        Transient failures (pool exhaustion, lock contention, timeouts) are
+        retried with backoff so a burst of concurrent joins/consents never
+        observes a false-empty channel. When the roster is still unreadable
+        after all attempts (or a non-transient error occurs), ``None`` is
+        returned so callers can fail CLOSED — never treat an unknown roster
+        as an empty one.
+        """
+        last_error: Optional[BaseException] = None
+        for attempt in range(self._ROSTER_LOOKUP_ATTEMPTS):
+            try:
+                return set(get_channel_voice_user_ids(self._db, channel_id))
+            except Exception as exc:
+                last_error = exc
+                if not self._is_transient_db_error(exc):
+                    break
+                if attempt < self._ROSTER_LOOKUP_ATTEMPTS - 1:
+                    time.sleep(
+                        self._ROSTER_LOOKUP_BACKOFF_BASE_S * (2**attempt)
+                        + random.uniform(0, self._ROSTER_LOOKUP_BACKOFF_BASE_S)
+                    )
+        logger.warning(
+            "voice_call participant lookup failed for channel %s: %s",
+            channel_id,
+            last_error,
+        )
+        return None
+
     def _current_participant_ids(self, channel_id: SnowflakeID) -> set[int]:
         """Return the users currently present in the voice channel.
 
         ``voice_states`` is the authoritative live-membership source. The
         historical ``participant_count`` on ``voice_calls`` is intentionally
         retained for call analytics and must not be used as a consent roster.
+
+        An unreadable roster degrades to an empty set here (historical
+        behaviour for snapshots and analytics); consent/recording decisions
+        must use :meth:`_lookup_participant_ids_strict` and fail closed.
         """
+        result = self._lookup_participant_ids_strict(channel_id)
+        return result if result is not None else set()
+
+    def _merge_participant_roster(self, call: VoiceCall, ids: set) -> None:
+        """Persist the union of ``ids`` into the call artifact's roster.
+
+        The distinct participant ID roster lives on the linked artifact
+        payload under ``participant_ids``. Transcription consent checks
+        require this roster (every DISTINCT member ever seen) to be a subset
+        of the consented set, so churn (join/leave cycling) cannot dilute
+        unanimity the way a max-concurrent COUNT can.
+        """
+        artifact_id: Optional[SnowflakeID] = getattr(call, "artifact_id", None)
+        if self._artifact_manager is None or artifact_id is None:
+            return
+        if not ids:
+            return
         try:
-            rows = self._db.fetch_all(
-                "SELECT user_id FROM voice_states WHERE channel_id = ?",
-                (channel_id,),
-            )
-            return {int(row["user_id"]) for row in rows or []}
+            existing = self._artifact_manager.get(artifact_id)
+            payload: Dict[str, Any] = {}
+            if existing is not None and isinstance(existing.payload, dict):
+                payload = dict(existing.payload)
+            roster: set = set()
+            for value in payload.get("participant_ids", []) or []:
+                try:
+                    roster.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+            roster |= {int(i) for i in ids}
+            payload["participant_ids"] = sorted(roster)
+            try:
+                payload["participant_count"] = max(
+                    int(payload.get("participant_count", 0) or 0), len(roster)
+                )
+            except (TypeError, ValueError):
+                pass
+            self._artifact_manager.update(artifact_id, payload=payload)
         except Exception as exc:
             logger.warning(
-                "voice_call participant lookup failed for channel %s: %s",
-                channel_id,
-                exc,
+                f"voice_call participant roster persist failed (call {call.id}): {exc}"
             )
-            return set()
 
     def add_participant(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
         """Record that another participant joined an active call.
@@ -291,27 +434,32 @@ class VoiceCallManager(BaseManager):
         checked against the live ``voice_states`` membership instead, so a
         departed participant no longer blocks a later recording segment.
         """
-        call = get_voice_call(self._db, call_id)
+        call = get_voice_call_uncached(self._db, call_id)
         if call is None:
             raise ValueError(f"Voice call {call_id} not found")
         normalized_user_id = int(user_id)
-        current_ids = self._current_participant_ids(self._require_channel_id(call))
-        if normalized_user_id not in current_ids:
-            raise ValueError(
-                f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
-            )
-        previous_ids = self._voice_call_participants.get(int(call_id))
-        if previous_ids is None:
-            # A manager reconstructed after the call began cannot know the
-            # prior snapshot. Treat this callback conservatively as a join so
-            # recording cannot continue without a fresh consent check.
-            previous_ids = current_ids - {normalized_user_id}
-        else:
-            # Drop departed users before comparing: a later rejoin must count
-            # as a new membership even when participant_count is historical.
-            previous_ids = previous_ids & current_ids
-        is_new_membership = normalized_user_id not in previous_ids
-        self._voice_call_participants[int(call_id)] = set(current_ids)
+        # M13: the live-membership read and the snapshot read-modify-write run
+        # atomically under _participants_lock. Otherwise two concurrent joins
+        # interleave as fetch(stale) / fetch(fresh) / write(fresh) /
+        # write(stale) and the stale write drops a participant from the roster.
+        with self._participants_lock:
+            current_ids = self._current_participant_ids(self._require_channel_id(call))
+            if normalized_user_id not in current_ids:
+                raise ValueError(
+                    f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
+                )
+            previous_ids = self._voice_call_participants.get(int(call_id))
+            if previous_ids is None:
+                # A manager reconstructed after the call began cannot know the
+                # prior snapshot. Treat this callback conservatively as a join so
+                # recording cannot continue without a fresh consent check.
+                previous_ids = current_ids - {normalized_user_id}
+            else:
+                # Drop departed users before comparing: a later rejoin must count
+                # as a new membership even when participant_count is historical.
+                previous_ids = previous_ids & current_ids
+            is_new_membership = normalized_user_id not in previous_ids
+            self._voice_call_participants[int(call_id)] = set(current_ids)
         # The callback can be delivered more than once for the same live
         # membership. With no participant identity roster in the existing
         # schema, the live set gives us the safe idempotence boundary: never
@@ -331,23 +479,37 @@ class VoiceCallManager(BaseManager):
         if updated is None:
             raise ValueError(f"Failed to update voice call {call_id}")
 
+        # Every distinct identity observed on the call joins the persisted
+        # roster; a later consent check must cover ALL of them.
+        self._merge_participant_roster(updated, current_ids)
+
         # A newly joined participant has not consented yet.  End the current
         # recording segment immediately; a later consent event may start a new
         # segment once every currently known participant has agreed.
-        current_ids = self._current_participant_ids(self._require_channel_id(updated))
+        # Fail CLOSED: when the roster is unreadable we cannot prove the
+        # newcomer consented, so a new membership stops the segment rather
+        # than letting it run over a possibly unconsented participant.
+        roster_ids = self._lookup_participant_ids_strict(
+            self._require_channel_id(updated)
+        )
         consented_ids = {int(value) for value in updated.consented_participants}
         if (
             is_new_membership
             and updated.recorded
             and self._recording_manager is not None
-            and not current_ids.issubset(consented_ids)
+            and (roster_ids is None or not roster_ids.issubset(consented_ids))
         ):
             self._recording_manager.stop_call_recording(updated.id)
         return updated
 
     def add_consent(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
-        """Append consent and start a pending recording once all consent."""
-        call = get_voice_call(self._db, call_id)
+        """Append consent and start a pending recording once all consent.
+
+        The consent append is ATOMIC: the fresh read + append + write run
+        inside a retried transaction so two participants consenting
+        simultaneously cannot lose a consent to a lost-update race.
+        """
+        call = get_voice_call_uncached(self._db, call_id)
         if call is None:
             raise ValueError(f"Voice call {call_id} not found")
 
@@ -358,27 +520,84 @@ class VoiceCallManager(BaseManager):
                 f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
             )
 
-        consented = list(call.consented_participants)
-        before_consented_ids = {int(value) for value in consented}
-        if normalized_user_id not in before_consented_ids:
-            consented.append(normalized_user_id)
-
-        updated = update_voice_call(
-            self._db,
-            call_id,
-            consented_participants=consented,
-            updated_at=self._get_timestamp(),
-        )
+        updated: Optional[VoiceCall] = None
+        before_consented_ids: set[int] = set()
+        last_error: Optional[Exception] = None
+        for attempt in range(5):
+            caller_transaction = getattr(self._db, "in_transaction", False)
+            try:
+                if not caller_transaction:
+                    self._db.begin_transaction()
+                # Re-read INSIDE the transaction so the append applies to the
+                # latest persisted roster, never to a snapshot taken before a
+                # competing writer's commit.
+                fresh = get_voice_call_uncached(self._db, call_id)
+                if fresh is None:
+                    raise ValueError(f"Voice call {call_id} not found")
+                consented = list(fresh.consented_participants)
+                before_consented_ids = {int(value) for value in consented}
+                if normalized_user_id not in before_consented_ids:
+                    consented.append(normalized_user_id)
+                candidate = update_voice_call(
+                    self._db,
+                    call_id,
+                    consented_participants=consented,
+                    updated_at=self._get_timestamp(),
+                )
+                if candidate is None:
+                    raise ValueError(f"Failed to update voice call {call_id}")
+                if not caller_transaction:
+                    self._db.commit()
+                updated = candidate
+                break
+            except ValueError:
+                # Non-transient (unknown call, failed update): rolling back
+                # our own transaction but retrying cannot help — re-raise.
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                raise
+            except Exception as exc:
+                last_error = exc
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                if attempt < 4:
+                    # Back off with jitter so concurrent consent writers
+                    # serialize instead of colliding on every retry (a tight
+                    # spin burns all attempts while a peer still holds the
+                    # write lock, turning contention into hard failures).
+                    time.sleep(0.005 * (2**attempt) + random.uniform(0, 0.005))
         if updated is None:
-            raise ValueError(f"Failed to update voice call {call_id}")
+            if isinstance(last_error, ValueError):
+                raise last_error
+            raise ValueError(
+                f"Failed to record consent for call {call_id}: {last_error}"
+            )
 
         # Start when consent transitions from incomplete to complete. A
         # duplicate consent must be idempotent and must not restart a live
         # recording segment.
-        current_ids = self._current_participant_ids(self._require_channel_id(updated))
+        # Fail CLOSED: an unreadable roster cannot prove unanimity (an empty
+        # set is trivially a "subset" of every consent set), so no recording
+        # is started. The consent itself is already persisted above; a later
+        # consent event re-evaluates once the roster is readable again.
+        roster_ids = self._lookup_participant_ids_strict(
+            self._require_channel_id(updated)
+        )
+        if roster_ids is None:
+            logger.warning(
+                f"voice_call consent recorded but roster unreadable "
+                f"(call {updated.id}): recording not started"
+            )
+            return updated
         after_consented_ids = {int(value) for value in updated.consented_participants}
-        was_complete = current_ids.issubset(before_consented_ids)
-        is_complete = current_ids.issubset(after_consented_ids)
+        was_complete = roster_ids.issubset(before_consented_ids)
+        is_complete = roster_ids.issubset(after_consented_ids)
         if (
             updated.recorded
             and self._recording_manager is not None
@@ -393,6 +612,175 @@ class VoiceCallManager(BaseManager):
                 force_restart=not was_complete,
             )
         return updated
+
+    def remove_consent(self, call_id: SnowflakeID, user_id: SnowflakeID) -> VoiceCall:
+        """Withdraw a participant's recording consent (mirror of add_consent).
+
+        The client's dialog can answer "no" (``consented: false``) and there
+        was previously no way to deliver that: only an explicit *true* had a
+        path, so a participant could never revoke. The removal is atomic and
+        retried for the same lost-update reason as the append. A withdrawal
+        that leaves the consent set incomplete stops any live recording
+        segment immediately -- continuing to record after a participant
+        revokes is the one outcome that must never happen.
+        """
+        call = get_voice_call_uncached(self._db, call_id)
+        if call is None:
+            raise ValueError(f"Voice call {call_id} not found")
+
+        normalized_user_id = int(user_id)
+        current_ids = self._current_participant_ids(self._require_channel_id(call))
+        if normalized_user_id not in current_ids:
+            raise ValueError(
+                f"User {normalized_user_id} is not currently in voice channel {call.channel_id}"
+            )
+
+        updated: Optional[VoiceCall] = None
+        before_consented_ids: set[int] = set()
+        last_error: Optional[Exception] = None
+        for attempt in range(5):
+            caller_transaction = getattr(self._db, "in_transaction", False)
+            try:
+                if not caller_transaction:
+                    self._db.begin_transaction()
+                fresh = get_voice_call_uncached(self._db, call_id)
+                if fresh is None:
+                    raise ValueError(f"Voice call {call_id} not found")
+                before = [int(value) for value in fresh.consented_participants]
+                before_consented_ids = set(before)
+                consented = [value for value in before if value != normalized_user_id]
+                candidate = update_voice_call(
+                    self._db,
+                    call_id,
+                    consented_participants=consented,
+                    updated_at=self._get_timestamp(),
+                )
+                if candidate is None:
+                    raise ValueError(f"Failed to update voice call {call_id}")
+                if not caller_transaction:
+                    self._db.commit()
+                updated = candidate
+                break
+            except ValueError:
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                raise
+            except Exception as exc:
+                last_error = exc
+                if not caller_transaction:
+                    try:
+                        self._db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                if attempt < 4:
+                    time.sleep(0.005 * (2**attempt) + random.uniform(0, 0.005))
+        if updated is None:
+            if isinstance(last_error, ValueError):
+                raise last_error
+            raise ValueError(
+                f"Failed to remove consent for call {call_id}: {last_error}"
+            )
+
+        # A recording may only continue while every live participant consents.
+        # Stop it only when the withdrawal actually breaks a previously
+        # complete set (a user who never consented is already the reason.
+        # recording is not running); this mirrors the append's transition test
+        # and keeps a duplicate revoke from stopping an unrelated segment.
+        # Fail CLOSED: when the roster is unreadable an actual withdrawal
+        # (the user was in the consent set before) stops the segment — a
+        # possibly-withdrawn participant must never stay recorded. A no-op
+        # duplicate revoke stays a no-op even then.
+        roster_ids = self._lookup_participant_ids_strict(
+            self._require_channel_id(updated)
+        )
+        after_consented_ids = {int(value) for value in updated.consented_participants}
+        actually_withdrew = normalized_user_id in before_consented_ids
+        if roster_ids is None:
+            if (
+                updated.recorded
+                and self._recording_manager is not None
+                and actually_withdrew
+            ):
+                logger.warning(
+                    f"voice_call consent withdrawn but roster unreadable "
+                    f"(call {updated.id}): stopping recording"
+                )
+                self._recording_manager.stop_call_recording(updated.id)
+            return updated
+        was_complete = roster_ids.issubset(before_consented_ids)
+        is_complete = roster_ids.issubset(after_consented_ids)
+        if (
+            updated.recorded
+            and self._recording_manager is not None
+            and was_complete
+            and not is_complete
+        ):
+            self._recording_manager.stop_call_recording(updated.id)
+        return updated
+
+    def revoke_consent_everywhere(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Withdraw ``user_id``'s consent from every call they are live in.
+
+        ANNEX AB delivered the client's *declined* consent dialog only to the
+        active call of the channel that dialog named, and recorded the gap. A
+        withdrawal has to reach the recordings the participant is actually
+        part of: the dialog's channel is a hint, while the authorization fact
+        is live participation. Every active call whose live roster contains
+        the user is therefore revoked, each through :meth:`remove_consent` so
+        the atomic removal, the membership re-check and the
+        stop-on-consent-split behaviour all still apply.
+
+        Returns the ids of the calls actually revoked. One call failing never
+        prevents the withdrawal from being applied to the others, and this
+        never raises.
+        """
+        normalized = int(user_id)
+        touched: List[SnowflakeID] = []
+        for call in get_active_voice_calls(self._db):
+            channel_id = call.channel_id
+            if channel_id is None:
+                continue
+            try:
+                if normalized not in self._current_participant_ids(channel_id):
+                    continue
+                self.remove_consent(call.id, normalized)
+            except ValueError:
+                # Not a participant after all, or the call ended between the
+                # listing and the removal: there is nothing to withdraw here.
+                continue
+            except Exception as exc:
+                logger.warning(
+                    f"voice_call consent revoke failed (call {call.id}): {exc}"
+                )
+                continue
+            touched.append(call.id)
+        return touched
+
+    def stop_live_recordings_for_user(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Stop live recording segments that still cover ``user_id``.
+
+        :meth:`remove_consent` stops a segment when a withdrawal breaks a
+        previously complete consent set *on the active call*. That leaves the
+        gap ANNEX AB recorded: a segment that is still finishing, or one keyed
+        to a call that is no longer the active one, would keep recording a
+        participant who has withdrawn. The recorder is asked directly, and
+        the outcome is reported rather than raised -- consent bookkeeping must
+        never break the voice state update the dialog arrived with.
+        """
+        recorder = self._recording_manager
+        if recorder is None:
+            return []
+        try:
+            stopped = recorder.stop_live_recordings_for_user(int(user_id))
+        except Exception as exc:
+            logger.warning(
+                f"voice_call recording stop failed for user {user_id}: {exc}"
+            )
+            return []
+        return [value for value in (stopped or [])]
 
     def set_transcript(
         self,

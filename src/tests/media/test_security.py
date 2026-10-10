@@ -76,8 +76,9 @@ class TestSecurity:
 
     def test_validate_content_type_allowed(self, media_manager):
         """Test that allowed content types pass validation."""
-        # Should not raise
-        media_manager._validate_content_type("image/png", MediaType.IMAGE)
+        assert (
+            media_manager._validate_content_type("image/png", MediaType.IMAGE) is None
+        )
 
     def test_validate_content_type_disallowed(self, media_manager):
         """Test that disallowed content types are rejected."""
@@ -86,8 +87,7 @@ class TestSecurity:
 
     def test_validate_file_size_within_limit(self, media_manager):
         """Test that files within size limit pass validation."""
-        # Should not raise
-        media_manager._validate_file_size(1024, MediaType.IMAGE)
+        assert media_manager._validate_file_size(1024, MediaType.IMAGE) is None
 
     def test_validate_file_size_exceeds_limit(self, media_manager):
         """Test that files exceeding size limit are rejected."""

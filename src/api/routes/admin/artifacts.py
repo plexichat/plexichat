@@ -11,14 +11,19 @@ import utils.logger as logger
 import utils.config as config
 from fastapi import APIRouter, Request, HTTPException, status
 
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+    require_approved_request,
+)
 from src.api.schemas.artifacts import (
     ArtifactResponse,
     RetentionPurgeResponse,
     ServerRetentionRequest,
     ServerRetentionResponse,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 
 
 ALLOWED_FEATURES = {"plexiscribe", "plexiscript", "plexiboard", "whiteboard", "voice"}
@@ -90,9 +95,14 @@ async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
 
 @router.delete("/{artifact_id}")
 async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str, Any]:
-    """Admin force-delete of any artifact."""
+    """Admin force-delete of any artifact.
+
+    Requires ``admin.artifacts.manage`` plus an approved approval request:
+    this destroys user data across every server.
+    """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
+    require_approved_request("artifacts.force_delete")
     if admin_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -134,7 +144,7 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
 async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
     """Trigger a retention purge of expired artifacts."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
     if admin_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -164,7 +174,14 @@ async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
         )
 
 
-@router.post("/retention/server")
+@router.post(
+    "/retention/server",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_set_server_retention(
     request: Request, body: ServerRetentionRequest
 ) -> ServerRetentionResponse:
@@ -183,9 +200,22 @@ async def admin_set_server_retention(
         )
 
     try:
+        try:
+            server_id = int(body.server_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid server_id"}},
+            )
         manager = _get_manager()
-        manager.set_server_retention_days(int(body.server_id), body.retention_days)
-        effective = manager.get_server_retention_days(int(body.server_id))
+        try:
+            manager.set_server_retention_days(server_id, body.retention_days)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
+        effective = manager.get_server_retention_days(server_id)
         return ServerRetentionResponse(
             server_id=body.server_id, retention_days=effective, success=True
         )
@@ -209,7 +239,7 @@ async def admin_set_server_retention(
 )
 async def admin_get_feature_settings(
     feature: str,
-    server_id: int,
+    server_id: SnowflakeIDParam,
     request: Request,
 ) -> Dict[str, Any]:
     """Get per-server override settings for a feature."""
@@ -219,7 +249,9 @@ async def admin_get_feature_settings(
         raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
     manager = _get_manager()
     settings = manager.get_feature_settings(server_id, feature)
-    return {"server_id": server_id, "feature": feature, "settings": settings}
+    # Snowflake as a decimal string (project convention), even though it echoed
+    # an int-typed path parameter.
+    return {"server_id": str(server_id), "feature": feature, "settings": settings}
 
 
 @router.post(
@@ -241,7 +273,7 @@ async def admin_set_feature_settings(
     Pass null to clear a setting back to default.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.artifacts.manage")
     if feature not in ALLOWED_FEATURES:
         raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
 
@@ -254,7 +286,17 @@ async def admin_set_feature_settings(
                 "error": {"code": 400, "message": "server_id and settings are required"}
             },
         )
+    # Accept a decimal-string snowflake (the admin UI sends ids as strings to
+    # avoid Number() rounding) as well as an int, then bind a real int so the
+    # query works on both SQLite and Postgres.
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server_id"}},
+        )
 
     manager = _get_manager()
     result = manager.set_feature_settings_bulk(server_id, feature, settings)
-    return {"server_id": server_id, "feature": feature, "settings": result}
+    return {"server_id": str(server_id), "feature": feature, "settings": result}

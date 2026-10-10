@@ -15,7 +15,7 @@ class TestMessagingIntegration:
         """Test reacting to DM message."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
-        reaction = reaction_manager.add_reaction(user1.id, msg.id, "dm_react")
+        reaction = reaction_manager.add_reaction(user1.id, msg.id, ":dm_react:")
 
         assert reaction is not None
         assert reaction.message_id == msg.id
@@ -26,13 +26,13 @@ class TestMessagingIntegration:
             group_with_message
         )
 
-        reaction_manager.add_reaction(owner.id, msg.id, "group_react")
-        reaction_manager.add_reaction(member1.id, msg.id, "group_react")
-        reaction_manager.add_reaction(member2.id, msg.id, "group_react")
+        reaction_manager.add_reaction(owner.id, msg.id, ":group_react:")
+        reaction_manager.add_reaction(member1.id, msg.id, ":group_react:")
+        reaction_manager.add_reaction(member2.id, msg.id, ":group_react:")
 
         msg_reactions = reaction_manager.get_reactions(owner.id, msg.id)
         group_react = next(
-            (r for r in msg_reactions.reactions if r.emoji == "group_react"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":group_react:"), None
         )
 
         assert group_react is not None
@@ -71,13 +71,13 @@ class TestMessagingIntegration:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "persist")
+        reaction_manager.add_reaction(user1.id, msg.id, ":persist:")
 
         messaging_manager.edit_message(user1.id, msg.id, "Edited content")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
         persist = next(
-            (r for r in msg_reactions.reactions if r.emoji == "persist"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":persist:"), None
         )
 
         assert persist is not None
@@ -93,9 +93,10 @@ class TestServerIntegration:
             users_with_server
         )
 
-        reaction = reaction_manager.add_reaction(owner.id, msg.id, "group_react")
+        reaction = reaction_manager.add_reaction(owner.id, msg.id, ":group_react:")
 
         assert reaction is not None
+        assert reaction.emoji == ":group_react:"
 
     def test_member_can_react_in_group(self, users_with_server):
         """Test group member can react."""
@@ -103,9 +104,10 @@ class TestServerIntegration:
             users_with_server
         )
 
-        reaction = reaction_manager.add_reaction(member.id, msg.id, "member_group")
+        reaction = reaction_manager.add_reaction(member.id, msg.id, ":member_group:")
 
         assert reaction is not None
+        assert reaction.emoji == ":member_group:"
 
     def test_non_member_cannot_react(
         self, auth_manager, messaging_manager, reaction_manager
@@ -135,7 +137,7 @@ class TestServerIntegration:
         msg = messaging_manager.send_message(owner.id, group.id, "Private message")
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.add_reaction(outsider.id, msg.id, "outsider")
+            reaction_manager.add_reaction(outsider.id, msg.id, ":outsider:")
 
     def test_custom_emoji_creation(self, users_with_server):
         """Test custom emoji can be created for server."""
@@ -183,15 +185,15 @@ class TestRelationshipsIntegration:
         )
         msg = messaging_manager.send_message(user1.id, group.id, "Block test message")
 
-        reaction_manager.add_reaction(user1.id, msg.id, "block_test")
-        reaction_manager.add_reaction(user2.id, msg.id, "block_test")
-        reaction_manager.add_reaction(user3.id, msg.id, "block_test")
+        reaction_manager.add_reaction(user1.id, msg.id, ":block_test:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":block_test:")
+        reaction_manager.add_reaction(user3.id, msg.id, ":block_test:")
 
         rel_manager.block_user(user1.id, user2.id)
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
         block_test = next(
-            (r for r in msg_reactions.reactions if r.emoji == "block_test"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":block_test:"), None
         )
 
         assert block_test is not None
@@ -224,15 +226,15 @@ class TestRelationshipsIntegration:
         )
         msg = messaging_manager.send_message(user1.id, group.id, "Blocked by test")
 
-        reaction_manager.add_reaction(user1.id, msg.id, "blockedby_test")
-        reaction_manager.add_reaction(user2.id, msg.id, "blockedby_test")
-        reaction_manager.add_reaction(user3.id, msg.id, "blockedby_test")
+        reaction_manager.add_reaction(user1.id, msg.id, ":blockedby_test:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":blockedby_test:")
+        reaction_manager.add_reaction(user3.id, msg.id, ":blockedby_test:")
 
         rel_manager.block_user(user2.id, user1.id)
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
         blockedby_test = next(
-            (r for r in msg_reactions.reactions if r.emoji == "blockedby_test"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":blockedby_test:"), None
         )
 
         assert blockedby_test is not None
@@ -265,13 +267,13 @@ class TestRelationshipsIntegration:
         )
         msg = messaging_manager.send_message(user1.id, group.id, "List test")
 
-        reaction_manager.add_reaction(user1.id, msg.id, "list_test")
-        reaction_manager.add_reaction(user2.id, msg.id, "list_test")
-        reaction_manager.add_reaction(user3.id, msg.id, "list_test")
+        reaction_manager.add_reaction(user1.id, msg.id, ":list_test:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":list_test:")
+        reaction_manager.add_reaction(user3.id, msg.id, ":list_test:")
 
         rel_manager.block_user(user1.id, user2.id)
 
-        users = reaction_manager.get_reaction_users(user1.id, msg.id, "list_test")
+        users = reaction_manager.get_reaction_users(user1.id, msg.id, ":list_test:")
         user_ids = [u.user_id for u in users]
 
         assert user2.id not in user_ids
@@ -284,12 +286,12 @@ class TestRelationshipsIntegration:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "no_block")
-        reaction_manager.add_reaction(user2.id, msg.id, "no_block")
+        reaction_manager.add_reaction(user1.id, msg.id, ":no_block:")
+        reaction_manager.add_reaction(user2.id, msg.id, ":no_block:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
         no_block = next(
-            (r for r in msg_reactions.reactions if r.emoji == "no_block"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":no_block:"), None
         )
 
         assert no_block is not None

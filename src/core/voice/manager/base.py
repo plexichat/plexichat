@@ -8,8 +8,21 @@ from ..models import (
     VoiceChannelType,
 )
 from ..exceptions import (
+    AlreadySpeakerError,
+    ChannelAccessDeniedError,
+    ChannelFullError,
+    ChannelNotFoundError,
+    ChannelTypeError,
+    InvalidVoiceStateError,
+    NotSpeakerError,
     PermissionDeniedError,
+    SpeakerRequestExistsError,
+    SpeakerRequestNotFoundError,
+    StageNotFoundError,
+    UserAlreadyInChannelError,
+    UserNotInChannelError,
     UserNotFoundError,
+    VoiceError,
 )
 from ..queries import (
     is_user_in_voice as _is_user_in_voice,
@@ -26,6 +39,7 @@ from .calls import CallLifecycleMixin
 
 
 class VoiceManager(
+    BaseManager,
     ChannelOpsMixin,
     StateMixin,
     ModerationMixin,
@@ -33,8 +47,26 @@ class VoiceManager(
     SettingsMixin,
     AfkMixin,
     CallLifecycleMixin,
-    BaseManager,
 ):
+    # Exception classes re-exported on the manager so callers (and tests) can
+    # reference ``voice.ChannelNotFoundError`` etc. without importing the
+    # exceptions module directly.
+    AlreadySpeakerError = AlreadySpeakerError
+    ChannelAccessDeniedError = ChannelAccessDeniedError
+    ChannelFullError = ChannelFullError
+    ChannelNotFoundError = ChannelNotFoundError
+    ChannelTypeError = ChannelTypeError
+    InvalidVoiceStateError = InvalidVoiceStateError
+    NotSpeakerError = NotSpeakerError
+    PermissionDeniedError = PermissionDeniedError
+    SpeakerRequestExistsError = SpeakerRequestExistsError
+    SpeakerRequestNotFoundError = SpeakerRequestNotFoundError
+    StageNotFoundError = StageNotFoundError
+    UserAlreadyInChannelError = UserAlreadyInChannelError
+    UserNotInChannelError = UserNotInChannelError
+    UserNotFoundError = UserNotFoundError
+    VoiceError = VoiceError
+
     def __init__(
         self,
         db,
@@ -75,11 +107,17 @@ class VoiceManager(
         permission: str,
         channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
-        if self._servers:
-            return self._servers.has_permission(
-                user_id, server_id, permission, channel_id
+        # SECURITY: fail CLOSED when the servers module is unwired. Voice is
+        # a server-scoped surface, so without the permission source nothing
+        # can be authorized; denying matches the reactions/webhooks managers
+        # and ``_get_server_channel``, which already returns None without it.
+        if not self._servers:
+            logger.warning(
+                f"Servers module unavailable; denying permission "
+                f"'{permission}' for user {user_id} in server {server_id}"
             )
-        return True
+            return False
+        return self._servers.has_permission(user_id, server_id, permission, channel_id)
 
     def _require_permission(
         self,

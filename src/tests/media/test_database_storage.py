@@ -42,11 +42,13 @@ class TestDatabaseStorage:
         """Test getting storage by backend name for local."""
         storage = media_manager._get_storage_by_backend("local")
         assert storage is not None
+        assert storage in (media_manager._storage, media_manager._db_storage)
 
     def test_get_storage_by_backend_database(self, media_manager):
         """Test getting storage by backend name for database."""
         storage = media_manager._get_storage_by_backend("database")
         assert storage is not None  # Falls back to primary
+        assert storage in (media_manager._storage, media_manager._db_storage)
 
     def test_file_record_has_checksum(self, media_manager, test_user):
         """Test that uploaded file has a checksum."""

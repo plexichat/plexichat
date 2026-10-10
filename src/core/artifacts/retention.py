@@ -52,30 +52,21 @@ def purge_expired(db: Any, config: Optional[Dict[str, Any]] = None) -> int:
             (now,),
         )
         removed = 0
+        from src.core.artifacts.manager import ArtifactManager
+
+        manager = ArtifactManager(db, _get_artifacts_config(config))
         for row in rows:
-            if _delete_artifact_cascade(db, row["id"]):
-                removed += 1
+            try:
+                if manager.delete(int(row["id"]), purge_media=True):
+                    removed += 1
+            except Exception as exc:
+                logger.warning(f"Failed to purge artifact {row['id']}: {exc}")
         if removed:
             logger.info(f"Purged {removed} expired artifact(s)")
         return removed
     except Exception as e:  # pragma: no cover - defensive
         logger.error(f"Failed to purge expired artifacts: {e}", exc_info=True)
         return 0
-
-
-def _delete_artifact_cascade(db: Any, artifact_id: int) -> bool:
-    """Remove an artifact and its cascade-linked rows (ops, voice_calls).
-
-    Reuses the repository's cascade delete so retention, the REST delete, and
-    the admin force-delete all follow the same cleanup semantics.
-    """
-    try:
-        from .repository import delete_artifact_cascade
-
-        return delete_artifact_cascade(db, artifact_id)
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"Failed to cascade-delete artifact {artifact_id}: {e}")
-        return False
 
 
 def _now_ms() -> int:
@@ -144,7 +135,12 @@ def resolve_retention_days(
 
     default_days = artifacts_cfg.get("default_retention_days")
     if default_days is None:
-        return None
+        # License-free evaluation mode makes suite/artifact content ephemeral.
+        from src.core.artifacts.capabilities import evaluation_ttl_days
+
+        default_days = evaluation_ttl_days(artifacts_cfg)
+        if default_days is None:
+            return None
     try:
         days = int(default_days)
     except (TypeError, ValueError):
@@ -259,7 +255,7 @@ def _apply_retention_windows(db: Any, config: Optional[Dict[str, Any]] = None) -
         return 0
 
     per_day_ms = _seconds_per_day() * 1000
-    updated = 0
+    pending: list = []
     for row in rows:
         artifact_id = row.get("id")
         server_id = row.get("server_id")
@@ -275,16 +271,37 @@ def _apply_retention_windows(db: Any, config: Optional[Dict[str, Any]] = None) -
             continue
 
         expires_at = int(created_at) + policy_days * per_day_ms
-        try:
-            db.execute(
-                "UPDATE artifacts SET expires_at = ? WHERE id = ?",
-                (expires_at, artifact_id),
-            )
-            updated += 1
-        except Exception as e:
-            logger.warning(
-                f"Failed to apply retention window for artifact {artifact_id}: {e}"
-            )
+        pending.append((expires_at, artifact_id))
+
+    if not pending:
+        return 0
+
+    # L16: apply the windows in batched writes instead of one UPDATE per
+    # row (N+1 query storm on large backlogs). Fall back to per-row writes
+    # if the batch fails so a single bad row cannot block the rest.
+    updated = 0
+    try:
+        cursor = db.execute_many(
+            "UPDATE artifacts SET expires_at = ? WHERE id = ?",
+            pending,
+        )
+        rowcount = getattr(cursor, "rowcount", None)
+        updated = (
+            rowcount if isinstance(rowcount, int) and rowcount >= 0 else len(pending)
+        )
+    except Exception as e:
+        logger.warning(f"Retention window batch write failed, retrying per-row: {e}")
+        for expires_at, artifact_id in pending:
+            try:
+                db.execute(
+                    "UPDATE artifacts SET expires_at = ? WHERE id = ?",
+                    (expires_at, artifact_id),
+                )
+                updated += 1
+            except Exception as row_e:
+                logger.warning(
+                    f"Failed to apply retention window for artifact {artifact_id}: {row_e}"
+                )
 
     if updated:
         logger.info(f"Applied retention windows to {updated} artifact(s)")
@@ -341,9 +358,18 @@ class RetentionCleanupJob:
     def stop(self) -> None:
         """Stop the background cleanup loop."""
         self._is_running = False
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=5)
+        thread = self._thread
         self._thread = None
+        if thread is not None and thread.is_alive():
+            # L16: never join the current thread — stop() called reentrantly
+            # from inside the cleanup loop would deadlock forever.
+            if threading.current_thread() is thread:
+                logger.warning(
+                    "RetentionCleanupJob.stop called from its own worker thread; "
+                    "flagged for shutdown instead of joining"
+                )
+                return
+            thread.join(timeout=5)
 
     def run_once(self, db: Any = None) -> Dict[str, int]:
         """Run a single cleanup cycle: apply windows then purge expired.
@@ -356,6 +382,24 @@ class RetentionCleanupJob:
         """
         target_db = db if db is not None else self._db
         applied = _apply_retention_windows(target_db, self._config)
+        suite_tickets = 0
+        suite_purged = 0
+        try:
+            # Reuse this existing scheduled cleanup worker rather than creating
+            # a second daemon solely for Stash tickets. Missing Suite tables are
+            # expected on older installations and are handled as a no-op.
+            from src.core.suite.stash import StashManager
+
+            stash = StashManager(target_db)
+            suite_tickets = stash.cleanup_expired_tickets()
+            retention_cfg = (
+                _get_artifacts_config(self._config).get("retention", {}) or {}
+            )
+            suite_purged = stash.purge_deleted_items(
+                retention_cfg.get("suite_deleted_retention_days", 30)
+            )
+        except Exception as exc:
+            logger.debug("Suite ticket cleanup skipped: %s", exc)
         purged = 0
         if self._purge_enabled():
             purged = purge_expired(target_db, self._config)
@@ -364,7 +408,12 @@ class RetentionCleanupJob:
                 "Retention purge disabled (purge_expired=False): "
                 "skipping deletion, only applying windows"
             )
-        return {"applied": applied, "purged": purged}
+        return {
+            "applied": applied,
+            "purged": purged,
+            "suite_tickets": suite_tickets,
+            "suite_purged": suite_purged,
+        }
 
     def _run_forever(self) -> None:
         interval = self._interval_seconds()

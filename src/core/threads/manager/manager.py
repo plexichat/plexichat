@@ -2,6 +2,8 @@ import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager
 
+from ..models import Thread, ThreadMember, ThreadType, ThreadState, AutoArchiveDuration
+
 from .permissions import ThreadPermissionMixin
 from .creation import ThreadCreationMixin
 from .membership import ThreadMembershipMixin
@@ -19,6 +21,12 @@ class ThreadManager(
     ThreadListingMixin,
     BaseManager,
 ):
+    Thread = Thread
+    ThreadMember = ThreadMember
+    ThreadType = ThreadType
+    ThreadState = ThreadState
+    AutoArchiveDuration = AutoArchiveDuration
+
     def __init__(
         self,
         db,

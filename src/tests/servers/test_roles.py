@@ -301,3 +301,232 @@ class TestMoveRole:
 
         with pytest.raises(servers.DefaultRoleError):
             servers.move_role(owner.id, default_role.id, position=5)
+
+
+class TestPermissionGrantSecurity:
+    """Editors may only grant permissions they possess; wildcards are rejected."""
+
+    def _make_moderator(self, servers, server, owner):
+        """Create a moderator (roles.manage only) below the admin-tier roles."""
+        import uuid
+
+        auth = servers._auth
+        unique_id = uuid.uuid4().hex[:8]
+        mod_user = auth.register(
+            f"grant_mod_{unique_id}",
+            f"grant_mod_{unique_id}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, mod_user.id)
+
+        mod_role = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Grant Mod",
+            permissions={"roles.manage": True, "members.manage_roles": True},
+        )
+        # Park the moderator role high but below the owner's reach check
+        servers.move_role(owner.id, mod_role.id, position=5)
+        servers.assign_role(owner.id, server.id, mod_user.id, mod_role.id)
+        return mod_user, mod_role
+
+    def test_create_wildcard_permission_rejected(self, fresh_server):
+        """Test that "*" cannot be stored on a role."""
+        server, owner, servers = fresh_server
+
+        with pytest.raises(servers.InvalidPermissionKeyError):
+            servers.create_role(
+                user_id=owner.id,
+                server_id=server.id,
+                name="Wildcard",
+                permissions={"*": True},
+            )
+
+    def test_create_namespace_wildcard_rejected(self, fresh_server):
+        """Test that "namespace.*" keys cannot be stored on a role."""
+        server, owner, servers = fresh_server
+
+        with pytest.raises(servers.InvalidPermissionKeyError):
+            servers.create_role(
+                user_id=owner.id,
+                server_id=server.id,
+                name="NsWildcard",
+                permissions={"channels.*": True},
+            )
+
+    def test_create_unknown_permission_key_rejected(self, fresh_server):
+        """Test that arbitrary keys are validated against SERVER_PERMISSIONS."""
+        server, owner, servers = fresh_server
+
+        with pytest.raises(servers.InvalidPermissionKeyError):
+            servers.create_role(
+                user_id=owner.id,
+                server_id=server.id,
+                name="Bogus",
+                permissions={"not.a.real.permission": True},
+            )
+
+    def test_moderator_cannot_grant_permissions_it_lacks(self, fresh_server):
+        """Test that a roles.manage holder cannot create an administrator role."""
+        server, owner, servers = fresh_server
+        mod_user, _ = self._make_moderator(servers, server, owner)
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.create_role(
+                user_id=mod_user.id,
+                server_id=server.id,
+                name="Escalated",
+                permissions={"administrator": True},
+            )
+
+    def test_moderator_cannot_update_role_with_perms_it_lacks(self, fresh_server):
+        """Test that editing a lower role cannot inject unheld permissions."""
+        server, owner, servers = fresh_server
+        mod_user, mod_role = self._make_moderator(servers, server, owner)
+
+        helper = servers.create_role(
+            user_id=mod_user.id, server_id=server.id, name="Helper"
+        )
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.update_role(
+                user_id=mod_user.id,
+                role_id=helper.id,
+                permissions={"members.ban": True},
+            )
+
+    def test_moderator_can_grant_permissions_it_holds(self, fresh_server):
+        """Test granting held permissions still works."""
+        import uuid
+
+        server, owner, servers = fresh_server
+        auth = servers._auth
+        unique_id = uuid.uuid4().hex[:8]
+        lead = auth.register(
+            f"greeter_lead_{unique_id}",
+            f"greeter_lead_{unique_id}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, lead.id)
+
+        # Lead sits above the Welcomer role and holds every permission it may
+        # hand out, including the one being added.
+        lead_role = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Greeter Lead",
+            permissions={
+                "roles.manage": True,
+                "messages.send": True,
+                "messages.read": True,
+            },
+        )
+        servers.move_role(owner.id, lead_role.id, position=5)
+        servers.assign_role(owner.id, server.id, lead.id, lead_role.id)
+
+        welcomer = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Welcomer",
+            permissions={"messages.send": True},
+        )
+        servers.move_role(owner.id, welcomer.id, position=2)
+
+        updated = servers.update_role(
+            user_id=lead.id,
+            role_id=welcomer.id,
+            permissions={"messages.send": True, "messages.read": True},
+        )
+        assert updated.permissions.get("messages.read") is True
+
+    def test_assign_role_with_unheld_permissions_fails(self, fresh_server):
+        """Test that attaching a role grants nothing the editor lacks."""
+        import uuid
+
+        server, owner, servers = fresh_server
+        mod_user, mod_role = self._make_moderator(servers, server, owner)
+
+        target = servers._auth.register(
+            f"assign_target_{uuid.uuid4().hex[:8]}",
+            f"assign_target_{uuid.uuid4().hex[:8]}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, target.id)
+
+        trusted = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Trusted",
+            permissions={"members.kick": True},
+        )
+        servers.move_role(owner.id, trusted.id, position=2)
+
+        with pytest.raises(servers.PermissionDeniedError):
+            servers.assign_role(mod_user.id, server.id, target.id, trusted.id)
+
+    def test_created_role_position_below_creators_highest(self, fresh_server):
+        """Test hierarchy on create: new role lands below creator's highest."""
+        server, owner, servers = fresh_server
+        mod_user, _ = self._make_moderator(servers, server, owner)
+
+        created = servers.create_role(
+            user_id=mod_user.id, server_id=server.id, name="Mod Created"
+        )
+        assert created.position < 5
+
+
+class TestUpdateRolePosition:
+    """PATCH-style position updates via update_role."""
+
+    def test_update_role_position(self, fresh_server):
+        """Test moving a role via update_role."""
+        server, owner, servers = fresh_server
+
+        role = servers.create_role(user_id=owner.id, server_id=server.id, name="Mover")
+        updated = servers.update_role(user_id=owner.id, role_id=role.id, position=3)
+        assert updated.position == 3
+
+    def test_update_role_position_above_own_highest_fails(self, fresh_server):
+        """Test a non-owner cannot move a role above their highest role."""
+        server, owner, servers = fresh_server
+        mod_user, mod_role = self._make_moderator_positioned(servers, server, owner)
+
+        other = servers.create_role(
+            user_id=mod_user.id, server_id=server.id, name="Peon"
+        )
+
+        with pytest.raises(servers.RoleHierarchyError):
+            servers.update_role(user_id=mod_user.id, role_id=other.id, position=10)
+
+    def test_update_default_role_position_fails(self, fresh_server):
+        """Test the default role cannot be moved via update_role."""
+        server, owner, servers = fresh_server
+
+        roles = servers.get_roles(owner.id, server.id)
+        default_role = [r for r in roles if r.is_default][0]
+
+        with pytest.raises(servers.DefaultRoleError):
+            servers.update_role(user_id=owner.id, role_id=default_role.id, position=9)
+
+    @staticmethod
+    def _make_moderator_positioned(servers, server, owner):
+        import uuid
+
+        auth = servers._auth
+        unique_id = uuid.uuid4().hex[:8]
+        mod_user = auth.register(
+            f"pos_mod_{unique_id}",
+            f"pos_mod_{unique_id}@example.com",
+            "TestPass123!",
+        )
+        servers.add_member(server.id, mod_user.id)
+
+        mod_role = servers.create_role(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Position Mod",
+            permissions={"roles.manage": True},
+        )
+        servers.move_role(owner.id, mod_role.id, position=5)
+        servers.assign_role(owner.id, server.id, mod_user.id, mod_role.id)
+        return mod_user, mod_role

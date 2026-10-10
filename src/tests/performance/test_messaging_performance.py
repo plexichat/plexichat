@@ -13,10 +13,26 @@ Tests messaging critical paths:
 import concurrent.futures
 from datetime import datetime
 
+import pytest
+
+# Check if pytest-benchmark is available (the benchmark fixture only exists
+# when the plugin is installed; without it those tests error at setup).
+try:
+    import pytest_benchmark  # noqa: F401
+
+    HAS_BENCHMARK = True
+except ImportError:
+    HAS_BENCHMARK = False
+
+# Timing-sensitive perf/memory suite: excluded from the default fast run
+# (pytest.ini deselects ``performance``). Run explicitly when needed.
+pytestmark = pytest.mark.performance
+
 
 class TestMessagingPerformance:
     """Test messaging performance."""
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_send_message_performance(self, benchmark, messaging_manager, test_dm):
         """Benchmark sending a simple text message."""
         dm, user1, user2 = test_dm
@@ -32,6 +48,7 @@ class TestMessagingPerformance:
         assert result is not None
         assert result.content == "Performance test message"
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_get_messages_performance(self, benchmark, messaging_manager, test_dm):
         """Benchmark retrieving messages from a conversation."""
         dm, user1, user2 = test_dm
@@ -49,6 +66,7 @@ class TestMessagingPerformance:
         messages = benchmark(get_messages)
         assert len(messages) == 50
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_bulk_send_performance(self, benchmark, messaging_manager, test_dm):
         """Test sending many messages in sequence."""
         dm, user1, user2 = test_dm
@@ -65,6 +83,7 @@ class TestMessagingPerformance:
         messages = benchmark(bulk_send)
         assert len(messages) == 100
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_concurrent_send_performance(self, benchmark, messaging_manager, test_dm):
         """Test concurrent message sending."""
         dm, user1, user2 = test_dm
@@ -86,6 +105,7 @@ class TestMessagingPerformance:
         messages = benchmark(concurrent_send)
         assert len(messages) == 50
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_message_search_performance(self, benchmark, messaging_manager, test_dm):
         """Test message search performance."""
         dm, user1, user2 = test_dm
@@ -101,14 +121,32 @@ class TestMessagingPerformance:
             )
 
         def search_messages():
-            all_messages = messaging_manager.get_messages(
-                user_id=user1.id, conversation_id=dm.id, limit=500
-            )
+            # get_messages caps each page at 100; page through to collect the
+            # full conversation before filtering so the keyword count matches
+            # exactly what was sent.
+            all_messages = []
+            before_id = None
+            while True:
+                page = messaging_manager.get_messages(
+                    user_id=user1.id,
+                    conversation_id=dm.id,
+                    limit=100,
+                    before_id=before_id,
+                )
+                if not page:
+                    break
+                all_messages.extend(page)
+                before_id = page[-1].id
+                if len(page) < 100:
+                    break
             return [m for m in all_messages if "keyword" in m.content.lower()]
 
         results = benchmark(search_messages)
-        assert len(results) >= 20
+        # Exactly 20 of the 200 seeded messages contain the keyword (i % 10 == 0).
+        assert len(results) == 20
+        assert all("keyword" in m.content.lower() for m in results)
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_edit_message_performance(self, benchmark, messaging_manager, test_dm):
         """Test message editing performance."""
         dm, user1, user2 = test_dm
@@ -125,6 +163,7 @@ class TestMessagingPerformance:
         result = benchmark(edit_message)
         assert result.content == "Edited content"
 
+    @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_conversation_list_performance(
         self, benchmark, messaging_manager, user_pool
     ):
@@ -144,7 +183,9 @@ class TestMessagingPerformance:
             return messaging_manager.get_conversations(user.id)
 
         conversations = benchmark(get_conversations)
-        assert len(conversations) >= 20
+        # Each iteration created a DM with a fresh user, so exactly 20 exist.
+        assert len(conversations) == 20
+        assert all(c.conversation_type.value == "dm" for c in conversations)
 
 
 class TestMessagingMemory:
@@ -294,9 +335,19 @@ class TestMessagingDegradation:
         time_5, count_5 = send_batch(20, 5)
         time_10, count_10 = send_batch(20, 10)
 
+        # Every message must be durably stored regardless of concurrency level.
         assert count_1 == 20
         assert count_5 == 20
         assert count_10 == 20
 
-        assert time_5 < time_1, "Parallel should be faster than sequential"
-        assert time_10 < time_1, "More parallelism should improve performance"
+        # All three batches must persist every message (verify by retrieval).
+        stored = messaging_manager.get_messages(user1.id, dm.id, limit=100)
+        assert len(stored) >= 60
+
+        # Absolute bound: concurrent batches must not take pathological time.
+        # Relative speedups are intentionally NOT asserted here -- under a GIL
+        # and a shared sqlite connection, parallel threads do not reliably beat
+        # a single thread, so a relative wall is a flaky timing assertion.
+        assert time_1 < 2.0, f"Sequential batch took {time_1}s (expected < 2s)"
+        assert time_5 < 2.0, f"5-worker batch took {time_5}s (expected < 2s)"
+        assert time_10 < 2.0, f"10-worker batch took {time_10}s (expected < 2s)"

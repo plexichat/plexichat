@@ -16,6 +16,10 @@ class WebhookCreateRequest(BaseModel):
     channel_id: SnowflakeID = Field(..., description="Channel ID for the webhook")
     name: str = Field(..., min_length=1, max_length=80, description="Webhook name")
     avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
+    require_signed_deliveries: bool = Field(
+        False,
+        description="When true, executions without a valid Ed25519 signature are rejected even with a valid token",
+    )
 
 
 class WebhookUpdateRequest(BaseModel):
@@ -28,6 +32,10 @@ class WebhookUpdateRequest(BaseModel):
     )
     avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
     channel_id: Optional[SnowflakeID] = Field(None, description="New channel ID")
+    require_signed_deliveries: Optional[bool] = Field(
+        None,
+        description="When true, executions without a valid Ed25519 signature are rejected even with a valid token",
+    )
 
 
 class WebhookResponse(BaseModel):
@@ -43,6 +51,10 @@ class WebhookResponse(BaseModel):
     avatar_url: Optional[str] = Field(None, description="Webhook avatar URL")
     token: Optional[str] = Field(None, description="Webhook token (only on create)")
     url: Optional[str] = Field(None, description="Webhook URL (only on create)")
+    require_signed_deliveries: bool = Field(
+        False,
+        description="Whether unsigned executions are rejected even with a valid token",
+    )
     created_at: int = Field(..., description="Creation timestamp")
 
 

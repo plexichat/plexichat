@@ -16,6 +16,7 @@ class QueryBuilder:
         connection: Any,
         db_type: str = "sqlite",
         enable_schema_validation: bool = False,
+        database: Any = None,
     ):
         """Initialize query builder.
 
@@ -23,9 +24,12 @@ class QueryBuilder:
             connection: Database connection object
             db_type: Database type ("sqlite" or "postgres")
             enable_schema_validation: Enable schema registry validation
+            database: Optional owning Database facade; when set, write
+                queries invalidate the facade's query-result cache.
         """
         self.connection = connection
         self.db_type = db_type
+        self.database = database
         self.schema_registry = SchemaRegistry() if enable_schema_validation else None
         logger.debug(
             f"QueryBuilder initialized with db_type={db_type}, schema_validation={enable_schema_validation}"
@@ -40,9 +44,11 @@ class QueryBuilder:
         Returns:
             TableQuery instance for method chaining
         """
-        return TableQuery(
+        table_query = TableQuery(
             self.connection, table_name, self.db_type, self.schema_registry
         )
+        table_query.database = self.database
+        return table_query
 
     def register_schema(self, table_name: str, columns: List[str]) -> None:
         """Register a table schema."""

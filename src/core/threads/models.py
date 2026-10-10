@@ -17,11 +17,18 @@ class ThreadType(Enum):
 
 
 class ThreadState(Enum):
-    """Thread states."""
+    """Thread lifecycle states.
+
+    NOTE: locking is intentionally NOT a lifecycle state — it is tracked in
+    the separate ``locked`` boolean column (statemgmt.py ``SET locked = 1``)
+    so threads can be locked while remaining active. The former LOCKED
+    variant here was dead: nothing ever set or compared it, and
+    ``ThreadState(row["state"])`` would raise ValueError on a stray
+    'locked' row instead of surfacing the lock flag.
+    """
 
     ACTIVE = "active"
     ARCHIVED = "archived"
-    LOCKED = "locked"
 
 
 class AutoArchiveDuration(Enum):

@@ -160,24 +160,37 @@ class TestTelemetryModule:
 
     def test_get_response_time_history_with_data(self, telemetry_module, mock_db):
         """Test getting history with data."""
-        now = int(time.time() * 1000)
+        # 1704067200000 ms is exactly on a 5-minute bucket boundary, making
+        # the bucketing deterministic: rows 1+2 share a bucket, row 3 lands
+        # in the next one.
+        boundary = 1704067200000
         bucket_ms = 5 * 60 * 1000  # 5 minutes
 
         mock_db.fetch_all.return_value = [
-            {"timestamp": now - bucket_ms, "response_time_ms": 10, "status_code": 200},
+            {"timestamp": boundary, "response_time_ms": 10, "status_code": 200},
             {
-                "timestamp": now - bucket_ms + 1000,
+                "timestamp": boundary + 1000,
                 "response_time_ms": 20,
                 "status_code": 200,
             },
-            {"timestamp": now, "response_time_ms": 30, "status_code": 200},
+            {
+                "timestamp": boundary + bucket_ms,
+                "response_time_ms": 30,
+                "status_code": 200,
+            },
         ]
 
         history = telemetry_module.get_response_time_history(
             endpoint="/api/v1/test", method="GET", hours=1, bucket_minutes=5
         )
 
-        assert len(history) >= 1
+        # Exactly two buckets: [10, 20] and [30]
+        assert len(history) == 2
+        bucket_counts = sorted(h["count"] for h in history)
+        assert bucket_counts == [1, 2]
+        bucket_avgs = sorted(h["avg_ms"] for h in history)
+        assert bucket_avgs == [15.0, 30.0]
+        assert all(h["error_count"] == 0 for h in history)
 
     def test_cleanup_old_data(self, telemetry_module, mock_db):
         """Test cleanup of old telemetry data."""

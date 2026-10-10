@@ -5,6 +5,8 @@ Adds blind indexes for encrypted fields and improved integrity.
 
 from src.core.database.core.schema_splitter import split_sql_statements
 
+import utils.logger as logger
+
 SCHEMA_SQLITE = """
 -- Users table
 CREATE TABLE IF NOT EXISTS auth_users (
@@ -26,6 +28,9 @@ CREATE TABLE IF NOT EXISTS auth_users (
     failed_login_attempts INTEGER DEFAULT 0,
     last_login_at INTEGER,
     totp_enabled INTEGER DEFAULT 0,
+    -- Passkey state (canonical initial schema)
+    passkey_enabled INTEGER DEFAULT 0,
+    webauthn_user_handle TEXT,
     totp_secret_encrypted TEXT,
     backup_codes_hash TEXT,
     avatar_url TEXT,
@@ -92,6 +97,8 @@ CREATE TABLE IF NOT EXISTS auth_devices (
     name_encrypted TEXT,
     device_type_encrypted TEXT,
     fingerprint_encrypted TEXT,
+    trusted INTEGER DEFAULT 0,
+    trusted_at INTEGER,
     first_seen_at INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
@@ -160,6 +167,8 @@ CREATE TABLE IF NOT EXISTS auth_2fa_challenges (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     used INTEGER DEFAULT 0,
+    -- Number of failed verification attempts for this challenge
+    attempts INTEGER DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
@@ -234,6 +243,10 @@ CREATE TABLE IF NOT EXISTS auth_api_access_token_events (
     reject_reason TEXT,
     FOREIGN KEY (token_id) REFERENCES auth_api_access_tokens(id) ON DELETE CASCADE
 );
+
+-- Failed login tracking per (user, IP) for distributed-lockout gating.
+-- DDL lives in ensure_failed_logins_table() below (single source of truth);
+-- create_tables() invokes it alongside the inline statements.
 
 -- Audit log with integrity
 CREATE TABLE IF NOT EXISTS auth_audit_log (
@@ -335,7 +348,129 @@ CREATE INDEX IF NOT EXISTS idx_auth_known_ips_ip_index ON auth_known_ips(ip_inde
 -- Index for auth_deletion_records
 CREATE INDEX IF NOT EXISTS idx_auth_deletion_records_user ON auth_deletion_records(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_deletion_records_hash ON auth_deletion_records(identifier_hash);
+
+-- Case-insensitive username uniqueness (prevents lookalike impersonation)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_username_lower
+    ON auth_users(LOWER(username));
 """
+
+
+# Single source of truth for the failed-login tracking DDL. Called from
+# create_tables() for fresh installs/migrations and lazily from the session
+# manager so databases created before this table existed are covered too.
+_FAILED_LOGINS_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS auth_failed_logins (
+        user_id INTEGER NOT NULL,
+        ip_index TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, ip_index)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auth_failed_logins_user_time
+        ON auth_failed_logins(user_id, last_attempt_at)
+    """,
+)
+
+
+def ensure_failed_logins_table(db) -> None:
+    for sql in _FAILED_LOGINS_DDL:
+        converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+        db.execute(converted)
+
+
+# Trusted-device trust flag: databases created before the flag existed get the
+# columns added lazily here (single source of truth, same pattern as the
+# failed-logins table).
+_TRUSTED_DEVICES_DDL = (
+    """
+    ALTER TABLE auth_devices ADD COLUMN trusted INTEGER DEFAULT 0
+    """,
+    """
+    ALTER TABLE auth_devices ADD COLUMN trusted_at INTEGER
+    """,
+)
+
+
+def ensure_trusted_devices_columns(db) -> None:
+    """Add the trusted-device columns when they do not exist yet.
+
+    ALTER TABLE has no IF NOT EXISTS in SQLite/Postgres, so probe the table
+    definition and only issue the ALTER when the column is missing.
+    """
+    try:
+        rows = db.fetch_all(
+            "SELECT name FROM pragma_table_info('auth_devices') AS t"
+            if hasattr(db, "dialect") and getattr(db, "dialect", None) == "postgres"
+            else "PRAGMA table_info(auth_devices)"
+        )
+        existing = {r["name"] for r in rows}
+    except Exception:
+        # Cannot introspect (unusual driver): attempt the ALTERs and ignore
+        # duplicate-column failures.
+        existing = set()
+
+    for sql in _TRUSTED_DEVICES_DDL:
+        column = "trusted_at" if "trusted_at" in sql else "trusted"
+        if column in existing:
+            continue
+        try:
+            converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+            db.execute(converted)
+        except Exception:
+            # Column already exists (race or fresh schema); safe to ignore.
+            logger.debug("trusted-device column already present", exc_info=True)
+
+
+_WS_TICKETS_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS auth_ws_tickets (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        session_id INTEGER,
+        ticket_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auth_ws_tickets_expires
+        ON auth_ws_tickets(expires_at)
+    """,
+)
+
+
+def ensure_ws_tickets_table(db) -> None:
+    for sql in _WS_TICKETS_DDL:
+        converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+        db.execute(converted)
+
+
+# Cross-worker TOTP replay claims. The claim key is a PRIMARY KEY, which makes
+# the insert-or-ignore below an atomic claim shared by every worker using the
+# same database — the fallback used when no shared Valkey backend is present.
+_TOTP_REPLAY_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS auth_totp_replay (
+        claim_key TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auth_totp_replay_expires
+        ON auth_totp_replay(expires_at)
+    """,
+)
+
+
+def ensure_totp_replay_table(db) -> None:
+    for sql in _TOTP_REPLAY_DDL:
+        converted = db.convert_schema(sql) if hasattr(db, "convert_schema") else sql
+        db.execute(converted)
 
 
 def create_tables(db) -> None:
@@ -346,3 +481,7 @@ def create_tables(db) -> None:
             db.convert_schema(statement) if hasattr(db, "convert_schema") else statement
         )
         db.execute(converted)
+    ensure_failed_logins_table(db)
+    ensure_trusted_devices_columns(db)
+    ensure_ws_tickets_table(db)
+    ensure_totp_replay_table(db)

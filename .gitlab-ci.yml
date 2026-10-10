@@ -1,17 +1,93 @@
+include:
+  - template: Jobs/Container-Scanning.gitlab-ci.yml
+
 stages:
   - lint
   - security
+  - pip-licenses
   - test
+  - performance
+  - metrics
+  - timestamp
   - docker
   - request-merge
   - test-and-release
 
+# =========================================================
+# OPEN TIMESTAMP STAGE
+# =========================================================
+
+ots:timestamp_commit:
+  extends: .python_base
+  stage: timestamp
+  script:
+    - pip install opentimestamps
+    - python ci-tooling/ots_stamp.py
+  artifacts:
+    paths:
+      - ots-proofs/
+    expire_in: never
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  allow_failure: true
+
+ots:push_proofs:
+  stage: test-and-release
+  extends: .python_base
+  needs:
+    - ots:timestamp_commit
+  script:
+    - pip install opentimestamps
+    - python ci-tooling/ots_stamp.py
+    - git config user.email "ci@plexichat.com"
+    - git config user.name "Plexichat CI"
+    - git fetch origin ots-proofs || true
+    - |
+      if git rev-parse --verify origin/ots-proofs >/dev/null 2>&1; then
+        git checkout -B ots-proofs origin/ots-proofs
+      else
+        git checkout --orphan ots-proofs
+        git rm -rf . 2>/dev/null || true
+        rm -rf .git/ots-proofs 2>/dev/null || true
+      fi
+    - mkdir -p ots-proofs
+    - cp ots-proofs/*.ots ots-proofs/ 2>/dev/null || true
+    - git add ots-proofs/
+    - |
+      if git diff --cached --quiet; then
+        echo "No new proofs to commit"
+      else
+        git commit -m "OTS proof: $CI_COMMIT_SHA"
+        git push origin ots-proofs
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  allow_failure: true
+
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-  PIP_INDEX_URL: "http://192.168.3.133:3141/root/pypi/+simple/"
-  PIP_TRUSTED_HOST: "192.168.3.133"
+  # No repository-wide PIP_INDEX_URL / PIP_TRUSTED_HOST here on purpose.
+  #
+  # A committed plaintext-HTTP package index applies to *every* job, so an
+  # on-path attacker could inject arbitrary wheels (and thus control the
+  # dependency tree, including the unhashed `pip install pip-audit safety`
+  # bootstrap). Jobs now install from the default HTTPS PyPI index unless the
+  # operator deliberately points them at an internal mirror.
+  #
+  # To use an internal mirror, define PIP_INDEX_URL as a *protected, masked*
+  # CI/CD variable (Settings -> CI/CD -> Variables) with an https:// URL.
+  # If — and only if — a mirror genuinely cannot serve TLS, also set
+  # PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1 (plus the host's PIP_TRUSTED_HOST);
+  # the guard in .python_base.before_script keeps that a loud, explicit
+  # opt-in rather than a silent default.
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
+
+  # Fail closed before any pip install when a plaintext HTTP index is
+  # configured without an explicit opt-in (Agent 55 F23).
+  PLEXICHAT_CI_ALLOW_INSECURE_INDEX: "0"
 
 cache:
   key:
@@ -28,10 +104,24 @@ cache:
 
 .python_base:
   image: 
-    name: python:3.14.6-slim-trixie
+    name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1
+    - |
+      # Refuse a plaintext HTTP package index unless the operator has
+      # explicitly opted in; otherwise the build could be hijacked by an
+      # on-path attacker (Agent 55 F23).
+      case "${PIP_INDEX_URL:-}" in
+        http://*)
+          if [ "${PLEXICHAT_CI_ALLOW_INSECURE_INDEX:-0}" != "1" ]; then
+            echo "FATAL: PIP_INDEX_URL uses plaintext http:// without PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1" >&2
+            echo "       Use an https:// mirror or set the opt-in variable deliberately." >&2
+            exit 1
+          fi
+          echo "WARNING: installing from a plaintext HTTP package index (PIP_INDEX_URL=$PIP_INDEX_URL); PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1." >&2
+          ;;
+      esac
     - |
       if [ -d ".venv" ]; then
         echo "Using cached virtual environment"
@@ -80,6 +170,17 @@ lint:pre-commit:
   before_script:
     - apt-get update -qq && apt-get upgrade -y -qq && apt-get install -y -qq --no-install-recommends git libatomic1 nodejs
     - |
+      # Same fail-closed package-index guard as .python_base (Agent 55 F23).
+      case "${PIP_INDEX_URL:-}" in
+        http://*)
+          if [ "${PLEXICHAT_CI_ALLOW_INSECURE_INDEX:-0}" != "1" ]; then
+            echo "FATAL: PIP_INDEX_URL uses plaintext http:// without PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1" >&2
+            exit 1
+          fi
+          echo "WARNING: installing from a plaintext HTTP package index (PIP_INDEX_URL=$PIP_INDEX_URL); PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1." >&2
+          ;;
+      esac
+    - |
       if [ -d ".venv" ]; then
         echo "Using cached virtual environment"
         source .venv/bin/activate
@@ -90,7 +191,7 @@ lint:pre-commit:
         pip install --upgrade pip
         pip install --require-hashes -r requirements.txt
       fi
-    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit
+    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit pip-audit
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ] || [ -n "$CI_MERGE_REQUEST_IID" ]; then
@@ -128,7 +229,6 @@ security:secret_detection:  # pragma: allowlist secret
     paths:
       - gl-secret-detection-report.json
     expire_in: 30 days
-  resource_group: plexichat-ci
   allow_failure: false
 
 # --- SAST (Semgrep) ---
@@ -148,7 +248,6 @@ security:sast:
     paths:
       - gl-sast-report.json
     expire_in: 30 days
-  resource_group: plexichat-ci
   allow_failure: true
 
 # --- Dependency scanning (NOT in pre-commit, keep it) ---
@@ -158,30 +257,340 @@ security:dependency_scanning:
   script:
     - pip-audit -r requirements.txt --format json > pip-audit-report.json
     - pip-audit -r requirements.txt
+    # License gate: fails on a new copyleft dependency or one whose license
+    # cannot be resolved. Reviewed exceptions live in ALLOWED_COPYLEFT in
+    # ci-tooling/license_audit.py and are documented in THIRD_PARTY_NOTICES.md.
+    - python ci-tooling/license_audit.py
     - mkdir -p ./bin && curl -sfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64.tar.gz | tar -xz -C ./bin osv-scanner || true
     - ./bin/osv-scanner --format json --output osv-report.json . || true
     - ./bin/osv-scanner . || true
-    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh || true
-    - ./bin/trivy fs --format json --output trivy-report.json . || true
-    - ./bin/trivy fs . || true
   artifacts:
     paths:
       - pip-audit-report.json
       - osv-report.json
-      - trivy-report.json
     expire_in: 30 days
-  resource_group: plexichat-ci
 
 # =========================================================
-# TEST STAGE (API Self-Test)
+# PIP-LICENSES STAGE (permissive-only license gate, round 2)
 # =========================================================
+
+# Independent second opinion on top of the license_audit.py step inside
+# security:dependency_scanning: the `pip-licenses` tool dumps every installed
+# distribution's license, and ci-tooling/check_pip_licenses.py gates the
+# pinned runtime tree in requirements.txt against the same permissive-only
+# policy (PERMISSIVE / ALLOWED_* in license_audit.py — shared, not duplicated).
+# Anything installed but not pinned there (pip-audit, safety, pip-licenses
+# itself, …) is tooling, not shipped code, and is out of scope.
+# Fails closed on any non-permissive or unresolvable license.
+pip-licenses:
+  extends: .python_base
+  stage: pip-licenses
+  script:
+    # Floor-pinned (not hashed): audit tooling follows the same precedent as
+    # `pip install pip-audit safety` in .python_base — latest 4.x+ keeps the
+    # stable --format=json schema (Name/Version/License) this gate parses.
+    - pip install "pip-licenses>=4.3"
+    - pip-licenses --format=json --output-file=pip-licenses.json
+    - pip-licenses --format=plain-vertical
+    - python ci-tooling/check_pip_licenses.py pip-licenses.json
+  artifacts:
+    paths:
+      - pip-licenses.json
+    expire_in: 30 days
+
+# =========================================================
+# TEST STAGE (Unit/Integration + API Self-Test)
+# =========================================================
+
+test:pytest:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  script:
+    # pytest and its plugins (asyncio, benchmark, xdist, timeout) are test-only
+    # and live in requirements-dev.in, so the runtime lock no longer carries
+    # them. The dev lock is a superset of the runtime tree, so installing it
+    # here is safe on top of a cached .venv.
+    - pip install --require-hashes -r requirements-dev.txt
+    # Full unit + integration suite. ``--maxfail=20`` keeps a broken commit
+    # from burning the whole 1h timeout listing failures; the default pytest.ini
+    # addopts already deselect slow/performance/postgres tests. The JUnit
+    # report feeds the performance:no_slow_tests gate in the next stage.
+    - python -m pytest -q --maxfail=20 --durations=25 --junitxml=test-results.xml
+  artifacts:
+    when: always
+    reports:
+      junit: test-results.xml
+    paths:
+      - test-results.xml
+    expire_in: 1 week
+
+# The PlexiSum engine's cross-engine contract gets its own job.
+#
+# The shared case table (src/tests/suite/formula_parity_cases.json) is the
+# statement of the formula semantics this engine and the PlexiSum client engine
+# must both satisfy, and the parity test also pins the table's digest so an
+# edit to either repository's copy that is not mirrored in the other fails
+# here. Running it as a named job keeps a broken contract a blocking, visible
+# check instead of one red line buried in test:pytest.
+test:formula_parity:
+  extends: .python_base
+  stage: test
+  timeout: 15m
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q
+      src/tests/suite/test_sum_formula_parity.py
+      src/tests/suite/test_sum_formulas.py
+  needs: []
+  allow_failure: false
+
+# Order-independence gate. The suite is required to pass in any file order,
+# and the only way to keep that true is to actually run it in a different
+# one. A fixed seed makes the order -- and any failure it exposes --
+# reproducible: replay locally with the same --shuffle-seed value. Files stay
+# whole, so this is the same test set as test:pytest in a shuffled order.
+test:shuffled_order:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  variables:
+    SHUFFLE_SEED: "424242"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - python -m pytest -q --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
+  needs: []
+  allow_failure: false
+
+# Wall-clock determinism gate. These suites wait on background effects -- a
+# worker thread's first cycle, an executor-driven database update, the pool
+# reclaiming an idle connection, a rate-limit window, an ICE/media handshake.
+# They pass on an idle box; the failure mode this closes is a wait whose fixed
+# budget is generous there but too tight on a loaded runner. The job runs
+# exactly those suites while dummy CPU burners oversubscribe the box, so an
+# under-budgeted wait goes red on the merge request instead of flaking later.
+# The deterministic replacements live in src/tests/_conftest/waiting.py.
+test:timing_under_load:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  variables:
+    # Busy-loop burners per CPU; >1 deliberately oversubscribes the scheduler.
+    PLEXICHAT_LOAD_PER_CPU: "2"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - |
+      set -eu
+      cpus=$(nproc)
+      burners=$((cpus * PLEXICHAT_LOAD_PER_CPU))
+      echo "Oversubscribing ${cpus} CPU(s) with ${burners} busy-loop burners"
+      burner_pids=""
+      for _ in $(seq 1 "$burners"); do
+        dd if=/dev/zero of=/dev/null bs=1M status=none &
+        burner_pids="$burner_pids $!"
+      done
+      stop_burners() {
+        # shellcheck disable=SC2086
+        kill $burner_pids 2>/dev/null || true
+      }
+      trap stop_burners EXIT
+      # Serial on purpose: the burners supply the contention, and running in
+      # one process keeps each file whole so the waits run where they live.
+      # The -m override relaxes pytest.ini's default deselect to include
+      # slow-marked timeout/reclaim tests -- the most clock-sensitive ones --
+      # while still excluding the duration-only performance suites.
+      python -m pytest -q --maxfail=20 --durations=25 \
+        -m "not performance and not production_simulation and not multiprocess" \
+        src/tests/ratelimit \
+        src/tests/webhooks \
+        src/tests/presence \
+        src/tests/websocket \
+        src/tests/events/test_queued_delivery_integration.py \
+        src/tests/media/test_scan_bugfixes.py \
+        src/tests/test_pool_monitoring.py \
+        src/tests/test_sqlite_pool_reclaim.py \
+        src/tests/test_database_pool.py \
+        src/tests/auth/test_sessions.py \
+        src/tests/auth/test_audit.py \
+        src/tests/voice/test_voice_media_handshake_e2e.py \
+        src/tests/voice/test_sfu_aiortc_media.py \
+        src/tests/voice/test_sfu_aiortc_fanout_media.py \
+        src/tests/voice/test_sfu_aiortc_degraded_media.py
+      stop_burners
+      trap - EXIT
+  needs: []
+  allow_failure: false
+
+# Dedicated run of the database-backed suites against real services.
+#
+# ``test:pytest`` runs everything else, but with no backend reachable the
+# Postgres/Valkey fixtures skip and the job still goes green -- which is how
+# the SQL bugs these suites exist to catch rotted unnoticed. Here the
+# services are real, ``USE_DOCKER=false`` tells the fixtures to attach to
+# them instead of spawning containers, and a failure fails the pipeline.
+test:database_backends:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  services:
+    - name: postgres:15-alpine
+      alias: postgres
+      variables:
+        POSTGRES_USER: postgres
+        # Throwaway service container credentials, not a real secret.
+        POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        POSTGRES_DB: test_db
+    - name: valkey/valkey:8-alpine
+      alias: valkey
+  variables:
+    USE_DOCKER: "false"
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+    POSTGRES_DB: test_db
+    VALKEY_HOST: valkey
+    VALKEY_PORT: "6379"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    # ``-m`` overrides pytest.ini's addopts deselect so the
+    # ``production_simulation`` cases (which are exactly the multi-worker
+    # ones) run here. ``slow``/``performance`` stay out: they are duration
+    # tests, not correctness ones, and have their own gate.
+    - >
+      python -m pytest -q -m "not slow and not performance"
+      --durations=25 --junitxml=test-results-db.xml
+      src/tests/test_postgres_docker.py
+      src/tests/test_transactions.py
+      src/tests/test_database.py
+      src/tests/test_production_simulation.py
+      src/tests/test_valkey_docker.py
+    # These suites skip silently when a backend is missing. A skip here
+    # means the services above did not come up, which must be a failure
+    # rather than a green pipeline with no coverage.
+    - |
+      if grep -qE 'skipped="[1-9]' test-results-db.xml; then
+        echo "FATAL: database-backed tests skipped -- the postgres/valkey services were not reachable" >&2
+        exit 1
+      fi
+  artifacts:
+    when: always
+    reports:
+      junit: test-results-db.xml
+    paths:
+      - test-results-db.xml
+    expire_in: 1 week
+
+# =========================================================
+# PERFORMANCE STAGE (test-duration gate)
+# =========================================================
+
+# Hard gate: the whole test stage is green, but any single test slower than
+# 5 seconds still fails the pipeline. Prevents performance regressions from
+# slipping in as the suite grows. Uses only the Python stdlib, so it does not
+# extend .python_base (no dependency install for a trivial parser). Note that
+# pytest.ini deselects ``slow``/``performance``-marked tests from the run, so
+# this gate deliberately enforces only the fast suite that CI actually runs.
+performance:no_slow_tests:
+  stage: performance
+  image:
+    name: python:3.14.8-slim-trixie
+    pull_policy: if-not-present
+  needs:
+    - test:pytest
+  script:
+    # The metrics JSON is uploaded alongside the gate verdict and feeds the
+    # metrics:trend job in the next stage.
+    - python ci-tooling/check_slow_tests.py test-results.xml --threshold 5.0 --job test:pytest --metrics-out test-durations.json
+  artifacts:
+    when: always
+    paths:
+      - test-durations.json
+    expire_in: 1 week
+  allow_failure: false
+
+# =========================================================
+# METRICS STAGE (per-job duration trend)
+# =========================================================
+
+# Accumulates the per-job test durations from the performance gate on the
+# ``ci-metrics`` branch (JSONL history + rendered index.html) so regressions
+# show over time. Mirrors the ots:push_proofs pattern: fetch the branch,
+# append, render, push back. allow_failure keeps a transient push race from
+# reddening the pipeline; the next run catches the branch up.
+metrics:trend:
+  stage: metrics
+  image:
+    name: python:3.14.8-slim-trixie
+    pull_policy: if-not-present
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - git config --global user.email "ci@plexichat.com"
+    - git config --global user.name "Plexichat CI"
+  needs:
+    - performance:no_slow_tests
+  script:
+    # The ci-metrics branch only tracks ci-metrics.jsonl + index.html, so
+    # checking it out would delete ci-tooling/ from the worktree.  Copy the
+    # publish script to /tmp first, and fetch the branch (CI only checks
+    # out the pipeline ref by default, so ci-metrics is not local).
+    - cp ci-tooling/trend_publish.py /tmp/trend_publish.py
+    - git fetch origin ci-metrics || true
+    - |
+      if git rev-parse --verify origin/ci-metrics >/dev/null 2>&1; then
+        git checkout -B ci-metrics origin/ci-metrics
+      else
+        git checkout --orphan ci-metrics
+        git rm -rf . 2>/dev/null || true
+      fi
+    - python /tmp/trend_publish.py merge --metrics test-durations.json --history ci-metrics.jsonl --out ci-metrics.jsonl
+    - python /tmp/trend_publish.py render --history ci-metrics.jsonl --out index.html --project "$CI_PROJECT_PATH" --gate 5.0
+    - |
+      git add ci-metrics.jsonl index.html
+      if git diff --cached --quiet; then
+        echo "No new metrics to commit"
+      else
+        git commit -m "CI metrics: $CI_COMMIT_SHORT_SHA"
+        PUSHED=0
+        for attempt in 1 2 3; do
+          if git push origin ci-metrics 2>/dev/null; then
+            PUSHED=1
+            break
+          fi
+          echo "push attempt $attempt failed; rebasing onto remote"
+          git pull --rebase origin ci-metrics 2>/dev/null || true
+        done
+        if [ "$PUSHED" != "1" ]; then
+          echo "WARN: ci-metrics push failed after retries (trend catches up next run)"
+        fi
+      fi
+  artifacts:
+    when: always
+    paths:
+      - index.html
+      - ci-metrics.jsonl
+    expire_in: 1 year
+  allow_failure: true
 
 test:self_test:
   extends: .python_base
   stage: test
+  timeout: 1h
   script:
     - mkdir -p .plexichat
-    - python main.py self-test
+    # Protected branches (master, etc.) set $PLEXICHAT_LICENSE in the CI
+    # secret store, so the licensed-only PlexiJoin endpoints can be exercised.
+    # On non-protected branches (feature branches like plexisuite-expansion)
+    # the variable is absent, so we pass --unlicensed to skip those
+    # license-gated routes. The self-test never auto-detects licensing state
+    # from the machine, so the operator must opt in explicitly via the flag.
+    - |
+      if [ -n "${PLEXICHAT_LICENSE:-}" ]; then
+        python main.py self-test
+      else
+        python main.py self-test --unlicensed
+      fi
 
 docker:build_and_push:
   stage: docker
@@ -190,24 +599,42 @@ docker:build_and_push:
     - name: docker:27-dind
       alias: docker
   variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
     DOCKER_BUILDKIT: "1"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Building backend docker image for tag $CI_COMMIT_TAG"
-    - docker build -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest .
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:latest
+    - docker build -t $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG -t $CI_REGISTRY/$CI_PROJECT_PATH/backend:latest .
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backend:latest
     # Push to Docker Hub
     - echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:$CI_COMMIT_TAG
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:latest
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:$CI_COMMIT_TAG
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG plexichat/plexichat:latest
     - docker push plexichat/plexichat:$CI_COMMIT_TAG
     - docker push plexichat/plexichat:latest
-  resource_group: plexichat-ci
+
+container_scanning:
+  stage: docker
+  variables:
+    CS_IMAGE: "$CI_REGISTRY/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG"
+    CS_REGISTRY_USER: "$CI_REGISTRY_USER"
+    CS_REGISTRY_PASSWORD: "$CI_REGISTRY_PASSWORD"
+    CS_REGISTRY_INSECURE: "${CI_REGISTRY_INSECURE:-false}"
+  needs:
+    - docker:build_and_push
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+  allow_failure: true
 
 docker:backup:
   stage: docker
@@ -216,23 +643,28 @@ docker:backup:
     - name: docker:27-dind
       alias: docker
   variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
     DOCKER_BUILDKIT: "1"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Building backup docker image for tag $CI_COMMIT_TAG"
-    - docker build -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG -t $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:latest docker/backup/
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG
-    - docker push $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:latest
+    - docker build -t $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG -t $CI_REGISTRY/$CI_PROJECT_PATH/backup:latest docker/backup/
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY/$CI_PROJECT_PATH/backup:latest
     - echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:$CI_COMMIT_TAG
-    - docker tag $CI_REGISTRY:80/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:latest
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:$CI_COMMIT_TAG
+    - docker tag $CI_REGISTRY/$CI_PROJECT_PATH/backup:$CI_COMMIT_TAG plexichat/plexichat-backup:latest
     - docker push plexichat/plexichat-backup:$CI_COMMIT_TAG
     - docker push plexichat/plexichat-backup:latest
-  resource_group: plexichat-ci
 
 docker:cleanup_old_images:
   stage: docker
@@ -241,16 +673,22 @@ docker:cleanup_old_images:
     - name: docker:27-dind
       alias: docker
   variables:
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
     - echo "Cleaning up old Docker images based on retention policy"
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY:80"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     - |
       # Get all tags for backend image
-      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY:80/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
+      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
       
       # Separate by version type
       ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
@@ -262,7 +700,7 @@ docker:cleanup_old_images:
         ALPHA_TO_DELETE=$(echo "$ALPHA_TAGS" | head -n -5)
         for tag in $ALPHA_TO_DELETE; do
           echo "Deleting old alpha build: $tag"
-          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
+          docker rmi $CI_REGISTRY/$CI_PROJECT_PATH/backend:$tag || true
         done
       fi
       
@@ -271,14 +709,13 @@ docker:cleanup_old_images:
         BETA_TO_DELETE=$(echo "$BETA_TAGS" | head -n -10)
         for tag in $BETA_TO_DELETE; do
           echo "Deleting old beta build: $tag"
-          docker rmi $CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$tag || true
+          docker rmi $CI_REGISTRY/$CI_PROJECT_PATH/backend:$tag || true
         done
       fi
       
       # Keep all releases (no deletion)
       echo "Keeping all release tags: $RELEASE_TAGS"
   allow_failure: true
-  resource_group: plexichat-ci
 
 create_merge_request:
   stage: request-merge
@@ -287,7 +724,7 @@ create_merge_request:
     - apk add --no-cache curl jq
   script:
     - |
-      API="$(echo "${CI_API_V4_URL}" | sed 's|https://|http://|')/projects/${CI_PROJECT_ID}"
+      API="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}"
       AUTH="PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}"
       
       echo "Creating merge request from dev to master..."
@@ -324,7 +761,6 @@ create_merge_request:
         "${API}/merge_requests/${MR_IID}/merge" | jq '.'
   rules:
     - if: $CI_COMMIT_BRANCH == "dev"
-  resource_group: plexichat-ci
 
 validate_master_and_tag:
   stage: test-and-release
@@ -344,4 +780,3 @@ validate_master_and_tag:
     - git push "$REPO_URL" "$BUILD_TAG" -o ci.skip
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
-  resource_group: plexichat-ci

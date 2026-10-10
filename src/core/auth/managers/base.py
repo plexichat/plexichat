@@ -107,11 +107,25 @@ class AuthManager(
             argon2_parallelism=encryption_cfg.get("parallelism", 2),
         )
         self._config = config.get("authentication", {})
+        # Precomputed dummy Argon2id hash used to equalize response timing on the
+        # user-not-found path, preventing account-enumeration timing side channels.
+        self._dummy_password_hash = self.crypto.hash_password(
+            "plexichat-timing-equalizer-dummy-false-password-9f2c7e"
+        )
         logger.info("Initializing authentication module")
         self.blacklist = BlacklistManager(db)
         self.deletion_log = DeletionLog()
         self.passkeys = PasskeyManager(db, crypto=self.crypto)
         self._ensure_system_user()
+        # Cross-worker TOTP replay protection: give the global replay cache a
+        # shared database so a claim holds across workers even when no shared
+        # cache backend (Valkey) is configured.
+        try:
+            from .. import totp as totp_module
+
+            totp_module.set_replay_cache_db(db)
+        except Exception:
+            logger.debug("TOTP replay cache DB wiring skipped", exc_info=True)
         # Store as global instance
         AuthManager._instance = self
 

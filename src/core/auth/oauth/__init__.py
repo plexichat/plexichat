@@ -19,6 +19,7 @@ from .state import (
     OAuthState,
     create_oauth_state,
     verify_oauth_state,
+    verify_oauth_nonce,
     cleanup_expired_states,
 )
 from .pkce import (
@@ -33,6 +34,7 @@ __all__ = [
     "OAuthState",
     "create_oauth_state",
     "verify_oauth_state",
+    "verify_oauth_nonce",
     "cleanup_expired_states",
     "generate_pkce_pair",
     "verify_pkce",

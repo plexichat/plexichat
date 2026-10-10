@@ -98,11 +98,26 @@ class DataGenerator:
                     if self.ctx.test_other_user_id
                     else self.generate_snowflake()
                 )
+            elif "/threads/" in path and "/members/" in path:
+                # Threads add-member must target a server member. other_user
+                # is a member (idempotent 200); the third user is not, so
+                # prefer the member identity.
+                if self.ctx.test_other_user_id:
+                    val = str(self.ctx.test_other_user_id)
+                else:
+                    val = _gen_snowflake()
             elif "/invites/" in path or "reports/users" in path:
                 val = (
                     str(self.ctx.test_other_user_id)
                     if self.ctx.test_other_user_id
                     else _gen_snowflake()
+                )
+            elif "/blocked-users" in path:
+                # Moderation hierarchy refuses targets holding any admin
+                # identity; target the permanently unprivileged fourth user
+                # (falls back to a snowflake when absent).
+                val = str(
+                    getattr(self.ctx, "test_fourth_user_id", None) or _gen_snowflake()
                 )
             else:
                 val = str(self.ctx.test_user_id)
@@ -112,12 +127,16 @@ class DataGenerator:
             val = str(self.ctx.test_server_id)
         elif "channel" in name_low:
             val = str(self.ctx.test_channel_id)
+        elif "violation" in name_low:
+            val = str(self.ctx.test_automod_violation_id or _gen_snowflake())
         elif "rule" in name_low or "automod" in name_low:
             val = str(self.ctx.test_automod_rule_id or _gen_snowflake())
         elif "ticket" in name_low:
             val = str(self.ctx.test_ticket_id or _gen_snowflake())
         elif "token" in name_low and ("access" in path or "security" in path):
             val = str(self.ctx.test_access_token_id or _gen_snowflake())
+        elif "device" in name_low and "id" in name_low:
+            val = str(getattr(self.ctx, "test_device_id", None) or _gen_snowflake())
         elif "thread" in name_low:
             val = str(self.ctx.test_thread_id or _gen_snowflake())
         elif "poll" in name_low:
@@ -144,6 +163,13 @@ class DataGenerator:
                 val = str(self.ctx.test_role_id or _gen_snowflake())
         elif "invite" in name_low or "code" in name_low:
             val = self.ctx.test_invite_code or "test_invite"
+        elif name_low == "url" and "/media/proxy" in path:
+            # The media proxy endpoint resolves query param ``url`` to a real
+            # public http(s) URL. ``1`` (the generic default) would be rejected
+            # with 400 by the route's scheme validation. Use an asset served
+            # from a domain we control (plexichat.com / plexichat-landing) so
+            # the proxy actually fetches and returns 200.
+            val = "https://plexichat.com/image.png"
         elif "webhook" in name_low:
             val = (
                 str(self.ctx.test_webhook_id)
@@ -174,12 +200,19 @@ class DataGenerator:
         elif "hash" in name_low:
             val = "a" * 64
         elif "emoji" in name_low:
-            if "id" in name_low or "name" not in name_low:
+            if "/reactions/" in path:
+                # Reaction endpoints need a valid unicode emoji (numeric
+                # ids 400 as invalid by design); custom-emoji detail is
+                # covered by the lifecycle test.
+                val = "👍"
+            elif "id" in name_low or "name" not in name_low:
                 val = str(self.ctx.test_emoji_id or _gen_snowflake())
             else:
                 val = "smile"
         elif "sticker" in name_low:
             val = str(self.ctx.test_sticker_id or _gen_snowflake())
+        elif "sound" in name_low:
+            val = str(getattr(self.ctx, "test_soundboard_id", None) or _gen_snowflake())
         elif "application" in name_low or "app_id" in name_low:
             val = str(self.ctx.test_application_id or _gen_snowflake())
         elif "notification" in name_low:
@@ -346,6 +379,13 @@ class DataGenerator:
             if "auth/register" in path:
                 body["username"] = f"user_{random.randint(10000, 99999)}"
 
+            # Thread message posts require non-empty content; schema-driven
+            # generation can omit it (optional in the model), so supply it
+            # explicitly to exercise the real send path.
+            if "/threads/" in path and path.endswith("/messages") and method == "POST":
+                if not body.get("content"):
+                    body["content"] = "Self-test thread message"
+
             # Artifact CRUD must use the real setup scope. Schema-driven
             # generation otherwise invents a conversation id, which the route
             # correctly rejects after scope validation.
@@ -385,8 +425,19 @@ class DataGenerator:
                 # other_session sends the request, so recipient is admin (test_user_id)
                 # The sender is implicit (authenticated via other_session token)
 
+            if "blocked-users" in path and method == "POST":
+                # Platform hierarchy refuses admin targets: point at the
+                # permanently unprivileged fourth user (random ids would
+                # 404 later; self would 403 here).
+                _fourth = getattr(self.ctx, "test_fourth_user_id", None)
+                if _fourth:
+                    body["user_id"] = str(_fourth)
+
             if "admin/security/access-tokens" in path and "/rotate" in path:
-                body["token"] = secrets.token_urlsafe(48)
+                # Rotation values are always generated server-side (see the
+                # rotate-specific rule above); never supply one.
+                if isinstance(body, dict):
+                    body.pop("token", None)
 
             if "version/negotiate" in path:
                 body["client_version"] = "r.1.0-999"
@@ -396,6 +447,19 @@ class DataGenerator:
                     body["user_id"] = str(self.ctx.test_other_user_id)
                 else:
                     body["user_id"] = "1"
+
+            if "reports/messages" in path and method == "POST":
+                # Reported by the OTHER user (see test_endpoint session switch)
+                # against the admin-owned reference message, so the route's own
+                # content guard does not reject it.
+                if self.ctx.test_message_id:
+                    body["message_id"] = str(self.ctx.test_message_id)
+                if self.ctx.test_channel_id:
+                    body["channel_id"] = str(self.ctx.test_channel_id)
+                if self.ctx.test_server_id:
+                    body["server_id"] = str(self.ctx.test_server_id)
+                body["reason"] = "Self-test message report"
+                body["category"] = "spam"
 
             if "admin/roles" in path and (
                 method == "POST" or method == "PUT" or method == "PATCH"
@@ -454,8 +518,21 @@ class DataGenerator:
                 body["token"] = secrets.token_urlsafe(32)
 
             if "reports/enhanced" in path and method == "POST":
+                # Filed by the OTHER user (see test_endpoint session switch)
+                # against the admin-owned reference message.
                 body["priority"] = "medium"
-                body["status"] = "open"
+                body["target_type"] = "message"
+                if self.ctx.test_message_id:
+                    body["target_id"] = str(self.ctx.test_message_id)
+                if self.ctx.test_channel_id:
+                    body["channel_id"] = str(self.ctx.test_channel_id)
+                if self.ctx.test_server_id:
+                    body["server_id"] = str(self.ctx.test_server_id)
+                body["reason"] = "Self-test enhanced report"
+                body["category"] = "spam"
+                # Schema-driven generation invents an invalid evidence URL list;
+                # clear it so the route's URL guard does not reject the request.
+                body.pop("evidence_urls", None)
 
             if "scheduled-messages" in path and method == "POST":
                 body["scheduled_at"] = int(time.time() * 1000) + 120000
@@ -552,7 +629,11 @@ class DataGenerator:
                         self.ctx.test_message_id or self.generate_snowflake()
                     )
 
-            if "polls/" in path and "/vote" in path and method == "POST":
+            # Both POST /vote (vote) and PUT /{id}/vote (change-vote) accept
+            # the same PollVoteRequest. The generic loop exercises both
+            # methods, so real option ids must be used for each — a random
+            # snowflake always 400s as an invalid option.
+            if "polls/" in path and "/vote" in path and method in ("POST", "PUT"):
                 if self.ctx.test_poll_option_ids:
                     body["option_ids"] = [
                         int(oid) for oid in self.ctx.test_poll_option_ids
@@ -593,14 +674,50 @@ class DataGenerator:
             if "features" in path and method == "PUT":
                 body["rate_limit_tier"] = "standard"
 
+            if "users/@me/channels" in path and method == "POST":
+                # DM creation needs a real, DM-accepting recipient: the
+                # other test user (self-DMs are 400, random ids 404).
+                if self.ctx.test_other_user_id:
+                    body["recipient_id"] = str(self.ctx.test_other_user_id)
+
+            if "features/bookmarks" in path and method == "POST":
+                # Bookmarking requires access to a real message: point at
+                # the seeded reference message (random ids 403 by design).
+                if self.ctx.test_message_id:
+                    body["message_id"] = str(self.ctx.test_message_id)
+                if self.ctx.test_conversation_id:
+                    body["conversation_id"] = str(self.ctx.test_conversation_id)
+
+            if "auth/devices/trust" in path or "auth/devices/untrust" in path:
+                # Trust operations only succeed for fingerprints this
+                # account authenticated from; use the seeded test device.
+                if getattr(self.ctx, "test_device_fingerprint", None):
+                    body["fingerprint"] = self.ctx.test_device_fingerprint
+
             if "tier" in path and method == "PUT":
                 body["tier"] = "standard"
 
             if "access-tokens" in path and "/rotate" in path and method == "POST":
-                body["token"] = secrets.token_urlsafe(32)
+                # Rotation values are always generated server-side;
+                # caller-supplied values are rejected with 400 by design.
+                # Send an empty body so the endpoint is exercised (200) and
+                # the rotation itself is validated.
+                body.pop("token", None)
 
             if "slowmode" in path and method == "PUT":
                 body["interval_ms"] = 5000
+
+            if "cross-worker-tuning" in path and method == "PATCH":
+                # Runtime tuning constants are bounds-validated server-side
+                # (see _TUNING_BOUNDS); send in-range values so the endpoint
+                # itself (200 + audit) is exercised instead of the validator.
+                body = {"glide_request_timeout_ms": 1000}
+
+            if "soundboard" in path and path.endswith("/play") and method == "POST":
+                # Playback requires a voice channel in the sound's server
+                # (a text channel id 404s by design).
+                if getattr(self.ctx, "test_voice_channel_id", None):
+                    body["channel_id"] = str(self.ctx.test_voice_channel_id)
 
             if "admin-users" in path and "/toggle-status" in path and method == "POST":
                 if self.ctx.test_other_user_id:
@@ -629,6 +746,23 @@ class DataGenerator:
                     if self.ctx.test_other_user_id
                     else str(self.ctx.test_user_id)
                 )
+
+            if (
+                "/servers/" in path
+                and path.rstrip("/").endswith("/transfer")
+                and method == "POST"
+            ):
+                # Ownership transfer requires the new owner to already be a
+                # member: the core raises MemberNotFoundError (mapped to 404
+                # "Server or member not found") otherwise. Schema-driven
+                # generation invents a random snowflake for new_owner_id,
+                # which deterministically 404s. Point at other_user, a real
+                # member seeded by setup (fallback: the acting owner, which
+                # the core accepts as a member rather than 404ing).
+                if self.ctx.test_other_user_id:
+                    body["new_owner_id"] = str(self.ctx.test_other_user_id)
+                elif self.ctx.test_user_id:
+                    body["new_owner_id"] = str(self.ctx.test_user_id)
 
             if "force-username-change" in path and method == "POST":
                 # Explicitly disable username banning to avoid polluting the
@@ -842,6 +976,9 @@ class DataGenerator:
                     return "ip"
                 if "emoji" in pn and "id" not in pn:
                     return "smile"
+                if "fingerprint" in pn:
+                    # Device fingerprints require min_length=8 server-side.
+                    return "selftest-fp-" + secrets.token_hex(4)
 
             fmt = schema.get("format")
             if fmt == "email":
@@ -855,7 +992,28 @@ class DataGenerator:
             if "id" in title or "snowflake" in title:
                 return str(self.generate_snowflake())
 
-            return "test"
+            value = "test"
+            min_len = schema.get("minLength") or 0
+            try:
+                min_len = int(min_len)
+            except (TypeError, ValueError):
+                min_len = 0
+            if min_len and len(value) < min_len:
+                # Pad to the schema minimum without breaking emails.
+                pad = "a" * (min_len - len(value))
+                if "@" in value:
+                    local, _, domain = value.partition("@")
+                    value = f"{local}{pad}@{domain}"
+                else:
+                    value = f"{value}{pad}"
+            max_len = schema.get("maxLength")
+            try:
+                max_len = int(max_len) if max_len is not None else None
+            except (TypeError, ValueError):
+                max_len = None
+            if max_len and len(value) > max_len:
+                value = value[:max_len]
+            return value
 
         elif type_ in ("integer", "number"):
             if prop_name:
@@ -877,6 +1035,26 @@ class DataGenerator:
                         return self.ctx.test_automod_rule_id or 1
                     if "thread" in pn:
                         return self.ctx.test_thread_id or 1
+            # Honor schema bounds for generated numbers (e.g. tuning ranges
+            # like glide_request_timeout_ms [10, 600000]); the old constant
+            # ``1`` tripped every minimum above 1.
+            minimum = schema.get("minimum")
+            maximum = schema.get("maximum")
+            try:
+                minimum = None if minimum is None else int(minimum)
+            except (TypeError, ValueError):
+                minimum = None
+            try:
+                maximum = None if maximum is None else int(maximum)
+            except (TypeError, ValueError):
+                maximum = None
+            if minimum is not None or maximum is not None:
+                if minimum is not None and maximum is not None:
+                    return min(max(1, minimum), maximum)
+                if minimum is not None:
+                    return max(1, minimum)
+                assert maximum is not None  # narrowed: not None by the branch guard
+                return min(1, maximum)
             return 1
 
         elif type_ == "boolean":

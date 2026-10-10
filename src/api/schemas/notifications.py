@@ -35,3 +35,12 @@ class NotificationsResponse(BaseModel):
         ..., description="List of notifications"
     )
     unread_count: int = Field(..., description="Number of unread notifications")
+    total_unread: Optional[int] = Field(
+        None,
+        description=(
+            "Exact count of ALL unread notification rows for the user, "
+            "independent of the returned page size. Clients should prefer "
+            "this over deriving a badge from the (possibly truncated) page. "
+            "Older clients that ignore the field are unaffected."
+        ),
+    )

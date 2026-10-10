@@ -113,15 +113,20 @@ def test_audit_log_pii_protection(auth_manager, db):
     user_id = user.id
     auth_manager.login(username, password, ip_address=ip)
 
-    # Check latest audit entry in DB
+    # Check latest audit entry in DB. Order by the monotonic audit id, not
+    # timestamp: with the test-friendly fast Argon2 the register() and
+    # login() audit rows can share the same millisecond, making
+    # ``ORDER BY timestamp DESC`` ambiguous (it previously passed only
+    # because the real 64MB Argon2 hash paced the two events far apart).
     row = db.fetch_one(
-        "SELECT ip_encrypted FROM auth_audit_log ORDER BY timestamp DESC LIMIT 1"
+        "SELECT ip_encrypted FROM auth_audit_log ORDER BY id DESC LIMIT 1"
     )
     assert row["ip_encrypted"] is not None
     assert row["ip_encrypted"] != ip
 
-    # Retrieve via AuthManager
+    # Retrieve via AuthManager: register + login write exactly one
+    # LOGIN_SUCCESS entry for this user.
     history = auth_manager.get_login_history(user_id)
-    assert len(history) > 0
+    assert len(history) == 1
     entry = history[0]
     assert entry.ip_address == ip

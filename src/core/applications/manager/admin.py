@@ -27,11 +27,8 @@ class AdminMixin(ApplicationManagerProtocol):
         return int(row["count"]) if row else 0
 
     def _maybe_count_rows(self, query: str, params: tuple = ()) -> int:
-        try:
-            row = self._db.fetch_one(query, params)
-            return int(row["count"]) if row else 0
-        except Exception:
-            return 0
+        row = self._db.fetch_one(query, params)
+        return int(row["count"]) if row else 0
 
     def _count_rows_any(
         self, tables: List[str], where: str = "", params: tuple = ()
@@ -53,7 +50,7 @@ class AdminMixin(ApplicationManagerProtocol):
         )
 
     def get_admin_bot_stats(self) -> Dict[str, int]:
-        week_ago = self._get_timestamp() - 604800
+        week_ago = self._get_timestamp() - 7 * 24 * 60 * 60 * 1000
         return {
             "total_applications": self._count_rows("app_applications"),
             "total_bots": self._count_rows("app_applications", "bot_id IS NOT NULL"),
@@ -93,6 +90,12 @@ class AdminMixin(ApplicationManagerProtocol):
         feature_stats["push_tokens"] = self._count_rows("push_tokens")
         feature_stats["webhook_retries_pending"] = self._count_rows(
             "webhook_retry_queue", "status = 'pending'"
+        )
+        feature_stats["webhook_retries_retrying"] = self._count_rows(
+            "webhook_retry_queue", "status = 'retrying'"
+        )
+        feature_stats["webhook_retries_dead_letter"] = self._count_rows(
+            "webhook_retry_queue", "status = 'dead_letter'"
         )
         if self._db.table_exists("message_reports"):
             rows = self._db.fetch_all(
@@ -148,7 +151,7 @@ class AdminMixin(ApplicationManagerProtocol):
                 "id": row["id"],
                 "name": row["name"],
                 "owner_id": row["owner_id"],
-                "bot_id": row["bot_id"],
+                "bot_id": (str(row["bot_id"]) if row["bot_id"] is not None else None),
                 "icon_url": row["icon_url"],
                 "approved_servers": row["approved_count"] or 0,
                 "pending_requests": row["pending_count"] or 0,

@@ -147,6 +147,7 @@ class TestSoundboardErrors:
 
         result = soundboard_manager.play_sound(1, sound.id, 1)
         assert result is not None
+        assert result.user_id == 1
 
     def test_get_server_sounds(self, soundboard_manager, test_db):
         """Get all sounds for server."""
@@ -157,15 +158,16 @@ class TestSoundboardErrors:
             "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
         )
 
-        soundboard_manager.upload_sound(
+        s1 = soundboard_manager.upload_sound(
             1, 1, "sound1", SoundFormat.MP3, "url1", 1000, 1.0
         )
-        soundboard_manager.upload_sound(
+        s2 = soundboard_manager.upload_sound(
             1, 1, "sound2", SoundFormat.MP3, "url2", 1000, 1.0
         )
 
         sounds = soundboard_manager.get_sounds(1, 1)
-        assert len(sounds) >= 2
+        assert len(sounds) == 2
+        assert {s.id for s in sounds} == {s1.id, s2.id}
 
     def test_update_sound(self, soundboard_manager, test_db):
         """Update sound metadata."""
@@ -265,6 +267,7 @@ class TestSoundPlayback:
 
         result = soundboard_manager.play_sound(1, sound.id, 1)
         assert result is not None
+        assert result.user_id == 1
 
     def test_play_sound_not_in_voice(self, soundboard_manager, test_db):
         """Cannot play sound if not in voice channel."""
@@ -300,6 +303,7 @@ class TestSoundPlayback:
 
         result = soundboard_manager.play_sound(1, sound.id, 1, volume=0.8)
         assert result is not None
+        assert result.user_id == 1
 
     def test_play_sound_not_found(self, soundboard_manager, test_db):
         """Cannot play nonexistent sound."""
@@ -485,7 +489,8 @@ class TestSoundUsage:
         soundboard_manager.play_sound(1, sound.id, 1)
 
         usage_count = soundboard_manager.get_usage_count(sound.id)
-        assert usage_count >= 1
+        # Exactly one play was recorded
+        assert usage_count == 1
 
     def test_get_popular_sounds(self, soundboard_manager, test_db):
         """Get popular sounds."""
@@ -505,7 +510,7 @@ class TestSoundUsage:
         # Disable per-sound cooldown so the test can replay it twice
         # to verify usage_count aggregation.
         soundboard_manager.update_sound(1, sound1.id, cooldown=0)
-        soundboard_manager.upload_sound(
+        sound2 = soundboard_manager.upload_sound(
             1, 1, "unpopular", SoundFormat.MP3, "url2", 1000, 1.0
         )
 
@@ -513,7 +518,11 @@ class TestSoundUsage:
         soundboard_manager.play_sound(1, sound1.id, 1)
 
         popular = soundboard_manager.get_popular_sounds(1, limit=5)
-        assert len(popular) > 0
+        # Both server sounds are returned, ordered by usage count;
+        # sound1 (played twice) must lead over the never-played sound2.
+        assert len(popular) == 2
+        assert popular[0].id == sound1.id
+        assert popular[1].id == sound2.id
 
     def test_get_recent_sounds(self, soundboard_manager, test_db):
         """Get recently used sounds."""
@@ -534,7 +543,8 @@ class TestSoundUsage:
         soundboard_manager.play_sound(1, sound.id, 1)
 
         recent = soundboard_manager.get_recent_sounds(1, 1, limit=5)
-        assert len(recent) > 0
+        assert len(recent) == 1
+        assert recent[0].id == sound.id
 
 
 class TestSoundSearch:
@@ -557,7 +567,8 @@ class TestSoundSearch:
         )
 
         results = soundboard_manager.search_sounds(1, 1, "airhorn")
-        assert len(results) >= 1
+        assert len(results) == 1
+        assert results[0].name == "airhorn"
 
     def test_search_sounds_empty_query(self, soundboard_manager, test_db):
         """Search with empty query."""
@@ -569,7 +580,7 @@ class TestSoundSearch:
         )
 
         results = soundboard_manager.search_sounds(1, 1, "")
-        assert len(results) >= 0
+        assert len(results) == 0
 
 
 class TestSoundPermissions:
@@ -589,19 +600,28 @@ class TestSoundPermissions:
         )
 
         can_play = soundboard_manager.can_play_sound(1, sound.id)
-        assert can_play
+        assert can_play is True
 
     def test_cannot_play_from_other_server(self, soundboard_manager, test_db):
         """Cannot play sound from server not member of."""
+        # Use a server ID unlikely to collide with other suites that share
+        # the same database fixture; the soundboard manager's membership gate
+        # must reject a user that has never been inserted as a member.
+        server_id = 800_000 + hash(id(soundboard_manager)) % 10_000
         test_db.execute(
-            "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
+            "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (?, 'Test', 1, 1000, 1000)",
+            (server_id,),
         )
         test_db.execute(
-            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (?, ?, 1, 1000, 1000)",
+            (
+                server_id,
+                server_id,
+            ),
         )
 
         sound = soundboard_manager.upload_sound(
-            1, 1, "sound", SoundFormat.MP3, "url", 1000, 1.0
+            1, server_id, "sound", SoundFormat.MP3, "url", 1000, 1.0
         )
 
         can_play = soundboard_manager.can_play_sound(2, sound.id)

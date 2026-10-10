@@ -26,7 +26,7 @@ from ..actions import (
     BanUserAction,
     AlertModeratorsAction,
 )
-from ..ai import OpenAIAdapter, PerspectiveAdapter, CustomAdapter
+from ..ai import OpenAIAdapter, PerspectiveAdapter, CustomAdapter, ShieldstralAdapter
 from .rules import RuleOpsMixin
 from .evaluation import EvaluationMixin
 from .actions import ActionMixin
@@ -109,6 +109,11 @@ class AutoModManager(
 
         if ai_config.get("custom", {}).get("endpoint_url"):
             self._ai_adapters["custom"] = CustomAdapter(ai_config["custom"])
+
+        if ai_config.get("shieldstral", {}).get("endpoint_url"):
+            self._ai_adapters["shieldstral"] = ShieldstralAdapter(
+                ai_config["shieldstral"]
+            )
 
     def reload_config(self) -> None:
         self._config = self._load_config()

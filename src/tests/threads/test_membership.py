@@ -104,16 +104,16 @@ class TestLeaveThread:
         with pytest.raises(ThreadMemberNotFoundError):
             threads.leave_thread(member1.id, thread.id)
 
-    def test_owner_can_leave_thread(self, server_with_channel):
-        """Test that owner can leave their own thread."""
+    def test_owner_cannot_leave_thread(self, server_with_channel):
+        """Test that owner cannot leave their own thread (prevents access loss)."""
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
             user_id=owner.id, channel_id=channel.id, name="Owner Leave Test"
         )
 
-        result = threads.leave_thread(owner.id, thread.id)
-        assert result is True
+        with pytest.raises(PermissionDeniedError):
+            threads.leave_thread(owner.id, thread.id)
 
 
 class TestAddMember:

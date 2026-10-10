@@ -3,18 +3,44 @@ QR code generation endpoints.
 """
 
 import io
-from typing import Any, cast
+from typing import Any, Protocol, cast
+
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from src.api.schemas.common import ErrorResponse
+import utils.logger as logger
 
 try:
     import qrcode
     from qrcode.image.pure import PyPNGImage
 except ImportError:
-    qrcode = None  # type: ignore
-    PyPNGImage = None  # type: ignore
+    qrcode = None
+    PyPNGImage = None
 
-from fastapi import APIRouter, Query, Response, HTTPException, status
-from src.api.schemas.common import ErrorResponse
-import utils.logger as logger
+
+class _QRCode(Protocol):
+    def add_data(self, data: str) -> None: ...
+
+    def make(self, fit: bool = True) -> None: ...
+
+    def make_image(self, **kwargs: Any) -> Any: ...
+
+
+class _QRCodeConstants(Protocol):
+    ERROR_CORRECT_L: int
+
+
+class _QRCodeModule(Protocol):
+    constants: _QRCodeConstants
+
+    def QRCode(
+        self,
+        *,
+        version: None,
+        error_correction: int,
+        box_size: int,
+        border: int,
+    ) -> _QRCode: ...
+
 
 router = APIRouter(tags=["Utilities"])
 
@@ -28,11 +54,14 @@ router = APIRouter(tags=["Utilities"])
             "content": {"image/png": {}, "image/jpeg": {}},
         },
         400: {"model": ErrorResponse, "description": "Invalid input data"},
+        503: {"model": ErrorResponse, "description": "QR dependency missing"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def generate_qr(
-    data: str = Query(..., description="The data to encode in the QR code"),
+    data: str = Query(
+        ..., min_length=1, description="The data to encode in the QR code"
+    ),
     size: str = Query(
         "200x200", description="Size of the image in pixels (e.g., 200x200)"
     ),
@@ -50,12 +79,15 @@ async def generate_qr(
             detail={"error": {"code": 400, "message": "Data is required"}},
         )
     if qrcode is None:
+        logger.warning("QR generation unavailable: qrcode dependency missing")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "QR code dependency missing"}},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": {"code": 503, "message": "QR code dependency missing"}},
         )
 
     from fastapi.concurrency import run_in_threadpool
+
+    qrcode_module = cast(_QRCodeModule, qrcode)
 
     def _generate():
         try:
@@ -69,9 +101,9 @@ async def generate_qr(
             height = max(10, min(1000, height))
 
             # Create QR code
-            qr = qrcode.QRCode(  # type: ignore
+            qr = qrcode_module.QRCode(
                 version=None,  # Automatically determine version
-                error_correction=qrcode.constants.ERROR_CORRECT_L,  # type: ignore
+                error_correction=qrcode_module.constants.ERROR_CORRECT_L,
                 box_size=10,
                 border=4,
             )
@@ -110,5 +142,5 @@ async def generate_qr(
             raise
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

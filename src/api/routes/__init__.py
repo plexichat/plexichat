@@ -25,6 +25,7 @@ from .feedback import router as feedback_router
 from .notifications import router as notifications_router
 from .polls import router as polls_router
 from .stickers import router as stickers_router
+from .soundboard import router as soundboard_router
 from .docs import (
     router as docs_router,
     is_docs_enabled,
@@ -43,6 +44,12 @@ from .help import router as help_router, robots_router
 from .config import router as config_router
 from .capabilities import router as capabilities_router
 from .artifacts import router as artifacts_router
+from .federation import router as federation_router
+from .join import router as join_router
+from .public_license import router as public_license_router
+from .suite.registry import router as suite_router
+from .suite.stash import router as stash_router
+from .suite.sum import router as sum_router
 
 import utils.config as config
 
@@ -54,6 +61,7 @@ def create_api_router() -> APIRouter:
     api_router.include_router(health_router)
     api_router.include_router(version_router)
     api_router.include_router(config_router)
+    api_router.include_router(capabilities_router)
     api_router.include_router(auth_router, prefix="/auth")
     api_router.include_router(users_router, prefix="/users")
     api_router.include_router(servers_router, prefix="/servers")
@@ -98,6 +106,9 @@ def create_api_router() -> APIRouter:
     # Include Stickers router
     api_router.include_router(stickers_router)
 
+    # Include Soundboard router (server sound library)
+    api_router.include_router(soundboard_router, prefix="/servers")
+
     # Include help router
     api_router.include_router(robots_router)
     api_router.include_router(help_router, prefix="/help")
@@ -105,11 +116,28 @@ def create_api_router() -> APIRouter:
     # Include feature expansion routes under /features prefix
     api_router.include_router(feature_expansion_router, prefix="/features")
 
-    # Include capabilities router (artifact feature availability state)
-    api_router.include_router(capabilities_router)
-
     # Include artifacts router (artifact CRUD + inline transcript emission)
     api_router.include_router(artifacts_router)
+
+    # Cross-instance artifact federation (PlexiJoin) inbound transport.
+    api_router.include_router(federation_router, prefix="/federation")
+
+    # Client-facing PlexiJoin federation surface (/Join contract, join.js).
+    api_router.include_router(join_router, prefix="/Join")
+
+    # Public license endpoints under the API prefix. The router carries its
+    # own ``/public/license`` prefix, so this serves
+    # ``/api/v1/public/license/*`` (the provisional-banner contract the web
+    # client reads). The root mount in ``src/api/app.py`` is preserved for
+    # the external signing-authority protocol.
+    api_router.include_router(public_license_router)
+
+    # Include the authenticated PlexiSuite registry and universal-home feed.
+    api_router.include_router(suite_router)
+    # PlexiStash owns its metadata and authorization boundary; binary content
+    # continues to use the existing media routes.
+    api_router.include_router(stash_router)
+    api_router.include_router(sum_router)
 
     return api_router
 

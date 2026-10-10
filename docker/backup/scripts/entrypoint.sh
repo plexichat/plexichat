@@ -4,6 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
+# Record container start time for the healthcheck's first-run grace window.
+date -u +%s > /tmp/.container_start
+
 if [ $# -gt 0 ]; then
   exec "$@"
 fi

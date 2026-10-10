@@ -11,14 +11,26 @@ from src.api.schemas.admin import (
     TelemetryEndpointStat,
     SystemMetrics,
 )
-from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 from src.core import applications
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/dashboard", response_model=AdminDashboardResponse)
+@router.get(
+    "/dashboard",
+    response_model=AdminDashboardResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_dashboard(request: Request):
     """
     Retrieve overview statistics for the administrator dashboard.
@@ -26,7 +38,7 @@ async def get_dashboard(request: Request):
     Returns a summary of system health, active sessions, and recent activity.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "metrics.read")
     from src.core import admin
 
     try:
@@ -122,15 +134,22 @@ async def get_dashboard(request: Request):
     except Exception as e:
         logger.error(f"Dashboard data error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/dashboard/cross-worker-tuning")
+@router.get(
+    "/dashboard/cross-worker-tuning",
+    responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_cross_worker_tuning(request: Request):
     """Return the current poll-loop tuning constants."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.dashboard.tuning")
 
     try:
         from src.api.websocket import get_poll_tuning
@@ -152,21 +171,61 @@ class _TuningPatch(_BaseModel):
     glide_request_timeout_ms: int | None = None
 
 
-@router.patch("/dashboard/cross-worker-tuning")
+# Sanity bounds for runtime tuning constants. Values outside these ranges are
+# rejected outright (<=0 would spin the poll loop; absurd upper bounds would
+# degrade or DoS the realtime layer).
+_TUNING_BOUNDS = {
+    "poll_interval_sec": (0.001, 5.0),
+    "heartbeat_interval_polls": (1, 10_000),
+    "max_backoff_sec": (0.01, 300.0),
+    "backoff_reset_after_polls": (1, 100_000),
+    "initial_backoff_sec": (0.01, 60.0),
+    "glide_request_timeout_ms": (10, 600_000),
+}
+
+
+def _validate_tuning_bounds(updates: dict) -> None:
+    for key, value in updates.items():
+        bounds = _TUNING_BOUNDS.get(key)
+        if not bounds:
+            continue
+        low, high = bounds
+        if value <= 0 or value < low or value > high:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": f"Tuning value '{key}'={value} out of allowed range [{low}, {high}]",
+                    }
+                },
+            )
+
+
+@router.patch(
+    "/dashboard/cross-worker-tuning",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
     """Hot-reload poll-loop tuning constants at runtime.
 
-    Only the keys provided (non-null) are updated; omitted keys keep
-    their current value.  Returns the full tuning dict after the
-    change.  Every hot-reload event is recorded in the admin audit
-    log (old → new values, admin ID, IP).
+    Requires the ``admin.dashboard.tuning`` permission. Only the keys
+    provided (non-null) are updated; omitted keys keep their current value.
+    Supplied constants are bounds-validated before being applied. Returns
+    the full tuning dict after the change. Every hot-reload event is
+    recorded in the admin audit log (old → new values, admin ID, IP).
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.dashboard.tuning")
 
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No tuning keys provided")
+    _validate_tuning_bounds(updates)
 
     # Snapshot old values for the audit trail *before* applying changes.
     old_tuning: dict = {}
@@ -196,14 +255,11 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
 
             # Resolve admin username for the audit trail.
             username = None
-            try:
-                row = db.fetch_one(
-                    "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
-                )
-                if row:
-                    username = row.get("username") if isinstance(row, dict) else row[0]
-            except Exception:
-                pass
+            row = db.fetch_one(
+                "SELECT username FROM admin_users WHERE id = ?", (admin_id,)
+            )
+            if row:
+                username = row.get("username") if isinstance(row, dict) else row[0]
 
             changes = {
                 k: {"old": old_tuning.get(k), "new": result.get(k)} for k in updates
@@ -224,7 +280,14 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
     return result
 
 
-@router.get("/dashboard/cross-worker-tuning/audit")
+@router.get(
+    "/dashboard/cross-worker-tuning/audit",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
     """Return recent cross-worker tuning audit log entries."""
     check_host_restriction(request)
@@ -255,8 +318,10 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
             if isinstance(row, dict):
                 entries.append(
                     {
+                        # ``id`` is the audit row's rowid; ``admin_id`` is the
+                        # acting admin's snowflake and is emitted as a string.
                         "id": row["id"],
-                        "admin_id": row["admin_id"],
+                        "admin_id": str(row["admin_id"]),
                         "username": row.get("username") or f"admin#{row['admin_id']}",
                         "details": row.get("details"),
                         "ip_address": row.get("ip_address"),
@@ -268,7 +333,7 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
                 entries.append(
                     {
                         "id": row[0],
-                        "admin_id": row[1],
+                        "admin_id": str(row[1]),
                         "username": row[2] or f"admin#{row[1]}",
                         "details": row[3],
                         "ip_address": row[4],
@@ -285,7 +350,14 @@ async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
         raise HTTPException(status_code=500, detail="Failed to query audit log")
 
 
-@router.get("/dashboard/system-alerts")
+@router.get(
+    "/dashboard/system-alerts",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_system_alerts(
     request: Request,
     limit: int = 50,
@@ -359,7 +431,14 @@ async def get_system_alerts(
         raise HTTPException(status_code=500, detail="Failed to query system alerts")
 
 
-@router.get("/dashboard/system-alerts/stats")
+@router.get(
+    "/dashboard/system-alerts/stats",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_system_alert_stats(
     request: Request,
     hours: int = 168,

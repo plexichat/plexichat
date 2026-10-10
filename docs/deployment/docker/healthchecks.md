@@ -1,490 +1,486 @@
 # Healthchecks
 
-Understanding and monitoring service health in Plexichat Docker.
+Understand and monitor health for each Plexichat Docker service.
 
-## What are Healthchecks?
+## What are healthchecks
 
-Healthchecks continuously verify that services are running and responsive. Docker automatically manages services with failing healthchecks.
+Healthchecks continuously verify that a service is running and responsive. Docker uses them to enforce startup order and to mark unhealthy containers.
 
-**Benefits:**
-- Early failure detection
-- Automatic restart on failure
-- Clear status visibility
-- Dependency management (service B waits for service A to be healthy)
+Benefits:
 
-## Service Health Status
+*   Early failure detection
+*   Correct startup order through `depends_on` conditions
+*   Clear status in `docker compose ps`
+*   Automatic restart with `restart: unless-stopped`
 
-View all services and their health:
+## View service health
+
+List services and their health:
 
 ```bash
 docker compose ps
 ```
 
 Expected output:
-```
+
+```text
 NAME       STATUS              HEALTH
 backend    Up 5 minutes        healthy
 db         Up 5 minutes        healthy
-redis      Up 5 minutes        healthy
-minio      Up 5 minutes        healthy
+valkey     Up 5 minutes        healthy
+rustfs     Up 5 minutes        healthy
 client     Up 5 minutes        healthy
+clamav     Up 5 minutes        healthy
+backup     Up 5 minutes        healthy
 ```
 
-Colors:
-- **Green (healthy)** - Service is responding correctly
-- **Yellow (starting)** - Service is starting, health check in progress
-- **Red (unhealthy)** - Service failed healthcheck, may restart
+Status colors:
 
-## Healthcheck Details
+*   **Healthy (green):** The health check passed.
+*   **Starting (yellow):** The start period has not elapsed or checks are still running.
+*   **Unhealthy (red):** Consecutive checks failed.
 
-### Backend API Healthcheck
+## Healthcheck details
 
-**Endpoint:** `GET /health`
+### Backend API healthcheck
 
-**Test Command:**
+The backend defines the same probe in `plexichat/Dockerfile` and `docker-compose.yml`.
+
+*   **Liveness probe:** `GET /api/v1/ready` (`src/api/routes/health.py:18`). Returns `200` and `{"status": "ready"}` as soon as the HTTP server is bound. No database, Valkey, or filesystem check. Docker uses this probe.
+*   **Deep health:** `GET /api/v1/health` and `GET /health` (`src/api/routes/health.py:46` and `src/api/app.py:575`). Returns `status`, `version`, `events_metrics`, `is_queue_recreate_pending`, and `cross_worker_listener`. Each metric is advisory and wrapped in `try/except`.
+
+**Docker healthcheck:**
+
+```yaml
+test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/ready"]
+interval: 15s
+timeout: 5s
+retries: 3
+start_period: 10s
+```
+
+If 3 consecutive checks fail after the 10-second start period, Docker marks the backend as unhealthy.
+
+**Manual tests:**
+
 ```bash
-curl http://localhost:8000/health
+curl -f http://localhost:8000/api/v1/ready
+# Expected: {"status": "ready"}
+
+curl -f http://localhost:8000/api/v1/health | python3 -m json.tool
+curl -f http://localhost:8000/health | python3 -m json.tool
+# Expected excerpt:
+# {
+#   "status": "healthy",
+#   "version": "a.1.0-132",
+#   "events_metrics": {},
+#   "is_queue_recreate_pending": false,
+#   "cross_worker_listener": {}
+# }
+
+docker compose exec backend curl -sf http://localhost:8000/api/v1/ready
 ```
 
-**Expected Response (200 OK):**
-```json
-{
-  "status": "healthy",
-  "version": "a.1.0-131",
-  "timestamp": "2024-01-15T10:30:45Z",
-  "database": "connected",
-  "redis": "connected",
-  "storage": "connected"
-}
+### PostgreSQL healthcheck
+
+*   **Image:** `postgres:18-alpine`
+*   **Command:** `pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}`
+
+**Docker healthcheck:**
+
+```yaml
+test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+interval: 10s
+timeout: 5s
+retries: 10
 ```
 
-**Healthcheck Settings:**
-```
-Interval: 10 seconds
-Timeout: 5 seconds
-Retries: 3
-Start period: 30 seconds
-```
+**Manual test:**
 
-Meaning: After 30 seconds, if 3 consecutive checks fail over 30 seconds (3 x 10s), service marks as unhealthy.
-
-**Manual Test:**
 ```bash
-docker compose exec backend curl -v http://localhost:8000/health
+docker compose exec db pg_isready -U plexichat -d plexichat
+# Expected: accepting connections
+
+docker compose exec db psql -U plexichat -d plexichat -c "SELECT 1;"
 ```
 
-### PostgreSQL Healthcheck
+### Valkey healthcheck
 
-**Command:** `pg_isready`
+*   **Image:** `valkey/valkey:9.1.1-alpine`
+*   **Command:** Authenticated ping with `REDISCLI_AUTH` to avoid leaking the password in the process list.
 
-**Manual Test:**
+**Docker healthcheck:**
+
+```yaml
+test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${VALKEY_PASSWORD:?VALKEY_PASSWORD must be set}\" redis-cli ping | grep PONG"]
+interval: 10s
+timeout: 5s
+retries: 10
+```
+
+**Manual tests:**
+
 ```bash
-docker compose exec db pg_isready -U plexichat
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping'
+# Expected: PONG
+
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli INFO stats | grep connected_clients'
 ```
 
-**Expected Output:**
-```
-accepting connections
+### RustFS healthcheck
+
+*   **Image:** `rustfs/rustfs:1.0.0-rc.3`
+*   **Endpoints:** `GET http://127.0.0.1:9000/health` (S3) and `GET http://127.0.0.1:9001/rustfs/console/health` (console)
+
+**Docker healthcheck:**
+
+```yaml
+test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9001/rustfs/console/health"]
+interval: 15s
+timeout: 10s
+retries: 10
+start_period: 40s
 ```
 
-**Healthcheck Settings:**
-```
-Interval: 10 seconds
-Timeout: 5 seconds
-Retries: 3
-Start period: 10 seconds
-```
+**Manual tests:**
 
-### Valkey Healthcheck
-
-**Command:** `redis-cli ping`
-
-**Manual Test:**
 ```bash
-docker compose exec valkey redis-cli ping
+docker compose exec rustfs sh -c 'curl -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9001/rustfs/console/health'
+# Expected (both): OK
+
+# From the host (only if you publish the ports for debugging):
+curl -f http://localhost:9000/health
+curl -f http://localhost:9001/rustfs/console/health
 ```
 
-**Expected Output:**
-```
-PONG
+### ClamAV healthcheck
+
+*   **Image:** `clamav/clamav:1.5.4`
+*   **Port:** `3310`
+
+**Docker healthcheck:**
+
+```yaml
+test: ["CMD-SHELL", "echo PING | nc -w 2 localhost 3310 | grep PONG"]
+interval: 30s
+timeout: 10s
+retries: 5
+start_period: 120s
 ```
 
-**Healthcheck Settings:**
-```
-Interval: 10 seconds
-Timeout: 5 seconds
-Retries: 3
-Start period: 10 seconds
-```
+**Manual test:**
 
-### MinIO Healthcheck
-
-**Endpoint:** Health endpoint
-
-**Manual Test:**
 ```bash
-curl http://localhost:9000/minio/health/live
+docker compose exec clamav sh -c 'echo PING | nc -w 2 localhost 3310 | grep PONG'
+# Expected: PONG
+
+docker compose logs clamav --tail 50
 ```
 
-**Expected Response (200 OK):**
-```
-MinIO OK
+### Backup healthcheck
+
+*   **Image:** `alpine:3.24` with `restic` and `supercronic 0.2.33`
+
+**Docker healthcheck:**
+
+```yaml
+test: ["CMD-SHELL", "/scripts/healthcheck.sh"]
+interval: 5m
+timeout: 10s
+retries: 3
+start_period: 2m
 ```
 
-**Healthcheck Settings:**
-```
-Interval: 10 seconds
-Timeout: 5 seconds
-Retries: 3
-Start period: 10 seconds
-```
+The script checks that supercronic is running and that a recent successful backup marker exists. It catches dead cron loops, broken mounts, empty `BACKUP_RESTIC_PASSWORD`, and failed runs.
 
-### Client (Nginx) Healthcheck
+**Manual test:**
 
-**Test:** HTTP on port 80
-
-**Manual Test:**
 ```bash
-curl http://localhost/
+docker exec backup /scripts/healthcheck.sh; echo $?
+docker exec backup /scripts/backup.sh list
 ```
 
-**Expected Response:** HTML homepage
+### Client (Nginx) healthcheck
 
-**Healthcheck Settings:**
-```
-Interval: 10 seconds
-Timeout: 5 seconds
-Retries: 3
-Start period: 15 seconds
-```
+*   **Image:** `nginx:stable-alpine` (built from `plexichat-client/Dockerfile`)
+*   **Docker healthcheck:** None is defined in `docker-compose.yml`.
 
-## Interpreting Healthcheck Failures
+**Manual test:**
 
-### Backend unhealthy
-
-**Log:**
-```
-WARNING backend is unhealthy
-```
-
-**Possible Causes:**
-1. Database connection failed
-2. Valkey connection failed
-3. MinIO connection failed
-4. Application crashed
-
-**Debug Steps:**
 ```bash
-# View logs
-docker compose logs backend --tail 50
+curl -f http://localhost/
+curl -fk https://localhost/
+docker compose logs client --tail 50
+```
 
-# Check dependencies
-docker compose exec backend curl http://db:5432    # Should fail (not HTTP)
-docker compose exec backend redis-cli -h redis ping # Should return PONG
-docker compose exec backend curl http://minio:9000  # Should redirect
+### Optional services healthchecks
+
+*   **Shieldstral (profile `ai`):** `curl -sf http://localhost:8080/health`, interval 15s, timeout 10s, 10 retries, start period 60s. Image `ghcr.io/ggml-org/llama.cpp:server-b10614`.
+*   **Meilisearch (profiles `search`, `search-meilisearch`):** `wget -qO- http://localhost:7700/health | grep -q ok || curl -sf http://localhost:7700/health`, interval 10s, timeout 5s, 10 retries, start period 15s. Image `getmeili/meilisearch:v1.12`.
+*   **Elasticsearch (profile `search-elastic`):** `curl -sf http://localhost:9200/_cluster/health | grep -q green || curl -sf http://localhost:9200/ | grep -q plexichat || exit 1`, interval 15s, timeout 10s, 10 retries, start period 60s. Image `docker.elastic.co/elasticsearch/elasticsearch:8.15.0`.
+
+## Interpreting failures
+
+### Backend is unhealthy
+
+**Possible causes:**
+
+1.  The backend process crashed.
+2.  `curl` is missing or the port is not bound.
+3.  A dependency did not become healthy and the backend never started.
+
+**Debug steps:**
+
+```bash
+docker compose logs backend --tail 100
+docker compose exec backend curl -v http://localhost:8000/api/v1/ready
+docker compose ps
+docker compose config | grep -A 5 "depends_on"
+```
+
+Check dependencies directly:
+
+```bash
+docker compose exec backend sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli -h valkey ping'
+docker compose exec backend curl -f http://rustfs:9000/health
+docker compose exec backend sh -c 'echo PING | nc -w 2 clamav 3310 | grep PONG'
 ```
 
 **Fix:**
+
 ```bash
-# If DB is down
+docker compose restart backend
+# If the database is down:
 docker compose restart db
-docker compose up
-
-# If connection pool exhausted
-docker compose exec backend grep "pool" config/docker-config.yaml
-# Increase DB_POOL_MAX_CONNECTIONS
+# If the pool is saturated:
+docker compose exec backend grep -A 5 "connection_pool" /app/config/docker-config.yaml
+# Increase DB_POOL_MAX_CONNECTIONS in .env and restart
 ```
 
-### Database unhealthy
+### Database is unhealthy
 
-**Log:**
-```
-WARNING db is unhealthy
-```
+**Possible causes:**
 
-**Possible Causes:**
-1. PostgreSQL failed to start
-2. Disk full
-3. Corrupted data
-4. Port conflict (another postgres running)
+1.  PostgreSQL failed to start.
+2.  Disk is full.
+3.  Data is corrupted.
+4.  `POSTGRES_PASSWORD` is unset (compose fails fast) or port 5432 is in use on the host.
 
-**Debug Steps:**
+**Debug steps:**
+
 ```bash
-# View logs
-docker compose logs db --tail 50
-
-# Check if port 5432 is available
-lsof -i :5432    # Should show only docker process
-
-# Test connection
-docker compose exec db psql -U plexichat -c "SELECT 1;"
+docker compose logs db --tail 100
+docker compose exec db pg_isready -U plexichat -d plexichat
+docker compose exec db psql -U plexichat -d plexichat -c "SELECT 1;"
 ```
 
 **Fix:**
-```bash
-# Restart service
-docker compose restart db
 
-# If corrupted, restore from backup
+```bash
+docker compose restart db
+# Restore from backup if needed:
 docker compose down
 cat backup.sql | docker compose exec -T db psql -U plexichat plexichat
-docker compose up
+docker compose up -d
 ```
 
-### Valkey unhealthy
+### Valkey is unhealthy
 
-**Log:**
-```
-WARNING redis is unhealthy
-```
+**Possible causes:**
 
-**Possible Causes:**
-1. Valkey process crashed
-2. Port 6379 conflict
-3. Out of memory
+1.  Valkey process crashed.
+2.  `VALKEY_PASSWORD` is unset (compose fails fast).
+3.  Host port 6379 is in use or memory is exhausted.
 
-**Debug Steps:**
+**Debug steps:**
+
 ```bash
-# View logs
-docker compose logs redis --tail 50
-
-# Test connection
-docker compose exec redis redis-cli ping
-
-# Check memory
-docker compose exec redis redis-cli INFO memory
+docker compose logs valkey --tail 100
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping'
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli INFO memory'
 ```
 
 **Fix:**
+
 ```bash
-# Restart
-docker compose restart redis
-
-# If out of memory, clear cache
-docker compose exec redis redis-cli FLUSHALL
-
-# Increase memory limit in docker-compose.yml
+docker compose restart valkey
+# If out of memory, evict or flush (data is ephemeral):
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli FLUSHALL'
 ```
 
-### MinIO unhealthy
+### RustFS is unhealthy
 
-**Log:**
-```
-WARNING minio is unhealthy
-```
+**Possible causes:**
 
-**Possible Causes:**
-1. MinIO failed to start
-2. Disk full
-3. Port 9000 conflict
+1.  RustFS failed to start.
+2.  Disk is full or `rustfs_data` is not writable by UID 10001.
+3.  `S3_ACCESS_KEY` or `S3_SECRET_KEY` is unset.
 
-**Debug Steps:**
+**Debug steps:**
+
 ```bash
-# View logs
-docker compose logs minio --tail 50
-
-# Test health endpoint
-curl http://localhost:9000/minio/health/live
-
-# Check disk usage
-docker compose exec minio df -h
+docker compose logs rustfs --tail 100
+docker compose exec rustfs sh -c 'curl -f http://127.0.0.1:9000/health; echo ok'
+docker compose exec rustfs df -h
+docker compose run --rm rustfs-perms
 ```
 
 **Fix:**
+
 ```bash
-# Restart
-docker compose restart minio
-
-# If disk full, remove old volumes and restart
-docker volume prune
-docker compose up
+docker compose restart rustfs
+# Fix ownership if needed:
+docker compose run --rm rustfs-perms
+docker compose up -d rustfs
 ```
 
-## Dependency Management
+## Dependency management
 
-Services wait for dependencies to be healthy before starting:
+Services wait for dependencies before they start:
 
+```text
+rustfs-perms (chown) --> rustfs (healthy) --> rustfs-init (completed)
+db (healthy) ─┐
+valkey (healthy) ─┼--> backend (healthy) --> client (started, waits for cert-init completed)
+rustfs-init (completed) ─┤
+clamav (healthy) ─┘
+db (healthy) --> backup
+cert-init (completed) --> client
 ```
-minio-init -> minio
-backend -> db, redis, minio-init
-client -> backend, cert-init
-```
 
-**Example timeline:**
-1. Deploy script generates config files (`.env`, `docker-config.yaml`, `client-config.js`)
-2. `db`, `redis`, `minio` start in parallel
-3. `minio-init` waits for `minio` to be healthy, then initializes buckets
-4. `backend` waits for all above to be healthy before starting
-5. `client` waits for `backend` to be healthy before starting
+Compose conditions:
 
-This ensures startup order is correct and dependencies are ready.
-
-## Checking Service Dependencies
+*   `service_healthy`: Wait until the health check passes.
+*   `service_completed_successfully`: Wait until the one-shot container exits with status 0 (used for `rustfs-init`, `rustfs-perms`, and `cert-init`).
+*   `service_started`: Do not wait for health (used for `client` -> `backend`).
 
 View actual dependencies:
+
 ```bash
 docker compose config | grep -A 3 "depends_on"
 ```
 
 Example:
+
 ```yaml
 backend:
   depends_on:
     db:
       condition: service_healthy
-    redis:
+    valkey:
       condition: service_healthy
-    minio-init:
+    rustfs-init:
+      condition: service_completed_successfully
+    clamav:
+      condition: service_healthy
+client:
+  depends_on:
+    backend:
+      condition: service_started
+    cert-init:
       condition: service_completed_successfully
 ```
 
-Conditions:
-- `service_healthy` - Wait for healthcheck to pass
-- `service_completed_successfully` - Wait for service to finish and exit (for one-time tasks like minio-init)
-- `service_started` - Don't wait (service just needs to be running)
+## Tune healthcheck intervals
 
-## Healthcheck Interval Tuning
-
-Default intervals (10 seconds) work for most cases.
-
-**For slow-starting services**, increase start_period:
+The defaults work for most deployments. If a service is slow to start, increase `start_period`:
 
 ```yaml
-backend:
-  healthcheck:
-    start_period: 60s  # Wait 60 seconds before first check
-    interval: 10s
-    timeout: 5s
-    retries: 3
+services:
+  backend:
+    healthcheck:
+      start_period: 60s
+      interval: 15s
+      timeout: 5s
+      retries: 3
 ```
 
-**For fast services**, decrease interval:
+For faster feedback on a quick service, decrease `interval`:
 
 ```yaml
-redis:
-  healthcheck:
-    interval: 5s  # Check every 5 seconds instead of 10
+services:
+  valkey:
+    healthcheck:
+      interval: 5s
 ```
 
-## Automatic Restart
+## Restart behavior
 
-Services automatically restart if unhealthy:
-
-```yaml
-restart_policy:
-  condition: on-failure
-  max_attempts: 3
-  delay: 10s
-```
-
-Means:
-- Restart if healthcheck fails
-- Try up to 3 times
-- Wait 10 seconds between restarts
+All long-running services use `restart: unless-stopped`. One-shot services (`rustfs-init`, `rustfs-perms`, `cert-init`) use `restart: "no"` so they exit after completion and do not block dependents.
 
 Check restart history:
+
 ```bash
 docker compose ps -a
-```
-
-View restart events:
-```bash
 docker events --filter 'type=container' | grep restart
 ```
 
-## Manual Health Checks
+## Manual health script
 
-Run healthchecks without relying on Docker:
+Run checks without relying on Docker status:
 
 ```bash
 #!/bin/bash
-echo "Backend health..."
+set -e
+echo "Backend liveness..."
+curl -f http://localhost:8000/api/v1/ready || echo "FAILED"
+
+echo "Backend deep health..."
 curl -f http://localhost:8000/health || echo "FAILED"
 
-echo "Database health..."
-docker compose exec db pg_isready -U plexichat || echo "FAILED"
+echo "Database..."
+docker compose exec db pg_isready -U plexichat -d plexichat || echo "FAILED"
 
-echo "Valkey health..."
-docker compose exec redis redis-cli ping || echo "FAILED"
+echo "Valkey..."
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping | grep -q PONG' || echo "FAILED"
 
-echo "MinIO health..."
-curl -f http://localhost:9000/minio/health/live || echo "FAILED"
+echo "RustFS..."
+docker compose exec rustfs sh -c 'curl -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9001/rustfs/console/health' || echo "FAILED"
 
-echo "Frontend health..."
+echo "ClamAV..."
+docker compose exec clamav sh -c 'echo PING | nc -w 2 localhost 3310 | grep -q PONG' || echo "FAILED"
+
+echo "Backup..."
+docker exec backup /scripts/healthcheck.sh || echo "FAILED"
+
+echo "Frontend..."
 curl -f http://localhost/ > /dev/null || echo "FAILED"
 ```
 
-Save as `check-health.sh` and run:
+Save as `check-health.sh`:
+
 ```bash
 chmod +x check-health.sh
 ./check-health.sh
 ```
 
-## Monitoring Healthchecks
+## Troubleshoot healthcheck issues
 
-Long-term monitoring:
+### Healthcheck is stuck in "starting"
 
-```bash
-# Watch health status continuously
-watch -n 5 'docker compose ps'
-
-# Export to file for graphing
-watch -n 60 'date >> health.log; docker compose ps >> health.log'
-```
-
-Integration with monitoring tools:
-
-```bash
-# Send to Prometheus
-curl -s http://localhost:8000/metrics | grep health
-
-# Send to datadog
-docker-compose logs backend | grep "health"
-```
-
-## Troubleshooting Healthcheck Issues
-
-### Healthcheck hangs (stuck in "starting" state)
-
-**Cause:** start_period too short or check command hangs
-
-**Fix:**
-```yaml
-healthcheck:
-  start_period: 60s    # Increase from 30s
-  timeout: 10s         # Increase from 5s
-```
+The `start_period` is too short or the check command hangs. Increase `start_period` and `timeout`.
 
 ### Too many restarts
 
-**Cause:** Healthcheck too strict or underlying issue
+The healthcheck is too strict or there is an underlying failure. Check logs and increase `retries` only after you fix the root cause:
 
-**Check logs:**
 ```bash
-docker compose logs backend | grep restart
+docker compose logs backend | grep -i health
 ```
 
-**Increase retry threshold:**
-```yaml
-healthcheck:
-  retries: 5    # Increase from 3
-```
+### False positives
 
-### False positives (service actually works but healthcheck fails)
+The service works but the check fails. This is usually a network or timing issue. Test the command manually inside the container:
 
-**Cause:** Network issue, port not yet open, or check command wrong
-
-**Debug:**
 ```bash
-docker compose exec backend curl -v http://localhost:8000/health
+docker compose exec backend curl -v http://localhost:8000/api/v1/ready
+docker compose exec backend sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli -h valkey ping'
 ```
 
-**Fix:** Adjust check command or add timeout.
+Adjust the command or add a timeout.
 
-## Next Steps
+## Next steps
 
-- [Troubleshooting](troubleshooting.md) - Common issues
-- [Production Setup](production-setup.md) - Production configuration
-- [Configuration](configuration.md) - Configure healthchecks
-
-
+*   [Architecture](architecture.md) for service topology
+*   [Configuration](configuration.md) for environment variables
+*   [Troubleshooting](troubleshooting.md) for common issues

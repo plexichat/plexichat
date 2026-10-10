@@ -26,8 +26,12 @@ class BlindIndexMixin(EncryptionCoreProtocol):
 
         Uses a dedicated root key for blind indexes to allow KEK rotation
         without breaking indexes.
+
+        The root key is derived deterministically from the KEK (and
+        persisted on first use) so that every manager instance produces
+        the same index for the same value.
         """
-        root_key = self.keyring.blind_index_root_key or self.keyring._get_kek()
+        root_key = self.keyring.get_blind_index_root_key()
         index_key = hashlib.blake2b(
             root_key, key=scope.encode(), digest_size=32
         ).digest()
@@ -51,4 +55,4 @@ class BlindIndexMixin(EncryptionCoreProtocol):
         seed_bytes = hashlib.blake2b(kek, key=scope.encode(), digest_size=8).digest()
         seed = int.from_bytes(seed_bytes, byteorder="big")
 
-        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()  # type: ignore[union-attr]
+        return xxhash.xxh64(data.lower().strip().encode(), seed=seed).hexdigest()

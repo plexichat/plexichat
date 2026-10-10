@@ -13,7 +13,9 @@ class TestRoleMentions:
         """Test parsing role mention format <@&ID>."""
         mentions = notification_manager.parse_mentions("<@&111222> announcement")
         role_mentions = [m for m in mentions if m.mention_type == MentionType.ROLE]
-        assert len(role_mentions) >= 1
+        # Exactly one role mention with the parsed ID
+        assert len(role_mentions) == 1
+        assert role_mentions[0].target_id == 111222
 
     def test_validate_role_mention_nonexistent(self, notification_manager):
         """Test validating a role mention for a non-existent role."""
@@ -22,7 +24,9 @@ class TestRoleMentions:
         invalid = [
             m for m in validated if not m.valid and m.mention_type == MentionType.ROLE
         ]
-        assert len(invalid) >= 1
+        # Exactly one role mention, and it is invalid
+        assert len(invalid) == 1
+        assert invalid[0].target_id == 999999
 
     def test_suppress_role_notifications(self, notification_manager, test_user):
         """Test that suppress_roles prevents role mention notifications."""

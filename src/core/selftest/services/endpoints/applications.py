@@ -67,8 +67,6 @@ class ApplicationMixin(EndpointTesterBase):
             logger.warning(f"Could not parse app creation response: {e}")
             return
 
-        time.sleep(0.05)
-
         # Create a bot for this application via the HTTP API
         logger.info(
             f"Testing POST /api/v1/applications/{new_app_id}/bot (fresh bot)..."
@@ -94,8 +92,6 @@ class ApplicationMixin(EndpointTesterBase):
             logger.info(f"Bot creation API PASSED -> {resp.status_code}")
         else:
             logger.warning(f"Bot creation API -> {resp.status_code}: {resp.text[:200]}")
-
-        time.sleep(0.05)
 
         # Cleanup: delete the application (cascades to bot)
         logger.info(f"Deleting test application ID: {new_app_id}...")

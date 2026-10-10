@@ -12,6 +12,7 @@ import src.api as api
 import utils.logger as logger
 
 from ..context import SelfTestContext
+from ..db_guard import sanitize_error
 
 
 class WebSocketTester:
@@ -72,7 +73,7 @@ class WebSocketTester:
                         success = True
                         ws_conn.close()
         except Exception as e:
-            error_msg = str(e)
+            error_msg = sanitize_error(e)
 
         duration = (time.time() - start) * 1000
         self.ctx.results.append(

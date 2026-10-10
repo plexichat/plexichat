@@ -41,7 +41,7 @@ class Poll:
     allow_multiple_choice: bool = False
     results_visibility: PollResultsVisibility = PollResultsVisibility.ALWAYS
     options: List[PollOption] = field(default_factory=list)
-    total_votes: int = 0
+    total_votes: Optional[int] = 0
     is_ended: bool = False
 
 
@@ -62,6 +62,6 @@ class PollResults:
 
     poll: Poll
     options: List[PollOption]
-    total_votes: int
+    total_votes: Optional[int] = None
     user_voted: bool = False
     user_votes: List[SnowflakeID] = field(default_factory=list)

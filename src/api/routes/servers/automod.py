@@ -13,6 +13,7 @@ from src.api.schemas.common import SnowflakeID, SuccessResponse
 
 import utils.logger as logger
 from .helpers import _automod_rule_to_response
+from ..exception_mapping import raise_mapped
 
 router = APIRouter()
 
@@ -43,7 +44,12 @@ async def get_server_automod_rules(
         raise
     except Exception as e:
         logger.error(f"Failed to get automod rules for server {server_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_mapped(
+            e,
+            not_found_message="Server not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
+        )
 
 
 @router.post(
@@ -113,7 +119,12 @@ async def create_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to create automod rule for server {server_id}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_mapped(
+            e,
+            not_found_message="Server not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
+        )
 
 
 @router.patch(
@@ -176,7 +187,12 @@ async def update_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to update automod rule {rule_id}: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_mapped(
+            e,
+            not_found_message="Rule not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
+        )
 
 
 @router.delete(
@@ -212,7 +228,12 @@ async def delete_server_automod_rule(
         raise
     except Exception as e:
         logger.error(f"Failed to delete automod rule {rule_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_mapped(
+            e,
+            not_found_message="Rule not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
+        )
 
 
 @router.get(
@@ -271,4 +292,69 @@ async def get_server_automod_violations(
         raise
     except Exception as e:
         logger.error(f"Failed to get automod violations for server {server_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise_mapped(
+            e,
+            not_found_message="Server not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
+        )
+
+
+@router.get(
+    "/{server_id}/automod/violations/{violation_id}",
+    response_model=AutomodViolationResponse,
+    summary="Get a single server automod violation",
+)
+async def get_server_automod_violation(
+    server_id: str,
+    violation_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> AutomodViolationResponse:
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+    from src.core import automod
+
+    try:
+        sid = int(server_id)
+        vid = int(violation_id)
+        servers_mod.require_permission(current_user.user_id, sid, "server.automod")
+
+        violation = automod.get_violation(vid, server_id=sid)
+        if violation is None:
+            raise HTTPException(status_code=404, detail="Violation not found")
+
+        return AutomodViolationResponse(
+            id=SnowflakeID(violation.id),
+            user_id=SnowflakeID(violation.user_id),
+            channel_id=SnowflakeID(violation.channel_id),
+            rule_id=SnowflakeID(violation.rule_id),
+            rule_type=violation.rule_type.value
+            if hasattr(violation.rule_type, "value")
+            else str(violation.rule_type),
+            matched_content=violation.matched_content,
+            severity=violation.severity.value
+            if hasattr(violation.severity, "value")
+            else str(violation.severity),
+            actions_taken=[
+                a.value if hasattr(a, "value") else str(a)
+                for a in violation.actions_taken
+            ],
+            created_at=violation.created_at,
+            metadata=violation.metadata or {},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Failed to get automod violation {violation_id} for server {server_id}: {e}"
+        )
+        raise_mapped(
+            e,
+            not_found_message="Violation not found",
+            permission_message="Access denied",
+            invalid_message="Invalid request",
+        )

@@ -20,12 +20,16 @@ def indexed_dm(auth_manager, messaging_manager, search_manager, two_users):
         messaging_manager.send_message(user1.id, dm.id, "banana cherry"),
         messaging_manager.send_message(user2.id, dm.id, "kiwi lemon mango"),
     ]
-    # Index each message so the search back-end can find it.
+    # Index each message so the search back-end can find it. Failures here
+    # must surface, not be swallowed, or every search assertion below would
+    # pass vacuously against an empty index.
+    index_failures = []
     for m in messages:
         try:
             search_manager.index_message(m.id, m.content or "")
-        except Exception:
-            pass
+        except Exception as exc:
+            index_failures.append((m.id, exc))
+    assert not index_failures, f"search index_message failed: {index_failures}"
     return user1, user2, messaging_manager, search_manager
 
 
@@ -50,6 +54,7 @@ class TestMessageSearch:
             limit=10,
         )
         assert page is not None
+        assert isinstance(page.results, list)
 
     def test_remove_from_index_safe_on_missing(self, db):
         # manager.search might not be importable; lazy-import.
@@ -69,4 +74,4 @@ class TestQueryParser:
         # Whatever the implementation, ParsedQuery must expose
         # filters and raw text fields.
         assert hasattr(parsed, "filters")
-        assert hasattr(parsed, "raw")
+        assert hasattr(parsed, "raw_query")

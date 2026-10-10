@@ -1,9 +1,21 @@
 """Default SVG placeholder mixin for the avatars module."""
 
-import hashlib
+import html
 from typing import Any
 
 from .protocol import AvatarProtocol
+
+
+def _djb2(data: bytes) -> int:
+    """Deterministic, dependency-free hash (matches the client ``getAvatarColor``).
+
+    The client implementation iterates UTF-8 code units the same way, so the
+    chosen background colour is identical on both sides.
+    """
+    h = 5381
+    for b in data:
+        h = ((h << 5) + h + b) & 0xFFFFFFFFFFFFFFFF
+    return h
 
 
 class AvatarDefaultsMixin(AvatarProtocol):
@@ -18,10 +30,13 @@ class AvatarDefaultsMixin(AvatarProtocol):
         )
 
         seed_bytes = str(seed or initials or "user").strip().lower().encode("utf-8")
-        color = colors[hashlib.sha256(seed_bytes).digest()[0] % len(colors)]
+        color = colors[_djb2(seed_bytes) % len(colors)]
+
+        # Always escape user-controlled text rendered into markup.
+        safe_initials = html.escape(initials or "", quote=True)
 
         return f"""<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
         <rect width="128" height="128" fill="{color}"/>
         <text x="50%" y="50%" font-family="Arial, sans-serif" font-size="48" font-weight="bold" 
-              fill="white" text-anchor="middle" dominant-baseline="central">{initials}</text>
+              fill="white" text-anchor="middle" dominant-baseline="central">{safe_initials}</text>
     </svg>"""

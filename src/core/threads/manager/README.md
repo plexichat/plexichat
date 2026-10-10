@@ -1,12 +1,12 @@
-# Thread Manager
+# Thread manager
 
 ## Purpose
-Implements thread lifecycle management, membership, and state transitions
-for server-based thread conversations.
+
+Implements thread lifecycle management, membership, and state transitions for server-based thread conversations.
 
 ## Architecture
-The ThreadManager is composed via mixin pattern. Each file in this directory
-handles a specific domain:
+
+The `ThreadManager` is composed via mixin pattern. Each file in this directory handles a specific domain:
 
 | File | Mixin | Responsibilities |
 |------|-------|-----------------|
@@ -19,15 +19,17 @@ handles a specific domain:
 | `listing.py` | `ThreadListingMixin` | `get_thread`, `get_active_threads`, `get_archived_threads`, `get_user_threads`, `get_user_private_threads` |
 | `manager.py` | `ThreadManager` | Composes all mixins with `BaseManager` |
 
-## Primary Responsibilities
-- Create, update, and archive threads
-- Manage thread membership and permissions
-- Maintain thread metadata and message counts
-- Enforce thread naming and lock rules
+## Primary responsibilities
 
-## Core Components
-- ThreadManager: main orchestration class for thread operations
-- Thread models for state, type, and auto-archive duration
+- Create, update, and archive threads.
+- Manage thread membership and permissions.
+- Maintain thread metadata and message counts.
+- Enforce thread naming and lock rules.
+
+## Core components
+
+- `ThreadManager` — Main orchestration class for thread operations.
+- Thread models for state, type, and auto-archive duration.
 
 ## Usage
 
@@ -58,11 +60,11 @@ tm.archive_thread(user_id=1, thread_id=thread.id)
 threads = tm.get_user_threads(user_id=2)
 ```
 
-## Error Handling
+## Error handling
 
 - `PermissionDeniedError` — User lacks `threads.view` or `threads.send` permission.
 - `ValueError` — Invalid thread name, message ID not found, or thread not found.
-- Archive/lock state transitions check current state and raise `ValueError` if the transition is invalid (e.g., archiving an already-archived thread).
+- Archive/lock state transitions check current state and raise `ValueError` if the transition is invalid (for example, archiving an already-archived thread).
 
 ```python
 from src.core.servers.exceptions import PermissionDeniedError
@@ -76,12 +78,14 @@ except PermissionDeniedError as e:
 ```
 
 ## Dependencies
+
 - Auth module for user validation.
 - Messaging module for thread message interactions (message creation, retrieval).
 - Servers module for permission checks (thread view/send/manage permissions).
 - Notifications module for thread mention signals (when users are @mentioned in thread messages).
 
 ## Notes
+
 - Auto-archive checks are based on last activity timestamps (via `_check_auto_archive` in helpers).
 - Thread naming can be encrypted if `encryption.encrypt_thread_names` is enabled in config.
 - Public API is exposed via `from .manager import ThreadManager`.

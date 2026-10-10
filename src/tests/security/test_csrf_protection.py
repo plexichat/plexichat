@@ -7,6 +7,12 @@ and cannot be performed through simple cross-origin requests.
 
 import pytest
 
+from src.core.auth.exceptions import (
+    TokenExpiredError,
+    TokenInvalidError,
+    InvalidCredentialsError,
+)
+
 
 class TestCSRFProtection:
     """Test CSRF protection mechanisms."""
@@ -64,9 +70,18 @@ class TestCSRFProtection:
 
     def test_expired_session_rejected(self, auth_manager, db, test_user):
         """Test that expired sessions are rejected."""
-        # Skip - internal token parsing structure has changed
-        # Session expiration is handled by the auth manager internally
-        pass
+        import time
+
+        result = auth_manager.login(test_user.username, "TestPass123!")
+
+        current_time = int(time.time() * 1000)
+        db.execute(
+            "UPDATE auth_sessions SET expires_at = ? WHERE id = ?",
+            (current_time - 100000, result.session.id),
+        )
+
+        with pytest.raises(TokenExpiredError):
+            auth_manager.verify_token(result.token)
 
     def test_revoked_session_rejected(self, auth_manager, test_user):
         """Test that revoked sessions are rejected."""
@@ -124,11 +139,15 @@ class TestCSRFProtection:
                 new_password="NewPass123!",
             )
 
-    def test_2fa_disable_requires_verification(self, auth_manager, test_user):
+    def test_2fa_disable_requires_verification(self, auth_manager, db, test_user):
         """Test that 2FA disable requires password and code."""
-        # Skip - TOTP code generation API has changed
-        # 2FA disable verification is handled by the auth manager
-        pass
+        db.execute(
+            "UPDATE auth_users SET totp_enabled = 1, totp_secret_encrypted = ? WHERE id = ?",
+            ("encrypted_secret", test_user.id),
+        )
+
+        with pytest.raises(InvalidCredentialsError):
+            auth_manager.disable_2fa(test_user.id, "WrongPassword", "123456")
 
     def test_bot_operations_require_ownership(self, auth_manager, two_users):
         """Test that bot operations require ownership."""
@@ -141,15 +160,37 @@ class TestCSRFProtection:
         with pytest.raises(Exception):
             auth_manager.regenerate_bot_token(other_user.id, bot.id)
 
-    def test_session_binding_prevents_token_reuse(self, auth_manager, test_user):
+    def test_session_binding_prevents_token_reuse(
+        self, auth_manager, test_user, monkeypatch
+    ):
         """Test that session binding prevents token reuse from different IPs."""
+        manager = auth_manager._manager
+        monkeypatch.setattr(
+            manager,
+            "_config",
+            {
+                **manager._config,
+                "security": {
+                    **manager._config.get("security", {}),
+                    "token_binding": True,
+                },
+            },
+        )
         result = auth_manager.login(
             username=test_user.username,
             password="TestPass123!",
             ip_address="192.168.1.1",
+            user_agent="ReuseUA/1",
         )
 
-        try:
-            auth_manager.verify_token(result.token, ip_address="192.168.1.2")
-        except Exception:
-            pass
+        # Same IP+UA still verifies.
+        token_info = auth_manager.verify_token(
+            result.token, ip_address="192.168.1.1", user_agent="ReuseUA/1"
+        )
+        assert token_info.valid
+
+        # The token must not be usable from a different IP.
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(
+                result.token, ip_address="192.168.1.2", user_agent="ReuseUA/1"
+            )

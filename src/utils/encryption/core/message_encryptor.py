@@ -43,6 +43,7 @@ class MessageEncryptor:
         """Decrypt message content, handling non-encrypted (legacy) content."""
         if not encrypted_content.startswith("ENC:"):
             return encrypted_content
+        version: Optional[int] = None
         try:
             parts = encrypted_content.split(":", 2)
             version = int(parts[1])
@@ -52,13 +53,25 @@ class MessageEncryptor:
             nonce, ciphertext = combined[:12], combined[12:]
             aad = str(message_id).encode() if message_id else None
             return aesgcm.decrypt(nonce, ciphertext, aad).decode("utf-8")
-        except Exception:
-            raise ValueError("Decryption failed")
+        except Exception as e:
+            # Name the key version and the id bound as AAD so a rotated-out
+            # key is distinguishable from a wrong-message-id integrity miss.
+            raise ValueError(
+                f"Decryption failed (key version {version}, "
+                f"message_id {message_id!r}): {e}"
+            ) from e
 
     def is_encrypted(self, content: str) -> bool:
         """Check if content has the encryption prefix."""
         return content.startswith("ENC:")
 
     def is_key_auto_generated(self) -> bool:
-        """Check if the message encryption key was auto-generated."""
-        return self.keyring.current_key_source == "generated"
+        """Check if the message encryption key was auto-generated.
+
+        ``generated`` is the label written at key-generation time; ``local``
+        is what the truthful KEK-source probe reports for the same situation
+        after a reload (machine-local generated fallback key). Both mean the
+        key material was not operator-provisioned via env/HSM/TPM and should
+        trigger the startup warning.
+        """
+        return self.keyring.current_key_source in ("generated", "local")

@@ -120,16 +120,30 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
     """Verify if the client IP is allowed based on host restrictions."""
     if not allowed_hosts:
         return True
-    localhost_variants = ["127.0.0.1", "localhost", "::1"]
-    for allowed in allowed_hosts:
-        if (
+    localhost_variants = {"127.0.0.1", "localhost", "::1"}
+    if client_ip in localhost_variants:
+        return any(
             allowed in localhost_variants and client_ip in localhost_variants
-        ) or client_ip == allowed:
-            return True
-        if "/" in allowed and client_ip.startswith(
-            allowed.split("/")[0].rsplit(".", 1)[0]
-        ):
-            return True
+            for allowed in allowed_hosts
+        )
+
+    try:
+        import ipaddress
+
+        client = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return client_ip in allowed_hosts
+
+    for allowed in allowed_hosts:
+        try:
+            if "/" in allowed:
+                if client in ipaddress.ip_network(allowed, strict=False):
+                    return True
+            elif client == ipaddress.ip_address(allowed):
+                return True
+        except ValueError:
+            if client_ip == allowed:
+                return True
     return False
 
 

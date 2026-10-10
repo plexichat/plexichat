@@ -47,7 +47,9 @@ class MentionSpamRule(BaseRule):
         user_count = len(user_mentions)
         role_count = len(role_mentions)
         everyone_count = len(everyone_mentions)
-        total_count = user_count + role_count
+        # @everyone/@here always count toward the total-mention limit;
+        # block_everyone is a separate policy that forbids them outright.
+        total_count = user_count + role_count + everyone_count
 
         violations = []
         highest_severity = ViolationSeverity.LOW
@@ -95,7 +97,14 @@ class MentionSpamRule(BaseRule):
         """Validate mention spam rule configuration."""
         issues = []
 
-        for field in ["max_user_mentions", "max_role_mentions", "max_total_mentions"]:
+        limit_fields = ["max_user_mentions", "max_role_mentions", "max_total_mentions"]
+        if not any(field in config for field in limit_fields):
+            issues.append(
+                "at least one of max_user_mentions, max_role_mentions, "
+                "max_total_mentions is required"
+            )
+
+        for field in limit_fields:
             value = config.get(field)
             if value is not None:
                 if not isinstance(value, int) or value < 0:

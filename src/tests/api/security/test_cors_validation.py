@@ -14,7 +14,7 @@ def test_cors_preflight_allowed_origin(test_client):
 
     # Should return 200 OK for preflight, or 400 if CORS is not configured
     # Just verify the request doesn't crash
-    assert response.status_code in [200, 400]
+    assert response.status_code == 200
 
 
 def test_cors_preflight_disallowed_origin(test_client):
@@ -38,7 +38,7 @@ def test_cors_preflight_disallowed_origin(test_client):
 def test_cors_simple_request_allowed_origin(test_client):
     """Test that simple requests succeed for allowed origins."""
     response = test_client.get(
-        "/api/v1/",
+        "/",
         headers={"Origin": "http://testserver"},
     )
 
@@ -59,4 +59,4 @@ def test_cors_credentials_header(test_client):
 
     # Should return 200 OK for preflight, or 400 if CORS is not configured
     # Just verify the request doesn't crash
-    assert response.status_code in [200, 400]
+    assert response.status_code == 200

@@ -1,98 +1,121 @@
-# Database Module
+# Database module
 
-A database connectivity module supporting SQLite and PostgreSQL with a clean, consistent API.
+## Overview
+
+The database module provides a unified interface for SQLite and PostgreSQL. It supports parameterized queries, transactions, connection-pool monitoring, and cross-database helpers. Use `?` placeholders in all queries; the module converts them to `%s` for PostgreSQL automatically.
+
+Related platform endpoints:
+
+*   WebSocket gateway: `/gateway` — see `plexichat/src/api/websocket/gateway.py:261`. Use `/gateway`, not `/ws`.
+*   Readiness probe: `GET /api/v1/ready` — see `plexichat/src/api/routes/health.py:18`.
+*   Deep health check: `GET /api/v1/health` — see `plexichat/src/api/routes/health.py:46` with root alias at `GET /health` — see `plexichat/src/api/app.py:574`.
+
+For gateway opcodes and intents, see `plexichat/src/api/websocket/opcodes.py:40` and `plexichat/src/core/events/types.py:120`.
 
 ## Features
 
-- SQLite and PostgreSQL support
-- Unified query syntax - use `?` placeholders for both databases (auto-converted to `%s` for PostgreSQL)
-- Parameterized queries for SQL injection prevention
-- Fetch helpers (fetch_one, fetch_all)
-- Transaction support
-- Context manager support
-- Automatic directory creation for SQLite
-- Dict-like row access for both SQLite and PostgreSQL
-- Integrated logging
-- **Connection pool monitoring** - Track pool health, acquisition times, and connection age
+*   SQLite and PostgreSQL support through a single API.
+*   Unified `?` placeholder syntax with automatic conversion for PostgreSQL.
+*   Parameterized queries for SQL injection prevention.
+*   Fetch helpers: `fetch_one` and `fetch_all`.
+*   Transaction support with savepoints.
+*   Context-manager support.
+*   Automatic directory creation for SQLite.
+*   Dict-like row access for both backends.
+*   Integrated logging.
+*   Connection-pool monitoring for health, acquisition time, and connection age.
 
 ## Documentation
 
-- [POOL_MONITORING.md](./POOL_MONITORING.md) - Comprehensive connection pool monitoring guide
+*   `POOL_MONITORING.md` — connection-pool monitoring guide.
 
 ## Requirements
 
 ```bash
-pip install PyYAML  # For config (via common_utils)
-pip install psycopg2-binary  # Only if using PostgreSQL
+pip install PyYAML  # For config through common_utils
+pip install pg8000  # Only if you use PostgreSQL
 ```
 
 ## Configuration
 
-The database module reads configuration from the `database` key in your config file:
+The module reads the `database` key — see `plexichat/src/config_defaults.py:64`:
 
 ```yaml
 database:
   type: sqlite  # or "postgres"
   path: data/app.db  # SQLite only
-  
-  # PostgreSQL settings (only used when type: postgres)
+
+  # PostgreSQL settings (only when type is "postgres")
   postgres:
     host: localhost
     port: 5432
     user: postgres
     password: ""
     dbname: plexichat
-  
-  # Connection pool monitoring (PostgreSQL)
+    sslmode: prefer
+
+  # Connection pool (PostgreSQL and SQLite)
   connection_pool:
-    min_connections: 2
-    max_connections: 20
+    min_connections: 5
+    max_connections: 100
     connect_timeout: 10
-    max_connection_age_hours: 0.5  # 30 minutes
-  
-  # Monitoring settings
+    max_connection_age_hours: 2.0
+
+  # Monitoring
   monitoring:
-    log_interval_seconds: 60  # Log stats every 60 seconds
+    slow_query_threshold_ms: 1000
+    alert_on_slow_queries: true
+
+  migrations:
+    auto_migrate: true
 ```
 
-### Switching to PostgreSQL
+Global server keys use these paths — see `plexichat/src/config_defaults.py`:
 
-1. Install the PostgreSQL driver:
-   ```bash
-   pip install psycopg2-binary
-   ```
+*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:54`. Do not use `api.host`, `api.port`, or `api.workers`.
+*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:131`. Do not use `api.prefix` or `prefix`.
+*   `tls` — see `plexichat/src/config_defaults.py:599`. Do not use `api.ssl`.
 
-2. Update your config:
-   ```yaml
-   database:
-     type: postgres
-     postgres:
-       host: localhost
-       port: 5432
-       user: postgres
-       password: your_password
-       dbname: plexichat
-   ```
+### Switch to PostgreSQL
 
-3. Ensure your PostgreSQL server is running and the database exists.
+1.  Install the driver:
+
+    ```bash
+    pip install pg8000
+    ```
+
+2.  Update your config:
+
+    ```yaml
+    database:
+      type: postgres
+      postgres:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: your_password
+        dbname: plexichat
+    ```
+
+3.  Ensure the PostgreSQL server is running and the database exists.
 
 ## Usage
 
-### Basic Usage
+### Basic usage
 
 ```python
-from core.database import Database
+from src.core.database import Database
 
 db = Database()
 db.connect()
 
-# Create table
+# Create a table
 db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)")
 
-# Insert data - use ? placeholders (works for both SQLite and PostgreSQL)
+# Insert data — use ? placeholders for both SQLite and PostgreSQL
 db.execute("INSERT INTO users (name, email) VALUES (?, ?)", ("Alice", "alice@example.com"))
 
-# Fetch single row - returns dict-like object
+# Fetch one row — returns a dict-like object
 user = db.fetch_one("SELECT * FROM users WHERE id = ?", (1,))
 print(user["name"])  # Alice
 
@@ -104,26 +127,24 @@ for user in users:
 db.close()
 ```
 
-### Cross-Database Compatibility
+### Cross-database compatibility
 
-The module automatically converts `?` placeholders to `%s` for PostgreSQL, so you can write database-agnostic code:
+The module converts `?` to `%s` for PostgreSQL, so you can write database-agnostic code — see `plexichat/src/core/database/core/compat.py`:
 
 ```python
-# This works for both SQLite and PostgreSQL
+# Works for both SQLite and PostgreSQL
 db.execute("INSERT INTO users (name) VALUES (?)", ("Bob",))
 db.fetch_one("SELECT * FROM users WHERE name = ?", ("Bob",))
 ```
 
-### Connection Pool Monitoring
-
-Monitor and track database connection pool health:
+### Connection-pool monitoring
 
 ```python
-from core.database import Database
+from src.core.database import Database
 
 db = Database()
 
-# Start automatic periodic logging of pool stats
+# Start periodic logging of pool stats
 db.start_pool_monitoring()
 
 # Get current pool statistics
@@ -136,20 +157,20 @@ print(f"Avg acquisition time: {stats['avg_acquisition_time']:.3f}s")
 db.stop_pool_monitoring()
 ```
 
-For comprehensive monitoring guide, see [POOL_MONITORING.md](./POOL_MONITORING.md)
+For details, see `POOL_MONITORING.md`.
 
-### Context Manager
+### Context manager
 
 ```python
-from core.database import Database
+from src.core.database import Database
 
 with Database() as db:
     db.execute("INSERT INTO users (name) VALUES (?)", ("Bob",))
     users = db.fetch_all("SELECT * FROM users")
-# Connection automatically closed
+# Connection is closed automatically.
 ```
 
-### Batch Operations
+### Batch operations
 
 ```python
 db.execute_many(
@@ -158,7 +179,7 @@ db.execute_many(
         ("Alice", "alice@example.com"),
         ("Bob", "bob@example.com"),
         ("Charlie", "charlie@example.com"),
-    ]
+    ],
 )
 ```
 
@@ -175,105 +196,81 @@ except Exception:
     raise
 ```
 
-### Check Table Existence
+### Check table existence
 
 ```python
 if not db.table_exists("users"):
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
 ```
 
-## API Reference
+## API reference
 
-### Database Class
+### `Database` class — see `plexichat/src/core/database/core/manager.py:29`
 
-#### `__init__()`
-Initialize the database manager. Reads configuration from config module.
+| Method | Description |
+| --- | --- |
+| `__init__()` | Initialize the manager. Reads config from `database`. |
+| `connect()` | Establish a connection. |
+| `execute(query, params=None)` | Execute a query with optional parameters. Returns a cursor. |
+| `execute_many(query, params_list)` | Execute a query multiple times. |
+| `fetch_one(query, params=None)` | Execute a query and return one result or `None`. |
+| `fetch_all(query, params=None)` | Execute a query and return all results. |
+| `table_exists(table_name)` | Check whether a table exists. Returns `bool`. |
+| `begin_transaction()` | Start a transaction. |
+| `commit()` | Commit the current transaction. |
+| `rollback()` | Roll back the current transaction. |
+| `close()` | Close the connection. |
+| `insert_or_ignore(table, columns, values)` | Cross-database `INSERT OR IGNORE` helper. |
+| `upsert(table, columns, values, conflict_columns, update_columns=None)` | Cross-database upsert helper. |
 
-#### `connect()`
-Establish connection to the database.
+### Cross-database upsert helpers
 
-#### `execute(query, params=None)`
-Execute a query with optional parameters. Returns cursor.
-
-#### `execute_many(query, params_list)`
-Execute a query multiple times with different parameters.
-
-#### `fetch_one(query, params=None)`
-Execute query and return single result or None.
-
-#### `fetch_all(query, params=None)`
-Execute query and return all results as list.
-
-#### `table_exists(table_name)`
-Check if a table exists. Returns boolean.
-
-#### `begin_transaction()`
-Start a transaction.
-
-#### `commit()`
-Commit current transaction.
-
-#### `rollback()`
-Rollback current transaction.
-
-#### `close()`
-Close the database connection.
-
-#### `insert_or_ignore(table, columns, values)`
-Insert a row if it doesn't already exist. Cross-database compatible alternative to SQLite's `INSERT OR IGNORE`.
-
-#### `upsert(table, columns, values, conflict_columns, update_columns=None)`
-Insert a row or update it if it already exists. Cross-database compatible alternative to SQLite's `INSERT OR REPLACE`.
-
-### Cross-Database Upsert Operations
-
-For operations that need to handle conflicts (insert-or-ignore, insert-or-update), use the helper methods instead of raw SQL:
+Use these helpers instead of raw `INSERT OR IGNORE` or `INSERT OR REPLACE`:
 
 ```python
-# Insert if not exists (ignores duplicates)
+# Insert if not exists
 db.insert_or_ignore("users", ["id", "name"], (1, "alice"))
 
-# Insert or update (upsert)
+# Insert or update
 db.upsert(
     table="users",
     columns=["id", "name", "email"],
     values=(1, "alice", "alice@example.com"),
-    conflict_columns=["id"],  # Columns that define uniqueness
-    update_columns=["name", "email"]  # Columns to update on conflict
+    conflict_columns=["id"],
+    update_columns=["name", "email"],
 )
 ```
 
-These methods automatically generate the correct SQL for each database:
-- SQLite: `INSERT OR IGNORE` / `INSERT OR REPLACE`
-- PostgreSQL: `INSERT ... ON CONFLICT DO NOTHING` / `INSERT ... ON CONFLICT DO UPDATE`
+Generated SQL:
 
-## Error Handling
+*   SQLite: `INSERT OR IGNORE` / `INSERT OR REPLACE`
+*   PostgreSQL: `INSERT ... ON CONFLICT DO NOTHING` / `INSERT ... ON CONFLICT DO UPDATE`
 
-The module raises appropriate exceptions:
+## Error handling
 
-- `ValueError`: Invalid configuration or unsupported database type
-- `ConnectionError`: Operations attempted without connection
-- `ImportError`: psycopg2 not installed when using PostgreSQL
-- `sqlite3.Error`: SQLite-specific errors
-- `psycopg2.Error`: PostgreSQL-specific errors
+| Exception | Cause |
+| --- | --- |
+| `ValueError` | Invalid configuration or unsupported database type. |
+| `ConnectionError` | Operation attempted without a connection. |
+| `ImportError` | `pg8000` not installed when `type` is `postgres`. |
+| `sqlite3.Error` | SQLite-specific error. |
+| `pg8000.dbapi.DatabaseError` | PostgreSQL-specific error (`IntegrityError`, `OperationalError`, ...). |
+| `TimeoutError` | Pool had no connection available within `connect_timeout`. |
 
-All errors are logged before being raised.
+All errors are logged before they are raised.
 
-## Thread Safety
+## Thread safety
 
-SQLite connections are not thread-safe by default. For multi-threaded applications:
-- Create a new Database instance per thread, or
-- Use connection pooling (future enhancement)
+SQLite connections are not thread-safe by default. For multi-threaded use, create one `Database` instance per thread or use connection pooling.
 
-## PostgreSQL Notes
+## PostgreSQL notes
 
-- Uses `psycopg2-binary` driver (sync, not async)
-- Uses `RealDictCursor` for dict-like row access matching SQLite behavior
-- Autocommit is disabled by default to match SQLite transaction behavior
-- The `?` placeholder syntax is automatically converted to `%s`
-- Supports `sslmode` configuration (default: `prefer`)
-
-### PostgreSQL Configuration Options
+*   Uses the `pg8000` driver (synchronous, BSD-3-Clause), installed as `pg8000`.
+*   Rows are tuples; the execution layer rebuilds dicts from `cursor.description`, matching SQLite behavior.
+*   Autocommit is disabled to match SQLite transaction semantics.
+*   Connection pooling is in-tree (`engines/pool.py`), shared with the SQLite engine.
+*   `?` placeholders are converted to `%s` automatically.
+*   Supports `sslmode` — default `prefer` — see `plexichat/src/config_defaults.py:79`.
 
 ```yaml
 database:
@@ -287,28 +284,16 @@ database:
     sslmode: prefer  # disable, allow, prefer, require, verify-ca, verify-full
 ```
 
-### PostgreSQL Compatibility Status
+### Compatibility status
 
-All core modules have been migrated to use cross-database compatible methods:
+All core modules use the cross-database helpers. For new code, use the helpers instead of SQLite-specific syntax:
 
-- `voice/manager.py` - Channel settings and AFK settings
-- `search/manager.py` - Message, user, and server indexing
-- `search/schema.py` - Category seeding
-- `relationships/manager.py` - Friend creation
-- `presence/manager.py` - Presence, custom status, activity, and typing indicators
-
-The codebase is now fully compatible with both SQLite and PostgreSQL.
-
-### Writing Cross-Database Code
-
-For new code, always use the helper methods instead of SQLite-specific syntax:
-
-| SQLite Syntax | Cross-Database Method |
-|---------------|----------------------|
+| SQLite syntax | Cross-database method |
+| --- | --- |
 | `INSERT OR IGNORE` | `db.insert_or_ignore()` |
 | `INSERT OR REPLACE` | `db.upsert()` |
 
-Note: `AUTOINCREMENT` should be avoided; PostgreSQL uses `SERIAL` or `GENERATED AS IDENTITY`.
+Avoid `AUTOINCREMENT`; PostgreSQL uses `SERIAL` or `GENERATED AS IDENTITY`.
 
 ## Testing
 
@@ -316,26 +301,25 @@ Note: `AUTOINCREMENT` should be avoided; PostgreSQL uses `SERIAL` or `GENERATED 
 pytest src/tests/test_database.py -v
 ```
 
-PostgreSQL tests are skipped if no PostgreSQL server is available.
-
+PostgreSQL tests are skipped when no PostgreSQL server is available.
 
 ---
 
-# Valkey Module
+# Valkey module
 
-A Valkey client module for caching, sessions, presence, and pub/sub with connection pooling and graceful degradation.
+Valkey provides caching, sessions, presence, and pub/sub with pooling and graceful degradation — see `plexichat/src/config_defaults.py:111`.
 
 ## Features
 
-- Connection pooling with automatic reconnection
-- TLS/SSL support for secure connections
-- Key prefixing to avoid collisions
-- Graceful degradation when Valkey is unavailable
-- Pub/Sub support for real-time events
-- Decorator-based caching (`@cached`)
-- Session and presence caching helpers
-- Rate limiting support
-- Health checks and monitoring
+*   Connection pooling with automatic reconnection.
+*   TLS/SSL support.
+*   Key prefixing to avoid collisions.
+*   Graceful degradation when Valkey is unavailable.
+*   Pub/sub for real-time events.
+*   Decorator-based caching (`@cached`).
+*   Session and presence helpers.
+*   Rate limiting.
+*   Health checks and monitoring.
 
 ## Requirements
 
@@ -345,7 +329,7 @@ pip install valkey-glide-sync>=2.5.0
 
 ## Configuration
 
-Add to your `config.yaml`:
+Add to your `config.yaml` — see `plexichat/src/config_defaults.py:111`:
 
 ```yaml
 valkey:
@@ -364,18 +348,18 @@ valkey:
     cache: 60               # 1 minute default
 ```
 
-### Environment Variables
+### Environment variables
 
 | Variable | Description |
-|----------|-------------|
-| `VALKEY_URL` | Full Valkey URL (overrides config) |
-| `VALKEY_HOST` | Valkey host |
-| `VALKEY_PORT` | Valkey port |
-| `VALKEY_PASSWORD` | Valkey password |
+| --- | --- |
+| `VALKEY_URL` | Full Valkey URL (overrides config). |
+| `VALKEY_HOST` | Valkey host. |
+| `VALKEY_PORT` | Valkey port. |
+| `VALKEY_PASSWORD` | Valkey password. |
 
 ## Usage
 
-### Basic Valkey Client
+### Basic Valkey client
 
 ```python
 from src.core.database import ValkeyClient
@@ -411,16 +395,49 @@ client.decr("stock", 5)
 client.close()
 ```
 
-### Context Manager
+### Context manager
 
 ```python
 with ValkeyClient() as client:
     client.set("key", "value")
     value = client.get("key")
-# Connection automatically closed
+# Connection is closed automatically.
+
+async with ValkeyClient() as client:
+    await client.aset("key", "value")
+    value = await client.aget("key")
 ```
 
-### Module-Level Setup
+### Async client (event loop)
+
+The client holds two handles, and each has its own interface: the blocking
+methods (`set`, `get`, `eval_lua`) run off the event loop, and the `a*`
+methods (`aset`, `aget`, `aeval_lua`) are awaited on it. Use the `a*` forms
+from anything running on the loop — routes, middleware, WebSocket handlers —
+otherwise a blocking call stalls every other request on that worker.
+
+```python
+from src.core.database import get_valkey_client
+from src.core.database.valkey_client import asetup
+
+# Inside the serving loop; returns None when Valkey is disabled/unreachable
+await asetup()
+
+client = get_valkey_client()
+if client is not None:
+    await client.aset_json("user:1", {"name": "Alice"})
+    user = await client.aget_json("user:1")
+```
+
+The app opens and closes the async handle in its lifespan, so application
+code only needs to await the operations. An `a*` call made before the handle
+is open raises `ValkeyConnectionError` rather than returning a silent miss,
+which keeps a missing cache from turning into a bypass.
+
+See `valkey_client/README.md` for the full dual-handle design and the
+complete async command surface.
+
+### Module-level setup
 
 ```python
 from src.core.database import setup_valkey, get_valkey_client, valkey_available
@@ -434,32 +451,31 @@ if valkey_available():
     client.set("key", "value")
 ```
 
-### Caching Decorator
+### Caching decorator
 
 ```python
 from src.core.database import cached
 
 @cached(ttl=300)
 def get_user(user_id: int) -> dict:
-    # Expensive database query
     return db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
 
-# First call executes function, caches result
+# First call executes and caches
 user = get_user(1)
 
-# Second call returns cached result
+# Second call returns the cached result
 user = get_user(1)
 
-# Invalidate cache
+# Invalidate
 get_user.invalidate(1)
 ```
 
-### Manual Cache Operations
+### Manual cache operations
 
 ```python
 from src.core.database import cache_get, cache_set, cache_delete, invalidate_pattern
 
-# Set/get
+# Set and get
 cache_set("user:1:profile", {"name": "Alice"}, ttl=300)
 profile = cache_get("user:1:profile")
 
@@ -470,7 +486,7 @@ cache_delete("user:1:profile")
 invalidate_pattern("user:1:*")  # Deletes all user:1:* keys
 ```
 
-### Session Caching
+### Session caching
 
 ```python
 from src.core.database import (
@@ -483,17 +499,17 @@ from src.core.database import (
 # Cache a session
 cache_session("sess_abc123", user_id=1, data={"ip": "127.0.0.1"})
 
-# Get session
+# Get a session
 session = get_cached_session("sess_abc123")
 
-# Invalidate single session
+# Invalidate one session
 invalidate_session("sess_abc123", user_id=1)
 
-# Invalidate all user sessions (logout everywhere)
+# Invalidate all sessions for a user (logout everywhere)
 invalidate_user_sessions(user_id=1)
 ```
 
-### Presence Caching
+### Presence caching
 
 ```python
 from src.core.database import (
@@ -505,14 +521,14 @@ from src.core.database import (
 # Cache presence
 cache_presence(user_id=1, status="online", custom_status="Playing games")
 
-# Get single presence
+# Get one presence
 presence = get_cached_presence(1)
 
 # Get multiple presences
 presences = get_bulk_presence([1, 2, 3, 4, 5])
 ```
 
-### Rate Limiting
+### Rate limiting
 
 ```python
 from src.core.database import check_rate_limit, reset_rate_limit
@@ -521,13 +537,13 @@ from src.core.database import check_rate_limit, reset_rate_limit
 allowed, remaining = check_rate_limit("user:1:api", limit=5, window_seconds=60)
 
 if not allowed:
-    raise RateLimitExceeded(f"Rate limit exceeded. Try again later.")
+    raise RateLimitExceeded("Rate limit exceeded. Try again later.")
 
-# Reset rate limit
+# Reset
 reset_rate_limit("user:1:api")
 ```
 
-### Pub/Sub
+### Pub/sub
 
 ```python
 from src.core.database import ValkeyClient
@@ -545,7 +561,7 @@ for message in pubsub.listen():
         print(f"Received: {message['data']}")
 ```
 
-### Health Check
+### Health check
 
 ```python
 from src.core.database import cache_health
@@ -569,16 +585,12 @@ print(health)
 
 ### Authentication
 
-Set a password in Valkey and config:
-
 ```yaml
 valkey:
   password: "your-secure-password"
 ```
 
 ### TLS/SSL
-
-For encrypted connections:
 
 ```yaml
 valkey:
@@ -587,25 +599,22 @@ valkey:
   ssl_ca_certs: /path/to/ca-cert.pem
 ```
 
-### Key Prefixing
+### Key prefixing
 
-All keys are automatically prefixed to avoid collisions:
+All keys are prefixed automatically — see `plexichat/src/config_defaults.py:118`:
 
 ```yaml
 valkey:
   key_prefix: "plexichat:"
 ```
 
-A key `user:1` becomes `plexichat:user:1` in Valkey.
+A key `user:1` becomes `plexichat:user:1`.
 
-### Input Sanitization
+### Input sanitization
 
-Keys are automatically sanitized to prevent injection:
-- Control characters removed
-- Length limited to 512 characters
-- No sensitive data should be stored in keys (use IDs only)
+Keys are sanitized: control characters are removed and length is limited to 512 characters. Do not store sensitive data in keys; use IDs only.
 
-## Error Handling
+## Error handling
 
 ```python
 from src.core.database import (
@@ -626,9 +635,9 @@ except ValkeyOperationError as e:
     logger.error(f"Valkey operation failed: {e}")
 ```
 
-## Graceful Degradation
+## Graceful degradation
 
-The cache module gracefully handles Valkey unavailability:
+If Valkey is unavailable, cached decorators and helpers fall back to direct execution:
 
 ```python
 from src.core.database import cached, valkey_available
@@ -637,10 +646,9 @@ from src.core.database import cached, valkey_available
 def get_user(user_id: int) -> dict:
     return db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
 
-# If Valkey is down, function executes normally without caching
+# If Valkey is down, the function runs without caching
 user = get_user(1)
 
-# Check availability
 if valkey_available():
     # Valkey-specific operations
     pass
@@ -649,29 +657,27 @@ if valkey_available():
 ## Testing
 
 ```bash
-# Run tests
 pytest src/tests/test_valkey.py -v
 ```
 
-Tests use an in-memory mock for unit tests. Integration tests with real Valkey are skipped if Valkey is unavailable.
-
+Tests use an in-memory mock. Integration tests are skipped when Valkey is unavailable.
 
 ---
 
-# RAM Cache Module
+# RAM cache module
 
-In-memory caching for small, frequently-read reference tables that rarely change.
+RAM cache provides in-memory caching for small, rarely changing reference tables.
 
-## When to Use RAM Cache vs Valkey
+## When to use RAM cache vs Valkey
 
-| Use Case | RAM Cache | Valkey |
-|----------|-----------|-------|
-| Static reference data (categories, config) | OK | |
-| User-specific data (settings, presence) | | OK |
-| Session data | | OK |
-| Data shared across server instances | | OK |
-| Data that changes frequently | | OK |
-| Tiny tables (< 100 rows) read 1000x/sec | OK | |
+| Use case | RAM cache | Valkey |
+| --- | --- | --- |
+| Static reference data (categories, config) | Yes |  |
+| User-specific data (settings, presence) |  | Yes |
+| Session data |  | Yes |
+| Data shared across instances |  | Yes |
+| Frequently changing data |  | Yes |
+| Tiny tables (< 100 rows) read 1000x/sec | Yes |  |
 
 ## Usage
 
@@ -681,58 +687,60 @@ from src.core.database import RAMCache, create_cache, get_cache
 # Create a cache for categories (1 hour TTL)
 cache = create_cache("categories", ttl=3600)
 
-# Load data from database
+# Load data from the database
 cache.load(db, "SELECT * FROM search_categories ORDER BY position")
 
 # Get all items
 all_categories = cache.get_all()
 
-# Get by field value
+# Get by field
 gaming = cache.get("id", "gaming")
 
 # Get multiple by field
 selected = cache.get_many("id", ["gaming", "music", "tech"])
 
-# Filter with predicate
+# Filter with a predicate
 popular = cache.filter(lambda x: x["server_count"] > 100)
 
 # Invalidate on write
 cache.invalidate()
 ```
 
-## Thread Safety
+## Thread safety
 
-The RAM cache is thread-safe using `threading.RLock`. Multiple threads can safely read and write concurrently.
+The RAM cache is thread-safe through `threading.RLock`.
 
-## Auto-Reload
+## Auto-reload
 
-If the cache expires and has a stored query, it will automatically reload from the database on the next access.
+If the cache expires and has a stored query, it reloads from the database on the next access.
 
 ---
 
-# Caching Strategy
+# Caching strategy
 
-Plexichat uses a multi-tier caching strategy:
+Plexichat uses a multi-tier strategy:
 
-## Tier 1: RAM Cache (In-Process)
-- **TTL**: 1 hour
-- **Data**: Static reference tables (search_categories)
-- **Latency**: ~1 nanosecond
+## Tier 1: RAM cache (in-process)
 
-## Tier 2: Valkey Cache (External)
-- **TTL**: 30 seconds to 10 minutes depending on data type
-- **Data**: User data, server info, notification settings, sessions, presence
-- **Latency**: ~0.5-2ms
+*   **TTL**: 1 hour
+*   **Data**: Static reference tables such as `search_categories`.
+*   **Latency**: ~1 microsecond
 
-## Tier 3: Database (PostgreSQL)
-- **TTL**: Permanent
-- **Data**: All persistent data
-- **Latency**: ~5-50ms
+## Tier 2: Valkey cache (external)
 
-## Cache Keys
+*   **TTL**: 30 seconds to 10 minutes depending on data type.
+*   **Data**: User data, server info, notification settings, sessions, presence.
+*   **Latency**: ~0.5–2 ms
 
-| Data Type | Key Pattern | TTL |
-|-----------|-------------|-----|
+## Tier 3: Database (PostgreSQL or SQLite)
+
+*   **Data**: All persistent data.
+*   **Latency**: ~5–50 ms
+
+## Cache keys
+
+| Data type | Key pattern | TTL |
+| --- | --- | --- |
 | User profile | `user:{user_id}` | 60s |
 | Server info | `server:{server_id}` | 300s |
 | Notification settings | `notif_settings:{user_id}:{server_id}` | 600s |
@@ -740,13 +748,21 @@ Plexichat uses a multi-tier caching strategy:
 | Presence | `presence:{user_id}` | 300s |
 | Token verification | `token:{hash}` | 30s |
 
-## Cache Invalidation
+## Cache invalidation
 
 Caches are invalidated on writes:
-- User update -> invalidate `user:*{user_id}*`
-- Server update -> invalidate `server:{server_id}`
-- Settings update -> invalidate `notif_settings:{user_id}:*`
 
-## Graceful Degradation
+*   User update invalidates `user:*{user_id}*`.
+*   Server update invalidates `server:{server_id}`.
+*   Settings update invalidates `notif_settings:{user_id}:*`.
 
-If Valkey is unavailable, all operations fall back to direct database queries. The application continues to function, just with higher latency.
+## Graceful degradation
+
+If Valkey is unavailable, all operations fall back to direct database queries. The app continues to function with higher latency.
+
+## Gateway opcodes and intents
+
+For real-time cache invalidation events sent over the gateway — see `plexichat/src/api/websocket/opcodes.py:40` and `plexichat/src/core/events/types.py:120`:
+
+*   Opcodes: `50 RATCHET_UPDATE`, `60 ARTIFACT_SUBSCRIBE`, `61 ARTIFACT_UNSUBSCRIBE`, `62 ARTIFACT_OP`, `63 ARTIFACT_SYNC`, `64 SUM_SUBSCRIBE`, `65 SUM_UNSUBSCRIBE`, `66 SUM_OP`, `67 SUM_SYNC`.
+*   Intents: `1<<20 ARTIFACTS` and `1<<21 SUMS`.

@@ -1,124 +1,71 @@
-# Voice Configuration
+# Voice configuration
 
-This guide covers voice and video configuration for deploying Plexichat in production. Voice settings control WebRTC signaling, STUN/TURN servers for NAT traversal, and SFU (Selective Forwarding Unit) backend selection. Proper configuration is essential for reliable voice/video connectivity across different network environments.
+This guide describes how to configure voice and video for Plexichat. Voice settings control WebRTC signaling, STUN and TURN servers for NAT traversal, and the SFU (Selective Forwarding Unit) backend. Correct configuration is essential for reliable connectivity.
 
-## Configuration Location
+## Configuration location
 
-All voice settings are nested under the `voice` key in your configuration file:
+Add voice settings to your `config.yaml` file under the `voice` key (`src/config_defaults.py:397`):
 
 ```yaml
 voice:
-  # All voice settings go here
+  # Voice settings
 ```
 
-## SFU Backend Selection
+## SFU backend selection
 
-Choose the Selective Forwarding Unit backend for handling voice/video streams.
+Choose the SFU backend that routes voice and video streams between participants.
 
 ### Configuration
 
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "mediasoup"
+  sfu_backend: "aiortc"   # Default is aiortc. Defined in src/config_defaults.py:399
 ```
 
-### Deployment Considerations
+Plexichat supports four backend values in `src/core/voice/signaling/sfu/__init__.py:45` and `src/core/voice/signaling/manager/base.py:32`:
 
-**Why SFU Backend Choice Matters**
+| Value | Implementation | Transport |
+| --- | --- | --- |
+| `aiortc` | Pure Python in `src/core/voice/signaling/sfu/aiortc_adapter.py` | In-process |
+| `mediasoup-ws` | WebSocket adapter in `src/core/voice/signaling/sfu/mediasoup_ws.py` | `wss://` or `ws://` |
+| `mediasoup` | REST adapter in `src/core/voice/signaling/sfu/mediasoup.py` | `https://` or `http://` |
+| `janus` | REST adapter in `src/core/voice/signaling/sfu/janus.py` | `http://` or `https://` |
 
-The SFU backend determines how voice/video streams are routed between participants. This choice impacts scalability, performance, resource requirements, and operational complexity. See [Deployment Guide](deployment.md#scaling-considerations) for scaling strategies.
+> **Note:** The fallback in `src/core/voice/signaling/manager/base.py:32` is `aiortc` when `sfu_backend` is absent. Use `mediasoup-ws` when your mediasoup server exposes the `mediasoup-demo` WebSocket API.
 
-**aiortc (Python-based)**
+### Deployment considerations
 
-**When to Use**
+**aiortc (Python-based, default)**
 
-- Development and testing environments
-- Small deployments with fewer than 50 concurrent voice users
-- Single-server deployments
-- Scenarios where operational simplicity is prioritized
+Use aiortc when you want operational simplicity.
 
-**Advantages**
-
-- No additional infrastructure required
-- Built-in to Plexichat (Python-only)
-- Simple configuration
-- Lower operational complexity
-
-**Limitations**
-
-- Limited scalability (single-process)
-- Higher CPU usage per participant
-- No horizontal scaling capability
-- Not suitable for large voice channels
-
-**Performance Characteristics**
-
-- CPU-intensive: Each participant's media is processed in Python
-- Memory usage: Moderate (~50-100MB per participant)
-- Network bandwidth: Standard WebRTC requirements
-- Latency: Good (local processing)
+*   **When to use it:** Development, testing, or single-server deployments with fewer than 50 concurrent voice users.
+*   **Advantages:** No external SFU is required. The SFU runs inside the Plexichat process. Configuration is minimal.
+*   **Limitations:** Single-process and CPU-intensive. Each participant uses about 10–20% of a CPU core and 50–100 MB of RAM. Not suitable for large channels.
+*   **Performance:** Good latency for local processing. No horizontal scaling.
 
 **mediasoup (C++-based)**
 
-**When to Use**
+Use mediasoup for production and large channels.
 
-- Production deployments of any scale
-- Multi-server deployments requiring horizontal scaling
-- Large voice channels (50+ participants)
-- High-performance requirements
-
-**Advantages**
-
-- Highly scalable (can handle hundreds of participants)
-- Lower CPU usage per participant (C++ implementation)
-- Horizontal scaling capability
-- Advanced features (simulcast, SVC, transport-wide CC)
-
-**Limitations**
-
-- Requires separate mediasoup server installation
-- Additional infrastructure and operational complexity
-- Network latency between Plexichat and mediasoup
-- Requires mediasoup configuration and monitoring
-
-**mediasoup Variants**
-
-- **mediasoup-ws**: WebSocket connection to mediasoup (recommended for new deployments)
-- **mediasoup**: REST API connection to mediasoup
-- Both require mediasoup server deployment
+*   **When to use it:** Production deployments, large channels with 50 or more participants, or when you need horizontal scaling.
+*   **Advantages:** Highly scalable, lower CPU per participant (C++), simulcast and SVC support, transport-wide congestion control.
+*   **Limitations:** Requires a separate Node.js mediasoup server and additional monitoring.
 
 **Janus Gateway**
 
-**When to Use**
+Use Janus when you already run Janus Gateway or need its plugin ecosystem.
 
-- Existing Janus Gateway infrastructure
-- Integration with other Janus-based services
-- Deployments requiring Janus-specific features
+*   **When to use it:** Existing Janus infrastructure or deployments that need SIP interop.
+*   **Advantages:** Mature media server with extensive plugins.
+*   **Limitations:** Requires Janus installation and configuration. Not optimized for Plexichat.
 
-**Advantages**
+**Recommendation:** For production, use `mediasoup` or `mediasoup-ws`. For development or small single-server deployments, use `aiortc`.
 
-- Mature, battle-tested media server
-- Extensive plugin ecosystem
-- Supports multiple protocols (WebRTC, SIP, etc.)
-- Good documentation and community support
+## aiortc configuration
 
-**Limitations**
-
-- Requires Janus Gateway installation and configuration
-- Additional infrastructure complexity
-- REST API latency
-- Not specifically optimized for Plexichat use case
-
-**Production Recommendation**
-
-For production deployments, use **mediasoup** for best scalability and performance. For development or small deployments, **aiortc** provides the simplest setup.
-
----
-
-## aiortc Configuration
-
-Settings for the built-in Python-based SFU.
+The built-in Python SFU requires no external service.
 
 ### Configuration
 
@@ -128,92 +75,68 @@ voice:
   sfu_backend: "aiortc"
 ```
 
-**Note**: The runtime fallback for `sfu_backend` (when the key is absent from your `voice:` config block) is `aiortc`. This section applies to the built-in Python-based SFU which requires no external infrastructure.
+The adapter is `src/core/voice/signaling/sfu/aiortc_adapter.py:110`. It raises `SFUConnectionError` at startup if the `aiortc` package is not installed.
 
-### Deployment Considerations
+Optional settings forwarded to the adapter:
 
-**Resource Requirements**
+```yaml
+voice:
+  stun_urls:
+    - "stun:stun.l.google.com:19302"
+  turn_urls: []
+  turn_username: ""
+  turn_credential: ""
+  turn_secret: ""
+  turn_ttl: 86400
+  acoustic_defense:
+    enabled: false
+```
 
-- **CPU**: ~10-20% CPU core per participant (varies by codec and quality)
-- **Memory**: ~50-100MB RAM per participant
-- **Network**: Standard WebRTC bandwidth (up to 2Mbps per participant for HD video)
-- **Ports**: UDP port range for media transport (typically 50000-60000)
+In `src/core/voice/signaling/manager/base.py:72`, Plexichat converts `stun_urls` and `turn_urls` to the `ice_servers` list that `AiortcAdapter` expects.
 
-**Performance Tuning**
+### Deployment considerations
 
-- **Codec Selection**: Opus for audio, VP8/VP9/H.264 for video
-- **Bitrate**: Configure appropriate bitrate based on network conditions
-- **Simulcast**: Not available in aiortc (consider mediasoup for this feature)
-- **CPU Pinning**: Consider pinning Python process to specific CPU cores
+*   Install `aiortc==1.15.0` (`requirements.in:62`). Also install native dependencies for Opus, libsrtp, and libvpx.
+*   Reserve UDP ports for media if your firewall restricts outbound traffic.
+*   Monitor CPU during peak voice usage. Move to mediasoup if CPU saturates.
 
-**Operational Notes**
-
-- Monitor CPU usage during peak voice usage
-- Ensure sufficient network bandwidth for media traffic
-- Configure firewall to allow UDP media ports
-- Test with expected number of participants before production
-
----
-
-## mediasoup Configuration
-
-Settings for mediasoup-based SFU deployment.
+## mediasoup configuration
 
 ### Configuration
 
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "mediasoup"
+  sfu_backend: "mediasoup"        # Or mediasoup-ws for WebSocket mode
   mediasoup_url: "https://localhost:4443"
 ```
 
-**Note**: The SFU backend value is `mediasoup`, not `mediasoup-ws`. The `mediasoup_origin` key exists in the signaling manager code but is not exposed as a top-level config key -- it defaults to `https://localhost`. The `mediasoup_url` uses `https://` (REST API) or `wss://` (WebSocket) depending on your mediasoup server setup.
+*   `mediasoup_url` is defined in `src/config_defaults.py:400`.
+*   The manager in `src/core/voice/signaling/manager/base.py:95` converts `https://` to `wss://` and `http://` to `ws://` when `sfu_backend` is `mediasoup-ws`.
+*   The internal config also includes `mediasoup_origin` (default `https://localhost` in `src/core/voice/signaling/manager/base.py:34`), which is sent as the `Origin` header for CORS on WebSocket connections. It is not a top-level key in `config.yaml`.
 
-### Deployment Considerations
+### Deployment considerations
 
-**mediasoup Installation**
+1.  Install Node.js and mediasoup:
 
-1. Install Node.js (required for mediasoup)
-2. Install mediasoup:
-   ```bash
-   npm install mediasoup
-   ```
+    ```bash
+    npm install mediasoup
+    ```
 
-3. Deploy mediasoup server (see mediasoup documentation for server setup)
-4. Configure WebSocket or REST API endpoint
+2.  Deploy the mediasoup server and expose either a WebSocket endpoint (`mediasoup-ws`) or a REST endpoint (`mediasoup`).
+3.  Point `mediasoup_url` to that endpoint. Use `wss://` or `https://` in production.
 
-**WebSocket vs REST API**
+**WebSocket versus REST**
 
-- **mediasoup-ws**: WebSocket connection (recommended for real-time bidirectional communication)
-- **mediasoup**: REST API connection (simpler firewall rules, higher latency)
+*   `mediasoup-ws` — Bidirectional WebSocket (recommended for real-time signaling).
+*   `mediasoup` — REST API (simpler firewall rules, higher latency).
 
-**URL Configuration**
+**Resource requirements**
 
-- **mediasoup_url**: WebSocket URL (wss://) or REST API URL (https://)
-- **mediasoup_origin**: Origin header for CORS (required for WebSocket connections)
-- **SSL/TLS**: Use wss:// and https:// for production security
+*   About 2–5% of a CPU core and 10–20 MB of RAM per participant.
+*   Scales horizontally. Put multiple mediasoup hosts behind a load balancer.
 
-**Resource Requirements**
-
-- **CPU**: ~2-5% CPU core per participant (much more efficient than aiortc)
-- **Memory**: ~10-20MB RAM per participant
-- **Network**: Standard WebRTC bandwidth
-- **Scaling**: Can scale horizontally across multiple mediasoup instances
-
-**Operational Notes**
-
-- Deploy mediasoup on separate server from Plexichat for better resource isolation
-- Use load balancer for multiple mediasoup instances
-- Monitor mediasoup health and performance metrics
-- Implement health checks and automatic failover
-- Configure appropriate codec settings in mediasoup
-
----
-
-## Janus Configuration
-
-Settings for Janus Gateway integration.
+## Janus configuration
 
 ### Configuration
 
@@ -221,54 +144,16 @@ Settings for Janus Gateway integration.
 voice:
   enabled: true
   sfu_backend: "janus"
-  janus_url: "http://localhost:8088/janus"
+  janus_url: "http://localhost:8088/janus"   # Defined in src/config_defaults.py:401
 ```
 
-### Deployment Considerations
+### Deployment considerations
 
-**Janus Installation**
+1.  Install Janus Gateway and its dependencies (`libnice`, `openssl`, `libsrtp`).
+2.  Enable the VideoRoom plugin.
+3.  Start Janus and set `janus_url` to the REST API. Use `https://` in production.
 
-1. Install dependencies (libnice, openssl, libsrtp, etc.)
-2. Install Janus Gateway:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install janus
-
-   # Or build from source
-   git clone https://github.com/meetecho/janus-gateway.git
-   cd janus-gateway
-   sh autogen.sh
-   ./configure --enable-docs --prefix=/opt/janus
-   make
-   sudo make install
-   ```
-
-3. Configure Janus (edit `/etc/janus/janus.jcfg` or `/opt/janus/etc/janus/janus.jcfg`)
-4. Start Janus Gateway
-
-**URL Configuration**
-
-- **janus_url**: REST API URL for Janus Gateway
-- **SSL/TLS**: Use https:// for production security
-- **Authentication**: Configure Janus authentication if required
-
-**Resource Requirements**
-
-- **CPU**: ~5-10% CPU core per participant
-- **Memory**: ~20-40MB RAM per participant
-- **Network**: Standard WebRTC bandwidth
-- **Plugins**: Ensure video room plugin is enabled
-
-**Operational Notes**
-
-- Configure Janus for production use (security, logging, etc.)
-- Monitor Janus health and performance
-- Use Janus admin API for monitoring and management
-- Configure appropriate codec settings in Janus configuration
-
----
-
-## STUN/TURN Configuration
+## STUN and TURN configuration
 
 Configure STUN and TURN servers for NAT traversal.
 
@@ -278,6 +163,9 @@ Configure STUN and TURN servers for NAT traversal.
 voice:
   stun_urls:
     - "stun:stun.l.google.com:19302"
+    - "stun:stun1.l.google.com:19302"
+    - "stun:stun2.l.google.com:19302"
+    - "stun:stun3.l.google.com:19302"
   turn_urls: []
   turn_secret: ""
   turn_ttl: 86400
@@ -285,96 +173,35 @@ voice:
   turn_credential: ""
 ```
 
-### Deployment Considerations
+Defaults are in `src/config_defaults.py:402`. The ICE server builder `src/core/voice/signaling/turn.py` (via `src/core/voice/signaling/manager/base.py:119`) turns these values into the ICE servers that Plexichat returns to clients.
 
-**Why STUN/TURN Matters**
+### Deployment considerations
 
-WebRTC uses peer-to-peer connections that often fail due to NAT (Network Address Translation). STUN helps discover public IP addresses. TURN relays traffic when direct connection is impossible.
+**Why STUN and TURN matter**
 
-**STUN Servers**
+WebRTC uses peer-to-peer connections. NAT blocks many direct connections. STUN helps peers discover their public IP address. TURN relays media when a direct connection is not possible.
 
-- **Purpose**: Help peers discover their public IP address and port
-- **Cost**: Free public STUN servers available (Google, Twilio, etc.)
-- **Reliability**: Public STUN servers are generally reliable
-- **Required**: Always configure at least one STUN server
+**STUN servers**
 
-**Public STUN Servers**
+*   Always configure at least one STUN server.
+*   Free public servers include `stun:stun.l.google.com:19302`, `stun:global.stun.twilio.com:3478`, and `stun:stun.services.mozilla.com`.
+*   Configure multiple servers for redundancy.
 
-- Google: `stun:stun.l.google.com:19302`
-- Twilio: `stun:global.stun.twilio.com:3478`
-- Mozilla: `stun:stun.services.mozilla.com`
-- Multiple STUN servers improve reliability
+**TURN servers**
 
-**TURN Servers**
+You need TURN when users are behind symmetric NAT, restrictive firewalls, or carrier-grade NAT (mobile networks).
 
-- **Purpose**: Relay media traffic when direct connection fails (symmetric NAT, firewalls)
-- **Cost**: Requires bandwidth and hosting (not free)
-- **Required**: Essential for connectivity behind restrictive NAT/firewalls
-- **Deployment**: Can use coturn (open source) or commercial TURN services
+Options:
 
-**When TURN is Required**
+*   Self-host `coturn` (open source)
+*   Commercial services such as Twilio Network Traversal, Xirsys, or Metered.ca
 
-- Users behind symmetric NAT (common in corporate networks)
-- Users behind restrictive firewalls - see [Deployment Guide](deployment.md#network-configuration)
-- Mobile networks (carrier-grade NAT)
-- Any scenario where direct P2P connection fails
+**TURN authentication**
 
-**TURN Deployment Options**
+*   **Time-limited credentials (recommended):** Set `turn_secret` and `turn_ttl`. Coturn generates temporary credentials. The default TTL is `86400` seconds (24 hours).
+*   **Static credentials:** Set `turn_username` and `turn_credential`. Use this for services that issue static credentials.
 
-**Self-Hosted (coturn)**
-
-1. Install coturn:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install coturn
-
-   # Or build from source
-   git clone https://github.com/coturn/coturn.git
-   cd coturn
-   ./configure
-   make
-   sudo make install
-   ```
-
-2. Configure coturn (`/etc/turnserver.conf`):
-   ```
-   listening-port=3478
-   external-ip=<your-public-ip>
-   realm=plexichat.example
-   user=plexichat:<shared-secret>
-   lt-cred-mech
-   ```
-
-3. Start coturn:
-   ```bash
-   sudo systemctl start coturn
-   sudo systemctl enable coturn
-   ```
-
-**Commercial TURN Services**
-
-- Twilio Network Traversal
-- Xirsys
-- Metered.ca
-- These services provide TURN servers with monthly pricing
-
-**TURN Authentication Methods**
-
-**Time-Limited Credentials (Recommended)**
-
-- Use `turn_secret` and `turn_ttl` for time-limited credentials
-- More secure than static credentials
-- Credentials expire after TTL (86400 seconds = 24 hours default)
-- Requires coturn or TURN service that supports time-limited credentials
-
-**Static Credentials**
-
-- Use `turn_username` and `turn_credential` for static credentials
-- Simpler but less secure
-- Never rotate credentials
-- Suitable for services like Metered.ca that use static credentials
-
-**TURN Configuration Example**
+**Example with TURN**
 
 ```yaml
 voice:
@@ -384,275 +211,139 @@ voice:
   turn_urls:
     - "turn:turn.example.com:3478?transport=udp"
     - "turn:turn.example.com:3478?transport=tcp"
-  turn_secret: "your-secret-key-here"
+  turn_secret: "your-secret-key"
   turn_ttl: 86400
 ```
 
-**Operational Notes**
+The signaling manager in `src/core/voice/signaling/manager/base.py:76` includes TURN URLs with static credentials when `turn_username` and `turn_credential` are both set, and includes bare TURN URLs when `turn_secret` is set.
 
-- Test TURN connectivity from various network environments
-- Monitor TURN server bandwidth usage and costs
-- Configure firewall to allow TURN traffic (UDP 3478, TCP 443 for TURN over TLS)
-- Use multiple TURN servers for redundancy
-- Monitor TURN server health and availability
+## Acoustic defense
 
----
+Plexichat can apply optional acoustic eavesdropping defenses to audio tracks.
 
-## Bitrate Configuration
+```yaml
+voice:
+  acoustic_defense:
+    enabled: false
+    jitter_ms_min: 5.0
+    jitter_ms_max: 20.0
+    spectral_masking: true
+    spectral_mask_noise_db: -40.0
+    spectral_mask_low_hz: 1000.0
+    spectral_mask_high_hz: 8000.0
+    vad_gating: true
+    vad_speech_threshold: 0.02
+    vad_silence_frames: 3
+    transient_shaving: true
+    transient_attack_ms: 0.5
+    transient_release_ms: 5.0
+    transient_ratio: 0.3
+```
 
-Configure maximum bitrate for voice/video streams.
+The defaults are in `src/config_defaults.py:414` and the dataclass is in `src/core/voice/signaling/sfu/base.py:27`. When `enabled` is `true`, the SFU wraps audio tracks with `src/core/voice/signaling/sfu/acoustic_defense.py:AudioProcessingTrack`.
+
+## Bitrate and participant limits
 
 ### Configuration
 
 ```yaml
-# Bitrate is not a server config key. It is controlled by the SFU backend
-# (mediasoup/janus) and WebRTC negotiation. Configure bitrate limits in your
-# SFU server configuration, not in the Plexichat config file.
+# Plexichat has no max_bitrate or max_participants_per_channel keys.
+# Configure bitrate and room size in your SFU server, not in config.yaml.
+# Participant limits per tier are in user_features.rate_limit_tiers
+# (src/config_defaults.py:345).
 ```
 
-**Note**: There is no `max_bitrate` config key in the Plexichat server. Bitrate is negotiated between clients and the SFU backend. To enforce bitrate limits, configure them in your mediasoup or Janus server settings.
+Bitrate is negotiated between clients and the SFU. To enforce a cap, configure the limit in your `mediasoup` or `Janus` server.
 
-### Deployment Considerations
+For limits per tier, see `src/config_defaults.py:345`. For example, the `standard` tier allows `max_voice_minutes_per_day: 120` and the `premium` tier allows unlimited minutes. These values control how long a user can stay in voice, not how many users can join a channel.
 
-**Why Bitrate Matters**
+### Deployment considerations
 
-Bitrate determines audio/video quality and bandwidth consumption. Higher bitrate provides better quality but requires more bandwidth and can cause performance issues on slow connections.
+**Bitrate guidelines**
 
-**Bitrate Recommendations**
+*   Voice only: 64–128 kbps
+*   Standard video: 500–1000 kbps
+*   HD video: 1500–3000 kbps
 
-- **Voice Only**: 64-128 kbps (128000 = 128 kbps)
-- **Standard Video**: 500-1000 kbps (500000-1000000)
-- **HD Video**: 1500-3000 kbps (1500000-3000000)
-- **4K Video**: 8000-15000 kbps (8000000-15000000)
+**Participant guidelines**
 
-**Default Value**
+*   aiortc: 10–20 participants per channel
+*   mediasoup or Janus: 50–100 participants per channel
 
-- **Default**: 128000 (128 kbps) is appropriate for voice-only or low-quality video
-- **Production**: Increase to 500000 (500 kbps) for standard video quality
-- **High-Quality**: Increase to 2000000 (2 Mbps) for HD video
-- **Bandwidth-Constrained**: Reduce to 64000 (64 kbps) for voice-only
+Plexichat uses an SFU architecture. Each participant sends one stream to the server and receives N streams. This scales linearly, unlike a mesh.
 
-**Adaptive Bitrate**
+## Network configuration
 
-- Plexichat may implement adaptive bitrate based on network conditions
-- Configure max_bitrate as the upper limit
-- Lower quality automatically on poor connections
+Open the ports that your SFU and TURN deployment needs:
 
-**Operational Notes**
+| Service | Ports |
+| --- | --- |
+| STUN and TURN | UDP and TCP `3478` |
+| TURN over TLS | TCP `443` |
+| Media transport (aiortc) | UDP `50000`–`60000` (configurable) |
+| mediasoup WebSocket | TCP `4443` |
+| Janus REST API | TCP `8088` |
 
-- Monitor bandwidth usage during voice/video calls
-- Adjust based on user network conditions and feedback
-- Consider implementing quality selection in client application
-- Test with various network conditions before production
-
----
-
-## Participant Limits
-
-Configure maximum participants per voice channel.
-
-### Configuration
-
-```yaml
-# There is no max_participants_per_channel config key in the Plexichat server.
-# Participant limits are enforced by the SFU backend and user feature tiers.
-# See the user_features.rate_limit_tiers section in default-config.md for
-# max_voice_minutes_per_day limits per tier.
-```
-
-**Note**: There is no `max_participants_per_channel` config key. Participant limits per voice channel are handled by the SFU backend's configuration, not by the Plexichat config file. See your mediasoup or Janus documentation for room size limits.
-
-### Deployment Considerations
-
-**Why Participant Limits Matter**
-
-Participant limits prevent resource exhaustion, ensure quality of service, and manage infrastructure costs. Without limits, large voice channels could overwhelm server resources.
-
-**Participant Limit Guidelines**
-
-- **aiortc Backend**: 10-20 participants (CPU-intensive)
-- **mediasoup Backend**: 50-100 participants (scalable)
-- **Janus Backend**: 50-100 participants (scalable)
-- **Default**: 25 is a conservative limit for most backends
-
-**Resource Impact**
-
-- **CPU**: Each participant adds processing load
-- **Memory**: Each participant consumes memory for media buffers
-- **Network**: Each participant sends/receives media streams
-- **Bandwidth**: N*(N-1) connections in mesh, N connections in SFU
-
-**SFU vs Mesh**
-
-- **SFU (Selective Forwarding Unit)**: Each participant sends 1 stream, receives N streams. Server handles routing. Scales better.
-- **Mesh**: Each participant connects to every other participant. N*(N-1) total connections. Doesn't scale well.
-
-Plexichat uses SFU architecture, so participant count scales linearly with server resources.
-
-**Operational Notes**
-
-- Monitor CPU and memory usage during large voice channels
-- Implement participant limits per server instance
-- Consider sharding large channels across multiple SFU instances
-- Provide user feedback when channel is full
-- Monitor voice channel sizes and adjust limits based on usage patterns
-
----
-
-## Network Configuration
-
-Configure network settings for voice/video traffic.
-
-### Firewall Configuration
-
-**Required Ports**
-
-- **STUN/TURN**: UDP 3478, TCP 3478
-- **Media Transport**: UDP 50000-60000 (configurable in SFU)
-- **WebSocket**: TCP 4443 (for mediasoup-ws)
-- **REST API**: TCP 8088 (for Janus)
-
-**Firewall Rules**
+Example firewall rules:
 
 ```bash
-# Allow STUN/TURN
 sudo ufw allow 3478/udp
 sudo ufw allow 3478/tcp
-
-# Allow media transport (adjust range as needed)
 sudo ufw allow 50000:60000/udp
-
-# Allow mediasoup WebSocket
 sudo ufw allow 4443/tcp
-
-# Allow Janus REST API
 sudo ufw allow 8088/tcp
 ```
 
-**NAT Traversal**
+Ensure the Plexichat host has a public IP or correct port forwarding so external clients can reach it.
 
-- Ensure your server has a public IP address or proper port forwarding
-- Configure static port mapping if behind NAT
-- Test connectivity from external networks
-- Consider using TURN for users behind restrictive NAT
+## Scaling
 
----
+**Vertical scaling (single server)**
 
-## Scaling Considerations
+Use vertical scaling for fewer than 100 concurrent voice users. Prefer mediasoup over aiortc for better CPU efficiency. Monitor CPU and memory during peak usage.
 
-### Vertical Scaling (Single Server)
+**Horizontal scaling (multiple SFU instances)**
 
-**When to Use**
+Use horizontal scaling for more than 100 concurrent voice users. Deploy mediasoup on separate hosts, add a load balancer, and monitor instance health. aiortc does not support horizontal scaling.
 
-- Deployments with fewer than 100 concurrent voice users
-- Simpler operational requirements
-- Limited budget for multiple servers
+**Geographic distribution**
 
-**Configuration Tips**
+For a global user base, deploy SFU and TURN servers in multiple regions and route users to the nearest region.
 
-- Use mediasoup for better resource efficiency
-- Allocate sufficient CPU and memory for voice processing
-- Monitor resource usage during peak voice usage
-- Consider CPU pinning for better performance
+## Monitoring and troubleshooting
 
-### Horizontal Scaling (Multiple SFU Instances)
+**Metrics to monitor**
 
-**When to Use**
+*   Active voice channels and total participants
+*   SFU CPU and memory usage
+*   Network bandwidth and packet loss
+*   TURN relay usage
 
-- Deployments with more than 100 concurrent voice users
-- High availability requirements
-- Geographic distribution
+**Common issues**
 
-**Configuration Tips**
+*   **Audio or video fails:** Check STUN and TURN connectivity and firewall ports. Look for WebRTC errors in the browser console.
+*   **Poor quality:** Check bandwidth, bitrate caps on the SFU, and SFU CPU usage.
+*   **High CPU:** Reduce participants per channel or switch from aiortc to mediasoup.
 
-- Use mediasoup for horizontal scaling capability
-- Deploy load balancer for SFU instances
-- Implement session affinity or routing logic
-- Monitor SFU instance health and load
-- Consider geographic distribution for low latency
-
-### Geographic Distribution
-
-**When to Use**
-
-- Global user base
-- Low latency requirements
-- Regional voice channels
-
-**Configuration Tips**
-
-- Deploy SFU instances in multiple regions
-- Route users to nearest SFU based on geolocation
-- Use TURN servers in each region
-- Monitor inter-region latency and quality
-- Consider edge computing (Cloudflare Workers, etc.)
-
----
-
-## Monitoring and Troubleshooting
-
-### Key Metrics to Monitor
-
-- **Active Voice Channels**: Number of ongoing voice/video calls
-- **Total Participants**: Total users in voice channels
-- **CPU Usage**: SFU CPU utilization
-- **Memory Usage**: SFU memory consumption
-- **Network Bandwidth**: Media traffic bandwidth
-- **Packet Loss**: Percentage of lost packets (quality indicator)
-- **Latency**: Round-trip time for media packets
-- **TURN Usage**: Number of users using TURN relay
-
-### Common Issues
-
-**Audio/Video Not Working**
-
-- Check STUN/TURN server connectivity
-- Verify firewall port configuration
-- Test from different network environments
-- Check browser console for WebRTC errors
-
-**Poor Quality**
-
-- Check network bandwidth and latency
-- Verify bitrate configuration
-- Check CPU usage on SFU server
-- Test with lower bitrate settings
-
-**Connection Drops**
-
-- Check network stability
-- Verify TURN server reliability
-- Check SFU server health
-- Monitor for resource exhaustion
-
-**High CPU Usage**
-
-- Check participant count per channel
-- Verify codec settings
-- Consider using mediasoup for better efficiency
-- Scale horizontally if needed
-
-### Health Checks
+**Health checks**
 
 ```bash
-# Test STUN server
+# Test STUN
 stunclient stun.l.google.com:19302
 
-# Test TURN server
-turnclient --server turn.example.com:3478 --username plexichat --password secret
+# Test TURN
+turnutils_uclient -p 3478 -W <turn_secret> turn.example.com
 
-# Check mediasoup health
+# Check mediasoup
 curl https://mediasoup.example.com/health
 
-# Check Janus health
+# Check Janus
 curl http://localhost:8088/janus/info
 ```
 
----
+## Related documentation
 
-## Related Documentation
-
-- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [Deployment Guide](../getting-started.md) - Network configuration and scaling
-- [Security Best Practices](../../security.md) - Voice security considerations
-- [Media Configuration](config-media.md) - Related media processing settings
+*   [Default configuration reference](../../default-config.md)
+*   [Deployment guide](../getting-started.md)
+*   [Security best practices](../../security.md)
+*   [Media configuration](config-media.md)

@@ -31,6 +31,23 @@ class BaseCollector(ABC):
 
     def __init__(self, db: DatabaseProtocol) -> None:
         self._db = db
+        # Per-collector collection errors. A failed query must NEVER be
+        # silently swallowed: it is logged at ERROR level here and
+        # surfaced by DataCollector as an incomplete-export warning in
+        # the export metadata so the compliance artifact honestly
+        # declares which categories could not be collected.
+        self.collection_errors: List[str] = []
+
+    def record_error(self, detail: str) -> None:
+        """Log a collection failure at ERROR level and record it.
+
+        Recorded errors are surfaced in the export metadata as
+        incomplete-export warnings (see ``DataCollector.collect_all``).
+        """
+        import utils.logger as logger
+
+        logger.error(f"{type(self).__name__}: {detail}")
+        self.collection_errors.append(detail)
 
     @abstractmethod
     def collect(self, user_id: int) -> Dict[str, Any]:

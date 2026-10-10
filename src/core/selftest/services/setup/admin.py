@@ -10,11 +10,43 @@ import time
 import src.api as api
 import utils.logger as logger
 
+from ...db_guard import sanitize_error
 from .base import SetupServiceBase
 
 
 class AdminSetupMixin(SetupServiceBase):
     """Sets up admin permissions, roles, and approvals."""
+
+    def _revoke_grants(self, user_id: int, granted: list) -> None:
+        """Best-effort revocation of partially-applied privilege grants."""
+        db = api.get_db()
+        if db is not None:
+            try:
+                db.execute(
+                    "UPDATE auth_users SET permissions = '{}' "
+                    "WHERE id = ? AND username LIKE 'selftest_%'",
+                    (user_id,),
+                )
+            except Exception as e:
+                logger.debug(f"Grant revocation note: {sanitize_error(e)}")
+            try:
+                from src.core.database import invalidate_pattern, cache_delete
+
+                invalidate_pattern("token_verify:*")
+                invalidate_pattern("user_data:*")
+                cache_delete(f"user_profile:{user_id}")
+            except Exception:
+                pass
+        try:
+            auth_mod = api.get_auth()
+            if auth_mod is not None and hasattr(auth_mod, "revoke_permission"):
+                for perm in granted:
+                    try:
+                        auth_mod.revoke_permission(user_id, perm)
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"Grant revocation note: {sanitize_error(e)}")
 
     def grant_admin_permissions(self) -> bool:
         enable_admin = self.ctx.config.get("enable_admin_tests", True)
@@ -28,8 +60,32 @@ class AdminSetupMixin(SetupServiceBase):
             return False
 
         user_id = self.ctx.test_user_id
-        auth_mod.grant_permission(user_id, "admin.*")
-        auth_mod.grant_permission(user_id, "*")
+        if not isinstance(user_id, int):
+            logger.error("No test user id available for admin grant")
+            return False
+        # Record the grants BEFORE applying them so a crash mid-phase can be
+        # reconciled by the next run's pre-test cleanup (journal-based).
+        journal = getattr(self.ctx, "journal", None)
+        permissions = ("admin.*", "*")
+        if journal is not None:
+            journal.record(
+                "permission_grant", user_id=user_id, permissions=list(permissions)
+            )
+        granted: list = []
+        try:
+            for permission in permissions:
+                # Privileged provisioning path: wildcards ("admin.*", "*")
+                # are required for the self-test admin identity. The
+                # explicit opt-in keeps the default-deny M5 hardening for
+                # all ordinary callers while allowing this trusted setup
+                # code to mint admin-equivalent grants.
+                auth_mod.grant_permission(user_id, permission, allow_wildcards=True)
+                granted.append(permission)
+        except Exception:
+            # try/finally-style revocation: a partially-applied escalation
+            # must never survive this phase.
+            self._revoke_grants(user_id, granted)
+            raise
         logger.debug("Admin permissions granted to test user")
         return True
 
@@ -83,12 +139,16 @@ class AdminSetupMixin(SetupServiceBase):
                 super_admin_id = self.ctx.data.generate_snowflake()
                 try:
                     db.execute(
-                        "INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                        "INSERT INTO admin_roles (id, name, description, permissions, position, created_at, created_by, is_system) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
                         (
                             super_admin_id,
                             "super_admin",
                             "Full system access",
                             '{"*": true}',
+                            # Hierarchy: super_admin outranks support_admin
+                            # so position-gated moderation of lesser admins
+                            # succeeds for the main session.
+                            100,
                             int(time.time()),
                             user_id,
                         ),
@@ -104,6 +164,12 @@ class AdminSetupMixin(SetupServiceBase):
                         )
                     else:
                         raise
+            try:
+                db.execute(
+                    "UPDATE admin_roles SET position = 100 WHERE name = 'super_admin'"
+                )
+            except Exception:
+                pass
 
             support_admin_row = db.fetch_one(
                 "SELECT id FROM admin_roles WHERE name = ?",
@@ -119,12 +185,13 @@ class AdminSetupMixin(SetupServiceBase):
                 support_admin_id = self.ctx.data.generate_snowflake()
                 try:
                     db.execute(
-                        "INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                        "INSERT INTO admin_roles (id, name, description, permissions, position, created_at, created_by, is_system) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
                         (
                             support_admin_id,
                             "support_admin",
                             "Support access",
                             '{"users.read": true, "users.edit": true, "tickets.*": true, "admin.approvals": true}',
+                            50,
                             int(time.time()),
                             user_id,
                         ),
@@ -144,7 +211,7 @@ class AdminSetupMixin(SetupServiceBase):
                         raise
             try:
                 db.execute(
-                    "UPDATE admin_roles SET permissions = ? WHERE id = ?",
+                    "UPDATE admin_roles SET permissions = ?, position = 50 WHERE id = ?",
                     (
                         '{"users.read": true, "users.edit": true, "tickets.*": true, "admin.approvals": true}',
                         support_admin_id,
@@ -219,12 +286,22 @@ class AdminSetupMixin(SetupServiceBase):
             logger.warning(f"Failed to seed admin roles: {e}")
 
         try:
+            # Reuse an existing approval only when it is still actionable:
+            # the approve/reject endpoint tests require a 'pending' request,
+            # and a stale approved/rejected row from a previous run would
+            # fail them (or 500 on older rows with integer approved_by).
             existing_approval = db.fetch_one(
-                "SELECT id FROM admin_approvals WHERE requested_by = ?",
-                (user_id,),
+                "SELECT id FROM admin_approvals "
+                "WHERE requested_by = ? AND status = 'pending' "
+                "AND (expires_at IS NULL OR expires_at > ?)",
+                (user_id, int(time.time() * 1000)),
             )
             if not existing_approval:
                 approval_id = self.ctx.data.generate_snowflake()
+                # admin_approvals timestamps are MILLISECONDS throughout the
+                # codebase (approval request route, approval gates). Writing
+                # seconds here made the row instantly "expired" to the gate.
+                _now_ms = int(time.time() * 1000)
                 db.execute(
                     "INSERT INTO admin_approvals (id, requested_by, action_type, target_type, status, required_approvals, current_approvals, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -235,9 +312,9 @@ class AdminSetupMixin(SetupServiceBase):
                         "pending",
                         2,
                         0,
-                        int(time.time()) + 86400,
-                        int(time.time()),
-                        int(time.time()),
+                        _now_ms + 86400 * 1000,
+                        _now_ms,
+                        _now_ms,
                     ),
                 )
                 self.ctx.test_approval_id = approval_id
@@ -284,10 +361,38 @@ class AdminSetupMixin(SetupServiceBase):
             # insertion of other_id, then unchanged other_id) becomes the
             # ``target`` for admin-to-admin endpoints.
             self.ctx.test_admin_user_id = other_id
-            db.execute(
-                "UPDATE auth_users SET permissions = ? WHERE id = ?",
-                ('{"admin.*": true, "*": true}', other_id),
-            )
+            # Journal BEFORE escalating so a crash mid-write is reconciled by
+            # the next run; revoke-on-failure keeps partial writes from
+            # surviving this phase.
+            journal = getattr(self.ctx, "journal", None)
+            if journal is not None:
+                journal.record(
+                    "elevated_account",
+                    user_id=other_id,
+                    username=self.ctx._setup_other_username,
+                )
+            try:
+                # Merge wildcard grants onto the existing permission map
+                # (preserving defaults) via the privileged grant path,
+                # instead of overwriting the whole column.
+                auth_mod = api.get_auth()
+                if auth_mod is not None and hasattr(auth_mod, "grant_permission"):
+                    for perm in ("admin.*", "*"):
+                        try:
+                            auth_mod.grant_permission(
+                                other_id, perm, allow_wildcards=True
+                            )
+                        except TypeError:
+                            # Back-compat with stubs/mocks lacking the flag.
+                            auth_mod.grant_permission(other_id, perm)
+                else:
+                    db.execute(
+                        "UPDATE auth_users SET permissions = ? WHERE id = ?",
+                        ('{"admin.*": true, "*": true}', other_id),
+                    )
+            except Exception:
+                self._revoke_grants(other_id, ["admin.*", "*"])
+                raise
 
             support_admin_row = db.fetch_one(
                 "SELECT id FROM admin_roles WHERE name = ?",
@@ -314,6 +419,82 @@ class AdminSetupMixin(SetupServiceBase):
                 )
         except Exception as e:
             logger.warning(f"Failed to setup other admin user: {e}")
+
+    def promote_third_to_support_admin(self) -> None:
+        """Seed the third test user as a support admin (least privilege).
+
+        Approval workflows require ``required_approvals`` (default 2)
+        distinct approvers and forbid self-approval, so a two-admin suite
+        can never reach quorum. The third admin (support role: users
+        scopes + tickets + ``admin.approvals``) provides the second vote
+        for the approval-gated standalone tests. The wildcard grants go
+        through the privileged auth path (explicit opt-in, merged onto the
+        existing map); journaled as an elevated account so a crashed run
+        is reconciled by the next run.
+        """
+        if not self.ctx.test_third_user_id:
+            return
+        third_id = self.ctx.test_third_user_id
+        db = api.get_db()
+        if not db:
+            return
+        try:
+            import src.utils.encryption as _setup_enc3
+
+            assert self.ctx._test_password is not None
+            _hash3 = _setup_enc3.hash_password(self.ctx._test_password)
+            db.execute(
+                "INSERT OR IGNORE INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp) VALUES (?, ?, ?, ?, ?, 0)",
+                (
+                    third_id,
+                    getattr(self.ctx, "test_third_username", None)
+                    or f"selftest_third_{third_id}",
+                    _hash3,
+                    f"third_{third_id}@selftest.plexichat.com",
+                    int(time.time()),
+                ),
+            )
+            journal = getattr(self.ctx, "journal", None)
+            if journal is not None:
+                journal.record(
+                    "elevated_account",
+                    user_id=third_id,
+                    username=getattr(self.ctx, "test_third_username", None),
+                )
+            auth_mod = api.get_auth()
+            if auth_mod is not None and hasattr(auth_mod, "grant_permission"):
+                for _perm in ("admin.*", "*"):
+                    try:
+                        auth_mod.grant_permission(third_id, _perm, allow_wildcards=True)
+                    except TypeError:
+                        auth_mod.grant_permission(third_id, _perm)
+            support_row = db.fetch_one(
+                "SELECT id FROM admin_roles WHERE name = ?",
+                ("support_admin",),
+            )
+            if support_row:
+                support_id = (
+                    support_row["id"]
+                    if isinstance(support_row, dict)
+                    else support_row[0]
+                )
+                assign = db.fetch_one(
+                    "SELECT 1 FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",
+                    (third_id, support_id),
+                )
+                if not assign:
+                    db.execute(
+                        "INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by) VALUES (?, ?, ?, ?)",
+                        (
+                            third_id,
+                            support_id,
+                            int(time.time()),
+                            self.ctx.test_user_id,
+                        ),
+                    )
+                    logger.debug(f"Assigned support_admin role to third {third_id}")
+        except Exception as e:
+            logger.warning(f"Failed to promote third user to support admin: {e}")
 
     def ensure_approval_comments_table(self) -> None:
         try:

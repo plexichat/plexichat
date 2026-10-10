@@ -47,10 +47,11 @@ class RoleMixin:
         color: Optional[str] = None,
         hoist: Optional[bool] = None,
         mentionable: Optional[bool] = None,
+        position: Optional[int] = None,
     ) -> Role:
         """Update role settings."""
         return self._manager.update_role(
-            user_id, role_id, name, permissions, color, hoist, mentionable
+            user_id, role_id, name, permissions, color, hoist, mentionable, position
         )
 
     def delete_role(self, user_id: SnowflakeID, role_id: SnowflakeID) -> bool:

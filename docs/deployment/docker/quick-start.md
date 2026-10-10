@@ -1,207 +1,251 @@
-# Docker Quick Start
+# Docker quick start
 
-Get Plexichat running locally in 5 minutes.
+Run Plexichat locally in 5 minutes.
 
 ## Prerequisites
 
-Ensure you have:
-- Docker 20.10+ installed
-- Docker Compose 2.0+ installed
-- 4GB RAM available
-- 10GB free disk space
+You need the following:
+
+- Docker 20.10 or later
+- Docker Compose 2.0 or later
+- 4 GB RAM available
+- 10 GB free disk space
 
 Check your versions:
+
 ```bash
 docker --version
 docker compose version
 ```
 
-## Step 1: Generate Environment Configuration
+## Step 1: Generate the environment file
 
-Visit the [Environment Generator](/docs/api/deployment/env-generator) to generate a secure `.env` file, or create one manually from `.env.example`.
-
-Save it as `.env` in your Plexichat directory.
-
-## Step 2: Start Services
+Generate a secure `.env` file with the [environment generator](/docs/api/deployment/env-generator), or copy `plexichat/.env.example:1`:
 
 ```bash
-VERSION=latest docker compose up -d
+umask 077
+cp plexichat/.env.example plexichat/.env
+chmod 600 plexichat/.env
+# Edit plexichat/.env and set strong values for POSTGRES_PASSWORD, VALKEY_PASSWORD,
+# S3_ACCESS_KEY, S3_SECRET_KEY, and BACKUP_RESTIC_PASSWORD.
 ```
 
-For a specific version:
+The Compose file fails fast if any required password is empty (`plexichat/docker-compose.yml:32`, `plexichat/docker-compose.yml:48`). Do not commit `.env` to version control.
+
+## Step 2: Start services
+
+From the `plexichat/` directory, run:
+
 ```bash
-VERSION=a.1.0-131 docker compose up -d
+BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
 ```
 
-This command:
-- Pulls Docker images from GitLab registry
-- Starts all services (database, cache, storage, backend, frontend)
-- Uses the `.env` file for configuration
+To deploy a specific version:
 
-Expected first-run time: 2-3 minutes (builds images and initializes database)
+```bash
+BACKEND_VERSION=a.1.0-132 CLIENT_VERSION=a.1.0-117 docker compose up -d
+```
 
-## Step 3: Wait for All Services to Be Healthy
+This command does the following:
 
-Watch the logs. You should see:
+- Pulls images from `gitlab.plexichat.com` (or builds `backend` from `plexichat/Dockerfile:1` which uses `python:3.14.8-slim-trixie`).
+- Starts `db`, `valkey`, `rustfs`, `clamav`, `backend`, and `client`.
+- Applies the settings from `.env` and `plexichat/config/docker-config.yaml:1`.
+
+The first run takes 2–3 minutes to download images, install dependencies, and initialize the database.
+
+## Step 3: Wait for services to become healthy
+
+Watch the logs:
+
+```bash
+docker compose logs -f backend
+```
+
+Look for:
 
 ```
 backend    | INFO: Application startup complete
-backend    | +==============================================================+
-backend    | |                    Plexichat API Server                      |
-backend    | |                      Version a.1.0-131                       |
-backend    | +==============================================================+
-client     | healthy
-db         | healthy
-valkey     | healthy
-minio      | healthy
 ```
 
-All services should report `healthy` in `docker compose ps`:
+Check health status:
+
 ```bash
 docker compose ps
 ```
 
-Expected output:
+Expected output (names and ports vary by Compose project name):
+
 ```
-NAME       IMAGE           STATUS           PORTS
-db         postgres:16     Up 2 min (healthy)   5432/tcp
-valkey     valkey/valkey:9.1.1-alpine    Up 2 min (healthy)   6379/tcp
-minio      minio:latest    Up 2 min (healthy)   9000/tcp, 9001/tcp
-backend    plexichat:dev   Up 1 min (healthy)   0.0.0.0:8000->8000/tcp
-client     nginx:latest    Up 1 min (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
+NAME                IMAGE                              STATUS              PORTS
+plexichat-db-1      postgres:18-alpine                 Up 2 minutes (healthy)
+plexichat-valkey-1  valkey/valkey:9.1.1-alpine          Up 2 minutes (healthy)
+plexichat-rustfs-1  rustfs/rustfs:1.0.0-rc.3             Up 2 minutes (healthy)
+plexichat-clamav-1  clamav/clamav:1.5.4                 Up 2 minutes (healthy)
+plexichat-backend-1 plexichat:dev                      Up 1 minute (healthy)   0.0.0.0:8000->8000/tcp, 0.0.0.0:30000-30100->30000-30100/udp
+plexichat-client-1  nginx:stable-alpine                Up 1 minute (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
 ```
+
+`valkey`, `db`, `rustfs`, `clamav`, `backend`, and `client` all report `healthy`. Only `client` (80/443) and `backend` (8000/TCP, 30000–30100/UDP) publish host ports. `rustfs` (9000/9001), `valkey` (6379), and `db` (5432) are internal-only (`plexichat/docker-compose.yml:91`, `plexichat/docker-compose.yml:142`) unless you add a `ports` override.
 
 ## Step 4: Access Plexichat
 
-Open your browser:
+| Resource | URL | Notes |
+|----------|-----|-------|
+| Web client | https://localhost | Self-signed cert on first run; `http://localhost` redirects to HTTPS (`plexichat-client/docker/nginx/default.conf:1`) |
+| API through Nginx | https://localhost/api/v1 | Proxied to `backend:8000` |
+| API directly | http://localhost:8000/api/v1 | Requires `backend` port 8000 published (default) |
+| Swagger UI | https://localhost/docs | Proxied from `backend` |
+| ReDoc | https://localhost/redoc | Proxied from `backend` |
+| OpenAPI spec | https://localhost/openapi.json | Proxied from `backend` |
+| Health (readiness) | http://localhost:8000/api/v1/ready | Used by Docker health check (`plexichat/Dockerfile:43`) |
+| Health (deep) | http://localhost:8000/api/v1/health | Includes `cross_worker_listener` status |
 
-| Resource | URL |
-|----------|-----|
-| Web Client | http://localhost |
-| API Docs (Swagger UI) | http://localhost:8000/docs |
-| ReDoc | http://localhost:8000/redoc |
-| MinIO Console | http://localhost:9001 |
+For RustFS console (9001) or direct Valkey/Postgres access, use `docker compose exec`:
 
-## Step 5: Verify Backend Health
-
-Check the health endpoint:
 ```bash
-curl http://localhost:8000/health
+docker compose exec valkey redis-cli ping
+docker compose exec db psql -U plexichat -d plexichat -c "SELECT 1;"
+# To expose RustFS on the host, add a ports override; see index.md.
+```
+
+## Step 5: Verify backend health
+
+Check the readiness probe:
+
+```bash
+curl http://localhost:8000/api/v1/ready
 ```
 
 Expected response:
+
 ```json
-{
-  "status": "healthy",
-  "version": "a.1.0-131",
-  "timestamp": "2024-01-15T10:30:45Z"
-}
+{"status": "ready"}
 ```
 
-## Step 6: Run Self-Test
+Check the deep health endpoint:
 
-Verify all API endpoints:
+```bash
+curl http://localhost:8000/api/v1/health
+```
+
+Expected fields include `status`, `version`, and `cross_worker_listener` (`plexichat/src/api/routes/health.py:46`).
+
+## Step 6: Run the self-test
+
+Verify API endpoints:
+
 ```bash
 docker compose exec backend python main.py self-test
 ```
 
-This runs automated checks on authentication, messaging, servers, and more.
+This command runs automated checks for authentication, messaging, and server management.
 
-## Next Steps
+## Next steps
 
-### Development Work
+### Develop locally
 
-If you're developing:
-1. Edit code in `./src` - changes auto-reload in container
-2. View logs: `docker compose logs -f backend`
-3. Run tests: `docker compose exec backend pytest`
+1. Edit code in `plexichat/src`. The backend container reflects changes after a restart (no automatic hot reload in the production image).
+2. View logs:
 
-See [Development Workflow](development-workflow.md) for details.
+   ```bash
+   docker compose logs -f backend
+   ```
 
-### Stop Services
+3. Run tests:
 
-To pause (keeps data):
+   ```bash
+   docker compose exec backend pytest
+   ```
+
+See [Development workflow](development-workflow.md) for details.
+
+### Stop services
+
+Pause without deleting data:
+
 ```bash
 docker compose stop
 ```
 
-To resume:
+Resume:
+
 ```bash
 docker compose start
 ```
 
-To fully stop and remove containers (keeps volumes/data):
+Stop and remove containers while keeping volumes:
+
 ```bash
 docker compose down
 ```
 
-To remove everything including data:
+Remove containers, networks, and all volumes (deletes all data):
+
 ```bash
 docker compose down -v
 ```
 
 ## Troubleshooting
 
-### Services won't start
+### Services do not start
 
 Check logs:
+
 ```bash
 docker compose logs backend
 ```
 
-Common issues:
-- Port already in use - change port mappings in `docker-compose.yml`
-- Not enough disk space - free up ~10GB
-- Docker daemon not running - restart Docker Desktop
+Common causes:
+
+- A host port is already in use. Change the mapping in `plexichat/docker-compose.yml:205` or stop the conflicting process.
+- Insufficient disk space. Free at least 10 GB.
+- Docker daemon is not running. Restart Docker Desktop or `dockerd`.
 
 ### Backend logs show errors
 
-First 30 seconds are normal (migrations running). Wait for:
-```
-INFO: Application startup complete
-```
+Migrations run during the first 30 seconds. Wait for `Application startup complete`. If errors persist after 60 seconds, see [Troubleshooting](troubleshooting.md).
 
-If errors persist after 60 seconds, see [Troubleshooting](troubleshooting.md).
+### You forget a password
 
-### Forget a password?
+Your `.env` file contains all secrets. Keep it secure and do not commit it:
 
-Your `.env` file contains all secrets. Keep it secure:
 ```bash
-cat .env
+grep -E "POSTGRES_PASSWORD|VALKEY_PASSWORD|S3_SECRET_KEY|BACKUP_RESTIC_PASSWORD" plexichat/.env
 ```
 
-### Need to reset everything?
+### You need a full reset
 
-Full wipe (removes all data):
+This command removes all data:
+
 ```bash
 docker compose down -v
 docker system prune -a
-docker compose --profile dev up
+docker compose up -d
 ```
 
 ## Configuration
 
-Default dev setup uses:
-- Database: PostgreSQL (auto-initialized)
-- Cache: Redis
-- Storage: MinIO (local)
-- API Port: 8000
-- Frontend Port: 80/443
+The default stack uses:
 
-To customize, see [Configuration](configuration.md).
+- PostgreSQL 18 (`postgres:18-alpine` at `plexichat/docker-compose.yml:25`)
+- Valkey 9.1 (`valkey/valkey:9.1.1-alpine` at `plexichat/docker-compose.yml:43`)
+- RustFS 1.0 (`rustfs/rustfs:1.0.0-rc.3`) for S3-compatible storage
+- Backend on 8000/TCP and 30000–30100/UDP (`plexichat/Dockerfile:40`)
+- Frontend on 80/443 (`plexichat-client/Dockerfile:16`)
+
+To customize settings, see [Configuration](configuration.md).
 
 ## Performance
 
-- Initial build: 2-3 min
-- Subsequent starts: 10-30 sec
-- First request: May take 5-10 sec (backend warming up)
-- All metrics viewable: `docker compose exec backend curl http://localhost:8000/status`
+- Initial build: 2–3 minutes
+- Subsequent starts: 10–30 seconds
+- First request: 5–10 seconds while the backend warms up
+- Check server state: `docker compose exec backend curl -sf http://localhost:8000/api/v1/health`
 
-## Next Sections
+## Next sections
 
-- [Configuration](configuration.md) - Customize settings
-- [Development Workflow](development-workflow.md) - Hot reload, testing
-- [Troubleshooting](troubleshooting.md) - Solve common problems
-- [Production Setup](production-setup.md) - Deploy to production
-
-
+- [Configuration](configuration.md) - Customize settings.
+- [Development workflow](development-workflow.md) - Hot reload and testing.
+- [Troubleshooting](troubleshooting.md) - Fix common problems.
+- [Production setup](production-setup.md) - Deploy to production.

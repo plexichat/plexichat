@@ -1,145 +1,97 @@
-# Admin API Routes
+# Admin routes
 
-Administrative API endpoints under `/api/v1/admin/` for server management, moderation, and system configuration. All endpoints require elevated permissions (admin role + 2FA).
+This package contains administrative API endpoints mounted at
+`/api/v1/admin`. The `/admin` path prefix is configurable through
+`admin_ui.path` in `config.yaml`. All endpoints require elevated
+permissions and are audited.
 
-## Route Files
+## Overview
 
-### `auth.py`
-Admin authentication and session management:
-- Admin login with 2FA verification
-- Session lifecycle management
-- Password and token validation
+Admin routes handle server management, moderation, user administration,
+and system configuration. The package is assembled in
+`src/api/routes/admin/__init__.py`, which includes each sub-router into a
+single `APIRouter` that `src.api.routes.create_api_router()` mounts at the
+configured admin path. Common error responses (`400`, `401`, `403`) are
+defined once on the parent router.
 
-### `users.py`
-User administration:
-- List, search, and filter users
-- Create, edit, and suspend user accounts
-- Role and permission assignment
-- Account deletion and data export
+## Route modules
 
-### `moderation.py`
-Content and user moderation:
-- Warning and timeout management
-- Ban/unban operations
-- Moderation history and appeals
-- Bulk moderation actions
-
-### `dashboard.py`
-Admin dashboard and system overview:
-- Server statistics and metrics
-- Active users, message counts, storage usage
-- System health indicators
-- Recent activity feed
-
-### `audit.py`
-Audit logging:
-- Search and filter audit log entries
-- Export audit logs (CSV, JSON)
-- Retention policy management
-- Compliance reporting
-
-### `approvals.py`
-Approval workflows:
-- Pending approval queue
-- Approve/reject actions
-- Escalation rules
-
-### `bots.py`
-Bot management:
-- List registered bots
-- Create, update, delete bot accounts
-- Bot permission scoping
-- Rate limit configuration
-
-### `database.py`
-Database administration:
-- Manual backup/restore triggers
-- Database optimization (VACUUM, ANALYZE)
-- Storage statistics
-- Replication status (PostgreSQL)
-
-### `licensing.py`
-License management:
-- License key validation and activation
-- License info and expiry tracking
-- Feature flag management
-
-### `logs.py`
-System log viewer:
-- Log level filtering (debug, info, warn, error)
-- Time range and source filtering
-- Log export and rotation management
-
-### `migrations.py`
-Database migration management:
-- View migration status and history
-- Run pending migrations
-- Rollback migrations
-- Integrity validation
-
-### `plexijoin.py`
-Federation administration:
-- Manage federation connections
-- View federation status
-- Approve/reject federation requests
-
-### `reindex.py`
-Search index management:
-- Trigger full reindex
-- View index status and statistics
-- Schedule maintenance indexing
-
-### `roles.py`
-Role and permission management:
-- Create/edit/delete roles
-- Configure permission sets
-- Role assignment to users
-- Permission inheritance
-
-### `security.py`
-Security configuration:
-- Password policy settings
-- 2FA enforcement levels
-- IP blocking and rate limiting
-- Session timeout configuration
-
-### `telemetry.py`
-Telemetry management:
-- View collected telemetry data
-- Configure telemetry collection
-- Data retention settings
-- Export telemetry reports
-
-### `tickets.py`
-Support ticket system:
-- View and manage support tickets
-- Assign tickets to admins
-- Ticket status and priority management
-
-### `ui.py`
-Admin UI customization:
-- Branding and theming options
-- Custom announcements
-- Login page customization
-- Footer and legal links
-
-### `utils.py`
-Utility endpoints:
-- Health check endpoints
-- Cache invalidation
-- System information
-- Maintenance mode toggle
+| Module | Description |
+|--------|-------------|
+| `auth.py` | Admin login, session lifecycle, and token validation for the admin dashboard |
+| `audit.py` | Audit log search, filtering, export (CSV, JSON), retention, and compliance reporting |
+| `approvals.py` | Approval queue, approve or reject actions, and escalation rules |
+| `artifacts.py` | Admin view and management of artifact content |
+| `bots.py` | Bot account listing, creation, update, deletion, permission scoping, and rate limit configuration |
+| `capabilities.py` | Management of advertised server capabilities |
+| `dashboard.py` | System overview: server statistics, active users, message counts, storage usage, health indicators, and recent activity |
+| `data_export.py` | User data export generation and download |
+| `database.py` | Manual backup and restore triggers, `VACUUM` and `ANALYZE`, storage statistics, and replication status |
+| `device_trust.py` | Device-trust and session-duration overview (`GET /device-trust/overview`, requires `admin.security.devices` scope; aggregation helper lives in `device_overview.py`, which defines no routes) |
+| `licensing.py` | License key validation, activation, expiry tracking, and feature flag management |
+| `logs.py` | System log viewer with level filtering (`debug`, `info`, `warn`, `error`), time-range and source filtering, export, and rotation |
+| `migrations.py` | Migration status and history, running pending migrations, rollback, and integrity validation |
+| `moderation.py` | Warnings, timeouts, bans and unbans, moderation history, appeals, and bulk actions |
+| `plexijoin.py` | Federation connection management, status, and request approval |
+| `reindex.py` | Search index rebuild, status, statistics, and scheduled maintenance |
+| `roles.py` | Role create, update, and delete; permission sets; assignment; and inheritance |
+| `security.py` | IP blocking, API access token lifecycle, banned username patterns, and session force-logout, lock/unlock, and logout-all |
+| `telemetry.py` | Viewing and configuring collected telemetry, retention settings, and report export |
+| `tickets.py` | Support ticket listing, assignment, and status or priority management |
+| `ui.py` | Admin UI customization: branding, theming, announcements, login page, and footer or legal links |
+| `utils.py` | Health checks, cache invalidation, system information, and maintenance mode toggle |
+| `users/` | User administration sub-package (see `users/README.md`) |
 
 ## Authentication
 
-All admin routes require:
-1. Valid JWT token with admin scope
-2. Completed 2FA verification for write operations
-3. IP whitelist check (configurable)
-4. Audit logging for all state-changing operations
+Most admin routes use the same bearer and cookie authentication as the
+main API, with additional authorization checks (admin role or session).
+The admin login flow in `auth.py` manages its own session table
+(`admin_sessions`) and sets `request.state.admin_id` for subsequent
+requests. The rate limiter recognizes `request.state.admin_id` as an admin
+bypass even when `request.state.user` is not set.
 
-## Rate Limiting
+## Authorization and auditing
 
-- Read operations: 100 req/min
-- Write operations: 30 req/min
-- Bulk operations: 5 req/min
+- Write operations typically require a completed two-factor verification
+  and an IP allowlist check when configured.
+- State-changing operations are audit-logged. You can query and export
+  these entries through `audit.py`.
+- Bulk operations and sensitive actions have stricter rate limits than
+  read operations.
+
+## Rate limiting
+
+Rate limits for admin endpoints are enforced by the shared
+`src.core.ratelimit` engine, which applies per-route limits (see
+`DEFAULT_ROUTE_LIMITS` in `src/core/ratelimit/config.py`; for example, the
+admin `ui-dashboard`, telemetry, and pool-health reads default to 120
+requests per minute). There are no per-role tiers. Admin sessions identified
+by `request.state.admin_id` bypass limits when the `rate_limiting.admin_bypass`
+config flag is enabled (default `true`).
+
+## Add a new admin route
+
+1. Create a new module in this directory (for example, `widgets.py`) that
+   defines `router = APIRouter()`.
+2. Add handlers to the router with standard FastAPI decorators and Pydantic
+   response models.
+3. Include the router in `src/api/routes/admin/__init__.py`:
+
+   ```python
+   from .widgets import router as widgets_router
+   router.include_router(widgets_router)
+   ```
+
+4. If the route needs new schemas, add them under `src.api.schemas.admin`.
+5. Add authorization checks (admin role, two-factor, or IP allowlist) as
+   required by the operation.
+
+## Related documentation
+
+- `../README.md` — full route table for non-admin endpoints
+- `users/README.md` — user administration sub-package and its mixin
+  architecture
+- `../../middleware/README.md` — authentication, rate limiting, and error
+  handling
+- `../../../core/admin` — underlying admin business logic

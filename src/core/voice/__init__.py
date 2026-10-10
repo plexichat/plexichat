@@ -114,6 +114,8 @@ __all__ = [
     "check_afk_timeout",
     # Voice call lifecycle
     "set_voice_call_manager",
+    "record_call_consent",
+    "revoke_call_consent",
     # User voice state queries
     "get_user_voice_state",
     "is_user_in_voice",
@@ -173,6 +175,36 @@ def set_voice_call_manager(voice_call_manager) -> None:
     """Attach a VoiceCallManager to the live voice manager (no-op if not setup)."""
     if _manager is not None:
         _manager.set_voice_call_manager(voice_call_manager)
+
+
+def record_call_consent(user_id: int, channel_id: int) -> bool:
+    """Record the caller's consent to be recorded on the active voice call.
+
+    Delivery point for the client's recording-consent dialog (``consented``
+    on ``VOICE_STATE_UPDATE``); returns False when there is nothing to record
+    consent against. Never raises.
+    """
+    manager = _manager
+    if not _setup_complete or manager is None:
+        return False
+    return manager.record_call_consent(user_id, channel_id)
+
+
+def revoke_call_consent(user_id: int, channel_id: int) -> bool:
+    """Withdraw the caller's consent to be recorded, wherever it is held.
+
+    Delivery point for a declined consent dialog (``consented: false`` on
+    ``VOICE_STATE_UPDATE``). ``channel_id`` is where the dialog was shown; the
+    withdrawal is applied to every active call the user is live in and to
+    every live recording segment still covering them, including one whose
+    call is no longer active. Returns False when there was nothing to revoke.
+    Never raises, and a withdrawal that cannot be persisted leaves the
+    recording gated shut.
+    """
+    manager = _manager
+    if not _setup_complete or manager is None:
+        return False
+    return manager.revoke_call_consent(user_id, channel_id)
 
 
 # === Channel Operations ===

@@ -25,6 +25,23 @@ class ArtifactType(Enum):
     FUTURE = "future"
     PLEXISCRIBE = "plexiscribe"
     PLEXISCRIPT = "plexiscript"
+    SUM = "sum"
+
+    @classmethod
+    def _missing_(cls, value):
+        """Keep missing types renderable as ``future``; reject unknown strings.
+
+        A NULL / absent persisted type means "not yet classified" and maps to
+        the explicit ``FUTURE`` member. A genuinely unknown *string* is schema
+        drift or a programming bug: collapsing it silently to ``FUTURE``
+        masked the divergence (the row was re-labelled as a type it never was
+        and became unfilterable under its real value). Raising surfaces the
+        drift; row loaders that must tolerate legacy junk catch this and fall
+        back with a logged error (see ``row_to_artifact``).
+        """
+        if value is None:
+            return cls.FUTURE
+        raise ValueError(f"Unknown artifact type: {value!r}")
 
 
 class ArtifactStatus(Enum):
@@ -53,6 +70,7 @@ class Artifact:
     payload: Dict[str, Any]
     created_at: int
     updated_at: int
+    rev: int = 0
     retention_policy: Optional[Any] = None
     expires_at: Optional[int] = None
     license_feature: Optional[str] = None

@@ -1,7 +1,7 @@
 """
 AutoMod test fixtures.
 
-Provides session-scoped automod setup and test helpers.
+Provides function-scoped automod setup and test helpers.
 """
 
 import pytest
@@ -11,16 +11,26 @@ from src.core import automod
 from src.core.automod import RuleType
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def automod_module(modules):
-    """Initialize automod module for tests."""
+    """Initialize automod module for tests.
+
+    Function-scoped on purpose: the ``modules`` registry (and every manager
+    inside it) is rebuilt against a fresh database copy for each test, so a
+    session-scoped automod module would either raise pytest's ScopeMismatch
+    or pin the FIRST test's database into every later test. The teardown
+    clears the module globals so no stale manager survives into suites that
+    use the bare ``automod`` module without this fixture.
+    """
     automod.setup(
         modules._db,
         modules.servers,
         modules.messaging,
-        getattr(modules, "notifications", None),
+        modules.notifications,
     )
-    return automod
+    yield automod
+    automod._manager = None
+    automod._setup_complete = False
 
 
 @pytest.fixture

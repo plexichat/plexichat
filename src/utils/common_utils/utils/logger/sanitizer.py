@@ -2,7 +2,32 @@ import re
 from typing import Any, Dict, List, Union
 
 # Patterns for sensitive data
-EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+# Atomic groups ((?>...)) prevent backtracking, and bounded quantifiers keep
+# per-position work constant, so long non-matching input (e.g. a 100k-char
+# log line of repeated letters) scans in linear time instead of quadratic
+# (log injection as a cheap DoS vector). Local part max 64 chars and domain
+# max 255 chars per RFC 5321. Python 3.11+ required for atomic groups.
+EMAIL_PATTERN = re.compile(
+    r"(?>[a-zA-Z0-9_.+-]{1,64})@(?>[a-zA-Z0-9-]{1,255})\.[a-zA-Z0-9-.]{1,255}"
+)
+
+# Trigger substrings for the secret-masking patterns below. Cheap substring
+# pre-checks avoid running the regex engines over long lines that cannot
+# match (regex scanning is linear, but this keeps constant factors tiny).
+_KEYWORD_TRIGGERS = (
+    "authorization",
+    "bearer",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "key",
+    "auth",
+    "api_key",
+    "client_secret",
+    "session_id",
+    "cookie",
+)
 # Email domains to never mask (official Plexichat addresses)
 EMAIL_ALLOWLIST_DOMAINS = {"plexichat.com", "plexichat.internal"}
 # Common keys for sensitive data in dictionaries
@@ -85,11 +110,14 @@ def sanitize_data(data: Union[Dict, List, str, Any]) -> Any:
     elif isinstance(data, list):
         return [sanitize_data(item) for item in data]
     elif isinstance(data, str):
-        # Scan string for emails and mask them
-        def email_repl(match):
-            return mask_email(match.group(0))
+        # Scan string for emails and mask them (skip when no '@' can match)
+        if "@" in data:
 
-        return EMAIL_PATTERN.sub(email_repl, data)
+            def email_repl(match):
+                return mask_email(match.group(0))
+
+            return EMAIL_PATTERN.sub(email_repl, data)
+        return data
     return data
 
 
@@ -98,29 +126,32 @@ def sanitize_log_message(message: str) -> str:
     if not isinstance(message, str):
         return str(message)
 
-    # Mask emails
-    def email_repl(match):
-        return mask_email(match.group(0))
+    # Mask emails — skipped entirely when no '@' can match (keeps long
+    # non-matching lines linear-time).
+    if "@" in message:
 
-    message = EMAIL_PATTERN.sub(email_repl, message)
+        def email_repl(match):
+            return mask_email(match.group(0))
 
-    patterns = [
-        (
-            r"(?i)authorization\s*:\s*bearer\s+[A-Za-z0-9._~+/=-]+",
-            "Authorization: Bearer ********",
-        ),
-        (r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ********"),
-        (
-            r"(?i)(password|passwd|secret|token|key|auth|authorization|access_token|refresh_token|api_key|client_secret|session_id|cookie)[\"'\s]*[:=]\s*[\"']([^\"\\]+)[\"\\]",
-            r"\1: ********",
-        ),
-        (
-            r"(?i)(password|passwd|secret|token|key|auth|authorization|access_token|refresh_token|api_key|client_secret|session_id|cookie)[\"'\s]*[:=]\s*([^\s,]+)",
-            r"\1: ********",
-        ),
-    ]
+        message = EMAIL_PATTERN.sub(email_repl, message)
 
-    for pattern, repl in patterns:
-        message = re.sub(pattern, repl, message)
+    if any(kw in message.lower() for kw in _KEYWORD_TRIGGERS):
+        patterns = [
+            (
+                r"(?i)authorization\s*:\s*bearer\s+[A-Za-z0-9._~+/=-]+",
+                "Authorization: Bearer ********",
+            ),
+            (r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer ********"),
+            (
+                r"(?i)(password|passwd|secret|token|key|auth|authorization|access_token|refresh_token|api_key|client_secret|session_id|cookie)[\"'\s]*[:=]\s*[\"']([^\"\\]+)[\"\\]",
+                r"\1: ********",
+            ),
+            (
+                r"(?i)(password|passwd|secret|token|key|auth|authorization|access_token|refresh_token|api_key|client_secret|session_id|cookie)[\"'\s]*[:=]\s*([^\s,]+)",
+                r"\1: ********",
+            ),
+        ]
+        for pattern, repl in patterns:
+            message = re.sub(pattern, repl, message)
 
     return message

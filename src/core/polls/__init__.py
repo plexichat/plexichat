@@ -36,6 +36,8 @@ from .exceptions import (
     MultipleVoteNotAllowedError,
     PermissionDeniedError,
     MessageNotFoundError,
+    PollConfigurationError,
+    PollAlreadyExistsError,
 )
 
 __all__ = [
@@ -57,13 +59,18 @@ __all__ = [
     "MultipleVoteNotAllowedError",
     "PermissionDeniedError",
     "MessageNotFoundError",
+    "PollConfigurationError",
+    "PollAlreadyExistsError",
     "setup",
+    "is_setup",
     "create_poll",
     "get_poll",
     "vote",
+    "change_vote",
     "get_results",
     "close_poll",
     "delete_poll",
+    "get_voters",
     "check_expired_polls",
 ]
 
@@ -71,20 +78,31 @@ _manager = None
 _setup_complete = False
 
 
-def setup(db, messaging_module=None):
+def setup(db, messaging_module=None, auth_module=None):
     """
     Initialize the polls module.
 
     Args:
         db: Database instance (must be connected)
         messaging_module: Optional messaging module for message access
+            and authorization checks (required at call time by
+            create_poll/get_poll — see PollConfigurationError)
+        auth_module: Optional auth module used to evaluate the
+            ``admin.polls.view_voters`` capability for voter rosters
     """
     global _manager, _setup_complete
 
     from .manager import PollManager
 
-    _manager = PollManager(db, messaging_module=messaging_module)
+    _manager = PollManager(
+        db, auth_module=auth_module, messaging_module=messaging_module
+    )
     _setup_complete = True
+
+
+def is_setup() -> bool:
+    """True once :func:`setup` has completed successfully."""
+    return _setup_complete and _manager is not None
 
 
 def _get_manager():
@@ -125,6 +143,11 @@ def vote(user_id: int, poll_id: int, option_ids: List[int]) -> PollResults:
     return _get_manager().vote(user_id, poll_id, option_ids)
 
 
+def change_vote(user_id: int, poll_id: int, option_ids: List[int]) -> PollResults:
+    """Revise an existing vote on a poll."""
+    return _get_manager().change_vote(user_id, poll_id, option_ids)
+
+
 def get_results(poll_id: int, user_id: int) -> PollResults:
     """Get poll results."""
     return _get_manager().get_results(poll_id, user_id)
@@ -138,6 +161,17 @@ def close_poll(user_id: int, poll_id: int) -> Poll:
 def delete_poll(user_id: int, poll_id: int) -> bool:
     """Delete a poll (creator only)."""
     return _get_manager().delete_poll(user_id, poll_id)
+
+
+def get_voters(poll_id: int, user_id: int) -> List[int]:
+    """Return the discrete voter roster for a poll.
+
+    Creator- or moderator-gated and visibility-aware (see
+    :meth:`PollManager.get_voters`); raises :class:`PollNotFoundError`
+    for unknown polls and :class:`PermissionDeniedError` for callers
+    outside the roster's permission boundary.
+    """
+    return _get_manager().get_voters(poll_id, user_id)
 
 
 def check_expired_polls() -> int:

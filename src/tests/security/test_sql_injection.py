@@ -58,7 +58,9 @@ class TestSQLInjectionPrevention:
             )
 
         messages = messaging_manager.get_messages(user1.id, dm.id)
-        assert len(messages) >= 1
+        # The injection payload was rejected, leaving only the valid message.
+        assert len(messages) == 1
+        assert messages[0].content == "Valid message"
 
     def test_sql_injection_in_search_query(self, messaging_manager, two_users):
         """Test SQL injection attempt in search functionality."""
@@ -71,11 +73,9 @@ class TestSQLInjectionPrevention:
 
         sql_injection = "test' OR '1'='1"
 
-        try:
-            results = messaging_manager.search_messages(user1.id, sql_injection)
-            assert isinstance(results, list)
-        except Exception:
-            pass
+        results = messaging_manager.search_messages(user1.id, dm.id, sql_injection)
+        assert isinstance(results, list)
+        assert all("OR '1'='1" not in r.content for r in results)
 
     def test_sql_injection_in_server_name(self, server_manager, test_user, db):
         """Test SQL injection attempt in server name."""
@@ -99,7 +99,11 @@ class TestSQLInjectionPrevention:
             channel_type="text",
         )
 
-        assert channel.name == sql_injection
+        # Text channel names are normalized to ASCII kebab-case by
+        # validate_channel_name, which neutralizes SQL metacharacters. The
+        # stored name is the slugified form, proving parameterized storage
+        # rather than raw injection.
+        assert channel.name == "channel-or-1-1"
 
     def test_sql_injection_in_user_id_lookup(self, auth_manager):
         """Test SQL injection attempt in user ID lookups."""

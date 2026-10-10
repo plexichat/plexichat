@@ -69,9 +69,11 @@ class TestConversations:
     def test_get_user_conversations(self, messaging_manager, two_users):
         """Test getting all conversations for a user."""
         user1, user2 = two_users
-        messaging_manager.create_dm(user1.id, user2.id)
+        dm = messaging_manager.create_dm(user1.id, user2.id)
         conversations = messaging_manager.get_conversations(user1.id)
-        assert len(conversations) >= 1
+        # Exactly one DM was created
+        assert len(conversations) == 1
+        assert int(conversations[0].id) == int(dm.id)
 
     def test_leave_group_conversation(self, messaging_manager, three_users):
         """Test leaving a group conversation."""

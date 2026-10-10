@@ -17,6 +17,11 @@ from src.api.schemas.channels import (
 )
 from src.api.schemas.common import SnowflakeID
 from src.core.database import cached
+from src.core.messaging.exceptions import (
+    ConversationAccessDeniedError,
+    ConversationNotFoundError,
+    InvalidRecipientError,
+)
 
 
 class ChannelMixin:
@@ -63,7 +68,8 @@ class ChannelMixin:
                     exc_info=True,
                 )
                 raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                    status_code=500,
+                    detail={"error": {"code": 500, "message": "Internal server error"}},
                 )
         except HTTPException:
             raise
@@ -73,7 +79,8 @@ class ChannelMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     @cached(ttl=5, prefix="user_dm_channels_api")
@@ -169,7 +176,8 @@ class ChannelMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def create_dm_channel(
@@ -199,6 +207,19 @@ class ChannelMixin:
                 raise HTTPException(
                     status_code=400,
                     detail={"error": {"code": 400, "message": "Invalid recipient ID"}},
+                )
+
+            # M5 FIX: reject self-DMs cleanly instead of letting the service
+            # create (or confirm) a conversation with oneself.
+            if rid == current_user.user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Cannot create a DM with yourself",
+                        }
+                    },
                 )
 
             try:
@@ -237,33 +258,47 @@ class ChannelMixin:
                 )
             except HTTPException:
                 raise
-            except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "User not found"}},
-                    )
-                elif "Blocked" in exc_name or "Permission" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied permission to DM user {rid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "error": {
-                                "code": 403,
-                                "message": "Cannot message this user",
-                            }
-                        },
-                    )
+            except InvalidRecipientError:
+                # Typed mapping (L2): the service raises this for a
+                # nonexistent recipient; keep the generic 404 so arbitrary ID
+                # probing gains no extra signal.
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
+                )
+            except ConversationNotFoundError:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
+                )
+            except ConversationAccessDeniedError:
+                logger.warning(
+                    f"User {current_user.user_id} denied permission to DM user {rid}"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "Cannot message this user",
+                        }
+                    },
+                )
 
+            except Exception as e:
                 logger.error(
-                    f"Failed to create DM channel with user {rid} for {current_user.user_id}: {e}",
+                    f"Failed to create DM channel with user {rid} for "
+                    f"{current_user.user_id}: {e}",
                     exc_info=True,
                 )
                 raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                    status_code=500,
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Internal server error",
+                        }
+                    },
                 )
         except HTTPException:
             raise
@@ -273,5 +308,6 @@ class ChannelMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

@@ -75,7 +75,7 @@ class TestPushManagerRegistration:
         from unittest.mock import patch
 
         from src.utils import encryption
-        from src.core.push.setup import setup
+        from src.core.push import setup
         from src.core.push.manager import PushManager
 
         setup(db, notifications_module=None)

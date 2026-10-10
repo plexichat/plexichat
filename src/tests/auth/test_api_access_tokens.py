@@ -42,6 +42,11 @@ class TestAPIAccessTokens:
         assert detail["token"].last_used_path == "/api/v1/users/@me"
         assert detail["distinct_ip_count"] == 1
         assert detail["recent_events"][0]["allowed"] is True
+        # Regression: each event's IP is sealed with AAD bound to its own
+        # row id. The aggregated top_ips query must decrypt with a real
+        # event id, not a constant context, or every entry is unreadable.
+        assert detail["top_ips"][0]["ip_address"] == "203.0.113.10"
+        assert detail["top_ips"][0]["request_count"] == 1
 
     def test_access_token_scope_monitor_mode_allows_with_denied_visibility(
         self, auth_manager

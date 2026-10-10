@@ -11,6 +11,7 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
+from ..exception_mapping import raise_mapped
 
 
 class ChannelWebhooksMixin(ChannelBase):
@@ -53,6 +54,54 @@ class ChannelWebhooksMixin(ChannelBase):
                     detail={"error": {"code": 400, "message": "Invalid channel ID"}},
                 )
 
+            # F8 FIX: existence/access pre-check consistent with channel CRUD
+            # so correctness does not depend on the webhooks module raising
+            # correctly-named exceptions (dual probe: 404 nonexistent vs 403
+            # exists-but-blocked).
+            servers_mod = api.get_servers()
+            messaging_mod = api.get_messaging()
+
+            has_access = False
+            if servers_mod:
+                try:
+                    if servers_mod.get_channel(cid, current_user.user_id):
+                        has_access = True
+                except Exception:
+                    pass
+            if not has_access and messaging_mod:
+                try:
+                    if messaging_mod.get_conversation(cid, current_user.user_id):
+                        has_access = True
+                except Exception:
+                    pass
+
+            if not has_access:
+                exists = False
+                if servers_mod:
+                    try:
+                        exists = bool(servers_mod.channel_exists(cid))
+                    except Exception:
+                        exists = False
+                if not exists and messaging_mod:
+                    try:
+                        exists = bool(messaging_mod.conversation_exists(cid))
+                    except Exception:
+                        exists = False
+                if not exists:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {
+                                "code": 404,
+                                "message": "Channel not found",
+                            }
+                        },
+                    )
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Channel access denied"}},
+                )
+
             try:
                 webhooks = await run_in_threadpool(
                     webhooks_mod.get_channel_webhooks, current_user.user_id, cid
@@ -72,26 +121,11 @@ class ChannelWebhooksMixin(ChannelBase):
                     for w in (webhooks or [])
                 ]
             except Exception as e:
-                exc_name = type(e).__name__
-                if "NotFound" in exc_name:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={"error": {"code": 404, "message": "Channel not found"}},
-                    )
-                elif "Permission" in exc_name or "Access" in exc_name:
-                    logger.warning(
-                        f"User {current_user.user_id} denied access to webhooks for channel {cid}"
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": {"code": 403, "message": str(e)}},
-                    )
-
-                logger.error(
-                    f"Failed to get webhooks for channel {cid}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                raise_mapped(
+                    e,
+                    not_found_message="Channel not found",
+                    permission_message="Access denied",
+                    invalid_message="Invalid request",
                 )
         except HTTPException:
             raise
@@ -101,5 +135,11 @@ class ChannelWebhooksMixin(ChannelBase):
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Internal server error",
+                    }
+                },
             )

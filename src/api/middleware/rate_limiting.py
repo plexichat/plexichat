@@ -101,7 +101,13 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
     bypass_secret = rl_config.get("bypass_secret")
     if bypass_secret:
         bypass_header = request.headers.get("X-RateLimit-Bypass")
-        if bypass_header and hmac.compare_digest(bypass_header, bypass_secret):
+        # SECURITY: compare UTF-8 encodings — hmac.compare_digest raises
+        # TypeError on non-ASCII str inputs (headers decode as latin-1),
+        # which would turn a malformed client header into a 500 instead
+        # of a simple "no bypass".
+        if bypass_header and hmac.compare_digest(
+            bypass_header.encode("utf-8"), str(bypass_secret).encode("utf-8")
+        ):
             user_info["is_internal"] = True
 
     if getattr(request.state, "is_internal", False) is True:

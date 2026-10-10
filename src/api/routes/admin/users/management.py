@@ -81,7 +81,7 @@ class ManagementMixin(AdminUsersRouterProtocol):
                     {
                         "user_id": str(uid),
                         "new_tier": update.tier,
-                        "changed_by": admin_id,
+                        "changed_by": str(admin_id),
                     },
                     source="admin",
                     severity="info",

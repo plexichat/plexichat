@@ -68,6 +68,7 @@ class TestOperations:
             dm.id, "System announcement", "announcement"
         )
         assert sys_msg is not None
+        assert sys_msg.content == "System announcement"
 
     def test_message_has_timestamp(self, messaging_manager, two_users):
         """Test that messages have proper timestamps."""

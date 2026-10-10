@@ -119,6 +119,17 @@ class TestIndexingEdgeCases:
             metadata={"author_id": 1, "conversation_id": 1},
         )
 
+        row = db.fetch_one(
+            "SELECT COUNT(*) AS c FROM search_message_index WHERE message_id = 999999"
+        )
+        assert row["c"] == 1
+
+        search.remove_from_index(999999)
+        row2 = db.fetch_one(
+            "SELECT COUNT(*) AS c FROM search_message_index WHERE message_id = 999999"
+        )
+        assert row2["c"] == 0
+
     def test_index_very_long_content(self, db_and_search):
         """Test indexing message with very long content."""
         db, auth, messaging, servers, search = db_and_search
@@ -147,7 +158,27 @@ class TestIndexingEdgeCases:
         """Test removing nonexistent message from index."""
         db, auth, messaging, servers, search = db_and_search
 
+        search.index_message(
+            message_id=888888,
+            content="probe_remove_nonexistent",
+            metadata={"author_id": 1, "conversation_id": 1},
+        )
+        assert (
+            db.fetch_one(
+                "SELECT COUNT(*) AS c FROM search_message_index WHERE message_id = 888888"
+            )["c"]
+            == 1
+        )
+
+        # Removing a nonexistent id must not raise or corrupt the index.
         search.remove_from_index(999999999)
+
+        assert (
+            db.fetch_one(
+                "SELECT COUNT(*) AS c FROM search_message_index WHERE message_id = 888888"
+            )["c"]
+            == 1
+        )
 
 
 @pytest.mark.search
@@ -240,10 +271,8 @@ class TestErrorRecovery:
         """Test module state is consistent after error."""
         db, auth, messaging, servers, search = db_and_search
 
-        try:
+        with pytest.raises(SearchLimitError):
             search.search_messages(1, "test", limit=10000)
-        except SearchLimitError:
-            pass
 
         results = search.search_messages(1, "test", limit=10)
 

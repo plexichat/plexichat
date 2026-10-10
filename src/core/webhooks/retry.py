@@ -9,13 +9,14 @@ Provides reliable webhook delivery with:
 - Automatic cleanup of expired retry records
 """
 
-import time
 import json
 import random
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
+from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.webhooks.url_safety import validate_delivery_endpoint
 
 
 class WebhookRetryQueue:
@@ -36,10 +37,10 @@ class WebhookRetryQueue:
         self._last_cleanup = 0
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
-        return generate_snowflake_id()
+        return generate_id()
 
     def _calculate_delay(self, attempt: int) -> int:
         """
@@ -61,6 +62,8 @@ class WebhookRetryQueue:
         payload: Dict[str, Any],
         endpoint_url: str,
         signing_headers: Optional[Dict[str, str]] = None,
+        *,
+        allow_private_network: bool = False,
     ) -> Dict[str, Any]:
         """
         Enqueue a webhook delivery for retry tracking.
@@ -72,13 +75,36 @@ class WebhookRetryQueue:
             webhook_id: ID of the webhook
             event_type: Type of event (e.g., 'message.created')
             payload: Event payload dict
-            endpoint_url: Target URL for delivery
+            endpoint_url: Target URL for delivery. Validated for SSRF
+                safety (scheme allowlist, private/reserved IP blocking)
+                BEFORE insertion; invalid URLs are rejected outright.
             signing_headers: Optional Ed25519 signing headers
+            allow_private_network: Testing seam only (loopback end-to-end
+                tests). Production callers must keep the strict default.
 
         Returns:
             Retry queue record dict
+
+        Raises:
+            ValueError: When the payload exceeds the size limit or the
+                endpoint URL fails SSRF validation.
         """
         now = self._get_timestamp()
+
+        # SECURITY (SSRF): never persist an endpoint we would refuse to
+        # POST to. Rejection happens here AND again at delivery time.
+        validate_delivery_endpoint(
+            endpoint_url, allow_private_network=allow_private_network
+        )
+
+        # Serialize snowflake ids as decimal strings at the wire boundary.
+        # A webhook receiver is an external HTTP consumer (almost always
+        # JavaScript), and a JS ``Number`` cannot hold a 64-bit snowflake
+        # exactly, so a numeric id would be silently rounded. Normalize
+        # BEFORE signing below: the Ed25519/HMAC signature covers the JSON
+        # body we actually deliver, so stringifying after signing would
+        # make every receiver reject the delivery.
+        payload = stringify_snowflake_ids(payload)
 
         # Validate payload size
         payload_json = json.dumps(payload, sort_keys=True)
@@ -86,8 +112,18 @@ class WebhookRetryQueue:
             raise ValueError("Webhook payload exceeds maximum size")
 
         # Store signing headers if provided (they're ephemeral per-request,
-        # but we need them for retries since timestamps change)
+        # but we need them for retries since timestamps change). If none
+        # were supplied but a webhook manager is wired in, derive the
+        # Ed25519 signature here so every outbound delivery is signed.
         metadata = {}
+        if not signing_headers and self._webhook_manager is not None:
+            try:
+                signing_headers = self._webhook_manager.sign_payload(
+                    webhook_id, payload
+                )
+            except Exception as e:  # signing is best-effort; never block delivery
+                logger.warning(f"Failed to sign webhook delivery for {webhook_id}: {e}")
+                signing_headers = None
         if signing_headers:
             metadata["original_signing_headers"] = signing_headers
 
@@ -97,7 +133,7 @@ class WebhookRetryQueue:
         self._db.execute(
             """INSERT INTO webhook_retry_queue
                (id, webhook_id, event_type, payload, endpoint_url,
-                attempt_count, max_attempts, next_attempt_at,
+                attempt_count, max_attempts, next_retry_at,
                 status, created_at, updated_at, metadata)
                VALUES (?, ?, ?, ?, ?, 0, ?, ?, 'pending', ?, ?, ?)""",
             (
@@ -126,7 +162,7 @@ class WebhookRetryQueue:
             "endpoint_url": endpoint_url,
             "attempt_count": 0,
             "max_attempts": self.MAX_RETRIES,
-            "next_attempt_at": next_attempt_at,
+            "next_retry_at": next_attempt_at,
             "status": "pending",
             "created_at": now,
         }
@@ -190,7 +226,7 @@ class WebhookRetryQueue:
         self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'retrying', response_status = ?, last_error = ?,
-                   attempt_count = ?, next_attempt_at = ?, updated_at = ?
+                   attempt_count = ?, next_retry_at = ?, updated_at = ?
                WHERE id = ?""",
             (response_status, error, new_attempt, next_attempt_at, now, retry_id),
         )
@@ -204,28 +240,46 @@ class WebhookRetryQueue:
             "id": retry_id,
             "status": "retrying",
             "attempts": new_attempt,
-            "next_attempt_at": next_attempt_at,
+            "next_retry_at": next_attempt_at,
             "delay_ms": delay,
         }
 
     def get_pending_retries(self, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Get all webhook deliveries that are due for retry.
+        Get and ATOMICALLY CLAIM all webhook deliveries that are due.
 
-        Called by the scheduler to process pending retries.
+        Each returned row is transitioned ``pending``/``retrying`` ->
+        ``delivering`` via a conditional ``UPDATE ... WHERE status IN
+        ('pending', 'retrying')`` guarded by rowcount, so concurrent
+        workers can never pick up (and double-deliver) the same record.
+        Callers must resolve every claimed record through
+        ``mark_success`` / ``mark_failure``; records whose worker dies
+        mid-delivery are re-claimed by :meth:`cleanup_expired` once the
+        24h window lapses.
         """
         now = self._get_timestamp()
         rows = self._db.fetch_all(
             """SELECT * FROM webhook_retry_queue
                WHERE status IN ('pending', 'retrying')
-                 AND next_attempt_at <= ?
-               ORDER BY next_attempt_at ASC
+                 AND next_retry_at <= ?
+               ORDER BY next_retry_at ASC
                LIMIT ?""",
             (now, limit),
         )
         results = []
         for row in rows:
             data = dict(row)
+            # Atomic claim: only THIS worker flips the row to
+            # 'delivering'; a racing worker's UPDATE matches zero rows.
+            cursor = self._db.execute(
+                """UPDATE webhook_retry_queue
+                   SET status = 'delivering', updated_at = ?
+                   WHERE id = ? AND status IN ('pending', 'retrying')""",
+                (now, data["id"]),
+            )
+            if int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                continue
+
             if data.get("payload") and isinstance(data["payload"], str):
                 try:
                     data["payload"] = json.loads(data["payload"])
@@ -260,17 +314,56 @@ class WebhookRetryQueue:
         return [dict(row) for row in rows]
 
     def retry_dead_letter(self, retry_id: int) -> bool:
-        """Manually retry a dead letter entry."""
+        """Manually retry a dead-letter entry.
+
+        Return ``True`` only when an eligible dead-letter row was changed;
+        callers must not report success for an unknown or already-retried id.
+
+        The frozen signing headers captured at enqueue time are stripped:
+        their timestamp predates the 5-minute replay window receivers
+        enforce, so re-using them would guarantee permanent rejection.
+        The delivery worker re-signs with a fresh timestamp when a webhook
+        manager is available (see ``delivery.WebhookDeliverer``).
+        """
         now = self._get_timestamp()
-        self._db.execute(
+        row = self._db.fetch_one(
+            "SELECT metadata FROM webhook_retry_queue WHERE id = ? AND status = 'dead_letter'",
+            (retry_id,),
+        )
+        if not row:
+            logger.debug("Dead letter entry %s was not eligible for retry", retry_id)
+            return False
+
+        metadata: Dict[str, Any] = {}
+        raw_metadata = row["metadata"]
+        if raw_metadata:
+            if isinstance(raw_metadata, str):
+                try:
+                    metadata = json.loads(raw_metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+            elif isinstance(raw_metadata, dict):
+                metadata = dict(raw_metadata)
+        metadata.pop("original_signing_headers", None)
+
+        result = self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'retrying', attempt_count = 0,
-                   next_attempt_at = ?, updated_at = ?
+                   next_retry_at = ?, updated_at = ?, metadata = ?
                WHERE id = ? AND status = 'dead_letter'""",
-            (now, now, retry_id),
+            (
+                now,
+                now,
+                json.dumps(metadata) if metadata else None,
+                retry_id,
+            ),
         )
-        logger.info(f"Manually retried dead letter entry {retry_id}")
-        return True
+        changed = int(getattr(result, "rowcount", 0) or 0)
+        if changed == 1:
+            logger.info(f"Manually retried dead letter entry {retry_id}")
+            return True
+        logger.debug("Dead letter entry %s was not eligible for retry", retry_id)
+        return False
 
     def cleanup_expired(self) -> int:
         """
@@ -287,24 +380,40 @@ class WebhookRetryQueue:
 
         # Delete old delivered/failed records past the window
         cutoff = now - self.RETRY_WINDOW_MS
-        self._db.execute(
+        delete_cursor = self._db.execute(
             """DELETE FROM webhook_retry_queue
                WHERE status IN ('delivered', 'dead_letter')
                  AND updated_at < ?""",
             (cutoff,),
         )
+        deleted = int(getattr(delete_cursor, "rowcount", 0) or 0)
 
         # Auto-abandon stuck retrying records
-        self._db.execute(
+        abandon_cursor = self._db.execute(
             """UPDATE webhook_retry_queue
                SET status = 'dead_letter', updated_at = ?
                WHERE status = 'retrying'
                  AND created_at < ?""",
             (now, cutoff),
         )
+        abandoned = int(getattr(abandon_cursor, "rowcount", 0) or 0)
+
+        # Re-claim records whose worker died mid-delivery: anything still
+        # 'delivering' past the retry window goes back to 'pending' so a
+        # live worker can retry it instead of leaking the row forever.
+        reclaim_cursor = self._db.execute(
+            """UPDATE webhook_retry_queue
+               SET status = 'pending', updated_at = ?
+               WHERE status = 'delivering'
+                 AND updated_at < ?""",
+            (now, cutoff),
+        )
+        reclaimed = int(getattr(reclaim_cursor, "rowcount", 0) or 0)
+        if reclaimed:
+            logger.info(f"Reclaimed {reclaimed} stale delivering webhook retries")
 
         logger.debug("Cleaned up expired webhook retry records")
-        return 1
+        return deleted + abandoned + reclaimed
 
     def get_stats(self, webhook_id: Optional[int] = None) -> Dict[str, int]:
         """Get retry queue statistics."""
@@ -319,6 +428,7 @@ class WebhookRetryQueue:
         stats = {
             "pending": 0,
             "retrying": 0,
+            "delivering": 0,
             "delivered": 0,
             "dead_letter": 0,
             "total": 0,

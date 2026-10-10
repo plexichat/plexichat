@@ -46,6 +46,8 @@ from .exceptions import (
     AttachmentTooLargeError,
     AttachmentLimitError,
     RateLimitError,
+    MessageConflictError,
+    MessageEditWindowExpiredError,
 )
 from .models import (
     Message,
@@ -185,6 +187,11 @@ def get_or_create_notes(user_id: int) -> Conversation:
 def get_conversation(conversation_id: int, user_id: int) -> Optional[Conversation]:
     """Get a conversation by ID if user has access."""
     return _get_manager().get_conversation(conversation_id, user_id)
+
+
+def conversation_exists(conversation_id: int) -> bool:
+    """Membership-agnostic existence probe for a conversation ID."""
+    return _get_manager().conversation_exists(conversation_id)
 
 
 def get_conversations(
@@ -345,17 +352,29 @@ def send_message(
     )
 
 
-def edit_message(user_id: int, message_id: int, content: str) -> Message:
-    """Edit a message (own messages only)."""
-    return _get_manager().edit_message(user_id, message_id, content)
+def edit_message(
+    user_id: int,
+    message_id: int,
+    content: str,
+    expected_edited_at: Optional[int] = None,
+) -> Message:
+    """Edit a message (own messages only).
+
+    ``expected_edited_at`` is an optional optimistic-concurrency token;
+    when provided and stale, MessageConflictError is raised.
+    """
+    return _get_manager().edit_message(
+        user_id, message_id, content, expected_edited_at=expected_edited_at
+    )
 
 
 def update_message_metadata(
+    user_id: int,
     message_id: int,
     metadata: Optional[Dict[str, Any]],
     merge: bool = True,
 ) -> Message:
-    return _get_manager().update_message_metadata(message_id, metadata, merge)
+    return _get_manager().update_message_metadata(user_id, message_id, metadata, merge)
 
 
 def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> bool:
@@ -373,14 +392,30 @@ def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> 
     return _get_manager().delete_message(user_id, message_id, hard_delete)
 
 
+def automod_remove_message(
+    message_id: int,
+    violation_id: Optional[int] = None,
+    rule_name: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Optional[Message]:
+    """Replace a message with an AutoMod removal placeholder (system op).
+
+    Only invoked by the AutoMod engine after the system-context check.
+    """
+    return _get_manager().automod_remove_message(
+        message_id, violation_id, rule_name, reason
+    )
+
+
 def delete_messages_bulk(
     user_id: int, channel_id: int, message_ids: List[int]
 ) -> List[int]:
     """
     Bulk-delete messages from a channel.
 
-    Delegates to the manager, which only removes messages the caller is
-    permitted to delete. Returns the list of message IDs actually deleted.
+    Delegates to the manager, which scopes every candidate message to the
+    requested channel and only removes messages the caller is permitted to
+    delete. Returns the list of message IDs actually deleted.
     """
     return _get_manager().delete_messages_bulk(user_id, channel_id, message_ids)
 
@@ -412,6 +447,20 @@ def get_messages(
     """
     return _get_manager().get_messages(
         user_id, conversation_id, limit, before_id, after_id
+    )
+
+
+def search_messages(
+    user_id: int,
+    conversation_id: int,
+    query: str,
+    limit: int = 50,
+    before_id: Optional[int] = None,
+    after_id: Optional[int] = None,
+) -> List[Message]:
+    """Search messages in a conversation for the channel search route."""
+    return _get_manager().search_messages(
+        user_id, conversation_id, query, limit, before_id, after_id
     )
 
 
@@ -650,6 +699,8 @@ __all__ = [
     "AttachmentTooLargeError",
     "AttachmentLimitError",
     "RateLimitError",
+    "MessageConflictError",
+    "MessageEditWindowExpiredError",
     # Models
     "Message",
     "Conversation",
@@ -688,6 +739,7 @@ __all__ = [
     "delete_message",
     "get_message",
     "get_messages",
+    "search_messages",
     "pin_message",
     "unpin_message",
     "get_pinned_messages",

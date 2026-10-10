@@ -157,6 +157,8 @@ CREATE TABLE IF NOT EXISTS admin_notes_versioning (
 
 -- Admin notes versioning indexes
 CREATE INDEX IF NOT EXISTS idx_admin_notes_target ON admin_notes_versioning(target_type, target_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_notes_version_unique
+    ON admin_notes_versioning(target_type, target_id, version_number);
 CREATE INDEX IF NOT EXISTS idx_admin_notes_created ON admin_notes_versioning(created_at);
 CREATE INDEX IF NOT EXISTS idx_admin_notes_author ON admin_notes_versioning(created_by);
 

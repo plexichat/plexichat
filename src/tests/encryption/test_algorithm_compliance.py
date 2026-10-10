@@ -15,7 +15,7 @@ import hashlib
 
 # common_utils is now a native package.
 
-from src.utils.encryption import (  # noqa: E402
+from src.utils.encryption import (
     hash_password,
     encrypt_data,
     decrypt_data,
@@ -24,13 +24,27 @@ from src.utils.encryption import (  # noqa: E402
     verify_signature,
     setup,
 )
-from src.utils.encryption.core import EncryptionManager  # noqa: E402
+from src.utils.encryption.core import EncryptionManager
+from src.utils.encryption.pepper import parse_envelope
+
+
+def _inner_argon2_hash(envelope: str) -> str:
+    """Unwrap the pepper envelope to the inner Argon2id PHC hash."""
+    parsed = parse_envelope(envelope)
+    assert parsed is not None, f"expected pepper envelope, got: {envelope!r}"
+    return parsed[1]
 
 
 @pytest.fixture(scope="module")
 def setup_encryption():
-    """Setup encryption module for tests."""
-    setup(worker_id=1, datacenter_id=1)
+    """Setup encryption module for tests (low-cost Argon2 for speed)."""
+    setup(
+        worker_id=1,
+        datacenter_id=1,
+        argon2_time_cost=1,
+        argon2_memory_cost=8,
+        argon2_parallelism=1,
+    )
     yield
 
 
@@ -38,12 +52,14 @@ class TestArgon2idCompliance:
     """Test Argon2id password hashing compliance with OWASP recommendations."""
 
     def test_argon2id_output_format(self, setup_encryption):
-        """Test that Argon2id outputs PHC string format."""
+        """Test that peppered Argon2id outputs envelope + PHC string format."""
         password = "test_password"
         hash_str = hash_password(password)
 
-        assert hash_str.startswith("$argon2id$")
-        parts = hash_str.split("$")
+        assert hash_str.startswith("$plexichat$pepper-v1$pid=")
+        inner = _inner_argon2_hash(hash_str)
+        assert inner.startswith("$argon2id$")
+        parts = inner.split("$")
         assert len(parts) >= 5
 
     def test_argon2id_salt_uniqueness(self, setup_encryption):
@@ -53,10 +69,11 @@ class TestArgon2idCompliance:
 
         salts = set()
         for hash_str in hashes:
-            parts = hash_str.split("$")
-            if len(parts) >= 5:
-                salt = parts[4].split(",")[0] if "," in parts[4] else parts[4]
-                salts.add(salt)
+            inner = _inner_argon2_hash(hash_str)
+            parts = inner.split("$")
+            assert len(parts) >= 5, f"Unexpected PHC format: {hash_str}"
+            salt = parts[4].split(",")[0] if "," in parts[4] else parts[4]
+            salts.add(salt)
 
         assert len(salts) == 10
 
@@ -93,29 +110,25 @@ class TestArgon2idCompliance:
         """Test that output hash is 32 bytes (256 bits)."""
         manager = EncryptionManager(argon2_hash_length=32)
         password = "test_password"
-        hash_str = manager.hash_password(password)
+        hash_str = _inner_argon2_hash(manager.hash_password(password))
 
         parts = hash_str.split("$")
-        if len(parts) >= 6:
-            hash_b64 = parts[-1]
-            decoded = base64.b64decode(hash_b64 + "==")
-            assert len(decoded) >= 32
+        assert len(parts) >= 6, f"Unexpected PHC format: {hash_str}"
+        hash_b64 = parts[-1]
+        decoded = base64.b64decode(hash_b64 + "=" * (-len(hash_b64) % 4))
+        assert len(decoded) >= 32
 
     def test_argon2id_salt_length(self):
         """Test that salt is at least 16 bytes."""
         manager = EncryptionManager(argon2_salt_length=16)
         password = "test_password"
-        hash_str = manager.hash_password(password)
+        hash_str = _inner_argon2_hash(manager.hash_password(password))
 
         parts = hash_str.split("$")
-        if len(parts) >= 5:
-            salt_part = parts[4].split(",")[0] if "," in parts[4] else parts[4]
-            salt_b64 = salt_part
-            try:
-                decoded = base64.b64decode(salt_b64 + "==")
-                assert len(decoded) >= 16
-            except Exception:
-                pass
+        assert len(parts) >= 5, f"Unexpected PHC format: {hash_str}"
+        salt_b64 = parts[4].split(",")[0] if "," in parts[4] else parts[4]
+        decoded = base64.b64decode(salt_b64 + "=" * (-len(salt_b64) % 4))
+        assert len(decoded) >= 16
 
 
 class TestAES256GCMCompliance:
@@ -398,34 +411,34 @@ class TestSecurityBestPractices:
         assert plaintext.lower() not in encrypted.lower()
 
     def test_timing_safe_comparison(self):
-        """Test that verification uses constant-time comparison."""
+        """Test that verification uses a constant-time comparison.
+
+        Asserted structurally (every verification must call the module's
+        constant-time comparator) rather than by wall-clock timing: timing
+        microsecond-scale SHA-256 comparisons is dominated by scheduler noise
+        and is inherently flaky under parallel load.
+        """
+        from unittest.mock import patch
         from src.core.auth.tokens import (
             verify_token_hash,
             hash_token,
             generate_token_secret,
+            _constant_time_compare,
         )
 
         secret = generate_token_secret()
         correct_hash = hash_token(secret)
         wrong_secret = generate_token_secret()
 
-        import time
+        with patch(
+            "src.core.auth.tokens._constant_time_compare",
+            wraps=_constant_time_compare,
+        ) as cmp:
+            assert verify_token_hash(secret, correct_hash) is True
+            assert verify_token_hash(wrong_secret, correct_hash) is False
+        assert cmp.call_count == 2
 
-        correct_times = []
-        wrong_times = []
-
-        for _ in range(50):
-            start = time.perf_counter()
-            verify_token_hash(secret, correct_hash)
-            correct_times.append(time.perf_counter() - start)
-
-            start = time.perf_counter()
-            verify_token_hash(wrong_secret, correct_hash)
-            wrong_times.append(time.perf_counter() - start)
-
-        avg_correct = sum(correct_times) / len(correct_times)
-        avg_wrong = sum(wrong_times) / len(wrong_times)
-
-        # Relaxed threshold for timing-safe comparison test
-        # This test is flaky due to system timing variations
-        assert abs(avg_correct - avg_wrong) < max(avg_correct, avg_wrong) * 0.7
+        # Comparator correctness on both outcomes and on length mismatch.
+        assert _constant_time_compare("abcd", "abcd") is True
+        assert _constant_time_compare("abcd", "abce") is False
+        assert _constant_time_compare("abcd", "abc") is False

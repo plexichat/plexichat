@@ -40,6 +40,18 @@ class ServerSetupMixin(SetupServiceBase):
         logger.info(
             f"Test channel ID: {self.ctx.test_channel_id}, Conv ID: {self.ctx.test_conversation_id}"
         )
+
+        # A voice channel in the same server for soundboard playback tests
+        # (play requires a voice channel in the sound's server).
+        try:
+            voice_channel = servers_mod.create_channel(
+                self.ctx.test_user_id, server.id, "test-voice", channel_type="voice"
+            )
+            if voice_channel is not None:
+                self.ctx.test_voice_channel_id = voice_channel.id
+                logger.info(f"Test voice channel ID: {self.ctx.test_voice_channel_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create test voice channel: {e}")
         return True
 
     def create_test_message(self) -> None:

@@ -29,6 +29,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         channel_id: SnowflakeID,
         name: str,
         avatar_url: Optional[str] = None,
+        require_signed_deliveries: bool = False,
     ) -> Webhook:
         """Create a new webhook for a channel."""
         channel = self._get_channel(channel_id)
@@ -45,7 +46,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         name = self._validate_name(name)
         avatar_url = self._validate_avatar_url(avatar_url)
 
-        max_per_channel = self._config.get("max_webhooks_per_channel", 100)
+        max_per_channel = self._config.get("max_webhooks_per_channel", 10)
         channel_count = self._get_channel_webhook_count(channel_id)
         if channel_count >= max_per_channel:
             raise WebhookLimitError(
@@ -78,8 +79,10 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         self._db.execute(
             """INSERT INTO webhook_webhooks
                (id, channel_id, server_id, creator_id, name, webhook_type,
-                avatar_url, token_hash, signing_key_public, signing_key_private_encrypted, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                avatar_url, token_hash, signing_key_public,
+                signing_key_private_encrypted, require_signed_deliveries,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 webhook_id,
                 channel_id,
@@ -91,6 +94,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                 token_hash,
                 public_key,
                 private_key_encrypted,
+                1 if require_signed_deliveries else 0,
                 now,
                 now,
             ),
@@ -106,6 +110,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             avatar_url=avatar_url,
             token=full_token,
             signing_key_public=public_key,
+            require_signed_deliveries=bool(require_signed_deliveries),
             created_at=now,
             updated_at=now,
         )
@@ -196,6 +201,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
         name: Optional[str] = None,
         avatar_url: Optional[str] = None,
         channel_id: Optional[SnowflakeID] = None,
+        require_signed_deliveries: Optional[bool] = None,
     ) -> Webhook:
         """Update a webhook."""
         row = self._db.fetch_one(
@@ -212,20 +218,20 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                 "Missing permission to manage webhooks", "webhooks.manage"
             )
 
-        updates = []
-        params = []
+        sets: List[str] = []
+        params: List[Any] = []
 
         if name is not None:
             name = self._validate_name(name)
-            updates.append("name = ?")
+            sets.append("name = ?")
             params.append(name)
 
         if avatar_url is not None:
             if avatar_url == "":
-                updates.append("avatar_url = NULL")
+                sets.append("avatar_url = NULL")
             else:
                 avatar_url = self._validate_avatar_url(avatar_url)
-                updates.append("avatar_url = ?")
+                sets.append("avatar_url = ?")
                 params.append(avatar_url)
 
         if channel_id is not None and channel_id != row["channel_id"]:
@@ -253,77 +259,28 @@ class WebhookCRUDMixin(WebhookManagerTrait):
                     channel_count,
                 )
 
-            updates.append("channel_id = ?")
+            sets.append("channel_id = ?")
             params.append(channel_id)
 
-        if not updates:
-            return self._row_to_webhook(row, include_token=False)
+        if require_signed_deliveries is not None:
+            sets.append("require_signed_deliveries = ?")
+            params.append(1 if require_signed_deliveries else 0)
 
         now = self._get_timestamp()
-        updates.append("updated_at = ?")
-        params.append(now)
-        params.append(webhook_id)
-
-        allowed_columns = {
-            "name",
-            "url",
-            "secret",
-            "events",
-            "enabled",
-            "avatar_url",
-            "channel_id",
-        }
-        for update in updates:
-            col_name = update.split(" = ")[0]
-            if col_name == "updated_at":
-                continue
-            if col_name not in allowed_columns:
-                raise ValueError(f"Invalid column name: {col_name}")
-
-        now = self._get_timestamp()
-        for update in updates:
-            if "name = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET name = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "url = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET url = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "secret = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET secret = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "events = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET events = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "enabled = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET enabled = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "avatar_url = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET avatar_url = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
-            elif "channel_id = ?" in update:
-                idx = updates.index(update)
-                self._db.execute(
-                    "UPDATE webhook_webhooks SET channel_id = ?, updated_at = ? WHERE id = ?",
-                    (params[idx], now, webhook_id),
-                )
+        if not sets:
+            self._db.execute(
+                "UPDATE webhook_webhooks SET updated_at = ? WHERE id = ?",
+                (now, webhook_id),
+            )
+        else:
+            sets.append("updated_at = ?")
+            params.append(now)
+            params.append(webhook_id)
+            placeholders = ", ".join(sets)
+            self._db.execute(
+                f"UPDATE webhook_webhooks SET {placeholders} WHERE id = ?",
+                tuple(params),
+            )
 
         result = self.get_webhook(webhook_id)
         assert result is not None
@@ -381,7 +338,10 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             (token_hash, now, webhook_id),
         )
 
-        webhook = self._row_to_webhook(row, include_token=False)
+        fresh_row = self._db.fetch_one(
+            "SELECT * FROM webhook_webhooks WHERE id = ?", (webhook_id,)
+        )
+        webhook = self._row_to_webhook(fresh_row, include_token=False)
         webhook.token = full_token
         webhook.updated_at = now
         return webhook
@@ -403,6 +363,7 @@ class WebhookCRUDMixin(WebhookManagerTrait):
             token=None,
             signing_key_public=row.get("signing_key_public"),
             signing_key_private_encrypted=row.get("signing_key_private_encrypted"),
+            require_signed_deliveries=bool(row.get("require_signed_deliveries") or 0),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

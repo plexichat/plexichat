@@ -15,8 +15,12 @@ Usage:
 
 from typing import Any, Optional
 
+import logging
+
 from .app import create_app
 from .config import APIConfig, get_api_config
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "create_app",
@@ -51,6 +55,7 @@ _search = None
 _events = None
 _polls = None
 _stickers = None
+_soundboard = None
 _telemetry = None
 _applications = None
 _internal_secret = None
@@ -67,6 +72,7 @@ def setup(
     presence_module: Optional[Any] = None,
     reactions_module: Optional[Any] = None,
     stickers_module: Optional[Any] = None,
+    soundboard_module: Optional[Any] = None,
     embeds_module: Optional[Any] = None,
     notifications_module: Optional[Any] = None,
     webhooks_module: Optional[Any] = None,
@@ -94,6 +100,7 @@ def setup(
         presence_module: Presence module for user status
         reactions_module: Reactions module for message reactions
         stickers_module: Stickers module for stickers
+        soundboard_module: Soundboard module for server sounds
         embeds_module: Embeds module for rich embeds
         notifications_module: Notifications module for mentions
         webhooks_module: Webhooks module for webhook execution
@@ -112,6 +119,7 @@ def setup(
     global \
         _reactions, \
         _stickers, \
+        _soundboard, \
         _embeds, \
         _notifications, \
         _webhooks, \
@@ -138,6 +146,7 @@ def setup(
     _presence = presence_module
     _reactions = reactions_module
     _stickers = stickers_module
+    _soundboard = soundboard_module
     _embeds = embeds_module
     _notifications = notifications_module
     _webhooks = webhooks_module
@@ -153,7 +162,12 @@ def setup(
     _events = events_module
     _telemetry = telemetry_module
     # Applications is set up separately via applications.setup() in main.py,
-    # and get_applications() has a fallback import so no explicit assignment needed here.
+    # and get_applications() has a fallback import so no explicit assignment
+    # is needed here. Suite schema creation and manager wiring belong to the
+    # server initializer: migration 000 is the authoritative production DDL
+    # path, and the initializer wires the media adapter after media.setup().
+    # API setup must not create schema or silently replace a production
+    # storage dependency with a fixture fallback.
     _setup_complete = True
 
 
@@ -335,6 +349,18 @@ def get_stickers() -> Optional[Any]:
         from src.core import stickers
 
         return stickers
+    except ImportError:
+        return None
+
+
+def get_soundboard() -> Optional[Any]:
+    """Get soundboard module."""
+    if _soundboard:
+        return _soundboard
+    try:
+        from src.core import soundboard
+
+        return soundboard
     except ImportError:
         return None
 

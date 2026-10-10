@@ -13,14 +13,11 @@ from src.api.schemas.messages import (
     MessageCreateRequest,
     MessageResponse,
 )
-from src.core.messaging.exceptions import (
-    MessageNotFoundError,
-)
+from src.core.embeds.exceptions import EmbedError
 from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
     ChannelAccessDeniedError,
-    PermissionDeniedError,
 )
 from src.core.polls import (
     PollResultsVisibility,
@@ -33,6 +30,20 @@ from src.core.polls import (
     InvalidPollDurationError,
     AlreadyVotedError,
     MultipleVoteNotAllowedError,
+    PollAlreadyExistsError,
+)
+
+# ``src.core.polls`` ships its own ``PermissionDeniedError`` /
+# ``MessageNotFoundError``.  They share a name with the servers/messaging
+# ones but descend from a different base (``PollError`` vs ``ServerError``),
+# so they are aliased here: the poll handler below must catch the classes
+# ``polls.create_poll`` actually raises, otherwise every poll authorization
+# or message-missing failure falls through to a generic 500.
+from src.core.polls import (
+    PermissionDeniedError as PollPermissionDeniedError,
+)
+from src.core.polls import (
+    MessageNotFoundError as PollMessageNotFoundError,
 )
 from src.api.routes.messages.helpers import _message_to_response
 from src.api.routes.messages.messages import get_msg_id
@@ -83,7 +94,13 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     },
                 )
 
-            reply_to = int(body.reply_to_id) if body.reply_to_id else None
+            try:
+                reply_to = int(body.reply_to_id) if body.reply_to_id else None
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid reply_to ID"}},
+                )
 
             attachments = None
             if body.attachments:
@@ -101,9 +118,113 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
 
             content_value = body.content or ""
             if (not content_value or not content_value.strip()) and (
-                attachments or body.poll
+                attachments or body.poll or body.embeds
             ):
+                # Embeds-only messages (e.g. sticker sends) carry their
+                # payload in the embeds slot; substitute the zero-width
+                # space so the messaging layer's non-empty-content
+                # validation passes without inventing visible text.
                 content_value = "\u200b"
+
+            # Aggregate ALL user-controlled text surfaces (message content,
+            # attachment filenames/URLs, poll question/options) so keyword /
+            # regex filters cannot be evaded via attachments or polls.
+            automod_content = content_value
+            _extra_parts = []
+            for _attachment in attachments or []:
+                if _attachment.get("filename"):
+                    _extra_parts.append(_attachment["filename"])
+                if _attachment.get("url"):
+                    _extra_parts.append(_attachment["url"])
+            if body.poll:
+                if body.poll.question:
+                    _extra_parts.append(body.poll.question)
+                _extra_parts.extend(option for option in body.poll.options if option)
+            if _extra_parts:
+                automod_content = "\n".join([automod_content] + _extra_parts)
+
+            from src.core import automod
+
+            # Phase 1 (synchronous): cheap rules (keyword/regex/spam/etc.) run
+            # BEFORE the message is created or broadcast. A match blocks the
+            # send entirely, so other clients never see the message. AI
+            # moderation is intentionally excluded here and runs async (phase 2).
+            server_id = self._resolve_server_id(cid, current_user.user_id, servers_mod)
+            if server_id:
+                try:
+                    automod_context = self._build_automod_context(
+                        cid,
+                        current_user.user_id,
+                        automod_content,
+                        servers_mod,
+                        messaging,
+                        "message_create",
+                    )
+                    fast_result = automod.check_message_fast(
+                        server_id=server_id,
+                        channel_id=cid,
+                        user_id=current_user.user_id,
+                        content=automod_content,
+                        message_id=None,
+                        context=automod_context,
+                    )
+                    if not fast_result.passed:
+                        for match in fast_result.violations:
+                            automod.process_violation(
+                                server_id=server_id,
+                                channel_id=cid,
+                                user_id=current_user.user_id,
+                                message_id=None,
+                                match=match,
+                                actions=fast_result.actions_to_take,
+                                context=automod_context,
+                            )
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "MESSAGE_BLOCKED",
+                                    "message": "Message blocked by auto-moderation",
+                                    "violations": [
+                                        v.rule_type.value
+                                        for v in fast_result.violations
+                                    ],
+                                }
+                            },
+                        )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error(f"Automod fast check failed for message create: {e}")
+                    automod.record_internal_error(
+                        "fast_check:message_create",
+                        server_id,
+                        cid,
+                        current_user.user_id,
+                        None,
+                        e,
+                    )
+                    if automod.is_fail_closed():
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "MESSAGE_BLOCKED",
+                                    "message": (
+                                        "Message blocked: auto-moderation is "
+                                        "temporarily unavailable"
+                                    ),
+                                    "violations": ["internal_error"],
+                                }
+                            },
+                        )
+
+            else:
+                # DM/group conversation: server automod does not apply, but
+                # DM spam protection MUST (rate/duplicate/pattern checks).
+                self._enforce_dm_spam_protection(
+                    cid, current_user.user_id, content_value, messaging
+                )
 
             msg, server_id = await self._send_message_with_fallback(
                 cid,
@@ -121,49 +242,6 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Channel not found"}},
                 )
-
-            if server_id:
-                try:
-                    from src.core import automod
-
-                    content = getattr(msg, "content", None) or body.content or ""
-                    result = automod.check_message(
-                        server_id=server_id,
-                        channel_id=cid,
-                        user_id=current_user.user_id,
-                        content=content,
-                        message_id=get_msg_id(msg),
-                        context={"source": "message_create"},
-                    )
-                    if not result.passed:
-                        for match in result.violations:
-                            automod.process_violation(
-                                server_id=server_id,
-                                channel_id=cid,
-                                user_id=current_user.user_id,
-                                message_id=get_msg_id(msg),
-                                match=match,
-                                actions=result.actions_to_take,
-                                context={"source": "message_create"},
-                            )
-
-                        if result.should_delete:
-                            raise HTTPException(
-                                status_code=400,
-                                detail={
-                                    "error": {
-                                        "code": "MESSAGE_BLOCKED",
-                                        "message": "Message blocked by auto-moderation",
-                                        "violations": [
-                                            v.rule_type.value for v in result.violations
-                                        ],
-                                    }
-                                },
-                            )
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    logger.warning(f"Automod check failed for message create: {e}")
 
             if body.poll:
                 polls_module = api.get_polls()
@@ -202,7 +280,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     if messaging and poll:
                         try:
                             msg = messaging.update_message_metadata(
-                                msg_id, {"poll_id": poll.id}
+                                current_user.user_id, msg_id, {"poll_id": poll.id}
                             )
                         except Exception:
                             pass
@@ -216,8 +294,9 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     InvalidPollDurationError,
                     AlreadyVotedError,
                     MultipleVoteNotAllowedError,
-                    PermissionDeniedError,
-                    MessageNotFoundError,
+                    PollAlreadyExistsError,
+                    PollPermissionDeniedError,
+                    PollMessageNotFoundError,
                 ) as e:
                     if messaging:
                         try:
@@ -231,23 +310,40 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                     if isinstance(
                         e,
                         (
-                            MessageNotFoundError,
+                            PollMessageNotFoundError,
                             ServerNotFoundError,
                             ChannelNotFoundError,
                         ),
                     ):
                         raise HTTPException(
                             status_code=404,
-                            detail={"error": {"code": 404, "message": str(e)}},
+                            detail={
+                                "error": {"code": 404, "message": "Message not found"}
+                            },
                         )
-                    if isinstance(e, (PermissionDeniedError, ChannelAccessDeniedError)):
+                    if isinstance(
+                        e,
+                        (PollPermissionDeniedError, ChannelAccessDeniedError),
+                    ):
                         raise HTTPException(
                             status_code=403,
-                            detail={"error": {"code": 403, "message": str(e)}},
+                            detail={"error": {"code": 403, "message": "Access denied"}},
+                        )
+                    if isinstance(e, PollAlreadyExistsError):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "error": {
+                                    "code": 409,
+                                    "message": "Resource already exists",
+                                }
+                            },
                         )
                     raise HTTPException(
                         status_code=400,
-                        detail={"error": {"code": 400, "message": str(e)}},
+                        detail={
+                            "error": {"code": 400, "message": "Invalid poll request"}
+                        },
                     )
                 except Exception as e:
                     if messaging:
@@ -288,12 +384,64 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             )
 
             await self._broadcast_message_create(
-                response, server_id, cid, servers_mod, messaging, current_user
+                response,
+                server_id,
+                cid,
+                servers_mod,
+                messaging,
+                current_user,
+                conversation_id=int(getattr(msg, "conversation_id", cid) or cid),
             )
+
+            # Phase 2 (asynchronous): AI moderation runs in the background
+            # after the message has been broadcast. A match replaces the
+            # message with an AutoMod tombstone (flag-driven rendering) and
+            # pushes a MESSAGE_UPDATE so clients re-render it.
+            if server_id:
+                try:
+                    msg_id = get_msg_id(msg)
+                    if msg_id is None:
+                        logger.warning(
+                            f"Automod AI check skipped for message in channel {channel_id}: no id"
+                        )
+                    else:
+                        automod.schedule_ai_check(
+                            server_id=server_id,
+                            channel_id=cid,
+                            user_id=current_user.user_id,
+                            message_id=msg_id,
+                            content=automod_content,
+                            context={"source": "message_create"},
+                        )
+                except Exception as e:
+                    # Scheduling stays async, but the failure is recorded so
+                    # the moderation gap is auditable rather than silent.
+                    logger.error(f"Automod AI check scheduling failed: {e}")
+                    try:
+                        _failed_mid = get_msg_id(msg)
+                    except Exception:
+                        _failed_mid = None
+                    automod.record_internal_error(
+                        "ai_schedule:message_create",
+                        server_id,
+                        cid,
+                        current_user.user_id,
+                        _failed_mid,
+                        e,
+                    )
 
             return response
         except HTTPException:
             raise
+        except EmbedError as e:
+            issues = getattr(e, "issues", [])
+            logger.warning(f"Embed validation failed: {issues or e}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": "Invalid embeds"},
+                },
+            )
         except Exception as e:
             logger.error(
                 f"Failed to send message to channel {channel_id}: {e}",

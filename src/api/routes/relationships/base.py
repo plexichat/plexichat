@@ -54,4 +54,8 @@ class RelationshipsBase:
             if normalized_id in seen_ids:
                 continue
             seen_ids.add(normalized_id)
-            invalidate_pattern(f"{prefix}:current_user:*:{normalized_id}")
+            # The cached key for a relationship listing route is
+            # ``relationships_api:<Router repr>:current_user:TokenInfo:<uid>``.
+            # The leading router-instance segment must be wildcarded so the
+            # invalidation glob actually matches the generated keys.
+            invalidate_pattern(f"{prefix}:*:current_user:TokenInfo:{normalized_id}:*")

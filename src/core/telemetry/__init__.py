@@ -120,6 +120,66 @@ _SEGMENT_PLACEHOLDERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Cardinality controls (client-supplied endpoints are untrusted).
+#
+# Endpoints that survive normalization but do not match a registered route
+# template are collapsed into a single overflow bucket so attacker-chosen
+# strings can never mint new GROUP BY keys. A config-driven cap on distinct
+# endpoint keys and a hard cap on total stored rows bound table growth even
+# when templates are unavailable; redirected/rejected entries are counted so
+# operators can see the abuse instead of it silently inflating storage.
+# ---------------------------------------------------------------------------
+
+OVERFLOW_BUCKET = "_other"
+
+_route_templates: List[str] = []
+_templates_registered = False
+_seen_endpoints: set = set()
+_cardinality_rejections = 0
+
+
+def _cfg(key: str, default):
+    try:
+        import utils.config as config
+
+        return config.get(key, default)
+    except Exception:
+        return default
+
+
+def register_route_templates(paths) -> None:
+    """Register server route templates used to allowlist client endpoints."""
+    global _templates_registered
+    _route_templates.clear()
+    for path in paths:
+        cleaned = str(path).split("?", 1)[0].rstrip("/") or "/"
+        if cleaned not in _route_templates:
+            _route_templates.append(cleaned)
+    _templates_registered = True
+
+
+def _matches_registered_template(endpoint: str) -> bool:
+    ep_parts = endpoint.split("/")
+    for tpl in _route_templates:
+        tp_parts = tpl.split("/")
+        if len(tp_parts) != len(ep_parts):
+            continue
+        if all(tp.startswith("{") or tp == ep for tp, ep in zip(tp_parts, ep_parts)):
+            return True
+    return False
+
+
+def get_cardinality_stats() -> Dict[str, Any]:
+    """Expose cardinality-cap counters for admin dashboards/tests."""
+    return {
+        "distinct_endpoints": len(_seen_endpoints),
+        "max_distinct_endpoints": int(_cfg("telemetry.max_distinct_endpoints", 500)),
+        "cardinality_rejections": _cardinality_rejections,
+        "overflow_bucket": OVERFLOW_BUCKET,
+    }
+
+
 def _normalize_endpoint(endpoint: str) -> str:
     if not endpoint:
         return endpoint
@@ -156,11 +216,17 @@ def submit_response_times(
     """
     Record multiple response time measurements in the database.
 
-    Automatically normalizes endpoints and generates unique IDs.
+    Automatically normalizes endpoints and generates unique IDs. Entries
+    missing ``timestamp`` default to server-now. Client-supplied endpoints
+    are allowlisted against registered route templates and collapsed into an
+    overflow bucket once the distinct-key cap is reached.
     """
+    global _cardinality_rejections
+
     db = _get_db()
     now = int(time.time() * 1000)
     batch_data = []
+    max_distinct = int(_cfg("telemetry.max_distinct_endpoints", 500))
 
     try:
         from src.utils.encryption import generate_snowflake_id
@@ -181,23 +247,46 @@ def submit_response_times(
                 continue
             method = str(entry.get("method", "GET")).strip().upper()[:10]
 
-            # Safely handle non-integer status codes (e.g., "MESSAGE_BLOCKED")
+            # Parse numeric status codes; fall back to a leading numeric
+            # prefix, else classify as an error (>=400 semantics preserved)
+            # so string codes like "MESSAGE_BLOCKED" are not undercounted
+            # as successes.
             status_code_raw = entry.get("status_code", 0)
             try:
                 status_code = int(status_code_raw)
             except (ValueError, TypeError):
-                # If it's a string like "MESSAGE_BLOCKED", use 0 or a specific error code
-                # We'll use 0 to indicate a non-standard/blocked response
-                status_code = 0
+                prefix_match = re.match(r"\s*(\d{3})", str(status_code_raw))
+                status_code = int(prefix_match.group(1)) if prefix_match else 500
+
+            normalized = _normalize_endpoint(endpoint)[:255]
+            # Allowlist: when route templates are registered, anything that
+            # does not match a known template goes to the overflow bucket so
+            # attacker-chosen strings cannot create new metric keys.
+            if _templates_registered and not _matches_registered_template(normalized):
+                normalized = OVERFLOW_BUCKET
+                _cardinality_rejections += 1
+            elif (
+                normalized not in _seen_endpoints
+                and len(_seen_endpoints) >= max_distinct
+            ):
+                normalized = OVERFLOW_BUCKET
+                _cardinality_rejections += 1
+            else:
+                _seen_endpoints.add(normalized)
+
+            # Missing timestamp defaults to server-now (documented) instead
+            # of silently dropping the entry.
+            raw_ts = entry.get("timestamp")
+            ts_val = now if raw_ts is None else int(raw_ts)
 
             batch_data.append(
                 (
                     gen_id(),
-                    _normalize_endpoint(endpoint)[:255],
+                    normalized,
                     method or "GET",
                     response_time_ms,
                     status_code,
-                    int(entry.get("timestamp", now)),
+                    ts_val,
                     client_id,
                     int(entry.get("db_queries", 0)),
                     float(entry.get("db_time_ms", 0.0)),
@@ -208,6 +297,9 @@ def submit_response_times(
 
     if not batch_data:
         return 0
+
+    _enforce_total_row_cap(db, len(batch_data))
+
     db.execute_many(
         """INSERT INTO telemetry_response_times 
            (id, endpoint, method, response_time_ms, status_code, timestamp, client_id, db_queries, db_time_ms)
@@ -215,6 +307,29 @@ def submit_response_times(
         batch_data,
     )
     return len(batch_data)
+
+
+def _enforce_total_row_cap(db: Any, incoming: int) -> None:
+    """Hard-cap total stored rows by trimming the oldest measurements."""
+    max_rows = int(_cfg("telemetry.max_total_rows", 100000))
+    if max_rows <= 0:
+        return
+    try:
+        row = db.fetch_one("SELECT COUNT(*) AS c FROM telemetry_response_times")
+        current = int(row["c"]) if row else 0
+        overflow = current + incoming - max_rows
+        if overflow > 0:
+            db.execute(
+                "DELETE FROM telemetry_response_times WHERE id IN "
+                "(SELECT id FROM telemetry_response_times ORDER BY timestamp ASC LIMIT ?)",
+                (overflow,),
+            )
+            logger.warning(
+                f"telemetry: trimmed {overflow} oldest rows to enforce "
+                f"max_total_rows={max_rows}"
+            )
+    except Exception:
+        logger.warning("telemetry: total row cap check failed", exc_info=True)
 
 
 def get_endpoint_stats(
@@ -308,6 +423,10 @@ def get_endpoint_stats(
     if client_id_filter:
         raw_lookup += " AND client_id = ?"
         raw_params.append(client_id_filter)
+    # Bound the second pass in SQL so a busy window cannot materialize every
+    # raw row in memory; the per-endpoint cap below still applies on top.
+    sample_budget = max(1, int(_cfg("telemetry.percentile_sample_rows", 25000)))
+    raw_lookup += f" LIMIT {sample_budget}"
 
     by_key: Dict[tuple, List[float]] = {}
     cap_hit = False
@@ -329,7 +448,7 @@ def get_endpoint_stats(
     except Exception:
         # The aggregate row above is still useful when the raw
         # pull fails (driver-specific quoting, permission errors etc).
-        pass
+        logger.warning("telemetry: raw request metrics pull failed", exc_info=True)
 
     if cap_hit:
         logger.warning(
@@ -488,5 +607,7 @@ __all__ = [
     "get_response_time_history",
     "reset_all_stats",
     "cleanup_old_data",
+    "register_route_templates",
+    "get_cardinality_stats",
     "EndpointStats",
 ]

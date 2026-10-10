@@ -31,6 +31,12 @@ class TestReactionErrors:
     def test_duplicate_reaction(self, reaction_manager, test_db):
         """Cannot add same reaction twice."""
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -48,6 +54,12 @@ class TestReactionErrors:
         """Cannot exceed reaction limit."""
         monkeypatch.setitem(reaction_manager._config, "max_reactions_per_message", 2)
 
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -71,6 +83,12 @@ class TestReactionErrors:
         )
 
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -88,6 +106,9 @@ class TestReactionErrors:
     def test_remove_nonexistent_reaction(self, reaction_manager, test_db):
         """Cannot remove non-existent reaction."""
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -102,6 +123,12 @@ class TestReactionErrors:
 
     def test_remove_others_reaction(self, reaction_manager, test_db):
         """Cannot remove others' reactions."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -120,6 +147,12 @@ class TestReactionErrors:
     def test_remove_all_reactions_permission(self, reaction_manager, test_db):
         """Need permission to remove all reactions."""
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -134,6 +167,12 @@ class TestReactionErrors:
 
     def test_get_reactions_for_message(self, reaction_manager, test_db):
         """Can get all reactions for a message."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -153,6 +192,9 @@ class TestReactionErrors:
     def test_get_reactions_empty(self, reaction_manager, test_db):
         """Get reactions for message with none."""
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -168,6 +210,12 @@ class TestReactionErrors:
     def test_get_users_who_reacted(self, reaction_manager, test_db):
         """Can get users who reacted with specific emoji."""
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -180,11 +228,17 @@ class TestReactionErrors:
         reaction_manager.add_reaction(1, 1, "👍")
         reaction_manager.add_reaction(2, 1, "👍")
 
-        users = reaction_manager.get_users_who_reacted(1, "👍")
+        users = reaction_manager.get_users_who_reacted(1, 1, "👍")
         assert len(users) >= 2
 
     def test_remove_all_reactions_as_owner(self, reaction_manager, test_db):
         """Owner can remove all reactions."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -199,14 +253,41 @@ class TestReactionErrors:
         reaction_manager.add_reaction(2, 1, "❤️")
 
         count = reaction_manager.remove_all_reactions(1, 1)
-        assert count >= 2
+        assert count == 2
 
 
 class TestReactionCustomEmoji:
     """Test custom emoji reactions."""
 
     def test_custom_emoji_reaction(self, reaction_manager, test_db):
-        """Can react with custom emoji."""
+        """Can react with an existing custom emoji even in a DM context."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (1, 1, 1, 'member', 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, 1, 'test', 1000, 1000, 'text')"
+        )
+        test_db.execute(
+            "INSERT INTO react_custom_emoji (id, server_id, name, animated, url, size, width, height, created_by, available, created_at) VALUES (123, 999, 'custom_emoji', 0, '/emoji.png', 0, NULL, NULL, 1, 1, 1000)"
+        )
+
+        reaction_manager.add_reaction(1, 1, "<:custom_emoji:123>")
+
+        reactions = reaction_manager.get_reactions(1, 1)
+        assert len(reactions.reactions) == 1
+        assert reactions.reactions[0].emoji == "<:custom_emoji:123>"
+
+    def test_nonexistent_custom_emoji_reaction_fails(self, reaction_manager, test_db):
+        """Rejecting a fabricated custom emoji that does not exist."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -217,10 +298,10 @@ class TestReactionCustomEmoji:
             "INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, 1, 'test', 1000, 1000, 'text')"
         )
 
-        reaction_manager.add_reaction(1, 1, "<:custom_emoji:123>")
+        from src.core.reactions import CustomEmojiNotFoundError
 
-        reactions = reaction_manager.get_reactions(1, 1)
-        assert len(reactions.reactions) >= 1
+        with pytest.raises(CustomEmojiNotFoundError):
+            reaction_manager.add_reaction(1, 1, "<:nonexistent:123>")
 
     def test_invalid_custom_emoji_format(self, reaction_manager):
         """Invalid custom emoji format."""
@@ -233,6 +314,15 @@ class TestReactionCounting:
 
     def test_reaction_count(self, reaction_manager, test_db):
         """Count reactions for message."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (3, 'user', 'user3', 'user3@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -253,6 +343,12 @@ class TestReactionCounting:
     def test_reaction_count_by_emoji(self, reaction_manager, test_db):
         """Count reactions by emoji."""
         test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
         test_db.execute(
@@ -272,8 +368,14 @@ class TestReactionCounting:
 class TestReactionNotifications:
     """Test reaction notifications."""
 
-    def test_reaction_notifies_author(self, reaction_manager, test_db):
-        """Reacting to message notifies author."""
+    def test_add_reaction_returns_created_reaction(self, reaction_manager, test_db):
+        """add_reaction persists and returns the created reaction."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (2, 'user', 'user2', 'user2@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -284,9 +386,15 @@ class TestReactionNotifications:
             "INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, 1, 'test', 1000, 1000, 'text')"
         )
 
-        reaction_manager.add_reaction(2, 1, "👍")
+        reaction = reaction_manager.add_reaction(2, 1, "👍")
 
-        assert True
+        assert reaction is not None
+        assert reaction.message_id == 1
+        assert reaction.user_id == 2
+        assert reaction.emoji == "👍"
+
+        visible = reaction_manager.get_reactions(1, 1)
+        assert any(r.emoji == "👍" and r.count == 1 for r in visible.reactions)
 
 
 class TestReactionBulkOperations:
@@ -294,6 +402,9 @@ class TestReactionBulkOperations:
 
     def test_get_reactions_for_multiple_messages(self, reaction_manager, test_db):
         """Get reactions for multiple messages."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )
@@ -307,11 +418,14 @@ class TestReactionBulkOperations:
         reaction_manager.add_reaction(1, 1, "👍")
         reaction_manager.add_reaction(1, 2, "❤️")
 
-        reactions = reaction_manager.get_reactions_bulk([1, 2])
+        reactions = reaction_manager.get_reactions_bulk(1, [1, 2])
         assert len(reactions) >= 2
 
     def test_user_reacted_to_messages(self, reaction_manager, test_db):
         """Check which messages user reacted to."""
+        test_db.execute(
+            "INSERT INTO auth_users (id, account_type, username, email_index, password_hash, permissions, created_at, updated_at) VALUES (1, 'user', 'user1', 'user1@test.com', 'hash', '[]', 1000, 1000)"
+        )
         test_db.execute(
             "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'dm', 1000, 1000)"
         )

@@ -33,7 +33,7 @@ class MessagesCollector(BaseCollector):
             rows = self._db.fetch_all(
                 """
                 SELECT id, conversation_id, author_id, content, created_at,
-                       edited_at, deleted_at, is_forwarded, is_scheduled
+                       edited_at, deleted_at, message_type, reply_to_id
                 FROM msg_messages WHERE author_id = ?
                 """,
                 (user_id,),
@@ -54,10 +54,16 @@ class MessagesCollector(BaseCollector):
     def _collect_participants(self, user_id: int) -> List[Dict[str, Any]]:
         """Collect msg_participants."""
         try:
+            # Column set matches the live schema: there is no `left_at`,
+            # `nick`, `is_owner` or `is_muted` column. The old projection used
+            # all four, so SQLite raised "no such column" and the except
+            # branch returned an empty list -- meaning a subject's DSAR export
+            # silently omitted every conversation they had ever been in.
             rows = self._db.fetch_all(
                 """
                 SELECT mp.id, mp.conversation_id, mp.user_id, mp.joined_at,
-                       mp.left_at, mp.nick, mp.is_owner, mp.is_muted
+                       mp.last_read_at, mp.nickname, mp.role, mp.muted,
+                       mp.muted_until, mp.permissions
                 FROM msg_participants mp WHERE mp.user_id = ?
                 """,
                 (user_id,),
@@ -115,12 +121,17 @@ class MessagesCollector(BaseCollector):
             return []
 
     def _collect_edit_history(self, user_id: int) -> List[Dict[str, Any]]:
-        """Collect msg_edit_history where user is editor."""
+        """Collect msg_edit_history where user is editor.
+
+        ``old_content_encrypted`` is raw ciphertext with no decryptable
+        context in an export; per the DSAR redaction policy it is
+        replaced by an "(encrypted)" placeholder.
+        """
         try:
             rows = self._db.fetch_all(
                 "SELECT * FROM msg_edit_history WHERE editor_id = ?", (user_id,)
             )
-            return [dict(row) for row in rows]
+            return self.serialize_rows(rows, redact_fields=["old_content_encrypted"])
         except Exception as e:
             import utils.logger as logger
 

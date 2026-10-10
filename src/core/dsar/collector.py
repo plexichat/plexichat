@@ -5,8 +5,11 @@ Composes domain-specific collectors to assemble complete user data exports
 for GDPR Article 20 Right to Data Portability compliance.
 """
 
+import json
 import time
 from typing import Any, Dict
+
+import utils.logger as logger
 
 from .collectors import (
     ApplicationsCollector,
@@ -29,6 +32,7 @@ from .collectors import (
     SessionsCollector,
     SoundboardCollector,
     StickersCollector,
+    SuiteCollector,
     VoiceCollector,
 )
 
@@ -64,6 +68,7 @@ class DataCollector:
             "stickers": StickersCollector(db),
             "soundboard": SoundboardCollector(db),
             "media": MediaCollector(db),
+            "suite": SuiteCollector(db),
         }
 
     def collect_all(self, user_id: int) -> Dict[str, Any]:
@@ -82,8 +87,26 @@ class DataCollector:
         }
 
         # Delegate to each collector
+        warnings: list = []
         for category, collector in self._collectors.items():
             result[category] = collector.collect(user_id)
+            if getattr(collector, "collection_errors", None):
+                for err in collector.collection_errors:
+                    warnings.append(f"{category}: {err}")
+                collector.collection_errors.clear()
+
+        # Surface incomplete-export warnings in the export metadata so a
+        # compliance artifact with missing categories is never presented
+        # as complete.
+        if warnings:
+            logger.error(
+                f"DSAR export for user {user_id} is INCOMPLETE: "
+                f"{len(warnings)} category collection error(s)"
+            )
+            result["export_metadata"] = {
+                "complete": False,
+                "warnings": warnings,
+            }
 
         return result
 
@@ -153,7 +176,18 @@ class DataCollector:
 
         for table, category in tables:
             try:
-                key_column = "id" if table == "auth_users" else "user_id"
+                # Most tables key the user on ``user_id``; a handful use a
+                # different ownership/actor column and must be mapped
+                # explicitly or the COUNT query fails (and is silently
+                # swallowed), under-reporting the user's data.
+                key_column = {
+                    "auth_users": "id",
+                    "msg_conversations": "owner_id",
+                    "msg_messages": "author_id",
+                    "msg_scheduled": "author_id",
+                    "msg_pinned": "pinned_by",
+                    "msg_forwarded": "original_author_id",
+                }.get(table, "user_id")
                 result = self._db.fetch_one(
                     f"SELECT COUNT(*) as count FROM {table} WHERE {key_column} = ?",
                     (user_id,),
@@ -165,6 +199,42 @@ class DataCollector:
                         if isinstance(result, dict)
                         else result[0]
                     )
+            except Exception as e:
+                import utils.logger as logger
+
+                logger.debug(f"Could not count {table}: {e}")
+
+        # Suite tables use ownership, actor, or subject columns rather than a
+        # uniform user_id column. Keep their preview counts explicit and
+        # schema-tolerant, matching SuiteCollector's export semantics.
+        suite_count_queries = {
+            "stash_items": ("owner_id = ?", (user_id,)),
+            "stash_collections": ("owner_id = ?", (user_id,)),
+            "stash_versions": ("created_by = ?", (user_id,)),
+            "stash_grants": (
+                "created_by = ? OR (subject_type = 'user' AND subject_id = ?)",
+                (user_id, str(user_id)),
+            ),
+            "stash_download_tickets": ("subject_id = ?", (user_id,)),
+            "sum_workbooks": ("owner_id = ?", (user_id,)),
+            "sum_grants": ("created_by = ? OR subject_id = ?", (user_id, user_id)),
+            "sum_range_permissions": (
+                "workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id,),
+            ),
+            "sum_snapshots": (
+                "created_by = ? OR workbook_id IN (SELECT id FROM sum_workbooks WHERE owner_id = ?)",
+                (user_id, user_id),
+            ),
+            "suite_audit_log": ("actor_id = ?", (user_id,)),
+        }
+        for table, (where, params) in suite_count_queries.items():
+            try:
+                row = self._db.fetch_one(
+                    f"SELECT COUNT(*) AS count FROM {table} WHERE {where}", params
+                )
+                if row:
+                    counts[f"suite_{table}"] = int(row.get("count", 0))
             except Exception as e:
                 import utils.logger as logger
 
@@ -203,22 +273,34 @@ class DataCollector:
             logger.debug(f"Could not count transcripts: {e}")
 
         try:
-            result = self._db.fetch_one(
+            rows = self._db.fetch_all(
                 """
-                SELECT COUNT(*) as count FROM voice_calls
-                WHERE initiator_id = ?
-                   OR (consented_participants IS NOT NULL
-                       AND EXISTS (SELECT 1 FROM json_each(consented_participants) WHERE value = ?))
+                SELECT id, initiator_id, consented_participants
+                FROM voice_calls
+                WHERE initiator_id = ? OR consented_participants IS NOT NULL
                 """,
-                (user_id, user_id),
+                (user_id,),
             )
-            if result:
-                counts["voice_voice_calls"] = (
-                    result.get("count", 0) if isinstance(result, dict) else result[0]
-                )
+            count = 0
+            for row in rows or []:
+                if int(row.get("initiator_id") or 0) == user_id:
+                    count += 1
+                    continue
+                consented = row.get("consented_participants")
+                try:
+                    parsed = (
+                        json.loads(consented)
+                        if isinstance(consented, str)
+                        else consented
+                    )
+                except (ValueError, TypeError):
+                    parsed = None
+                if isinstance(parsed, list) and user_id in parsed:
+                    count += 1
+            counts["voice_voice_calls"] = count
         except Exception as e:
             import utils.logger as logger
 
-            logger.debug(f"Could not count voice_calls: {e}")
+            logger.debug(f"Could not count voice calls: {e}")
 
         return counts

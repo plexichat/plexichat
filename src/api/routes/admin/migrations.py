@@ -13,8 +13,13 @@ from pydantic import BaseModel
 import utils.config as config
 import utils.logger as logger
 from src.core.migrations.manager import MigrationManager
-from src.core.database import Database
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+    require_approved_request,
+)
+from src.api.schemas.common import ErrorResponse
 
 # Valid migration version pattern (3 digits)
 VERSION_PATTERN = re.compile(r"^\d{3}$")
@@ -95,7 +100,11 @@ class EmergencyOverrideResponse(BaseModel):
 
 def get_migration_manager() -> MigrationManager:
     """Dependency injection for migration manager."""
-    db = Database()
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise RuntimeError("Database not initialized")
     return MigrationManager(db)
 
 
@@ -113,7 +122,14 @@ def validate_version(version: str) -> None:
         )
 
 
-@router.get("/migrations", response_model=MigrationListResponse)
+@router.get(
+    "/migrations",
+    response_model=MigrationListResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_migrations(
     request: Request,
     manager: MigrationManager = Depends(get_migration_manager),
@@ -199,11 +215,17 @@ async def list_migrations(
         logger.error(f"Failed to list migrations: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list migrations: {str(e)}",
+            detail="Failed to list migrations",
         )
 
 
-@router.get("/migrations/status")
+@router.get(
+    "/migrations/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_migration_system_status(
     request: Request,
     manager: MigrationManager = Depends(get_migration_manager),
@@ -223,11 +245,20 @@ async def get_migration_system_status(
         logger.error(f"Failed to get migration system status: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get migration system status: {str(e)}",
+            detail="Failed to get migration system status",
         )
 
 
-@router.get("/migrations/{version}", response_model=MigrationDetailResponse)
+@router.get(
+    "/migrations/{version}",
+    response_model=MigrationDetailResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid migration version"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Migration not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_migration_details(
     request: Request,
     version: str,
@@ -313,26 +344,36 @@ async def get_migration_details(
         logger.error(f"Failed to get migration details: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get migration details: {str(e)}",
+            detail="Failed to get migration details",
         )
 
 
-@router.post("/migrations/{version}/run", response_model=MigrationRunResponse)
+@router.post(
+    "/migrations/{version}/run",
+    response_model=MigrationRunResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def run_migration(
     request: Request,
     version: str,
     body: MigrationRunRequest,
     manager: MigrationManager = Depends(get_migration_manager),
-    admin_user: int = Depends(get_admin_user),
 ) -> MigrationRunResponse:
     """
     Run a specific migration.
 
-    For irreversible migrations, requires confirmation text matching
-    "THE DATABASE IS BACKED UP" unless dry_run is True.
+    Requires the ``admin.migrations.execute`` permission plus an approved
+    approval request. For irreversible migrations, requires confirmation text
+    matching "THE DATABASE IS BACKED UP" unless dry_run is True.
     """
     check_host_restriction(request)
     validate_version(version)
+    admin_user = require_admin_permission(request, "admin.migrations.execute")
+    require_approved_request("migrations.run")
     try:
         # Get migration metadata
         metadata = manager.tracker.get_migration_metadata(version)
@@ -377,34 +418,43 @@ async def run_migration(
         )
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Internal server error",
         )
     except Exception as e:
         logger.error(f"Failed to run migration {version}: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to run migration: {str(e)}",
+            detail="Failed to run migration",
         )
 
 
-@router.post("/migrations/{version}/rollback")
+@router.post(
+    "/migrations/{version}/rollback",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def rollback_migration(
     request: Request,
     version: str,
     manager: MigrationManager = Depends(get_migration_manager),
-    admin_user: int = Depends(get_admin_user),
 ) -> Dict[str, Any]:
     """
     Rollback a specific migration.
 
-    Only available for migrations with a down() function.
+    Requires the ``admin.migrations.execute`` permission plus an approved
+    approval request. Only available for migrations with a down() function.
     Irreversible migrations cannot be rolled back.
     """
     check_host_restriction(request)
     validate_version(version)
+    admin_user = require_admin_permission(request, "admin.migrations.execute")
+    require_approved_request("migrations.rollback")
     try:
         # Check if migration is irreversible
         metadata = manager.tracker.get_migration_metadata(version)
@@ -421,33 +471,48 @@ async def rollback_migration(
         return result
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Internal server error",
         )
     except Exception as e:
         logger.error(f"Failed to rollback migration {version}: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to rollback migration: {str(e)}",
+            detail="Failed to rollback migration",
         )
 
 
-@router.post("/migrations/emergency-override", response_model=EmergencyOverrideResponse)
+@router.post(
+    "/migrations/emergency-override",
+    response_model=EmergencyOverrideResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def generate_emergency_override(
     request: Request,
     body: EmergencyOverrideRequest,
     manager: MigrationManager = Depends(get_migration_manager),
-    admin_user: int = Depends(get_admin_user),
 ) -> EmergencyOverrideResponse:
     """
     Generate an emergency override token for bypassing migration delays.
+
+    Requires the ``admin.migrations.execute`` permission AND an approved
+    approval request (action ``migrations.emergency_override``) - minting a
+    delay-bypass credential is precisely the class of action the approvals
+    system exists for. The minted token is single-use: it is consumed by the
+    first validation against it.
 
     The token must be set as the EMERGENCY_MIGRATION_OVERRIDE environment
     variable to take effect. Tokens expire after the specified time.
     """
     check_host_restriction(request)
+    admin_user = require_admin_permission(request, "admin.migrations.execute")
+    require_approved_request("migrations.emergency_override")
     try:
         token = manager.tracker.generate_emergency_override(
             reason=body.reason, expires_minutes=body.expires_minutes
@@ -466,5 +531,5 @@ async def generate_emergency_override(
         logger.error(f"Failed to generate emergency override: {e}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate emergency override: {str(e)}",
+            detail="Failed to generate emergency override",
         )

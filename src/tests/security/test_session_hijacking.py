@@ -8,6 +8,8 @@ including session fixation, session prediction, and token theft.
 import pytest
 import time
 
+from src.core.auth.exceptions import AuthError, TokenExpiredError, TokenInvalidError
+
 
 class TestSessionHijacking:
     """Test session hijacking prevention mechanisms."""
@@ -41,9 +43,17 @@ class TestSessionHijacking:
 
     def test_session_expires_after_timeout(self, auth_manager, db, test_user):
         """Test that sessions expire after the configured timeout."""
-        # Skip - internal token parsing structure has changed
-        # Session expiration is handled by the auth manager internally
-        pass
+        result = auth_manager.login(test_user.username, "TestPass123!")
+
+        # Manually expire the session row (expiry is enforced at verify time).
+        current_time = int(time.time() * 1000)
+        db.execute(
+            "UPDATE auth_sessions SET expires_at = ? WHERE id = ?",
+            (current_time - 100000, result.session.id),
+        )
+
+        with pytest.raises(TokenExpiredError):
+            auth_manager.verify_token(result.token)
 
     def test_session_invalidated_on_logout(self, auth_manager, test_user):
         """Test that sessions are properly invalidated on logout."""
@@ -79,13 +89,30 @@ class TestSessionHijacking:
         old_token = result.token
 
         new_token = auth_manager.refresh_session(old_token)
+        assert new_token is not None
 
-        # Refresh may return the same token if it's still valid
-        # The important thing is the refresh operation works
-        if new_token:
-            # Token should still be valid after refresh
-            token_info = auth_manager.verify_token(new_token)
-            assert token_info is not None
+        # Token should still be valid after refresh
+        token_info = auth_manager.verify_token(new_token)
+        assert token_info is not None
+
+    def test_session_refresh_invalidates_old_token(self, auth_manager, test_user):
+        """Rotation must kill the pre-refresh bearer (F3).
+
+        An intercepted token stays valid only until the next refresh;
+        after rotation the old bearer must be rejected.
+        """
+        result = auth_manager.login(test_user.username, "TestPass123!")
+        old_token = result.token
+
+        new_token = auth_manager.refresh_session(old_token)
+        assert new_token is not None
+        assert new_token != old_token
+
+        with pytest.raises(AuthError):
+            auth_manager.verify_token(old_token)
+
+        # The rotated token works.
+        assert auth_manager.verify_token(new_token) is not None
 
     def test_session_fixation_prevented(self, auth_manager, test_user):
         """Test that session fixation attacks are prevented."""
@@ -95,35 +122,71 @@ class TestSessionHijacking:
 
         assert result.token != fake_token
 
-    def test_session_ip_binding(self, auth_manager, test_user):
-        """Test session IP binding if enabled."""
+    def test_session_ip_binding(self, auth_manager, test_user, monkeypatch):
+        """Test session IP binding when token_binding is enabled."""
+        manager = auth_manager._manager
+        monkeypatch.setattr(
+            manager,
+            "_config",
+            {
+                **manager._config,
+                "security": {
+                    **manager._config.get("security", {}),
+                    "token_binding": True,
+                },
+            },
+        )
         result = auth_manager.login(
             username=test_user.username,
             password="TestPass123!",
             ip_address="192.168.1.100",
+            user_agent="TestAgent/1.0",
         )
 
-        try:
-            token_info = auth_manager.verify_token(
-                result.token, ip_address="192.168.1.100"
-            )
-            assert token_info.valid
-        except Exception:
-            pass
+        token_info = auth_manager.verify_token(
+            result.token, ip_address="192.168.1.100", user_agent="TestAgent/1.0"
+        )
+        assert token_info.valid
 
-    def test_session_user_agent_binding(self, auth_manager, test_user):
-        """Test session user agent binding if enabled."""
+        # A different IP must be rejected while binding is enforced.
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(
+                result.token, ip_address="192.168.1.101", user_agent="TestAgent/1.0"
+            )
+
+    def test_session_user_agent_binding(self, auth_manager, test_user, monkeypatch):
+        """Test session user agent binding when token_binding is enabled."""
+        manager = auth_manager._manager
+        monkeypatch.setattr(
+            manager,
+            "_config",
+            {
+                **manager._config,
+                "security": {
+                    **manager._config.get("security", {}),
+                    "token_binding": True,
+                },
+            },
+        )
         user_agent = "Mozilla/5.0 Test Browser"
 
         result = auth_manager.login(
-            username=test_user.username, password="TestPass123!", user_agent=user_agent
+            username=test_user.username,
+            password="TestPass123!",
+            ip_address="10.0.0.5",
+            user_agent=user_agent,
         )
 
-        try:
-            token_info = auth_manager.verify_token(result.token, user_agent=user_agent)
-            assert token_info.valid
-        except Exception:
-            pass
+        token_info = auth_manager.verify_token(
+            result.token, ip_address="10.0.0.5", user_agent=user_agent
+        )
+        assert token_info.valid
+
+        # A different user agent on the same IP must be rejected.
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(
+                result.token, ip_address="10.0.0.5", user_agent="Different Browser"
+            )
 
     def test_concurrent_session_limit_enforced(self, auth_manager, test_user):
         """Test that concurrent session limits are enforced."""
@@ -148,8 +211,9 @@ class TestSessionHijacking:
         auth_manager.verify_token(result.token)
 
         sessions = auth_manager.get_sessions(test_user.id)
-        if sessions:
-            assert sessions[0].last_activity is not None
+        assert len(sessions) == 1
+        assert sessions[0].last_activity is not None
+        assert sessions[0].last_activity > 0
 
     def test_session_device_tracking(self, auth_manager, test_user):
         """Test that session device information is tracked."""
@@ -166,25 +230,52 @@ class TestSessionHijacking:
         )
 
         sessions = auth_manager.get_sessions(test_user.id)
-        if sessions and sessions[0].device_id:
-            devices = auth_manager.get_devices(test_user.id)
-            assert len(devices) > 0
+        assert len(sessions) == 1
+        assert sessions[0].device_id is not None
+        devices = auth_manager.get_devices(test_user.id)
+        assert len(devices) == 1
+        assert devices[0].fingerprint == "test_device_123"
 
-    def test_suspicious_activity_detection(self, auth_manager, test_user):
-        """Test detection of suspicious activity patterns."""
+    def test_suspicious_activity_detection(self, auth_manager, test_user, monkeypatch):
+        """Test that a token used from a different IP is flagged when binding is on."""
+        manager = auth_manager._manager
+        monkeypatch.setattr(
+            manager,
+            "_config",
+            {
+                **manager._config,
+                "security": {
+                    **manager._config.get("security", {}),
+                    "token_binding": True,
+                },
+            },
+        )
         result = auth_manager.login(
             username=test_user.username,
             password="TestPass123!",
             ip_address="192.168.1.1",
+            user_agent="SuspiciousUA/1",
         )
 
-        try:
-            auth_manager.verify_token(result.token, ip_address="10.0.0.1")
-        except Exception:
-            pass
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(
+                result.token, ip_address="10.0.0.1", user_agent="SuspiciousUA/1"
+            )
 
-    def test_session_takeover_detection(self, auth_manager, test_user):
-        """Test detection of potential session takeover."""
+    def test_session_takeover_detection(self, auth_manager, test_user, monkeypatch):
+        """Test that a token replayed from a different IP+UA is rejected."""
+        manager = auth_manager._manager
+        monkeypatch.setattr(
+            manager,
+            "_config",
+            {
+                **manager._config,
+                "security": {
+                    **manager._config.get("security", {}),
+                    "token_binding": True,
+                },
+            },
+        )
         result = auth_manager.login(
             username=test_user.username,
             password="TestPass123!",
@@ -192,12 +283,10 @@ class TestSessionHijacking:
             user_agent="Mozilla/5.0",
         )
 
-        try:
+        with pytest.raises(TokenInvalidError):
             auth_manager.verify_token(
                 result.token, ip_address="10.0.0.1", user_agent="Different Browser"
             )
-        except Exception:
-            pass
 
     def test_token_reuse_from_different_source(self, auth_manager, test_user):
         """Test that tokens cannot be easily reused from different sources."""
@@ -230,18 +319,15 @@ class TestSessionHijacking:
                 auth_manager.verify_token(result.token)
 
     def test_password_change_revokes_sessions(self, auth_manager, test_user):
-        """Test that password changes can optionally revoke sessions."""
+        """Test that password changes revoke existing sessions."""
         result = auth_manager.login(test_user.username, "TestPass123!")
 
-        try:
-            auth_manager.change_password(
-                user_id=test_user.id,
-                old_password="TestPass123!",
-                new_password="NewPass123!",
-            )
+        changed = auth_manager.change_password(
+            user_id=test_user.id,
+            old_password="TestPass123!",
+            new_password="NewPassword123!",
+        )
+        assert changed is True
 
-            time.sleep(0.1)
-
+        with pytest.raises(TokenInvalidError):
             auth_manager.verify_token(result.token)
-        except Exception:
-            pass

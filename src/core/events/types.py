@@ -11,6 +11,12 @@ class EventType(Enum):
     READY = "READY"
     RESUMED = "RESUMED"
 
+    # Server -> client error frame for a specific request that could not
+    # be fulfilled (denied permission, internal failure, ...). Carries a
+    # stable machine code so clients can distinguish outcomes instead of
+    # guessing from silence.
+    ERROR = "ERROR"
+
     MESSAGE_CREATE = "MESSAGE_CREATE"
     MESSAGE_UPDATE = "MESSAGE_UPDATE"
     MESSAGE_DELETE = "MESSAGE_DELETE"
@@ -19,6 +25,9 @@ class EventType(Enum):
     MESSAGE_REACTION_ADD = "MESSAGE_REACTION_ADD"
     MESSAGE_REACTION_REMOVE = "MESSAGE_REACTION_REMOVE"
     MESSAGE_REACTION_REMOVE_ALL = "MESSAGE_REACTION_REMOVE_ALL"
+    MESSAGE_REACTION_REMOVE_EMOJI = "MESSAGE_REACTION_REMOVE_EMOJI"
+
+    POLL_UPDATE = "POLL_UPDATE"
 
     PRESENCE_UPDATE = "PRESENCE_UPDATE"
     TYPING_START = "TYPING_START"
@@ -63,6 +72,8 @@ class EventType(Enum):
     RELATIONSHIP_ADD = "RELATIONSHIP_ADD"
     RELATIONSHIP_REMOVE = "RELATIONSHIP_REMOVE"
 
+    INTERACTION_CREATE = "INTERACTION_CREATE"
+
     NOTIFICATION_CREATE = "NOTIFICATION_CREATE"
     NOTIFICATION_UPDATE = "NOTIFICATION_UPDATE"
     NOTIFICATION_DELETE = "NOTIFICATION_DELETE"
@@ -76,6 +87,11 @@ class EventType(Enum):
     ARTIFACT_UPDATE = "ARTIFACT_UPDATE"
     ARTIFACT_DELETE = "ARTIFACT_DELETE"
     ARTIFACT_OP = "ARTIFACT_OP"
+
+    # PlexiSum workbook mutations (cells, structure, comments, formats...).
+    WORKBOOK_UPDATE = "WORKBOOK_UPDATE"
+    SUM_OPERATION = "SUM_OPERATION"
+    SUM_PRESENCE = "SUM_PRESENCE"
 
 
 class GatewayIntent(IntFlag):
@@ -102,31 +118,20 @@ class GatewayIntent(IntFlag):
     AUTOMOD = 1 << 18
     AUDIT_LOG = 1 << 19
     ARTIFACTS = 1 << 20
+    SUMS = 1 << 21
 
     @classmethod
     def all_intents(cls) -> int:
-        """Get all intents combined."""
-        return (
-            cls.GUILDS
-            | cls.GUILD_MEMBERS
-            | cls.GUILD_BANS
-            | cls.GUILD_EMOJIS
-            | cls.GUILD_INTEGRATIONS
-            | cls.GUILD_WEBHOOKS
-            | cls.GUILD_INVITES
-            | cls.GUILD_VOICE_STATES
-            | cls.GUILD_PRESENCES
-            | cls.GUILD_MESSAGES
-            | cls.GUILD_MESSAGE_REACTIONS
-            | cls.GUILD_MESSAGE_TYPING
-            | cls.DIRECT_MESSAGES
-            | cls.DIRECT_MESSAGE_REACTIONS
-            | cls.DIRECT_MESSAGE_TYPING
-            | cls.MESSAGE_CONTENT
-            | cls.AUTOMOD
-            | cls.AUDIT_LOG
-            | cls.ARTIFACTS
-        )
+        """Get all intents combined.
+
+        Derived from the enum itself so the mask can never drift from the
+        declared intent set (a previous hand-written list silently dropped
+        SCHEDULED_EVENTS and THREADS).
+        """
+        value = 0
+        for member in cls:
+            value |= int(member)
+        return value
 
     @classmethod
     def default_intents(cls) -> int:
@@ -146,6 +151,7 @@ class GatewayIntent(IntFlag):
             | cls.DIRECT_MESSAGE_REACTIONS
             | cls.DIRECT_MESSAGE_TYPING
             | cls.ARTIFACTS
+            | cls.SUMS
         )
 
     @classmethod

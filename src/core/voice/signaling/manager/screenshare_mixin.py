@@ -1,20 +1,64 @@
 """Screen share handling mixin for SignalingManager."""
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import utils.logger as logger
 
 from ..exceptions import NotConnectedError, ScreenShareError
+from ...exceptions import PermissionDeniedError
 from ..models import ScreenShareState
 
 
 class ScreenShareMixin:
     """Mixin handling screen share methods."""
 
+    if TYPE_CHECKING:
+
+        def _get_timestamp(self) -> int: ...
+        def _voice_manager(self) -> Optional[Any]: ...
+
     _voice: Optional[Any]
     _connections: Dict[int, Any]
 
-    def _get_timestamp(self) -> int: ...
+    def _require_stream_permission(self, user_id: int, channel_id: int) -> None:
+        """Enforce ``voice.speak`` for stream-capable operations (M7).
+
+        Raises PermissionDeniedError when the voice module is wired and the
+        user lacks the permission; fails open only when the underlying
+        module cannot resolve the channel (deferring to the caller's own
+        channel lookup).
+        """
+        manager = self._voice_manager()
+        if manager is None:
+            return
+
+        get_channel = getattr(manager, "_get_server_channel", None)
+        require_permission = getattr(manager, "_require_permission", None)
+        if get_channel is None or require_permission is None:
+            # See ``_require_connect_permission``: an authorization guard that
+            # cannot be evaluated denies rather than skips.
+            raise PermissionDeniedError(
+                "Cannot verify voice.speak for this channel",
+                permission="voice.speak",
+            )
+
+        try:
+            channel = get_channel(channel_id)
+        except Exception as e:
+            logger.warning(
+                f"Could not resolve channel {channel_id} for screen share "
+                f"permission check: {e}"
+            )
+            return
+
+        if not channel:
+            return
+
+        server_id = channel.get("server_id")
+        if server_id is None:
+            return
+
+        require_permission(user_id, server_id, "voice.speak", channel_id)
 
     def start_screen_share(self, user_id: int, channel_id: int) -> ScreenShareState:
         """
@@ -44,6 +88,11 @@ class ScreenShareMixin:
             raise ScreenShareError(
                 "Screen share already active", user_id=user_id, reason="already_sharing"
             )
+
+        # SECURITY (Agent 34 M7): starting a screen share is a stream/speak
+        # capability and previously had NO permission check at all. Require
+        # voice.speak in the channel's server before allowing it.
+        self._require_stream_permission(user_id, channel_id)
 
         now = self._get_timestamp()
         stream_id = f"screen_{user_id}_{now}"
@@ -84,6 +133,15 @@ class ScreenShareMixin:
         """
         connection = self._connections.get(user_id)
         if not connection:
+            return False
+
+        # SECURITY (Agent 34 M7): stop must operate on the bound channel only;
+        # a mismatched channel id previously still tore down the share.
+        if connection.channel_id != channel_id:
+            logger.warning(
+                f"Channel mismatch stopping screen share for user {user_id}: "
+                f"bound={connection.channel_id} requested={channel_id}"
+            )
             return False
 
         if not connection.screen_share or not connection.screen_share.active:

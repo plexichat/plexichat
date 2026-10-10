@@ -2,6 +2,8 @@
 
 import pytest
 
+from src.core.media.models import ScanStatus
+
 
 MINI_PNG = (
     b"\x89PNG\r\n\x1a\n"
@@ -61,7 +63,7 @@ class TestIntegration:
         )
         scan_status, scan_result = media_manager.scan_file(result.file_id)
         # Scanner is likely not available in test env, so status is SKIPPED
-        assert scan_status is not None
+        assert isinstance(scan_status, ScanStatus)
 
     def test_scan_nonexistent_file(self, media_manager):
         """Test scanning a nonexistent file raises error."""

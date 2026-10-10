@@ -8,10 +8,13 @@ This module handles:
 - Change tracking and reasons
 """
 
+import html
 import logging
 import time
-from typing import Optional, List, TYPE_CHECKING
 from dataclasses import dataclass
+from typing import List, Optional, TYPE_CHECKING, cast
+
+import utils.config as config
 
 if TYPE_CHECKING:
     pass
@@ -69,26 +72,16 @@ class AdminNotesManager:
         now = int(time.time() * 1000)
         note_id = generate_snowflake_id()
 
-        # Get current version number for this target
-        version_number = self._get_next_version_number(target_type, target_id)
-
-        self.db.execute(
-            """
-            INSERT INTO admin_notes_versioning 
-            (id, target_type, target_id, note_content, note_format, created_by, created_at, version_number, change_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                note_id,
-                target_type,
-                target_id,
-                content,
-                note_format,
-                author_id,
-                now,
-                version_number,
-                change_reason,
-            ),
+        note_content = self._encode_content(content, target_type, target_id)
+        version_number = self._insert_version(
+            note_id,
+            target_type,
+            target_id,
+            note_content,
+            note_format,
+            author_id,
+            now,
+            change_reason,
         )
 
         # Update the target's current note
@@ -127,26 +120,16 @@ class AdminNotesManager:
         now = int(time.time() * 1000)
         note_id = generate_snowflake_id()
 
-        # Get current version number for this target
-        version_number = self._get_next_version_number(target_type, target_id)
-
-        self.db.execute(
-            """
-            INSERT INTO admin_notes_versioning 
-            (id, target_type, target_id, note_content, note_format, created_by, created_at, version_number, change_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                note_id,
-                target_type,
-                target_id,
-                content,
-                note_format,
-                author_id,
-                now,
-                version_number,
-                change_reason,
-            ),
+        note_content = self._encode_content(content, target_type, target_id)
+        version_number = self._insert_version(
+            note_id,
+            target_type,
+            target_id,
+            note_content,
+            note_format,
+            author_id,
+            now,
+            change_reason,
         )
 
         # Update the target's current note
@@ -189,7 +172,9 @@ class AdminNotesManager:
                     id=row["id"],
                     target_type=row["target_type"],
                     target_id=row["target_id"],
-                    note_content=row["note_content"],
+                    note_content=self._decode_content(
+                        row["note_content"], target_type, target_id
+                    ),
                     note_format=row["note_format"],
                     created_by=row["created_by"],
                     created_at=row["created_at"],
@@ -201,7 +186,7 @@ class AdminNotesManager:
                     id=row[0],
                     target_type=row[1],
                     target_id=row[2],
-                    note_content=row[3],
+                    note_content=self._decode_content(row[3], target_type, target_id),
                     note_format=row[4],
                     created_by=row[5],
                     created_at=row[6],
@@ -249,10 +234,12 @@ class AdminNotesManager:
             )
 
         if isinstance(version, dict):
-            content = version["note_content"]
+            content = self._decode_content(
+                version["note_content"], target_type, target_id
+            )
             note_format = version["note_format"]
         else:
-            content = version[0]
+            content = self._decode_content(version[0], target_type, target_id)
             note_format = version[1]
 
         # Create new version with old content
@@ -298,6 +285,78 @@ class AdminNotesManager:
         )
         return deleted_count
 
+    def _encode_content(self, content: str, target_type: str, target_id: int) -> str:
+        """Store version content as ciphertext when note encryption is enabled."""
+        if not config.get("encryption.encrypt_internal_notes", False):
+            return content
+        from src.utils.encryption import encrypt_data
+
+        context = f"admin_note:{target_type}:{target_id}"
+        return "enc:" + encrypt_data(content, context=context)
+
+    def _decode_content(self, value: str, target_type: str, target_id: int) -> str:
+        """Decode version content without exposing plaintext on crypto failure."""
+        if not config.get("encryption.encrypt_internal_notes", False):
+            return value or ""
+        if not isinstance(value, str) or not value.startswith("enc:"):
+            return ""
+        from src.utils.encryption import decrypt_data
+
+        try:
+            context = f"admin_note:{target_type}:{target_id}"
+            return decrypt_data(value[4:], context=context)
+        except Exception as e:
+            logger.warning(
+                "Failed to decrypt note version for %s %s: %s",
+                target_type,
+                target_id,
+                e,
+            )
+            return ""
+
+    def _insert_version(
+        self,
+        note_id: int,
+        target_type: str,
+        target_id: int,
+        note_content: str,
+        note_format: str,
+        author_id: int,
+        created_at: int,
+        change_reason: Optional[str],
+    ) -> int:
+        """Insert a version, retrying collisions caused by concurrent writers."""
+        for _ in range(3):
+            version_number = self._get_next_version_number(target_type, target_id)
+            try:
+                self.db.execute(
+                    """
+                    INSERT INTO admin_notes_versioning
+                    (id, target_type, target_id, note_content, note_format, created_by, created_at, version_number, change_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        note_id,
+                        target_type,
+                        target_id,
+                        note_content,
+                        note_format,
+                        author_id,
+                        created_at,
+                        version_number,
+                        change_reason,
+                    ),
+                )
+                return version_number
+            except Exception as exc:
+                message = str(exc).lower()
+                if "unique" not in message and "duplicate" not in message:
+                    raise
+                rollback = getattr(self.db, "rollback", None)
+                if callable(rollback):
+                    rollback()
+        raise RuntimeError("Could not allocate a unique note version")
+
     def _get_next_version_number(self, target_type: str, target_id: int) -> int:
         """Get the next version number for a target."""
         result = self.db.fetch_one(
@@ -320,7 +379,7 @@ class AdminNotesManager:
         self, target_type: str, target_id: int, content: str, note_format: str
     ):
         """Update the target's current note and format."""
-        encrypt_internal_notes = False  # Get from config if needed
+        encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
 
         if target_type == "user":
             if encrypt_internal_notes:
@@ -333,7 +392,7 @@ class AdminNotesManager:
                     SET internal_notes = ?, internal_notes_encrypted = ?, internal_notes_format = ?
                     WHERE id = ?
                 """,
-                    (content, encrypted, note_format, target_id),
+                    (None, encrypted, note_format, target_id),
                 )
             else:
                 self.db.execute(
@@ -355,7 +414,7 @@ class AdminNotesManager:
                     SET internal_notes = ?, internal_notes_encrypted = ?, internal_notes_format = ?
                     WHERE id = ?
                 """,
-                    (content, encrypted, note_format, target_id),
+                    (None, encrypted, note_format, target_id),
                 )
             else:
                 self.db.execute(
@@ -371,6 +430,12 @@ class AdminNotesManager:
         """
         Render markdown content to HTML.
 
+        Uses mistune, the same parser as the docs renderer, so admin notes and
+        published docs cannot drift apart in rendering behaviour. Raw HTML is
+        left intact for the sanitizer below (``escape=False``) and
+        ``hard_wrap`` reproduces the ``nl2br`` extension the previous
+        ``markdown``-based implementation relied on.
+
         Args:
             content: Markdown content to render
 
@@ -378,13 +443,29 @@ class AdminNotesManager:
             HTML rendered content
         """
         try:
-            import markdown  # type: ignore
+            import mistune
 
-            return markdown.markdown(content, extensions=["extra", "nl2br"])
+            renderer = mistune.create_markdown(
+                escape=False,
+                hard_wrap=True,
+                plugins=[
+                    "strikethrough",
+                    "footnotes",
+                    "table",
+                    "task_lists",
+                ],
+            )
+            rendered = cast(str, renderer(content))
+            # Reuse the server's allowlist sanitizer; markdown output is still
+            # user-authored HTML and must not be trusted merely because it was
+            # produced by the markdown renderer.
+            from src.api.routes.artifacts_export import sanitize_rich_html
+
+            return sanitize_rich_html(rendered)
         except ImportError:
-            # If markdown library not available, return as-is
+            # If markdown library is unavailable, return escaped plain text.
             logger.warning("Markdown library not available, returning plain text")
-            return content
+            return html.escape(content or "", quote=False)
         except Exception as e:
             logger.warning(f"Markdown rendering error: {e}")
-            return content
+            return html.escape(content or "", quote=False)

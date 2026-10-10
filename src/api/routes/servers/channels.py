@@ -201,7 +201,8 @@ async def create_server_channel(
             f"Failed to create channel in server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
     except Exception as e:
         exc_name = type(e).__name__
@@ -212,14 +213,16 @@ async def create_server_channel(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
             f"Failed to create channel in server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -255,6 +258,28 @@ async def get_server_invites(
             )
 
         invites = servers_mod.get_invites(current_user.user_id, sid)
+
+        # Enrich invites with inviter public info so clients can render the
+        # creator's name instead of "Unknown".
+        inviter_map = {}
+        inviter_ids = {
+            int(inv.inviter_id)
+            for inv in (invites or [])
+            if getattr(inv, "inviter_id", None) is not None
+        }
+        if inviter_ids:
+            auth_mod = api.get_auth()
+            if auth_mod and hasattr(auth_mod, "get_users_bulk"):
+                try:
+                    from ..users import _user_to_public_response
+
+                    for uid, u in (
+                        auth_mod.get_users_bulk(list(inviter_ids)) or {}
+                    ).items():
+                        inviter_map[int(uid)] = _user_to_public_response(u)
+                except Exception as ue:
+                    logger.debug(f"Failed to enrich invite inviters: {ue}")
+
         return [
             InviteResponse(
                 code=inv.code,
@@ -265,6 +290,11 @@ async def get_server_invites(
                 inviter_id=SnowflakeID(inv.inviter_id)
                 if hasattr(inv, "inviter_id")
                 else None,
+                inviter=inviter_map.get(
+                    int(inv.inviter_id)
+                    if getattr(inv, "inviter_id", None) is not None
+                    else -1
+                ),
                 uses=getattr(inv, "uses", 0),
                 max_uses=getattr(inv, "max_uses", 0),
                 max_age=getattr(inv, "max_age", 86400),
@@ -285,12 +315,14 @@ async def get_server_invites(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
             f"Failed to fetch invites for server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

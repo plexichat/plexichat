@@ -2,7 +2,9 @@
 FastAPI middleware for rate limiting.
 """
 
+import hashlib
 import re
+import threading
 from typing import Optional, Dict, Callable, Any
 
 from fastapi import Request
@@ -13,11 +15,118 @@ import utils.config as config
 from src.utils.net import get_client_ip
 
 
+# ---------------------------------------------------------------------------
+# F8: bounded rate-limit keyspace.
+# ---------------------------------------------------------------------------
+# ``extract_route_info`` used to return ``f"{method} {path}"`` verbatim for
+# any path that matched no known route. An attacker could therefore craft
+# distinct URLs (``/api/a?x=1..N``, ``/api/evil/<id>``) and each one created
+# a brand-new bucket row in the persistent backends (DB/Valkey) with no
+# eviction -- unbounded storage growth / DoS via key exhaustion.
+#
+# The fix normalizes attacker-controlled input BEFORE it becomes a bucket
+# key, and bounds whatever keyspace remains:
+#   1. the query string / fragment is stripped (``?`` / ``#`` never fan out);
+#   2. UUID-like, pure-numeric, and long-hex path segments collapse to
+#      ``{id}`` so ``/api/evil/1..N`` shares one bucket;
+#   3. overlong paths are truncated to ``MAX_ROUTE_LENGTH``;
+#   4. genuinely-distinct unknown routes are kept 1:1 only up to
+#      ``MAX_DISTINCT_UNKNOWN_ROUTES`` -- beyond that they hash into a fixed
+#      set of ``UNKNOWN_BUCKET_COUNT`` overflow buckets, so 1000 distinct
+#      paths can never create 1000 buckets.  Legitimate low-cardinality
+#      routes still get distinct buckets (per-route limiting keeps working).
+# Every storage backend additionally enforces TTL + row-count eviction, so
+# even a full overflow set cannot grow without bound.
+MAX_ROUTE_LENGTH = 512
+MAX_DISTINCT_UNKNOWN_ROUTES = 128
+UNKNOWN_BUCKET_COUNT = 16
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_HEXISH_RE = re.compile(r"^[0-9a-fA-F]{16,}$")
+
+_unknown_lock = threading.Lock()
+# Insertion-ordered set of distinct normalized unknown routes (py3.7+ dict).
+_unknown_routes: Dict[str, None] = {}
+
+
+def _reset_unknown_route_cache() -> None:
+    """Clear the bounded unknown-route registry (used by tests)."""
+    with _unknown_lock:
+        _unknown_routes.clear()
+
+
+def _collapse_id_segments(path: str) -> str:
+    """Replace ID-like path segments with ``{id}``."""
+    segments = path.split("/")
+    collapsed = []
+    for seg in segments:
+        if not seg:
+            collapsed.append(seg)
+            continue
+        if seg.isdigit():
+            collapsed.append("{id}")
+        elif _UUID_RE.match(seg):
+            collapsed.append("{id}")
+        elif _HEXISH_RE.match(seg):
+            collapsed.append("{id}")
+        else:
+            # Cap absurd single-segment lengths so one giant segment
+            # cannot blow up key memory.
+            collapsed.append(seg[:64] if len(seg) > 64 else seg)
+    return "/".join(collapsed)
+
+
+def _register_unknown_route(candidate: str, method: str) -> str:
+    """Bound the distinct unknown-route keyspace via hashed overflow."""
+    with _unknown_lock:
+        if candidate in _unknown_routes:
+            return candidate
+        if len(_unknown_routes) < MAX_DISTINCT_UNKNOWN_ROUTES:
+            _unknown_routes[candidate] = None
+            return candidate
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    slot = int(digest[:8], 16) % UNKNOWN_BUCKET_COUNT
+    return f"{method} /unknown/{{overflow-{slot}}}"
+
+
+_DEFAULT_API_PREFIX = "/api/v1"
+
+
+def _resolve_api_prefix() -> str:
+    """Resolve the configurable API prefix, falling back to the default.
+
+    ``extract_route_info``'s route tables are keyed on the default prefix.
+    An operator that renames ``api.api_prefix`` would otherwise miss every
+    strict per-route cap (login/register/2FA/password-reset) and silently
+    fall back to the generic default limit.
+    """
+    try:
+        prefix = config.get("api", {}).get("api_prefix", _DEFAULT_API_PREFIX)
+        return (prefix or _DEFAULT_API_PREFIX).rstrip("/") or _DEFAULT_API_PREFIX
+    except Exception:
+        return _DEFAULT_API_PREFIX
+
+
 # Common routes for fast lookup (without regex)
 COMMON_ROUTES = {
     "/api/v1/auth/login": "POST /auth/login",
     "/api/v1/auth/register": "POST /auth/register",
     "/api/v1/auth/2fa": "POST /auth/2fa",
+    # SECURITY: strict brute-force protections for token/code confirmation
+    # endpoints. Without these mappings the requests fall through to the
+    # generic per-IP default instead of their intended strict caps.
+    "/api/v1/auth/2fa/enable": "POST /auth/2fa/enable",
+    "/api/v1/auth/2fa/confirm": "POST /auth/2fa/confirm",
+    "/api/v1/auth/2fa/disable": "POST /auth/2fa/disable",
+    "/api/v1/auth/password-reset/request": "POST /auth/password-reset/request",
+    "/api/v1/auth/password-reset/confirm": "POST /auth/password-reset/confirm",
+    "/api/v1/auth/refresh": "POST /auth/refresh",
+    "/api/v1/auth/ws-ticket": "POST /auth/ws-ticket",
+    "/api/v1/auth/verify-email": "{method} /auth/verify-email",
+    "/api/v1/auth/resend-verification": "POST /auth/resend-verification",
     "/api/v1/auth/logout": "POST /auth/logout",
     "/api/v1/users/@me": "{method} /users/@me",
     "/api/v1/relationships/@me": "GET /relationships/@me",
@@ -57,7 +166,70 @@ ROUTE_PATTERNS = [
     (re.compile(r"^/api/v\d+/webhooks$"), "POST /webhooks"),
     (re.compile(r"^/api/v\d+/webhooks/(\d+)$"), "{method} /webhooks/{id}"),
     (re.compile(r"^/api/v\d+/webhooks/(\d+)/([^/]+)$"), "POST /webhooks/{id}/{token}"),
+    (re.compile(r"^/api/v\d+/suite/stash/items$"), "{method} /suite/stash/items"),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/versions$"),
+        "{method} /suite/stash/items/{id}/versions",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/pin$"),
+        "{method} /suite/stash/items/{id}/pin",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/grants$"),
+        "{method} /suite/stash/items/{id}/grants",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/download-ticket$"),
+        "{method} /suite/stash/items/{id}/download-ticket",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)/restore$"),
+        "{method} /suite/stash/items/{id}/restore",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/items/(\d+)$"),
+        "{method} /suite/stash/items/{id}",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/download-ticket/redeem$"),
+        "{method} /suite/stash/download-ticket/redeem",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/grants/(\d+)$"),
+        "{method} /suite/stash/grants/{id}",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/stash/collections$"),
+        "{method} /suite/stash/collections",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)/sheets/(\d+)/viewport$"),
+        "{method} /suite/sum/workbooks/{id}/sheets/{sheet_id}/viewport",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)/sheets/(\d+)/operations$"),
+        "{method} /suite/sum/workbooks/{id}/sheets/{sheet_id}/operations",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)/restore$"),
+        "{method} /suite/sum/workbooks/{id}/restore",
+    ),
+    (
+        re.compile(r"^/api/v\d+/suite/sum/workbooks/(\d+)$"),
+        "{method} /suite/sum/workbooks/{id}",
+    ),
+    (re.compile(r"^/api/v\d+/suite/sum/workbooks$"), "{method} /suite/sum/workbooks"),
     (re.compile(r"^/api/v\d+/telemetry/response-times$"), "POST /telemetry"),
+    # OAuth provider routes (provider is a path segment, not an ID)
+    (
+        re.compile(r"^/api/v\d+/auth/oauth/([^/]+)/login$"),
+        "{method} /auth/oauth/login",
+    ),
+    (
+        re.compile(r"^/api/v\d+/auth/oauth/([^/]+)/callback$"),
+        "{method} /auth/oauth/callback",
+    ),
 ]
 
 
@@ -68,6 +240,28 @@ def extract_route_info(path: str, method: str) -> tuple:
     Returns:
         Tuple of (route_pattern, resource_id, webhook_id).
     """
+    # F8: strip query string / fragment first -- they are attacker-controlled
+    # and must never fan out into distinct buckets. (ASGI ``scope["path"]``
+    # is already decoded without the query string, but callers/tests may
+    # pass a full path, so normalize defensively.)
+    path = path.split("?", 1)[0].split("#", 1)[0]
+    if not path.startswith("/"):
+        path = "/" + path
+    # Collapse duplicate slashes and drop a trailing slash (except root).
+    path = re.sub(r"/{2,}", "/", path)
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+    # Hard cap on raw path length before any further processing.
+    if len(path) > MAX_ROUTE_LENGTH:
+        path = path[:MAX_ROUTE_LENGTH]
+
+    # Normalize a non-default api_prefix back to the canonical prefix the
+    # route tables below are keyed on, so renamed deployments still match
+    # their strict per-route caps.
+    api_prefix = _resolve_api_prefix()
+    if api_prefix != _DEFAULT_API_PREFIX and path.startswith(api_prefix):
+        path = _DEFAULT_API_PREFIX + path[len(api_prefix) :]
+
     # 1. Try fast lookup
     if path in COMMON_ROUTES:
         return COMMON_ROUTES[path].replace("{method}", method), None, None
@@ -89,7 +283,12 @@ def extract_route_info(path: str, method: str) -> tuple:
                 except (ValueError, IndexError):
                     pass
             return route, resource_id, webhook_id
-    return f"{method} {path}", resource_id, webhook_id
+    # 3. Unknown path: collapse ID-like segments, then bound the keyspace.
+    normalized = _collapse_id_segments(path)
+    if len(normalized) > MAX_ROUTE_LENGTH:
+        normalized = normalized[:MAX_ROUTE_LENGTH]
+    candidate = f"{method} {normalized}"
+    return _register_unknown_route(candidate, method), resource_id, webhook_id
 
 
 class RateLimitMiddlewareASGI:
@@ -179,10 +378,17 @@ class RateLimitMiddlewareASGI:
 
             import hmac
 
+            # SECURITY: hmac.compare_digest raises TypeError on non-ASCII
+            # str inputs (Starlette decodes headers as latin-1, so a client
+            # can send arbitrary bytes). Compare UTF-8 encodings so a
+            # malformed header is simply treated as "no bypass" instead of
+            # raising a 500 inside the ASGI middleware.
             if (
                 bypass_secret
                 and bypass_header
-                and hmac.compare_digest(bypass_header, bypass_secret)
+                and hmac.compare_digest(
+                    bypass_header.encode("utf-8"), str(bypass_secret).encode("utf-8")
+                )
             ):
                 user_info["is_internal"] = True
             elif getattr(request.state, "is_internal", False):
@@ -193,7 +399,7 @@ class RateLimitMiddlewareASGI:
             user_info["is_webhook"] = True
             user_info["webhook_id"] = webhook_id
 
-        result = ratelimit.check_rate_limit(
+        result = await ratelimit.acheck_rate_limit(
             user_id=user_info.get("user_id"),
             ip_address=user_info.get("ip_address"),
             route=route,

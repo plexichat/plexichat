@@ -73,10 +73,12 @@ class AuthSetupMixin(SetupServiceBase):
 
         try:
             user = auth_mod.get_user_by_username(username)
+            password_already_stored = False
             if not user:
                 logger.debug(f"Creating new test user: {username}")
                 try:
                     user = auth_mod.register_selftest(username, email, password)
+                    password_already_stored = True
                 except Exception as e:
                     if "Email already registered" in str(e):
                         db = api.get_db()
@@ -99,8 +101,11 @@ class AuthSetupMixin(SetupServiceBase):
                 logger.error("Failed to find or create test user")
                 return False
 
+            # register_selftest already stored the correct hash for a freshly
+            # created user; only re-hash when the user pre-existed (the random
+            # password changed on this run, so the stored hash is stale).
             _pwd_db = api.get_db()
-            if _pwd_db:
+            if _pwd_db and not password_already_stored:
                 try:
                     import src.utils.encryption as _setup_enc_pwd
 
@@ -191,7 +196,17 @@ class AuthSetupMixin(SetupServiceBase):
 
         resp = self.ctx.session.post(
             f"{self.ctx.base_url}/api/v1/auth/login",
-            json={"username": username, "password": password},
+            json={
+                "username": username,
+                "password": password,
+                # Register a stable device fingerprint so device lifecycle
+                # endpoints (trust/untrust/rename/revoke) have a real
+                # device to address instead of fuzzed ids (404 by design).
+                "device_fingerprint": "selftest-device-01",
+            },
+            # M9: raw session tokens leave the JSON body ONLY for explicit
+            # non-browser opt-in; self-test drives the Bearer path.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
             timeout=10,
         )
 
@@ -206,6 +221,23 @@ class AuthSetupMixin(SetupServiceBase):
             return False
         self.ctx.session.headers.update({"Authorization": f"Bearer {self.ctx.token}"})
         logger.debug("Logged in and token retrieved")
+
+        # Capture the tracked device row for device lifecycle coverage.
+        try:
+            _dev_db = api.get_db()
+            if _dev_db:
+                _dev_row = _dev_db.fetch_one(
+                    "SELECT id FROM auth_devices WHERE user_id = ? AND fingerprint = ? ORDER BY id DESC LIMIT 1",
+                    (self.ctx.test_user_id, "selftest-device-01"),
+                )
+                if _dev_row:
+                    self.ctx.test_device_id = int(
+                        _dev_row["id"] if isinstance(_dev_row, dict) else _dev_row[0]
+                    )
+                    self.ctx.test_device_fingerprint = "selftest-device-01"
+                    logger.debug(f"Captured test device ID: {self.ctx.test_device_id}")
+        except Exception as _dev_e:
+            logger.debug(f"Device capture note: {_dev_e}")
 
         verify = self.ctx.session.get(
             f"{self.ctx.base_url}/api/v1/users/@me", timeout=5
@@ -229,6 +261,8 @@ class AuthSetupMixin(SetupServiceBase):
                     "username": self.ctx._setup_other_username,
                     "password": self.ctx._test_password,
                 },
+                # M9 opt-in: self-test needs the raw bearer in the body.
+                headers={"X-Plexichat-Token-Mode": "bearer"},
                 timeout=10,
             )
             if other_resp.status_code == 200:
@@ -248,6 +282,91 @@ class AuthSetupMixin(SetupServiceBase):
                 logger.debug("Other user logged in and token retrieved")
         except Exception as e:
             logger.warning(f"Failed to login other user: {e}")
+
+    def create_third_user(self) -> bool:
+        password = self.ctx._test_password
+        for _attempt in range(2):
+            rand_suffix = secrets.token_hex(4)
+            third_username = f"selftest_third_{rand_suffix}"
+            third_email = f"third_{rand_suffix}@selftest.plexichat.com"
+            try:
+                register_resp = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/auth/register",
+                    json={
+                        "username": third_username,
+                        "email": third_email,
+                        "password": password,
+                    },
+                    timeout=10,
+                )
+                if register_resp.status_code in (200, 201):
+                    register_data = register_resp.json()
+                    user_obj = register_data.get("user")
+                    third_user_id = (user_obj or {}).get("id") if user_obj else None
+                    if third_user_id is not None:
+                        third_user_id = int(third_user_id)
+                        auth_db = api.get_db()
+                        if auth_db:
+                            try:
+                                auth_db.execute(
+                                    "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
+                                    (third_user_id,),
+                                )
+                            except Exception:
+                                pass
+                        self.ctx.test_third_user_id = third_user_id
+                        self.ctx.test_third_username = third_username
+                        logger.debug(
+                            f"Registered third user via API: {third_username} (id={third_user_id})"
+                        )
+                        return True
+                else:
+                    logger.debug(
+                        f"Register third user attempt {_attempt + 1} failed: {register_resp.status_code}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Register third user attempt {_attempt + 1} exception: {e}"
+                )
+        logger.warning("Failed to register third user after 2 attempts")
+        return False
+
+    def create_fourth_user(self) -> bool:
+        """Register a permanently unprivileged user for moderation targets.
+
+        Hierarchy-gated moderation endpoints refuse targets that hold any
+        admin identity, so they need a plain user that is never promoted.
+        Best-effort: a snowflake fallback is used when registration fails.
+        """
+        password = self.ctx._test_password
+        for _attempt in range(2):
+            rand_suffix = secrets.token_hex(4)
+            fourth_username = f"selftest_fourth_{rand_suffix}"
+            fourth_email = f"fourth_{rand_suffix}@selftest.plexichat.com"
+            try:
+                register_resp = self.ctx.session.post(
+                    f"{self.ctx.base_url}/api/v1/auth/register",
+                    json={
+                        "username": fourth_username,
+                        "email": fourth_email,
+                        "password": password,
+                    },
+                    timeout=10,
+                )
+                if register_resp.status_code in (200, 201):
+                    user_obj = (register_resp.json().get("user")) or {}
+                    fourth_id = user_obj.get("id")
+                    if fourth_id is not None:
+                        self.ctx.test_fourth_user_id = int(fourth_id)
+                        logger.debug(
+                            f"Registered fourth user: {fourth_username} "
+                            f"(id={fourth_id})"
+                        )
+                        return True
+            except Exception as e:
+                logger.debug(f"Register fourth user attempt failed: {e}")
+        logger.warning("Failed to register fourth user after 2 attempts")
+        return False
 
     def block_selftest_username_prefix(self) -> None:
         try:

@@ -1,58 +1,102 @@
-# REST API Reference
+# REST API reference
 
-This section organizes the backend REST API by route group. For exact request and response schemas, use the generated OpenAPI docs at `/docs`.
+This section describes the Plexichat backend REST API by route group. For
+exact request and response schemas, see the generated OpenAPI documentation at
+`/docs`.
 
 ## Base URL
 
-All routes in this section are relative to `https://api.plexichat.com`.
+All routes in this section are relative to:
 
-## Public Utility Endpoints
+```
+https://api.plexichat.com
+```
 
-- `GET /health`: readiness and health signal
-- `GET /version`: current backend version
-- `POST /version/negotiate`: client compatibility negotiation
-- `GET /status`: operational or maintenance status
-- `GET /capabilities`: public runtime constants and feature hints
-- `GET /qr`: local QR code generation
+For local development, use `http://localhost:8000`.
 
-## Authenticated Product Areas
+The API prefix for most product endpoints is `/api/v1`. Utility endpoints
+such as `/health` and `/version` are at the root.
 
-- [Authentication](authentication.md): registration, login, sessions, 2FA, recovery
-- [Users](users.md): profiles, notes, presence, self-service user actions
-- [Settings](settings.md): synced user preference storage
-- [Relationships](relationships.md): friends, blocks, and relationship state
-- [Servers](servers.md): servers, members, roles, invites, structure
-- [Channels](channels.md): channel management and channel-scoped actions
-- [Messages](messages.md): message CRUD, pins, acks, and attachments
-- [Reactions](reactions.md): message reactions and reaction user lists
-- [Presence](presence.md): presence retrieval and updates
-- [Webhooks](webhooks.md): webhook management and execution
-- [Avatars](avatars.md): user and server avatar endpoints
-- [Emojis](emojis.md): custom emoji management
-- [Features](features.md): public feature visibility plus admin-controlled tiers/badges
+## Authentication
 
-## Artifacts Capability Endpoints
+Most endpoints require authentication. Include your session token in the
+`Authorization` header:
 
-- `GET /api/v1/capabilities` (auth required): per-feature artifacts availability
-  state (`{feature: {state, message, details}}`) for client availability banners.
-- `GET /api/v1/admin/capabilities` (admin guarded): same breakdown plus a
-  top-level `summary` (counts and `by_state` grouping) for the admin panel.
+```
+Authorization: Bearer <token>
+```
 
-## Additional Route Groups
+If you receive `401`, your token is missing, invalid, or expired. Some
+server policies also require an additional API access token.
 
-- [Search](search.md): `/search/messages`, `/search/users`, `/search/servers`
-- [Notifications](notifications.md): current-user notification reads and read markers
-- [Polls](polls.md): poll creation, voting, results, close, delete
-- [Voice](voice.md): ICE server discovery and voice channel info
-- [Media](media.md): hash reporting, resumable upload sessions, compression status
-- [Reports](reports.md): user and message reporting
-- [Feedback](feedback.md): feedback submission and status checks
-- [Telemetry](telemetry.md): response-time and CSP telemetry ingestion
-- [System](system.md): capabilities, help pages, QR, health, status, version
-- [Admin](admin.md): operator-only admin authentication, review, security, telemetry, and UI routes
+## Public utility endpoints
+
+These endpoints do not require authentication unless noted:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Readiness and health signal. |
+| `GET` | `/version` | Current backend version. |
+| `POST` | `/version/negotiate` | Client compatibility negotiation. |
+| `GET` | `/status` | Operational or maintenance status. |
+| `GET` | `/capabilities` | Public runtime constants and feature hints. |
+| `GET` | `/qr` | QR code generation (local). |
+
+## Authenticated product areas
+
+| Area | Document | Description |
+| --- | --- | --- |
+| Authentication | [Authentication](authentication.md) | Registration, login, sessions, 2FA, and recovery. |
+| Users | [Users](users.md) | Profiles, notes, presence, and self-service actions. |
+| Settings | [Settings](settings.md) | Synced user preference storage. |
+| Relationships | [Relationships](relationships.md) | Friends, blocks, and relationship state. |
+| Servers | [Servers](servers.md) | Servers, members, roles, invites, and structure. |
+| Channels | [Channels](channels.md) | Channel management and channel-scoped actions. |
+| Messages | [Messages](messages.md) | Message CRUD, pins, acknowledgments, and attachments. |
+| Reactions | [Reactions](reactions.md) | Message reactions and reaction user lists. |
+| Presence | [Presence](presence.md) | Presence retrieval and updates. |
+| Webhooks | [Webhooks](webhooks.md) | Webhook management and execution. |
+| Avatars | [Avatars](avatars.md) | User and server avatar endpoints. |
+| Emojis | [Emojis](emojis.md) | Custom emoji management (`emojis.manage` permission). |
+| Soundboard | [Soundboard](soundboard.md) | Per-server sound uploads, permissions, and playback. |
+| Features | [Features](features.md) | User tiers (`standard`, `alpha`, `premium`) and badges. |
+
+## Capabilities
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/capabilities` | Per-feature availability state. Requires authentication. Returns `{feature: {state, message, details}}` for client banners. |
+| `GET` | `/api/v1/admin/capabilities` | Same as above plus a top-level `summary` with counts and `by_state` grouping. Requires admin privileges. |
+
+## Additional route groups
+
+| Area | Document | Path |
+| --- | --- | --- |
+| Search | [Search](search.md) | `/search/messages`, `/search/users`, `/search/servers` |
+| Notifications | [Notifications](notifications.md) | Notification reads and read markers. |
+| Polls | [Polls](polls.md) | Poll creation, voting, results, close, and delete. |
+| Voice | [Voice](voice.md) | ICE server discovery and voice channel info. |
+| Media | [Media](media.md) | Hash reporting, resumable uploads, and compression status. |
+| Reports | [Reports](reports.md) | User and message reporting. |
+| Feedback | [Feedback](feedback.md) | Feedback submission and status checks. |
+| Telemetry | [Telemetry](telemetry.md) | Response-time and CSP telemetry ingestion. |
+| System | [System](system.md) | Capabilities, help pages, QR, health, status, and version. |
+| Admin | [Admin](admin.md) | Operator-only admin authentication, review, security, telemetry, and UI routes. |
+
+## Conventions
+
+*   IDs are snowflakes encoded as decimal strings.
+*   Timestamps are Unix timestamps. Channel and server timestamps use seconds;
+    emoji and feedback timestamps use milliseconds unless noted.
+*   All JSON request and response bodies use `application/json` unless an
+    endpoint specifies `multipart/form-data`.
+*   Errors use the shape `{"error": {"code": <status>, "message": "<text>"}}`.
 
 ## Notes
 
-- Some endpoints require normal authentication plus an API access token depending on server policy.
-- The public narrative docs intentionally avoid private infrastructure and operator-only procedures.
-- Administrative routes are mounted at a configurable root path and are documented separately in [Admin](admin.md).
+*   Some endpoints require normal authentication plus an API access token
+    depending on server policy.
+*   The public narrative docs intentionally avoid private infrastructure and
+    operator-only procedures.
+*   Administrative routes are mounted at a configurable root path (default
+    `/admin`) and are documented separately in [Admin](admin.md).

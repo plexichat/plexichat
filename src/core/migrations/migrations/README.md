@@ -1,50 +1,80 @@
-# Database Migrations
+# Database migrations
 
-Versioned migration scripts for the Plexichat database schema.
+This document describes the migration directory layout, schema policy, and file conventions for Plexichat database migrations.
 
-## Naming Convention
+## Overview
 
-```
-NNN_descriptive_name.py
-```
+The migration directory is intentionally minimal during the current development phase. The initial schema migration creates the full canonical schema, so fresh installations are deterministic.
 
-- `NNN` -- Zero-padded sequential number (000, 001, 002, ...)
-- `descriptive_name` -- Short snake_case description of the change
+| Version | File | Purpose |
+|---------|------|---------|
+| `000` | `000_initial_schema.py` | Create the complete canonical schema from module schema definitions. |
+| `001` | `001_selftest_noop.py` | No-op migration for self-tests that exercise apply and rollback behavior. |
 
-## Format
+The migration runner discovers only `000` and `001` in this directory. See `plexichat/src/core/migrations/manager.py:93` and `plexichat/src/core/migrations/validator.py:193`.
+
+## Schema policy
+
+Add schema changes to the module schema definitions that `000_initial_schema.py` imports. Do not add a numbered production migration for each schema adjustment yet.
+
+This keeps the initial schema as the authoritative source of truth for new SQLite and PostgreSQL installations. The module schema definitions include artifact feature settings, authentication hardening columns and indexes, server public visibility, and OAuth token usage timestamps.
+
+When the project needs to support upgrades for already-deployed databases, introduce a reviewed, ordered migration strategy instead of restoring deleted files ad hoc.
+
+The authoritative schema creator is `plexichat/src/core/migrations/migrations/000_initial_schema.py:59`. It calls each module's `create_tables` function in dependency order.
+
+## Naming and format
+
+Name migration files with the pattern `NNN_descriptive_name.py`, where `NNN` is a zero-padded version number.
 
 Each migration file must export:
 
-| Function | Signature | Purpose |
-|----------|-----------|---------|
-| `up(db)` | `up(database.Database)` | Apply the migration |
-| `down(db)` | `down(database.Database)` | Roll back the migration (optional but recommended) |
+*   `up(db)` — apply the migration.
+*   `down(db)` — roll back the migration.
 
-## Migration Index
+For irreversible migrations, you may omit `down()`, but you must declare `MIGRATION_METADATA` in the module docstring with `"irreversible": true`. The validator accepts a missing `down()` only in that case. See `plexichat/src/core/migrations/validator.py:280`.
 
-| # | File | Description |
-|---|------|-------------|
-| 000 | `000_initial_schema.py` | Foundational schema -- creates all core tables via module schema definitions |
-| 001 | `001_initial_example.py` | Template/reference migration |
-| 002 | `002_legacy_transfer.py` | Legacy data transfer utilities |
-| 003 | `003_add_totp_secret_encrypted.py` | Add encrypted TOTP secret column |
-| 004 | `004_fix_user_settings_pk.py` | Fix primary key in user settings |
-| 005 | `005_consolidated_schema_fixes.py` | Batch schema corrections |
-| 006 | `006_add_msg_status_index.py` | Index for message status queries |
-| 007 | `007_add_username_blacklist.py` | Username blacklist table |
-| 008 | `008_harden_admin_security.py` | Admin security hardening |
-| 009 | `009_add_db_metrics_to_telemetry.py` | Database metrics in telemetry |
-| 010-016 | Various | Feature expansions (internal notes, content indexing, applied roles, timeouts, API tokens, max reactions) |
-| 017 | `017_add_account_deletion_support.py` | Account deletion workflow support |
-| 018 | `018_harden_admin_2fa.py` | Admin 2FA enforcement |
-| 019 | `019_feature_expansion.py` | General feature expansion |
-| 020-021 | `020-021_*` | Fix last_chat BIGINT columns for Postgres/SQLite |
-| 022-032 | `022-032_*` | Encryption configuration -- adds encrypted columns, migrates data, drops unencrypted columns (auth, polls, descriptions, internal notes) |
-| 033 | `033_admin_rbac_system.py` | Admin role-based access control |
-| 034 | `034_admin_notes_versioning.py` | Versioned admin notes |
-| 035 | `035_plexijoin_federation_system.py` | Federation schema for PlexiJoin |
-| 036 | `036_fix_thread_threads_columns.py` | Threads table column fixes |
+Example for an irreversible migration:
 
-## Migration Runner
+```python
+"""
+Add search index.
 
-Migrations are executed by the migration system in `plexichat/src/core/migrations/`.
+MIGRATION_METADATA:
+{"irreversible": true}
+"""
+
+def up(db):
+    db.execute("CREATE INDEX ...")
+```
+
+Do not add a fake or destructive no-op `down()` function to satisfy validation.
+
+The runner screens migration SQL before execution and blocks dangerous patterns such as `DROP DATABASE`, `DROP SCHEMA`, and `TRUNCATE migrations_history`. See `plexichat/src/core/migrations/runner.py:62`.
+
+## Retired versions and stale cache
+
+Versions `002`, `003`, and `004` were consolidated into migration `000` and their source files were deleted. See `RETIRED_MIGRATIONS` in `plexichat/src/core/migrations/validator.py:20`. History rows for those versions remain valid on upgraded databases, and integrity checks treat them as retired rather than missing. See `plexichat/src/core/migrations/manager.py:496`.
+
+Compiled artifacts for retired versions can linger in `migrations/__pycache__/`, for example `002_artifact_feature_settings.cpython-313.pyc`. The loader reads only explicit `.py` paths, so these files never execute, but you should remove them to avoid confusion:
+
+```bash
+rm -rf src/core/migrations/migrations/__pycache__
+```
+
+The loader warns about stale artifacts at startup. See `plexichat/src/core/migrations/validator.py:50`.
+
+The `create_migration` helper accounts for retired versions when it computes the next version number, so a new migration never reuses `002` through `004`.
+
+## Rollback for the initial schema
+
+Rolling back `000` is destructive: it drops all application tables listed in `ROLLBACK_TABLE_ALLOWLIST` at `plexichat/src/core/migrations/migrations/000_initial_schema.py:129`. Migration tracking tables are never dropped.
+
+You must set the environment variable `MIGRATIONS_ALLOW_DESTRUCTIVE_ROLLBACK=1` before `down()` runs. Otherwise the rollback is refused. The drop order handles foreign key dependencies on SQLite, and uses `CASCADE` on PostgreSQL.
+
+## Related code
+
+*   `plexichat/src/core/migrations/manager.py` — discovery, ordering, and execution
+*   `plexichat/src/core/migrations/runner.py` — transaction handling and SQL screening
+*   `plexichat/src/core/migrations/validator.py` — file validation and version ordering
+*   `plexichat/src/core/migrations/tracker.py` — history and locking

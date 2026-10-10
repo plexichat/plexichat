@@ -96,10 +96,17 @@ class MutualInfoMixin(RelationshipHelpersMixin):
               AND f2.friend_id NOT IN (SELECT friend_id FROM rel_friends WHERE user_id = ?)
               AND f2.friend_id NOT IN (SELECT blocked_id FROM rel_blocked WHERE blocker_id = ?)
               AND f2.friend_id NOT IN (SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?)
+              AND f2.friend_id NOT IN (
+                  SELECT sender_id FROM rel_friend_requests
+                  WHERE recipient_id = ? AND status = 'pending'
+                  UNION
+                  SELECT recipient_id FROM rel_friend_requests
+                  WHERE sender_id = ? AND status = 'pending'
+              )
             GROUP BY f2.friend_id
             ORDER BY mutual_count DESC
             LIMIT ?
             """,
-            (user_id, user_id, user_id, user_id, user_id, limit),
+            (user_id, user_id, user_id, user_id, user_id, user_id, user_id, limit),
         )
         return [row["friend_id"] for row in rows]

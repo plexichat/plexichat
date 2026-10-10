@@ -76,6 +76,12 @@ def fresh_server(modules):
         password="TestPass123!",
     )
 
+    non_member = modules.auth.register(
+        username=f"fresh_nonmember_{unique_id}",
+        email=f"fresh_nonmember_{unique_id}@example.com",
+        password="TestPass123!",
+    )
+
     server = modules.servers.create_server(owner.id, f"Fresh Server {unique_id}")
 
     channels = modules.servers.get_channels(owner.id, server.id)
@@ -83,6 +89,7 @@ def fresh_server(modules):
 
     return {
         "owner": owner,
+        "non_member": non_member,
         "server": server,
         "channel": channel,
         "servers": modules.servers,

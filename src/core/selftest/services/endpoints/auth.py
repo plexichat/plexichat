@@ -72,7 +72,7 @@ class AuthMixin(EndpointTesterBase):
             logger.warning(f"Could not re-sync password: {_pw_e}")
 
         # --- Login (fresh session, no auth) ---
-        login_session = self.ctx.requests_module.Session()
+        login_session = self.ctx.make_session()
         # Use the same internal-secret source as setup.py so the login
         # request is treated identically (is_internal bypasses blacklist etc).
         internal_secret = api.get_internal_secret()
@@ -89,6 +89,8 @@ class AuthMixin(EndpointTesterBase):
         resp = login_session.post(
             f"{self.ctx.base_url}/api/v1/auth/login",
             json={"username": username, "password": password},
+            # M9 opt-in: this probe reads the raw bearer from the body.
+            headers={"X-Plexichat-Token-Mode": "bearer"},
             timeout=5,
         )
         duration = (time.time() - login_start) * 1000
@@ -119,7 +121,7 @@ class AuthMixin(EndpointTesterBase):
         # requests bypass the blacklist. Use a different prefix to be safe.
         rand_user = f"stuser{random.randint(100000, 999999)}"
         rand_email = f"{rand_user}@selftest.plexichat.com"
-        register_session = self.ctx.requests_module.Session()
+        register_session = self.ctx.make_session()
         if internal_secret:
             register_session.headers.update(
                 {"X-Plexichat-Internal-Secret": internal_secret}
@@ -198,11 +200,12 @@ class AuthMixin(EndpointTesterBase):
                 logger.warning(f"Auth logout -> {resp.status_code}: {resp.text[:200]}")
 
             # Re-login so we can test revoke-all with a valid session
-            time.sleep(0.5)
             logger.debug("Re-logging in for revoke-all test...")
             re_login_resp = login_session.post(
                 f"{self.ctx.base_url}/api/v1/auth/login",
                 json={"username": username, "password": password},
+                # M9 opt-in: the re-issued bearer is read from the body.
+                headers={"X-Plexichat-Token-Mode": "bearer"},
                 timeout=5,
             )
             if re_login_resp.status_code == 200:
@@ -258,6 +261,8 @@ class AuthMixin(EndpointTesterBase):
             _reauth_resp = self.ctx.session.post(
                 f"{self.ctx.base_url}/api/v1/auth/login",
                 json={"username": username, "password": password},
+                # M9 opt-in: the fresh bearer is read from the body.
+                headers={"X-Plexichat-Token-Mode": "bearer"},
                 timeout=5,
             )
             if _reauth_resp.status_code == 200:
@@ -272,3 +277,72 @@ class AuthMixin(EndpointTesterBase):
                     logger.debug("Re-authenticated main session after revoke-all")
         except Exception as _reauth_e:
             logger.warning(f"Failed to re-authenticate main session: {_reauth_e}")
+
+    def test_verify_email_contract(self) -> None:
+        """Verify a REAL email-verification token end to end (200 only).
+
+        Mints a genuine single-use token through the token primitives and
+        inserts its hash row, then redeems it via the API like a user
+        clicking the verification link. No bogus tokens: 4xx outcomes are
+        failures, never expectations.
+        """
+        if not self.ctx.standalone_mode:
+            return
+        if not self.ctx.test_user_id:
+            return
+        try:
+            import time as _time_mod
+
+            from src.core.auth.tokens import create_email_token
+
+            db = api.get_db()
+            if not db:
+                logger.warning("Verify-email test skipped (no database)")
+                return
+            tid = self.ctx.data.generate_snowflake()
+            full_token, secret_hash = create_email_token(int(tid))
+            now_ms = int(_time_mod.time() * 1000)
+            db.execute(
+                "INSERT INTO auth_email_tokens (id, user_id, token_hash, token_type, created_at, expires_at, used) VALUES (?, ?, ?, ?, ?, ?, 0)",
+                (
+                    int(tid),
+                    self.ctx.test_user_id,
+                    secret_hash,
+                    "verify_email",
+                    now_ms,
+                    now_ms + 86400 * 1000,
+                ),
+            )
+            resp = self.ctx.session.post(
+                f"{self.ctx.base_url}/api/v1/auth/verify-email",
+                json={"token": full_token},
+                timeout=5,
+            )
+            ok = 200 <= resp.status_code < 300
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": "/api/v1/auth/verify-email",
+                    "status_code": resp.status_code,
+                    "duration_ms": 0,
+                    "success": ok,
+                    "label": "verify_email",
+                }
+            )
+            if ok:
+                logger.info("Verify-email PASSED -> 200 (real token redeemed)")
+            else:
+                logger.warning(f"Verify-email -> {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Verify-email exception: {e}")
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": "/api/v1/auth/verify-email",
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "verify_email",
+                    "error": str(e)[:200],
+                }
+            )

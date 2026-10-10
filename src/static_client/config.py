@@ -49,9 +49,9 @@ class SecurityHeadersConfig:
     permissions_policy: str = "geolocation=(), microphone=(self), camera=()"
     content_security_policy: str = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
-        "style-src 'self' https://fonts.googleapis.com; "
-        "font-src https://fonts.gstatic.com; "
-        "img-src 'self' data: blob:; media-src 'self' blob:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob:; media-src 'self' blob: data:; "
         "worker-src blob:; connect-src 'self' wss:; "
         "manifest-src 'self'; frame-ancestors 'none';"
     )
@@ -83,7 +83,7 @@ class ConfigInjectionConfig:
 
     enabled: bool = True
     filename: str = "config.js"
-    public_server_url: str = "http://localhost:8000"
+    public_server_url: str = ""
     content: str = (
         'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", '
         'hideServerField: true, defaultTheme: "ocean", '
@@ -246,14 +246,7 @@ def get_static_client_config() -> StaticClientConfig:
             ),
             content_security_policy=_coerce_str(
                 sec_raw.get("content_security_policy"),
-                (
-                    "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
-                    "style-src 'self' https://fonts.googleapis.com; "
-                    "font-src https://fonts.gstatic.com; "
-                    "img-src 'self' data: blob:; media-src 'self' blob:; "
-                    "worker-src blob:; connect-src 'self' wss:; "
-                    "manifest-src 'self'; frame-ancestors 'none';"
-                ),
+                SecurityHeadersConfig().content_security_policy,
             ),
         ),
         rate_limit=StaticRateLimitConfig(
@@ -279,7 +272,7 @@ def get_static_client_config() -> StaticClientConfig:
                 env_public
                 if env_public is not None
                 else cfg_raw.get("public_server_url"),
-                "http://localhost:8000",
+                "",
             ),
             content=_coerce_str(
                 cfg_raw.get("content"),

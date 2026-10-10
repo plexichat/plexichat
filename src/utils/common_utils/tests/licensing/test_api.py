@@ -341,8 +341,11 @@ class TestErrorHandling:
         assert result1 is True
         assert license.get_instance_id() == "first-instance"
 
-        # Second setup - should reset
-        license_data2 = license_data.copy()
+        # Second setup - should reset. Drop the previous signature before
+        # re-signing: signing a dict that still carries the old signature
+        # field produces a signature that never verifies (the verification
+        # canonical form excludes the signature key).
+        license_data2 = {k: v for k, v in license_data.items() if k != "signature"}
         license_data2["instance_id"] = "second-instance"
         license_data2["signature"] = sign_license(private_key, license_data2)
 

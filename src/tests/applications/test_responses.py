@@ -131,4 +131,4 @@ class TestResponses:
             content="Hello <@12345>!",
             allowed_mentions={"parse": ["users"]},
         )
-        assert response.allowed_mentions is not None
+        assert response.allowed_mentions == {"parse": ["users"]}

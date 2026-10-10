@@ -19,9 +19,10 @@ from src.core.servers.exceptions import (
     PermissionDeniedError,
 )
 from src.api.routes.messages.helpers import _message_to_response
+from .base import MessagesCRUDBase
 
 
-class RetrieveMixin:
+class RetrieveMixin(MessagesCRUDBase):
     async def get_message(
         self,
         channel_id: str,
@@ -52,10 +53,59 @@ class RetrieveMixin:
                 messaging.get_message, current_user.user_id, mid
             )
             if not message:
+                # Visibility: distinguish "row missing" from "access denied"
+                # without changing the client-visible 404 contract.
+                try:
+                    _dbg_row = None
+                    _dbg_part = None
+                    _dbg_db = api.get_db()
+                    if _dbg_db is not None:
+                        _dbg_row = _dbg_db.fetch_one(
+                            "SELECT conversation_id, author_id FROM "
+                            "msg_messages WHERE id = ?",
+                            (mid,),
+                        )
+                        if _dbg_row is not None and messaging is not None:
+                            _p_svc = getattr(
+                                getattr(messaging, "_manager", messaging),
+                                "_participant_svc",
+                                None,
+                            )
+                            if _p_svc is None:
+                                _mgr = getattr(messaging, "_message_svc", None)
+                                _p_svc = getattr(_mgr, "_participant_svc", None)
+                            if _p_svc is not None:
+                                try:
+                                    _dbg_part = bool(
+                                        _p_svc.is_participant(
+                                            _dbg_row["conversation_id"],
+                                            current_user.user_id,
+                                        )
+                                    )
+                                except Exception as _pe:
+                                    _dbg_part = f"check-error: {_pe!r}"
+                    logger.warning(
+                        f"get_message {mid} unresolved for user "
+                        f"{current_user.user_id} in channel {cid}: "
+                        f"row={'missing' if _dbg_row is None else dict(_dbg_row)}, "
+                        f"participant={_dbg_part}"
+                    )
+                except Exception:
+                    pass
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Message not found"}},
                 )
+
+            # The URL channel must be the message's actual channel: a
+            # mismatch returns the same 404 a nonexistent message produces
+            # (no existence oracle for foreign conversations).
+            self._ensure_message_in_channel(
+                message,
+                self._resolve_channel_scope(
+                    cid, current_user.user_id, api.get_servers()
+                ),
+            )
 
             author_info = {"username": None, "avatar_url": None, "badges": []}
             auth = api.get_auth()

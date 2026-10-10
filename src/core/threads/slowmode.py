@@ -9,10 +9,10 @@ Slowmode is enforced by checking the time elapsed since a user's last
 message in the thread against the configured interval.
 """
 
-import time
 from typing import Dict, Any
 
 import utils.logger as logger
+from src.core.base import timestamp_ms
 from src.core.database import cache_get, cache_set
 
 
@@ -24,14 +24,16 @@ class ThreadSlowmode:
     MAX_INTERVAL_MS = 21600000  # 6 hours maximum
     DEFAULT_INTERVAL_MS = 0  # Disabled by default
 
-    # Cache TTL for slowmode checks (slightly longer than max interval)
-    CACHE_TTL = 21600  # 6 hours in seconds
+    # Cache TTL for slowmode settings. Kept short so a deleted/changed
+    # thread's stale interval cannot be served for hours after deletion
+    # (previously 6h, which outlived the thread itself).
+    CACHE_TTL = 300  # 5 minutes
 
     def __init__(self, db):
         self._db = db
 
     def _get_timestamp(self) -> int:
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def set_slowmode(
         self,
@@ -103,9 +105,12 @@ class ThreadSlowmode:
         )
 
         return {
-            "thread_id": thread_id,
+            # Snowflake ids are emitted as strings: a JS Number cannot
+            # hold a 64-bit id exactly, so a numeric id would be rounded
+            # by the client and subsequent lookups would miss.
+            "thread_id": str(thread_id),
             "interval_ms": interval_ms,
-            "updated_by": user_id,
+            "updated_by": str(user_id) if user_id is not None else None,
             "updated_at": now,
         }
 
@@ -124,11 +129,13 @@ class ThreadSlowmode:
         )
 
         result = {
-            "thread_id": thread_id,
+            "thread_id": str(thread_id),
             "interval_ms": row["slowmode_interval_ms"]
             if row and row["slowmode_interval_ms"]
             else 0,
-            "updated_by": row["slowmode_updated_by"] if row else None,
+            "updated_by": str(row["slowmode_updated_by"])
+            if row and row["slowmode_updated_by"] is not None
+            else None,
             "updated_at": row["slowmode_updated_at"] if row else None,
         }
 

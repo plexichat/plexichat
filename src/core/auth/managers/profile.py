@@ -1,13 +1,17 @@
 import json
 from typing import Optional, List, Dict, Any
 
+import utils.logger as logger
+
 from ..exceptions import (
     UserNotFoundError,
     InvalidUsernameError,
+    InvalidEmailError,
+    InvalidPermissionError,
 )
 from ..models import User, AccountType
 from ..permissions import permissions_to_json, permissions_from_json
-from ..passwords import validate_username
+from ..passwords import validate_username, validate_email
 from src.core.database import cached, invalidate_pattern
 
 
@@ -21,7 +25,22 @@ class ProfileMixin(AuthManagerProtocol):
         username: Optional[str] = None,
         email: Optional[str] = None,
         permissions: Optional[Dict[str, bool]] = None,
+        allow_wildcards: bool = False,
     ) -> User:
+        """Update user profile fields.
+
+        Args:
+            user_id: ID of the user to update.
+            username: New username (optional).
+            email: New email address (optional).
+            permissions: Replacement permission map (optional).
+            allow_wildcards: Explicit opt-in for privileged callers
+                (admin provisioning, self-test) to persist wildcard keys
+                (``"*"`` and ``"<category>.*"``). Defaults to ``False`` so
+                user-controlled paths can never escalate via wildcards (M5).
+                Even when enabled, wildcards are validated against known
+                permission categories and bot restrictions still apply.
+        """
         updates = []
         params = []
         if username:
@@ -52,12 +71,85 @@ class ProfileMixin(AuthManagerProtocol):
             updates.append("force_username_change = ?")
             params.append(0)
 
+        email_changed = False
         if email:
-            email_index = self.crypto.blind_index(email, "user_email")
-            email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
-            updates.append("email_index = ?, email_encrypted = ?")
-            params.extend([email_index, email_encrypted])
+            # M4: the registration path validates email format; profile updates
+            # previously skipped it entirely and relied on the DB constraint
+            # for uniqueness, so a malformed address was accepted/stored.
+            if not validate_email(email):
+                raise InvalidEmailError("Invalid email")
+            current_for_email = self.get_user(user_id)
+            if not current_for_email:
+                raise UserNotFoundError("User not found")
+            # Only an actual address change demotes verification and triggers
+            # a new verification email (resubmitting the same address is a
+            # no-op for the verified flag).
+            email_changed = email != current_for_email.email
+            if email_changed:
+                email_index = self.crypto.blind_index(email, "user_email")
+                email_encrypted = self.crypto.encrypt_data(email, context=str(user_id))
+                # M2 FIX: a changed address is unverified until the user
+                # completes the email-verification flow for the new value.
+                # Forcing the flag down here (manager level) means no route
+                # can accidentally leave a hijacked/stale session holding a
+                # verified new address.
+                updates.append(
+                    "email_index = ?, email_encrypted = ?, email_verified = ?"
+                )
+                params.extend([email_index, email_encrypted, 0])
         if permissions is not None:
+            from ..permissions import PERMISSIONS, BOT_RESTRICTED_PERMISSIONS
+
+            valid_prefixes = {p.split(".")[0] for p in PERMISSIONS}
+            current_user_for_perms = self.get_user(user_id)
+            is_bot = bool(
+                current_user_for_perms is not None
+                and getattr(current_user_for_perms, "account_type", None)
+                and str(
+                    getattr(current_user_for_perms.account_type, "value", "")
+                    or current_user_for_perms.account_type
+                ).lower()
+                == "bot"
+            )
+
+            for key, value in permissions.items():
+                is_wildcard = key == "*" or key.endswith(".*")
+                if is_wildcard and not allow_wildcards:
+                    raise InvalidPermissionError(
+                        f"Wildcard permissions are not accepted: {key}"
+                    )
+                if is_wildcard and allow_wildcards:
+                    # Privileged path: still validate shape. "*" grants
+                    # everything; "<category>.*" must name a known category
+                    # so typos like "admin.everything" cannot be persisted.
+                    if key != "*":
+                        prefix = key[:-2]
+                        if not prefix or prefix not in valid_prefixes:
+                            raise InvalidPermissionError(f"Unknown permission: {key}")
+                    if not isinstance(value, bool):
+                        raise InvalidPermissionError(
+                            f"Permission {key} must be a boolean"
+                        )
+                    if is_bot and value:
+                        if key == "*":
+                            raise InvalidPermissionError(
+                                "Bots cannot have permission: *"
+                            )
+                        for restricted in BOT_RESTRICTED_PERMISSIONS:
+                            if restricted == key or restricted.startswith(
+                                key[:-2] + "."
+                            ):
+                                raise InvalidPermissionError(
+                                    f"Bots cannot have permission: {restricted} "
+                                    f"(via {key})"
+                                )
+                    continue
+                if key not in PERMISSIONS:
+                    raise InvalidPermissionError(f"Unknown permission: {key}")
+                if not isinstance(value, bool):
+                    raise InvalidPermissionError(f"Permission {key} must be a boolean")
+                if is_bot and value and key in BOT_RESTRICTED_PERMISSIONS:
+                    raise InvalidPermissionError(f"Bots cannot have permission: {key}")
             updates.append("permissions = ?")
             params.append(permissions_to_json(permissions))
 
@@ -74,6 +166,18 @@ class ProfileMixin(AuthManagerProtocol):
             from src.core.database import cache_delete
 
             cache_delete(f"user_profile:{user_id}")
+
+        # W7 lockout FIX: a changed address is now unverified, so the
+        # verification email for the NEW address must actually be sent —
+        # otherwise the user is permanently locked out of the verified state.
+        if updates and email and email_changed and self.email_sender:
+            try:
+                self._send_verification_email(user_id, email)
+            except Exception as e:
+                logger.error(
+                    f"Failed to send verification email after address change "
+                    f"for user {user_id}: {e}"
+                )
 
         user = self.get_user(user_id)
         if not user:
@@ -283,11 +387,21 @@ class ProfileMixin(AuthManagerProtocol):
 
         return result
 
-    def grant_permission(self, user_id: int, permission: str) -> bool:
+    def grant_permission(
+        self, user_id: int, permission: str, allow_wildcards: bool = False
+    ) -> bool:
+        """Grant a single permission to a user.
+
+        Wildcard keys (``"*"``, ``"<category>.*"``) are rejected unless
+        ``allow_wildcards=True`` is passed explicitly by a privileged
+        caller (admin provisioning, self-test). Ordinary callers must
+        leave the default ``False`` so a compromised/compromisable path
+        can never mint admin-equivalent grants.
+        """
         user = self.get_user(user_id)
         if not user:
             return False
         perms = user.permissions.copy()
         perms[permission] = True
-        self.update_user(user_id, permissions=perms)
+        self.update_user(user_id, permissions=perms, allow_wildcards=allow_wildcards)
         return True

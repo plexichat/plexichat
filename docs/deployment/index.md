@@ -1,57 +1,57 @@
-# Deployment Documentation
+# Deployment documentation
 
-Welcome to the Plexichat deployment documentation. This section covers everything you need to deploy, configure, and operate a Plexichat server.
+This section describes how to deploy, configure, and operate a Plexichat server.
 
-## Quick Start
+## Quick start
 
-New to Plexichat deployment? Start here:
+If you're new to deploying Plexichat, start with these guides:
 
-- **[Environment Generator](/docs/api/deployment/env-generator)** - Generate secure .env file with cryptographically random values
-- **[Docker Deployment](docker/index.md)** - Complete Docker setup guide (development, production, troubleshooting)
-- **[Getting Started](getting-started.md)** - Step-by-step production deployment guide
-- **[Requirements](requirements.md)** - System requirements for production and development
-- **[Overview](overview.md)** - High-level deployment architecture
+- [Environment generator](/docs/api/deployment/env-generator) — Generate a secure `.env` file with cryptographically random values.
+- [Docker deployment](docker/index.md) — Complete Docker Compose setup for development and production.
+- [Getting started](getting-started.md) — Step-by-step production deployment guide.
+- [Requirements](requirements.md) — System requirements for production and development.
+- [Overview](overview.md) — Deployment architecture and components.
 
-## Configuration Guides
+## Configuration guides
 
-Detailed configuration for each subsystem:
+Guides for each subsystem:
 
-- **[Authentication](configuration/config-authentication.md)** - Password policies, 2FA, sessions, security
-- **[Database](configuration/config-database.md)** - PostgreSQL/SQLite, connection pooling, migrations
-- **[Email](configuration/config-email.md)** - SMTP settings for notifications
-- **[Embeds](configuration/config-embeds.md)** - URL preview configuration
-- **[Media](configuration/config-media.md)** - File uploads, S3/MinIO storage
-- **[Rate Limiting](configuration/config-rate-limiting.md)** - API and gateway rate limits
- - **[Valkey](configuration/config-valkey.md)** - Caching, session storage
-- **[Search](configuration/config-search.md)** - Search backends and indexing
-- **[Voice](configuration/config-voice.md)** - WebRTC, STUN/TURN servers
-- **[WebSocket](configuration/config-websocket.md)** - Gateway settings, compression
+- [Authentication](configuration/config-authentication.md) — Password policies, 2FA, sessions, and security.
+- [Database](configuration/config-database.md) — PostgreSQL and SQLite, connection pooling, and migrations.
+- [Email](configuration/config-email.md) — SMTP settings for notifications.
+- [Embeds](configuration/config-embeds.md) — URL preview configuration.
+- [Media](configuration/config-media.md) — File uploads and S3 or RustFS storage.
+- [Rate limiting](configuration/config-rate-limiting.md) — API and gateway rate limits.
+- [Valkey](configuration/config-valkey.md) — Caching and session storage.
+- [Search](configuration/config-search.md) — Search backends and indexing.
+- [Voice](configuration/config-voice.md) — WebRTC and STUN/TURN servers.
+- [WebSocket](configuration/config-websocket.md) — Gateway settings and compression.
 
-## Deployment Topics
+## Deployment topics
 
-### Docker Deployment
+### Docker deployment
 
-The recommended way to deploy Plexichat is using Docker Compose:
+Docker Compose is the recommended way to deploy Plexichat:
 
-- **[Docker Index](docker/index.md)** - Overview and system requirements
-- **[Quick Start](docker/quick-start.md)** - Get running in 5 minutes
-- **[Configuration](docker/configuration.md)** - Environment variables and profiles
-- **[Development Workflow](docker/development-workflow.md)** - Hot reload, testing, debugging
-- **[Production Setup](docker/production-setup.md)** - Security, TLS, scaling, Proxmox
-- **[Connection Pooling](docker/connection-pooling.md)** - Database tuning
-- **[Healthchecks](docker/healthchecks.md)** - Service monitoring
-- **[Troubleshooting](docker/troubleshooting.md)** - Common issues and solutions
-- **[Architecture](docker/architecture.md)** - System design and data flows
+- [Docker index](docker/index.md) — Overview and system requirements.
+- [Quick start](docker/quick-start.md) — Get running in 5 minutes.
+- [Configuration](docker/configuration.md) — Environment variables and profiles.
+- [Development workflow](docker/development-workflow.md) — Hot reload, testing, and debugging.
+- [Production setup](docker/production-setup.md) — Security, TLS, scaling, and Proxmox.
+- [Connection pooling](docker/connection-pooling.md) — Database tuning.
+- [Health checks](docker/healthchecks.md) — Service monitoring.
+- [Troubleshooting](docker/troubleshooting.md) — Common issues and solutions.
+- [Architecture](docker/architecture.md) — System design and data flows.
 
-### Environment Setup
+### Environment setup
 
-- **[Environment Generator](/docs/api/deployment/env-generator)** - Generate secure .env file online
+- [Environment generator](/docs/api/deployment/env-generator) — Generate a secure `.env` file online.
 
-### Versioning and Updates
+### Versioning and updates
 
-- [Versioning and Updates](versioning.md) - Version scheme, update procedures, rollback strategies
+- [Versioning and updates](versioning.md) — Version scheme, update procedures, and rollback strategies.
 
-### Environment Variables
+### Environment variables
 
 Plexichat supports environment variable interpolation in configuration files:
 
@@ -62,56 +62,78 @@ database:
     password: "${POSTGRES_PASSWORD}"
 ```
 
-See [Configuration Overview](../configuration.md) for details.
+For details, see the [Configuration overview](../configuration.md).
 
-### Security Considerations
+### Security considerations
 
-- Use `PLEXICHAT_SYSTEM_KEY` for encryption (bootstrap-level security)
-- Enable 2FA for operator accounts
-- Configure access token gating for closed deployments
-- Review [Security Best Practices](../security.md)
+- Use `PLEXICHAT_SYSTEM_KEY` for encryption at the bootstrap level.
+- Enable 2FA for operator accounts.
+- Configure access token gating for closed deployments.
+- Review [Security best practices](../security.md).
 
 ## Maintenance
 
-### Database Migrations
+### Database migrations
+
+Run pending migrations after updating code or configuration:
 
 ```bash
 # Docker
-docker compose exec backend python main.py
+docker compose exec backend python -m src.core.migrations.cli apply_migrations
 
-# Native
-python main.py
+# Native — preferred wrapper
+python main.py migrate-db
+
+# Native — direct CLI
+python -m src.core.migrations.cli apply_migrations
 ```
 
-### Health Monitoring
+To preview changes without applying them, add `--dry-run`:
 
-Available endpoints for monitoring:
+```bash
+python main.py migrate-db --dry-run
+```
 
-- `GET /health` - Basic health check
-- `GET /api/v1/status` - Detailed status including DB, Valkey
-- `GET /api/v1/version` - Version information
+### Health monitoring
+
+Plexichat exposes these endpoints under the API prefix (`/api/v1` by default). A root-level `/health` alias is also available.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/ready` | Readiness probe. Returns 200 as soon as the server is listening. No database or Valkey checks. Use for container orchestrator health checks. |
+| `GET /api/v1/health` | Health check. Returns `status` and `version`, plus advisory `events_metrics` and `cross_worker_listener` fields. |
+| `GET /api/v1/status` | Server status. Returns operational state, version, uptime, and maintenance announcements. |
+| `GET /api/v1/version` | Version information. Returns the current server version and minimum supported client version. |
+
+The Docker Compose `backend` service checks `GET http://localhost:8000/api/v1/ready`.
+
+For details, see [Health checks](docker/healthchecks.md).
 
 ## Troubleshooting
 
-### Common Issues
+### Common issues
 
-**Cannot connect to database:**
-- Verify PostgreSQL is running and accessible
-- Check connection string in config
-- Ensure database exists
+**Cannot connect to database**
 
-**Valkey connection failures:**
-- Verify Valkey is running
-- Check Valkey password if configured
-- Review connection pool settings
+- Verify that PostgreSQL 18 is running and reachable.
+- Check the connection string in your config.
+- Ensure the database exists and the user has `CONNECT` permission.
 
-**WebSocket connection issues:**
-- Verify port 8000 is accessible
-- Check firewall rules
-- Ensure gateway is enabled in config
+**Valkey connection failures**
+
+- Verify that Valkey 9.1.1 is running.
+- Check `VALKEY_PASSWORD` if authentication is enabled.
+- Review connection pool settings.
+
+**WebSocket connection issues**
+
+- Verify that port 8000 is accessible or proxied through the `client` Nginx container at 443.
+- Check firewall rules and `gateway` configuration.
+- Ensure `/gateway` upgrades are allowed through your reverse proxy.
 
 For more help, see:
-- [Docker Troubleshooting](docker/troubleshooting.md)
-- [Configuration Overview](../configuration.md)
-- [Default Configuration Reference](../default-config.md)
-- [Admin Panel Guide](../admin/index.md)
+
+- [Docker troubleshooting](docker/troubleshooting.md)
+- [Configuration overview](../configuration.md)
+- [Default configuration reference](../default-config.md)
+- [Admin panel guide](../admin/index.md)

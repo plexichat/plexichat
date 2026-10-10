@@ -22,6 +22,7 @@ loop at schedule time).
 
 import asyncio
 import os
+import queue
 import shutil
 import tempfile
 import threading
@@ -126,10 +127,53 @@ def _resolve_azure_recording_ref(
         return None
 
 
+def _resolve_local_recording_path(
+    ref: str, call_id: Optional[SnowflakeID] = None
+) -> Optional[str]:
+    """Accept a local recording path only when it lives inside the configured
+    recording root and (when the call is known) matches that call's files.
+
+    Artifact payloads are user-editable, so a ``recording_ref`` must never be
+    treated as an arbitrary server-side path: that would let an artifact author
+    read any file the process can access (e.g. via the OpenAI upload or local
+    Whisper).
+    """
+    try:
+        import utils.config as cfg
+        from src.core.voice.signaling.sfu.paths import ensure_within_recording_dir
+
+        artifacts_cfg = cfg.get("artifacts", {}) or {}
+        root = (
+            (artifacts_cfg.get("voice", {}) or {})
+            .get("recording", {})
+            .get("output_dir")
+        )
+        if not root:
+            return None
+        safe_path = ensure_within_recording_dir(
+            ref, os.path.realpath(os.path.expanduser(str(root)))
+        )
+    except Exception:
+        return None
+    if call_id is not None:
+        # M27: multi-segment recordings are stored as
+        # ``call_<id>_track_<n>.<ext>`` (when ffmpeg combining fails). The
+        # previous ``call_<id>.`` prefix check rejected every track file, so
+        # consent-interrupted segmented calls were NEVER transcribed. Accept
+        # both the single-file ``call_<id>.`` form and the ``call_<id>_track_``
+        # form so the first available segment resolves.
+        name = safe_path.name
+        prefix = f"call_{int(call_id)}"
+        if not (name.startswith(prefix + ".") or name.startswith(prefix + "_track_")):
+            return None
+    return str(safe_path)
+
+
 def _resolve_recording_ref(
     call_payload: Dict[str, Any],
     db: Any,
     provider_name: str,
+    call_id: Optional[SnowflakeID] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Resolve a recording reference into the form a provider can consume.
 
@@ -149,7 +193,7 @@ def _resolve_recording_ref(
     if provider_name == "azure":
         return _resolve_azure_recording_ref(call_payload), None
     if os.path.isfile(ref):
-        return ref, None
+        return _resolve_local_recording_path(ref, call_id), None
 
     file_id = call_payload.get("recording_file_id")
     if not file_id:
@@ -157,13 +201,26 @@ def _resolve_recording_ref(
         # fail open into a provider error; the worker will skip this call.
         return None, None
 
+    temporary_path = _materialize_media_file(int(file_id))
+    if temporary_path is None:
+        return None, None
+    return temporary_path, temporary_path
+
+
+def _materialize_media_file(file_id: int) -> Optional[str]:
+    """Copy a media object to a temporary local file; return its path.
+
+    Returns ``None`` when the media module is unavailable, the object cannot
+    be streamed/read, or the write fails. The caller owns unlinking the
+    returned path.
+    """
     temporary_path: Optional[str] = None
     try:
         import src.api as api
 
         media = api.get_media()
         if media is None:
-            return None, None
+            return None
         suffix = ".bin"
         stream = None
         content_type = None
@@ -199,7 +256,7 @@ def _resolve_recording_ref(
                             pass
                         temporary_path = None
                         raise
-                    return handle.name, handle.name
+                    return handle.name
             finally:
                 close = getattr(stream, "close", None)
                 if callable(close):
@@ -207,7 +264,7 @@ def _resolve_recording_ref(
 
         get_data = getattr(media, "get_file_data", None)
         if not callable(get_data):
-            return None, None
+            return None
         raw_data_result = get_data(int(file_id))
         if not isinstance(raw_data_result, (tuple, list)) or len(raw_data_result) != 2:
             raise TypeError("media.get_file_data returned an invalid result")
@@ -228,7 +285,7 @@ def _resolve_recording_ref(
                     pass
                 temporary_path = None
                 raise
-            return handle.name, handle.name
+            return handle.name
     except Exception as exc:
         logger.warning(
             "transcription: could not materialize recording file %s: %s",
@@ -240,22 +297,228 @@ def _resolve_recording_ref(
                 os.unlink(temporary_path)
             except OSError:
                 pass
-        return None, None
+        return None
 
 
-def _consent_allows(call: Any) -> bool:
+def _recording_segment_file_ids(call_payload: Dict[str, Any]) -> List[int]:
+    """Return the ordered media file ids of a multi-segment recording.
+
+    RecordingManager stores consent-interrupted recordings as several media
+    objects when ffmpeg combining fails; the artifact payload then carries
+    ``recording_file_ids`` with one entry per track. Single-segment
+    recordings (and malformed/empty lists) return ``[]`` so callers fall back
+    to the classic single-reference resolution.
+    """
+    raw_ids = call_payload.get("recording_file_ids")
+    if not isinstance(raw_ids, (list, tuple)) or len(raw_ids) <= 1:
+        return []
+    ids: List[int] = []
+    for raw in raw_ids:
+        try:
+            ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _resolve_local_recording_tracks(
+    ref: str, call_id: Optional[SnowflakeID] = None
+) -> List[str]:
+    """Expand a local multi-segment recording ref into every track file.
+
+    RecordingManager writes each consent-interrupted segment as
+    ``call_<id>_track_<n>.<ext>`` under the recording root. When ``ref`` names
+    one of those track files, return the full ordered track list (M27); a
+    plain single-file ``call_<id>.`` ref returns ``[ref]`` when it passes the
+    containment check. An unsafe/unknown path returns ``[]``.
+    """
+    try:
+        import utils.config as cfg
+        from src.core.voice.signaling.sfu.paths import ensure_within_recording_dir
+
+        artifacts_cfg = cfg.get("artifacts", {}) or {}
+        root = (
+            (artifacts_cfg.get("voice", {}) or {})
+            .get("recording", {})
+            .get("output_dir")
+        )
+        if not root:
+            return []
+        safe_path = ensure_within_recording_dir(
+            ref, os.path.realpath(os.path.expanduser(str(root)))
+        )
+    except Exception:
+        return []
+    if call_id is None:
+        return []
+    prefix = f"call_{int(call_id)}"
+    name = safe_path.name
+    if name.startswith(prefix + "."):
+        return [str(safe_path)]
+    if not name.startswith(prefix + "_track_"):
+        return []
+
+    track_prefix = prefix + "_track_"
+    indexed: List[Tuple[int, Any]] = []
+    try:
+        for child in safe_path.parent.iterdir():
+            child_name = child.name
+            if not child_name.startswith(track_prefix):
+                continue
+            if child.suffix != safe_path.suffix:
+                continue
+            try:
+                idx = int(child_name[len(track_prefix) :].split(".", 1)[0])
+            except ValueError:
+                continue
+            indexed.append((idx, child))
+    except OSError:
+        return []
+    indexed.sort(key=lambda item: item[0])
+    return [str(child) for _, child in indexed]
+
+
+def _resolve_recording_segments(
+    call_payload: Dict[str, Any],
+    db: Any,
+    provider_name: str,
+    call_id: Optional[SnowflakeID] = None,
+) -> List[Tuple[Optional[str], Optional[str]]]:
+    """Resolve a call recording into one entry per media segment (M27).
+
+    Consent-interrupted calls produce several SFU segments. RecordingManager
+    concatenates them with ffmpeg when possible, but when combining fails the
+    payload carries ``recording_file_ids`` (2+) and the worker must transcribe
+    EVERY segment - not just the first - or the transcript silently omits
+    most of the call.    Returns a list of ``(recording_ref, temporary_ref)`` pairs in recording
+    order (``temporary_ref`` is non-None only for media objects materialized
+    to a temp file; the caller unlinks it). Single-segment recordings resolve
+    exactly like :func:`_resolve_recording_ref`. Entries that fail to resolve
+    are skipped, so a partially-available recording still yields whatever
+    segments can be transcribed.
+    """
+    segment_ids = _recording_segment_file_ids(call_payload)
+    if not segment_ids:
+        single = _resolve_recording_ref(call_payload, db, provider_name, call_id)
+        return [single] if single[0] is not None else []
+
+    ref = call_payload.get("recording_ref")
+    if isinstance(ref, str) and os.path.isfile(ref):
+        # Local multi-segment recordings: transcribe every sibling track file.
+        return [
+            (track, None) for track in _resolve_local_recording_tracks(ref, call_id)
+        ]
+
+    results: List[Tuple[Optional[str], Optional[str]]] = []
+    for fid in segment_ids:
+        # Narrow the payload to this one segment so per-provider resolution
+        # (Azure signing, media materialization) runs exactly as it does for a
+        # single-file recording. The shared ref only names the FIRST track;
+        # forwarding it would re-resolve track 0 for every segment, so replace
+        # it with a synthetic relative ref that routes resolution through the
+        # segment's own file id (the ref value is unused once a file id is
+        # present, but the resolver requires a non-empty string).
+        segment_payload = dict(call_payload)
+        segment_payload["recording_file_id"] = fid
+        segment_payload["recording_ref"] = f"/media/segment-{fid}.webm"
+        resolved = _resolve_recording_ref(segment_payload, db, provider_name, call_id)
+        if resolved[0] is not None:
+            results.append(resolved)
+    return results
+
+
+def _merge_transcription_results(
+    results: List[TranscriptionResult],
+) -> TranscriptionResult:
+    """Merge per-segment transcription results into one coherent transcript.
+
+    The segments of a consent-interrupted call are consecutive recordings of
+    the same conversation, so each later result's timestamps are offset by the
+    cumulative duration of the segments before it (the previous result's final
+    segment end time). Speaker labels and per-segment text pass through
+    unchanged. A single result is returned untouched.
+    """
+    if not results:
+        return TranscriptionResult()
+    if len(results) == 1:
+        return results[0]
+
+    merged: List[Dict[str, Any]] = []
+    offset = 0.0
+    language = "unknown"
+    for result in results:
+        if result.language and result.language != "unknown":
+            if language == "unknown":
+                language = result.language
+        for seg in result.segments:
+            if not isinstance(seg, dict):
+                continue
+            shifted = dict(seg)
+            try:
+                start = float(seg.get("start") or 0.0)
+                end = float(seg.get("end") or 0.0)
+            except (TypeError, ValueError):
+                start, end = 0.0, 0.0
+            shifted["start"] = round(start + offset, 3)
+            shifted["end"] = round(end + offset, 3)
+            merged.append(shifted)
+            offset = max(offset, shifted["end"])
+
+    text = " ".join(
+        str(seg.get("text") or "").strip()
+        for seg in merged
+        if str(seg.get("text") or "").strip()
+    )
+    return TranscriptionResult(segments=merged, language=language, text=text)
+
+
+def _consent_allows(call: Any, participant_ids: Optional[List[Any]] = None) -> bool:
     """Decide whether consent permits transcription of this call.
 
-    Consent is required unless the server config opts out (``consent_required``
-    is explicitly ``False``). When required, at least one consented participant
-    must be recorded.
+    Policy (aligned with RecordingManager's all-consenting rule): EVERY
+    distinct participant of the call must have consented — never merely one.
+    Consent is required unless the server config opts out
+    (``consent_required`` is explicitly ``False``), mirroring the recording
+    gate.
+
+    When a persisted participant ID roster is supplied (the DISTINCT identity
+    roster kept on the linked artifact payload by ``VoiceCallManager``), it is
+    authoritative: every roster member must appear in ``consented_participants``
+    (roster ⊆ consented). This is immune to member-churn attacks that defeat a
+    max-concurrent COUNT. An empty/malformed roster fails closed.
+
+    Without any roster (e.g. calls created before roster persistence existed),
+    unanimity falls back to the count comparison against the call's persisted
+    ``participant_count``; a consent roster covering fewer participants than
+    joined fails closed there too.
     """
     transcription_cfg = _transcription_config()
     consent_required = transcription_cfg.get("consent_required", True)
     if consent_required is False:
         return True
     consented = getattr(call, "consented_participants", None) or []
-    return len(consented) > 0
+    if not isinstance(consented, (list, tuple, set)):
+        return False
+    try:
+        distinct_consented = {int(value) for value in consented}
+    except (TypeError, ValueError):
+        return False
+
+    if participant_ids is not None:
+        try:
+            roster = {int(value) for value in participant_ids}
+        except (TypeError, ValueError):
+            return False
+        if not roster:
+            # No verifiable roster: fail closed rather than transcribing on a
+            # single stray consent.
+            return False
+        return roster.issubset(distinct_consented)
+
+    participant_count = int(getattr(call, "participant_count", 0) or 0)
+    if participant_count <= 0:
+        return False
+    return len(distinct_consented) >= participant_count
 
 
 def _emit_artifact_update(
@@ -336,13 +599,48 @@ async def transcribe_call(
             logger.info(f"transcription: call {call_id} was not recorded; skip.")
             return None
 
-        if not _consent_allows(call):
-            logger.info(f"transcription: call {call_id} lacks consent; skip (GDPR).")
-            return None
+        # L28: enforce the documented ``max_audio_minutes`` soft cap (previously
+        # configured but NEVER read, so unbounded audio reached providers).
+        # Skip transcription when the call's recorded duration exceeds the cap;
+        # a missing/unknown duration is allowed through (fail open on data
+        # availability, not on policy).
+        max_audio_minutes = transcription_cfg.get("max_audio_minutes")
+        if max_audio_minutes is not None:
+            try:
+                cap_seconds = float(max_audio_minutes) * 60.0
+            except (TypeError, ValueError):
+                cap_seconds = 0.0
+            if cap_seconds > 0:
+                duration_seconds = getattr(call, "duration_seconds", None) or 0
+                try:
+                    duration_seconds = float(duration_seconds)
+                except (TypeError, ValueError):
+                    duration_seconds = 0.0
+                if duration_seconds > cap_seconds:
+                    logger.warning(
+                        f"transcription: call {call_id} duration "
+                        f"{duration_seconds:.0f}s exceeds max_audio_minutes "
+                        f"({max_audio_minutes}); skip."
+                    )
+                    return None
 
+        # Load the linked artifact BEFORE the consent gate: its persisted
+        # participant ID roster (distinct identities observed on the call)
+        # makes the unanimity check churn-proof.
         artifact = None
         if call.artifact_id is not None:
             artifact = get_artifact(db, call.artifact_id)
+
+        participant_roster: Optional[List[Any]] = None
+        if artifact is not None and isinstance(artifact.payload, dict):
+            raw_roster = artifact.payload.get("participant_ids")
+            if isinstance(raw_roster, (list, tuple)):
+                participant_roster = list(raw_roster)
+
+        if not _consent_allows(call, participant_roster):
+            logger.info(f"transcription: call {call_id} lacks consent; skip (GDPR).")
+            return None
+
         call_payload: Dict[str, Any] = {}
         if artifact is not None and isinstance(artifact.payload, dict):
             call_payload = artifact.payload
@@ -356,12 +654,18 @@ async def transcribe_call(
             )
             return None
 
-        recording_ref, temporary_ref = _resolve_recording_ref(
+        # M27: a consent-interrupted call may have several SFU segments
+        # (ffmpeg combining failed at record time). Resolve EVERY segment and
+        # transcribe each one, then merge the results with cumulative time
+        # offsets so the transcript covers the whole call - not just the first
+        # track. Single-segment recordings keep the exact single-file path.
+        resolved_segments = _resolve_recording_segments(
             call_payload,
             db,
             str(transcription_cfg.get("provider", "local_whisper")),
+            call_id=call_id,
         )
-        if recording_ref is None:
+        if not resolved_segments:
             logger.warning(f"transcription: call {call_id} has no recording_ref; skip.")
             return None
 
@@ -369,15 +673,38 @@ async def transcribe_call(
             "language": transcription_cfg.get("language", "auto"),
             "diarize": transcription_cfg.get("diarize", False),
         }
-        logger.info(f"transcription: running provider for call {call_id}...")
+        logger.info(
+            f"transcription: running provider for call {call_id} over "
+            f"{len(resolved_segments)} segment(s)..."
+        )
+        transcribed: List[TranscriptionResult] = []
         try:
-            result: TranscriptionResult = await provider.transcribe(recording_ref, opts)
-        finally:
-            if temporary_ref:
+            for recording_ref, temporary_ref in resolved_segments:
+                if recording_ref is None:
+                    continue
                 try:
-                    os.unlink(temporary_ref)
-                except OSError:
-                    pass
+                    segment_result: TranscriptionResult = await provider.transcribe(
+                        recording_ref, opts
+                    )
+                finally:
+                    if temporary_ref:
+                        try:
+                            os.unlink(temporary_ref)
+                        except OSError:
+                            pass
+                transcribed.append(segment_result)
+        finally:
+            # Never leak temp files if a later segment raises mid-loop.
+            for _recording_ref, temporary_ref in resolved_segments:
+                if temporary_ref:
+                    try:
+                        os.unlink(temporary_ref)
+                    except OSError:
+                        pass
+        if not transcribed:
+            logger.warning(f"transcription: call {call_id} produced no results; skip.")
+            return None
+        result = _merge_transcription_results(transcribed)
 
         artifact_manager = ArtifactManager(db, config.get("artifacts", {}) or {})
         voice_manager = VoiceCallManager(
@@ -429,15 +756,21 @@ async def transcribe_call(
 # Bounded in-process queue used when no asyncio loop is running at schedule time
 # (e.g. a synchronous lifecycle hook). A background task drains it once a loop
 # starts; this keeps the API non-blocking in both sync and async contexts.
+#
+# M26: implemented as a stdlib ``queue.Queue`` (not ``asyncio.Queue``) so the
+# queue is thread-safe for ``put_nowait`` from arbitrary sync threads and is
+# created WITHOUT a running loop (asyncio.Queue must be bound to a loop and is
+# not thread-safe for puts). The async drainer polls it.
 _QUEUE = None
 _QUEUE_DRAINING = False
 _QUEUE_LOCK = threading.Lock()
+_QUEUE_MAX = 512
 
 
 def _get_queue():
     global _QUEUE
     if _QUEUE is None:
-        _QUEUE = asyncio.Queue()
+        _QUEUE = queue.Queue(maxsize=_QUEUE_MAX)
     return _QUEUE
 
 
@@ -445,13 +778,17 @@ async def _drain_queue() -> None:
     """Process any queued transcription jobs. Runs while the loop is alive."""
     try:
         while True:
-            job = await _get_queue().get()
+            # Poll the thread-safe stdlib queue; never block the loop on a
+            # blocking ``queue.get()``.
+            job = _get_queue().get_nowait()
             try:
                 await transcribe_call(job["call_id"], job["db"], job["config"])
-            except Exception as exc:  # noqa: BLE001 - never crash the drainer
+            except Exception as exc:  # never crash the drainer
                 logger.error(f"transcription: queued job failed: {exc}")
             finally:
                 _get_queue().task_done()
+    except queue.Empty:
+        pass
     except asyncio.CancelledError:  # pragma: no cover - shutdown
         return
     finally:
@@ -466,8 +803,8 @@ def schedule_transcribe_call(
     """Schedule :func:`transcribe_call` without blocking the caller.
 
     Uses ``asyncio.create_task`` when a loop is running; otherwise enqueues the
-    job on the in-process queue so a later ``ensure_drainer`` call (wired into
-    the app startup) can process it.
+    job on the in-process bounded queue so a later ``ensure_drainer`` call
+    (wired into the app startup) can process it.
     """
     transcription_cfg = (
         config_arg if config_arg is not None else _transcription_config()
@@ -481,8 +818,17 @@ def schedule_transcribe_call(
         logger.debug("No running loop; enqueuing transcription job")
         pass
 
-    # No running loop: defer to the bounded queue.
-    _get_queue().put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+    # No running loop: defer to the bounded queue. A full queue means the
+    # drainer is backed up; drop the job with a warning instead of growing
+    # memory without bound (the DB row remains, so a later sweep can retry).
+    q = _get_queue()
+    try:
+        q.put_nowait({"call_id": call_id, "db": db, "config": transcription_cfg})
+    except queue.Full:
+        logger.warning(
+            f"transcription: queue full ({_QUEUE_MAX}); dropped job for call {call_id}"
+        )
+        return
     ensure_transcription_drainer()
 
 

@@ -47,12 +47,35 @@ async def get_server_bans(
             )
 
         bans = servers_mod.get_bans(current_user.user_id, sid)
+
+        # Enrich bans with the banned user's public info so clients can render
+        # real usernames instead of "Unknown User".
+        users_map = {}
+        user_ids = {
+            int(b.user_id)
+            for b in (bans or [])
+            if getattr(b, "user_id", None) is not None
+        }
+        if user_ids:
+            auth_mod = api.get_auth()
+            if auth_mod and hasattr(auth_mod, "get_users_bulk"):
+                try:
+                    from ..users import _user_to_public_response
+
+                    for uid, u in (
+                        auth_mod.get_users_bulk(list(user_ids)) or {}
+                    ).items():
+                        users_map[int(uid)] = _user_to_public_response(u)
+                except Exception as ue:
+                    logger.debug(f"Failed to enrich ban users: {ue}")
+
         return [
             BanResponse(
                 user_id=SnowflakeID(b.user_id),
+                user=users_map.get(int(b.user_id)),
                 reason=getattr(b, "reason", None),
                 banned_by=SnowflakeID(b.banned_by) if hasattr(b, "banned_by") else None,
-                banned_at=getattr(b, "banned_at", None),
+                banned_at=getattr(b, "created_at", None),
             )
             for b in (bans or [])
         ]
@@ -67,12 +90,14 @@ async def get_server_bans(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(f"Failed to get bans for server {server_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -134,14 +159,29 @@ async def ban_member(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+        elif "NotSupported" in exc_name:
+            # H6: message purge on ban is not implemented server-side.
+            # Surface an honest 400 (the request asked for something we do
+            # not support) instead of a misleading 500-style message.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Message purge on ban is not supported; retry with delete_message_days=0",
+                    }
+                },
             )
 
         logger.error(
             f"Failed to ban user {user_id} from server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -191,7 +231,8 @@ async def unban_member(
             )
         elif "Permission" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
@@ -199,5 +240,6 @@ async def unban_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

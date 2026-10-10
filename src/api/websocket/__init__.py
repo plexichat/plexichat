@@ -109,7 +109,7 @@ def cross_worker_listener_status() -> dict:
     """
     import utils.config as _cfg
 
-    valkey_cfg = _cfg.get("redis") or {}
+    valkey_cfg = _cfg.get("valkey") or _cfg.get("redis") or {}
     if not valkey_cfg.get("enabled", False):
         return {"enabled": False}
 
@@ -293,7 +293,13 @@ async def _handle_cross_worker_message(raw_message: str) -> None:
         return
 
     source_worker = payload.get("sw", "")
-    if source_worker == _get_worker_id():
+    # Echo protection (B5): only skip our own published events. Events tagged
+    # with an empty or "unknown" worker id (published before set_worker_id /
+    # before session-manager identity assignment) can never be assumed to be
+    # our own echo — dropping them on multi-worker deployments silently
+    # discards sibling delivery during the pre-identity window.
+    own_id = _get_worker_id()
+    if source_worker and source_worker != "unknown" and source_worker == own_id:
         return
 
     event_type: str = payload.get("t", "")
@@ -327,7 +333,7 @@ async def _cross_worker_poll_loop() -> None:
     """
     import utils.config as config
 
-    valkey_cfg = config.get("redis") or {}
+    valkey_cfg = config.get("valkey") or config.get("redis") or {}
     if not valkey_cfg.get("enabled", False):
         logger.info("Cross-worker listener: Valkey disabled — skipping")
         return
@@ -384,7 +390,11 @@ async def _cross_worker_poll_loop() -> None:
         poll_count = 0
         healthy_polls = 0
         reconnect = False
-        last_heartbeat = asyncio.get_event_loop().time()
+        # C7: use the running loop's clock. asyncio.get_event_loop() is
+        # deprecated when no loop is running (3.10+) and can hand back a
+        # detached loop; this poll loop always runs inside the serving
+        # loop, so get_running_loop() is the correct clock source.
+        last_heartbeat = asyncio.get_running_loop().time()
 
         try:
             while not _cross_worker_stop.is_set():
@@ -408,7 +418,9 @@ async def _cross_worker_poll_loop() -> None:
 
                 # Record a periodic heartbeat alert so operators can see
                 # healthy worker activity in the Alerts tab timeline.
-                now = asyncio.get_event_loop().time()
+                # C7: same running-loop clock as above (see comment at
+                # last_heartbeat); never the deprecated get_event_loop().
+                now = asyncio.get_running_loop().time()
                 if now - last_heartbeat >= _HEARTBEAT_ALERT_INTERVAL_SEC:
                     last_heartbeat = now
                     _record_system_alert(
@@ -461,21 +473,28 @@ def _create_pubsub_client(valkey_cfg: dict) -> Any | None:
     connection fails.
     """
     try:
-        from glide_sync import (  # pyright: ignore[reportMissingImports]
-            GlideClient,
-            GlideClientConfiguration,
-            NodeAddress,
-            ServerCredentials,
-        )
+        import importlib
+
+        glide_sync = importlib.import_module("glide_sync")
+        GlideClient = glide_sync.GlideClient
+        GlideClientConfiguration = glide_sync.GlideClientConfiguration
+        NodeAddress = glide_sync.NodeAddress
+        ServerCredentials = glide_sync.ServerCredentials
     except ImportError:
         logger.info("Cross-worker listener: valkey-glide-sync not available — skipping")
         return None
 
     host = valkey_cfg.get("host", "localhost")
-    port = valkey_cfg.get("port", 6379)
+    try:
+        port = int(valkey_cfg.get("port", 6379))
+    except (TypeError, ValueError):
+        port = 6379
     password = valkey_cfg.get("password", "") or None
     use_tls = valkey_cfg.get("ssl", False)
-    db = valkey_cfg.get("db", 0)
+    try:
+        db = int(valkey_cfg.get("db", 0))
+    except (TypeError, ValueError):
+        db = 0
 
     try:
         kwargs: dict = {

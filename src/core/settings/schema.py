@@ -11,8 +11,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
     user_id INTEGER NOT NULL,
     key VARCHAR(100) NOT NULL,
     value TEXT,
-    -- Encrypted value mirror (commit db920196)
-    value_encrypted TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,

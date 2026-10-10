@@ -5,13 +5,23 @@ Handles server bot approval, user bot requests, bot profiles,
 bot directory browsing, and OAuth authorized application management.
 """
 
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends, status
+from typing import Optional, List, Annotated
+import logging
+from fastapi import APIRouter, HTTPException, Depends, status, Query
 
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 
-from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.middleware.authentication import (
+    get_current_user,
+    get_optional_user,
+    TokenInfo,
+)
+from src.api.schemas.common import (
+    ErrorResponse,
+    NullableSnowflakeIDParam,
+    SnowflakeID,
+    SnowflakeIDParam,
+)
 from src.core import applications
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
@@ -26,6 +36,8 @@ from src.core.applications.exceptions import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/bots", tags=["Bots"])
 
 
@@ -35,7 +47,7 @@ router = APIRouter(prefix="/bots", tags=["Bots"])
 class ApprovedBotResponse(BaseModel):
     """Response schema for an approved bot."""
 
-    id: int
+    id: SnowflakeID
     server_id: str
     application_id: str
     approved_by: str
@@ -49,9 +61,15 @@ class ApprovedBotResponse(BaseModel):
 
 
 class BotRequestResponse(BaseModel):
-    """Response schema for a bot request."""
+    """Response schema for a bot request.
 
-    id: int
+    ``id`` is a snowflake like every other identifier here, so it must be
+    serialized as a decimal string (a JSON number rounds past 2**53 on the
+    client). It was typed ``int``, which leaked the raw id as a number while
+    the sibling ``*_id`` fields were already strings.
+    """
+
+    id: SnowflakeID
     server_id: str
     application_id: str
     requester_id: str
@@ -81,19 +99,22 @@ class BotProfileResponse(BaseModel):
 class AuthorizedAppResponse(BaseModel):
     """Response schema for a user's authorized application."""
 
-    id: int
+    id: SnowflakeID
     application_id: str
     application_name: str
     application_icon: Optional[str] = None
     scopes: List[str] = []
     authorized_at: int
-    last_used_at: int
+    # A freshly authorized app has never been used, so ``last_used_at`` is
+    # null until its first verified request. It was required, which made the
+    # list endpoint 500 for every never-used grant.
+    last_used_at: Optional[int] = None
 
 
 class BotDirectoryEntry(BaseModel):
     """A bot entry in the directory listing."""
 
-    id: int
+    id: SnowflakeID
     name: str
     description: Optional[str] = None
     icon_url: Optional[str] = None
@@ -151,6 +172,20 @@ class BotDirectoryResponse(BaseModel):
 # === Helper ===
 
 
+def _coerce_nullable_int(value):
+    """Coerce ``null``/empty query values for optional int params to None."""
+    if (
+        value is None
+        or value == ""
+        or (isinstance(value, str) and value.strip().lower() == "null")
+    ):
+        return None
+    return value
+
+
+NullableInt = Annotated[Optional[int], BeforeValidator(_coerce_nullable_int)]
+
+
 def _approved_bot_to_response(bot, app_name=None, app_icon=None) -> ApprovedBotResponse:
     """Convert an ApprovedBot model to a response."""
     return ApprovedBotResponse(
@@ -206,10 +241,11 @@ async def list_approved_bots(
             server_id=int(server_id), status="approved"
         )
         return [_approved_bot_to_response(bot) for bot in bots]
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list approved bots")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -241,20 +277,21 @@ async def request_bot(
             reason=body.reason,
         )
         return _bot_request_to_response(req)
-    except BotRequestExistsError as e:
+    except BotRequestExistsError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except BotAlreadyApprovedError as e:
+    except BotAlreadyApprovedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to request bot")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -280,17 +317,18 @@ async def remove_approved_bot(
             application_id=int(application_id),
             user_id=current_user.user_id,
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except InstallationNotFoundError:
         pass
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to remove approved bot")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -316,10 +354,11 @@ async def disable_bot(
 
     try:
         auth.disable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to disable bot")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Bot not found"}},
         )
 
 
@@ -342,10 +381,11 @@ async def enable_bot(
 
     try:
         auth.enable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to enable bot")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Bot not found"}},
         )
 
 
@@ -373,10 +413,11 @@ async def list_bot_requests(
             status=status_filter,
         )
         return [_bot_request_to_response(req) for req in requests]
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list bot requests")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -410,15 +451,15 @@ async def approve_bot(
             bot_name=body.bot_name,
         )
         return _approved_bot_to_response(bot)
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except BotAlreadyApprovedError as e:
+    except BotAlreadyApprovedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except BotLimitError as e:
         raise HTTPException(
@@ -426,7 +467,7 @@ async def approve_bot(
             detail={
                 "error": {
                     "code": 400,
-                    "message": str(e),
+                    "message": "Bot limit reached",
                     "max_allowed": e.max_allowed,
                     "current": e.current,
                 }
@@ -435,17 +476,24 @@ async def approve_bot(
     except LicenseFeatureError as e:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={"error": {"code": 402, "message": str(e), "feature": e.feature}},
+            detail={
+                "error": {
+                    "code": 402,
+                    "message": "Feature requires valid license",
+                    "feature": e.feature,
+                }
+            },
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to approve bot")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -462,7 +510,7 @@ async def approve_bot(
 )
 async def review_bot_request(
     server_id: str,
-    request_id: int,
+    request_id: SnowflakeIDParam,
     body: ReviewBotRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ):
@@ -476,20 +524,21 @@ async def review_bot_request(
             review_reason=body.review_reason,
         )
         return _bot_request_to_response(req)
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except BotRequestError as e:
+    except BotRequestError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to review bot request")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -501,14 +550,23 @@ async def review_bot_request(
     response_model=BotProfileResponse,
     summary="Get a bot's public profile",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid application ID"},
         404: {"model": ErrorResponse, "description": "Profile not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_bot_profile(application_id: str):
-    """Get a bot's public profile."""
+async def get_bot_profile(
+    application_id: SnowflakeIDParam,
+    current_user: Optional[TokenInfo] = Depends(get_optional_user),
+):
+    """Get a bot's public profile.
+
+    A profile marked private resolves only for the application owner; for
+    anyone else it is indistinguishable from a missing profile.
+    """
     try:
-        profile = applications.get_bot_profile(int(application_id))
+        viewer_id = current_user.user_id if current_user else None
+        profile = applications.get_bot_profile(application_id, viewer_id=viewer_id)
         if not profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -529,10 +587,11 @@ async def get_bot_profile(application_id: str):
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to get bot profile")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -580,20 +639,21 @@ async def update_bot_profile(
             nsfw=profile.nsfw,
             private=profile.private,
         )
-    except ApplicationNotFoundError as e:
+    except ApplicationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": 404, "message": str(e)}},
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except ApplicationAccessDeniedError as e:
+    except ApplicationAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to update bot profile")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -605,22 +665,26 @@ async def update_bot_profile(
     response_model=BotDirectoryResponse,
     summary="Browse the bot directory",
     responses={
+        400: {"model": ErrorResponse, "description": "Invalid server_id"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def list_bot_directory(
-    server_id: Optional[str] = None,
-    q: Optional[str] = None,
-    tag: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    server_id: Annotated[
+        NullableSnowflakeIDParam,
+        Query(description="Filter out bots already approved on this server"),
+    ] = None,
+    q: Optional[str] = Query(None, description="Search query"),
+    tag: Optional[str] = Query(None, description="Filter by tag"),
+    limit: int = Query(50, ge=1, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
 ):
     """Browse available bots in the directory."""
     try:
         if limit > 100:
             limit = 100
         result = applications.get_bot_directory(
-            server_id=int(server_id) if server_id is not None else None,
+            server_id=server_id,
             include_public=True,
             limit=limit,
             offset=offset,
@@ -644,10 +708,11 @@ async def list_bot_directory(
             limit=limit,
             offset=offset,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list bot directory")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -671,7 +736,7 @@ async def list_authorized_apps(
         apps = applications.get_user_authorized_apps(current_user.user_id)
         return [
             AuthorizedAppResponse(
-                id=app.id,
+                id=SnowflakeID(app.id),
                 application_id=str(app.application_id),
                 application_name=app.application_name,
                 application_icon=app.application_icon,
@@ -681,10 +746,11 @@ async def list_authorized_apps(
             )
             for app in apps
         ]
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to list authorized apps")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -694,11 +760,12 @@ async def list_authorized_apps(
     summary="Revoke an authorized application",
     responses={
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Authorized app not found"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def revoke_authorized_app(
-    token_id: int,
+    token_id: SnowflakeIDParam,
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Revoke an authorized application's access."""
@@ -707,8 +774,14 @@ async def revoke_authorized_app(
             token_id=token_id,
             user_id=current_user.user_id,
         )
-    except Exception as e:
+    except ApplicationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
+        )
+    except Exception:
+        logger.exception("Failed to revoke authorized app")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

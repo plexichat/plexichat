@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import Response
 
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.auth import (
-    TwoFactorRequest,
     LoginResponse,
+    TwoFactorRequest,
     TwoFactorStatusResponse,
     TwoFactorSetupRequest,
     TwoFactorSetupResponse,
@@ -14,6 +15,11 @@ from src.api.schemas.auth import (
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
 from .helpers import _user_to_response
+from .cookies import (
+    set_session_cookie,
+    session_expiry_seconds,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     AuthError,
     InvalidCredentialsError,
@@ -22,10 +28,45 @@ from src.core.auth.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
     TwoFactorInvalidError,
-    TwoFactorRequiredError,
     TwoFactorSetupError,
     UserNotFoundError,
 )
+from src.core.auth.models import AuthStatus
+from src.utils.net import get_client_ip
+
+try:
+    from src.core.ratelimit.decorators import rate_limit
+except ImportError as _2fa_rl_exc:  # pragma: no cover
+    rate_limit = None
+    import utils.logger as _rl_logger
+    import os as _rl_os
+    import utils.config as _rl_cfg
+
+    _rl_logger.critical(
+        "2FA RATE_LIMIT IMPORT FAILED: %s. "
+        "2FA routes will run WITHOUT rate limiting. "
+        "Install plexichat-ratelimit and restart, OR explicitly "
+        "opt-out by setting PLEXICHAT_ALLOW_2FA_NO_RATELIMIT=1.",
+        _2fa_rl_exc,
+    )
+    try:
+        _rl_required = bool(_rl_cfg.get("rate_limiting", {}).get("required", False))
+    except Exception:
+        _rl_required = False
+    if _rl_required or _rl_os.environ.get("PLEXICHAT_REQUIRE_FAIL_CLOSED", "") not in (
+        "",
+        "0",
+    ):
+        if _rl_os.environ.get("PLEXICHAT_ALLOW_2FA_NO_RATELIMIT", "") in (
+            "1",
+            "true",
+            "yes",
+        ):
+            _rl_logger.critical("Opted-in to running without 2FA rate-limit.")
+        else:
+            raise RuntimeError(
+                "2FA rate-limit import failed and fail-closed mode is required; refusing to start."
+            ) from _2fa_rl_exc
 
 router = APIRouter()
 
@@ -39,7 +80,10 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
+async def complete_2fa(
+    request: Request, response: Response, body: TwoFactorRequest
+) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")
@@ -48,14 +92,32 @@ async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
+    ip_address = get_client_ip(request)
+    user_agent = request.headers.get("User-Agent")
+
     try:
-        result = auth.complete_2fa(body.challenge_token, body.code)
-    except (TokenInvalidError, TokenExpiredError) as e:
-        logger.warning(f"2FA completion failed: {e}")
-        raise HTTPException(
-            status_code=401, detail={"error": {"code": 401, "message": str(e)}}
+        result = auth.complete_2fa(
+            body.challenge_token, body.code, ip_address, user_agent
         )
-    except TwoFactorInvalidError:
+    except (TokenInvalidError, TokenExpiredError):
+        logger.warning("2FA completion failed: invalid or expired challenge")
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid or expired challenge"}},
+        )
+    except TwoFactorInvalidError as e:
+        # Includes per-user limiter "Too many attempts" and per-challenge limit
+        msg = str(e)
+        if "Too many attempts" in msg:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": {
+                        "code": 429,
+                        "message": "Too many attempts; try again later",
+                    }
+                },
+            )
         logger.warning("2FA completion failed: Invalid code")
         raise HTTPException(
             status_code=401,
@@ -70,19 +132,37 @@ async def complete_2fa(body: TwoFactorRequest) -> LoginResponse:
     except Exception as e:
         logger.error(f"Unexpected error in complete_2fa: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     logger.info(
         f"2FA completed successfully for user ID: {getattr(result.user, 'id', 'unknown')}"
     )
+    # Fail closed (C1): the verify step must only ever emit success when the
+    # core actually returned SUCCESS with a session token. Without this
+    # guard a future non-success AuthResult would be rendered as a
+    # "success" body with a null credential.
+    if result.status != AuthStatus.SUCCESS or not result.token:
+        logger.error(f"Unexpected auth status in 2FA completion: {result.status!r}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+    # M9 (same as login): the full session goes to browsers ONLY via the
+    # HttpOnly cookie; the body carries a marker plus the session
+    # lifetime, with the raw token echoed back solely for explicit
+    # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
+    # Mirror the real session expiry (trusted-device rows are longer-lived).
+    max_age = session_expiry_seconds(result.session)
+    set_session_cookie(response, result.token, max_age=max_age)
     return LoginResponse(
-        status="success",
-        token=result.token,
+        status=AuthStatus.SUCCESS.value,
+        token=session_token_for_response(request, result.token),
         user=_user_to_response(result.user) if result.user else None,
         challenge_token=None,
         methods=None,
-        expires_in=None,
+        expires_in=max_age,
     )
 
 
@@ -126,7 +206,8 @@ async def get_2fa_status(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -142,9 +223,14 @@ async def get_2fa_status(
         401: {"model": ErrorResponse, "description": "Invalid password"},
         404: {"model": ErrorResponse, "description": "User not found"},
         409: {"model": ErrorResponse, "description": "2FA is already enabled"},
+        429: {"model": ErrorResponse, "description": "Too many requests"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+# Password-verification route: without a limiter an authenticated session
+# could brute-force the account password through this endpoint (Agent 50 F2
+# parity — the other 2FA verify routes carry the same 5/60s budget).
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def enable_2fa(
     body: TwoFactorSetupRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> TwoFactorSetupResponse:
@@ -182,21 +268,24 @@ async def enable_2fa(
             )
 
         try:
-            auth.login(user.username, password)
-        except InvalidCredentialsError:
-            logger.warning(
-                f"2FA enable failed for user {current_user.user_id}: Invalid password"
-            )
-            raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": "Invalid password"}},
-            )
-        except TwoFactorRequiredError:
-            pass
-        except (AccountLockedError, AccountDisabledError) as e:
+            # Re-confirm the password without minting a throwaway session;
+            # auth.login() would create an orphaned session row here.
+            if not auth.verify_user_password(current_user.user_id, password):
+                logger.warning(
+                    f"2FA enable failed for user {current_user.user_id}: Invalid password"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": {"code": 401, "message": "Invalid password"}},
+                )
+        except HTTPException:
+            raise
+        except (AccountLockedError, AccountDisabledError):
             raise HTTPException(
                 status_code=403,
-                detail={"error": {"code": 403, "message": str(e)}},
+                detail={
+                    "error": {"code": 403, "message": "Account locked or disabled"}
+                },
             )
 
         result = auth.setup_2fa(current_user.user_id)
@@ -208,22 +297,19 @@ async def enable_2fa(
         )
     except HTTPException:
         raise
-    except AuthError as e:
-        if "already" in str(e).lower():
-            raise HTTPException(
-                status_code=409,
-                detail={"error": {"code": 409, "message": "2FA is already enabled"}},
-            )
+    except AuthError:
+        # Already-enabled is handled above; generic auth error
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(
             f"Failed to enable 2FA for user {current_user.user_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -240,6 +326,7 @@ async def enable_2fa(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def confirm_2fa_setup(
     body: TwoFactorConfirmRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
@@ -260,7 +347,18 @@ async def confirm_2fa_setup(
 
     try:
         success = auth.confirm_2fa(current_user.user_id, code)
-    except TwoFactorInvalidError:
+    except TwoFactorInvalidError as e:
+        msg = str(e)
+        if "Too many attempts" in msg:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": {
+                        "code": 429,
+                        "message": "Too many attempts; try again later",
+                    }
+                },
+            )
         logger.warning(
             f"2FA confirm failed for user {current_user.user_id}: Invalid code"
         )
@@ -268,11 +366,13 @@ async def confirm_2fa_setup(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid code"}},
         )
-    except (UserNotFoundError, TwoFactorSetupError, AuthError) as e:
-        logger.warning(f"2FA confirm failed for user {current_user.user_id}: {e}")
+    except (UserNotFoundError, TwoFactorSetupError, AuthError):
+        logger.warning(
+            f"2FA confirm failed for user {current_user.user_id}: invalid setup"
+        )
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(
@@ -280,7 +380,8 @@ async def confirm_2fa_setup(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
     if success:
@@ -309,6 +410,7 @@ async def confirm_2fa_setup(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
+@(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def disable_2fa(
     body: TwoFactorDisableRequest, current_user: TokenInfo = Depends(get_current_user)
 ) -> SuccessResponse:
@@ -335,7 +437,12 @@ async def disable_2fa(
         )
 
     try:
-        auth.disable_2fa(current_user.user_id, password, code)
+        auth.disable_2fa(
+            current_user.user_id,
+            password,
+            code,
+            except_session_id=current_user.session_id,
+        )
         logger.info(f"2FA disabled for user {current_user.user_id}")
         return SuccessResponse(success=True, message=None)
     except InvalidCredentialsError:
@@ -346,7 +453,18 @@ async def disable_2fa(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid password"}},
         )
-    except TwoFactorInvalidError:
+    except TwoFactorInvalidError as e:
+        msg = str(e)
+        if "Too many attempts" in msg:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": {
+                        "code": 429,
+                        "message": "Too many attempts; try again later",
+                    }
+                },
+            )
         logger.warning(
             f"2FA disable failed for user {current_user.user_id}: Invalid 2FA code"
         )
@@ -354,18 +472,13 @@ async def disable_2fa(
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid 2FA code"}},
         )
-    except AuthError as e:
-        if "not enabled" in str(e).lower():
-            logger.warning(
-                f"2FA disable failed for user {current_user.user_id}: 2FA not enabled"
-            )
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "2FA is not enabled"}},
-            )
+    except AuthError:
+        logger.warning(
+            f"2FA disable failed for user {current_user.user_id}: 2FA not enabled"
+        )
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "2FA is not enabled"}},
         )
     except Exception as e:
         logger.error(
@@ -373,5 +486,6 @@ async def disable_2fa(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

@@ -60,7 +60,8 @@ class TestKeywordRules:
             content="This contains badword here",
         )
         assert not result.passed
-        assert len(result.violations) > 0
+        assert len(result.violations) == 1
+        assert result.violations[0].matched_content == "badword"
 
     def test_keyword_rule_no_match(self, automod_manager, test_server):
         """Test that keyword rule does not match clean content."""

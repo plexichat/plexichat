@@ -10,6 +10,8 @@ import secrets
 import time
 from typing import Dict, List, Optional, Any
 
+import httpx
+
 import utils.config as config
 import utils.logger as logger
 
@@ -25,6 +27,7 @@ from .base import (
     SFUProducer,
     SFUConsumer,
 )
+from .quality import QualityReporter, parse_quality_metrics
 
 
 class JanusAdapter(SFUAdapter):
@@ -53,16 +56,19 @@ class JanusAdapter(SFUAdapter):
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
         self._api_secret = api_secret
-        self._session = None
+        self._session: Optional[httpx.AsyncClient] = None
+        self._session_id = None  # Latest created session id (fixation tracking)
         self._janus_sessions: Dict[str, int] = {}  # room_id -> session_id
         self._janus_handles: Dict[
             str, Dict[str, int]
         ] = {}  # room_id -> {peer_id -> handle_id}
         self._producer_kinds: Dict[str, MediaKind] = {}  # producer_id -> MediaKind
+        self._producer_peers: Dict[str, str] = {}  # producer_id -> peer_id
         self._janus_recordings: Dict[
             str, Dict[str, Any]
         ] = {}  # room_id -> recording info
         self._janus_recording_roots: Dict[str, str] = {}
+        self._quality_reporter: Optional[QualityReporter] = None
         self._acoustic_defense = acoustic_defense
 
     def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
@@ -85,21 +91,10 @@ class JanusAdapter(SFUAdapter):
             "transient_ratio": self._acoustic_defense.transient_ratio,
         }
 
-    async def _get_session(self):
-        """Get or create aiohttp session."""
+    async def _get_session(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client used for the Janus REST API."""
         if self._session is None:
-            try:
-                import aiohttp
-
-                self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=self._timeout)
-                )
-            except ImportError:
-                raise SFUConnectionError(
-                    "aiohttp is required for Janus adapter",
-                    backend="janus",
-                    url=self._api_url,
-                )
+            self._session = httpx.AsyncClient(timeout=self._timeout)
         return self._session
 
     def _generate_transaction(self) -> str:
@@ -132,24 +127,24 @@ class JanusAdapter(SFUAdapter):
             data["apisecret"] = self._api_secret
 
         try:
-            async with session.post(
+            response = await session.post(
                 url,
                 json=data,
                 headers={"Content-Type": "application/json"},
-            ) as response:
-                result = await response.json()
+            )
+            result = response.json()
 
-                if result.get("janus") == "error":
-                    error = result.get("error", {})
-                    raise SFUConnectionError(
-                        f"Janus error: {error.get('reason', 'Unknown')}",
-                        backend="janus",
-                        url=url,
-                    )
+            if result.get("janus") == "error":
+                error = result.get("error", {})
+                raise SFUConnectionError(
+                    f"Janus error: {error.get('reason', 'Unknown')}",
+                    backend="janus",
+                    url=url,
+                )
 
-                return result
+            return result
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             raise SFUTimeoutError(
                 "Janus request timed out",
                 operation=endpoint,
@@ -165,7 +160,9 @@ class JanusAdapter(SFUAdapter):
     async def _create_janus_session(self) -> int:
         """Create a Janus session."""
         result = await self._request("", {"janus": "create"})
-        return result["data"]["id"]
+        session_id = result["data"]["id"]
+        self._session_id = session_id
+        return session_id
 
     async def _attach_plugin(
         self, session_id: int, plugin: str = "janus.plugin.videoroom"
@@ -284,6 +281,18 @@ class JanusAdapter(SFUAdapter):
         # Destroy session
         await self._request(f"/{session_id}", {"janus": "destroy"})
 
+        # L1 (Agent 34): drop producer-kind bookkeeping owned by this room's
+        # peers so closing a room leaves no stale entries behind.
+        for peer_key in list(self._janus_handles.get(room_id, {})):
+            stale_kinds = [
+                pid
+                for pid in self._producer_kinds
+                if isinstance(peer_key, str) and pid.startswith(f"{peer_key}_")
+            ]
+            for pid in stale_kinds:
+                self._producer_kinds.pop(pid, None)
+                self._producer_peers.pop(pid, None)
+
         del self._janus_sessions[room_id]
         if room_id in self._janus_handles:
             del self._janus_handles[room_id]
@@ -340,7 +349,8 @@ class JanusAdapter(SFUAdapter):
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
         """Remove a peer from a room."""
         session_id = self._janus_sessions.get(room_id)
-        handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
+        room_handles = self._janus_handles.get(room_id, {})
+        handle_id = room_handles.get(peer_id)
 
         if session_id and handle_id:
             await self._send_message(session_id, handle_id, {"request": "leave"})
@@ -348,9 +358,121 @@ class JanusAdapter(SFUAdapter):
             # Detach handle
             await self._request(f"/{session_id}/{handle_id}", {"janus": "detach"})
 
-            del self._janus_handles[room_id][peer_id]
+            room_handles.pop(peer_id, None)
+
+        # L1 (Agent 34): detach any subscriber handles this peer created via
+        # consume() (consumer ids are prefixed "<peer_id>_sub_") so they do
+        # not leak on the Janus side.
+        if session_id:
+            subscriber_ids = [
+                cid
+                for cid in room_handles
+                if isinstance(cid, str) and cid.startswith(f"{peer_id}_sub_")
+            ]
+            for consumer_id in subscriber_ids:
+                sub_handle = room_handles.pop(consumer_id, None)
+                if sub_handle is None:
+                    continue
+                try:
+                    await self._request(
+                        f"/{session_id}/{sub_handle}", {"janus": "detach"}
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to detach Janus subscriber handle for "
+                        f"{consumer_id}: {e}"
+                    )
+
+        # L1: drop producer-kind bookkeeping owned by this peer so it does
+        # not grow unbounded across join/leave cycles.
+        stale_kinds = [
+            pid for pid in self._producer_kinds if pid.startswith(f"{peer_id}_")
+        ]
+        for pid in stale_kinds:
+            self._producer_kinds.pop(pid, None)
+            self._producer_peers.pop(pid, None)
 
         logger.debug(f"Peer {peer_id} left Janus room {room_id}")
+        return True
+
+    async def apply_remote_offer(
+        self,
+        room_id: str,
+        peer_id: str,
+        offer_sdp: str,
+    ) -> Dict[str, Any]:
+        """Negotiate the client's offer with the Janus VideoRoom plugin.
+
+        Janus terminates the media session itself. The client's offer must be
+        handed to the peer's publisher handle as a ``publish`` request carrying
+        the ``jsep``, and Janus's own answer returned verbatim. There are no
+        out-of-band transport parameters to hand the client, so an adapter that
+        does not drive this handshake produces nothing usable -- and a manager
+        that invents ICE credentials on its behalf produces a dead call. Raise
+        when Janus does not answer so the offer fails closed.
+        """
+        session_id = self._janus_sessions.get(room_id)
+        handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
+        if not session_id or not handle_id:
+            raise SFUConnectionError(
+                f"Peer {peer_id} not in Janus room {room_id}",
+                backend="janus",
+                url=self._api_url,
+            )
+
+        result = await self._send_message(
+            session_id,
+            handle_id,
+            {"request": "publish", "audio": True, "video": True},
+            jsep={"type": "offer", "sdp": offer_sdp},
+        )
+
+        jsep = result.get("jsep") or {}
+        answer_sdp = jsep.get("sdp")
+        if not answer_sdp:
+            raise SFUConnectionError(
+                "Janus did not return an SDP answer for the publish handshake",
+                backend="janus",
+                url=self._api_url,
+            )
+
+        logger.debug(f"Negotiated Janus media session for peer {peer_id}")
+        return {"sdp": answer_sdp, "type": jsep.get("type", "answer")}
+
+    async def add_ice_candidate(
+        self,
+        room_id: str,
+        peer_id: str,
+        candidate: str,
+        sdp_mid: Optional[str] = None,
+        sdp_mline_index: Optional[int] = None,
+    ) -> bool:
+        """Forward a trickled client candidate to the peer's Janus handle.
+
+        The client talks to THIS gateway, not to Janus directly, so a trickled
+        candidate never reaches the media plane on its own; without a
+        ``trickle`` message Janus only learns what its own peer-reflexive
+        discovery happens to find.
+        """
+        session_id = self._janus_sessions.get(room_id)
+        handle_id = self._janus_handles.get(room_id, {}).get(peer_id)
+        if not session_id or not handle_id:
+            return False
+
+        payload: Dict[str, Any] = {"candidate": candidate}
+        if sdp_mid is not None:
+            payload["sdpMid"] = sdp_mid
+        if sdp_mline_index is not None:
+            payload["sdpMLineIndex"] = sdp_mline_index
+
+        try:
+            await self._request(
+                f"/{session_id}/{handle_id}",
+                {"janus": "trickle", "candidate": payload},
+            )
+        except Exception as exc:
+            logger.debug(f"Failed to forward ICE candidate to Janus: {exc}")
+            return False
         return True
 
     async def create_transport(
@@ -359,19 +481,19 @@ class JanusAdapter(SFUAdapter):
         peer_id: str,
         direction: TransportDirection,
     ) -> SFUTransport:
-        """Create a WebRTC transport for a peer."""
-        # Janus handles transport creation implicitly during publish/subscribe
-        # Return a placeholder transport
-        transport_id = (
-            f"{room_id}_{peer_id}_{direction.value}_{int(time.time() * 1000)}"
-        )
+        """Not applicable: Janus negotiates media in-band.
 
-        return SFUTransport(
-            id=transport_id,
-            direction=direction,
-            ice_parameters={},
-            ice_candidates=[],
-            dtls_parameters={},
+        The VideoRoom plugin terminates the WebRTC session; the client's offer
+        goes to :meth:`apply_remote_offer` and Janus's own answer is returned.
+        There are no transport parameters to hand the client, and returning an
+        empty ``SFUTransport`` would only invite the manager to fabricate ICE
+        credentials. Fail closed with a diagnosable error instead.
+        """
+        raise SFUConnectionError(
+            "Janus negotiates media in-band via the VideoRoom publish "
+            "handshake; create_transport is not applicable",
+            backend="janus",
+            url=self._api_url,
         )
 
     async def connect_transport(
@@ -418,6 +540,12 @@ class JanusAdapter(SFUAdapter):
         producer_id = f"{peer_id}_{kind.value}_{int(time.time() * 1000)}"
 
         self._producer_kinds[producer_id] = kind
+        # H5: record the exact producing peer id at publish time so subscriber
+        # feed resolution never has to guess from the id string. Producer ids
+        # embed "standard" peer ids (``user_<id>_<kind>_<ts>``) whose first
+        # underscore-delimited segment is just "user", so the old
+        # ``split("_")[0]`` approach mapped every peer to the same bogus feed.
+        self._producer_peers[producer_id] = peer_id
 
         return SFUProducer(
             id=producer_id,
@@ -447,9 +575,15 @@ class JanusAdapter(SFUAdapter):
 
         room_num = stable_numeric_id(room_id, "room")
 
-        # Parse producer_id to get feed ID
-        parts = producer_id.split("_")
-        feed_peer = parts[0] if parts else producer_id
+        # Resolve the producing peer's identity for the subscriber feed.
+        # Prefer the exact peer id recorded at publish time; fall back to
+        # stripping the ``_<kind>_<ts>`` suffix for producers created before
+        # the mapping existed (peer ids may themselves contain underscores,
+        # e.g. ``user_5``, so the last two fields are dropped, not the first).
+        feed_peer = self._producer_peers.get(producer_id)
+        if not feed_peer:
+            parts = producer_id.split("_")
+            feed_peer = "_".join(parts[:-2]) if len(parts) >= 3 else producer_id
         feed_num = stable_numeric_id(feed_peer, "peer")
 
         # Join as subscriber
@@ -465,6 +599,13 @@ class JanusAdapter(SFUAdapter):
         )
 
         consumer_id = f"{peer_id}_sub_{producer_id}_{int(time.time() * 1000)}"
+
+        # L1 (Agent 34): subscriber handles were attached to Janus but never
+        # tracked, leaking the remote handle forever. Track them so they are
+        # detached when the consuming peer leaves the room.
+        if room_id not in self._janus_handles:
+            self._janus_handles[room_id] = {}
+        self._janus_handles[room_id][consumer_id] = handle_id
 
         kind = self._producer_kinds.get(producer_id, MediaKind.AUDIO)
 
@@ -532,6 +673,11 @@ class JanusAdapter(SFUAdapter):
 
         if session_id and handle_id:
             await self._send_message(session_id, handle_id, {"request": "unpublish"})
+
+        # L1 (Agent 34): closed producers must drop their kind bookkeeping or
+        # the map grows unbounded.
+        self._producer_kinds.pop(producer_id, None)
+        self._producer_peers.pop(producer_id, None)
         return True
 
     async def get_room_info(self, room_id: str) -> Optional[RoomInfo]:
@@ -581,9 +727,95 @@ class JanusAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
-        # Janus VideoRoom handles simulcast differently
+        """Apply a preferred simulcast layer to the peer's subscriber feeds.
+
+        Janus VideoRoom has no mediasoup-style ``setConsumerPreferredLayers``;
+        the equivalent is a ``configure`` on the *subscriber* handle carrying
+        ``substream`` / ``temporal``. The BandwidthEstimator has no per-consumer
+        mapping and calls this with an empty consumer id, so when none is given
+        every subscriber handle owned by the peer is configured. Returns False
+        when there is nothing to configure rather than reporting success.
+        """
+        session_id = self._janus_sessions.get(room_id)
+        if not session_id:
+            return False
+
+        room_handles = self._janus_handles.get(room_id, {})
+        if consumer_id:
+            handles = [room_handles.get(consumer_id)]
+        else:
+            prefix = f"{peer_id}_sub_"
+            handles = [
+                handle
+                for key, handle in room_handles.items()
+                if isinstance(key, str) and key.startswith(prefix)
+            ]
+        handles = [handle for handle in handles if handle]
+        if not handles:
+            return False
+
+        for handle_id in handles:
+            await self._send_message(
+                session_id,
+                handle_id,
+                {
+                    "request": "configure",
+                    "substream": spatial_layer,
+                    "temporal": temporal_layer,
+                },
+            )
         return True
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Wire the quality sink and start polling Janus for peer metrics.
+
+        Janus is request/response only (no server-pushed scores on this
+        transport), so quality is pulled from the room's participant list.
+        """
+        super().set_quality_mixin(quality_mixin)
+        if self._quality_reporter is None:
+            self._quality_reporter = QualityReporter(self)
+        self._quality_reporter.start()
+
+    async def collect_quality(self) -> List[tuple]:
+        """Poll room participants for any per-peer metrics Janus reports.
+
+        The VideoRoom ``listparticipants`` response carries ``id`` / ``display``
+        and codec info; stat-aware deployments or plugins may additionally
+        return ``bitrate`` / ``packet_loss`` / ``jitter`` / ``round_trip_time``
+        / ``score``. Only participants carrying at least one numeric metric are
+        reported, so stock Janus yields nothing rather than fabricated values.
+        """
+        samples: List[tuple] = []
+        for room_id, session_id in list(self._janus_sessions.items()):
+            handle_id = self._janus_handles.get(room_id, {}).get("admin")
+            if not session_id or not handle_id:
+                continue
+            try:
+                result = await self._send_message(
+                    session_id,
+                    handle_id,
+                    {
+                        "request": "listparticipants",
+                        "room": stable_numeric_id(room_id, "room"),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("Janus quality poll failed for room %s: %s", room_id, exc)
+                continue
+            participants = (
+                result.get("plugindata", {}).get("data", {}).get("participants", [])
+            )
+            if not isinstance(participants, list):
+                continue
+            for participant in participants:
+                if not isinstance(participant, dict):
+                    continue
+                peer_id = participant.get("display") or participant.get("id")
+                metrics = parse_quality_metrics(participant)
+                if peer_id is not None and metrics:
+                    samples.append((room_id, str(peer_id), metrics))
+        return samples
 
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
         """Start recording in a Janus room.
@@ -680,12 +912,17 @@ class JanusAdapter(SFUAdapter):
                     f"Failed to destroy Janus session {session_id} for room {room_id}: {e}"
                 )
 
+        if self._quality_reporter is not None:
+            self._quality_reporter.stop()
+            self._quality_reporter = None
+
         self._janus_sessions.clear()
         self._janus_handles.clear()
         self._producer_kinds.clear()
+        self._producer_peers.clear()
         self._janus_recordings.clear()
         self._janus_recording_roots.clear()
 
         if self._session:
-            await self._session.close()
+            await self._session.aclose()
             self._session = None

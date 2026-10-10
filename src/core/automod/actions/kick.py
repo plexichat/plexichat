@@ -54,12 +54,24 @@ class KickUserAction(BaseAction):
                     )
                     return False
 
-                self._db.execute(
-                    "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
+                member_row = self._db.fetch_one(
+                    "SELECT id FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),
                 )
+                # srv_member_roles is keyed by member_id (not server_id/user_id).
+                # Delete roles before the member row to respect the FK.
+                if member_row:
+                    member_id = (
+                        member_row["id"]
+                        if isinstance(member_row, dict)
+                        else member_row[0]
+                    )
+                    self._db.execute(
+                        "DELETE FROM srv_member_roles WHERE member_id = ?",
+                        (member_id,),
+                    )
                 self._db.execute(
-                    "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
+                    "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),
                 )
 

@@ -2,6 +2,7 @@
 Tests for @everyone and @here mentions with permissions.
 """
 
+import utils.config as config
 from src.core.notifications import MentionType
 from unittest.mock import patch
 from src.utils import encryption
@@ -99,14 +100,23 @@ class TestEveryoneValidation:
                 password="TestPass123!",
             )
 
-        content = "@everyone"
-        mentions = notification_manager.parse_mentions(content)
-        validated = notification_manager.validate_mentions(
-            owner.id, mentions, server_id=123, channel_id=456
+        # In this test the servers module isn't wired, so @everyone is only
+        # permitted if the deployment opts in via config.
+        config.set(
+            "notifications",
+            {"allow_everyone_when_servers_missing": True},
         )
+        try:
+            content = "@everyone"
+            mentions = notification_manager.parse_mentions(content)
+            validated = notification_manager.validate_mentions(
+                owner.id, mentions, server_id=123, channel_id=456
+            )
 
-        assert len(validated) == 1
-        assert validated[0].valid is True
+            assert len(validated) == 1
+            assert validated[0].valid is True
+        finally:
+            config.set("notifications", {})
 
     def test_here_invalid_in_dm(
         self, auth_manager, messaging_manager, notification_manager

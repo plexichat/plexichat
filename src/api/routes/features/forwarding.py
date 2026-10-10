@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -43,4 +44,10 @@ async def forward_message(
         message_id,
         target_conversation_id,
     )
-    return {"success": True, "forward": result}
+    payload = stringify_snowflake_ids(result)
+    # ``forwarded_by`` names the forwarding user's snowflake but does not
+    # match the central ``id``/``*_id``/``*_ids`` rule, so stringify it here
+    # the way the neighbouring routes str() their ``*_by`` actor fields.
+    if payload.get("forwarded_by") is not None:
+        payload["forwarded_by"] = str(payload["forwarded_by"])
+    return {"success": True, "forward": payload}

@@ -5,30 +5,28 @@ Implements CRUD + listing for artifacts plus inline transcript emission.
 Permission checks defer to the server RBAC layer (`artifact.view/create/
 edit/delete/manage_retention`); for DM/group conversations (no server) the
 caller must be a participant/owner of the conversation.
+
+Shared helpers live in ``artifacts_helpers.py`` and export renderers in
+``artifacts_export.py``; they are re-exported here so the historical import
+path ``src.api.routes.artifacts`` keeps exposing every public name.
 """
 
-import html as _html
 import json
-from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import utils.logger as logger
 import utils.config as config
+import src.api as api
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 
-import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse, SuccessResponse
-from fpdf import FPDF
-from odf.opendocument import OpenDocumentText
-from odf.text import P
-from src.core.artifacts.models import ArtifactType, ArtifactStatus
-from src.core.artifacts.capabilities import (
-    CapabilityState,
-    artifact_type_capability,
-    get_capability,
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
 )
+from src.core.artifacts.models import ArtifactType, ArtifactStatus
 from src.api.schemas.artifacts import (
     ArtifactCreateRequest,
     ArtifactUpdateRequest,
@@ -37,318 +35,108 @@ from src.api.schemas.artifacts import (
     ConvertUploadRequest,
 )
 
+# Re-exported helpers: stable import surface for tests and sibling modules
+# (e.g. ``src.api.routes.suite.registry``). ``__all__`` marks them as used.
+from src.api.routes.artifacts_helpers import (
+    _artifact_response,
+    _author_profile_cache,
+    _authorize_scope,
+    _conversation_server_id,
+    _deep_merge_payload,
+    _emit_artifact_message,
+    _get_manager,
+    _is_conversation_member,
+    _artifact_capability_for_type,
+    _my_permissions,
+    _require_artifact_capability,
+    _require_server_permission,
+    _validate_artifact_scope,
+    payload_revision,
+    stale_payload_write,
+)
+from src.api.routes.artifacts_export import (
+    _artifact_board_text,
+    _artifact_export_html,
+    _artifact_export_markdown,
+    _artifact_export_odt,
+    _artifact_export_pdf,
+    _artifact_export_text,
+    _artifact_native_bytes,
+    _artifact_scribe_html,
+    _artifact_script_text,
+    _json_loads,
+    _latin1_safe,
+    _strip_html_markup,
+    sanitize_rich_html,
+)
+
+__all__ = [
+    "router",
+    "sanitize_rich_html",
+    "_artifact_board_text",
+    "_artifact_capability_for_type",
+    "_artifact_export_html",
+    "_artifact_export_markdown",
+    "_artifact_export_odt",
+    "_artifact_export_pdf",
+    "_artifact_export_text",
+    "_artifact_native_bytes",
+    "_artifact_response",
+    "_artifact_scribe_html",
+    "_artifact_script_text",
+    "_author_profile_cache",
+    "_authorize_scope",
+    "_conversation_server_id",
+    "_deep_merge_payload",
+    "_emit_artifact_message",
+    "_get_manager",
+    "_is_conversation_member",
+    "_json_loads",
+    "_latin1_safe",
+    "_my_permissions",
+    "_require_artifact_capability",
+    "_require_server_permission",
+    "_strip_html_markup",
+    "_validate_artifact_scope",
+    "payload_revision",
+    "stale_payload_write",
+]
+
 router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
 
 ARTIFACT_ICON = config.get("artifacts", {}).get("inline_icon", "📎")
 
-# === Permission helpers ===
 
+def _parse_optional_id(value: Optional[str], field: str) -> Optional[int]:
+    """Parse an optional client-supplied ID, failing with 400 not 500.
 
-def _require_server_permission(
-    user_id: int, server_id: Optional[int], permission: str
-) -> bool:
-    """Return True if the user holds ``permission`` in ``server_id``.
-
-    Treats a missing server module or unknown permission name as a deny rather
-    than an error, which keeps the route usable before RBAC config is wired.
+    List filters arrive as raw query strings (``Optional[str]``), so a value
+    like ``?conversation_id=abc`` would previously raise a bare ``ValueError``
+    from ``int()`` and collapse into a generic 500 via the route's
+    ``except Exception`` handler. Validate explicitly to match the single-ID
+    routes below, which return 400 for the same input.
     """
-    if server_id is None:
-        return False
-    servers_mod = api.get_servers()
-    if servers_mod is None:
-        return False
-    from src.core.servers.exceptions import PermissionDeniedError
-
-    try:
-        servers_mod.require_permission(user_id, server_id, permission)
-        return True
-    except PermissionDeniedError:
-        return False
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"server permission check failed for {permission}: {e}")
-        return False
-
-
-def _is_conversation_member(
-    messaging_mod: Any, conversation_id: Optional[int], user_id: int
-) -> bool:
-    """Return True if ``user_id`` participates in / owns the conversation."""
-    if conversation_id is None or messaging_mod is None:
-        return False
-    try:
-        return messaging_mod.is_participant(conversation_id, user_id)
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"membership check failed for conv {conversation_id}: {e}")
-        return False
-
-
-def _authorize_scope(
-    user_id: int,
-    conversation_id: Optional[int],
-    server_id: Optional[int],
-    permission: str,
-    author_id: Optional[int] = None,
-) -> None:
-    """Authorize a server-scoped, conversation-scoped, or personal action.
-
-    Raises HTTPException(403) when the caller has neither the server permission,
-    conversation membership, nor (for personal/notes-scope artifacts) authored
-    the artifact.
-
-    ``author_id`` is the id of the artifact's author (or the caller's own id
-    when creating/listings their personal scope). A personal scope (both
-    ``server_id`` and ``conversation_id`` are ``None``) is only accessible to
-    the author, matching the WebSocket subscribe handler's behavior.
-    """
-    if _require_server_permission(user_id, server_id, permission):
-        return
-    messaging_mod = api.get_messaging()
-    if _is_conversation_member(messaging_mod, conversation_id, user_id):
-        return
-    if server_id is None and conversation_id is None:
-        # Personal / notes-style scope: only the author may act.
-        if author_id is not None and int(author_id) == int(user_id):
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail={"error": {"code": 403, "message": "Not authorized"}},
-    )
-
-
-def _deep_merge_payload(
-    base: Optional[Dict[str, Any]], patch: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Merge ``patch`` into ``base`` (both dicts) with PATCH semantics.
-
-    Nested dicts are merged recursively; lists and scalars replace the base
-    value wholesale; an explicit ``None`` value deletes the key from the
-    result. This lets editors persist a partial payload (e.g. only ``content``)
-    without clobbering concurrently-updated keys such as ``rev``/``language``.
-    """
-    result = dict(base or {})
-    if not isinstance(patch, dict):
-        return result
-    for key, value in patch.items():
-        if value is None:
-            result.pop(key, None)
-        elif isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge_payload(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-# === Manager access ===
-
-
-def _artifact_capability_for_type(artifact_type: ArtifactType) -> str:
-    """Map an artifact type to the capability that gates it."""
-    return artifact_type_capability(artifact_type)
-
-
-def _require_artifact_capability(artifact_type: ArtifactType) -> str:
-    """Fail closed when the requested artifact feature is unavailable."""
-    feature = _artifact_capability_for_type(artifact_type)
-    info = get_capability(feature, config.get("artifacts", {}) or {})
-    if info.state != CapabilityState.AVAILABLE:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text.isdecimal():
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": {
-                    "code": 403,
-                    "message": f"Artifact feature '{feature}' is unavailable",
-                    "state": info.state.value,
-                }
-            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
         )
-    return feature
-
-
-def _validate_artifact_scope(
-    conversation_id: Optional[int],
-    channel_id: Optional[int],
-    server_id: Optional[int],
-) -> tuple[Optional[int], Optional[int], Optional[int]]:
-    """Validate and normalize the artifact's conversation/server/channel scope."""
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Database unavailable"}},
-        )
-
-    if conversation_id is not None:
-        row = db.fetch_one(
-            "SELECT metadata FROM msg_conversations WHERE id = ? AND deleted = 0",
-            (conversation_id,),
-        )
-        if not row:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Conversation not found"}},
-            )
-        metadata: Dict[str, Any] = {}
-        raw_metadata = row.get("metadata")
-        if raw_metadata:
-            try:
-                parsed = json.loads(raw_metadata)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail={
-                        "error": {
-                            "code": 500,
-                            "message": "Invalid conversation metadata",
-                        }
-                    },
-                ) from exc
-            if isinstance(parsed, dict):
-                metadata = parsed
-        expected_server = metadata.get("server_id")
-        expected_channel = metadata.get("channel_id")
-        if expected_server is None and (
-            server_id is not None or channel_id is not None
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": {
-                        "code": 400,
-                        "message": "Personal conversation cannot have server/channel scope",
-                    }
-                },
-            )
-        if expected_server is not None:
-            if server_id is not None and int(server_id) != int(expected_server):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": {
-                            "code": 400,
-                            "message": "server_id does not match conversation scope",
-                        }
-                    },
-                )
-            server_id = int(expected_server)
-        if expected_channel is not None:
-            if channel_id is not None and int(channel_id) != int(expected_channel):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": {
-                            "code": 400,
-                            "message": "channel_id does not match conversation scope",
-                        }
-                    },
-                )
-            channel_id = int(expected_channel)
-
-    if server_id is not None:
-        server = db.fetch_one(
-            "SELECT id FROM srv_servers WHERE id = ? AND deleted = 0",
-            (server_id,),
-        )
-        if not server:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Server not found"}},
-            )
-
-    if channel_id is not None:
-        channel = db.fetch_one(
-            "SELECT server_id FROM srv_channels WHERE id = ? AND deleted = 0",
-            (channel_id,),
-        )
-        if not channel:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Channel not found"}},
-            )
-        channel_server = int(channel["server_id"])
-        if server_id is not None and int(server_id) != channel_server:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": {
-                        "code": 400,
-                        "message": "server_id does not match channel scope",
-                    }
-                },
-            )
-        server_id = channel_server
-
-    return conversation_id, channel_id, server_id
-
-
-def _get_manager():
-    db = api.get_db()
-    if db is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": "Database unavailable"}},
-        )
-    from src.core.artifacts.manager import ArtifactManager
-
-    artifacts_cfg = config.get("artifacts", {}) or {}
-    return ArtifactManager(db, artifacts_cfg)
-
-
-# === Inline message emission ===
-
-
-def _emit_artifact_message(
-    artifact: ArtifactResponse,
-    author: Dict[str, Any],
-) -> None:
-    """Emit a MESSAGE_CREATE so the artifact appears in transcript history.
-
-    The message references the artifact via ``metadata.artifact_id`` and uses
-    the ``artifact`` message type. Delivery is scoped to the conversation
-    participants (preferred) or the owning server; failures are swallowed so
-    the underlying artifact write is never rolled back.
-    """
     try:
-        from src.core import events
-
-        if not events.is_setup():
-            return
-
-        server_id = artifact.server_id
-        channel_id = artifact.channel_id
-        conversation_id = artifact.conversation_id
-
-        content = f"{ARTIFACT_ICON} {artifact.title}"
-        event = events.create_message_create(
-            message_id=int(artifact.id),
-            channel_id=int(channel_id) if channel_id else 0,
-            author_id=int(artifact.author_id),
-            content=content,
-            server_id=int(server_id) if server_id else None,
-            author=author,
+        parsed = int(text)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
         )
-        event.data["type"] = 0
-        event.data["message_type"] = "artifact"
-        event.data["metadata"] = {"artifact_id": str(artifact.id)}
-
-        user_ids: Optional[List[int]] = None
-        messaging_mod = api.get_messaging()
-        if conversation_id is not None and messaging_mod is not None:
-            try:
-                user_ids = [
-                    int(u) for u in messaging_mod.get_participant_ids(conversation_id)
-                ]
-            except Exception as e:  # pragma: no cover - defensive
-                logger.debug(f"Failed to resolve participants: {e}")
-                user_ids = None
-
-        events.dispatch(
-            event,
-            user_ids=user_ids,
-            server_id=int(server_id) if server_id else None,
-            channel_id=int(channel_id) if channel_id else None,
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
         )
-    except Exception as e:  # pragma: no cover - defensive
-        logger.debug(f"Failed to emit artifact message: {e}")
+    return parsed
 
 
 # === Routes ===
@@ -419,7 +207,7 @@ async def create_artifact(
         }
         _emit_artifact_message(ArtifactResponse.model_validate(artifact), author)
 
-        return ArtifactResponse.model_validate(artifact)
+        return _artifact_response(current_user.user_id, artifact)
     except HTTPException:
         raise
     except Exception as e:
@@ -454,14 +242,21 @@ async def list_artifacts(
     sort_order: str = "desc",
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_payload: bool = Query(True),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactListResponse:
-    """List artifacts with query filters."""
+    """List artifacts with query filters.
+
+    ``include_payload=False`` omits the (up to 1 MB) type-specific payload
+    from every item so metadata-only listings (e.g. the Suite's Scribe/Script/
+    Board libraries) never ship full document bodies over the wire. Single-artifact
+    GETs and the chat artifacts pane keep ``include_payload=True``.
+    """
     try:
-        conv_id = int(conversation_id) if conversation_id is not None else None
-        chan_id = int(channel_id) if channel_id is not None else None
-        srv_id = int(server_id) if server_id is not None else None
-        auth_id = int(author_id) if author_id is not None else None
+        conv_id = _parse_optional_id(conversation_id, "conversation ID")
+        chan_id = _parse_optional_id(channel_id, "channel ID")
+        srv_id = _parse_optional_id(server_id, "server ID")
+        auth_id = _parse_optional_id(author_id, "author ID")
 
         # Every list request is subject to the base artifacts capability,
         # including untyped listings.
@@ -558,8 +353,16 @@ async def list_artifacts(
         )
         total = manager.count(filters)
 
+        author_cache = _author_profile_cache(artifacts)
+        items = [
+            _artifact_response(current_user.user_id, a, author_cache) for a in artifacts
+        ]
+        if not include_payload:
+            for item in items:
+                item.payload = {}
+
         return ArtifactListResponse(
-            items=[ArtifactResponse.model_validate(a) for a in artifacts],
+            items=items,
             total=total,
             has_more=(offset + limit) < total,
         )
@@ -577,6 +380,12 @@ async def list_artifacts(
     "/convert-upload",
     response_model=ArtifactResponse,
     summary="Convert an upload to an artifact",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid input"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Attachment or message not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def _convert_upload_impl(
     body: ConvertUploadRequest,
@@ -660,7 +469,18 @@ async def _convert_upload_impl(
         # The artifact must remain attached to the source message's
         # conversation and its server/channel scope. Accepting arbitrary target
         # IDs lets a caller move an attachment across conversations.
-        source_conv_id = int(msg_data["conversation_id"])
+        source_conv_id = msg_data.get("conversation_id")
+        if source_conv_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Source message has no conversation",
+                    }
+                },
+            )
+        source_conv_id = int(source_conv_id)
         if conversation_id is not None and conversation_id != source_conv_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -678,8 +498,6 @@ async def _convert_upload_impl(
         conversation_metadata: Dict[str, Any] = {}
         if conversation_row and conversation_row.get("metadata"):
             try:
-                import json
-
                 parsed_metadata = json.loads(conversation_row["metadata"])
                 if isinstance(parsed_metadata, dict):
                     conversation_metadata = parsed_metadata
@@ -758,7 +576,7 @@ async def _convert_upload_impl(
         }
         _emit_artifact_message(ArtifactResponse.model_validate(artifact), author)
 
-        return ArtifactResponse.model_validate(artifact)
+        return _artifact_response(current_user.user_id, artifact)
     except HTTPException:
         raise
     except Exception as e:
@@ -859,77 +677,37 @@ async def _export_artifact_impl(
 
         payload = artifact.payload or {}
         artifact_type_value = artifact.artifact_type.value
-
-        def _extract_text() -> str:
-            """Pull the human-readable text for export from the artifact payload."""
-            if artifact_type_value == "plexiscribe":
-                return payload.get("content_html") or payload.get("document") or ""
-            if artifact_type_value == "plexiscript":
-                return payload.get("source") or payload.get("content") or ""
-            if artifact_type_value == "whiteboard":
-                return payload.get("board") or ""
-            return (
-                payload.get("content") or payload.get("text") or artifact.summary or ""
-            )
+        text = _artifact_export_text(artifact_type_value, payload, artifact.summary)
 
         if (
             export_format == "plexiscribe"
             and artifact.artifact_type.value == "plexiscribe"
         ):
-            data: bytes = (payload.get("document") or "{}").encode("utf-8", "replace")
+            data = _artifact_native_bytes(payload.get("document"))
         elif (
             export_format == "plexiscript"
             and artifact.artifact_type.value == "plexiscript"
         ):
-            data = (payload.get("source") or payload.get("content") or "{}").encode(
-                "utf-8", "replace"
+            data = _artifact_native_bytes(
+                payload.get("source") or payload.get("content")
             )
         elif (
             export_format == "plexiboard"
             and artifact.artifact_type.value == "whiteboard"
         ):
-            data = (payload.get("board") or "{}").encode("utf-8", "replace")
+            data = _artifact_native_bytes(payload.get("board"))
         elif export_format == "txt":
-            data = _extract_text().encode("utf-8", "replace")
+            data = text.encode("utf-8", "replace")
         elif export_format == "md":
-            md = (
-                f"# {_html.escape(artifact.title)}\n\n"
-                f"{_html.escape(artifact.summary or '')}\n\n"
-                f"```\n{_html.escape(payload.get('content', ''))}\n```"
-            )
-            data = md.encode("utf-8", "replace")
+            data = _artifact_export_markdown(artifact, text).encode("utf-8", "replace")
         elif export_format == "html":
-            content = payload.get("content", "")
-            html_doc = (
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                f"<title>{_html.escape(artifact.title or '')}</title></head>"
-                "<body><h1>"
-                f"{_html.escape(artifact.title or '')}</h1><pre>"
-                f"{_html.escape(str(content))}</pre></body></html>"
+            data = _artifact_export_html(artifact, artifact_type_value, payload).encode(
+                "utf-8", "replace"
             )
-            data = html_doc.encode("utf-8", "replace")
         elif export_format == "pdf":
-            pdf = FPDF()
-            pdf.set_auto_page_break(auto=True, margin=2.0)
-            pdf.add_page()
-            pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 10, artifact.title or "Document", new_x="LMARGIN", new_y="NEXT")
-            pdf.ln(2)
-            pdf.set_font("Helvetica", "", 10)
-            for line in (_extract_text() or "").splitlines():
-                pdf.multi_cell(0, 6, line)
-            pdf_bytes = pdf.output()
-            data = bytes(pdf_bytes) if pdf_bytes else b""
+            data = _artifact_export_pdf(artifact, text)
         elif export_format == "odt":
-            doc = OpenDocumentText()
-            doc_text = getattr(doc, "text")
-            doc_text.addElement(P(text=artifact.title or "Document"))
-            doc_text.addElement(P(text=""))
-            for line in (_extract_text() or "").splitlines():
-                doc_text.addElement(P(text=line))
-            buf = BytesIO()
-            doc.save(buf)
-            data = buf.getvalue()
+            data = _artifact_export_odt(artifact, text)
         else:
             data = str(payload).encode("utf-8", "replace")
 
@@ -1061,7 +839,7 @@ async def get_artifact(
         )
         _require_artifact_capability(artifact.artifact_type)
 
-        return ArtifactResponse.model_validate(artifact)
+        return _artifact_response(current_user.user_id, artifact)
     except HTTPException:
         raise
     except Exception as e:
@@ -1081,26 +859,22 @@ async def get_artifact(
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Not authorized"},
         404: {"model": ErrorResponse, "description": "Artifact not found"},
+        409: {
+            "model": ErrorResponse,
+            "description": "Stale revision: the artifact changed since this write was based on",
+        },
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
 async def update_artifact(
-    artifact_id: str,
+    artifact_id: SnowflakeIDParam,
     body: ArtifactUpdateRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactResponse:
     """Update mutable fields of an artifact."""
     try:
-        try:
-            aid = int(artifact_id)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
-            )
-
         manager = _get_manager()
-        artifact = manager.get(aid)
+        artifact = manager.get(artifact_id)
         if artifact is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1109,18 +883,13 @@ async def update_artifact(
 
         _require_artifact_capability(artifact.artifact_type)
 
-        # Author/owner can always edit their own artifact; otherwise require
-        # the server permission.
-        if (
-            artifact.author_id != current_user.user_id
-            and not _require_server_permission(
-                current_user.user_id, artifact.server_id, "artifact.edit"
-            )
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": 403, "message": "Not authorized"}},
-            )
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.edit",
+            author_id=artifact.author_id,
+        )
 
         update_fields: Dict[str, Any] = {}
         if body.title is not None:
@@ -1130,6 +899,35 @@ async def update_artifact(
         if body.status is not None:
             update_fields["status"] = ArtifactStatus(body.status.value)
         if body.payload is not None:
+            # Rev guard: the code/text editor stamps a monotonic ``rev`` into
+            # the payload on every autosave. A write whose rev is not NEWER
+            # than the persisted rev is stale — a concurrent tab already
+            # committed a later revision, and letting the older payload
+            # through would silently overwrite it (lost update). Reject with
+            # 409 so the client re-fetches and re-bases instead of retrying.
+            # Only enforced when both payloads carry a numeric ``rev``; other
+            # artifact types and legacy clients are unaffected.
+            #
+            # New-style writes carry the expected rev at the TOP level
+            # (``body.rev``) and are guarded atomically below via
+            # ``UPDATE ... WHERE rev = ?``; this legacy payload-carried guard
+            # only applies when the caller did not supply a top-level rev.
+            if body.rev is None and stale_payload_write(artifact.payload, body.payload):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": (
+                                "Stale artifact revision: the artifact is already "
+                                f"at revision {payload_revision(artifact.payload)}, "
+                                f"but this write is for revision "
+                                f"{payload_revision(body.payload)}. Reload the "
+                                "artifact and retry."
+                            ),
+                        }
+                    },
+                )
             # Merge (not replace) so a partial payload no longer clobbers
             # concurrently-updated keys. Editors that send the full payload
             # dict are unaffected (a superset merge is a no-op replacement).
@@ -1139,6 +937,25 @@ async def update_artifact(
             update_fields["payload"] = _deep_merge_payload(
                 existing_payload, body.payload
             )
+        if "payload" in update_fields:
+            try:
+                merged_size = len(
+                    json.dumps(update_fields["payload"], ensure_ascii=False).encode(
+                        "utf-8"
+                    )
+                )
+            except (TypeError, ValueError):
+                merged_size = -1
+            if merged_size > 1024 * 1024:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "payload exceeds maximum size of 1 MB",
+                        }
+                    },
+                )
         if body.recorded is not None:
             update_fields["recorded"] = body.recorded
         if body.has_transcript is not None:
@@ -1149,13 +966,45 @@ async def update_artifact(
         if "retention_policy" in getattr(body, "model_fields_set", set()):
             update_fields["retention_policy"] = body.retention_policy
 
-        updated = manager.update(aid, **update_fields)
-        if updated is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": 404, "message": "Artifact not found"}},
+        if body.rev is not None:
+            # Optimistic concurrency on the dedicated rev column: the row is
+            # updated atomically only while its revision still matches, and the
+            # revision advances by one in the same statement — no read-modify-
+            # write race. A zero-row update means a concurrent writer already
+            # moved the revision: reject the stale write with 409.
+            updated = manager.update(
+                artifact_id, expected_rev=body.rev, **update_fields
             )
-        return ArtifactResponse.model_validate(updated)
+            if updated is None:
+                current = manager.get(artifact_id)
+                if current is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={
+                            "error": {"code": 404, "message": "Artifact not found"}
+                        },
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": (
+                                "Stale artifact revision: the artifact is already "
+                                f"at revision {current.rev}, but this write expects "
+                                f"revision {body.rev}. Reload the artifact and retry."
+                            ),
+                        }
+                    },
+                )
+        else:
+            updated = manager.update(artifact_id, **update_fields)
+            if updated is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"error": {"code": 404, "message": "Artifact not found"}},
+                )
+        return _artifact_response(current_user.user_id, updated)
     except HTTPException:
         raise
     except Exception as e:
@@ -1199,16 +1048,13 @@ async def delete_artifact(
                 detail={"error": {"code": 404, "message": "Artifact not found"}},
             )
 
-        if (
-            artifact.author_id != current_user.user_id
-            and not _require_server_permission(
-                current_user.user_id, artifact.server_id, "artifact.delete"
-            )
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": 403, "message": "Not authorized"}},
-            )
+        _authorize_scope(
+            current_user.user_id,
+            artifact.conversation_id,
+            artifact.server_id,
+            "artifact.delete",
+            author_id=artifact.author_id,
+        )
 
         if not manager.delete(aid):
             raise HTTPException(

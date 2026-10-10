@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from starlette.types import ASGIApp, Receive, Send, Scope, Message
 
-from typing import Any, Dict, cast
+from typing import Any, Dict, Mapping, Optional, cast
 import re
 import traceback
 import utils.config as config
@@ -55,22 +55,127 @@ ERROR_MAPPINGS = {
 }
 
 
+# Generic, stable client-facing messages per mapped exception type (M6).
+# Mapped exceptions NEVER echo str(exc) verbatim: internal validation detail,
+# filesystem paths, SQL fragments, or config values must not reach clients.
+# The original detail is logged server-side at the catch site instead.
+GENERIC_ERROR_MESSAGES = {
+    "NotFoundError": "Resource not found",
+    "AccessDeniedError": "Access denied",
+    "PermissionDeniedError": "Permission denied",
+    "FileUploadError": "File upload failed",
+    "InvalidCredentialsError": "Invalid credentials",
+    "TokenExpiredError": "Authentication token has expired",
+    "TokenInvalidError": "Invalid authentication token",
+    "AccountLockedError": "Account is locked",
+    "AccountDisabledError": "Account is disabled",
+    "UserExistsError": "User already exists",
+    "AlreadyExistsError": "Resource already exists",
+    "ExistsError": "Resource already exists",
+    "ValidationError": "Validation failed",
+    "InvalidError": "Invalid request",
+    "LimitError": "Request limit exceeded",
+    "AttachmentLimitError": "Attachment limit exceeded",
+    "ChannelFullError": "Channel is full",
+    "LicenseFeatureError": "Feature not available",
+    "UserNotInChannelError": "User is not in the channel",
+    "UserAlreadyInChannelError": "User is already in the channel",
+    "ChannelTypeError": "Invalid channel type",
+    "NotSpeakerError": "Speaker permission required",
+    "AlreadySpeakerError": "Already a speaker",
+    "RateLimitError": "Rate limit exceeded",
+    "BlockedError": "Action is blocked",
+    "LockedError": "Resource is locked",
+    "ArchivedError": "Resource is archived",
+    "InvalidRecipientError": "Invalid recipient",
+}
+
+_FALLBACK_MESSAGE_BY_STATUS = {
+    400: "Invalid request",
+    401: "Authentication required",
+    403: "Access denied",
+    404: "Resource not found",
+    409: "Resource already exists",
+    410: "Resource is archived",
+    413: "Request too large",
+    423: "Resource is locked",
+    429: "Rate limit exceeded",
+    507: "Channel is full",
+}
+
+
+def _match_mapped_pattern(exc_name: str) -> str | None:
+    """Return the ERROR_MAPPINGS key matching an exception class name.
+
+    Exact matches win; otherwise the longest suffix pattern wins so that
+    e.g. ``RateLimitError`` maps to its own entry rather than the shorter
+    ``LimitError`` suffix (which previously shadowed it and yielded 400
+    instead of the mapped 429).
+    """
+    if exc_name in ERROR_MAPPINGS:
+        return exc_name
+    best: str | None = None
+    for pattern in ERROR_MAPPINGS:
+        if exc_name.endswith(pattern) and (best is None or len(pattern) > len(best)):
+            best = pattern
+    return best
+
+
+def _generic_message_for_exception(exc: Exception, status_code: int) -> str:
+    """Return the generic per-type message for a mapped exception."""
+    pattern = _match_mapped_pattern(type(exc).__name__)
+    if pattern is not None:
+        code = ERROR_MAPPINGS[pattern]
+        return GENERIC_ERROR_MESSAGES.get(
+            pattern, _FALLBACK_MESSAGE_BY_STATUS.get(code, "Invalid request")
+        )
+    return _FALLBACK_MESSAGE_BY_STATUS.get(status_code, "Internal server error")
+
+
 def get_status_code_for_exception(exc: Exception) -> int:
     """Determine HTTP status code based on exception type."""
-    exc_name = type(exc).__name__
-
-    for pattern, code in ERROR_MAPPINGS.items():
-        # Use endswith to avoid false positives from substring matches
-        # e.g. "NotFoundInCacheError" ends with "Error", not "NotFoundError"
-        if exc_name == pattern or exc_name.endswith(pattern):
-            return code
+    pattern = _match_mapped_pattern(type(exc).__name__)
+    if pattern is not None:
+        return ERROR_MAPPINGS[pattern]
 
     return 500
 
 
-def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
+def _debug_detail_allowed(request: Any) -> bool:
+    """Whether this request may receive DEBUG-LEVEL error detail.
+
+    M5: ``api.debug`` alone is NOT sufficient — it is enabled by default
+    (config_defaults.py) and would otherwise leak raw 5xx exception text
+    to any caller on a deployment that never flipped the flag. Debug
+    detail therefore additionally requires the request to be a valid
+    internal/self-test request: localhost peer AND the constant-time
+    compared ``X-Plexichat-Internal-Secret`` header
+    (``src.api.is_self_test_request``). Both signals fail closed when
+    absent — a spoofed header from a non-localhost peer, or any request
+    when no internal secret is provisioned, gets generic messages only.
+    """
+    try:
+        if not config.get("api", {}).get("debug", False):
+            return False
+    except Exception:
+        return False
+    try:
+        import src.api as api
+
+        return bool(api.is_self_test_request(request))
+    except Exception:
+        return False
+
+
+def _sanitize_error_message(
+    code: int, message: str, debug: bool, debug_detail: Optional[bool] = None
+) -> str:
     safe_message = sanitize_log_message(message)
-    if debug:
+    # ``debug_detail`` is the authoritative gate (api.debug AND
+    # localhost+secret). Legacy ``debug`` alone no longer unlocks raw
+    # internal messages (M5).
+    effective_debug = debug if debug_detail is None else debug_detail
+    if effective_debug:
         return safe_message
     if code >= 500:
         return "Internal server error"
@@ -79,6 +184,42 @@ def _sanitize_error_message(code: int, message: str, debug: bool) -> str:
     ):
         return "Invalid request"
     return safe_message
+
+
+def _safe_error_message(
+    exc: Exception, status_code: int, debug_detail: bool = False
+) -> str:
+    """Return a client-safe message for a mapped exception.
+
+    M6: mapped exceptions NEVER echo ``str(exc)`` verbatim — not even for
+    project-owned (``src.*``) exceptions, whose messages can embed
+    validation detail, filesystem paths, SQL fragments, or config values.
+    Every mapped type gets a generic, stable per-type message; the
+    original detail is logged server-side at the catch site instead.
+    When ``debug_detail`` is True (api.debug AND a valid internal
+    self-test request per M5), the raw message is returned so internal
+    diagnostics keep working; otherwise the generic message applies.
+    """
+    if debug_detail:
+        return str(exc)
+    pattern = _match_mapped_pattern(type(exc).__name__)
+    if pattern is not None:
+        return GENERIC_ERROR_MESSAGES.get(
+            pattern,
+            _FALLBACK_MESSAGE_BY_STATUS.get(status_code, "Invalid request"),
+        )
+    if status_code >= 500:
+        return "Internal server error"
+    return _generic_message_for_exception(exc, status_code)
+
+
+def _merge_error_headers(
+    cors_headers: Dict[str, str], exc_headers: Optional[Mapping[str, str]]
+) -> Dict[str, str]:
+    """Merge exception-provided headers (e.g. ``Allow``) into CORS headers."""
+    if not exc_headers:
+        return cors_headers
+    return {**cors_headers, **exc_headers}
 
 
 def format_error_response(code: int, message: str, debug: bool = False) -> dict:
@@ -113,27 +254,21 @@ def _get_cors_headers(request: Request) -> dict:
         cors_methods = api_conf.get(
             "cors_allow_methods", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
         )
-        allow_wildcard = api_conf.get("allow_wildcard_cors", False)
     except Exception:
-        cors_origins = ["*"]
-        allow_wildcard = True
+        # Error handling must fail closed if configuration cannot be read;
+        # reflecting an arbitrary Origin with credentials would weaken the
+        # authentication/CSRF boundary precisely during failures.
+        cors_origins = []
 
     origin = request.headers.get("origin", "")
 
-    # Check if origin is allowed
-    is_allowed = False
-    if "*" in cors_origins:
-        if allow_wildcard or not origin:
-            is_allowed = True
-        else:
-            # If wildcard is not allowed for this origin, check if origin is explicitly allowed
-            is_allowed = origin in cors_origins
-    elif origin in cors_origins:
-        is_allowed = True
+    # Wildcard origins are never reflected when credentials are enabled.
+    # Only an explicitly configured origin may receive credentialed errors.
+    is_allowed = bool(origin) and origin in cors_origins
 
     if is_allowed:
         return {
-            "Access-Control-Allow-Origin": origin if origin else "*",
+            "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": ", ".join(cors_methods),
             "Access-Control-Allow-Headers": ", ".join(cors_allow_headers),
@@ -183,13 +318,11 @@ class ErrorHandlingMiddleware:
 
             if isinstance(exc, StarletteHTTPException):
                 http_exc = cast(StarletteHTTPException, exc)
-                headers = _get_cors_headers(request)
+                headers = _merge_error_headers(
+                    _get_cors_headers(request), http_exc.headers
+                )
 
-                debug = False
-                try:
-                    debug = config.get("api", {}).get("debug", False)
-                except Exception:
-                    pass
+                debug_detail = _debug_detail_allowed(request)
 
                 detail = http_exc.detail
                 if isinstance(detail, dict) and "error" in detail:
@@ -199,7 +332,7 @@ class ErrorHandlingMiddleware:
                         msg = error.get("message")
                         if msg and isinstance(msg, str):
                             error["message"] = _sanitize_error_message(
-                                http_exc.status_code, msg, debug
+                                http_exc.status_code, msg, debug_detail, debug_detail
                             )
                         detail_dict["error"] = error
 
@@ -214,7 +347,7 @@ class ErrorHandlingMiddleware:
                 response = JSONResponse(
                     status_code=http_exc.status_code,
                     content=format_error_response(
-                        http_exc.status_code, str(detail), debug
+                        http_exc.status_code, str(detail), debug_detail
                     ),
                     headers=headers,
                 )
@@ -223,6 +356,9 @@ class ErrorHandlingMiddleware:
 
             if isinstance(exc, RequestValidationError):
                 headers = _get_cors_headers(request)
+                # Documented contract: validation errors surface as 400
+                # (docs/errors.md "Validation Errors (400)"), matching
+                # ERROR_MAPPINGS' ValidationError -> 400.
                 response = JSONResponse(
                     status_code=400,
                     content=format_error_response(400, "Request validation failed"),
@@ -242,13 +378,17 @@ class ErrorHandlingMiddleware:
             # Determine status code and message
             status_code = get_status_code_for_exception(exc)
 
-            debug = False
-            try:
-                debug = config.get("api", {}).get("debug", False)
-            except Exception:
-                pass
+            # M5: debug-level detail (raw messages, tracebacks) requires
+            # api.debug AND localhost+secret — never the flag alone.
+            debug_detail = _debug_detail_allowed(request)
 
-            message = str(exc)
+            # M6: mapped exceptions get generic per-type messages; the
+            # original detail was already logged server-side above and is
+            # never echoed. Raw detail only for valid internal self-test
+            # requests (M5 gate).
+            message = _safe_error_message(exc, status_code, debug_detail)
+            if not debug_detail:
+                message = _sanitize_error_message(status_code, message, False)
 
             # Check for self-test debug mode (uses centralized validation)
             include_traceback = False
@@ -266,7 +406,7 @@ class ErrorHandlingMiddleware:
             headers = _get_cors_headers(request)
 
             # Create response content
-            content = format_error_response(status_code, message, debug)
+            content = format_error_response(status_code, message, debug_detail)
             if include_traceback:
                 content["error"]["traceback"] = "".join(traceback.format_exc())
 
@@ -284,13 +424,9 @@ def setup_exception_handlers(app: FastAPI):
     @app.exception_handler(HTTPException)
     async def fastapi_http_exception_handler(request: Request, exc: HTTPException):
         """Handle FastAPI HTTP exceptions."""
-        headers = _get_cors_headers(request)
+        headers = _merge_error_headers(_get_cors_headers(request), exc.headers)
 
-        debug = False
-        try:
-            debug = config.get("api", {}).get("debug", False)
-        except Exception:
-            pass
+        debug_detail = _debug_detail_allowed(request)
 
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             detail_dict = cast(Dict[str, Any], exc.detail)
@@ -299,7 +435,7 @@ def setup_exception_handlers(app: FastAPI):
                 msg = error.get("message")
                 if msg and isinstance(msg, str):
                     error["message"] = _sanitize_error_message(
-                        exc.status_code, msg, debug
+                        exc.status_code, msg, debug_detail, debug_detail
                     )
                 detail_dict["error"] = error
             return JSONResponse(
@@ -308,7 +444,9 @@ def setup_exception_handlers(app: FastAPI):
 
         return JSONResponse(
             status_code=exc.status_code,
-            content=format_error_response(exc.status_code, str(exc.detail), debug),
+            content=format_error_response(
+                exc.status_code, str(exc.detail), debug_detail
+            ),
             headers=headers,
         )
 
@@ -316,13 +454,9 @@ def setup_exception_handlers(app: FastAPI):
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         """Handle HTTP exceptions."""
         detail = exc.detail
-        headers = _get_cors_headers(request)
+        headers = _merge_error_headers(_get_cors_headers(request), exc.headers)
 
-        debug = False
-        try:
-            debug = config.get("api", {}).get("debug", False)
-        except Exception:
-            pass
+        debug_detail = _debug_detail_allowed(request)
 
         if isinstance(detail, dict) and "error" in detail:
             detail_dict = cast(Dict[str, Any], detail)
@@ -331,7 +465,7 @@ def setup_exception_handlers(app: FastAPI):
                 msg = error.get("message")
                 if msg and isinstance(msg, str):
                     error["message"] = _sanitize_error_message(
-                        exc.status_code, msg, debug
+                        exc.status_code, msg, debug_detail, debug_detail
                     )
                 detail_dict["error"] = error
             return JSONResponse(
@@ -340,7 +474,7 @@ def setup_exception_handlers(app: FastAPI):
 
         return JSONResponse(
             status_code=exc.status_code,
-            content=format_error_response(exc.status_code, str(detail), debug),
+            content=format_error_response(exc.status_code, str(detail), debug_detail),
             headers=headers,
         )
 
@@ -352,21 +486,17 @@ def setup_exception_handlers(app: FastAPI):
         errors = exc.errors()
         headers = _get_cors_headers(request)
 
-        # Log validation errors for debugging
+        # Log validation detail server-side only; clients get a generic,
+        # stable message (M6) so field names/paths/validators never leak.
         logger.warning(
             f"Validation error on {request.method} {request.url.path}: {errors}"
         )
         # SECURITY: Do not read/log full request body to avoid memory DOS
 
-        if errors:
-            first_error = errors[0]
-            loc = first_error.get("loc", [])
-            msg = first_error.get("msg", "Validation error")
-            field = loc[-1] if loc else "unknown"
-            message = f"Invalid {field}: {msg}"
-        else:
-            message = "Request validation failed"
+        message = "Request validation failed"
 
+        # Documented contract: validation errors surface as 400
+        # (docs/errors.md "Validation Errors (400)").
         return JSONResponse(
             status_code=400,
             content=format_error_response(400, message),
@@ -377,11 +507,42 @@ def setup_exception_handlers(app: FastAPI):
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle all other exceptions."""
         status_code = get_status_code_for_exception(exc)
-        message = str(exc) if status_code != 500 else "Internal server error"
+        # M6: never echo exception strings verbatim — generic per-type
+        # message only. Detail goes to server logs, never the response
+        # (raw detail only for valid internal self-test requests per M5).
+        logger.error(
+            f"General handler caught exception: {type(exc).__name__}: {exc}",
+            exc_info=True,
+        )
+        debug_detail = _debug_detail_allowed(request)
+        message = _safe_error_message(exc, status_code, debug_detail)
+        if not debug_detail:
+            message = _sanitize_error_message(status_code, message, False)
         headers = _get_cors_headers(request)
 
         return JSONResponse(
             status_code=status_code,
-            content=format_error_response(status_code, message),
+            content=format_error_response(status_code, message, debug_detail),
             headers=headers,
         )
+
+    # /Join client-contract errors must reach the web client as a FLAT
+    # {"error": {"code", "message"}} body (the client reads
+    # ``body.error.message``), never nested under FastAPI's ``detail``
+    # envelope. Imported lazily to avoid an import cycle with the routes
+    # package.
+    try:
+        from ..routes.join import JoinApiError
+
+        @app.exception_handler(JoinApiError)
+        async def join_api_error_handler(request: Request, exc: JoinApiError):
+            """Render /Join contract errors flat: {"error": {code, message}}."""
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=format_error_response(
+                    exc.status_code, exc.message, _debug_detail_allowed(request)
+                ),
+                headers=_merge_error_headers(_get_cors_headers(request), None),
+            )
+    except ImportError:  # pragma: no cover
+        pass

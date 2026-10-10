@@ -20,31 +20,23 @@ from __future__ import annotations
 
 import base64
 import os
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
-# Make the project root importable when running pytest from the
-# src directory.
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
-
-from src.utils.encryption.hkdf import derive_key  # noqa: E402
-from src.utils.encryption.channel_ratchet import (  # noqa: E402
+from src.utils.encryption.hkdf import derive_key
+from src.utils.encryption.channel_ratchet import (
     ChannelRatchetManager,
     ChannelRatchetStore,
     EncryptedMessageV3,
     RatchetInterval,
     WIRE_PREFIX,
 )
-from src.utils.encryption.channel_ratchet.exceptions import (  # noqa: E402
+from src.utils.encryption.channel_ratchet.exceptions import (
     RatchetIntervalNotFoundError,
 )
-from src.utils.encryption.core.keyring import Keyring  # noqa: E402
+from src.utils.encryption.core.keyring import Keyring
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +477,23 @@ class TestChannelRatchetManager:
         assert snap["context_tag"] == "plexichat.channel-message.v3"
         assert snap["nonce_bytes"] == 12
         assert snap["key_bytes"] == 32
+
+    def test_snapshot_list_returns_intervals_with_start_keys(self, manager):
+        """The list endpoint must expose every interval, newest first."""
+        manager.encrypt(42, 1001, b"a")
+        # Force a rotation so two intervals exist to enumerate.
+        manager.rotate_if_due(42, last_message_id=1001, now_ms=10**15)
+        manager.encrypt(42, 1002, b"b")
+
+        listed = manager.snapshot_list(42)
+
+        assert len(listed) == 2
+        assert listed[0]["interval_id"] == manager.snapshot(42)["interval_id"]
+        for item in listed:
+            assert item["start_key"]
+            assert item["context_tag"] == "plexichat.channel-message.v3"
+            assert item["nonce_bytes"] == 12
+            assert item["key_bytes"] == 32
 
     def test_continuity_across_intervals(self, manager):
         r1 = manager.encrypt(42, 1001, b"a")

@@ -20,6 +20,31 @@ class ChannelMixin:
         """Check if a channel exists by ID (membership-agnostic)."""
         return self._manager.channel_exists(channel_id)
 
+    def get_channel_conversation_id(
+        self, channel_id: SnowflakeID
+    ) -> Optional[SnowflakeID]:
+        """Membership-agnostic lookup of the conversation linked to a channel.
+
+        The module-level ``servers.get_channel_conversation_id`` wrapper and
+        the message-CRUD channel-scope helpers call this on the live
+        ``ServersManager``; without the delegation every such lookup raised
+        ``AttributeError`` (swallowed into scope ``{channel_id}``) and all
+        message reads/edits/deletes on server channels 404'd.
+        """
+        getter = getattr(self._manager, "get_channel_conversation_id", None)
+        if getter is None:
+            return None
+        return getter(channel_id)
+
+    def get_channel_by_conversation(
+        self, conversation_id: SnowflakeID
+    ) -> Optional[dict]:
+        """Membership-agnostic reverse lookup: server channel for a conversation."""
+        lookup = getattr(self._manager, "get_channel_by_conversation", None)
+        if lookup is None:
+            return None
+        return lookup(conversation_id)
+
     def create_channel(
         self,
         user_id: SnowflakeID,

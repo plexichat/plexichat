@@ -22,6 +22,12 @@ def validate_intents(intents: int) -> bool:
     Returns:
         True if valid
     """
+    # Non-integer payloads (strings, lists, dicts, None) must be rejected
+    # outright; comparing them against the bitmask would raise instead of
+    # returning the documented INVALID_INTENTS close code. Booleans are
+    # ints in Python but are never a valid intent mask.
+    if not isinstance(intents, int) or isinstance(intents, bool):
+        return False
     if intents < 0:
         return False
     if intents > ALL_INTENTS:
@@ -111,5 +117,11 @@ def get_intent_description(intent: GatewayIntent) -> str:
         GatewayIntent.DIRECT_MESSAGE_REACTIONS: "DM reaction events",
         GatewayIntent.DIRECT_MESSAGE_TYPING: "DM typing events",
         GatewayIntent.MESSAGE_CONTENT: "Message content (privileged)",
+        GatewayIntent.SCHEDULED_EVENTS: "Scheduled event events",
+        GatewayIntent.THREADS: "Thread events",
+        GatewayIntent.AUTOMOD: "Auto-moderation events",
+        GatewayIntent.AUDIT_LOG: "Audit log events",
+        GatewayIntent.ARTIFACTS: "Artifact collaboration events (whiteboards, live editors)",
+        GatewayIntent.SUMS: "PlexiSum workbook collaboration events",
     }
     return descriptions.get(intent, "Unknown intent")

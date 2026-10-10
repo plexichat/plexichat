@@ -36,7 +36,11 @@ class TestBroadcastRatchetUpdate:
         return GatewayDispatcher(session_manager=session_manager)
 
     @pytest.mark.asyncio
-    async def test_broadcast_sends_to_all_authenticated(self, dispatcher):
+    async def test_broadcast_sends_only_to_conversation_participants(self, dispatcher):
+        """SECURITY regression guard: RATCHET_UPDATE must be scoped to
+        conversation participants. Broadcasting rotations (conversation id,
+        message anchor, timing) to every connected user leaks private
+        conversation metadata."""
         conn1 = MagicMock()
         conn1.is_authenticated = True
         conn1.connection_id = "c1"
@@ -51,30 +55,67 @@ class TestBroadcastRatchetUpdate:
         conn2.intents = 0
         type(conn2).user_id = PropertyMock(return_value=2)
 
-        conn3 = MagicMock()
-        conn3.is_authenticated = False
+        # A connected user who is NOT a participant of the conversation.
+        outsider = MagicMock()
+        outsider.is_authenticated = True
+        outsider.send_json = AsyncMock(return_value=True)
+
+        conn1.send_json = AsyncMock(return_value=True)
+        conn2.send_json = AsyncMock(return_value=True)
 
         dispatcher._session_manager.get_all_connections.return_value = [
             conn1,
             conn2,
-            conn3,
+            outsider,
         ]
-        conn1.send_json = AsyncMock(return_value=True)
-        conn2.send_json = AsyncMock(return_value=True)
+        dispatcher._session_manager.get_connections_for_users.return_value = [
+            conn1,
+            conn2,
+        ]
 
-        result = await dispatcher.broadcast_ratchet_update(
-            conversation_id=42,
-            update_data={"reason": "rotation", "new_interval_id": 99},
-        )
+        with patch(
+            "src.core.messaging.get_participant_ids",
+            return_value=[1, 2],
+        ) as mock_participants:
+            result = await dispatcher.broadcast_ratchet_update(
+                conversation_id=42,
+                update_data={"reason": "rotation", "new_interval_id": 99},
+            )
+
+        # Participants were resolved and used to fetch target connections.
+        mock_participants.assert_called_once_with(42)
+        dispatcher._session_manager.get_connections_for_users.assert_called_once()
+        called_ids = dispatcher._session_manager.get_connections_for_users.call_args[0][
+            0
+        ]
+        assert set(called_ids) == {1, 2}
 
         assert result == 2
         conn1.send_json.assert_called_once()
+        conn2.send_json.assert_called_once()
+        # Non-participants must never receive the update.
+        outsider.send_json.assert_not_called()
+
         payload = conn1.send_json.call_args[0][0]
         assert payload["op"] == int(GatewayOpcode.RATCHET_UPDATE)
         assert payload["t"] == "RATCHET_UPDATE"
-        assert payload["d"]["conversation_id"] == 42
+        # Id fields cross the wire as strings so JS clients do not round a
+        # 64-bit snowflake and then derive a mismatched ratchet key.
+        assert payload["d"]["conversation_id"] == "42"
         assert payload["d"]["reason"] == "rotation"
-        assert payload["d"]["new_interval_id"] == 99
+        assert payload["d"]["new_interval_id"] == "99"
+
+        # F9 regression: every frame carries a per-connection sequence
+        # number and is recorded against the session so a rotation is
+        # never lost across a resume (dedup + replay).
+        assert "s" in payload
+        recorded = dispatcher._session_manager.record_event.call_args_list
+        assert {call.args[0] for call in recorded} == {"s1", "s2"}
+        for call in recorded:
+            body = call.args[1]
+            assert body["op"] == int(GatewayOpcode.RATCHET_UPDATE)
+            assert "s" in body
+            assert body["d"]["conversation_id"] == "42"
 
     @pytest.mark.asyncio
     async def test_broadcast_empty_when_no_connections(self, dispatcher):
@@ -119,36 +160,38 @@ class TestNotifyRatchetUpdate:
 
     def test_notify_ratchet_update_fire_and_forget_no_loop(self):
         with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")):
-            notify_ratchet_update(42, {"reason": "rotation"})
+            result = notify_ratchet_update(42, {"reason": "rotation"})
+            assert result is None
 
     def test_notify_ratchet_update_fire_and_forget_with_mock_coro(self):
         mock_loop = MagicMock()
-        mock_loop.run_coroutine_threadsafe = MagicMock(return_value=MagicMock())
-
         mock_coro = MagicMock()
-        mock_coro_send = MagicMock()
-        future_mock = MagicMock()
-        mock_coro.send = mock_coro_send
-        mock_loop.run_coroutine_threadsafe.return_value = future_mock
 
         with patch("asyncio.get_running_loop", return_value=mock_loop):
             with patch(
-                "src.api.websocket.broadcast_ratchet_update", return_value=MagicMock()
+                "src.api.websocket.broadcast_ratchet_update",
+                MagicMock(return_value=mock_coro),
             ):
-                notify_ratchet_update(42, {"reason": "split", "new_interval_id": 7})
+                with patch("asyncio.run_coroutine_threadsafe") as mock_schedule:
+                    notify_ratchet_update(42, {"reason": "split", "new_interval_id": 7})
 
-        mock_loop.run_coroutine_threadsafe.assert_called_once()
-        args, _ = mock_loop.run_coroutine_threadsafe.call_args
+        mock_schedule.assert_called_once()
+        args, _ = mock_schedule.call_args
         assert len(args) == 2
-        call_args = mock_loop.run_coroutine_threadsafe.call_args
-        assert call_args[0][1] is not None
+        assert args[0] is mock_coro
+        assert args[1] is mock_loop
 
     def test_notify_ratchet_update_fire_and_forget_exception(self):
         with patch("asyncio.get_running_loop", return_value=MagicMock()):
             with patch(
-                "asyncio.run_coroutine_threadsafe", side_effect=RuntimeError("boom")
+                "src.api.websocket.broadcast_ratchet_update",
+                MagicMock(return_value=MagicMock()),
             ):
-                notify_ratchet_update(42, {"reason": "rotation"})
+                with patch(
+                    "asyncio.run_coroutine_threadsafe", side_effect=RuntimeError("boom")
+                ):
+                    result = notify_ratchet_update(42, {"reason": "rotation"})
+                    assert result is None
 
 
 class TestLegacyEnvelopeConfigGate:

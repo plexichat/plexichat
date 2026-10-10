@@ -13,31 +13,18 @@ in BOTH SQLite and Postgres; the cursor strips the quotes and exposes
 the column under the unquoted name ``exists``, so ``row["exists"]``
 works against either DB.
 
-*** Phase-3 followup ***
-One pre-existing source-level bug surfaced while writing this suite:
-
-  ``channel_handler.delete_channel`` (and probably all sibling ops)
-  calls ``self.manager.get_channel(user_id, channel_id)`` in the OLD
-  (user_id, channel_id) positional order, but base.py canonicalises
-  ``get_channel`` to ``(channel_id, user_id)`` per AGENTS.md. The
-  call is therefore WRONG at runtime -- ``get_channel`` interprets
-  ``user_id`` as ``channel_id``, finds no row, returns ``None``,
-  which then propagates as ``ChannelNotFoundError`` even when the
-  channel exists AND the caller is the owner.
-
-  The dual-probe (channel_exists + get_channel) is unaffected because
-  test code here calls ``server_manager.get_channel(c.id, u.id)``
-  directly with the canonical order. The probe itself is correct.
-
-  Phase-3 fix: globally fix the positional call order in
-  ``channel_handler.py`` and ``member_handler.py`` (delete_channel,
-  update_channel, create_invite, set_channel_override and friends)
-  to ``self.manager.get_channel(channel_id, user_id)``.
-
-  To avoid coupling Phase-2 test green-up to that source fix, the
-  "post-delete probe" assertion below uses a raw ``UPDATE
-  srv_channels SET deleted = 1`` that bypasses the buggy
-  ``delete_channel`` handler entirely.
+*** Handler positional-order note ***
+An earlier revision of this suite documented a pre-existing bug where
+``channel_handler.delete_channel`` / ``update_channel`` and
+``member_handler.create_invite`` called
+``self.manager.get_channel(user_id, channel_id)`` in the OLD positional
+order while ``base.py`` canonicalises ``get_channel`` to
+``(channel_id, user_id)``. That bug has since been FIXED at source: all
+handlers now use the canonical order, so the direct-SQL workarounds in
+these tests exist only where the assertion genuinely requires raw row
+manipulation (e.g. the hard-delete below, because production
+``delete_channel`` is a soft delete the EXISTS probe intentionally does
+not observe).
 """
 
 import uuid
@@ -122,14 +109,8 @@ def test_channel_exists_returns_false_after_channel_deleted(
     server, channel = _create_server_with_channel(server_manager, test_user.id)
     assert server_manager.channel_exists(channel.id) is True
 
-    # Direct SQL DELETE -- bypasses ``channel_handler.delete_channel``'s
-    # positional-arg bug (see file-level docstring). This isolates the
-    # behavioral claim under test ("probe flips to False after the row
-    # is gone") from the broken handler path; the handler path is
-    # covered comprehensively elsewhere and will be fixed in Phase-3.
-    #
-    # NOTE: production ``delete_channel`` is a SOFT delete
-    # (`UPDATE srv_channels SET deleted = 1`) but the probe
+    # Direct SQL DELETE -- production ``delete_channel`` is a SOFT
+    # delete (`UPDATE srv_channels SET deleted = 1`) but the probe
     # ``SELECT EXISTS(SELECT 1 FROM srv_channels WHERE id = ?)``
     # does NOT filter on ``deleted`` (per its docstring contract:
     # "exists at all, regardless of membership/permission"). So a

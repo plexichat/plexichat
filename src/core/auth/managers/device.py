@@ -1,8 +1,8 @@
-from typing import List
+from typing import List, Optional
 
 import utils.logger as logger
 
-from ..models import Device
+from ..models import AuditEventType, Device
 
 
 from .protocol import AuthManagerProtocol
@@ -37,6 +37,8 @@ class DeviceMixin(AuthManagerProtocol):
                 device_type=self._decrypt_device_field(
                     r, "device_type", "device_type_encrypted"
                 ),
+                trusted=bool(r.get("trusted", 0)),
+                trusted_at=r.get("trusted_at"),
                 first_seen_at=r["first_seen_at"],
                 last_seen_at=r["last_seen_at"],
             )
@@ -73,4 +75,63 @@ class DeviceMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?", (device_id,)
         )
+        self._log_audit(AuditEventType.DEVICE_REVOKED, user_id, True)
+        return True
+
+    # ------------------------------------------------------------------
+    # Trusted devices (2FA skip)
+    # ------------------------------------------------------------------
+
+    def _ensure_trusted_device_columns(self) -> None:
+        """Lazy guard so databases created before the trust columns existed
+        are covered without paying the DDL cost on every request."""
+        from ..schema import ensure_trusted_devices_columns
+
+        ensure_trusted_devices_columns(self._db)
+
+    def is_trusted_device(self, user_id: int, fingerprint: Optional[str]) -> bool:
+        """True when this (user, fingerprint) pair is marked trusted.
+
+        SECURITY: a missing fingerprint can never be trusted — an attacker
+        who strips the fingerprint header must not inherit trust.
+        """
+        if not fingerprint:
+            return False
+        self._ensure_trusted_device_columns()
+        row = self._db.fetch_one(
+            "SELECT trusted FROM auth_devices WHERE user_id = ? AND fingerprint = ?",
+            (user_id, fingerprint),
+        )
+        return bool(row and row.get("trusted"))
+
+    def trust_device(self, user_id: int, fingerprint: Optional[str]) -> bool:
+        """Mark a known device as trusted (2FA skip). Idempotent."""
+        if not fingerprint:
+            return False
+        self._ensure_trusted_device_columns()
+        now = self._get_timestamp()
+        # Only mark trust on a device we have seen before: trusting an
+        # unknown fingerprint would let an attacker pre-trust a device
+        # they have never authenticated from.
+        cursor = self._db.execute(
+            "UPDATE auth_devices SET trusted = 1, trusted_at = ? WHERE user_id = ? AND fingerprint = ?",
+            (now, user_id, fingerprint),
+        )
+        if getattr(cursor, "rowcount", 0) == 0:
+            return False
+        self._log_audit(AuditEventType.DEVICE_TRUSTED, user_id, True)
+        return True
+
+    def untrust_device(self, user_id: int, fingerprint: Optional[str]) -> bool:
+        """Remove trust from a device. Idempotent."""
+        if not fingerprint:
+            return False
+        self._ensure_trusted_device_columns()
+        cursor = self._db.execute(
+            "UPDATE auth_devices SET trusted = 0, trusted_at = NULL WHERE user_id = ? AND fingerprint = ?",
+            (user_id, fingerprint),
+        )
+        if getattr(cursor, "rowcount", 0) == 0:
+            return False
+        self._log_audit(AuditEventType.DEVICE_UNTRUSTED, user_id, True)
         return True

@@ -146,6 +146,18 @@ class PlexichatServer:
             except Exception as e:
                 logger.error(f"Error closing database: {e}")
 
+        # Close the blocking Valkey handle off the loop (the async handle was
+        # already closed by the app lifespan while its loop was still alive).
+        try:
+            from src.core.database.valkey_client import get_client
+
+            valkey_client = get_client()
+            if valkey_client is not None:
+                valkey_client.close()
+                logger.info("Valkey connection closed")
+        except Exception as e:
+            logger.error(f"Error closing Valkey connection: {e}")
+
         logger.info("Cleanup complete")
 
     def run(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:
@@ -162,22 +174,19 @@ class PlexichatServer:
         if tls_config.get("enabled", False) or tls_config.get(
             "auto_generate_self_signed", False
         ):
-            try:
-                from src.core import tls
+            from src.core import tls
 
-                if tls.is_tls_enabled():
-                    ssl_config = tls.get_tls_config()
-                    if ssl_config:
-                        use_https = True
-                        logger.info("TLS enabled - server will use HTTPS")
-            except ImportError:
-                logger.warning("TLS module not available")
-            except Exception as e:
-                logger.error(f"Failed to configure TLS: {e}")
+            ssl_config = tls.get_tls_config()
+            if ssl_config:
+                use_https = True
+                logger.info("TLS enabled - server will use HTTPS")
 
-        assert self.app is not None
-        assert host is not None
-        assert port is not None
+        if self.app is None:
+            raise RuntimeError("Server app is not initialized; cannot start.")
+        if host is None:
+            raise RuntimeError("Server host is not configured; cannot start.")
+        if port is None:
+            raise RuntimeError("Server port is not configured; cannot start.")
 
         plexi_level = config.get("logging", {}).get("level", "info").lower()
         uvi_level = plexi_level if plexi_level not in ("debug", "trace") else "info"
@@ -192,7 +201,8 @@ class PlexichatServer:
         )
 
         self.server = uvicorn.Server(uvi_config)
-        assert self.server is not None
+        if self.server is None:
+            raise RuntimeError("Failed to create uvicorn server instance.")
 
         def signal_handler(signum, frame):
             signal_map = {

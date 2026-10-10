@@ -163,6 +163,11 @@ def media_module(modules, temp_upload_dir):
 
     assert config._config_instance is not None
     config._config_instance.config["media"] = original_media_config
+    if media._manager is not None:
+        try:
+            media._manager.close()
+        except Exception:
+            pass
     media._manager = None
     media._setup_complete = False
 

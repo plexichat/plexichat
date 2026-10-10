@@ -14,6 +14,8 @@ from ..exceptions import (
     CustomEmojiNotFoundError,
     ReactionLimitError,
     PermissionDeniedError,
+    UserBlockedError,
+    InvalidEmojiError,
 )
 
 
@@ -40,15 +42,25 @@ class ReactionOpsMixin(ReactionProtocol):
                     "Missing permission to add reactions", "messages.add_reactions"
                 )
 
+        if self._relationships and self._is_blocked_by_either(
+            user_id, msg["author_id"]
+        ):
+            raise UserBlockedError("Cannot react to this message")
+
         is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
 
-        if is_custom and channel:
+        if is_custom:
             if custom_emoji_id is None:
-                raise CustomEmojiNotFoundError("Custom emoji not found in this server")
-            if not self._validate_custom_emoji_for_server(
-                custom_emoji_id, channel["server_id"]
-            ):
-                raise CustomEmojiNotFoundError("Custom emoji not found in this server")
+                raise CustomEmojiNotFoundError("Custom emoji not found")
+            if not self._validate_custom_emoji_exists(custom_emoji_id):
+                raise CustomEmojiNotFoundError("Custom emoji not found")
+            if channel:
+                if not self._validate_custom_emoji_for_server(
+                    custom_emoji_id, channel["server_id"]
+                ):
+                    raise CustomEmojiNotFoundError(
+                        "Custom emoji not found in this server"
+                    )
 
         existing = self._db.fetch_one(
             "SELECT 1 FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
@@ -80,12 +92,17 @@ class ReactionOpsMixin(ReactionProtocol):
                 raise ReactionExistsError("You have already reacted with this emoji")
 
             unique_count = self._get_unique_emoji_count(message_id)
-            user_has_this_emoji = self._db.fetch_one(
+            # NOTE: this is a MESSAGE-wide lookup, not a per-user one -- it
+            # answers "is this emoji already present on the message at all?".
+            # It is the right gate for the message-level cap below (only a
+            # genuinely new distinct emoji consumes a message slot), but it
+            # must never gate the per-user cap.
+            emoji_on_message = self._db.fetch_one(
                 "SELECT 1 FROM react_reactions WHERE message_id = ? AND emoji = ?",
                 (message_id, normalized_emoji),
             )
 
-            if not user_has_this_emoji and unique_count >= max_reactions:
+            if not emoji_on_message and unique_count >= max_reactions:
                 self._db.rollback()
                 raise ReactionLimitError(
                     f"Message has reached maximum of {max_reactions} unique reactions",
@@ -98,7 +115,15 @@ class ReactionOpsMixin(ReactionProtocol):
                 (message_id, user_id),
             )["count"]
 
-            if not user_has_this_emoji and user_unique_count >= max_user_reactions:
+            # The per-user cap counts THIS user's distinct emoji, so it must be
+            # evaluated unconditionally. It previously reused the
+            # message-wide ``emoji_on_message`` flag as a short-circuit, which
+            # silently disabled the cap for every emoji some other user had
+            # already reacted with -- a user at their limit could keep adding
+            # distinct emoji as long as each one already existed on the
+            # message. The duplicate check above has already rejected the only
+            # case where this insert would not grow the user's distinct count.
+            if user_unique_count >= max_user_reactions:
                 self._db.rollback()
                 raise ReactionLimitError(
                     f"User has reached maximum of {max_user_reactions} unique reactions per message",
@@ -132,8 +157,10 @@ class ReactionOpsMixin(ReactionProtocol):
         except ReactionExistsError:
             self._db.rollback()
             raise
-        except Exception:
+        except Exception as e:
             self._db.rollback()
+            if self._is_unique_violation(e):
+                raise ReactionExistsError("You have already reacted with this emoji")
             raise
 
         logger.debug(
@@ -154,6 +181,11 @@ class ReactionOpsMixin(ReactionProtocol):
         if not self._is_participant(msg["conversation_id"], user_id):
             raise MessageNotFoundError("Message not found")
 
+        if self._relationships and self._is_blocked_by_either(
+            user_id, msg["author_id"]
+        ):
+            raise UserBlockedError("Cannot react to this message")
+
         is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
 
         any_reaction = self._db.fetch_one(
@@ -170,10 +202,13 @@ class ReactionOpsMixin(ReactionProtocol):
         if not existing:
             raise PermissionDeniedError("Cannot remove reaction added by someone else")
 
-        self._db.execute(
+        cursor = self._db.execute(
             "DELETE FROM react_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
             (message_id, user_id, normalized_emoji),
         )
+
+        if getattr(cursor, "rowcount", 1) == 0:
+            raise ReactionNotFoundError("Reaction not found")
 
         logger.debug(f"Reaction removed from message {message_id} by user {user_id}")
 
@@ -186,17 +221,29 @@ class ReactionOpsMixin(ReactionProtocol):
         if not msg:
             raise MessageNotFoundError("Message not found")
 
+        if not self._is_participant(msg["conversation_id"], user_id):
+            raise MessageNotFoundError("Message not found")
+
         channel = self._get_channel_for_conversation(msg["conversation_id"])
         if channel:
-            if not self._servers or not self._servers.has_permission(
-                user_id, channel["server_id"], "messages.manage", channel["id"]
+            if not self._check_server_permission(
+                user_id,
+                channel["server_id"],
+                channel["id"],
+                permission="messages.manage",
             ):
                 raise PermissionDeniedError(
                     "Missing permission to manage messages", "messages.manage"
                 )
         else:
+            # Fail closed: a soft-deleted (or missing) conversation must deny
+            # the wipe instead of skipping the permission block entirely.
             conv = self._get_conversation(msg["conversation_id"])
-            if conv and conv["owner_id"] != user_id:
+            if not conv:
+                raise PermissionDeniedError(
+                    "Cannot verify permissions to remove all reactions"
+                )
+            if conv["owner_id"] != user_id:
                 participant = self._db.fetch_one(
                     "SELECT role FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
                     (msg["conversation_id"], user_id),
@@ -229,17 +276,29 @@ class ReactionOpsMixin(ReactionProtocol):
         if not msg:
             raise MessageNotFoundError("Message not found")
 
+        if not self._is_participant(msg["conversation_id"], user_id):
+            raise MessageNotFoundError("Message not found")
+
         channel = self._get_channel_for_conversation(msg["conversation_id"])
         if channel:
-            if not self._servers or not self._servers.has_permission(
-                user_id, channel["server_id"], "messages.manage", channel["id"]
+            if not self._check_server_permission(
+                user_id,
+                channel["server_id"],
+                channel["id"],
+                permission="messages.manage",
             ):
                 raise PermissionDeniedError(
                     "Missing permission to manage messages", "messages.manage"
                 )
         else:
+            # Fail closed: a soft-deleted (or missing) conversation must deny
+            # the wipe instead of skipping the permission block entirely.
             conv = self._get_conversation(msg["conversation_id"])
-            if conv and conv["owner_id"] != user_id:
+            if not conv:
+                raise PermissionDeniedError(
+                    "Cannot verify permissions to remove reactions"
+                )
+            if conv["owner_id"] != user_id:
                 participant = self._db.fetch_one(
                     "SELECT role FROM msg_participants WHERE conversation_id = ? AND user_id = ?",
                     (msg["conversation_id"], user_id),
@@ -288,15 +347,7 @@ class ReactionOpsMixin(ReactionProtocol):
         if not self._is_participant(msg["conversation_id"], user_id):
             raise MessageNotFoundError("Message not found")
 
-        blocked_users = set()
-        if self._relationships:
-            blocked_ids = self._relationships.get_blocked_user_ids(user_id)
-            blocked_users.update(blocked_ids)
-            rows = self._db.fetch_all(
-                "SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?", (user_id,)
-            )
-            for row in rows:
-                blocked_users.add(row["blocker_id"])
+        blocked_users = self._get_blocked_user_ids(user_id)
 
         query = """SELECT r.emoji, r.is_custom, r.custom_emoji_id, e.url, COUNT(*) as count,
                           MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
@@ -309,7 +360,9 @@ class ReactionOpsMixin(ReactionProtocol):
         if blocked_users:
             placeholders = ",".join("?" * len(blocked_users))
             query += f" AND r.user_id NOT IN ({placeholders})"
-            params.extend(list(blocked_users))
+            # L6: iterate in sorted order so parameter ordering is
+            # deterministic across runs (sets have arbitrary iteration order).
+            params.extend(sorted(blocked_users))
 
         query += """ GROUP BY r.emoji, r.is_custom, r.custom_emoji_id, e.url
                      ORDER BY MIN(r.created_at)"""
@@ -354,20 +407,17 @@ class ReactionOpsMixin(ReactionProtocol):
         if not self._is_participant(msg["conversation_id"], user_id):
             raise MessageNotFoundError("Message not found")
 
-        is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
+        # Legacy/stored emoji rows may no longer pass the (now stricter)
+        # validator; treat them as "no users" instead of erroring reads.
+        try:
+            is_custom, custom_emoji_id, normalized_emoji = self._validate_emoji(emoji)
+        except InvalidEmojiError:
+            return []
 
         max_per_page = self._config.get("max_users_per_reaction_page", 100)
         limit = min(limit, max_per_page)
 
-        blocked_users = set()
-        if self._relationships:
-            blocked_ids = self._relationships.get_blocked_user_ids(user_id)
-            blocked_users.update(blocked_ids)
-            rows = self._db.fetch_all(
-                "SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?", (user_id,)
-            )
-            for row in rows:
-                blocked_users.add(row["blocker_id"])
+        blocked_users = self._get_blocked_user_ids(user_id)
 
         query = """SELECT user_id, created_at FROM react_reactions 
                    WHERE message_id = ? AND emoji = ?"""
@@ -377,7 +427,8 @@ class ReactionOpsMixin(ReactionProtocol):
             query += " AND user_id NOT IN ({})".format(
                 ",".join("?" * len(blocked_users))
             )
-            params.extend(blocked_users)
+            # L6: deterministic parameter order (sets iterate arbitrarily).
+            params.extend(sorted(blocked_users))
 
         if after_user_id:
             query += " AND user_id > ?"
@@ -418,15 +469,7 @@ class ReactionOpsMixin(ReactionProtocol):
 
         logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
 
-        blocked_users = set()
-        if self._relationships:
-            blocked_ids = self._relationships.get_blocked_user_ids(user_id)
-            blocked_users.update(blocked_ids)
-            rows = self._db.fetch_all(
-                "SELECT blocker_id FROM rel_blocked WHERE blocked_id = ?", (user_id,)
-            )
-            for row in rows:
-                blocked_users.add(row["blocker_id"])
+        blocked_users = self._get_blocked_user_ids(user_id)
 
         placeholders = ",".join("?" * len(message_ids))
 
@@ -435,13 +478,27 @@ class ReactionOpsMixin(ReactionProtocol):
                            MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as me
                     FROM react_reactions r
                     LEFT JOIN react_custom_emoji e ON r.custom_emoji_id = e.id
-                    WHERE r.message_id IN ({placeholders})"""
-        params = [user_id] + list(message_ids)
+                    WHERE r.message_id IN ({placeholders})
+                      AND (
+                        r.message_id IN (
+                            SELECT m.id FROM msg_messages m
+                            JOIN msg_participants p ON m.conversation_id = p.conversation_id
+                            WHERE p.user_id = ?
+                        )
+                        OR r.message_id IN (
+                            SELECT m.id FROM msg_messages m
+                            JOIN srv_channels sc ON m.conversation_id = sc.conversation_id
+                            JOIN srv_members sm ON sc.server_id = sm.server_id
+                            WHERE sm.user_id = ?
+                        )
+                      )"""
+        params = [user_id] + list(message_ids) + [user_id, user_id]
 
         if blocked_users:
             blocked_placeholders = ",".join("?" * len(blocked_users))
             query += f" AND r.user_id NOT IN ({blocked_placeholders})"
-            params.extend(list(blocked_users))
+            # L6: deterministic parameter order (sets iterate arbitrarily).
+            params.extend(sorted(blocked_users))
 
         query += " GROUP BY r.message_id, r.emoji, r.is_custom, r.custom_emoji_id, e.url ORDER BY r.message_id, MIN(r.created_at)"
 
@@ -467,26 +524,49 @@ class ReactionOpsMixin(ReactionProtocol):
 
         return result
 
-    def get_reaction_count(self, message_id: SnowflakeID) -> int:
-        row = self._db.fetch_one(
-            "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ?",
-            (message_id,),
-        )
+    def get_reaction_count(
+        self, message_id: SnowflakeID, viewer_id: Optional[SnowflakeID] = None
+    ) -> int:
+        query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ?"
+        params: List[Any] = [message_id]
+
+        # Keep internal counters consistent with the filtered list APIs.
+        blocked_users = self._get_blocked_user_ids(viewer_id)
+        if blocked_users:
+            placeholders = ",".join("?" * len(blocked_users))
+            query += f" AND user_id NOT IN ({placeholders})"
+            params.extend(sorted(blocked_users))
+
+        row = self._db.fetch_one(query, tuple(params))
         return row["count"] if row else 0
 
-    def get_reaction_count_by_emoji(self, message_id: SnowflakeID, emoji: str) -> int:
-        is_custom, custom_id, normalized = self._validate_emoji(emoji)
+    def get_reaction_count_by_emoji(
+        self,
+        message_id: SnowflakeID,
+        emoji: str,
+        viewer_id: Optional[SnowflakeID] = None,
+    ) -> int:
+        # Legacy/stored junk rows may no longer pass the stricter validator;
+        # report an empty count instead of erroring reads.
+        try:
+            is_custom, custom_id, normalized = self._validate_emoji(emoji)
+        except InvalidEmojiError:
+            return 0
 
         if is_custom:
-            row = self._db.fetch_one(
-                "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND custom_emoji_id = ?",
-                (message_id, custom_id),
-            )
+            query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND custom_emoji_id = ?"
+            params: List[Any] = [message_id, custom_id]
         else:
-            row = self._db.fetch_one(
-                "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND emoji = ? AND is_custom = 0",
-                (message_id, normalized),
-            )
+            query = "SELECT COUNT(*) as count FROM react_reactions WHERE message_id = ? AND emoji = ? AND is_custom = 0"
+            params = [message_id, normalized]
+
+        blocked_users = self._get_blocked_user_ids(viewer_id)
+        if blocked_users:
+            placeholders = ",".join("?" * len(blocked_users))
+            query += f" AND user_id NOT IN ({placeholders})"
+            params.extend(sorted(blocked_users))
+
+        row = self._db.fetch_one(query, tuple(params))
         return row["count"] if row else 0
 
     def user_reacted_to_messages(
@@ -503,12 +583,14 @@ class ReactionOpsMixin(ReactionProtocol):
         return [row["message_id"] for row in rows]
 
     def get_users_who_reacted(
-        self, message_id: SnowflakeID, emoji: str
+        self, user_id: int, message_id: SnowflakeID, emoji: str
     ) -> List[SnowflakeID]:
-        users = self.get_reaction_users(user_id=1, message_id=message_id, emoji=emoji)
+        users = self.get_reaction_users(
+            user_id=user_id, message_id=message_id, emoji=emoji
+        )
         return [u.user_id for u in users]
 
     def get_reactions_bulk(
-        self, message_ids: List[int]
+        self, user_id: int, message_ids: List[int]
     ) -> Dict[int, List[Dict[str, Any]]]:
-        return self.get_reactions_batch(user_id=1, message_ids=message_ids)
+        return self.get_reactions_batch(user_id=user_id, message_ids=message_ids)

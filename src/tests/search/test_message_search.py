@@ -5,6 +5,7 @@ Tests for message search functionality.
 import pytest
 import uuid
 
+from src.core.search.exceptions import SearchQueryError
 from src.core.search.models import MessageSearchResult
 
 
@@ -21,12 +22,11 @@ class TestMessageSearchBasic:
         assert isinstance(results, list)
 
     def test_search_empty_query(self, users_with_dm):
-        """Test search with empty query returns empty."""
+        """F16: empty queries are rejected, consistently across endpoints."""
         user1, user2, dm, messages, search = users_with_dm
 
-        results = search.search_messages(user1.id, "")
-
-        assert results == []
+        with pytest.raises(SearchQueryError):
+            search.search_messages(user1.id, "")
 
     def test_search_no_matches(self, users_with_dm):
         """Test search with no matches returns empty."""
@@ -163,7 +163,9 @@ class TestMessageSearchIndexing:
 
         results = search.search_messages(user.id, f"indextest {unique_id}")
 
-        assert len(results) >= 1
+        # Exactly one message matches the unique indexed content
+        assert len(results) == 1
+        assert results[0].message_id == msg.id
 
     def test_remove_from_index(self, auth_manager, messaging_manager, search_manager):
         """Test removing a message from index."""

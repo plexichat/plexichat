@@ -13,10 +13,9 @@ Usage:
     result = media.upload_file(user_id=1, file_data=data, filename="image.jpg")
 """
 
-from typing import Optional, Dict, Any, BinaryIO, Tuple, TYPE_CHECKING
+from typing import Optional, Dict, Any, BinaryIO, Tuple
 
-if TYPE_CHECKING:
-    from .manager import MediaManager
+from .manager import MediaManager
 
 from .models import (
     MediaFile,
@@ -106,6 +105,10 @@ __all__ = [
     "get_file_data",
     "get_file_stream",
     "delete_file",
+    "delete_file_permanently",
+    "can_delete_file_permanently",
+    "get_file_for_permanent_delete",
+    "get_file_by_filename_for_permanent_delete",
     "check_file_access",
     # URL signing
     "sign_url",
@@ -137,6 +140,13 @@ __all__ = [
     "complete_upload_session",
     "complete_upload_session_stream",
     "cancel_upload_session",
+    "cleanup_expired_upload_sessions",
+    # Server-authored blobs (Suite workbook files, etc.)
+    "store_blob",
+    "retrieve_blob",
+    "delete_blob",
+    "blob_exists",
+    "get_blob_size",
 ]
 
 _manager = None
@@ -161,15 +171,37 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
         _chunked_manager, \
         _setup_complete
 
-    from .manager import MediaManager
     from .deduplication import DeduplicationManager
     from .compression import CompressionManager
     from .chunked import ChunkedUploadManager
+    from .schema import create_tables
 
+    # Shut down any previous manager's background workers before
+    # replacing it, so fire-and-forget scan/phash/thumbnail threads
+    # never outlive their database file (they hold mmap'd SQLite
+    # connections; a deleted DB file crashes the process with SIGBUS).
+    if _manager is not None:
+        try:
+            _manager.close()
+        except Exception:
+            pass
+        _manager = None
+
+    # Keep media-owned compatibility objects available on existing databases;
+    # migration 000 remains the authoritative fresh-install orchestrator.
+    create_tables(db)
     _manager = MediaManager(db, messaging_module)
     _dedup_manager = DeduplicationManager(db)
     _compression_manager = CompressionManager()
     _chunked_manager = ChunkedUploadManager(db)
+
+    # Never expose a media manager without the database-level reference guards.
+    # Migration 000 creates every dependency before normal startup reaches this
+    # point; direct callers receive a fail-closed error on an incomplete or
+    # legacy schema instead of silently permitting unsafe deletion.
+    from .schema import create_reference_guards
+
+    create_reference_guards(db)
     _setup_complete = True
 
 
@@ -178,6 +210,43 @@ def _get_manager() -> MediaManager:
     if not _setup_complete or _manager is None:
         raise RuntimeError("Media module not initialized. Call media.setup(db) first.")
     return _manager
+
+
+# === Server-authored blob storage ===
+
+
+def store_blob(
+    data: bytes,
+    key: str,
+    content_type: str = "application/octet-stream",
+) -> str:
+    """Store raw server-authored bytes through the active storage adapter.
+
+    Returns an opaque storage path. Used by Suite domains (PlexiSum
+    ``.plexisum`` workbook files) to persist independent database files through
+    the same S3/local adapter as media, without the media upload pipeline.
+    """
+    return _get_manager().store_blob(data, key, content_type)
+
+
+def retrieve_blob(path: str) -> bytes:
+    """Retrieve raw bytes previously stored with store_blob()."""
+    return _get_manager().retrieve_blob(path)
+
+
+def delete_blob(path: str) -> bool:
+    """Delete a stored blob path."""
+    return _get_manager().delete_blob(path)
+
+
+def blob_exists(path: str) -> bool:
+    """Return whether a server-authored blob exists in active storage."""
+    return _get_manager().blob_exists(path)
+
+
+def get_blob_size(path: str) -> int:
+    """Return a stored blob's size in bytes."""
+    return _get_manager().get_blob_size(path)
 
 
 # === File Operations ===
@@ -315,6 +384,28 @@ def delete_file(user_id: int, file_id: int) -> bool:
     return _get_manager().delete_file(user_id, file_id)
 
 
+def delete_file_permanently(user_id: int, file_id: int) -> bool:
+    """Permanently delete an owned file and its underlying storage object."""
+    return _get_manager().delete_file_permanently(user_id, file_id)
+
+
+def can_delete_file_permanently(file_id: int) -> bool:
+    """Check whether a file has no known cross-domain references."""
+    return _get_manager().can_delete_file_permanently(file_id)
+
+
+def get_file_for_permanent_delete(file_id: int) -> Optional[MediaFile]:
+    """Load an active or soft-deleted file for internal retention cleanup."""
+    return _get_manager()._get_file_for_permanent_delete(file_id)
+
+
+def get_file_by_filename_for_permanent_delete(
+    filename: str,
+) -> Optional[MediaFile]:
+    """Load an active or soft-deleted file by opaque filename."""
+    return _get_manager().get_file_by_filename_for_permanent_delete(filename)
+
+
 def check_file_access(filename: str, user_id: int) -> bool:
     """Check if a user can access a media file."""
     return _get_manager().check_file_access(filename, user_id)
@@ -324,7 +415,11 @@ def check_file_access(filename: str, user_id: int) -> bool:
 
 
 def sign_url(
-    file_id: int, expires_in: Optional[int] = None, params: Optional[dict] = None
+    file_id: int,
+    expires_in: Optional[int] = None,
+    params: Optional[dict] = None,
+    user_id: Optional[int] = None,
+    url: Optional[str] = None,
 ) -> SignedUrl:
     """
     Generate signed URL for file.
@@ -333,11 +428,17 @@ def sign_url(
         file_id: File ID
         expires_in: Expiration time in seconds
         params: Optional storage-specific parameters
+        user_id: User authorized to use this URL (embedded in the
+            signature and enforced at verification time). Omit only
+            for intentionally public assets.
+        url: Explicit URL to sign instead of the storage-derived one.
 
     Returns:
         SignedUrl object
     """
-    return _get_manager().sign_url(file_id, expires_in, params)
+    return _get_manager().sign_url(
+        file_id, expires_in, params, user_id=user_id, url=url
+    )
 
 
 def verify_signed_url(
@@ -627,7 +728,7 @@ def upload_chunk(
         user_id: User ID
         chunk_index: Zero-based chunk index
         chunk_data: Chunk bytes
-        chunk_checksum: Optional MD5 checksum
+        chunk_checksum: Optional SHA-256 checksum (lowercase hex)
 
     Returns:
         ChunkUploadResult
@@ -672,3 +773,14 @@ def complete_upload_session_stream(
 def cancel_upload_session(session_id: str, user_id: int) -> bool:
     """Cancel an upload session."""
     return _get_chunked_manager().cancel_session(session_id, user_id)
+
+
+def cleanup_expired_upload_sessions() -> int:
+    """
+    Delete expired chunked-upload sessions and their temp files.
+
+    Intended to be called from a periodic background sweep so sessions
+    abandoned mid-upload are reaped even when no request ever touches
+    them again.
+    """
+    return _get_chunked_manager().cleanup_expired()

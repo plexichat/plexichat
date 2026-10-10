@@ -20,21 +20,13 @@ This file covers two surfaces:
 * **Manager-level dual-probe gate controls:** deterministic tests
   that exercise the dual-probe at the SQL/manager layer (no HTTP,
   no threadpool) for owners who should pass both gates. The mutation
-  half of each positive-control test uses *direct SQL*
-  ``UPDATE srv_channels`` / ``INSERT srv_invites`` because the
-  underlying ``channel_handler.delete_channel``,
-  ``channel_handler.update_channel`` and
-  ``member_handler.create_invite`` all share a pre-existing
-  positional-order bug (they call
-  ``self.manager.get_channel(user_id, channel_id)`` using the
-  legacy order, while ``base.py`` canonicalises ``get_channel``
-  to ``(channel_id, user_id)`` per AGENTS.md). That bug falsely
-  inspects ``user_id`` as if it were a ``channel_id`` and returns
-  ``None`` -- ``ChannelNotFoundError`` even when the channel
-  exists. Direct-SQL bypass keeps the dual-probe assertion
-  isolated from the handler bug; see Phase-3 followup in
-  ``src/tests/servers/test_channel_exists.py`` for the
-  remediation plan.
+  half of each positive-control test goes through the real manager
+  methods (``update_channel`` / ``delete_channel`` /
+  ``create_invite``) — these handlers previously shared a positional
+  ``get_channel(user_id, channel_id)`` call-order bug and the tests
+  used direct-SQL workarounds; the handlers now call
+  ``get_channel(channel_id, user_id)`` in the canonical order, so the
+  bypasses are gone and the manager surface is exercised directly.
 """
 
 import uuid
@@ -52,11 +44,8 @@ def _build_owner_with_server(server_manager, auth_manager):
     The owner is implicit-member via ``is_member``'s owner-check,
     so the membership-aware ``get_channel`` gate passes for all 3
     dual-probe positive controls. We do not call
-    ``server_manager.add_member(owner)`` -- an explicit member
-    INSERT mid-test would reflow the perms-cache under the
-    not-yet-fixed handler positional-order bug (see file-level
-    docstring) and push ``get_permissions`` onto its
-    unregistered-row path.
+    ``server_manager.add_member(owner)`` -- the owner already passes
+    the membership gate implicitly.
     """
     from src.utils import encryption
 
@@ -175,19 +164,14 @@ def test_create_channel_invite_403_for_non_member(
 # These tests assert that, after ``_build_owner_with_server``, BOTH
 # the cheap probe AND the membership-aware ``get_channel`` report
 # the channel for the owner -- the dual-probe gates pass when the
-# owner is implicitly a member. The mutation step below uses direct
-# SQL rather than ``update_channel`` / ``delete_channel`` /
-# ``create_invite``, because the handler trio shares a positional
-# ``get_channel`` bug (see file-level docstring); the Phase-3 fix
-# will let these tests switch back to the manager methods without
-# behavior change.
+# owner is implicitly a member. The mutation step goes through the
+# real manager methods now that the handler trio calls ``get_channel``
+# in the canonical ``(channel_id, user_id)`` order.
 
 
 def test_update_channel_dual_probe_passes_for_owner(server_manager, auth_manager):
     """Dual-probe gates: probe True AND get_channel returns the channel
-    for an owner. The mutation half updates the channel name via
-    direct SQL so the assertion focuses on the gate outcome, not on
-    the buggy handler positional-arg path.
+    for an owner. The mutation half goes through ``update_channel``.
     """
     owner, _server, channel = _build_owner_with_server(server_manager, auth_manager)
 
@@ -198,13 +182,11 @@ def test_update_channel_dual_probe_passes_for_owner(server_manager, auth_manager
     assert ch is not None
     assert ch.id == channel.id
 
-    # Mutation half -- direct SQL update (handler bug bypass).
+    # Mutation half -- real handler path.
     new_name = f"renamed-{uuid.uuid4().hex[:6]}"
-    server_manager._db.execute(
-        "UPDATE srv_channels SET name = ?, updated_at = ? WHERE id = ?",
-        (new_name, server_manager._get_timestamp(), channel.id),
-    )
-    server_manager._cache_invalidate(server_manager._channel_cache_prefix, channel.id)
+    updated = server_manager.update_channel(owner.id, channel.id, name=new_name)
+    assert updated is not None
+    assert updated.name == new_name
 
     # Probe is still True (mutation does not touch deleted flag).
     assert server_manager.channel_exists(channel.id) is True
@@ -212,8 +194,7 @@ def test_update_channel_dual_probe_passes_for_owner(server_manager, auth_manager
 
 def test_delete_channel_dual_probe_passes_for_owner(server_manager, auth_manager):
     """Dual-probe gates for the DELETE endpoint: owner passes both
-    gates; deletion flips the probe to False. Direct-SQL delete to
-    bypass the handler positional-arg bug (see file-level docstring).
+    gates; deletion flips the probe to False via the real handler.
     """
     owner, _server, channel = _build_owner_with_server(server_manager, auth_manager)
 
@@ -223,13 +204,14 @@ def test_delete_channel_dual_probe_passes_for_owner(server_manager, auth_manager
     ch = server_manager.get_channel(channel.id, owner.id)
     assert ch is not None
 
-    # Direct SQL hard-delete (handler bug bypass). The probe itself
-    # does NOT filter on `deleted = 0` (per its docstring contract:
-    # "exists at all, regardless of membership/permission"), so a
-    # production-style soft-delete leaves the probe True. To exercise
-    # the 404-detector side of the dual-probe contract we hard-delete
-    # the row; in production, a hard-delete is what removes the row
-    # entirely (vanishing from the EXISTS subquery).
+    # The probe itself does NOT filter on `deleted = 0` (per its
+    # docstring contract: "exists at all, regardless of
+    # membership/permission"), so the production-style soft-delete
+    # leaves the row in place. Assert the soft-delete outcome through
+    # the handler, then hard-delete so the EXISTS probe actually
+    # reports False for the 404-detector side of the contract.
+    assert server_manager.delete_channel(owner.id, channel.id) is True
+
     server_manager._db.execute(
         "DELETE FROM srv_channels WHERE id = ?",
         (channel.id,),
@@ -244,8 +226,7 @@ def test_create_channel_invite_dual_probe_passes_for_owner(
     server_manager, auth_manager
 ):
     """Dual-probe gates for the POST invites endpoint. The mutation
-    half uses direct SQL INSERT into ``srv_invites`` to bypass the
-    handler positional-arg bug.
+    half creates the invite through the real manager method.
     """
     owner, _server, channel = _build_owner_with_server(server_manager, auth_manager)
 
@@ -255,35 +236,14 @@ def test_create_channel_invite_dual_probe_passes_for_owner(
     ch = server_manager.get_channel(channel.id, owner.id)
     assert ch is not None
 
-    # Direct SQL INSERT (handler bug bypass).
-    code = uuid.uuid4().hex[:8]  # 8-char code matching invite_code_length default
-    invite_id = server_manager._generate_id()
-    now_ms = server_manager._get_timestamp()
-    server_manager._db.execute(
-        """INSERT INTO srv_invites
-           (id, code, server_id, channel_id, inviter_id, max_age,
-            max_uses, temporary, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            invite_id,
-            code,
-            channel.server_id,
-            channel.id,
-            owner.id,
-            3600,
-            1,
-            0,
-            now_ms,
-            now_ms + (3600 * 1000),
-        ),
+    # Real handler path (previously bypassed with direct SQL).
+    invite = server_manager.create_invite(
+        owner.id,
+        channel.id,
+        max_age=3600,
+        max_uses=1,
+        temporary=False,
     )
-
-    # Read the row back through the manager's getter to confirm the
-    # dual-probe didn't leave the invite table in an inconsistent
-    # shape. We use ``get_invite`` rather than the buggy ``create_invite``
-    # manager method -- ``get_invite`` reads the row directly via
-    # ``db.fetch_one`` and doesn't touch the positional bug.
-    invite = server_manager.get_invite(code)
     assert invite is not None
-    assert invite.code == code
+    assert invite.channel_id == channel.id
     assert len(invite.code) >= 6  # invite code length floor

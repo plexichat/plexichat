@@ -49,8 +49,21 @@ class TestValidator:
         """Test getting migration files from valid directory."""
         files = get_migration_files(str(migration_manager.migrations_dir))
         assert isinstance(files, list)
-        # Should have at least the initial schema
-        assert len(files) > 0
+        # Every entry is a (version, path) tuple and the list is sorted
+        assert len(files) >= 1
+        versions = [v for v, _ in files]
+        assert versions == sorted(versions)
+        for _, path in files:
+            assert os.path.isfile(path)
+        # Exactly the numeric-prefixed .py files on disk are returned
+        expected = sorted(
+            fname.split("_")[0]
+            for fname in os.listdir(str(migration_manager.migrations_dir))
+            if fname.endswith(".py")
+            and fname != "__init__.py"
+            and fname.split("_")[0].isdigit()
+        )
+        assert versions == expected
 
     def test_calculate_checksum_consistency(self):
         """Test that checksum is consistent for same content."""

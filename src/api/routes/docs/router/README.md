@@ -1,84 +1,129 @@
-# Documentation Router Sub-package
+# Docs router
 
-This package refactors the monolithic `router.py` into a class-based,
-mixin-oriented architecture. Each file contains a focused mixin class,
-and the `composer.py` combines them via multiple inheritance.
+This package implements the documentation router as a set of focused mixin classes.
 
-## Architecture
+## Overview
+
+The `router` package refactors the documentation routes into a class-based, mixin architecture. Each file defines one mixin that handles a group of pages. `DocsRouter` combines the mixins through multiple inheritance and registers all routes on a FastAPI `APIRouter` through `register_routes()`.
+
+To use the router, import `router` from `src.api.routes.docs.router`. That module creates a singleton `DocsRouter`, calls `register_routes()`, and re-exports `clear_docs_cache` and `get_docs_stats` for backward compatibility.
+
+## File structure
 
 ```
 router/
-├── __init__.py          # Module-level APIRouter + thin function wrappers
-├── base.py              # DocsRouterBase — cache helpers, shared state
+├── __init__.py          # Creates APIRouter, instantiates DocsRouter, re-exports helpers
+├── base.py              # DocsRouterBase — DOCS_ROOT, cache helpers, stats
 ├── serving.py           # ServingMixin — _serve_page HTML rendering
-├── core_pages.py        # CorePagesMixin — index, getting-started, features…
-├── config_pages.py      # ConfigPagesMixin — config-*, deployment/configuration/*
-├── deployment_pages.py  # DeploymentPagesMixin — deployment/*, migrations
-├── admin_pages.py       # AdminPagesMixin — admin/*
+├── core_pages.py        # CorePagesMixin — index, getting-started, features, permissions, security
+├── config_pages.py      # ConfigPagesMixin — configuration/* and config-* pages
+├── deployment_pages.py  # DeploymentPagesMixin — deployment/* and migrations
+├── admin_pages.py       # AdminPagesMixin — admin/* pages
 ├── reference_pages.py   # ReferencePagesMixin — reference/*, rate-limits, errors
-├── websocket_pages.py   # WebSocketPagesMixin — websocket/*, client-development/*
-├── user_pages.py        # UserPagesMixin — end-user/*
+├── websocket_pages.py   # WebSocketPagesMixin — websocket/* and client-development/*
+├── user_pages.py        # UserPagesMixin — end-user/* pages
 ├── env_generator.py     # EnvGeneratorMixin — env-generator, security-logout, access-blocked
+├── cli_pages.py         # CliPagesMixin — cli/* pages
 ├── composer.py          # DocsRouter — combines all mixins, register_routes()
 └── README.md            # This file
 ```
 
-## Inheritance Order
+## Inheritance order
 
-`DocsRouter` uses C3 linearisation (MRO):
+`DocsRouter` follows Python C3 method resolution order (MRO). The order matters: the serving mixin must appear before the page mixins that call `_serve_page`, and `DocsRouterBase` must be last so its state initializes correctly.
 
+```python
+class DocsRouter(
+    ServingMixin,
+    CorePagesMixin,
+    ConfigPagesMixin,
+    DeploymentPagesMixin,
+    AdminPagesMixin,
+    ReferencePagesMixin,
+    WebSocketPagesMixin,
+    UserPagesMixin,
+    EnvGeneratorMixin,
+    CliPagesMixin,
+    DocsRouterBase,
+): ...
 ```
-DocsRouter
-  → ServingMixin
-  → CorePagesMixin
-  → ConfigPagesMixin
-  → DeploymentPagesMixin
-  → AdminPagesMixin
-  → ReferencePagesMixin
-  → WebSocketPagesMixin
-  → UserPagesMixin
-  → EnvGeneratorMixin
-  → DocsRouterBase
+
+Execution order:
+
+1. `ServingMixin` — provides `_serve_page`.
+2. `CorePagesMixin` through `CliPagesMixin` — page handlers that call `_serve_page`.
+3. `DocsRouterBase` — shared cache and configuration at the base of the MRO.
+
+## Key design decisions
+
+### Instance methods with shared state
+
+Module-level functions became instance methods so they share `self._docs_cache` and `self._html_cache` without global variables.
+
+### Explicit registration
+
+The `@router.get(...)` decorator pattern is replaced by explicit calls in `register_routes()`:
+
+```python
+def register_routes(self, router: APIRouter) -> None:
+    router.get("/getting-started", include_in_schema=False)(self.docs_getting_started)
 ```
 
-The stack order is important: concrete mixins come first, the serving
-mixin (which provides `_serve_page`) comes before the page mixins (which
-call it), and `DocsRouterBase` sits at the bottom so its `__init__` runs
-last.
+This keeps route paths in one place and avoids decorator side effects at import time.
 
-## Key Design Decisions
+### Module-level wrappers for compatibility
 
-1. **Function → Method**: All module-level functions became instance methods
-   so they can share state through `self._docs_cache` / `self._html_cache`.
+`__init__.py` creates a singleton `_docs_router` and re-exports:
 
-2. **Decorator → register_routes()**: The `@router.get(...)` decorators are
-   replaced by explicit `router.get(path)(method)` calls in
-   `register_routes()`.
+```python
+clear_docs_cache = _docs_router.clear_docs_cache
+get_docs_stats = _docs_router.get_docs_stats
+```
 
-3. **Module-level wrappers**: `clear_docs_cache()` and `get_docs_stats()`
-   are module-level functions in `__init__.py` that delegate to a singleton
-   `DocsRouter` instance. This preserves backward compatibility for
-   consumers that import them directly.
+Existing callers that import these names continue to work.
 
-4. **DOCS_ROOT adjustment**: The path computation uses `.parents[5]` (one
-   more level than the original `router.py`) because the file is now nested
-   one directory deeper (`router/base.py` vs `router.py`).
+### DOCS_ROOT path adjustment
 
-5. **ServingMixin imports**: The `_serve_page` method re-imports its
-   dependencies inside the method body to avoid circular import issues
-   at module load time. (In practice these are safe, but keeping the
-   pattern explicit avoids surprises during refactoring.)
+`DocsRouterBase.DOCS_ROOT` is `Path(__file__).resolve().parents[5] / "docs"` — one level deeper than the original monolithic `router.py` because the file now lives at `router/base.py`.
 
-## Adding a New Page
+### Lazy imports in ServingMixin
 
-1. Add the route handler method to the appropriate mixin (or create a new
-   mixin file if it belongs to a new category).
-2. In `composer.py`, add `router.get("/path")(self.handler_method)` to
-   `register_routes()`.
-3. If the mixin is new, add it to the `DocsRouter` class definition's
-   MRO list.
+`_serve_page` imports its dependencies inside the method body to avoid circular imports at module load time.
 
-## Migration Note
+## Add a new page
 
-This refactoring preserves the exact same route paths, handler signatures,
-caching behaviour, and HTML output. No functional changes were introduced.
+1. Add a handler method to the appropriate mixin file, or create a new mixin if the page belongs to a new category.
+
+   ```python
+   class MyPagesMixin(DocsRouterBase):
+       async def docs_my_page(self, request: Request):
+           return await self._serve_page(
+               source_key="my-page",
+               title="My page",
+               current_path="/my-page",
+               request=request,
+           )
+   ```
+
+2. Register the path in `composer.py:register_routes`:
+
+   ```python
+   router.get("/my-page", include_in_schema=False)(self.docs_my_page)
+   ```
+
+3. If you created a new mixin, add it to the `DocsRouter` base-class list in `composer.py`.
+
+## Migration note
+
+This refactoring preserves paths, handler signatures, caching behavior, and HTML output from the original `router.py`. No functional changes were introduced.
+
+## Dependencies
+
+* `DocsRouterBase` from `base.py` for `DOCS_ROOT`, `_get_cached_value`, `_set_cached_value`, `_build_html_cache_key`, `clear_docs_cache`, and `get_docs_stats`.
+* `DocsConfig` helpers from `../config.py`.
+* FastAPI `APIRouter` and `Response`.
+
+## Notes
+
+* All docs routes use `include_in_schema=False` because they serve HTML pages, not JSON API operations.
+* Caching uses class-level dictionaries (`_docs_cache`, `_html_cache`) keyed by source, title, path, and config representation, with TTL and max-entries eviction.

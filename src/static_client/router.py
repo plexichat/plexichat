@@ -26,8 +26,8 @@ import re
 from dataclasses import dataclass
 from email.utils import formatdate
 from pathlib import Path
-from typing import List, Optional, Tuple, cast
-from urllib.parse import unquote
+from typing import Any, Dict, List, Optional, Tuple, cast
+from urllib.parse import quote
 
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -145,7 +145,9 @@ def _build_paths(
         admin_path=admin_path,
         docs_path=docs_path,
         static_prefixes=static_prefixes,
-        api_prefixes=tuple(dict.fromkeys(api_prefixes)),  # type: ignore  # dataclass strict-tuple-size mismatch is a false positive
+        api_prefixes=tuple(
+            dict.fromkeys(api_prefixes)
+        ),  # dataclass strict-tuple-size mismatch is a false positive
         static_files=("/favicon.svg", "/config.js", "/robots.txt"),
     )
 
@@ -179,23 +181,29 @@ class _ResolvedFile:
 
 
 def _scope_client_ip(scope: Scope) -> Optional[str]:
-    """Best-effort extraction of the client IP from an ASGI scope."""
+    """Extract the client IP from an ASGI scope.
+
+    Delegates to :func:`src.utils.net.get_client_ip`, the consolidated
+    trusted-proxy-aware extractor used by the API rate limiter. This means
+    ``X-Forwarded-For`` is only honoured when the direct peer is a configured
+    trusted proxy, so a client cannot spoof its IP to bypass the static-client
+    rate limit. Falls back to the raw socket address if extraction fails.
+    """
+    try:
+        from src.utils.net import get_client_ip
+
+        # ASGI ``Scope`` is a ``MutableMapping``; ``get_client_ip`` accepts a
+        # plain ``Dict`` at runtime, so this is a safe, zero-cost widening cast.
+        ip = get_client_ip(cast(Dict[str, Any], scope))
+        if ip:
+            return ip
+    except Exception:
+        pass
     client = scope.get("client")
     if isinstance(client, (tuple, list)) and client:
         host = client[0]
         if host:
             return str(host)
-    for name, value in scope.get("headers") or []:
-        if isinstance(name, (bytes, bytearray)) and name.lower() == b"x-forwarded-for":
-            try:
-                raw = (
-                    value.decode("latin-1") if isinstance(value, bytes) else str(value)
-                )
-            except Exception:
-                continue
-            ip = raw.split(",")[0].strip()
-            if ip:
-                return ip
     return None
 
 
@@ -244,7 +252,7 @@ class _RateLimitOutcome:
     headers: Tuple[Tuple[bytes, bytes], ...]
 
 
-def _check_static_client_rate_limit(
+async def _check_static_client_rate_limit(
     scope: Scope, route_key: str, enabled: bool = True
 ) -> _RateLimitOutcome:
     """Run a rate limit check via the shared rate limiter.
@@ -252,35 +260,61 @@ def _check_static_client_rate_limit(
     Returns an ``_RateLimitOutcome`` describing whether the request is
     allowed, the suggested ``Retry-After`` (when blocked) and any
     informational headers to surface to the client.
+
+    Failure semantics are tier-aware:
+
+    * ``static_client:html`` FAILS CLOSED — if the limiter cannot answer,
+      HTML (the expensive, dynamic tier) is denied 429 with a loud error
+      log. An unmetered HTML tier combined with this middleware sitting
+      outside the global RateLimitMiddleware would otherwise be a free
+      DoS amplifier.
+    * asset requests fail open but log a warning; hashed static files are
+      cheap and cacheable, so availability outweighs strict metering.
     """
+    fail_closed = route_key == _ROUTE_HTML
+
+    def _limiter_failure(reason: str) -> _RateLimitOutcome:
+        if fail_closed:
+            logger.error(
+                f"static_client: rate limiter unavailable for HTML tier "
+                f"({reason}); failing CLOSED (denying request)"
+            )
+            return _RateLimitOutcome(False, 5, ())
+        logger.warning(
+            f"static_client: rate limiter unavailable for asset tier "
+            f"({reason}); allowing un-metered asset request"
+        )
+        return _RateLimitOutcome(True, None, ())
+
     if not enabled:
+        # Explicit operator disable is configuration, not a failure.
         return _RateLimitOutcome(True, None, ())
 
     try:
         from src.core import ratelimit
 
         if not ratelimit.is_setup():
-            return _RateLimitOutcome(True, None, ())
-    except Exception:
-        return _RateLimitOutcome(True, None, ())
+            return _limiter_failure("rate limiter not set up")
+    except Exception as exc:
+        return _limiter_failure(f"rate limiter import failed: {exc}")
 
     ip = _scope_client_ip(scope)
     if not ip:
-        return _RateLimitOutcome(True, None, ())
+        return _limiter_failure("client IP could not be extracted")
 
     is_internal = _is_internal_scope(scope)
     if is_internal:
         return _RateLimitOutcome(True, None, ())
 
     try:
-        result = ratelimit.check_rate_limit(
+        result = await ratelimit.acheck_rate_limit(
             ip_address=ip,
             route=route_key,
             is_internal=False,
         )
     except Exception as exc:
         logger.warning(f"static_client: rate limit check failed: {exc}")
-        return _RateLimitOutcome(True, None, ())
+        return _limiter_failure(f"check raised: {exc}")
 
     info_headers: List[Tuple[bytes, bytes]] = []
     try:
@@ -315,6 +349,37 @@ def _check_static_client_rate_limit(
         return _RateLimitOutcome(False, retry_after, retry_header)
 
     return _RateLimitOutcome(True, None, tuple(info_headers))
+
+
+def _parse_range(spec: str, size: int) -> Tuple[int, int, bool, bool]:
+    """Parse a single ``bytes=`` range spec (RFC 7233).
+
+    Returns ``(start, end, is_partial, unsatisfiable)`` where ``end`` is
+    inclusive. ``unsatisfiable=True`` means the caller must answer ``416``
+    with ``Content-Range: bytes */<size>``. Multi-range specs are unsupported
+    and return a full-body (200) tuple instead.
+    """
+    # Multi-range requests are unsupported: fall back to the full body.
+    if "," in spec:
+        return 0, size - 1, False, False
+    try:
+        if spec.startswith("-"):
+            # Suffix range: the final ``n`` bytes (``bytes=-n``).
+            n = int(spec[1:])
+            if n <= 0:
+                return 0, size - 1, False, True
+            if size <= 0:
+                return 0, size - 1, False, False
+            return max(0, size - n), size - 1, True, False
+        first, _, last = spec.partition("-")
+        start = int(first) if first else 0
+        end = int(last) if last else size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            return 0, size - 1, False, True
+        return start, end, True, False
+    except ValueError:
+        return 0, size - 1, False, True
 
 
 class StaticClientMiddleware:
@@ -399,6 +464,14 @@ class StaticClientMiddleware:
         """Return True if *path* should be served by this middleware."""
         if not path:
             return False
+        # SECURITY: API-prefix exclusion MUST run FIRST. Extension- and
+        # prefix-based heuristics below must never be able to claim a path
+        # that belongs to the API/admin/docs/gateway surface; otherwise any
+        # future route ending in .js/.html/... would be shadowed by this
+        # middleware and bypass Authentication/RateLimit entirely.
+        for prefix in self._paths.api_prefixes:
+            if path == prefix or path.startswith(prefix):
+                return False
         # Exact-match static files are always ours
         if path in self._paths.static_files:
             return True
@@ -419,10 +492,6 @@ class StaticClientMiddleware:
         # "/" and "/index.html" are ours
         if path == "/" or path == "/index.html":
             return True
-        # Exclude API prefixes
-        for prefix in self._paths.api_prefixes:
-            if path == prefix or path.startswith(prefix):
-                return False
         # Anything else: SPA fallback (we will serve index.html)
         return True
 
@@ -449,18 +518,22 @@ class StaticClientMiddleware:
         ]
         scope = {**scope, "headers": headers}
 
-        decoded = unquote(path) or "/"
+        # ``scope["path"]`` is already percent-decoded by the ASGI server
+        # (uvicorn), so it is used directly. A second ``unquote`` would
+        # double-decode literal ``%XX`` sequences in real file names.
 
-        # Invite redirect: /invite/CODE -> 302 to /app.html?invite=CODE
+        # Invite redirect: /invite/CODE -> 302 to /app.html?invite=CODE.
+        # The code is percent-encoded so characters such as &, # or =
+        # cannot inject extra query parameters/fragments into the target.
         if self._cfg.invite_redirect:
-            m = self._invite_redirect_re.match(decoded)
+            m = self._invite_redirect_re.match(path)
             if m:
-                target = f"/app.html?invite={m.group(1)}"
+                target = f"/app.html?invite={quote(m.group(1), safe='')}"
                 await self._send_redirect(send, target)
                 return
 
-        route_key = _ROUTE_HTML if self._is_html_request(decoded) else _ROUTE_ASSETS
-        outcome = _check_static_client_rate_limit(
+        route_key = _ROUTE_HTML if self._is_html_request(path) else _ROUTE_ASSETS
+        outcome = await _check_static_client_rate_limit(
             scope, route_key, self._rate_limit_enabled
         )
         if not outcome.allowed:
@@ -475,11 +548,11 @@ class StaticClientMiddleware:
         # /config.js is generated per-request so serverUrl reflects the
         # request's actual origin (Host / Origin header) rather than the
         # value baked into the on-disk file at install time.
-        if Path(decoded).name == self._cfg.config_injection.filename:
+        if Path(path).name == self._cfg.config_injection.filename:
             await self._send_runtime_config(send, scope, outcome)
             return
 
-        resolved = self._resolve(install_path, decoded)
+        resolved = self._resolve(install_path, path)
         if resolved is None:
             await self._send_not_found(send)
             return
@@ -568,10 +641,11 @@ class StaticClientMiddleware:
             (b"permissions-policy", sec.permissions_policy.encode()),
             (b"content-security-policy", sec.content_security_policy.encode()),
         ]
-        origin = self._extract_origin_header(scope)
-        if origin:
-            headers.append((b"access-control-allow-origin", origin.encode()))
-        headers.append((b"vary", b"Accept-Encoding, Origin"))
+        # SECURITY: no Access-Control-Allow-Origin is emitted for static
+        # assets. Cross-origin reads of served files are not a feature, so
+        # reflecting the request Origin (previously unconditionally) only
+        # widened the attack surface beyond the configured CORS allowlist.
+        headers.append((b"vary", b"Accept-Encoding"))
         for k, v in rate_limit_headers:
             headers.append((k, v))
         return headers
@@ -731,23 +805,12 @@ class StaticClientMiddleware:
             and range_header.startswith("bytes=")
             and (not if_range or if_range == etag)
         ):
-            try:
-                range_val = range_header[len("bytes=") :]
-                if "-" in range_val:
-                    s, e = range_val.split("-", 1)
-                    if s:
-                        start = int(s)
-                    if e:
-                        end = int(e)
-                    end = min(end, size - 1)
-                    if start <= end and 0 <= start < size:
-                        is_partial = True
-                    else:
-                        start = 0
-                        end = size - 1
-            except ValueError:
-                start = 0
-                end = size - 1
+            start, end, is_partial, unsatisfiable = _parse_range(
+                range_header[len("bytes=") :], size
+            )
+            if unsatisfiable:
+                await self._send_range_not_satisfiable(send, size)
+                return
 
         content_length = end - start + 1
         rl_headers = (
@@ -818,6 +881,22 @@ class StaticClientMiddleware:
                 "headers": [
                     (b"content-type", b"text/plain; charset=utf-8"),
                     (b"content-length", str(len(body)).encode()),
+                    (b"x-content-type-options", b"nosniff"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body, "more_body": False})
+
+    async def _send_range_not_satisfiable(self, send: Send, size: int) -> None:
+        body = b""
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 416,
+                "headers": [
+                    (b"content-range", f"bytes */{size}".encode()),
+                    (b"content-length", b"0"),
+                    (b"cache-control", b"no-store"),
                     (b"x-content-type-options", b"nosniff"),
                 ],
             }

@@ -1,200 +1,218 @@
-# Relationships Module
+# Relationships
 
-Friend and block management system for Plexichat API supporting friend requests, blocking, and mutual information queries.
+Manage friends and blocks in Plexichat.
 
-## Features
+## Overview
 
-- Friend requests (send, accept, decline, cancel)
-- Block/unblock users
-- Relationship states: none, friend, blocked, pending_incoming, pending_outgoing
-- Get friends list
-- Get blocked users list
-- Get pending requests (incoming and outgoing)
-- Check relationship between two users
-- Mutual friends calculation
-- Mutual servers calculation (integrates with servers module)
-- Auto-decline pending requests when blocking
-- Auto-remove friendship when blocking
+The relationships module provides friend requests, bidirectional friendships, block and unblock, relationship status queries, and mutual information. It automatically resolves conflicts when blocks occur and integrates with the servers module for mutual server counts.
 
-## Setup
+Use this module to implement friend lists, block lists, and relationship-aware features such as direct message access control.
+
+## Before you begin
+
+Call `setup` once at startup before using any other function. Pass a connected database instance and, optionally, auth and servers modules.
 
 ```python
-from src.core.database import Database
-from src.core import auth
-from src.core import servers
-from src.core import relationships
+from plexichat.src.core.database import Database
+from plexichat.src.core import auth
+from plexichat.src.core import servers
+from plexichat.src.core import relationships
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize auth first
 auth.setup(db)
-
-# Initialize servers (optional, for mutual servers)
 servers.setup(db, auth)
 
-# Initialize relationships
 relationships.setup(db, auth, servers)
 ```
 
-## Usage
+`__init__.py:101` stores the manager singleton. All public functions delegate to `RelationshipManager` (`manager/composer.py`) through `_get_manager` (`__init__.py:119`), which raises `RuntimeError` if you call it before setup.
 
-### Friend Requests
+## Send and respond to friend requests
+
+### Send a friend request
 
 ```python
-from src.core import relationships
+from plexichat.src.core import relationships
 
-# Send a friend request
 request = relationships.send_friend_request(
     sender_id=user1_id,
     recipient_id=user2_id,
-    message="Hey, let's be friends!"
+    message="Hey, let's be friends!",
 )
-
-# Accept a friend request
-request = relationships.accept_friend_request(user2_id, request.id)
-
-# Decline a friend request
-request = relationships.decline_friend_request(user2_id, request.id)
-
-# Cancel a sent friend request
-request = relationships.cancel_friend_request(user1_id, request.id)
-
-# Get pending incoming requests
-incoming = relationships.get_pending_requests_incoming(user_id)
-
-# Get pending outgoing requests
-outgoing = relationships.get_pending_requests_outgoing(user_id)
 ```
 
-### Friends Management
+### Accept, decline, or cancel a request
 
 ```python
-# Get friends list
-friends = relationships.get_friends(user_id)
+# Recipient accepts or declines
+request = relationships.accept_friend_request(user2_id, request.id)
+request = relationships.decline_friend_request(user2_id, request.id)
 
-# Get friend IDs only
+# Sender cancels an outgoing request
+request = relationships.cancel_friend_request(user1_id, request.id)
+
+# Look up a request by ID
+request = relationships.get_friend_request(request.id)
+
+# List pending requests
+incoming = relationships.get_pending_requests_incoming(user_id, limit=100)
+outgoing = relationships.get_pending_requests_outgoing(user_id, limit=100)
+```
+
+Request lifecycle is defined in `models.py:21`: `PENDING`, `ACCEPTED`, `DECLINED`, `CANCELLED`. Accepting a pending request creates a bidirectional friendship.
+
+## Manage friends
+
+```python
+# List friends
+friends = relationships.get_friends(user_id, limit=100)
+
+# Get only IDs
 friend_ids = relationships.get_friend_ids(user_id)
 
-# Remove a friend (unfriend)
+# Remove a friend
 relationships.remove_friend(user_id, friend_id)
 ```
 
-### Blocking
+Friendship records are bidirectional and stored in `rel_friends`. `remove_friend` deletes both directions.
+
+## Block users
+
+Blocking is one-way. When you block a user, the module automatically handles cleanup (see [Blocking behavior](#blocking-behavior)).
 
 ```python
 # Block a user
-block = relationships.block_user(
-    blocker_id=user_id,
-    blocked_id=target_id,
-    reason="Spam"
-)
+block = relationships.block_user(blocker_id=user_id, blocked_id=target_id, reason="Spam")
 
-# Unblock a user
+# Unblock
 relationships.unblock_user(user_id, target_id)
 
-# Get blocked users list
-blocked = relationships.get_blocked_users(user_id)
-
-# Check if user is blocked
+# Query block state
+blocked = relationships.get_blocked_users(user_id, limit=100)
+blocked_ids = relationships.get_blocked_user_ids(user_id)
+all_blocked = relationships.get_all_blocked_ids(user_id)
 is_blocked = relationships.is_blocked(blocker_id, blocked_id)
-
-# Check if either user has blocked the other
 either_blocked = relationships.is_blocked_by_either(user1_id, user2_id)
 ```
 
-### Relationship Status
+## Check relationship status
+
+Use `get_relationship` to get the status between two users, or `get_all_relationships` for a complete overview.
 
 ```python
-# Get relationship between two users
 rel = relationships.get_relationship(user_id, target_id)
 
 if rel.status == relationships.RelationshipStatus.FRIEND:
-    print("You are friends!")
+    print("You are friends")
 elif rel.status == relationships.RelationshipStatus.BLOCKED:
     print("You have blocked this user")
 elif rel.status == relationships.RelationshipStatus.PENDING_INCOMING:
-    print("This user sent you a friend request")
+    print("They sent you a request")
 elif rel.status == relationships.RelationshipStatus.PENDING_OUTGOING:
-    print("You sent this user a friend request")
+    print("You sent them a request")
 else:
     print("No relationship")
+
+# Get all relationships at once
+all_rels = relationships.get_all_relationships(user_id)
 ```
 
-### Mutual Information
+### Status values
+
+Defined in `models.py:11`:
+
+| Status | Description |
+|--------|-------------|
+| `NONE` | No relationship. |
+| `FRIEND` | Users are bidirectional friends. |
+| `BLOCKED` | You have blocked the target. |
+| `PENDING_INCOMING` | Target sent you a friend request. |
+| `PENDING_OUTGOING` | You sent the target a friend request. |
+
+## Get mutual information
 
 ```python
-# Get mutual friends
-mutual_friends = relationships.get_mutual_friends(user1_id, user2_id)
-
-# Get mutual friend count
+# Mutual friends
+mutual_ids = relationships.get_mutual_friends(user1_id, user2_id)
 count = relationships.get_mutual_friend_count(user1_id, user2_id)
 
-# Get mutual servers (requires servers module)
+# Mutual servers (requires servers module)
 mutual_servers = relationships.get_mutual_servers(user1_id, user2_id)
+server_count = relationships.get_mutual_server_count(user1_id, user2_id)
 
-# Get all mutual info at once
+# All mutual information at once
 info = relationships.get_mutual_info(user1_id, user2_id)
 print(f"Mutual friends: {info.mutual_friend_count}")
 print(f"Mutual servers: {info.mutual_server_count}")
 ```
 
-## Relationship States
+`MutualInfo` is defined in `models.py:75`. When the servers module is not configured, mutual server queries return an empty list.
 
-| Status | Description |
-|--------|-------------|
-| none | No relationship between users |
-| friend | Users are friends |
-| blocked | User has blocked the target |
-| pending_incoming | Target sent a friend request to user |
-| pending_outgoing | User sent a friend request to target |
+## Blocking behavior
 
-## Blocking Behavior
+When you block a user (`manager/blocking.py`), the module does the following atomically:
 
-When a user blocks another:
-1. Any existing friendship is removed
-2. Any pending friend requests (in either direction) are auto-declined
-3. The blocked user cannot send new friend requests
-4. DM creation is prevented (when integrated with messaging)
+1. Removes any existing friendship in both directions.
+2. Declines pending friend requests in either direction.
+3. Prevents the blocked user from sending new friend requests. Attempts raise `UserBlockedError`.
+4. Supports DM filtering when the messaging module checks `is_blocked_by_either`.
 
-## Error Handling
+## Handle errors
 
-All relationship errors inherit from `RelationshipError`:
+All errors inherit from `RelationshipError` (`__init__.py:42`, `exceptions.py`):
+
+| Exception | When it occurs |
+|-----------|----------------|
+| `UserNotFoundError` | User does not exist. |
+| `SelfRelationshipError`, `CannotBlockSelfError` | You target yourself. |
+| `FriendRequestNotFoundError` | Request ID does not exist or you are not the recipient/sender. |
+| `FriendRequestExistsError` | A pending request already exists between these users. |
+| `AlreadyFriendsError` | Users are already friends. |
+| `NotFriendsError` | Users are not friends. |
+| `UserBlockedError` | Action blocked because either user has blocked the other. |
+| `AlreadyBlockedError` | User already blocked. |
+| `NotBlockedError` | User not blocked. |
+
+Example:
 
 ```python
-from src.core.relationships import (
-    RelationshipError,
-    UserNotFoundError,
-    SelfRelationshipError,
-    FriendRequestNotFoundError,
-    FriendRequestExistsError,
-    AlreadyFriendsError,
-    NotFriendsError,
+from plexichat.src.core.relationships import (
     UserBlockedError,
-    AlreadyBlockedError,
-    NotBlockedError,
-    CannotBlockSelfError,
+    AlreadyFriendsError,
+    FriendRequestExistsError,
 )
 
 try:
     relationships.send_friend_request(user_id, target_id)
-except UserBlockedError as e:
-    print(f"Cannot send request: blocked")
+except UserBlockedError:
+    print("Cannot send request: blocked")
 except AlreadyFriendsError:
-    print("Already friends!")
+    print("Already friends")
 except FriendRequestExistsError:
-    print("Request already sent")
+    print("Request already pending")
 ```
 
-## Database Schema
+## Data models
 
-Tables (prefixed with `rel_`):
-- `rel_friends` - Bidirectional friendship records
-- `rel_friend_requests` - Friend request history
-- `rel_blocked` - Block records
+Defined in `models.py`:
 
-## Testing
+* `Relationship` (`models.py:31`) — `user_id`, `target_user_id`, `status`, `created_at`, `updated_at`.
+* `FriendRequest` (`models.py:42`) — `id`, `sender_id`, `recipient_id`, `status`, `message`, `created_at`, `updated_at`.
+* `BlockedUser` (`models.py:55`) — `id`, `blocker_id`, `blocked_id`, `reason`, `created_at`.
+* `Friend` (`models.py:66`) — `id`, `user_id`, `friend_id`, `created_at`.
+* `MutualInfo` (`models.py:76`) — `mutual_friends`, `mutual_friend_count`, `mutual_servers`, `mutual_server_count`.
+
+### Database schema
+
+Tables are prefixed with `rel_` (`schema.py`):
+
+* `rel_friends` — Bidirectional friendship records.
+* `rel_friend_requests` — Friend request history.
+* `rel_blocked` — Block records.
+
+## Test the module
 
 ```bash
 pytest src/tests/relationships/ -v

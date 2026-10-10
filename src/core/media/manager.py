@@ -29,6 +29,7 @@ from ._config import (  # noqa: F401  (re-exported for convenience)
 )
 from ._validation import _ValidationMixin
 from ._storage_setup import _StorageSetupMixin
+from ._blobs import _BlobMixin
 from ._rate_limit import _RateLimitMixin
 from ._upload import _UploadMixin
 from ._thumbnails import _ThumbnailsMixin
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 class MediaManager(
     _ValidationMixin,
     _StorageSetupMixin,
+    _BlobMixin,
     _RateLimitMixin,
     _UploadMixin,
     _ThumbnailsMixin,
@@ -99,7 +101,8 @@ class MediaManager(
         # Thread pool for CPU-bound background work (compression, thumbnails,
         # dedup scanning, pHash computation). Sized for concurrent upload
         # throughput on a single-process deployment.
-        self._executor = ThreadPoolExecutor(max_workers=32)
+        max_workers = int(self._config.get("processing_threads", 8))
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
         # Deduplication (imported here to avoid circular imports)
         from .deduplication import setup as dedup_setup, DeduplicationManager
@@ -116,3 +119,23 @@ class MediaManager(
             self._compression_manager = None
 
         logger.info("Media module initialized")
+
+    def close(self) -> None:
+        """Shut down background workers and release resources.
+
+        Waits for in-flight executor tasks (malware scan, pHash dedup,
+        thumbnails, rate-limit update) to complete so no background
+        thread keeps touching the database after the manager is torn
+        down. Without this, a fire-and-forget task can outlive its
+        request/test and access a deleted SQLite file through its
+        mmap'd connection, crashing the whole process with SIGBUS.
+
+        Idempotent: safe to call multiple times or when already closed.
+        """
+        executor = self._executor
+        self._executor = None
+        if executor is not None:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except Exception as e:
+                logger.warning(f"Media background executor shutdown failed: {e}")

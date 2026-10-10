@@ -9,6 +9,7 @@ import threading
 import utils.logger as logger
 
 from src.core.events.models import Event
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 from .opcodes import GatewayOpcode
 from .connection import Connection
@@ -41,10 +42,28 @@ class GatewayDispatcher:
         self._rate_limit_per_minute = rate_limit_per_minute
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
+        # Observable back-pressure signal (C2): events dropped because a
+        # connection exceeded its per-minute send budget. Exposed via
+        # :meth:`get_rate_limit_metrics` instead of being silently
+        # debug-dropped.
+        self._rate_limited_events = 0
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the event loop for async dispatch."""
         self._loop = loop
+
+    def get_rate_limit_metrics(self) -> Dict[str, int]:
+        """Expose outbound back-pressure metrics for observability (C2).
+
+        Returns the cumulative number of events dropped because a
+        connection exceeded its per-minute rate budget, plus the
+        configured budget itself.
+        """
+        with self._lock:
+            return {
+                "rate_limited_events": self._rate_limited_events,
+                "rate_limit_per_minute": self._rate_limit_per_minute,
+            }
 
     def on_event(self, event: Event, user_ids: List[int]) -> None:
         """
@@ -54,21 +73,26 @@ class GatewayDispatcher:
             event: Event to dispatch
             user_ids: Target user IDs
         """
-        if self._loop:
+        # C7: prefer the current thread's running loop, then the captured
+        # per-connection loop. asyncio.get_event_loop() outside a running loop
+        # is deprecated on 3.12+ and the previous except-pass silently DROPPED
+        # events whenever neither loop was available (e.g. startup ordering
+        # before set_event_loop).
+        loop: Optional[asyncio.AbstractEventLoop] = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self._loop
+        if loop is not None and not loop.is_closed():
             asyncio.run_coroutine_threadsafe(
                 self.dispatch_event(event, user_ids),
-                self._loop,
+                loop,
             )
-        else:
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        self.dispatch_event(event, user_ids),
-                        loop,
-                    )
-            except RuntimeError:
-                pass
+            return
+        logger.warning(
+            f"GatewayDispatcher: no running event loop to dispatch "
+            f"{event.event_type.value} to {len(user_ids)} users; event dropped"
+        )
 
     async def dispatch_event(
         self,
@@ -112,8 +136,18 @@ class GatewayDispatcher:
             if not getattr(
                 connection, "is_selftest", False
             ) and not connection.check_rate_limit(self._rate_limit_per_minute):
-                logger.debug(
-                    f"Rate limited connection {getattr(connection, 'id', None)}"
+                # BACK-PRESSURE (C2): rate-limited sends are counted and
+                # logged at WARNING (not silently debug-dropped) so
+                # saturation is observable. The counter is exposed via
+                # get_rate_limit_metrics() for /health-style dashboards.
+                with self._lock:
+                    self._rate_limited_events += 1
+                    total_limited = self._rate_limited_events
+                logger.warning(
+                    f"Rate limited connection {connection.connection_id} "
+                    f"(user={connection.user_id}); dropped "
+                    f"{event.event_type.value} "
+                    f"(total rate-limited drops: {total_limited})"
                 )
                 continue
 
@@ -188,7 +222,7 @@ class GatewayDispatcher:
         self,
         connection: Connection,
         opcode: GatewayOpcode,
-        data: Optional[Dict[str, Any]] = None,
+        data: Optional[Any] = None,
         event_type: Optional[str] = None,
     ) -> bool:
         """
@@ -209,14 +243,70 @@ class GatewayDispatcher:
             payload["s"] = connection.increment_sequence()
             if event_type:
                 payload["t"] = event_type
-            payload["d"] = data or {}
+            # Central backstop (matches _build_dispatch_payload): a raw
+            # DISPATCH frame bypasses Event construction, so stringify here
+            # or a hand-built dict leaks a numeric snowflake to JS clients.
+            payload["d"] = stringify_snowflake_ids(data or {})
 
             if connection.session_id:
                 self._session_manager.record_event(connection.session_id, payload)
         else:
-            payload["d"] = data
+            # Non-DISPATCH frames (VOICE_SPEAKING, VOICE_SDP_*, HELLO, ...)
+            # carry ids too; stringify id keys so a future caller cannot
+            # leak a numeric snowflake. Scalars (bool/None) pass through.
+            payload["d"] = stringify_snowflake_ids(data)
 
         return await self._send_to_connection(connection, payload)
+
+    async def dispatch_raw_to_users(
+        self,
+        user_ids: List[int],
+        opcode: GatewayOpcode,
+        data: Optional[Any] = None,
+    ) -> int:
+        """Fan a raw (non-DISPATCH) frame out to every connection of ``user_ids``.
+
+        ``dispatch_raw`` targets a single connection; an opcode frame that is
+        peer-visible state (a voice speaking indicator) has no single target.
+        Mirrors ``dispatch_event``'s connection lookup, rate-limit accounting
+        and gather semantics. Intents are not consulted: they gate *events*
+        (which carry an event type), and a raw frame carries none.
+
+        Args:
+            user_ids: Target user IDs
+            opcode: Gateway opcode to send
+            data: Payload data
+
+        Returns:
+            Number of connections the frame was sent to
+        """
+        target_ids = [int(uid) for uid in user_ids]
+        if not target_ids:
+            return 0
+
+        connections = self._session_manager.get_connections_for_users(target_ids)
+        if not connections:
+            return 0
+
+        tasks = []
+        for connection in connections:
+            if not getattr(
+                connection, "is_selftest", False
+            ) and not connection.check_rate_limit(self._rate_limit_per_minute):
+                with self._lock:
+                    self._rate_limited_events += 1
+                logger.warning(
+                    f"Rate limited connection {connection.connection_id} "
+                    f"(user={connection.user_id}); dropped raw opcode {int(opcode)}"
+                )
+                continue
+            tasks.append(self.dispatch_raw(connection, opcode, data))
+
+        if not tasks:
+            return 0
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return sum(1 for r in results if r is True)
 
     async def send_hello(self, connection: Connection) -> bool:
         """
@@ -244,8 +334,11 @@ class GatewayDispatcher:
         Returns:
             True if sent successfully
         """
-        connection.record_heartbeat_ack()
-        return await self.dispatch_raw(connection, GatewayOpcode.HEARTBEAT_ACK)
+        sent = await self.dispatch_raw(connection, GatewayOpcode.HEARTBEAT_ACK)
+        if sent:
+            # Record only once the ACK was actually written (Agent 38 F7).
+            connection.record_heartbeat_ack()
+        return sent
 
     async def send_invalid_session(
         self,
@@ -265,7 +358,7 @@ class GatewayDispatcher:
         return await self.dispatch_raw(
             connection,
             GatewayOpcode.INVALID_SESSION,
-            {"resumable": resumable},
+            resumable,
         )
 
     async def send_reconnect(self, connection: Connection) -> bool:
@@ -322,7 +415,9 @@ class GatewayDispatcher:
             "op": int(GatewayOpcode.DISPATCH),
             "t": event.event_type.value,
             "s": seq,
-            "d": event.data,
+            # Central backstop: every id that crosses the wire is a decimal
+            # string, regardless of how the event was built.
+            "d": stringify_snowflake_ids(event.data),
         }
 
         if connection.session_id:
@@ -344,6 +439,37 @@ class GatewayDispatcher:
             )
             return False
 
+    def _resolve_server_member_ids(self, server_id: int) -> set:
+        """Resolve the user ids that are members of ``server_id``.
+
+        Returns an empty set when membership cannot be determined (no
+        servers module wired, or the lookup failed) so callers fail closed
+        instead of over-broadcasting.
+        """
+        try:
+            from src.api.websocket import get_servers_module
+
+            servers_module = get_servers_module()
+        except Exception as e:
+            logger.warning(
+                f"GatewayDispatcher: servers module unavailable while resolving "
+                f"members of server {server_id}: {e}"
+            )
+            return set()
+        if not servers_module:
+            logger.warning(
+                f"GatewayDispatcher: no servers module wired; refusing to "
+                f"resolve members of server {server_id}"
+            )
+            return set()
+        try:
+            return {int(uid) for uid in servers_module.get_member_user_ids(server_id)}
+        except Exception as e:
+            logger.warning(
+                f"GatewayDispatcher: failed to list members of server {server_id}: {e}"
+            )
+            return set()
+
     async def broadcast_to_server(
         self,
         server_id: int,
@@ -352,6 +478,12 @@ class GatewayDispatcher:
     ) -> int:
         """
         Broadcast an event to all members of a server.
+
+        SECURITY: this previously fanned out to EVERY connected authenticated
+        user regardless of membership, despite its name and docstring, so any
+        server-scoped event pushed through it leaked to non-members. Recipients
+        are now resolved through the servers module and the broadcast fails
+        closed (sends nothing) when membership cannot be determined.
 
         Args:
             server_id: Server ID
@@ -365,9 +497,17 @@ class GatewayDispatcher:
         sent_count = 0
         tasks = []
 
-        with self._lock:
-            all_connections = self._session_manager.get_all_connections()
-        for conn in all_connections:
+        member_ids = self._resolve_server_member_ids(server_id)
+        target_ids = [uid for uid in member_ids if uid not in exclude_set]
+        if not target_ids:
+            logger.debug(
+                f"GatewayDispatcher: no deliverable members for server "
+                f"{server_id}; dropping {event.event_type.value}"
+            )
+            return 0
+
+        connections = self._session_manager.get_connections_for_users(target_ids)
+        for conn in connections:
             if not conn.is_authenticated:
                 continue
             # conn.user_id is guaranteed to be non-None by is_authenticated
@@ -417,7 +557,11 @@ class GatewayDispatcher:
             if conn.is_authenticated:
                 payload = {
                     "op": int(GatewayOpcode.SERVER_STATUS),
-                    "d": status_data,
+                    # Central backstop (matches _build_dispatch_payload and
+                    # dispatch_raw): status_data is caller-built, so stringify
+                    # id-shaped keys here or a future key such as server_id
+                    # leaks as a JSON number that JS clients round.
+                    "d": stringify_snowflake_ids(status_data),
                 }
                 tasks.append(self._send_to_connection(conn, payload))
 
@@ -460,21 +604,48 @@ class GatewayDispatcher:
         tasks = []
 
         if connections is None:
-            with self._lock:
-                connections = self._session_manager.get_all_connections()
+            # SECURITY: scope the broadcast to conversation participants only.
+            # Sending ratchet rotations (conversation ID, message anchor,
+            # timing) to every connected user would leak private-conversation
+            # metadata, unlike every other event which is routed via
+            # EventRouter.get_recipients.
+            try:
+                from src.core.messaging import get_participant_ids
 
-        payload = {
-            "op": int(GatewayOpcode.RATCHET_UPDATE),
-            "t": "RATCHET_UPDATE",
-            "d": {
-                "conversation_id": int(conversation_id),
-                **dict(update_data),
-            },
-        }
+                participant_ids = set(get_participant_ids(conversation_id))
+                connections = self._session_manager.get_connections_for_users(
+                    list(participant_ids)
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to resolve participants for RATCHET_UPDATE "
+                    f"(conversation {conversation_id}): {e}"
+                )
+                connections = []
 
         for conn in connections:
             if not conn.is_authenticated:
                 continue
+            # F9: ratchet rotations must be sequenced and recorded in the
+            # session replay buffer exactly like every other dispatched
+            # event. Previously the frame was built once without an ``s``
+            # and sent raw, so clients could not dedupe it across
+            # reconnects and a rotation that fired while a participant was
+            # disconnected was never redelivered on resume -- leaving that
+            # client with a stale ratchet interval key.
+            payload = {
+                "op": int(GatewayOpcode.RATCHET_UPDATE),
+                "t": "RATCHET_UPDATE",
+                "s": conn.increment_sequence(),
+                "d": stringify_snowflake_ids(
+                    {
+                        "conversation_id": int(conversation_id),
+                        **dict(update_data),
+                    }
+                ),
+            }
+            if conn.session_id:
+                self._session_manager.record_event(conn.session_id, payload)
             tasks.append(self._send_to_connection(conn, payload))
 
         if tasks:

@@ -40,10 +40,15 @@ class ReadyEvent(Event):
 
     def __post_init__(self):
         self.event_type = EventType.READY
+        # Copy (never alias): the constructor may receive the caller's
+        # containers, and ``data``/fields must stay independent so a
+        # later mutation of one cannot corrupt the other.
+        self.user = dict(self.user) if self.user is not None else None
+        self.guilds = list(self.guilds)
         self.data = {
             "v": 10,
-            "user": self.user or {},
-            "guilds": self.guilds,
+            "user": dict(self.user) if self.user is not None else {},
+            "guilds": list(self.guilds),
             "session_id": self.session_id,
             "resume_gateway_url": self.resume_gateway_url,
         }

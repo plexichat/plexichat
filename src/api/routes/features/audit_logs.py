@@ -75,21 +75,43 @@ async def get_user_audit_logs(
         rows = db.fetch_all(query, tuple(params))
         entries = []
         for row in rows:
-            data = dict(row)
+            if isinstance(row, dict):
+                data = row
+            else:
+                data = {
+                    "id": row[0],
+                    "server_id": row[1],
+                    "user_id": row[2],
+                    "action": row[3],
+                    "target_type": row[4],
+                    "target_id": row[5],
+                    "changes": row[6],
+                    "reason": row[7],
+                    "created_at": row[8],
+                }
             entries.append(
                 {
-                    "id": data.get("id"),
-                    "server_id": data.get("server_id"),
-                    "user_id": data.get("user_id"),
+                    # Snowflake ids are emitted as strings: a JS Number cannot
+                    # hold a 64-bit id exactly, so a numeric id would be rounded
+                    # by the client and subsequent lookups would miss.
+                    "id": str(data.get("id")) if data.get("id") is not None else None,
+                    "server_id": str(data.get("server_id"))
+                    if data.get("server_id") is not None
+                    else None,
+                    "user_id": str(data.get("user_id"))
+                    if data.get("user_id") is not None
+                    else None,
                     "action": data.get("action"),
                     "target_type": data.get("target_type"),
-                    "target_id": data.get("target_id"),
+                    "target_id": str(data.get("target_id"))
+                    if data.get("target_id") is not None
+                    else None,
                     "changes": data.get("changes"),
                     "reason": data.get("reason"),
                     "created_at": data.get("created_at"),
                 }
             )
         return {"entries": entries}
-    except Exception as e:
-        logger.error(f"Failed to get user audit logs: {e}")
+    except Exception:
+        logger.error("Failed to get user audit logs", exc_info=True)
         raise_internal("Internal server error")

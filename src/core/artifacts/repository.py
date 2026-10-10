@@ -8,6 +8,7 @@ constrained to an explicit allow-list so no user input is interpolated into SQL.
 """
 
 import json
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -38,9 +39,15 @@ _COLUMNS = (
     "retention_policy",
     "expires_at",
     "license_feature",
+    "rev",
     "created_at",
     "updated_at",
 )
+
+# Repository-level default page size applied when a caller omits ``limit``
+# (L7): prevents unbounded full-table materialization by internal callers.
+_DEFAULT_LIST_LIMIT = 200
+
 
 # Allow-list of columns that may be used in ORDER BY. `duration` is a synthetic
 # key resolved to the `voice_calls.duration_seconds` column via a LEFT JOIN.
@@ -71,6 +78,27 @@ def _json_loads(value: Any) -> Any:
     return value
 
 
+def _parse_artifact_type(row: Dict[str, Any]) -> ArtifactType:
+    """Parse a persisted artifact_type string, tolerating legacy drift.
+
+    ``ArtifactType`` raises for unknown non-null strings (L18: silently
+    collapsing them to ``FUTURE`` masked schema drift and made divergent
+    rows unfilterable). A read of such a row must not crash the caller, but
+    the divergence must not pass silently either - log it and fall back to
+    the explicit ``FUTURE`` member.
+    """
+    raw_type = row["artifact_type"]
+    try:
+        return ArtifactType(raw_type)
+    except ValueError:
+        logger.error(
+            "artifact %s has unknown artifact_type %r; treating as 'future'",
+            row["id"],
+            raw_type,
+        )
+        return ArtifactType.FUTURE
+
+
 def row_to_artifact(row: Dict[str, Any]) -> Artifact:
     """Build an :class:`Artifact` from a DB row dict."""
     return Artifact(
@@ -79,7 +107,7 @@ def row_to_artifact(row: Dict[str, Any]) -> Artifact:
         channel_id=row.get("channel_id"),
         server_id=row.get("server_id"),
         author_id=row["author_id"],
-        artifact_type=ArtifactType(row["artifact_type"]),
+        artifact_type=_parse_artifact_type(row),
         title=row["title"],
         summary=row.get("summary"),
         status=ArtifactStatus(row["status"]),
@@ -88,6 +116,7 @@ def row_to_artifact(row: Dict[str, Any]) -> Artifact:
         payload=_json_loads(row.get("payload")) or {},
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        rev=int(row.get("rev", 0) or 0),
         retention_policy=_json_loads(row.get("retention_policy")),
         expires_at=row.get("expires_at"),
         license_feature=row.get("license_feature"),
@@ -112,14 +141,26 @@ def artifact_to_row(artifact: Artifact) -> Dict[str, Any]:
         "retention_policy": _json_dumps(artifact.retention_policy),
         "expires_at": artifact.expires_at,
         "license_feature": artifact.license_feature,
+        "rev": int(artifact.rev or 0),
         "created_at": artifact.created_at,
         "updated_at": artifact.updated_at,
     }
 
 
 def create_artifact(db, artifact: Artifact) -> Artifact:
-    """Insert an artifact row and return it unchanged."""
+    """Insert an artifact row and return it unchanged.
+
+    A new artifact whose payload carries a legacy numeric ``rev`` (editor
+    stamps) seeds the column from it so the first optimistic write continues
+    the chain instead of colliding at rev 1.
+    """
     row = artifact_to_row(artifact)
+    if int(row["rev"] or 0) <= 0:
+        from .revision import payload_revision
+
+        seeded = payload_revision(artifact.payload)
+        if seeded is not None and seeded > 0:
+            row["rev"] = seeded
     placeholders = ", ".join("?" for _ in _COLUMNS)
     column_list = ", ".join(_COLUMNS)
     query = f"INSERT INTO artifacts ({column_list}) VALUES ({placeholders})"
@@ -135,26 +176,46 @@ def get_artifact(db, artifact_id: SnowflakeID) -> Optional[Artifact]:
     return row_to_artifact(row)
 
 
-def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Artifact]:
+# Columns that may never be rewritten directly through ``update_artifact``:
+# ``rev`` is the optimistic-concurrency revision and only moves via the
+# atomic ``expected_rev`` path (or is seeded at insert). A stray ``rev`` in
+# fields would let a caller rewind/forge the revision chain.
+_IMMUTABLE_UPDATE_COLUMNS = frozenset({"rev"})
+
+
+def update_artifact(
+    db,
+    artifact_id: SnowflakeID,
+    expected_rev: Optional[int] = None,
+    **fields: Any,
+) -> Optional[Artifact]:
     """Update the given columns for an artifact and return the refreshed row.
 
     Only known columns are accepted; unknown keys are ignored to avoid
-    constructing SQL from arbitrary input.
+    constructing SQL from arbitrary input. ``rev`` is never writable through
+    ``fields``; it is only advanced by the optimistic-concurrency path.
 
     Args:
         db: Database connection.
         artifact_id: The ID of the artifact to update.
+        expected_rev: When provided, the row is updated only if its current
+            ``rev`` equals this value, and ``rev`` is advanced by one in the
+            same statement (``SET rev = rev + 1 ... WHERE id = ? AND rev = ?``).
+            A concurrent writer who already advanced the revision makes the
+            UPDATE match zero rows and this returns ``None`` — the caller can
+            distinguish a stale write from a missing artifact by re-fetching.
         **fields: Column-value pairs to update. Only keys listed in
             ``_COLUMNS`` are accepted; unknown keys are silently ignored.
 
     Returns:
-        The updated :class:`Artifact`, or ``None`` if no artifact exists
-        with the given ``artifact_id``.
+        The updated :class:`Artifact`, ``None`` when no artifact exists with
+        the given ``artifact_id``, or (with ``expected_rev``) ``None`` when
+        the row exists but its revision has already moved past ``expected_rev``.
     """
     allowed: Dict[str, Any] = {}
     model_fields = set(Artifact.__dataclass_fields__.keys())
     for key, value in fields.items():
-        if key not in _COLUMNS:
+        if key not in _COLUMNS or key in _IMMUTABLE_UPDATE_COLUMNS:
             continue
         if key in model_fields and key in ("artifact_type",):
             allowed[key] = value.value if hasattr(value, "value") else value
@@ -168,6 +229,20 @@ def update_artifact(db, artifact_id: SnowflakeID, **fields: Any) -> Optional[Art
             allowed[key] = value
 
     if not allowed:
+        return get_artifact(db, artifact_id)
+
+    if expected_rev is not None:
+        set_clause = ", ".join(f"{col} = ?" for col in allowed)
+        # ``rev = rev + 1`` is a raw expression: it must NOT be bound as a
+        # parameter (SQLite binds literals, and ``rev = ? + 1`` with the old
+        # value would not be atomic under a concurrent writer).
+        params = tuple(allowed.values()) + (artifact_id, expected_rev)
+        cursor = db.execute(
+            f"UPDATE artifacts SET {set_clause}, rev = rev + 1 WHERE id = ? AND rev = ?",
+            params,
+        )
+        if getattr(cursor, "rowcount", 0) <= 0:
+            return None
         return get_artifact(db, artifact_id)
 
     set_clause = ", ".join(f"{col} = ?" for col in allowed)
@@ -225,7 +300,6 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
     for col in (
         "conversation_id",
         "channel_id",
-        "server_id",
         "author_id",
         "status",
     ):
@@ -235,6 +309,24 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
             if col == "status" and hasattr(value, "value"):
                 value = value.value
             params.append(value)
+
+    # Server id: accepts a single value or a list (used by the Suite shared
+    # feed to gather the caller's memberships in one query).
+    server_id = filters.get("server_id")
+    if server_id is not None:
+        if isinstance(server_id, (list, tuple, set, frozenset)):
+            ids = [int(v) for v in server_id]
+            if not ids:
+                # ``IN ()`` is invalid SQL; an empty membership set must
+                # match nothing rather than raise a syntax error.
+                clauses.append("1 = 0")
+            else:
+                placeholders = ", ".join("?" for _ in ids)
+                clauses.append(f"a.server_id IN ({placeholders})")
+                params.extend(ids)
+        else:
+            clauses.append("a.server_id = ?")
+            params.append(server_id)
 
     # Artifact type: accepts a single value or a list.
     artifact_type = filters.get("artifact_type")
@@ -261,11 +353,15 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
         clauses.append("a.has_transcript = ?")
         params.append(1 if filters["has_transcript"] else 0)
 
-    # Free-text search across title/summary.
+    # Free-text search across title/summary. LIKE wildcards in user input are
+    # escaped so a bare "%" cannot match every row (filter evasion / DoS on
+    # listing); the escape char is declared explicitly in the clause.
     search = filters.get("search")
     if search:
-        clauses.append("(a.title LIKE ? OR a.summary LIKE ?)")
-        like = f"%{search}%"
+        clauses.append("(a.title LIKE ? ESCAPE '\\' OR a.summary LIKE ? ESCAPE '\\')")
+        like = "%{}%".format(
+            str(search).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
         params.extend((like, like))
 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -289,6 +385,13 @@ def list_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> List[Artifac
 
     limit = filters.get("limit")
     offset = filters.get("offset", 0)
+
+    # L7: an omitted limit used to return the ENTIRE table (only the HTTP
+    # route clamped). Cap the repository default so internal callers can never
+    # accidentally materialize unbounded result sets; callers that need a
+    # larger page pass an explicit limit.
+    if limit is None:
+        limit = _DEFAULT_LIST_LIMIT
 
     query = (
         f"SELECT a.* FROM artifacts a{joins}{where} ORDER BY {sort_column} {sort_order}"
@@ -314,8 +417,37 @@ def count_artifacts(db, filters: Optional[Dict[str, Any]] = None) -> int:
 # === Artifact ops log (artifact_ops table) ===
 
 # Op types that carry no durable document state and are never persisted.
-_TRANSIENT_OP_TYPES = {"cursor", "snapshot_request", "typing", "selection"}
+# ``presence`` / ``presence_leave`` announce board participants (the roster is
+# ephemeral by design, like live cursors) and must never bloat the ops log.
+_TRANSIENT_OP_TYPES = {
+    "cursor",
+    "snapshot_request",
+    "typing",
+    "selection",
+    "presence",
+    "presence_leave",
+}
 _MAX_ARTIFACT_OP_BYTES = 256 * 1024
+
+
+# Serializes in-process seq allocation per artifact. SQLite already
+# serializes writers at the database level, so this lock adds no effective
+# contention beyond what the engine imposes — but it collapses the
+# SELECT-MAX/INSERT race window between threads of this process so the
+# UNIQUE-retry loop below (which still arbitrates cross-process races)
+# almost never has to fire more than once.
+_APPEND_LOCKS_GUARD = threading.Lock()
+_APPEND_LOCKS: Dict[Any, threading.Lock] = {}
+
+
+def _append_lock(artifact_id: SnowflakeID) -> threading.Lock:
+    """Return the process-wide mutex serializing appends to one artifact."""
+    with _APPEND_LOCKS_GUARD:
+        lock = _APPEND_LOCKS.get(artifact_id)
+        if lock is None:
+            lock = threading.Lock()
+            _APPEND_LOCKS[artifact_id] = lock
+        return lock
 
 
 def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
@@ -324,14 +456,11 @@ def _fetch_next_seq(db, artifact_id: SnowflakeID) -> int:
     Uses ``db.execute`` directly (not ``fetch_one``) so the result is never
     served from the query cache: a just-inserted op must be visible.
     """
-    try:
-        row = db.execute(
-            "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq "
-            "FROM artifact_ops WHERE artifact_id = ?",
-            (artifact_id,),
-        ).fetchone()
-    except Exception:
-        return 1
+    row = db.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq "
+        "FROM artifact_ops WHERE artifact_id = ?",
+        (artifact_id,),
+    ).fetchone()
     if not row:
         return 1
     try:
@@ -384,23 +513,39 @@ def append_artifact_op(
         return None
     now = int(time.time() * 1000)
     data_json = _json_dumps(data)
-    for _ in range(8):
-        seq = _fetch_next_seq(db, artifact_id)
-        try:
-            cursor = db.execute(
-                "INSERT INTO artifact_ops "
-                "(artifact_id, seq, op_type, actor_id, data, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (artifact_id, seq, op_type, actor_id, data_json, now),
-            )
-        except Exception as e:
-            # Retry only on unique/integrity collisions; anything else surfaces.
-            lowered = str(e).lower()
-            if "unique" in lowered or "integrity" in lowered:
-                continue
-            logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
-            return None
-        if getattr(cursor, "rowcount", 0):
+    # Atomic seq allocation: in-process threads serialize on the per-artifact
+    # mutex while ``UNIQUE(artifact_id, seq)`` (schema.py) arbitrates races
+    # from other processes/connections — a colliding loser retries with a
+    # fresh number instead of dropping an op. Transient lock contention
+    # ("database is locked") is retried too; anything else surfaces.
+    with _append_lock(artifact_id):
+        for _ in range(32):
+            seq = _fetch_next_seq(db, artifact_id)
+            try:
+                db.execute(
+                    "INSERT INTO artifact_ops "
+                    "(artifact_id, seq, op_type, actor_id, data, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (artifact_id, seq, op_type, actor_id, data_json, now),
+                )
+            except Exception as e:
+                # Retry only on unique/integrity collisions or transient lock
+                # contention; anything else surfaces.
+                lowered = str(e).lower()
+                if (
+                    "unique" in lowered
+                    or "integrity" in lowered
+                    or "database is locked" in lowered
+                    or "database table is locked" in lowered
+                    or "deadlock" in lowered
+                ):
+                    continue
+                logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
+                return None
+            # A successful INSERT without an exception IS success: return the
+            # seq unconditionally. A rowcount guard here would be wrong — some
+            # drivers report 0/-1 rowcount on successful INSERTs, which would
+            # loop and insert phantom duplicate ops for a single append call.
             return seq
     logger.warning(f"Failed to persist artifact op for {artifact_id}: seq contention")
     return None
@@ -418,16 +563,14 @@ def list_artifact_ops(
     the original op payload under ``op`` (the same shape used on the
     ``ARTIFACT_SYNC`` wire format for late-joiner replay).
     """
-    try:
-        rows = db.fetch_all(
-            "SELECT seq, op_type, actor_id, data, created_at "
-            "FROM artifact_ops WHERE artifact_id = ? AND seq > ? "
-            "ORDER BY seq ASC LIMIT ?",
-            (artifact_id, int(after_seq), int(limit)),
-        )
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"Failed to list artifact ops for {artifact_id}: {e}")
-        return []
+    safe_limit = max(1, min(int(limit), 2000))
+    safe_after = max(0, int(after_seq))
+    rows = db.fetch_all(
+        "SELECT seq, op_type, actor_id, data, created_at "
+        "FROM artifact_ops WHERE artifact_id = ? AND seq > ? "
+        "ORDER BY seq ASC LIMIT ?",
+        (artifact_id, safe_after, safe_limit),
+    )
     ops: List[Dict[str, Any]] = []
     for row in rows:
         try:
@@ -543,6 +686,25 @@ def get_active_voice_call_by_channel(
     return row_to_voice_call(row)
 
 
+def get_active_voice_calls(db) -> List[VoiceCall]:
+    """Return every active (not ended) voice call.
+
+    The consent paths need this: a participant's withdrawal has to reach the
+    calls and recordings they are actually part of, not only the one the
+    client's dialog happened to name.
+    """
+    rows = db.fetch_all(
+        "SELECT * FROM voice_calls WHERE ended_at IS NULL ORDER BY started_at DESC"
+    )
+    calls: List[VoiceCall] = []
+    for row in rows or []:
+        try:
+            calls.append(row_to_voice_call(row))
+        except Exception:
+            continue
+    return calls
+
+
 # === Server artifact settings (per-server retention overrides) ===
 
 
@@ -550,26 +712,23 @@ def get_server_retention_days(db, server_id: SnowflakeID) -> Optional[int]:
     """Return the per-server retention override (days) or ``None``.
 
     Reads from the ``server_artifact_settings`` table created by migration 048.
-    Returns ``None`` when no override exists or on any error (the caller then
-    falls back to the global default).
+    Returns ``None`` when no override exists (the caller then falls back to the
+    global default).
     """
-    try:
-        row = db.fetch_one(
-            "SELECT retention_days FROM server_artifact_settings WHERE server_id = ?",
-            (server_id,),
-        )
-        if not row:
-            return None
-        raw = row.get("retention_days")
-        if raw is None:
-            return None
-        try:
-            days = int(raw)
-        except (TypeError, ValueError):
-            return None
-        return days if days > 0 else None
-    except Exception:
+    row = db.fetch_one(
+        "SELECT retention_days FROM server_artifact_settings WHERE server_id = ?",
+        (server_id,),
+    )
+    if not row:
         return None
+    raw = row.get("retention_days")
+    if raw is None:
+        return None
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return days if days > 0 else None
 
 
 def set_server_retention_days(
@@ -595,30 +754,55 @@ def set_server_retention_days(
     if days <= 0:
         raise ValueError("retention_days must be a positive integer or None")
 
-    existing = db.fetch_one(
-        "SELECT id FROM server_artifact_settings WHERE server_id = ?",
-        (server_id,),
+    # Conditional upsert: UPDATE first (a no-op when the row is missing), then
+    # INSERT only when nothing was updated. A concurrent insert can still hit
+    # the UNIQUE(server_id) constraint; that means the other writer won the
+    # race, so re-apply the UPDATE instead of surfacing a 500.
+    cursor = db.execute(
+        "UPDATE server_artifact_settings "
+        "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
+        (days, now, server_id),
     )
-    if existing:
-        db.execute(
-            "UPDATE server_artifact_settings "
-            "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
-            (days, now, server_id),
-        )
-    else:
+    if getattr(cursor, "rowcount", 0) > 0:
+        return
+    try:
         db.execute(
             "INSERT INTO server_artifact_settings "
             "(server_id, retention_days, created_at, updated_at) "
             "VALUES (?, ?, ?, ?)",
             (server_id, days, now, now),
         )
+    except Exception as e:
+        if not ("unique" in str(e).lower() or "integrity" in str(e).lower()):
+            raise
+        db.execute(
+            "UPDATE server_artifact_settings "
+            "SET retention_days = ?, updated_at = ? WHERE server_id = ?",
+            (days, now, server_id),
+        )
+
+
+# Columns that may never be rewritten through ``update_voice_call``: they are
+# set at insert time (identity, creation) or owned by other subsystems (the
+# linked artifact id). Silently allowing them let a caller corrupt referential
+# integrity (L8).
+_VOICE_CALL_IMMUTABLE_COLUMNS = frozenset(
+    {"id", "artifact_id", "created_at", "updated_at"}
+)
 
 
 def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[VoiceCall]:
-    """Update mutable columns of a voice call row."""
+    """Update mutable columns of a voice call row.
+
+    Identity/creation columns (``id``, ``artifact_id``, ``created_at``,
+    ``updated_at``) are always ignored, no matter what the caller passes, so
+    a stray ``created_at`` cannot silently rewrite history (L8).
+    """
     allowed: Dict[str, Any] = {}
     for key, value in fields.items():
         if key not in _VOICE_CALL_COLUMNS:
+            continue
+        if key in _VOICE_CALL_IMMUTABLE_COLUMNS:
             continue
         if key in ("recorded",):
             allowed[key] = 1 if value else 0
@@ -644,17 +828,12 @@ def update_voice_call(db, call_id: SnowflakeID, **fields: Any) -> Optional[Voice
 
 def get_feature_settings(db, server_id: SnowflakeID, feature: str) -> Dict[str, str]:
     """Return all setting key-value pairs for a feature on a server."""
-    try:
-        rows = db.fetch_all(
-            "SELECT setting_key, setting_value FROM server_artifact_feature_settings "
-            "WHERE server_id = ? AND feature = ?",
-            (server_id, feature),
-        )
-        return (
-            {row["setting_key"]: row["setting_value"] for row in rows} if rows else {}
-        )
-    except Exception:
-        return {}
+    rows = db.fetch_all(
+        "SELECT setting_key, setting_value FROM server_artifact_feature_settings "
+        "WHERE server_id = ? AND feature = ?",
+        (server_id, feature),
+    )
+    return {row["setting_key"]: row["setting_value"] for row in rows} if rows else {}
 
 
 def set_feature_setting(
@@ -673,23 +852,30 @@ def set_feature_setting(
         )
         return
 
-    existing = db.fetch_one(
-        "SELECT id FROM server_artifact_feature_settings "
+    # Conditional upsert (see set_server_retention_days): avoids the
+    # SELECT-then-INSERT race where two concurrent writers both miss the
+    # SELECT and one INSERT dies on UNIQUE(server_id, feature, setting_key).
+    cursor = db.execute(
+        "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
         "WHERE server_id = ? AND feature = ? AND setting_key = ?",
-        (server_id, feature, key),
+        (value, now, server_id, feature, key),
     )
-    if existing:
-        db.execute(
-            "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
-            "WHERE server_id = ? AND feature = ? AND setting_key = ?",
-            (value, now, server_id, feature, key),
-        )
-    else:
+    if getattr(cursor, "rowcount", 0) > 0:
+        return
+    try:
         db.execute(
             "INSERT INTO server_artifact_feature_settings "
             "(server_id, feature, setting_key, setting_value, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (server_id, feature, key, value, now, now),
+        )
+    except Exception as e:
+        if not ("unique" in str(e).lower() or "integrity" in str(e).lower()):
+            raise
+        db.execute(
+            "UPDATE server_artifact_feature_settings SET setting_value = ?, updated_at = ? "
+            "WHERE server_id = ? AND feature = ? AND setting_key = ?",
+            (value, now, server_id, feature, key),
         )
 
 
@@ -713,3 +899,41 @@ def set_feature_settings_bulk(
             db.rollback()
         raise
     return get_feature_settings(db, server_id, feature)
+
+
+def get_voice_call_uncached(db, call_id: SnowflakeID) -> Optional[VoiceCall]:
+    """Fetch a voice call bypassing the query cache (fresh consent state)."""
+    cursor = db.execute("SELECT * FROM voice_calls WHERE id = ?", (call_id,))
+    row = cursor.fetchone()
+    if not row:
+        return None
+    try:
+        return row_to_voice_call(dict(row))
+    except Exception:
+        return None
+
+
+def get_channel_voice_user_ids(db, channel_id: SnowflakeID) -> List[int]:
+    """Return live ``voice_states`` member ids for a channel, bypassing cache."""
+    cursor = db.execute(
+        "SELECT user_id FROM voice_states WHERE channel_id = ?",
+        (channel_id,),
+    )
+    rows = cursor.fetchall() or []
+    user_ids: List[int] = []
+    for row in rows:
+        value = None
+        try:
+            value = row["user_id"]
+        except (KeyError, TypeError, IndexError):
+            try:
+                value = row[0]
+            except (TypeError, IndexError):
+                value = None
+        if value is None:
+            continue
+        try:
+            user_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return user_ids

@@ -22,16 +22,19 @@ def db_and_modules(
     'create_pack'`` (and friends) inside sticker tests.
 
     This override keeps the 5-tuple positional contract the sticker
-    tests expect but swaps the 5th element to ``sticker_manager``
+    tests expect but swaps the ``module`` element to ``sticker_manager``
     (already wired with ``servers_module`` and ``messaging_module``
-    by the root fixture).
+    by the root fixture). The bundle is a named tuple: unpack by name
+    (``bundle.module``), never positionally.
     """
-    return (
-        db,
-        auth_manager,
-        messaging_manager,
-        server_manager,
-        sticker_manager,
+    from src.tests._conftest.module_registry import ModuleBundle
+
+    return ModuleBundle(
+        db=db,
+        auth=auth_manager,
+        messaging=messaging_manager,
+        servers=server_manager,
+        module=sticker_manager,
     )
 
 

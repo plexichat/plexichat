@@ -111,6 +111,15 @@ class TestSecurity:
             actions=[{"action_type": "log_only"}],
         )
 
-        # Server2 should have no rules
+        # Server2 must not see Server1's custom rule. New servers DO get
+        # their own auto-initialized default rules (production parity:
+        # create_server calls automod.ensure_default_rules), so assert
+        # isolation by ownership and name, not by an empty list.
         rules2 = automod_manager.get_server_rules(server2.id)
-        assert len(rules2) == 0
+        assert all(str(r.server_id) == str(server2.id) for r in rules2), (
+            "rules from another server leaked into server2"
+        )
+        assert "Server1 Only Rule" not in {r.name for r in rules2}
+        # And the rule is still scoped to server1 only.
+        rules1 = automod_manager.get_server_rules(server1.id)
+        assert "Server1 Only Rule" in {r.name for r in rules1}

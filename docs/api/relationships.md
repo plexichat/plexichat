@@ -1,24 +1,79 @@
 # Relationships API
 
-Endpoints for managing friend relationships and user blocks.
+Manage friend relationships and user blocks. You use this API to send, accept, and remove relationships.
 
-**Base URL**: `https://api.plexichat.com/api/v1`
+All endpoints in this document are relative to `https://api.plexichat.com`.
+For local development, use `http://localhost:8000`.
 
-For development, use `http://localhost:8000/api/v1`.
+You must authenticate with `Authorization: Bearer <token>` for all relationship endpoints.
 
-All endpoints in this document are prefixed with `/api/v1/relationships/` unless otherwise specified.
+Rate limits apply per user. The `POST /relationships` route is limited to 10 friend requests per rolling minute; repeated calls return `429`.
 
-## GET /relationships/@me
+Relationship events are dispatched via WebSocket so clients can update contact lists live. If you use caching, cached relationship lists expire after 60 seconds.
 
-Get all relationships for the current user.
+## Relationship resource
 
-### Headers
+```json
+{
+  "user_id": "123456789012345678",
+  "username": "Alice",
+  "avatar_url": "https://cdn.example.com/avatars/123.png",
+  "status": "friend",
+  "presence": {"status": "online"},
+  "message": "Hey, want to be friends?",
+  "created_at": 1704067200
+}
+```
+
+### Properties
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `user_id` | string | Snowflake ID of the related user. |
+| `username` | string | Username of the related user. Falls back to `User {id}` if the profile cannot be resolved. |
+| `avatar_url` | string or null | Avatar URL of the related user. |
+| `status` | string | Relationship status. See the statuses table. |
+| `presence` | object or null | Current presence, with a `status` of `online`, `idle`, `dnd`, or `offline`. Blocked users always return `offline` to avoid leaking presence. |
+| `message` | string or null | Optional message from the original friend request. Present for pending requests. |
+| `created_at` | integer or null | Unix timestamp in milliseconds when the relationship was created. |
+
+### Relationship statuses
+
+| Status | Description |
+| --- | --- |
+| `friend` | Mutual friendship. |
+| `pending_incoming` | Incoming friend request awaiting your action. |
+| `pending_outgoing` | Outgoing friend request awaiting the recipient's action. |
+| `blocked` | User is blocked. You receive no presence for blocked users. |
+| `none` | No relationship (internal only; never returned as a listed relationship). |
+
+## List your relationships
+
+Returns friends, pending requests, and blocked users for the current user. You can page the results.
 
 ```
-Authorization: Bearer <token>
+GET /api/v1/relationships/@me
 ```
 
-### Response (200 OK)
+Results are cached for 60 seconds and are enriched with live profile and presence data in a single bulk lookup per request.
+
+### Query parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer | No | Maximum relationships to return. `1`–`500`, default `100`. |
+| `offset` | integer | No | Offset for pagination, `>= 0`, default `0`. |
+
+### Example request
+
+```bash
+curl -X GET "https://api.plexichat.com/api/v1/relationships/@me?limit=100&offset=0" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
 
 ```json
 [
@@ -42,38 +97,45 @@ Authorization: Bearer <token>
 ]
 ```
 
-### Relationship Statuses
+### Errors
 
-- friend: Mutual friendship
-- pending_incoming: Incoming friend request
-- pending_outgoing: Outgoing friend request
-- blocked: User is blocked
+| Status | Description |
+| --- | --- |
+| `401` | Not authenticated. |
+| `500` | Relationships module not available or failed to fetch relationships. |
 
-## POST /relationships
+## Send a friend request
 
-Send a friend request.
-
-### Headers
+Create a pending friend request.
 
 ```
-Authorization: Bearer <token>
+POST /api/v1/relationships
 ```
 
-### Request Body
+If a reverse pending request already exists (the target already sent you a request), sending a request auto-accepts the friendship. In that case you and the target both receive a `friend` relationship event, and the API returns `status: friend` instead of `pending_outgoing`.
 
-- `user_id` (string, required, Snowflake ID): Target user ID
-- `message` (string, optional, Max 256 chars): Optional message
+### Request body
 
-### Example Request
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `user_id` | string | Yes | Snowflake ID of the target user. |
+| `message` | string | No | Optional message. Max 256 characters. |
 
-```json
-{
-  "user_id": "123456789012345678",
-  "message": "Hey, let's be friends!"
-}
+### Example request
+
+```bash
+curl -X POST https://api.plexichat.com/api/v1/relationships \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "123456789012345678",
+    "message": "Hey, let's be friends!"
+  }'
 ```
 
-### Response (200 OK)
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -83,28 +145,53 @@ Authorization: Bearer <token>
 }
 ```
 
-### Error Responses
+When auto-accepted:
 
-- 400 Self request: Cannot send request to yourself
-- 403 Blocked: User has blocked you
-- 404 User not found: User doesn't exist
-- 409 Already exists: Request exists or already friends
-
-## PUT /relationships/{user_id}/accept
-
-Accept a pending friend request.
-
-### Headers
-
-```
-Authorization: Bearer <token>
+```json
+{
+  "user_id": "123456789012345678",
+  "status": "friend",
+  "created_at": 1704067200
+}
 ```
 
-### Path Parameters
+### Errors
 
-- `user_id` (string): Sender's user ID
+| Status | Description |
+| --- | --- |
+| `400` | Invalid user ID, sending a request to yourself, or validation error. |
+| `401` | Not authenticated. |
+| `403` | Cannot send the request because a block exists. The message is intentionally generic to avoid revealing block direction. |
+| `404` | Target user does not exist. |
+| `409` | Request already exists or you are already friends. |
+| `429` | Too many friend requests. Slow down. |
 
-### Response (200 OK)
+## Accept a friend request
+
+Accept a pending incoming friend request.
+
+```
+PUT /api/v1/relationships/{user_id}/accept
+```
+
+You specify the sender's user ID, not the request ID. The API looks up the pending incoming request from that sender.
+
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `user_id` | string | Yes | Snowflake ID of the user who sent the request. |
+
+### Example request
+
+```bash
+curl -X PUT https://api.plexichat.com/api/v1/relationships/123456789012345678/accept \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -112,26 +199,50 @@ Authorization: Bearer <token>
 }
 ```
 
-### Error Responses
+Both users receive a `friend` relationship event that includes live usernames and visible presence.
 
-- 400 Invalid user ID: ID format invalid
-- 404 Request not found: No pending request from user
+### Errors
 
-## DELETE /relationships/{user_id}
+| Status | Description |
+| --- | --- |
+| `400` | Invalid user ID format. |
+| `401` | Not authenticated. |
+| `404` | Pending request not found. |
+| `500` | Failed to accept the request. |
 
-Remove a relationship. Action depends on current status:
-- Friend: Unfriend
-- Pending incoming: Decline request
-- Pending outgoing: Cancel request
-- Blocked: Unblock
+## Remove a relationship
 
-### Headers
+Remove a relationship. The action depends on the current status.
 
 ```
-Authorization: Bearer <token>
+DELETE /api/v1/relationships/{user_id}
 ```
 
-### Response (200 OK)
+| Current status | Action |
+| --- | --- |
+| `friend` | Remove the friendship from both users. |
+| `pending_incoming` | Decline the incoming request. |
+| `pending_outgoing` | Cancel the outgoing request. |
+| `blocked` | Unblock the user. |
+
+This is the same as `DELETE /api/v1/relationships/{user_id:int}`. The `user_id` must be a valid integer Snowflake ID.
+
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `user_id` | string | Yes | Snowflake ID of the related user. |
+
+### Example request
+
+```bash
+curl -X DELETE https://api.plexichat.com/api/v1/relationships/123456789012345678 \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -139,34 +250,47 @@ Authorization: Bearer <token>
 }
 ```
 
-### Error Responses
+Both users receive a `remove` relationship event when the relationship is a friendship or a pending request.
 
-- 400 Invalid user ID: ID format invalid
-- 404 Relationship not found: No relationship exists
+### Errors
 
-## POST /relationships/block
+| Status | Description |
+| --- | --- |
+| `400` | Invalid user ID format. |
+| `401` | Not authenticated. |
+| `404` | Relationship does not exist. |
+| `500` | Failed to delete the relationship. |
 
-Block a user. Removes any existing relationship.
+## Block a user
 
-### Headers
+Block a user. If a friendship or pending request exists, it is removed.
 
 ```
-Authorization: Bearer <token>
+POST /api/v1/relationships/block
 ```
 
-### Request Body
+If the user was previously a friend, the target receives a `remove` event for your user.
 
-- `user_id` (string, required): User ID to block
+### Request body
 
-### Example Request
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `user_id` | string | Yes | Snowflake ID of the user to block. |
 
-```json
-{
-  "user_id": "123456789012345678"
-}
+### Example request
+
+```bash
+curl -X POST https://api.plexichat.com/api/v1/relationships/block \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "123456789012345678"
+  }'
 ```
 
-### Response (200 OK)
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -176,30 +300,18 @@ Authorization: Bearer <token>
 }
 ```
 
-### Error Responses
+You receive an `add` relationship event with `status: blocked`.
 
-- 400 Self block: Cannot block yourself
-- 404 User not found: User doesn't exist
-- 409 Already blocked: User already blocked
+### Errors
 
-## Relationship Object
+| Status | Description |
+| --- | --- |
+| `400` | Invalid target ID or cannot block yourself. |
+| `401` | Not authenticated. |
+| `404` | User does not exist. |
+| `409` | User is already blocked. |
 
-```json
-{
-  "user_id": "123456789012345678",
-  "username": "Alice",
-  "avatar_url": "https://cdn.example.com/avatars/123.png",
-  "status": "friend",
-  "presence": {"status": "online"},
-  "message": "Hey, let's be friends!",
-  "created_at": 1704067200
-}
-```
+## Related endpoints
 
-- `user_id` (string): Related user's ID
-- `username` (string): Related user's username
-- `avatar_url` (string?): User avatar URL
-- `status` (string): Relationship status
-- `presence` (PresenceInfo?): User's current presence status
-- `message` (string?): Optional message (for pending requests)
-- `created_at` (int?): Unix timestamp of creation
+*   [Users](users.md) — User profiles and search.
+*   [WebSocket Events](../websocket/events.md) — `RELATIONSHIP_ADD` and `RELATIONSHIP_REMOVE` events.

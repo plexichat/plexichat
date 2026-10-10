@@ -364,7 +364,8 @@ class TestServerCaching:
         server_manager.assign_role(1, server.id, 2, role.id)
 
         perms = server_manager.get_permissions(2, server.id)
-        assert perms is not None
+        assert isinstance(perms, dict)
+        assert len(perms) > 0
 
 
 class TestServerMemberOperations:
@@ -700,6 +701,7 @@ class TestServerCategories:
 
         category = server_manager.create_category(1, server.id, "General")
         assert category is not None
+        assert category.name == "General"
 
     def test_delete_category(self, server_manager):
         """Can delete category."""

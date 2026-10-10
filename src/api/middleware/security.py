@@ -5,6 +5,21 @@ Security headers middleware - Adds standard security headers to all responses.
 from starlette.types import ASGIApp, Receive, Send, Scope
 
 
+def _resolve_api_prefix() -> str:
+    """Resolve the configurable API prefix, falling back to the default.
+
+    The CSP scoping below must follow ``api.api_prefix``; hardcoding
+    ``/api/v1`` silently downgraded the strict API policy to the permissive
+    SPA policy on any deployment that renamed the prefix.
+    """
+    try:
+        from src.api.config import get_api_config
+
+        return get_api_config().api_prefix.rstrip("/") or "/api/v1"
+    except Exception:
+        return "/api/v1"
+
+
 class SecurityHeadersMiddleware:
     """ASGI middleware to add security headers to all HTTP responses."""
 
@@ -23,14 +38,18 @@ class SecurityHeadersMiddleware:
                 # Per-path CSP scoping: the API surface is hardened
                 # and only consumes JSON; the static-client bundle +
                 # admin SPA rely on inline scripts/styles to bootstrap.
-                # Emit a strict no-unsafe CSP for /api/v1/* so XSS in a
+                # Emit a strict no-unsafe CSP for API responses so XSS in a
                 # future JSON response can't ``eval``; fall back to the
                 # historically-permissive policy for ``/``/``/admin``
                 # and bundled SPA routes so we don't regress the
                 # admin UI.
                 path = scope.get("path", "")
-                is_api = path.startswith("/api/v1/")
-                is_media = path.startswith("/api/v1/media/")
+                api_prefix = _resolve_api_prefix()
+                is_api = path.startswith(f"{api_prefix}/")
+                is_media = path.startswith(f"{api_prefix}/media/")
+                # User-facing HTML help pages carry inline <style> blocks
+                # and must not inherit the strict API-only CSP.
+                is_help = path.startswith(f"{api_prefix}/help/")
 
                 # Security Headers
                 security_headers = [
@@ -38,8 +57,24 @@ class SecurityHeadersMiddleware:
                     (b"X-XSS-Protection", b"1; mode=block"),
                     (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
                     (b"X-Permitted-Cross-Domain-Policies", b"none"),
+                    # The suite never needs the camera, mic, geolocation,
+                    # payment, or USB browser APIs; disable them so a
+                    # compromised page cannot prompt for or exfiltrate via
+                    # those capabilities. Clipboard stays unrestricted for
+                    # the editors' copy/paste flows.
+                    (
+                        b"Permissions-Policy",
+                        b"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+                    ),
+                    # L1: HSTS is only honored by browsers over HTTPS, so
+                    # emitting it unconditionally is safe (plain-HTTP responses
+                    # ignore the header).
+                    (
+                        b"Strict-Transport-Security",
+                        b"max-age=31536000; includeSubDomains",
+                    ),
                 ]
-                if is_api and not is_media:
+                if is_api and not is_media and not is_help:
                     # Strict CSP for API responses. They should never
                     # be rendered as HTML; default-src 'none' makes
                     # any accidental script-injection inert.
@@ -100,18 +135,6 @@ class SecurityHeadersMiddleware:
                 # Add X-Frame-Options: SAMEORIGIN only if not a media request and not present
                 if not is_media and b"x-frame-options" not in present_names:
                     final_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
-
-                # Relax CSP for media to allow embedding
-                if is_media and b"content-security-policy" not in present_names:
-                    final_headers.append(
-                        (
-                            b"Content-Security-Policy",
-                            b"default-src 'self'; "
-                            b"img-src 'self' data: blob: *; "
-                            b"media-src 'self' *; "
-                            b"frame-ancestors *",
-                        )
-                    )
 
                 message["headers"] = final_headers
 

@@ -62,7 +62,7 @@ class EnvGeneratorMixin:
         </div>
 
         <div class="warning-box">
-            <strong>Important:</strong> Save this file as <code>.env.generated</code> in your Plexichat directory. Never commit this file to version control. Keep a backup of your encryption keys.
+            <strong>Important:</strong> Save this file as <code>.env.generated</code> in your Plexichat directory. It holds database, cache, storage, and encryption secrets: create it under <code>umask 077</code> and keep it <code>chmod 600</code> (e.g. save, then run <code>chmod 600 .env.generated</code>). Never commit this file to version control. Keep a backup of your encryption keys.
         </div>
 
         <h2>Deployment Instructions</h2>
@@ -102,13 +102,11 @@ VALKEY_PASSWORD=${generateSecureHex(24)}
 VALKEY_HOST=valkey
 VALKEY_PORT=6379
 
-MINIO_ROOT_USER=plexichat
-MINIO_ROOT_PASSWORD=${generateSecureHex(24)}
 S3_BUCKET=plexichat-media
 S3_REGION=us-east-1
 S3_ACCESS_KEY=plexichat
 S3_SECRET_KEY=${generateSecureHex(24)}
-S3_ENDPOINT=http://minio:9000
+S3_ENDPOINT=http://rustfs:9000
 S3_PUBLIC_URL=
 
 # Public URL the web client should use to reach the API. If left empty

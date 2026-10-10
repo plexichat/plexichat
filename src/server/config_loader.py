@@ -1,13 +1,122 @@
+"""Configuration loader with environment variable overrides.
+
+Reads the YAML/JSON config file, deep-merges it with programmatic defaults,
+and applies environment-variable overrides for database, monitoring, media,
+Valkey, and search settings.
+"""
+
 import os
 import urllib.parse
 from pathlib import Path
 from typing import Optional
 
-import utils.logger as logger
 import utils.config as config
+import utils.logger as logger
+
+
+def _as_bool(raw: str) -> bool:
+    """Coerce an environment variable string to a boolean.
+
+    Args:
+        raw: The raw string value. Truthy values are ``"true"``, ``"1"``,
+            and ``"yes"`` (case-insensitive).
+
+    Returns:
+        ``True`` if the string matches a truthy value, ``False`` otherwise.
+    """
+    return raw.lower() in ("true", "1", "yes")
+
+
+def _apply_int(
+    target: dict,
+    key: str,
+    raw: Optional[str],
+    env_name: str,
+    *,
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
+) -> bool:
+    """Assign an integer value from an environment variable into a target dict.
+
+    Args:
+        target: The dictionary to update.
+        key: The key to set in *target*.
+        raw: The raw string from ``os.getenv()``. If ``None`` or empty, the
+            call is a no-op.
+        env_name: The environment variable name, used for log messages.
+        min_value: Optional lower bound (inclusive). Values below this are
+            rejected.
+        max_value: Optional upper bound (inclusive). Values above this are
+            rejected.
+
+    Returns:
+        ``True`` if a value was assigned, ``False`` otherwise.
+    """
+    if not raw:
+        return False
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(f"Invalid {env_name} value: {raw}")
+        return False
+    if min_value is not None and value < min_value:
+        logger.warning(f"Invalid {env_name} value: {raw} (must be >= {min_value})")
+        return False
+    if max_value is not None and value > max_value:
+        logger.warning(f"Invalid {env_name} value: {raw} (must be <= {max_value})")
+        return False
+    target[key] = value
+    return True
+
+
+def _apply_float(target: dict, key: str, raw: Optional[str], env_name: str) -> bool:
+    """Assign a float value from an environment variable into a target dict.
+
+    Args:
+        target: The dictionary to update.
+        key: The key to set in *target*.
+        raw: The raw string from ``os.getenv()``. If ``None`` or empty, the
+            call is a no-op.
+        env_name: The environment variable name, used for log messages.
+
+    Returns:
+        ``True`` if a value was assigned, ``False`` otherwise.
+    """
+    if not raw:
+        return False
+    try:
+        target[key] = float(raw)
+    except ValueError:
+        logger.warning(f"Invalid {env_name} value: {raw}")
+        return False
+    return True
+
+
+def _apply_bool(target: dict, key: str, raw: Optional[str]) -> bool:
+    """Assign a boolean value from an environment variable into a target dict.
+
+    Args:
+        target: The dictionary to update.
+        key: The key to set in *target*.
+        raw: The raw string from ``os.getenv()``. If ``None`` or empty, the
+            call is a no-op.
+
+    Returns:
+        ``True`` if a value was assigned, ``False`` otherwise.
+    """
+    if not raw:
+        return False
+    target[key] = _as_bool(raw)
+    return True
 
 
 def _apply_env_overrides() -> None:
+    """Apply environment-variable overrides to the in-memory configuration.
+
+    Reads ``DATABASE_URL``, ``POSTGRES_*``, ``DB_POOL_*``, ``MONITORING_*``,
+    ``LOG_LEVEL``, ``SCANNER_*``, ``VALKEY_*``, and ``SEARCH_*`` environment
+    variables and patches the corresponding config sections.
+    """
     db_config = config.get("database", {})
 
     database_url = os.getenv("DATABASE_URL")
@@ -42,19 +151,14 @@ def _apply_env_overrides() -> None:
         if postgres_host:
             postgres_config["host"] = postgres_host
 
-        postgres_port = os.getenv("POSTGRES_PORT")
-        if postgres_port:
-            try:
-                port_val = int(postgres_port)
-                if port_val < 1 or port_val > 65535:
-                    raise ValueError(
-                        f"Port must be between 1 and 65535, got {port_val}"
-                    )
-                postgres_config["port"] = port_val
-            except ValueError as e:
-                logger.warning(
-                    f"Invalid POSTGRES_PORT value: {postgres_port}, using default: {e}"
-                )
+        _apply_int(
+            postgres_config,
+            "port",
+            os.getenv("POSTGRES_PORT"),
+            "POSTGRES_PORT",
+            min_value=1,
+            max_value=65535,
+        )
 
         postgres_user = os.getenv("POSTGRES_USER")
         if postgres_user:
@@ -77,61 +181,44 @@ def _apply_env_overrides() -> None:
 
     pool_config = db_config["connection_pool"]
 
-    db_pool_min = os.getenv("DB_POOL_MIN_CONNECTIONS")
-    if db_pool_min:
-        try:
-            val = int(db_pool_min)
-            if val < 0:
-                raise ValueError(f"Value must be >= 0, got {val}")
-            pool_config["min_connections"] = val
-        except ValueError as e:
-            logger.warning(f"Invalid DB_POOL_MIN_CONNECTIONS value: {db_pool_min}: {e}")
-
-    db_pool_max = os.getenv("DB_POOL_MAX_CONNECTIONS")
-    if db_pool_max:
-        try:
-            val = int(db_pool_max)
-            if val < 0:
-                raise ValueError(f"Value must be >= 0, got {val}")
-            pool_config["max_connections"] = val
-        except ValueError as e:
-            logger.warning(f"Invalid DB_POOL_MAX_CONNECTIONS value: {db_pool_max}: {e}")
-
-    db_pool_timeout = os.getenv("DB_POOL_CONNECT_TIMEOUT")
-    if db_pool_timeout:
-        try:
-            val = int(db_pool_timeout)
-            if val < 0:
-                raise ValueError(f"Value must be >= 0, got {val}")
-            pool_config["connect_timeout"] = val
-        except ValueError as e:
-            logger.warning(
-                f"Invalid DB_POOL_CONNECT_TIMEOUT value: {db_pool_timeout}: {e}"
-            )
-
-    db_pool_idle = os.getenv("DB_POOL_MAX_IDLE_TIME")
-    if db_pool_idle:
-        try:
-            pool_config["max_idle_time"] = int(db_pool_idle)
-        except ValueError:
-            logger.warning(f"Invalid DB_POOL_MAX_IDLE_TIME value: {db_pool_idle}")
-
-    db_pool_validation_interval = os.getenv("DB_POOL_VALIDATION_INTERVAL")
-    if db_pool_validation_interval:
-        try:
-            pool_config["validation_interval"] = int(db_pool_validation_interval)
-        except ValueError:
-            logger.warning(
-                f"Invalid DB_POOL_VALIDATION_INTERVAL value: {db_pool_validation_interval}"
-            )
-
-    db_pool_enable_validation = os.getenv("DB_POOL_ENABLE_VALIDATION")
-    if db_pool_enable_validation:
-        pool_config["enable_validation"] = db_pool_enable_validation.lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+    _apply_int(
+        pool_config,
+        "min_connections",
+        os.getenv("DB_POOL_MIN_CONNECTIONS"),
+        "DB_POOL_MIN_CONNECTIONS",
+        min_value=0,
+    )
+    _apply_int(
+        pool_config,
+        "max_connections",
+        os.getenv("DB_POOL_MAX_CONNECTIONS"),
+        "DB_POOL_MAX_CONNECTIONS",
+        min_value=0,
+    )
+    _apply_int(
+        pool_config,
+        "connect_timeout",
+        os.getenv("DB_POOL_CONNECT_TIMEOUT"),
+        "DB_POOL_CONNECT_TIMEOUT",
+        min_value=0,
+    )
+    _apply_int(
+        pool_config,
+        "max_idle_time",
+        os.getenv("DB_POOL_MAX_IDLE_TIME"),
+        "DB_POOL_MAX_IDLE_TIME",
+    )
+    _apply_int(
+        pool_config,
+        "validation_interval",
+        os.getenv("DB_POOL_VALIDATION_INTERVAL"),
+        "DB_POOL_VALIDATION_INTERVAL",
+    )
+    _apply_bool(
+        pool_config,
+        "enable_validation",
+        os.getenv("DB_POOL_ENABLE_VALIDATION"),
+    )
 
     db_pool_validation_query = os.getenv("DB_POOL_VALIDATION_QUERY")
     if db_pool_validation_query:
@@ -150,107 +237,72 @@ def _apply_env_overrides() -> None:
 
     monitoring_config = config.get("monitoring", {})
 
-    monitoring_enabled = os.getenv("MONITORING_ENABLED")
-    if monitoring_enabled:
-        monitoring_config["enabled"] = monitoring_enabled.lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-
-    monitoring_log_interval = os.getenv("MONITORING_LOG_INTERVAL")
-    if monitoring_log_interval:
-        try:
-            monitoring_config["log_interval"] = int(monitoring_log_interval)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_LOG_INTERVAL value: {monitoring_log_interval}"
-            )
-
-    monitoring_metrics = os.getenv("MONITORING_METRICS_ENABLED")
-    if monitoring_metrics:
-        monitoring_config["metrics_enabled"] = monitoring_metrics.lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+    _apply_bool(monitoring_config, "enabled", os.getenv("MONITORING_ENABLED"))
+    _apply_int(
+        monitoring_config,
+        "log_interval",
+        os.getenv("MONITORING_LOG_INTERVAL"),
+        "MONITORING_LOG_INTERVAL",
+    )
+    _apply_bool(
+        monitoring_config,
+        "metrics_enabled",
+        os.getenv("MONITORING_METRICS_ENABLED"),
+    )
 
     if "alert_thresholds" not in monitoring_config:
         monitoring_config["alert_thresholds"] = {}
 
     alert_thresholds = monitoring_config["alert_thresholds"]
 
-    cpu_threshold = os.getenv("MONITORING_ALERT_CPU_THRESHOLD")
-    if cpu_threshold:
-        try:
-            alert_thresholds["cpu_percent"] = float(cpu_threshold)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_CPU_THRESHOLD value: {cpu_threshold}"
-            )
-
-    memory_threshold = os.getenv("MONITORING_ALERT_MEMORY_THRESHOLD")
-    if memory_threshold:
-        try:
-            alert_thresholds["memory_percent"] = float(memory_threshold)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_MEMORY_THRESHOLD value: {memory_threshold}"
-            )
-
-    db_pool_threshold = os.getenv("MONITORING_ALERT_DB_POOL_THRESHOLD")
-    if db_pool_threshold:
-        try:
-            alert_thresholds["db_pool_saturation_percent"] = float(db_pool_threshold)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_DB_POOL_THRESHOLD value: {db_pool_threshold}"
-            )
-
-    query_time = os.getenv("MONITORING_ALERT_QUERY_TIME_MS")
-    if query_time:
-        try:
-            alert_thresholds["query_time_ms"] = int(query_time)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_QUERY_TIME_MS value: {query_time}"
-            )
-
-    db_errors = os.getenv("MONITORING_ALERT_DB_ERRORS_PER_MINUTE")
-    if db_errors:
-        try:
-            alert_thresholds["db_errors_per_minute"] = int(db_errors)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_DB_ERRORS_PER_MINUTE value: {db_errors}"
-            )
-
-    api_response_time = os.getenv("MONITORING_ALERT_API_RESPONSE_TIME_MS")
-    if api_response_time:
-        try:
-            alert_thresholds["api_response_time_ms"] = int(api_response_time)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_API_RESPONSE_TIME_MS value: {api_response_time}"
-            )
-
-    error_rate = os.getenv("MONITORING_ALERT_ERROR_RATE_PERCENT")
-    if error_rate:
-        try:
-            alert_thresholds["error_rate_percent"] = float(error_rate)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_ERROR_RATE_PERCENT value: {error_rate}"
-            )
-
-    active_connections = os.getenv("MONITORING_ALERT_ACTIVE_CONNECTIONS")
-    if active_connections:
-        try:
-            alert_thresholds["active_connections"] = int(active_connections)
-        except ValueError:
-            logger.warning(
-                f"Invalid MONITORING_ALERT_ACTIVE_CONNECTIONS value: {active_connections}"
-            )
+    _apply_float(
+        alert_thresholds,
+        "cpu_percent",
+        os.getenv("MONITORING_ALERT_CPU_THRESHOLD"),
+        "MONITORING_ALERT_CPU_THRESHOLD",
+    )
+    _apply_float(
+        alert_thresholds,
+        "memory_percent",
+        os.getenv("MONITORING_ALERT_MEMORY_THRESHOLD"),
+        "MONITORING_ALERT_MEMORY_THRESHOLD",
+    )
+    _apply_float(
+        alert_thresholds,
+        "db_pool_saturation_percent",
+        os.getenv("MONITORING_ALERT_DB_POOL_THRESHOLD"),
+        "MONITORING_ALERT_DB_POOL_THRESHOLD",
+    )
+    _apply_int(
+        alert_thresholds,
+        "query_time_ms",
+        os.getenv("MONITORING_ALERT_QUERY_TIME_MS"),
+        "MONITORING_ALERT_QUERY_TIME_MS",
+    )
+    _apply_int(
+        alert_thresholds,
+        "db_errors_per_minute",
+        os.getenv("MONITORING_ALERT_DB_ERRORS_PER_MINUTE"),
+        "MONITORING_ALERT_DB_ERRORS_PER_MINUTE",
+    )
+    _apply_int(
+        alert_thresholds,
+        "api_response_time_ms",
+        os.getenv("MONITORING_ALERT_API_RESPONSE_TIME_MS"),
+        "MONITORING_ALERT_API_RESPONSE_TIME_MS",
+    )
+    _apply_float(
+        alert_thresholds,
+        "error_rate_percent",
+        os.getenv("MONITORING_ALERT_ERROR_RATE_PERCENT"),
+        "MONITORING_ALERT_ERROR_RATE_PERCENT",
+    )
+    _apply_int(
+        alert_thresholds,
+        "active_connections",
+        os.getenv("MONITORING_ALERT_ACTIVE_CONNECTIONS"),
+        "MONITORING_ALERT_ACTIVE_CONNECTIONS",
+    )
 
     config.set("monitoring", monitoring_config)
 
@@ -262,36 +314,151 @@ def _apply_env_overrides() -> None:
 
     media_config = config.get("media", {})
 
-    scanner_enabled = os.getenv("SCANNER_ENABLED")
-    if scanner_enabled:
-        media_config["scanner_enabled"] = scanner_enabled.lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+    _apply_bool(media_config, "scanner_enabled", os.getenv("SCANNER_ENABLED"))
 
     scanner_host = os.getenv("SCANNER_HOST")
     if scanner_host:
         media_config["scanner_host"] = scanner_host
 
-    scanner_port = os.getenv("SCANNER_PORT")
-    if scanner_port:
-        try:
-            port_val = int(scanner_port)
-            if port_val < 1 or port_val > 65535:
-                raise ValueError(f"Port must be between 1 and 65535, got {port_val}")
-            media_config["scanner_port"] = port_val
-        except ValueError as e:
-            logger.warning(
-                f"Invalid SCANNER_PORT value: {scanner_port}, using default: {e}"
-            )
+    _apply_int(
+        media_config,
+        "scanner_port",
+        os.getenv("SCANNER_PORT"),
+        "SCANNER_PORT",
+        min_value=1,
+        max_value=65535,
+    )
 
     config.set("media", media_config)
 
+    valkey_config = config.get("valkey") or config.get("redis") or {}
+
+    valkey_changed = False
+
+    valkey_enabled = os.getenv("VALKEY_ENABLED")
+    if valkey_enabled is not None:
+        valkey_config["enabled"] = _as_bool(valkey_enabled)
+        valkey_changed = True
+
+    valkey_changed |= _apply_int(
+        valkey_config,
+        "port",
+        os.getenv("VALKEY_PORT"),
+        "VALKEY_PORT",
+        min_value=1,
+        max_value=65535,
+    )
+    valkey_changed |= _apply_int(
+        valkey_config, "db", os.getenv("VALKEY_DB"), "VALKEY_DB"
+    )
+
+    valkey_max_connections = os.getenv("VALKEY_CONNECTION_POOL")
+    if valkey_max_connections:
+        conn_pool = valkey_config.setdefault("connection_pool", {})
+        valkey_changed |= _apply_int(
+            conn_pool,
+            "max_connections",
+            valkey_max_connections,
+            "VALKEY_CONNECTION_POOL",
+        )
+
+    search_config = config.get("search", {}) or {}
+    search_changed = False
+    backend_env = os.getenv("SEARCH_BACKEND")
+    if backend_env:
+        be = backend_env.strip().lower()
+        if be in (
+            "sqlite_fts5",
+            "sqlite",
+            "postgres",
+            "meilisearch",
+            "elasticsearch",
+            "es",
+        ):
+            if be == "sqlite":
+                be = "sqlite_fts5"
+            if be == "es":
+                be = "elasticsearch"
+            search_config["backend"] = be
+            search_changed = True
+        else:
+            import utils.logger as _slog
+
+            _slog.warning(f"Invalid SEARCH_BACKEND value: {backend_env}")
+    enabled = os.getenv("SEARCH_ENABLED")
+    if enabled is not None:
+        search_config["enabled"] = _as_bool(enabled)
+        search_changed = True
+    search_changed |= _apply_int(
+        search_config,
+        "result_limit",
+        os.getenv("SEARCH_RESULT_LIMIT"),
+        "SEARCH_RESULT_LIMIT",
+        min_value=1,
+        max_value=1000,
+    )
+    search_changed |= _apply_int(
+        search_config,
+        "batch_size",
+        os.getenv("SEARCH_BATCH_SIZE"),
+        "SEARCH_BATCH_SIZE",
+        min_value=1,
+        max_value=1000,
+    )
+    wti_raw = os.getenv("SEARCH_WRITE_TIME_INDEXING")
+    if wti_raw is not None:
+        search_config["write_time_indexing"] = _as_bool(wti_raw)
+        search_changed = True
+    meili_host = os.getenv("SEARCH_MEILISEARCH_HOST") or os.getenv("MEILISEARCH_HOST")
+    meili_key = os.getenv("SEARCH_MEILISEARCH_API_KEY") or os.getenv(
+        "MEILISEARCH_API_KEY"
+    )
+    if meili_host or meili_key is not None:
+        ms = search_config.setdefault("meilisearch", {})
+        if meili_host:
+            ms["host"] = meili_host
+            search_changed = True
+        if meili_key is not None:
+            ms["api_key"] = meili_key or None
+            search_changed = True
+    es_hosts = os.getenv("SEARCH_ELASTICSEARCH_HOSTS") or os.getenv(
+        "ELASTICSEARCH_HOSTS"
+    )
+    if es_hosts:
+        es = search_config.setdefault("elasticsearch", {})
+        hosts = [h.strip() for h in es_hosts.split(",") if h.strip()]
+        if hosts:
+            es["hosts"] = hosts
+            search_changed = True
+    if search_changed:
+        config.set("search", search_config)
+
+    if valkey_changed:
+        config.set("valkey", valkey_config)
+
 
 def setup_config(
-    project_root: str, default_config: dict, config_path_arg: Optional[str] = None
+    project_root: str,
+    default_config: dict,
+    config_path_arg: Optional[str] = None,
 ) -> str:
+    """Initialize configuration from file and environment.
+
+    Searches for an existing ``config.yaml`` in the home directory first,
+    then the project directory. If neither exists, the home-directory path
+    is used as the default. After loading the file, environment-variable
+    overrides are applied.
+
+    Args:
+        project_root: Absolute path to the project root directory.
+        default_config: The default configuration dictionary (typically
+            produced by ``config_defaults.get_default_config``).
+        config_path_arg: Optional explicit path to a config file. When
+            provided, this path takes precedence over the search order.
+
+    Returns:
+        The resolved path to the config file that was loaded.
+    """
     config_paths = [
         (
             str(Path.home() / ".plexichat" / "config" / "config.yaml"),

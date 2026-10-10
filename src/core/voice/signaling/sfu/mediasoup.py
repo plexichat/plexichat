@@ -9,6 +9,8 @@ import os
 import time
 from typing import Dict, List, Optional, Any
 
+import httpx
+
 import utils.logger as logger
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
@@ -28,6 +30,7 @@ from .base import (
     MediaKind,
     AcousticDefenseConfig,
 )
+from .quality import QualityReporter, parse_quality_metrics
 
 
 class MediasoupAdapter(SFUAdapter):
@@ -54,8 +57,15 @@ class MediasoupAdapter(SFUAdapter):
         """
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout
-        self._session = None
+        self._session: Optional[httpx.AsyncClient] = None
         self._recordings: Dict[str, Dict] = {}
+        # room_id -> peers currently joined, used to poll per-peer stats.
+        self._joined_peers: Dict[str, set] = {}
+        # (room_id, peer_id) -> consumers created for that peer. Needed to
+        # resolve the empty consumer id BandwidthEstimator passes; without it
+        # the layer hint was sent to a path segment that cannot exist.
+        self._consumers: Dict[tuple, List[SFUConsumer]] = {}
+        self._quality_reporter: Optional[QualityReporter] = None
         self._acoustic_defense = acoustic_defense
 
     def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
@@ -78,21 +88,10 @@ class MediasoupAdapter(SFUAdapter):
             "transient_ratio": self._acoustic_defense.transient_ratio,
         }
 
-    async def _get_session(self):
-        """Get or create aiohttp session."""
+    async def _get_session(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client used for the mediasoup REST API."""
         if self._session is None:
-            try:
-                import aiohttp
-
-                self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=self._timeout)
-                )
-            except ImportError:
-                raise SFUConnectionError(
-                    "aiohttp is required for mediasoup adapter",
-                    backend="mediasoup",
-                    url=self._api_url,
-                )
+            self._session = httpx.AsyncClient(timeout=self._timeout)
         return self._session
 
     async def _request(
@@ -116,25 +115,28 @@ class MediasoupAdapter(SFUAdapter):
         url = f"{self._api_url}{endpoint}"
 
         try:
-            async with session.request(
+            response = await session.request(
                 method,
                 url,
                 json=data,
                 headers={"Content-Type": "application/json"},
-            ) as response:
-                if response.status >= 400:
-                    text = await response.text()
-                    raise SFUConnectionError(
-                        f"Mediasoup API error: {response.status} - {text}",
-                        backend="mediasoup",
-                        url=url,
-                    )
+            )
+            if response.status_code >= 400:
+                text = response.text
+                raise SFUConnectionError(
+                    f"Mediasoup API error: {response.status_code} - {text}",
+                    backend="mediasoup",
+                    url=url,
+                )
 
-                if response.content_type == "application/json":
-                    return await response.json()
-                return {}
+            # Match the media type only, so a server sending
+            # ``application/json; charset=utf-8`` still takes the JSON path.
+            content_type = response.headers.get("content-type", "")
+            if content_type.split(";")[0].strip() == "application/json":
+                return response.json()
+            return {}
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, httpx.TimeoutException):
             raise SFUTimeoutError(
                 "Mediasoup request timed out",
                 operation=endpoint,
@@ -171,6 +173,8 @@ class MediasoupAdapter(SFUAdapter):
         if room_id in self._recordings:
             await self.stop_recording(room_id)
         await self._request("DELETE", f"/rooms/{path_segment(room_id, 'room_id')}")
+        self._joined_peers.pop(room_id, None)
+        self._forget_consumers(room_id)
         logger.debug(f"Closed mediasoup room: {room_id}")
         return True
 
@@ -185,6 +189,7 @@ class MediasoupAdapter(SFUAdapter):
             },
         )
 
+        self._joined_peers.setdefault(room_id, set()).add(peer_id)
         logger.debug(f"Peer {peer_id} joined room {room_id}")
 
         return {
@@ -199,8 +204,22 @@ class MediasoupAdapter(SFUAdapter):
             "DELETE",
             f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}",
         )
+        peers = self._joined_peers.get(room_id)
+        if peers is not None:
+            peers.discard(peer_id)
+            if not peers:
+                self._joined_peers.pop(room_id, None)
+        self._forget_consumers(room_id, peer_id)
         logger.debug(f"Peer {peer_id} left room {room_id}")
         return True
+
+    def _forget_consumers(self, room_id: str, peer_id: Optional[str] = None) -> None:
+        """Drop tracked consumers when a peer or the whole room is torn down."""
+        if peer_id is not None:
+            self._consumers.pop((room_id, peer_id), None)
+            return
+        for key in [key for key in self._consumers if key[0] == room_id]:
+            self._consumers.pop(key, None)
 
     async def create_transport(
         self,
@@ -303,6 +322,8 @@ class MediasoupAdapter(SFUAdapter):
             paused=result.get("paused", False),
         )
 
+        self._consumers.setdefault((room_id, peer_id), []).append(consumer)
+
         logger.debug(f"Created consumer {consumer.id} for producer {producer_id}")
 
         return consumer
@@ -365,7 +386,7 @@ class MediasoupAdapter(SFUAdapter):
         result = await self._request(
             "GET", f"/rooms/{path_segment(room_id, 'room_id')}/routerCapabilities"
         )
-        return result.get("rtpCapabilities", {})
+        return result.get("rtpCapabilities", result)
 
     async def set_preferred_layers(
         self,
@@ -375,16 +396,93 @@ class MediasoupAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
-        await self._request(
-            "POST",
-            f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/consumers/{path_segment(consumer_id, 'consumer_id')}/preferredLayers",
-            {
-                "spatialLayer": spatial_layer,
-                "temporalLayer": temporal_layer,
-            },
-        )
+        """Set preferred simulcast layers for the peer's consumers.
+
+        An empty ``consumer_id`` (how ``BandwidthEstimator`` calls this) means
+        "every consumer this peer receives". Previously the empty id went
+        straight into ``path_segment``, which rejects it -- so the request
+        raised ``ValueError`` and the degradation hint never reached the SFU
+        on this backend. Video consumers are preferred because layers are only
+        meaningful for simulcast video. Returns False when no layer request
+        could be issued.
+        """
+        if consumer_id:
+            consumer_ids = [consumer_id]
+        else:
+            consumers = self._consumers.get((room_id, peer_id), [])
+            consumer_ids = [
+                consumer.id
+                for consumer in consumers
+                if consumer.kind is MediaKind.VIDEO
+            ] or [consumer.id for consumer in consumers]
+
+        if not consumer_ids:
+            logger.debug(
+                f"No consumers to configure for peer {peer_id} in room {room_id}"
+            )
+            return False
+
+        # An SFU rejection propagates rather than being swallowed: reporting
+        # success on a failed layer change is the fail-open shape this audit
+        # exists to remove (see test_mediasoup_simulcast_layer_manipulation).
+        for target_id in consumer_ids:
+            await self._request(
+                "POST",
+                f"/rooms/{path_segment(room_id, 'room_id')}/peers/{path_segment(peer_id, 'peer_id')}/consumers/{path_segment(target_id, 'consumer_id')}/preferredLayers",
+                {
+                    "spatialLayer": spatial_layer,
+                    "temporalLayer": temporal_layer,
+                },
+            )
+
         return True
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Wire the quality sink and start polling SFU stats for it.
+
+        This adapter is request/response only -- the SFU never pushes scores
+        -- so quality is pulled from per-peer stat records instead.
+        """
+        super().set_quality_mixin(quality_mixin)
+        if self._quality_reporter is None:
+            self._quality_reporter = QualityReporter(self)
+        self._quality_reporter.start()
+
+    async def collect_quality(self) -> List[tuple]:
+        """Poll per-peer transport stats into quality samples.
+
+        The REST contract mirrors the rest of this adapter:
+        ``GET /rooms/{room}/peers/{peer}/stats`` answered with a list of stat
+        records (or a ``{"stats": [...]}`` envelope) using ``bitrate`` /
+        ``packetLoss`` / ``jitter`` / ``roundTripTime`` / ``score`` field
+        names. Peers that report nothing are skipped rather than guessed at.
+        """
+        samples: List[tuple] = []
+        for room_id, peer_ids in list(self._joined_peers.items()):
+            for peer_id in list(peer_ids):
+                try:
+                    payload = await self._request(
+                        "GET",
+                        f"/rooms/{path_segment(room_id, 'room_id')}"
+                        f"/peers/{path_segment(peer_id, 'peer_id')}/stats",
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Mediasoup quality poll failed for %s in %s: %s",
+                        peer_id,
+                        room_id,
+                        exc,
+                    )
+                    continue
+                records = (
+                    payload.get("stats", payload)
+                    if isinstance(payload, dict)
+                    else payload
+                )
+                metrics = parse_quality_metrics(records)
+                if metrics:
+                    samples.append((room_id, peer_id, metrics))
+        return samples
 
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
         """Start recording by creating a recorder transport on the room."""
@@ -466,7 +564,10 @@ class MediasoupAdapter(SFUAdapter):
                 logger.debug(
                     "Failed to stop mediasoup recording for %s: %s", room_id, exc
                 )
+        if self._quality_reporter is not None:
+            self._quality_reporter.stop()
+            self._quality_reporter = None
         self._recordings.clear()
         if self._session:
-            await self._session.close()
+            await self._session.aclose()
             self._session = None

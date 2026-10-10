@@ -22,6 +22,8 @@ case "$COMMAND" in
 
     if [ "$FAILED" -eq 0 ]; then
       log_info "Backup completed successfully"
+      # Liveness marker consumed by /scripts/healthcheck.sh (compose healthcheck).
+      date -u +%s > /tmp/.last_successful_backup
       run_hook "$BACKUP_SUCCESS_HOOK" "success"
     else
       log_error "Backup completed with errors"
@@ -54,7 +56,8 @@ case "$COMMAND" in
     SNAPSHOT="${1:-latest}"
     log_info "Restoring database from snapshot $SNAPSHOT..."
     export PGPASSWORD="${POSTGRES_PASSWORD}"
-    restic dump "$SNAPSHOT" /db_dump/plexichat.sql.gz 2>/dev/null \
+    DB_DUMP_IN_REPO="${BACKUP_DB_DUMP_PATH#/}/plexichat.sql.gz"
+    restic dump "$SNAPSHOT" "$DB_DUMP_IN_REPO" 2>/dev/null \
       | gunzip \
       | psql -h db -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER}" -d "${POSTGRES_DBNAME}" --quiet
     log_info "Database restore complete"

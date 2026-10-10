@@ -34,6 +34,37 @@ RECORDING_FORMATS = {
 }
 DEFAULT_RECORDING_FORMAT = "webm"
 
+# ffmpeg audio codec used when concatenating SFU segments into one file, per
+# configured recording format. The container must match the format the file
+# is later uploaded as (extension + content type); previously every combined
+# file was written as a .webm/libopus stream even when the instance recorded
+# wav/mp4, so the stored file did not match its declared type (L12).
+_COMBINE_AUDIO_CODECS = {
+    "webm": "libopus",
+    "opus": "libopus",
+    "wav": "pcm_s16le",
+    "mp4": "aac",
+}
+
+
+def combine_output_target(recording_format: str) -> tuple:
+    """Return ``(suffix, audio_codec)`` for ffmpeg's combined-segment output.
+
+    The suffix matches the container declared by :data:`RECORDING_FORMATS`
+    for the configured format, and the codec is a container-appropriate audio
+    codec, so a combined recording keeps the extension/content-type of the
+    format it is configured to record (L12). Unrecognized formats fall back
+    to the default webm/opus behavior.
+    """
+    fmt = (
+        recording_format
+        if recording_format in RECORDING_FORMATS
+        else DEFAULT_RECORDING_FORMAT
+    )
+    suffix = "." + RECORDING_FORMATS[fmt][1]
+    codec = _COMBINE_AUDIO_CODECS.get(fmt, "libopus")
+    return suffix, codec
+
 
 class RecordingManager:
     """Manages the lifecycle of voice call audio recordings.
@@ -82,6 +113,11 @@ class RecordingManager:
         self._starting: set[int] = set()
         self._stopping: set[int] = set()
         self._pending_stops: set[int] = set()
+        # All lifecycle state above is mutated from voice-lifecycle threads
+        # AND from up to two event loops (main + background). Every
+        # check-then-set sequence must hold this lock so a duplicate SFU
+        # session for one call is impossible. Never hold it across ``await``.
+        self._state_lock = threading.Lock()
 
         # Dedicated background event loop used when no loop is running in the
         # calling thread (``asyncio.get_event_loop()`` raises RuntimeError in
@@ -154,15 +190,16 @@ class RecordingManager:
             "initiator_id": int(initiator_id),
         }
         call_id = normalized["call_id"]
-        if force_restart and (call_id in self._active or call_id in self._starting):
-            # A restart is only consumed after the old SFU recording has been
-            # stopped. If a start is still in flight, coalesce the request;
-            # the start task itself will observe the current state.
-            self._pending_restarts[call_id] = normalized
-            return
-        if call_id in self._active or call_id in self._starting:
-            return
-        self._starting.add(call_id)
+        with self._state_lock:
+            if force_restart and (call_id in self._active or call_id in self._starting):
+                # A restart is only consumed after the old SFU recording has
+                # been stopped. If a start is still in flight, coalesce the
+                # request; the start task itself will observe the current state.
+                self._pending_restarts[call_id] = normalized
+                return
+            if call_id in self._active or call_id in self._starting:
+                return
+            self._starting.add(call_id)
         self._schedule(self._do_start_recording(**normalized))
 
     def stop_call_recording(self, call_id: SnowflakeID) -> None:
@@ -171,17 +208,71 @@ class RecordingManager:
         Fire-and-forget, same as :meth:`start_call_recording`.
         """
         cid = int(call_id)
-        if cid in self._stopping:
-            return
-        if cid in self._starting:
-            # The start task will stop immediately after it records the SFU
-            # session, rather than allowing a late start to leak resources.
-            self._pending_stops.add(cid)
-            return
-        if cid not in self._active:
-            return
-        self._stopping.add(cid)
+        with self._state_lock:
+            if cid in self._stopping:
+                return
+            if cid in self._starting:
+                # The start task will stop immediately after it records the SFU
+                # session, rather than allowing a late start to leak resources.
+                self._pending_stops.add(cid)
+                return
+            if cid not in self._active:
+                return
+            self._stopping.add(cid)
         self._schedule(self._do_stop_recording(cid))
+
+    def stop_live_recordings_for_user(self, user_id: SnowflakeID) -> List[int]:
+        """Stop every live recording segment that is still recording ``user_id``.
+
+        ``stop_call_recording`` is keyed by call and only fires when a consent
+        transition breaks a complete set on the call that is still active. A
+        participant withdrawing consent has to reach further than that: a
+        segment can be mid-stop, or be the tail of a call the dialog no longer
+        names, and continuing to record someone who has withdrawn is exactly
+        the outcome the unanimous-consent gate exists to prevent (M14).
+
+        Membership comes from ``voice_states``, the live authority. An
+        unreadable roster stops the segment rather than leaving it running: a
+        withdrawal this explicit fails closed. Returns the call ids stopped.
+        """
+        with self._state_lock:
+            live = [
+                (call_id, info.get("channel_id"))
+                for call_id, info in self._active.items()
+                if call_id not in self._stopping
+            ]
+
+        stopped: List[int] = []
+        for call_id, channel_id in live:
+            if channel_id is None:
+                # Fail closed: without a channel the live roster cannot be
+                # resolved, so membership of the segment is unprovable.
+                logger.warning(
+                    "recording: call %s has no channel; stopping on revoke", call_id
+                )
+                self.stop_call_recording(call_id)
+                stopped.append(call_id)
+                continue
+            try:
+                from .repository import get_channel_voice_user_ids
+
+                members = set(get_channel_voice_user_ids(self._db, channel_id))
+            except Exception as exc:
+                logger.warning(
+                    "recording: consent lookup failed for call %s: %s", call_id, exc
+                )
+                self.stop_call_recording(call_id)
+                stopped.append(call_id)
+                continue
+            if int(user_id) in members:
+                logger.info(
+                    "recording: stopping call %s; user %s withdrew consent",
+                    call_id,
+                    user_id,
+                )
+                self.stop_call_recording(call_id)
+                stopped.append(call_id)
+        return stopped
 
     # ------------------------------------------------------------------
     # Internal async implementation
@@ -196,8 +287,11 @@ class RecordingManager:
     ) -> None:
         # Consent callbacks may race with the initial fire-and-forget start.
         # Never create two SFU recordings for one call.
-        if call_id in self._active:
-            self._starting.discard(call_id)
+        with self._state_lock:
+            already_active = call_id in self._active
+        if already_active:
+            with self._state_lock:
+                self._starting.discard(call_id)
             return
         room_id = f"voice_{channel_id}"
         if self._consent_required and not self._call_consent_allows(
@@ -206,30 +300,54 @@ class RecordingManager:
             logger.info(
                 "recording: consent not recorded for call %s; not starting", call_id
             )
-            self._starting.discard(call_id)
-            self._pending_stops.discard(call_id)
-            self._pending_restarts.pop(call_id, None)
+            with self._state_lock:
+                self._starting.discard(call_id)
+                self._pending_stops.discard(call_id)
+                self._pending_restarts.pop(call_id, None)
             return
         output_dir = str(self._recording_root)
         try:
             os.makedirs(output_dir, exist_ok=True)
         except OSError as exc:
             logger.warning(f"recording: cannot create output dir {output_dir}: {exc}")
-            self._starting.discard(call_id)
-            self._pending_stops.discard(call_id)
-            self._pending_restarts.pop(call_id, None)
+            with self._state_lock:
+                self._starting.discard(call_id)
+                self._pending_stops.discard(call_id)
+                self._pending_restarts.pop(call_id, None)
             return
 
         try:
             result = await self._sfu.start_recording(room_id, output_dir)
-            self._active[call_id] = {
-                "room_id": room_id,
-                "artifact_id": artifact_id,
-                "recording_id": result.get("recording_id", ""),
-                "initiator_id": initiator_id,
-                "channel_id": channel_id,
-            }
-            self._start_times[call_id] = time.time()
+            with self._state_lock:
+                if call_id in self._active or call_id in self._stopping:
+                    # Another thread/task won the race (e.g. a stop was
+                    # processed while the SFU start was in flight). Tear the
+                    # duplicate session down instead of registering it.
+                    duplicate = True
+                else:
+                    duplicate = False
+                    self._active[call_id] = {
+                        "room_id": room_id,
+                        "artifact_id": artifact_id,
+                        "recording_id": result.get("recording_id", ""),
+                        "initiator_id": initiator_id,
+                        "channel_id": channel_id,
+                    }
+                    self._start_times[call_id] = time.time()
+            if duplicate:
+                try:
+                    await self._sfu.stop_recording(room_id)
+                except Exception as exc:
+                    logger.warning(
+                        "recording: duplicate session cleanup failed for call %s: %s",
+                        call_id,
+                        exc,
+                    )
+                with self._state_lock:
+                    self._starting.discard(call_id)
+                    self._pending_stops.discard(call_id)
+                    self._pending_restarts.pop(call_id, None)
+                return
             logger.info(
                 f"recording: started for call {call_id} (room {room_id}, "
                 f"files={result.get('file_count', 0)})"
@@ -238,32 +356,40 @@ class RecordingManager:
                 asyncio.create_task(
                     self._check_max_duration(call_id, self._max_duration_minutes)
                 )
-            self._starting.discard(call_id)
-            # A consent event that arrived while start was awaiting the SFU
-            # is already represented by this now-authorized recording. Do not
-            # restart it a second time.
-            self._pending_restarts.pop(call_id, None)
-            if call_id in self._pending_stops:
-                self._pending_stops.discard(call_id)
-                self._stopping.add(call_id)
+            with self._state_lock:
+                self._starting.discard(call_id)
+                # A consent event that arrived while start was awaiting the SFU
+                # is already represented by this now-authorized recording. Do
+                # not restart it a second time.
+                self._pending_restarts.pop(call_id, None)
+                has_pending_stop = call_id in self._pending_stops
+                if has_pending_stop:
+                    self._pending_stops.discard(call_id)
+                    self._stopping.add(call_id)
+            if has_pending_stop:
                 await self._do_stop_recording(call_id)
         except Exception as exc:
-            self._starting.discard(call_id)
-            self._pending_stops.discard(call_id)
-            self._pending_restarts.pop(call_id, None)
+            with self._state_lock:
+                self._starting.discard(call_id)
+                self._pending_stops.discard(call_id)
+                self._pending_restarts.pop(call_id, None)
             logger.warning(f"recording: failed to start for call {call_id}: {exc}")
 
     async def _check_max_duration(self, call_id: int, max_minutes: int) -> None:
         await asyncio.sleep(max_minutes * 60)
-        if call_id in self._active:
+        with self._state_lock:
+            is_active = call_id in self._active
+        if is_active:
             logger.info(f"recording: max duration reached for call {call_id}, stopping")
             self.stop_call_recording(call_id)
 
     async def _do_stop_recording(self, call_id: int) -> None:
-        info = self._active.pop(call_id, None)
-        self._start_times.pop(call_id, None)
+        with self._state_lock:
+            info = self._active.pop(call_id, None)
+            self._start_times.pop(call_id, None)
         if info is None:
-            self._stopping.discard(call_id)
+            with self._state_lock:
+                self._stopping.discard(call_id)
             return
 
         stop_succeeded = False
@@ -285,20 +411,24 @@ class RecordingManager:
                     call_id,
                     exc,
                 )
+                for fp in filepaths:
+                    self._cleanup_file(fp)
         else:
             logger.info(f"recording: call {call_id} has no recorded files")
 
-        self._stopping.discard(call_id)
-        # If the SFU stop failed, restore the active entry and retain the
-        # restart request. A later stop call can retry safely; starting now
-        # could leave two live recordings for the same room.
-        restart = self._pending_restarts.get(call_id)
-        if not stop_succeeded:
-            self._active[call_id] = info
-            self._start_times[call_id] = time.time()
-            return
+        with self._state_lock:
+            self._stopping.discard(call_id)
+            # If the SFU stop failed, restore the active entry and retain the
+            # restart request. A later stop call can retry safely; starting now
+            # could leave two live recordings for the same room.
+            restart = self._pending_restarts.get(call_id)
+            if not stop_succeeded:
+                self._active[call_id] = info
+                self._start_times[call_id] = time.time()
+                return
         if restart is not None:
-            self._pending_restarts.pop(call_id, None)
+            with self._state_lock:
+                self._pending_restarts.pop(call_id, None)
             restart_call_id = restart.get("call_id")
             restart_channel_id = restart.get("channel_id")
             restart_initiator_id = restart.get("initiator_id")
@@ -312,7 +442,8 @@ class RecordingManager:
                     call_id,
                 )
                 return
-            self._starting.add(call_id)
+            with self._state_lock:
+                self._starting.add(call_id)
             await self._do_start_recording(
                 call_id=int(restart_call_id),
                 channel_id=int(restart_channel_id),
@@ -388,6 +519,7 @@ class RecordingManager:
                     )
         except Exception as exc:
             logger.warning(f"recording: media upload failed for call {call_id}: {exc}")
+            self._cleanup_file(filepath)
             return
 
         self._update_artifact_payload(
@@ -484,8 +616,13 @@ class RecordingManager:
             return None
 
         combine_dir = str(Path(filepaths[0]).expanduser().resolve().parent)
+        # L12: the combined file must use the container/codec of the
+        # configured recording format (it is uploaded with that format's
+        # extension and content type afterwards); previously the suffix and
+        # codec were hardcoded to webm/libopus regardless of configuration.
+        suffix, audio_codec = combine_output_target(self._recording_format)
         fd, out_path = tempfile.mkstemp(
-            suffix=".webm", prefix="recording_", dir=combine_dir
+            suffix=suffix, prefix="recording_", dir=combine_dir
         )
         os.close(fd)
 
@@ -503,7 +640,7 @@ class RecordingManager:
             ["ffmpeg", "-y"]
             + input_args
             + ["-filter_complex", filter_str]
-            + ["-map", "[a]", "-c:a", "libopus", out_path]
+            + ["-map", "[a]", "-c:a", audio_codec, out_path]
         )
 
         try:
@@ -539,23 +676,23 @@ class RecordingManager:
         and logging context only.
         """
         try:
-            from .repository import get_voice_call
+            from .repository import (
+                get_channel_voice_user_ids,
+                get_voice_call_uncached,
+            )
 
-            call = get_voice_call(self._db, call_id)
+            call = get_voice_call_uncached(self._db, call_id)
             if call is None:
+                return False
+            if call.channel_id is None:
+                # Fail closed: without a channel we cannot resolve the live
+                # roster, so consent cannot be verified.
                 return False
             raw_consented = getattr(call, "consented_participants", []) or []
             if not isinstance(raw_consented, (list, tuple, set)):
                 return False
             consented = {int(value) for value in raw_consented}
-            current_ids = {
-                int(row["user_id"])
-                for row in self._db.fetch_all(
-                    "SELECT user_id FROM voice_states WHERE channel_id = ?",
-                    (call.channel_id,),
-                )
-                or []
-            }
+            current_ids = set(get_channel_voice_user_ids(self._db, call.channel_id))
             # An unavailable/empty live roster must fail closed. Recording a
             # call based only on the initiator ID would bypass participant
             # consent during a membership lookup failure.

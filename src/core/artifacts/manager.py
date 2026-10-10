@@ -10,7 +10,7 @@ handlers, and no voice-specific call logic (those are introduced by later
 groups). Permission/visibility checks are performed by the route layer.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import utils.config as config
 import utils.logger as logger
@@ -116,6 +116,13 @@ class ArtifactManager(BaseManager):
 
         if days is None:
             days = artifacts_cfg.get("default_retention_days")
+        if days is None:
+            # License-free evaluation mode makes suite/artifact content
+            # ephemeral: fall back to the evaluation retention window so new
+            # artifacts are auto-purged by the retention cleanup job.
+            from .capabilities import evaluation_ttl_days
+
+            days = evaluation_ttl_days(artifacts_cfg)
 
         return days
 
@@ -186,6 +193,7 @@ class ArtifactManager(BaseManager):
         payload: Optional[Dict[str, Any]] = None,
         retention_policy: Any = None,
         license_feature: Optional[str] = None,
+        emit_event: bool = True,
     ) -> Artifact:
         """Create and persist a new artifact with a fresh Snowflake id."""
         created_at = self._get_timestamp()
@@ -212,7 +220,8 @@ class ArtifactManager(BaseManager):
             license_feature=license_feature,
         )
         created = create_artifact(self._db, artifact)
-        self._emit_lifecycle_event("create", created)
+        if emit_event:
+            self._emit_lifecycle_event("create", created)
         return created
 
     def get(self, artifact_id: SnowflakeID) -> Optional[Artifact]:
@@ -222,9 +231,17 @@ class ArtifactManager(BaseManager):
     def update(
         self,
         artifact_id: SnowflakeID,
+        emit_event: bool = True,
+        expected_rev: Optional[int] = None,
         **fields: Any,
     ) -> Optional[Artifact]:
-        """Update an artifact's mutable fields and retention deadline."""
+        """Update an artifact's mutable fields and retention deadline.
+
+        ``expected_rev`` enables optimistic concurrency: when provided the row
+        is only updated if its current ``rev`` matches, and the revision is
+        advanced atomically in the same statement. Returns ``None`` when the
+        artifact is missing OR the revision has already moved on.
+        """
         existing = get_artifact(self._db, artifact_id)
         if existing is None:
             return None
@@ -242,19 +259,28 @@ class ArtifactManager(BaseManager):
                 )
 
         fields.setdefault("updated_at", self._get_timestamp())
-        updated = update_artifact(self._db, artifact_id, **fields)
-        if updated is not None:
+        updated = update_artifact(
+            self._db, artifact_id, expected_rev=expected_rev, **fields
+        )
+        if updated is not None and emit_event:
             self._emit_lifecycle_event("update", updated)
         return updated
 
-    def delete(self, artifact_id: SnowflakeID, purge_media: bool = True) -> bool:
+    def delete(
+        self,
+        artifact_id: SnowflakeID,
+        purge_media: bool = True,
+        emit_event: bool = True,
+    ) -> bool:
         """Delete an artifact row plus its cascade-linked rows.
 
         Removes the metadata row, the ordered operations log (``artifact_ops``),
         and linked ``voice_calls`` rows. When ``purge_media`` is set, any media
         files referenced by the artifact payload (e.g. voice-call recordings)
-        are soft-deleted through the media module as a best-effort cleanup —
-        media errors never fail the delete.
+        are soft-deleted through the media module as a best-effort cleanup AFTER
+        the row deletion has succeeded — a failed delete must never strand
+        broken playback references on a still-live artifact. Media errors never
+        fail the delete.
 
         Returns ``True`` when the metadata row was removed.
         """
@@ -263,11 +289,38 @@ class ArtifactManager(BaseManager):
             artifact = get_artifact(self._db, artifact_id)
         except Exception:  # pragma: no cover - defensive
             artifact = None
-        if artifact is not None and purge_media:
-            self._purge_artifact_media(artifact)
-        deleted = delete_artifact(self._db, artifact_id)
+        sum_purged = False
+        if artifact is not None and artifact.artifact_type == ArtifactType.SUM:
+            sum_purged = self._purge_sum_workbook(artifact)
+        # L3: the metadata row must be gone before reporting success.
+        # The repository DELETE checks cursor.rowcount (>0 means exactly the
+        # one targeted row was removed); a concurrent second delete matches
+        # zero rows and returns False. A successful SUM workbook purge removes
+        # the artifact row in Sum's own transaction, so verify it disappeared
+        # (falling back to a direct delete if it is still present).
+        if sum_purged:
+            try:
+                still_present = get_artifact(self._db, artifact_id) is not None
+            except Exception:  # pragma: no cover - defensive
+                still_present = False
+            if still_present:
+                deleted = delete_artifact(self._db, artifact_id)
+            else:
+                deleted = True
+        else:
+            deleted = delete_artifact(self._db, artifact_id)
         if deleted and artifact is not None:
-            self._emit_lifecycle_event("delete", artifact)
+            if purge_media:
+                # L3: media cleanup is best-effort and runs only after the
+                # confirmed row delete; media errors never fail the delete.
+                try:
+                    self._purge_artifact_media(artifact)
+                except Exception as exc:  # pragma: no cover - best-effort
+                    logger.debug(
+                        "Media purge failed for artifact %s: %s", artifact.id, exc
+                    )
+            if emit_event:
+                self._emit_lifecycle_event("delete", artifact)
         return deleted
 
     def _emit_lifecycle_event(self, action: str, artifact: Artifact) -> None:
@@ -351,6 +404,64 @@ class ArtifactManager(BaseManager):
 
     # === Media cleanup ===
 
+    def _purge_sum_workbook(self, artifact: Artifact) -> bool:
+        """Erase the linked Sum workbook through its owning domain manager."""
+        payload = artifact.payload or {}
+        if not isinstance(payload, dict) or not payload.get("workbook_id"):
+            # A SUM artifact without a valid link cannot be safely deleted:
+            # the workbook metadata/blob may still exist but is no longer
+            # discoverable for cleanup.
+            raise ValueError("SUM artifact is missing its linked workbook_id")
+        try:
+            workbook_id = int(payload["workbook_id"])
+            if workbook_id <= 0:
+                raise ValueError("SUM artifact has an invalid workbook_id")
+            from src.core.suite import sum as sum_domain
+
+            manager = sum_domain.get_manager()
+            linked = manager._db.fetch_one(
+                "SELECT artifact_id FROM sum_workbooks WHERE id = ?",
+                (workbook_id,),
+            )
+            if not linked:
+                # The workbook was already purged; the artifact row can still
+                # be removed by this manager without attempting storage work.
+                return False
+            linked_artifact_id = linked.get("artifact_id")
+            if linked_artifact_id is not None and int(linked_artifact_id) != int(
+                artifact.id
+            ):
+                raise RuntimeError("SUM artifact/workbook link mismatch")
+            if linked_artifact_id is None:
+                # Do not delete an artifact while leaving an unowned workbook
+                # behind. The link must be repaired before destructive cleanup.
+                raise RuntimeError("SUM workbook has no owning artifact link")
+            return bool(manager.purge_workbook_by_id(workbook_id, purge_artifact=True))
+        except RuntimeError:
+            # Sum is optional on legacy installations. If Sum metadata exists,
+            # fail closed rather than deleting the artifact identity while
+            # leaving its external workbook blob behind. If table capability
+            # cannot be checked, fail closed as well.
+            try:
+                has_sum_tables = self._db.table_exists("sum_workbooks")
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "Cannot verify Sum metadata tables for artifact cleanup"
+                ) from exc
+            if has_sum_tables:
+                raise RuntimeError(
+                    "Sum manager unavailable for linked workbook cleanup"
+                )
+            logger.debug("Sum manager unavailable during artifact cleanup")
+            return False
+        except Exception as exc:
+            logger.error(
+                "Failed to purge Sum workbook linked to artifact %s: %s",
+                artifact.id,
+                exc,
+            )
+            raise
+
     def _purge_artifact_media(self, artifact: Artifact) -> None:
         """Best-effort soft-delete of media files referenced by the payload."""
         payload = artifact.payload or {}
@@ -386,7 +497,7 @@ class ArtifactManager(BaseManager):
         self,
         filters: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[SnowflakeID] = None,
-        server_id: Optional[SnowflakeID] = None,
+        server_id: Optional[Union[SnowflakeID, List[SnowflakeID]]] = None,
         channel_id: Optional[SnowflakeID] = None,
         author_id: Optional[SnowflakeID] = None,
     ) -> List[Artifact]:
@@ -435,8 +546,8 @@ class ArtifactManager(BaseManager):
         Returns the created artifact.
 
         Raises:
-            ValueError: when the attachment size exceeds the configured
-                ``max_artifact_size_mb``.
+            ValueError: when the attachment size is unparseable ("invalid
+                size") or exceeds the configured ``max_artifact_size_mb``.
         """
         attachment_id = attachment.get("attachment_id") or attachment.get("id")
         if attachment_id is None:
@@ -446,7 +557,19 @@ class ArtifactManager(BaseManager):
             "max_artifact_size_mb", 200
         )
         max_size_bytes = max_size_mb * 1024 * 1024
-        if attachment.get("size", 0) > max_size_bytes:
+        # L4: ``size`` may arrive as a string (form/JSON coercion); a raw
+        # comparison would raise TypeError and surface as a 500. Coerce via
+        # int() fail-closed: numeric strings are accepted, unparseable
+        # values raise ValueError ("invalid size" -> 400), never 500.
+        raw_size = attachment.get("size", 0)
+        if raw_size is None:
+            declared_size = 0
+        else:
+            try:
+                declared_size = int(raw_size)
+            except (TypeError, ValueError):
+                raise ValueError("invalid size")
+        if declared_size > max_size_bytes:
             raise ValueError(f"Attachment exceeds maximum size of {max_size_mb} MB")
 
         payload: Dict[str, Any] = {

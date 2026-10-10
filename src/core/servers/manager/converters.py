@@ -42,6 +42,24 @@ def _row_to_server(row: Dict[str, Any], encrypt_descriptions: bool = False) -> S
     except (KeyError, IndexError):
         pass
 
+    verification_level = 0
+    try:
+        verification_level = row["verification_level"]
+    except (KeyError, IndexError):
+        pass
+
+    default_message_notifications = 0
+    try:
+        default_message_notifications = row["default_message_notifications"]
+    except (KeyError, IndexError):
+        pass
+
+    max_reactions_per_message = 20
+    try:
+        max_reactions_per_message = row["max_reactions_per_message"]
+    except (KeyError, IndexError):
+        pass
+
     description = None
     if row.get("description_encrypted"):
         if encrypt_descriptions:
@@ -68,7 +86,9 @@ def _row_to_server(row: Dict[str, Any], encrypt_descriptions: bool = False) -> S
         default_role_id=row["default_role_id"],
         default_channel_id=default_channel_id,
         system_channel_id=row["system_channel_id"],
-        verification_level=row["verification_level"],
+        verification_level=verification_level,
+        default_message_notifications=default_message_notifications,
+        max_reactions_per_message=max_reactions_per_message,
         deleted=bool(row["deleted"]),
         deleted_at=row["deleted_at"],
         metadata=json.loads(row["metadata"]) if row["metadata"] else None,
@@ -93,6 +113,8 @@ def _server_to_dict(server: Server) -> Dict[str, Any]:
         "default_channel_id": server.default_channel_id,
         "system_channel_id": server.system_channel_id,
         "verification_level": server.verification_level,
+        "default_message_notifications": server.default_message_notifications,
+        "max_reactions_per_message": server.max_reactions_per_message,
         "deleted": server.deleted,
         "deleted_at": server.deleted_at,
         "metadata": server.metadata,
@@ -117,6 +139,8 @@ def _dict_to_server(data: Dict[str, Any]) -> Server:
         default_channel_id=data.get("default_channel_id"),
         system_channel_id=data.get("system_channel_id"),
         verification_level=data.get("verification_level", 0),
+        default_message_notifications=data.get("default_message_notifications", 0),
+        max_reactions_per_message=data.get("max_reactions_per_message", 20),
         deleted=data.get("deleted", False),
         deleted_at=data.get("deleted_at"),
         metadata=data.get("metadata"),
@@ -212,6 +236,7 @@ def _row_to_member(
         inviter_id=row.get("inviter_id"),
         timeout_until=row.get("timeout_until"),
         timeout_reason=row.get("timeout_reason"),
+        is_temporary=bool(row.get("is_temporary", False)),
         roles=roles or [],
     )
 
@@ -257,13 +282,27 @@ def _row_to_invite(row: Dict[str, Any]) -> Invite:
 
 
 def _row_to_ban(row: Dict[str, Any]) -> Ban:
-    """Convert database row to Ban model."""
+    """Convert database row to Ban model.
+
+    ``reason_encrypted`` is the source of truth; the plaintext ``reason``
+    column is a compatibility mirror. Decrypt with the row id the reason
+    was sealed under, falling back to the mirror if decryption fails so a
+    reason is never silently dropped.
+    """
+    reason = row.get("reason")
+    if row.get("reason_encrypted"):
+        try:
+            from src.utils.encryption import decrypt_data
+
+            reason = decrypt_data(row["reason_encrypted"], context=f"ban:{row['id']}")
+        except Exception as e:
+            logger.warning(f"Failed to decrypt ban reason for {row['id']}: {e}")
     return Ban(
         id=row["id"],
         server_id=row["server_id"],
         user_id=row["user_id"],
         banned_by=row["banned_by"],
-        reason=row["reason"],
+        reason=reason,
         created_at=row["created_at"],
     )
 

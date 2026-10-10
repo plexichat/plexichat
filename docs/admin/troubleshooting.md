@@ -1,334 +1,360 @@
-# Admin Troubleshooting
+# Troubleshoot the admin panel
 
-This guide helps you troubleshoot common issues with the Plexichat admin panel.
+This guide helps you diagnose and fix common issues with the Plexichat admin panel.
 
-## Authentication Issues
+## Fix authentication issues
 
-### Cannot Login to Admin Panel
+### You cannot log in
 
-**Symptoms**: Login page loads but authentication fails
+**Symptoms:** The login page loads but authentication fails.
 
-**Possible Causes**:
-- Incorrect username or password
-- Account locked due to rate limiting
-- 2FA issues
-- Host restriction blocking access
-- Session issues
+**Possible causes:**
 
-**Solutions**:
-1. Verify credentials are correct
-2. Check if account is rate-limited (wait for lockout period)
-3. Ensure 2FA is working correctly
-4. Verify your IP is in allowed hosts
-5. Clear browser cache and cookies
-6. Try different browser
+- Incorrect username or password.
+- Account is locked due to rate limiting.
+- Two-factor authentication (2FA) failure.
+- Host restriction blocks your IP.
+- Session or cookie issue.
 
-### 2FA Not Working
+**Try this:**
 
-**Symptoms**: OTP codes are rejected
+1.  Verify your username and password.
+2.  Wait for the lockout period to expire if you are rate-limited (check `admin_ui.rate_limit`).
+3.  Verify that your 2FA code is correct and your device time is synchronized.
+4.  Verify that your IP is in `admin_ui.host_restriction.allowed_hosts`.
+5.  Clear browser cache and cookies, or try a different browser.
 
-**Possible Causes**:
-- Device time not synchronized
-- Incorrect OTP secret
-- Authenticator app issues
-- Backup codes needed
+### 2FA codes are rejected
 
-**Solutions**:
-1. Sync device time with network time
-2. Try different authenticator app
-3. Use backup codes if available
-4. Contact super admin to reset 2FA
-5. Re-setup OTP if possible
+**Symptoms:** One-time password (OTP) codes are rejected.
 
-### Session Expiring Too Quickly
+**Possible causes:**
 
-**Symptoms**: Frequent logouts required
+- Device time is out of sync.
+- Incorrect OTP secret.
+- Authenticator app issue.
 
-**Possible Causes**:
-- Session timeout configured too short
-- IP address changes
-- Browser clearing cookies
-- Security settings
+**Try this:**
 
-**Solutions**:
-1. Increase session timeout in configuration
-2. Check for IP changes (VPN, network switch)
-3. Disable browser cookie clearing for admin domain
-4. Review security settings
+1.  Sync your device time with network time.
+2.  Try a different authenticator app.
+3.  Use a backup code if available.
+4.  Ask a super admin to reset your 2FA.
 
-## Permission Issues
+### Your session expires too quickly
 
-### Access Denied Errors
+**Symptoms:** You are logged out frequently.
 
-**Symptoms**: "Permission denied" or "Insufficient permissions" errors
+**Possible causes:**
 
-**Possible Causes**:
-- Missing required permission
-- Role not assigned correctly
-- RBAC not enabled
-- Approval workflow blocking action
+- Session timeout is too short.
+- IP address changes (VPN or network switch).
+- Browser clears cookies.
 
-**Solutions**:
-1. Check your assigned roles
-2. Verify required permissions for action
-3. Contact super admin for role changes
-4. Check if approval is needed for action
-5. Review audit logs for details
+**Try this:**
 
-### Cannot Access Specific Section
+1.  Increase `admin_ui.security.session.timeout_idle_minutes` and `session_timeout_minutes`.
+2.  Check for IP changes.
+3.  Disable cookie clearing for the admin domain.
 
-**Symptoms**: Some admin sections are inaccessible
+## Fix permission issues
 
-**Possible Causes**:
-- Missing specific permission
-- Section disabled in configuration
-- Feature not available
+### You see "access denied" or "insufficient permissions"
 
-**Solutions**:
-1. Check if section requires specific permission
-2. Verify section is enabled in configuration
-3. Review role permissions
-4. Contact super admin for access
+**Symptoms:** The API returns `403` or the UI shows a permission error.
 
-## Performance Issues
+**Possible causes:**
 
-### Dashboard Loading Slowly
+- Missing required scope.
+- Role is not assigned correctly.
+- RBAC is disabled.
+- An approval workflow is blocking the action.
 
-**Symptoms**: Dashboard takes long time to load
+**Try this:**
 
-**Possible Causes**:
-- Large dataset
-- Database performance issues
-- Network latency
-- Server resource constraints
-
-**Solutions**:
-1. Check database performance
-2. Review system resources
-3. Check network connectivity
-4. Reduce data range/time period
-5. Consider database optimization
-
-### Charts Not Updating
+1.  Check your assigned roles at `GET /api/v1/admin/admins/{id}/roles`.
+2.  Verify the required scope for the action. Check `src/core/admin/permissions.py:42` (`PERMISSION_SCOPES`) and do not use non-existent scopes such as those in the following table:
 
-**Symptoms**: Dashboard charts show stale data
-
-**Possible Causes**:
-- JavaScript errors
-- API connectivity issues
-- Browser caching
-- WebSocket issues
-
-**Solutions**:
-1. Refresh the page
-2. Check browser console for errors
-3. Clear browser cache
-4. Verify API connectivity
-5. Check WebSocket connection
-
-## Data Issues
-
-### User Not Found
-
-**Symptoms**: Cannot find user in search
-
-**Possible Causes**:
-- User deleted
-- Incorrect search criteria
-- User ID typo
-- Database sync issues
-
-**Solutions**:
-1. Verify search criteria
-2. Check if user was deleted
-3. Try different search terms
-4. Check database integrity
-5. Review audit logs
-
-### Inconsistent Data Display
+    | Incorrect (does not exist) | Use instead |
+    |----------------------------|-------------|
+    | `users.force_password_change` | `users.force_username_change` or `admin.security.sessions` |
+    | `servers.ban` | `admin.moderation.bans` |
+    | `reports.resolve` | `reports.action` |
 
-**Symptoms**: Data shows different values in different places
-
-**Possible Causes**:
-- Caching issues
-- Database replication lag
-- Concurrent modifications
-- Display bugs
-
-**Solutions**:
-1. Refresh the page
-2. Clear cache
-3. Check database consistency
-4. Verify data source
-5. Report as bug if persistent
-
-## Configuration Issues
-
-### Settings Not Saving
-
-**Symptoms**: Configuration changes not persisting
-
-**Possible Causes**:
-- File permission issues
-- Database write errors
-- Configuration validation errors
-- Concurrent modifications
-
-**Solutions**:
-1. Check file permissions
-2. Verify database connectivity
-3. Review configuration validation
-4. Check for error messages
-5. Try again after short delay
-
-### Changes Not Taking Effect
+3.  Verify that `admin_ui.rbac.enabled` is `true`.
+4.  Check whether the action requires approval (`admin.approvals`).
+5.  Review the audit log at `GET /api/v1/admin/audit/logs` (requires `admin.audit.read`; the path is `/audit/logs`, not `/audit-log` — see `src/api/routes/admin/audit.py:34`).
 
-**Symptoms**: Configuration changes applied but not working
-
-**Possible Causes**:
-- Service restart required
-- Caching issues
-- Incorrect configuration
-- Dependency issues
-
-**Solutions**:
-1. Restart the service
-2. Clear cache
-3. Verify configuration syntax
-4. Check for conflicting settings
-5. Review documentation
-
-## Audit Logging Issues
-
-### Actions Not Being Logged
-
-**Symptoms**: Some admin actions not appearing in audit log
-
-**Possible Causes**:
-- Audit logging disabled
-- Database connection issues
-- File permission issues
-- Logging configuration errors
-
-**Solutions**:
-1. Verify audit logging is enabled
-2. Check database connectivity
-3. Review file permissions
-4. Check logging configuration
-5. Review error logs
-
-### Audit Logs Missing Details
+### You cannot access a section
 
-**Symptoms**: Audit log entries incomplete
-
-**Possible Causes**:
-- Logging level too low
-- Data sanitization
-- Configuration issues
-- Database schema issues
-
-**Solutions**:
-1. Check logging level configuration
-2. Review data sanitization settings
-3. Verify database schema
-4. Check for logging errors
-5. Update logging configuration
-
-## Approval Workflow Issues
-
-### Approval Requests Not Created
-
-**Symptoms**: Sensitive actions execute without approval
-
-**Possible Causes**:
-- Approval workflows disabled
-- Action not in approval list
-- Single admin bypass active
-- Permission issues
-
-**Solutions**:
-1. Verify approval workflows enabled
-2. Check action is in require_approval_for list
-3. Review single_admin_bypass setting
-4. Check admin permissions
-5. Review configuration
-
-### Approvals Not Counting
-
-**Symptoms**: Approvals given but not counted
-
-**Possible Causes**:
-- Already approved by same admin
-- Request expired
-- Permission issues
-- Database issues
-
-**Solutions**:
-1. Check if you already approved
-2. Verify request is not expired
-3. Check approval permissions
-4. Review database state
-5. Check audit logs
-
-## System Issues
-
-### Service Not Starting
-
-**Symptoms**: Admin panel service fails to start
-
-**Possible Causes**:
-- Configuration errors
-- Database connection issues
-- Port conflicts
-- Resource constraints
-
-**Solutions**:
-1. Check configuration syntax
-2. Verify database connectivity
-3. Check for port conflicts
-4. Review system resources
-5. Check error logs
-
-### High Memory Usage
-
-**Symptoms**: Admin panel consuming excessive memory
-
-**Possible Causes**:
-- Memory leaks
-- Large datasets
-- Caching issues
-- Configuration problems
-
-**Solutions**:
-1. Review memory usage patterns
-2. Reduce data cache size
-3. Check for memory leaks
-4. Optimize configuration
-5. Restart service
-
-## Getting Help
-
-### When to Contact Support
-
-- Issues not resolved by troubleshooting
-- Security concerns
-- Data integrity issues
-- System outages
-- Configuration assistance
-
-### Information to Provide
-
-When seeking help, provide:
-- Plexichat version
-- Error messages (exact text)
-- Steps to reproduce
-- Configuration details
-- Audit log excerpts
-- System logs
-
-### Diagnostic Information
-
-Collect diagnostic information:
+**Symptoms:** Some admin sections are missing or return `403`.
+
+**Possible causes:**
+
+- Missing specific scope.
+- Section is disabled in configuration.
+
+**Try this:**
+
+1.  Check which scope the section requires. For example, audit logs require `admin.audit.read`, blocked users require `admin.moderation.bans`, and reviewing reports requires `reports.action`.
+2.  Verify that the section is enabled in your configuration.
+3.  Ask a super admin to update your roles.
+
+## Fix performance issues
+
+### The dashboard loads slowly
+
+**Symptoms:** The dashboard takes a long time to load.
+
+**Possible causes:**
+
+- Large dataset.
+- Database performance issue.
+- Network latency.
+- Server resource constraints.
+
+**Try this:**
+
+1.  Check database performance and slow queries.
+2.  Review system resources.
+3.  Check network connectivity.
+4.  Reduce the data range or time period.
+5.  Consider database optimization (indexes, connection pool, cache hit rate).
+
+### Charts show stale data
+
+**Symptoms:** Dashboard charts do not update.
+
+**Possible causes:**
+
+- JavaScript error.
+- API connectivity issue.
+- Browser caching.
+- WebSocket issue.
+
+**Try this:**
+
+1.  Refresh the page.
+2.  Check the browser console for errors.
+3.  Clear the browser cache.
+4.  Verify API and WebSocket connectivity.
+
+## Fix data issues
+
+### You cannot find a user
+
+**Symptoms:** Search does not return the user.
+
+**Possible causes:**
+
+- User was deleted.
+- Incorrect search criteria or user-ID typo.
+- Database sync issue.
+
+**Try this:**
+
+1.  Verify your search criteria.
+2.  Check whether the user was deleted or purged.
+3.  Try different search terms.
+4.  Check database integrity and review the audit log.
+
+### Data is inconsistent
+
+**Symptoms:** Different views show different values.
+
+**Possible causes:**
+
+- Caching issue.
+- Database replication lag.
+- Concurrent modifications.
+
+**Try this:**
+
+1.  Refresh the page and clear the cache.
+2.  Check database consistency and the data source.
+3.  Report the issue if it persists.
+
+## Fix configuration issues
+
+### Settings do not save
+
+**Symptoms:** Configuration changes do not persist.
+
+**Possible causes:**
+
+- File permission issue.
+- Database write error.
+- Validation error.
+- Concurrent modification.
+
+**Try this:**
+
+1.  Check file permissions.
+2.  Verify database connectivity.
+3.  Review validation errors in the API response.
+4.  Try again after a short delay.
+
+### Changes do not take effect
+
+**Symptoms:** Configuration is saved but has no effect.
+
+**Possible causes:**
+
+- Service restart is required.
+- Caching issue.
+- Incorrect configuration value.
+
+**Try this:**
+
+1.  Restart the service.
+2.  Clear the cache.
+3.  Verify configuration syntax and check for conflicting settings.
+
+## Fix audit-logging issues
+
+### Actions are not logged
+
+**Symptoms:** Some admin actions do not appear in the audit log.
+
+**Possible causes:**
+
+- Audit logging is disabled.
+- Database connection issue.
+- Logging configuration error.
+
+**Try this:**
+
+1.  Verify that audit logging is enabled (`admin_ui.audit`).
+2.  Check database connectivity.
+3.  Review file permissions and logging configuration.
+4.  Query the correct endpoint: `GET /api/v1/admin/audit/logs` with `admin.audit.read`. Do not query `/audit-log` — that path does not exist.
+
+### Audit logs are missing details
+
+**Symptoms:** Audit entries are incomplete.
+
+**Possible causes:**
+
+- Logging level is too low.
+- Data sanitization removes fields.
+- Database schema issue.
+
+**Try this:**
+
+1.  Check the logging level.
+2.  Review sanitization settings.
+3.  Verify the database schema.
+4.  Check for logging errors and update the configuration.
+
+### How to query audit logs
+
+```bash
+# List recent logs (paginated)
+curl "/api/v1/admin/audit/logs?page=1&per_page=50" \
+  -H "Authorization: Bearer <token>"
+
+# Filter by action family and status
+curl "/api/v1/admin/audit/logs?action_family=reports&status=success" \
+  -H "Authorization: Bearer <token>"
+
+# Export as CSV
+curl "/api/v1/admin/audit/logs/export?format=csv" \
+  -H "Authorization: Bearer <token>" -o audit_logs.csv
+```
+
+Required permission: `admin.audit.read`. For endpoint details, see `src/api/routes/admin/audit.py:34`.
+
+## Fix approval-workflow issues
+
+### Approval requests are not created
+
+**Symptoms:** Sensitive actions run without approval.
+
+**Possible causes:**
+
+- Approval workflows are disabled.
+- Action is not in `require_approval_for`.
+- Single-admin bypass is active.
+- Missing permission.
+
+**Try this:**
+
+1.  Verify that `approval_workflows.enabled` is `true`.
+2.  Check that the action is in `require_approval_for`.
+3.  Review `single_admin_bypass` — when only one admin exists and bypass is enabled, approval is skipped.
+4.  Check admin permissions.
+
+### Approvals are not counted
+
+**Symptoms:** Approvals do not increment.
+
+**Possible causes:**
+
+- You already approved the request.
+- Request has expired.
+- Permission issue.
+
+**Try this:**
+
+1.  Check whether you already approved.
+2.  Verify that the request has not expired.
+3.  Check approval permissions (`admin.approvals`) and database state.
+
+## Fix system issues
+
+### The service does not start
+
+**Symptoms:** The admin-panel service fails to start.
+
+**Possible causes:**
+
+- Configuration error.
+- Database connection issue.
+- Port conflict.
+- Resource constraints.
+
+**Try this:**
+
+1.  Check configuration syntax.
+2.  Verify database connectivity.
+3.  Check for port conflicts.
+4.  Review system resources and error logs.
+
+### Memory usage is high
+
+**Symptoms:** The admin panel uses excessive memory.
+
+**Possible causes:**
+
+- Memory leak.
+- Large datasets or cache.
+
+**Try this:**
+
+1.  Review memory-usage patterns.
+2.  Reduce cache size.
+3.  Check for leaks and optimize configuration.
+4.  Restart the service.
+
+## Get help
+
+### When to contact support
+
+- The issue persists after troubleshooting.
+- You suspect a security issue.
+- You see data-integrity issues or system outages.
+- You need help with configuration.
+
+### What to include
+
+- Plexichat version (`GET /api/v1/version`).
+- Exact error message.
+- Steps to reproduce.
+- Relevant configuration (redact secrets).
+- Audit-log excerpts and system logs.
+
+### Collect diagnostic information
+
 ```bash
 # System information
 uname -a
@@ -337,35 +363,29 @@ python --version
 # Plexichat version
 curl http://localhost:8000/api/v1/version
 
-# Configuration check
-# (review your config file)
-
-# Recent logs
-# (check application logs)
+# Recent audit logs
+curl "http://localhost:8000/api/v1/admin/audit/logs?per_page=20" \
+  -H "Authorization: Bearer <token>"
 ```
 
-## Prevention
+## Prevent issues
 
-### Regular Maintenance
+### Maintain the system
 
-- Review system logs weekly
-- Check disk space monthly
-- Update software regularly
-- Review audit logs monthly
-- Test backup restoration quarterly
+- Review system logs weekly.
+- Check disk space monthly.
+- Update software regularly.
+- Review audit logs monthly.
+- Test backup restoration quarterly.
 
-### Monitoring
+### Monitor
 
-- Set up alerting for critical errors
-- Monitor system resources
-- Track failed login attempts
-- Monitor database performance
-- Review approval workflow status
+- Alert on critical errors.
+- Monitor system resources and database performance.
+- Track failed login attempts and approval-workflow status.
 
-### Documentation
+### Document
 
-- Document custom configurations
-- Keep change logs
-- Maintain runbooks
-- Document troubleshooting steps
-- Update contact information
+- Document custom configurations and changes.
+- Maintain runbooks and troubleshooting notes.
+- Keep contact information up to date.

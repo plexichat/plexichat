@@ -13,6 +13,21 @@ from ...exceptions import ConversationAccessDeniedError
 from ..base import BaseService
 from .protocol import MessageServiceProtocol
 
+# L6: the rebuild previously did DELETE + RPUSH as two separate commands,
+# so a concurrent send (lpush) or a concurrent rebuild could interleave and
+# leave a partially-built list that readers then trusted via the llen
+# comparison. This script performs DEL + RPUSH* + EXPIRE as ONE atomic
+# operation; readers only ever see the old complete list or the new one.
+_REBUILD_RECENT_LIST_SCRIPT = """
+redis.call('DEL', KEYS[1])
+local n = tonumber(ARGV[1])
+for i = 2, n + 1 do
+    redis.call('RPUSH', KEYS[1], ARGV[i])
+end
+redis.call('EXPIRE', KEYS[1], ARGV[n + 2])
+return 1
+"""
+
 
 class RetrievalMixin(BaseService, MessageServiceProtocol):
     """Mixin providing message retrieval operations."""
@@ -31,7 +46,7 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                     return msg
 
         msg_row = self._repo.get_by_id(message_id)
-        if not msg_row or msg_row["deleted"]:
+        if not msg_row:
             return None
 
         if not self._participant_svc.is_participant(
@@ -121,15 +136,40 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                 client = get_client()
                 if client and valkey_available():
                     list_key = f"msg:recent:{conversation_id}"
-                    client.delete(list_key)
-                    if messages:
-                        mids = [m.id for m in messages]
-                        client.rpush(list_key, *mids)
-                        client.expire(list_key, 3600)
+                    mids = [str(m.id) for m in messages]
+                    if not self._rebuild_recent_list_atomic(client, list_key, mids):
+                        # Degrade safely to the legacy non-atomic path.
+                        client.delete(list_key)
+                        if mids:
+                            client.rpush(list_key, *mids)
+                            client.expire(list_key, 3600)
             except Exception as e:
                 logger.debug(f"Failed to populate recent messages cache: {e}")
 
         return messages
+
+    @staticmethod
+    def _rebuild_recent_list_atomic(client, list_key: str, mids: list) -> bool:
+        """Rebuild the recent-messages list atomically via Lua when possible.
+
+        Returns True on success; False (after a debug log) when the client
+        cannot run scripts so the caller can fall back to the legacy path.
+        """
+        if not mids:
+            return False
+        try:
+            eval_lua = getattr(client, "eval_lua", None)
+            if eval_lua is None:
+                return False
+            eval_lua(
+                _REBUILD_RECENT_LIST_SCRIPT,
+                [list_key],
+                [len(mids), *mids, 3600],
+            )
+            return True
+        except Exception as e:
+            logger.debug(f"Atomic recent-list rebuild failed for {list_key}: {e}")
+            return False
 
     def search_messages(
         self,

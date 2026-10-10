@@ -67,5 +67,9 @@ class TestGroups:
         group = messaging_manager.create_group(owner.id, "Test", [m1.id, m2.id])
         messages = messaging_manager.get_messages(owner.id, group.id)
         system_msgs = [m for m in messages if m.message_type.value == "system"]
-        # At least one system message should be present
-        assert len(system_msgs) >= 1
+        # Exactly one system message with the group_created event
+        assert len(system_msgs) == 1
+        assert system_msgs[0].content == 'Group "Test" created'
+        assert system_msgs[0].metadata is not None
+        assert system_msgs[0].metadata.get("event_type") == "group_created"
+        assert system_msgs[0].metadata.get("creator_id") == owner.id

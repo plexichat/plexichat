@@ -41,15 +41,26 @@ class TestPlexiJoinConnections:
     def test_get_connection_missing_returns_none(self, plexijoin):
         assert plexijoin.get_connection(999999) is None
 
-    def test_record_traffic_smoke(self, plexijoin):
-        # record_traffic takes an int connection_id; foreign-key may
-        # not exist but the call should not raise uncaught.
-        try:
-            plexijoin.record_traffic(999999, "inbound", 5)
-        except Exception:
-            # Defensive: some test DBs may FK-halt; that's OK — the
-            # surface is still callable.
-            pass
+    def test_record_traffic_records_row(self, plexijoin):
+        """record_traffic appends a row visible via get_traffic_data."""
+        conn = plexijoin.create_connection(
+            remote_instance_id="remote-a",
+            remote_url="https://remote.example",
+            shared_key="sekret",
+            note="test",
+            admin_id=1,
+        )
+
+        conn_id = conn.get("id") or conn.get("connection_id")
+        assert conn_id is not None
+        plexijoin.record_traffic(conn_id, "inbound", 5)
+
+        rows = plexijoin.get_traffic_data(hours=1)
+        assert isinstance(rows, list)
+        assert len(rows) == 1
+        assert rows[0]["direction"] == "inbound"
+        assert rows[0]["message_count"] == 5
+        assert rows[0]["recorded_at"] > 0
 
     def test_traffic_data_window(self, plexijoin):
         rows = plexijoin.get_traffic_data(hours=1)

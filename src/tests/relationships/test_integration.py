@@ -2,10 +2,14 @@
 Tests for integration with other modules (auth, servers, messaging).
 """
 
+import pytest
+
 from src.core.relationships import (
     RelationshipStatus,
     FriendRequestStatus,
 )
+from src.core.relationships.exceptions import RelationshipValidationError
+from src.core.relationships.manager import friend_requests as friend_requests_module
 
 
 class TestAuthIntegration:
@@ -180,9 +184,14 @@ class TestRelationshipWorkflows:
         rel = rel_manager.get_relationship(user1.id, user2.id)
         assert rel.status == RelationshipStatus.FRIEND
 
-    def test_decline_and_resend_workflow(self, rel_manager, two_users):
+    def test_decline_and_resend_workflow(self, rel_manager, two_users, monkeypatch):
         """Test declining and resending friend request."""
         user1, user2 = two_users
+
+        # Disable the anti-spam cooldown so the resend is immediate.
+        monkeypatch.setattr(
+            friend_requests_module, "FRIEND_REQUEST_RESEND_COOLDOWN_SECONDS", 0
+        )
 
         # Send and decline
         request1 = rel_manager.send_friend_request(user1.id, user2.id)
@@ -197,9 +206,14 @@ class TestRelationshipWorkflows:
         assert request2.id != request1.id
         assert request2.status == FriendRequestStatus.PENDING
 
-    def test_cancel_and_resend_workflow(self, rel_manager, two_users):
+    def test_cancel_and_resend_workflow(self, rel_manager, two_users, monkeypatch):
         """Test cancelling and resending friend request."""
         user1, user2 = two_users
+
+        # Disable the anti-spam cooldown so the resend is immediate.
+        monkeypatch.setattr(
+            friend_requests_module, "FRIEND_REQUEST_RESEND_COOLDOWN_SECONDS", 0
+        )
 
         # Send and cancel
         request1 = rel_manager.send_friend_request(user1.id, user2.id)
@@ -209,6 +223,16 @@ class TestRelationshipWorkflows:
         request2 = rel_manager.send_friend_request(user1.id, user2.id)
         assert request2.id != request1.id
         assert request2.status == FriendRequestStatus.PENDING
+
+    def test_resend_blocked_by_cooldown_after_decline(self, rel_manager, two_users):
+        """An instant resend after a decline hits the anti-spam cooldown."""
+        user1, user2 = two_users
+
+        request1 = rel_manager.send_friend_request(user1.id, user2.id)
+        rel_manager.decline_friend_request(user2.id, request1.id)
+
+        with pytest.raises(RelationshipValidationError):
+            rel_manager.send_friend_request(user1.id, user2.id)
 
 
 class TestConcurrentRelationships:

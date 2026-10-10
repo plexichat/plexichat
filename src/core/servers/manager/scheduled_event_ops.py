@@ -8,9 +8,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
 try:
-    from dateutil.rrule import rrulestr  # type: ignore
+    from dateutil.rrule import rrulestr
 except ImportError:
-    rrulestr = None  # type: ignore
+    rrulestr = None
 
 import utils.config as config
 import utils.logger as logger
@@ -132,7 +132,7 @@ class ScheduledEventManager:
             if rrulestr is None:
                 raise ScheduledEventError("Recurring events require python-dateutil")
             try:
-                rrulestr(rrule)  # type: ignore
+                rrulestr(rrule)
             except Exception:
                 raise ScheduledEventError("Invalid RRULE format")
 
@@ -295,20 +295,38 @@ class ScheduledEventManager:
             changes["status"] = {"old": event.status.value, "new": status.value}
 
         if updates:
-            updates.append("updated_at = ?")
-            params.append(self._get_timestamp())
-            params.append(event_id)
-
-            now = self._get_timestamp()
-            for i, update in enumerate(updates):
+            # Only these columns are ever appended to ``updates`` above, so
+            # the allow-list stays in sync with the builder by construction.
+            allowed_columns = {
+                "name",
+                "description",
+                "start_time",
+                "end_time",
+                "channel_id",
+                "location",
+                "image_url",
+                "status",
+            }
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
-                value = params[i]
-                query = (
-                    "UPDATE srv_scheduled_events SET "
-                    + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"
-                )
-                self._db.execute(query, (value, now, event_id))
+                if col_name not in allowed_columns:
+                    raise ValueError(f"Invalid column name: {col_name}")
+                set_columns.append(col_name)
+                set_params.append(value)
+            now = self._get_timestamp()
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_scheduled_events SET " + set_clause + " WHERE id = ?"
+            self._db.execute(query, (*set_params, event_id))
 
             self._log_audit(
                 event.server_id,
@@ -451,10 +469,11 @@ class ScheduledEventManager:
             updates.append("going_count = going_count + 1")
 
         if updates:
-            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
-            for update in updates:
-                query = "UPDATE srv_scheduled_events SET " + update + " WHERE id = ?"  # nosec: B608
-                self._db.execute(query, (event_id,))
+            # One atomic statement: the decrement and the increment land
+            # together, so a failure between them cannot skew the counts.
+            set_clause = ", ".join(updates)
+            query = "UPDATE srv_scheduled_events SET " + set_clause + " WHERE id = ?"
+            self._db.execute(query, (event_id,))
 
     def generate_recurring_instances(
         self, event_id: int, user_id: int, count: int = 10
@@ -491,10 +510,10 @@ class ScheduledEventManager:
         duration = (event.end_time - event.start_time) if event.end_time else 3600000
 
         for i, dt in enumerate(rule):
-            if i >= count:
-                break
             if i == 0:
                 continue
+            if len(instances) >= count:
+                break
 
             start_ms = int(dt.timestamp() * 1000)
             end_ms = start_ms + duration

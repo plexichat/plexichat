@@ -12,7 +12,7 @@ import threading
 
 # common_utils is now a native package.
 
-from src.utils.encryption.core import (  # noqa: E402
+from src.utils.encryption.core import (
     EncryptionManager,
     MessageEncryptor,
     Keyring,
@@ -158,6 +158,28 @@ class TestKeyRotationMigration:
 
         assert manager_with_keyring.decrypt_data(new_encrypted) == original_data
         assert old_encrypted != new_encrypted
+
+    def test_rotated_out_version_names_the_missing_version(self, manager_with_keyring):
+        """A missing key version must name the version and what is loaded.
+
+        A rotated-out key used to fail with no actionable detail; the error
+        now reports the version the envelope asked for and the versions
+        actually present, so an operator can tell a pruned key from a
+        context/integrity failure.
+        """
+        encrypted = manager_with_keyring.encrypt_data("payload")
+        version = int(encrypted.split(":", 2)[1])
+
+        # Rotate forward, then prune the older version this ciphertext needs.
+        manager_with_keyring.keyring.rotate()
+        del manager_with_keyring.keyring.keys[version]
+
+        with pytest.raises(ValueError) as exc_info:
+            manager_with_keyring.decrypt_data(encrypted)
+
+        message = str(exc_info.value)
+        assert f"version {version}" in message
+        assert "loaded versions" in message
 
 
 class TestConcurrentKeyRotation:

@@ -6,9 +6,10 @@ Provides session-scoped database with transaction-based isolation.
 
 import os
 import shutil
+import tempfile
+from typing import Optional
 
 import utils.config as config
-import utils.logger as logger
 from src.core.database import Database
 from .config import get_test_config
 
@@ -21,7 +22,9 @@ class DatabaseManager:
     transaction-based isolation between tests.
     """
 
-    def __init__(self, test_dir: str = "temp/test_session"):
+    def __init__(self, test_dir: Optional[str] = None):
+        if test_dir is None:
+            test_dir = tempfile.mkdtemp(prefix="plexichat_test_session_")
         self.test_dir = test_dir
         self.db_path = os.path.join(test_dir, "test_session.db")
         self._db = None
@@ -44,11 +47,10 @@ class DatabaseManager:
         log_dir = os.path.join(self.test_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
 
-        # Setup logger (suppress most output during tests)
-        try:
-            logger.setup(log_dir=log_dir, level="WARNING", zip_logs=False)
-        except Exception:
-            pass  # Logger may already be setup
+        # NOTE: no logger.setup() here. The shared test logger is configured
+        # once by src.tests._conftest.config_env; calling setup() would mutate
+        # the process-global AppLogger level/handlers for every later test in
+        # the same worker. See src.tests._conftest.logger_isolation.
 
         # Setup config
         config_path = os.path.join(self.test_dir, "config.yaml")

@@ -44,26 +44,33 @@ class ElasticsearchIndexer(BaseIndexer):
         # URLValidator BEFORE accepting the configuration so an
         # attacker cannot redirect ``index_message`` into a private
         # network address.
-        try:
-            from src.utils.security import URLValidator
+        #
+        # When a caller injects a custom ``http_client`` the urllib
+        # path (and its SSRF surface) is never used — ``_request``
+        # short-circuits to the injected client — so there is nothing
+        # to validate and the host defaults must not abort
+        # construction (this is what mock-based unit tests rely on).
+        if http_client is None:
+            try:
+                from src.utils.security import URLValidator
 
-            validator = URLValidator()
-            for h in list(candidate_hosts):
-                validator.validate_url_for_request(h)
-        except Exception as _es_host_exc:
-            import utils.logger as _es_logger
+                validator = URLValidator()
+                for h in list(candidate_hosts):
+                    validator.validate_url_for_request(h)
+            except Exception as _es_host_exc:
+                import utils.logger as _es_logger
 
-            _es_logger.critical(
-                "Elasticsearch host list %r failed SSRF "
-                "validation; aborting indexer construction: %s",
-                candidate_hosts,
-                _es_host_exc,
-            )
-            raise SearchBackendError(
-                f"Elasticsearch host failed SSRF validation: {_es_host_exc}",
-                backend="elasticsearch",
-                original_error=_es_host_exc,
-            )
+                _es_logger.critical(
+                    "Elasticsearch host list %r failed SSRF "
+                    "validation; aborting indexer construction: %s",
+                    candidate_hosts,
+                    _es_host_exc,
+                )
+                raise SearchBackendError(
+                    f"Elasticsearch host failed SSRF validation: {_es_host_exc}",
+                    backend="elasticsearch",
+                    original_error=_es_host_exc,
+                )
         self._hosts = candidate_hosts
         self._index_prefix = index_prefix
         self._http_client = http_client
@@ -115,10 +122,13 @@ class ElasticsearchIndexer(BaseIndexer):
         path: str,
         body: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Make HTTP request to Elasticsearch."""  # nosec B310
+        """Make HTTP request to Elasticsearch."""
         if self._http_client is None:
             try:
                 url = self._validate_http_url(f"{self._hosts[0]}{path}")
+                from src.utils.security import URLValidator
+
+                URLValidator().validate_url_for_request(url)
                 data = json.dumps(body).encode() if body else None
                 headers = {"Content-Type": "application/json"}
 
@@ -233,7 +243,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 "message_id": str(message.message_id),
                 "content": message.content or "",
                 "author_id": str(message.author_id),
-                "author_username": "",
+                "author_username": message.author_username or "",
                 "conversation_id": str(message.conversation_id),
                 "server_id": str(message.server_id) if message.server_id else None,
                 "channel_id": str(message.channel_id) if message.channel_id else None,
@@ -245,6 +255,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 if message.mentions
                 else [],
                 "is_pinned": message.is_pinned,
+                "attachment_types": message.attachment_types or [],
             }
 
             self._request(
@@ -282,6 +293,7 @@ class ElasticsearchIndexer(BaseIndexer):
                             "message_id": str(message.message_id),
                             "content": message.content or "",
                             "author_id": str(message.author_id),
+                            "author_username": message.author_username or "",
                             "conversation_id": str(message.conversation_id),
                             "server_id": str(message.server_id)
                             if message.server_id
@@ -297,15 +309,18 @@ class ElasticsearchIndexer(BaseIndexer):
                             if message.mentions
                             else [],
                             "is_pinned": message.is_pinned,
+                            "attachment_types": message.attachment_types or [],
                         }
                     )
                 )
 
             bulk_data = "\n".join(bulk_body) + "\n"
-            # nosec B310
             import urllib.request
 
             url = self._validate_http_url(f"{self._hosts[0]}/_bulk")
+            from src.utils.security import URLValidator
+
+            URLValidator().validate_url_for_request(url)
             req = urllib.request.Request(
                 url,
                 data=bulk_data.encode(),
@@ -366,14 +381,38 @@ class ElasticsearchIndexer(BaseIndexer):
 
             if conversation_ids:
                 must.append(
-                    {"terms": {"conversation_id": [str(c) for c in conversation_ids]}}
+                    {
+                        "terms": {
+                            "conversation_id": [
+                                str(c) for c in conversation_ids if c is not None
+                            ]
+                        }
+                    }
                 )
             if server_ids:
-                must.append({"terms": {"server_id": [str(s) for s in server_ids]}})
+                must.append(
+                    {
+                        "terms": {
+                            "server_id": [str(s) for s in server_ids if s is not None]
+                        }
+                    }
+                )
             if channel_ids:
-                must.append({"terms": {"channel_id": [str(c) for c in channel_ids]}})
+                must.append(
+                    {
+                        "terms": {
+                            "channel_id": [str(c) for c in channel_ids if c is not None]
+                        }
+                    }
+                )
             if author_ids:
-                must.append({"terms": {"author_id": [str(a) for a in author_ids]}})
+                must.append(
+                    {
+                        "terms": {
+                            "author_id": [str(a) for a in author_ids if a is not None]
+                        }
+                    }
+                )
 
             search_body = {
                 "query": {"bool": {"must": must}},
@@ -395,6 +434,7 @@ class ElasticsearchIndexer(BaseIndexer):
                         message_id=int(source.get("message_id", 0)),
                         content=source.get("content", ""),
                         author_id=int(source.get("author_id", 0)),
+                        author_username=source.get("author_username", ""),
                         conversation_id=int(source.get("conversation_id", 0)),
                         server_id=int(source["server_id"])
                         if source.get("server_id")
@@ -404,6 +444,9 @@ class ElasticsearchIndexer(BaseIndexer):
                         else None,
                         created_at=source.get("created_at", 0),
                         has_attachments=source.get("has_attachments", False),
+                        has_embeds=source.get("has_embeds", False),
+                        has_links=source.get("has_links", False),
+                        attachment_types=source.get("attachment_types", []),
                         is_pinned=source.get("is_pinned", False),
                         score=hit.get("_score", 0.0),
                     )
@@ -411,9 +454,15 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Elasticsearch search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Elasticsearch message search failed: {e}",
+                backend="elasticsearch",
+                original_error=e,
+            )
 
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
@@ -437,7 +486,8 @@ class ElasticsearchIndexer(BaseIndexer):
         try:
             self._request("DELETE", f"/{self._user_index}/_doc/{user_id}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove user {user_id} from Elasticsearch: {e}")
             return False
 
     def search_users(
@@ -477,9 +527,15 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Elasticsearch user search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Elasticsearch user search failed: {e}",
+                backend="elasticsearch",
+                original_error=e,
+            )
 
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
@@ -506,7 +562,8 @@ class ElasticsearchIndexer(BaseIndexer):
         try:
             self._request("DELETE", f"/{self._server_index}/_doc/{server_id}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove server {server_id} from Elasticsearch: {e}")
             return False
 
     def search_servers(
@@ -564,9 +621,15 @@ class ElasticsearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Elasticsearch server search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Elasticsearch server search failed: {e}",
+                backend="elasticsearch",
+                original_error=e,
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""

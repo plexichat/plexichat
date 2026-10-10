@@ -11,8 +11,12 @@ HMAC-SHA256 using a key HKDF-derived from the server's KEK.
 Architecture
 ------------
 * ``install_zip_at`` → ``_fetch_and_install`` writes manifest.json + .hmac
+  (+ a key-epoch marker recording the signing-key fingerprint)
 * ``ensure_active``  → on startup, verifies HMAC then re-checks every file
-* On HMAC mismatch with intact files (key migration), manifest is re-signed
+* On HMAC mismatch, the install is treated as UNTRUSTED and re-downloaded,
+  EXCEPT for the narrow key-migration case: the stored key epoch differs
+  from the current key AND every on-disk file still matches the signed
+  hash list — only then is the manifest re-signed under the new key
 * On file hash mismatch (tamper/rot), a re-download is triggered
 """
 
@@ -28,8 +32,23 @@ import utils.logger as logger
 
 _MANIFEST_FILE = "manifest.json"
 _HMAC_FILE = "manifest.json.hmac"
-_EXCLUDED_FILES: Set[str] = {"config.js", _MANIFEST_FILE, _HMAC_FILE}
+_EPOCH_FILE = "manifest.json.epoch"
+EXCLUDED_FILES: Set[str] = {
+    "config.js",
+    _MANIFEST_FILE,
+    _HMAC_FILE,
+    _EPOCH_FILE,
+}
+# Back-compat alias used by existing callers.
+_EXCLUDED_FILES = EXCLUDED_FILES
 _CHUNK = 64 * 1024
+
+# Verification outcomes returned by :func:`verify_manifest_detailed`.
+VERIFY_OK = "ok"
+VERIFY_HMAC_MISMATCH = "hmac_mismatch"
+VERIFY_HASH_MISMATCH = "hash_mismatch"
+VERIFY_MISSING = "missing"
+VERIFY_ERROR = "error"
 
 
 def _hash_file(path: Path) -> str:
@@ -42,6 +61,26 @@ def _hash_file(path: Path) -> str:
                 break
             h.update(chunk)
     return h.hexdigest()
+
+
+def key_epoch(signing_key: bytes) -> str:
+    """Return a short fingerprint of *signing_key* (the ``key epoch``).
+
+    Stored next to the manifest so a later HMAC failure can be attributed
+    to a key rotation rather than tampering. The fingerprint is a one-way
+    hash and leaks nothing about the key itself.
+    """
+    return hashlib.sha256(b"epoch:" + signing_key).hexdigest()[:16]
+
+
+def read_key_epoch(install_dir: Path) -> Optional[str]:
+    """Return the stored key epoch for an install, or ``None``."""
+    epoch_path = install_dir / _EPOCH_FILE
+    try:
+        value = epoch_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
 
 
 def generate_manifest(
@@ -69,7 +108,7 @@ def generate_manifest(
 def write_manifest(
     install_dir: Path, files: Dict[str, str], signing_key: bytes
 ) -> None:
-    """Atomically write ``manifest.json`` and ``manifest.json.hmac``."""
+    """Atomically write ``manifest.json``, its HMAC and the key-epoch marker."""
     manifest = {"files": files}
     manifest_bytes = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode(
         "utf-8"
@@ -78,19 +117,24 @@ def write_manifest(
 
     (install_dir / _MANIFEST_FILE).write_bytes(manifest_bytes)
     (install_dir / _HMAC_FILE).write_text(hmac_value + "\n", encoding="utf-8")
+    (install_dir / _EPOCH_FILE).write_text(
+        key_epoch(signing_key) + "\n", encoding="utf-8"
+    )
 
 
-def verify_manifest(install_dir: Path, signing_key: bytes) -> bool:
+def verify_manifest_detailed(install_dir: Path, signing_key: bytes) -> str:
     """Verify HMAC + all file hashes in the manifest.
 
-    Returns ``True`` if everything checks out.
-    Returns ``False`` on HMAC mismatch, file hash mismatch, or missing files.
+    Returns one of ``VERIFY_OK``, ``VERIFY_HMAC_MISMATCH``,
+    ``VERIFY_HASH_MISMATCH``, ``VERIFY_MISSING`` or ``VERIFY_ERROR`` so
+    callers can distinguish a key migration (HMAC mismatch under an
+    unchanged file set) from tampering before deciding to re-sign.
     """
     manifest_path = install_dir / _MANIFEST_FILE
     hmac_path = install_dir / _HMAC_FILE
 
     if not manifest_path.is_file() or not hmac_path.is_file():
-        return False
+        return VERIFY_MISSING
 
     try:
         manifest_bytes = manifest_path.read_bytes()
@@ -104,26 +148,60 @@ def verify_manifest(install_dir: Path, signing_key: bytes) -> bool:
                 "static_client: manifest HMAC mismatch "
                 "(possible key migration or tampering)"
             )
-            return False
+            return VERIFY_HMAC_MISMATCH
 
         manifest = json.loads(manifest_bytes)
         files: Dict[str, str] = manifest.get("files", {})
         for rel_path, expected_hash in files.items():
-            file_path = install_dir / rel_path.replace("/", "\\")
+            # Forward-slash relative paths resolve correctly on every platform
+            # via pathlib. The previous ``rel_path.replace("/", "\\")`` turned
+            # the separator into a literal backslash on POSIX, so nested files
+            # (assets/*, js/*, .vite/*) could never verify.
+            file_path = install_dir / rel_path
             if not file_path.is_file():
                 logger.warning("static_client: manifest file missing: %s", rel_path)
-                return False
+                return VERIFY_MISSING
             actual = _hash_file(file_path)
             if not hmac.compare_digest(actual, expected_hash):
                 logger.warning("static_client: manifest hash mismatch for %s", rel_path)
-                return False
+                return VERIFY_HASH_MISMATCH
 
         logger.info("static_client: manifest OK (%d files verified)", len(files))
-        return True
+        return VERIFY_OK
 
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("static_client: manifest read/parse error: %s", exc)
+        return VERIFY_ERROR
+
+
+def files_match_manifest(install_dir: Path) -> bool:
+    """Check every on-disk file against the hashes recorded in the manifest.
+
+    This deliberately does NOT verify the manifest's HMAC; it is used only
+    as a secondary integrity cross-check when deciding whether an HMAC
+    failure is a benign key migration (files intact) or tampering.
+    """
+    manifest_path = install_dir / _MANIFEST_FILE
+    try:
+        manifest = json.loads(manifest_path.read_bytes())
+    except (OSError, json.JSONDecodeError):
         return False
+    for rel_path, expected_hash in manifest.get("files", {}).items():
+        file_path = install_dir / rel_path
+        if not file_path.is_file():
+            return False
+        if not hmac.compare_digest(_hash_file(file_path), expected_hash):
+            return False
+    return True
+
+
+def verify_manifest(install_dir: Path, signing_key: bytes) -> bool:
+    """Verify HMAC + all file hashes in the manifest.
+
+    Returns ``True`` if everything checks out.
+    Returns ``False`` on HMAC mismatch, file hash mismatch, or missing files.
+    """
+    return verify_manifest_detailed(install_dir, signing_key) == VERIFY_OK
 
 
 def regenerate_manifest(install_dir: Path, signing_key: bytes) -> bool:
@@ -189,8 +267,13 @@ __all__ = [
     "generate_manifest",
     "write_manifest",
     "verify_manifest",
+    "verify_manifest_detailed",
+    "files_match_manifest",
     "regenerate_manifest",
     "get_signing_key",
+    "key_epoch",
+    "read_key_epoch",
     "_MANIFEST_FILE",
     "_HMAC_FILE",
+    "_EPOCH_FILE",
 ]

@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS rel_friends (
     user_id INTEGER NOT NULL,
     friend_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
-    UNIQUE(user_id, friend_id)
+    UNIQUE(user_id, friend_id),
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (friend_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
 -- Friends indexes
@@ -30,7 +32,9 @@ CREATE TABLE IF NOT EXISTS rel_friend_requests (
     message TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    UNIQUE(sender_id, recipient_id)
+    UNIQUE(sender_id, recipient_id),
+    FOREIGN KEY (sender_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipient_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
 -- Friend requests indexes
@@ -45,7 +49,9 @@ CREATE TABLE IF NOT EXISTS rel_blocked (
     blocked_id INTEGER NOT NULL,
     reason TEXT,
     created_at INTEGER NOT NULL,
-    UNIQUE(blocker_id, blocked_id)
+    UNIQUE(blocker_id, blocked_id),
+    FOREIGN KEY (blocker_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocked_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
 -- Blocked indexes

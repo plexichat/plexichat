@@ -118,7 +118,16 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         if not row:
             return None
 
-        return row_to_application(row)
+        app = row_to_application(row)
+
+        # SECURITY: when a caller context is supplied, enforce ownership at
+        # the core layer so route-level gaps cannot leak application
+        # metadata (name, redirect URIs, bot ID, timestamps) to other users.
+        # Internal callers omit ``user_id`` and keep unrestricted access.
+        if user_id is not None and app.owner_id != user_id:
+            raise ApplicationAccessDeniedError("You do not own this application")
+
+        return app
 
     def get_user_applications(self, user_id: SnowflakeID) -> List[Application]:
         rows = self._db.fetch_all(
@@ -206,7 +215,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             logger.debug(f"Application updated: {application_id}")
 
         result = self.get_application(application_id)
-        assert result is not None
+        if result is None:
+            raise ApplicationNotFoundError("Application not found after update")
         return result
 
     def delete_application(
@@ -347,7 +357,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             "access_token": token.access_token,
             "refresh_token": token.refresh_token,
             "token_type": "Bearer",
-            "expires_in": token.expires_at - self._get_timestamp(),
+            "expires_in": (token.expires_at - self._get_timestamp()) // 1000,
             "scope": " ".join(token.scopes),
         }
 
@@ -363,12 +373,12 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             "access_token": token.access_token,
             "refresh_token": token.refresh_token,
             "token_type": "Bearer",
-            "expires_in": token.expires_at - self._get_timestamp(),
+            "expires_in": (token.expires_at - self._get_timestamp()) // 1000,
             "scope": " ".join(token.scopes),
         }
 
-    def revoke_token(self, token: str) -> bool:
-        return self._oauth.revoke_token(token)
+    def revoke_token(self, token: str, user_id: Optional[SnowflakeID] = None) -> bool:
+        return self._oauth.revoke_token(token, user_id)
 
     def register_command(
         self,
@@ -457,5 +467,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         self,
         interaction_token: str,
         response: InteractionResponse,
+        application_id: Optional[SnowflakeID] = None,
     ) -> bool:
-        return self._interactions.respond(interaction_token, response)
+        return self._interactions.respond(
+            interaction_token, response, application_id=application_id
+        )

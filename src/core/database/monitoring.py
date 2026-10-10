@@ -1,7 +1,7 @@
 import threading
 import time
 from typing import Any, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 import utils.config as config
 import utils.logger as logger
 
@@ -24,6 +24,7 @@ class DatabaseMonitor:
         # Threading state
         self._periodic_logging_thread = None
         self._stop_logging = False
+        self._stop_event = threading.Event()
 
         # Rate-limited alert state (record only on state transitions).
         self._alert_state: dict[str, bool] = {}  # alert_key → currently_firing
@@ -94,7 +95,10 @@ class DatabaseMonitor:
                 "old_connections": [],
                 "status": engine_stats.get("status", "healthy"),
                 "database_type": self.db_type,
-                "timestamp": datetime.now().isoformat(),
+                # Pool stats are returned verbatim by
+                # GET /admin/database/pool-health; stamp UTC so the admin
+                # surface matches the other UTC timestamps.
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
             # Acquisition time metrics
@@ -159,6 +163,7 @@ class DatabaseMonitor:
                 return
 
             self._stop_logging = False
+            self._stop_event.clear()
             self._periodic_logging_thread = threading.Thread(
                 target=self._periodic_logging_loop,
                 args=(get_stats_cb, reap_cb),
@@ -170,10 +175,25 @@ class DatabaseMonitor:
                 f"Started pool monitoring thread (interval: {self._periodic_log_interval}s)"
             )
 
-    def stop_pool_monitoring(self):
-        """Stop the background logging thread."""
+    def stop_pool_monitoring(self, timeout: float = 5.0):
+        """Stop the background logging thread.
+
+        Signals the loop via ``_stop_event`` and then joins the thread so
+        ``stop`` is synchronous: when this returns the thread is no longer
+        alive (or the join timed out). The join happens outside ``_lock``
+        because the loop acquires the same lock in ``_cleanup_metrics`` /
+        ``calculate_error_rate`` — joining while holding it could deadlock.
+        Safe to call when monitoring was never started.
+        """
         with self._lock:
             self._stop_logging = True
+            self._stop_event.set()
+            thread = self._periodic_logging_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+            with self._lock:
+                if not thread.is_alive():
+                    self._periodic_logging_thread = None
 
     def _format_log_context(self, **kwargs) -> str:
         """Internal helper for structured logging context."""
@@ -182,7 +202,7 @@ class DatabaseMonitor:
 
     def _periodic_logging_loop(self, get_stats_cb, reap_cb=None):
         """Main loop for the periodic logging thread."""
-        while not self._stop_logging:
+        while not self._stop_event.is_set():
             try:
                 # 1. Proactively reap leaked connections if callback provided
                 if reap_cb:
@@ -319,7 +339,7 @@ class DatabaseMonitor:
             except Exception as e:
                 logger.error(f"Error in pool monitoring loop: {e}")
 
-            time.sleep(self._periodic_log_interval)
+            self._stop_event.wait(self._periodic_log_interval)
 
     def _cleanup_metrics(self):
         """Clean up old metrics to prevent memory growth."""

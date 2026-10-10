@@ -88,13 +88,21 @@ def _load_stable_peer_secret() -> bytes:
     except Exception:
         pass
 
-    logger.critical(
-        "mediasoup_ws: NO deployment-scoped stable-peer secret was "
-        "configured. peer_id values will be CONSTANT per instance "
-        "(any restart / redeploy rotates them). Set "
-        "voice.mediated.stable_peer_secret or "
-        "PLEXICHAT_VOICE_STABLE_PEER_SECRET in production."
-    )
+    # Best-effort: this runs at import time (see the module-level call below),
+    # which can precede ``logger.setup()``. An unconfigured logger raises,
+    # and a crash here would take the whole signaling package with it. The
+    # notice is not lost: no secret means the next ``_stable_peer_id`` call
+    # resolves it again, with a configured logger by then.
+    try:
+        logger.critical(
+            "mediasoup_ws: NO deployment-scoped stable-peer secret was "
+            "configured. peer_id values will be CONSTANT per instance "
+            "(any restart / redeploy rotates them). Set "
+            "voice.mediated.stable_peer_secret or "
+            "PLEXICHAT_VOICE_STABLE_PEER_SECRET in production."
+        )
+    except RuntimeError:
+        pass  # Logger not configured yet
     return b""
 
 
@@ -182,6 +190,10 @@ class MediasoupWSAdapter(SFUAdapter):
         self._recording_teardown_failures: Dict[str, Dict[str, Any]] = {}
         self._quality_mixin: Optional[Any] = None
         self._message_handlers: Dict[str, Callable] = {}
+        # Strong references to the per-connection receive tasks: asyncio only
+        # holds a weak reference, so a task created without one can be
+        # garbage-collected mid-flight and silently end the SFU session.
+        self._receiver_tasks: Dict[str, asyncio.Task] = {}
         self._ssl_context = self._create_ssl_context()
         self._acoustic_defense = acoustic_defense
 
@@ -328,8 +340,11 @@ class MediasoupWSAdapter(SFUAdapter):
         )
         self._connections[key] = connection
 
-        # Start message receiver task
-        asyncio.create_task(self._receive_messages(connection))
+        # Start message receiver task (keep a strong reference; see
+        # ``_receiver_tasks``).
+        self._receiver_tasks[key] = asyncio.create_task(
+            self._receive_messages(connection)
+        )
 
         logger.debug(f"Connected to mediasoup: room={room_id}, peer={peer_id}")
         return connection
@@ -344,6 +359,27 @@ class MediasoupWSAdapter(SFUAdapter):
         finally:
             key = self._get_connection_key(connection.room_id, connection.peer_id)
             self._connections.pop(key, None)
+            self._receiver_tasks.pop(key, None)
+            self._fail_pending_requests(connection)
+
+    @staticmethod
+    def _fail_pending_requests(connection: PeerConnection) -> None:
+        """Fail every in-flight request when the signaling socket ends.
+
+        Otherwise callers block for the full request timeout after a
+        disconnect instead of failing immediately.
+        """
+        pending = list(connection.pending_requests.values())
+        connection.pending_requests.clear()
+        for request in pending:
+            if request.future.done():
+                continue
+            request.future.set_exception(
+                SFUConnectionError(
+                    "Signaling connection closed",
+                    backend="mediasoup-ws",
+                )
+            )
 
     async def _handle_message(self, connection: PeerConnection, message: str):
         """Handle incoming protoo message."""
@@ -352,12 +388,28 @@ class MediasoupWSAdapter(SFUAdapter):
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON message: {message[:100]}")
             return
+        if not isinstance(data, dict):
+            # A JSON array/string/number is schema-invalid protoo traffic;
+            # ``data.get`` would raise AttributeError and end the session.
+            logger.warning(f"Ignoring non-object SFU message: {str(data)[:100]}")
+            return
 
         if data.get("response"):
-            # Response to a request
-            request_id = data.get("id")
-            if request_id in connection.pending_requests:
-                pending = connection.pending_requests.pop(request_id)
+            # Response to a request. Resolving an already-settled future (a
+            # duplicate or late response) raises InvalidStateError, which
+            # would otherwise escape and tear down the receive loop.
+            try:
+                raw_id = data.get("id")
+                if raw_id is None:
+                    return
+                # Pending requests are keyed by the integer ids we sent; a
+                # non-numeric echo is schema drift and is ignored below.
+                request_id = int(raw_id)
+                pending = connection.pending_requests.pop(request_id, None)
+                if pending is None:
+                    return
+                if pending.future.done():
+                    return
                 if data.get("ok"):
                     pending.future.set_result(data.get("data", {}))
                 else:
@@ -367,12 +419,23 @@ class MediasoupWSAdapter(SFUAdapter):
                             error_msg, backend="mediasoup-ws", url=self._ws_url
                         )
                     )
+            except Exception as e:
+                logger.warning(f"Failed to resolve SFU response: {e}")
         elif data.get("request"):
             # Server request (e.g., newConsumer)
-            await self._handle_server_request(connection, data)
+            try:
+                await self._handle_server_request(connection, data)
+            except Exception as e:
+                # One malformed frame must not tear down the peer's SFU
+                # session: an escaping exception ends the receive loop in
+                # ``_receive_messages`` and drops the connection.
+                logger.warning(f"Failed to handle SFU server request: {e}")
         elif data.get("notification"):
             # Server notification
-            await self._handle_notification(connection, data)
+            try:
+                await self._handle_notification(connection, data)
+            except Exception as e:
+                logger.warning(f"Failed to handle SFU notification: {e}")
 
     async def _handle_server_request(self, connection: PeerConnection, data: Dict):
         """Handle server-initiated request."""
@@ -382,33 +445,65 @@ class MediasoupWSAdapter(SFUAdapter):
 
         logger.debug(f"Server request: {method}")
 
-        response = {"response": True, "id": request_id, "ok": True, "data": {}}
+        response: Dict[str, Any] = {
+            "response": True,
+            "id": request_id,
+            "ok": True,
+            "data": {},
+        }
 
-        if method == "newConsumer":
-            # Server wants us to consume a producer
-            consumer = SFUConsumer(
-                id=request_data.get("id"),
-                producer_id=request_data.get("producerId"),
-                kind=MediaKind(request_data.get("kind")),
-                rtp_parameters=request_data.get("rtpParameters", {}),
-                paused=request_data.get("producerPaused", False),
-            )
-            connection.consumers[consumer.id] = consumer
+        try:
+            if method == "newConsumer":
+                # Server wants us to consume a producer
+                consumer = SFUConsumer(
+                    id=request_data.get("id"),
+                    producer_id=request_data.get("producerId"),
+                    kind=MediaKind(request_data.get("kind")),
+                    rtp_parameters=request_data.get("rtpParameters", {}),
+                    paused=request_data.get("producerPaused", False),
+                )
+                connection.consumers[consumer.id] = consumer
 
-            # Store consumer info for the handler
-            handler_key = f"newConsumer:{connection.room_id}:{connection.peer_id}"
-            if handler_key in self._message_handlers:
-                await self._message_handlers[handler_key](consumer)
+                # Store consumer info for the handler
+                handler_key = f"newConsumer:{connection.room_id}:{connection.peer_id}"
+                if handler_key in self._message_handlers:
+                    await self._message_handlers[handler_key](consumer)
 
-        elif method == "newDataConsumer":
-            # Data channel consumer - acknowledge but don't process
-            logger.debug(
-                f"Acknowledged newDataConsumer from server for peer {connection.peer_id}"
-            )
-            # No logic needed for data consumers in this implementation
+            elif method == "newDataConsumer":
+                # Data channel consumer - acknowledge but don't process
+                logger.debug(
+                    f"Acknowledged newDataConsumer from server for peer "
+                    f"{connection.peer_id}"
+                )
+                # No logic needed for data consumers in this implementation
+        except Exception as e:
+            # A protoo server WAITS on this response: swallowing the failure
+            # without answering leaves the request hanging and can drop the
+            # peer. Report the failure in the response instead.
+            logger.warning(f"Failed to handle SFU server request {method}: {e}")
+            response["ok"] = False
+            response["errorReason"] = "request handler failed"
 
-        # Send response
-        await connection.websocket.send(json.dumps(response))
+        try:
+            await connection.websocket.send(json.dumps(response))
+        except Exception as e:
+            logger.warning(f"Failed to respond to SFU server request {method}: {e}")
+
+    def _report_peer_quality(
+        self,
+        connection: PeerConnection,
+        notification_data: Dict[str, Any],
+        **metrics: Any,
+    ) -> None:
+        """Report an SFU score notification to the canonical quality store.
+
+        ``producerScore`` / ``consumerScore`` carry SFU-scoped identifiers
+        (``voice_<channel>`` / ``user_<id>``); the shared base bridge maps them
+        back to the numeric ids the store is keyed by and contains any sink
+        failure, so a metric update can never tear down the receive loop.
+        """
+        raw_peer = notification_data.get("peerId") or connection.peer_id
+        self.report_quality(connection.room_id, raw_peer, metrics)
 
     async def _handle_notification(self, connection: PeerConnection, data: Dict):
         """Handle server notification."""
@@ -428,37 +523,24 @@ class MediasoupWSAdapter(SFUAdapter):
                 f"Peer left room {connection.room_id}: {notification_data.get('peerId')}"
             )
         elif method == "producerScore":
-            if self._quality_mixin is not None:
-                peer_id = notification_data.get("peerId") or connection.peer_id
-                score = notification_data.get("score", 0)
-                bitrate = notification_data.get("bitrate", 0)
-                packet_loss = notification_data.get("packetLoss", 0.0)
-                jitter = notification_data.get("jitter", 0.0)
-                self._quality_mixin.update_quality_hint(
-                    connection.room_id,
-                    peer_id,
-                    bitrate=bitrate,
-                    packet_loss=packet_loss,
-                    jitter=jitter,
-                    score=score,
-                )
+            self._report_peer_quality(
+                connection,
+                notification_data,
+                bitrate=notification_data.get("bitrate", 0),
+                packet_loss=notification_data.get("packetLoss", 0.0),
+                jitter=notification_data.get("jitter", 0.0),
+                score=notification_data.get("score", 0),
+            )
         elif method == "consumerScore":
-            if self._quality_mixin is not None:
-                peer_id = notification_data.get("peerId") or connection.peer_id
-                score = notification_data.get("score", 0)
-                bitrate = notification_data.get("bitrate", 0)
-                packet_loss = notification_data.get("packetLoss", 0.0)
-                jitter = notification_data.get("jitter", 0.0)
-                rtt = notification_data.get("roundTripTime", 0)
-                self._quality_mixin.update_quality_hint(
-                    connection.room_id,
-                    peer_id,
-                    bitrate=bitrate,
-                    packet_loss=packet_loss,
-                    jitter=jitter,
-                    round_trip_time=rtt,
-                    score=score,
-                )
+            self._report_peer_quality(
+                connection,
+                notification_data,
+                bitrate=notification_data.get("bitrate", 0),
+                packet_loss=notification_data.get("packetLoss", 0.0),
+                jitter=notification_data.get("jitter", 0.0),
+                round_trip_time=notification_data.get("roundTripTime", 0),
+                score=notification_data.get("score", 0),
+            )
         elif method == "activeSpeaker":
             # Active speaker changed
             handler_key = f"activeSpeaker:{connection.room_id}"
@@ -902,21 +984,50 @@ class MediasoupWSAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
+        """Set preferred simulcast layers for the peer's consumers.
+
+        ``BandwidthEstimator`` calls this with an empty ``consumer_id`` -- it
+        has no per-consumer mapping -- and the previous code sent
+        ``consumerId: ""`` verbatim, which mediasoup cannot resolve, so the
+        degradation hint silently never applied. An empty id now means "every
+        consumer this peer receives"; layers are meaningful for video, so
+        video consumers are preferred and audio ones are only used when the
+        peer has no video consumer. Returns False when there is nothing to
+        configure rather than claiming success.
+        """
         key = self._get_connection_key(room_id, peer_id)
         connection = self._connections.get(key)
         if not connection:
             return False
 
-        await self._request(
-            connection,
-            "setConsumerPreferredLayers",
-            {
-                "consumerId": consumer_id,
-                "spatialLayer": spatial_layer,
-                "temporalLayer": temporal_layer,
-            },
-        )
+        if consumer_id:
+            consumer_ids = [consumer_id]
+        else:
+            consumer_ids = [
+                consumer.id
+                for consumer in connection.consumers.values()
+                if consumer.kind is MediaKind.VIDEO
+            ] or [consumer.id for consumer in connection.consumers.values()]
+
+        if not consumer_ids:
+            logger.debug(
+                f"No consumers to configure for peer {peer_id} in room {room_id}"
+            )
+            return False
+
+        # An SFU rejection propagates rather than being swallowed: reporting
+        # success on a failed layer change is the fail-open shape this audit
+        # exists to remove (see test_mediasoup_simulcast_layer_manipulation).
+        for target_id in consumer_ids:
+            await self._request(
+                connection,
+                "setConsumerPreferredLayers",
+                {
+                    "consumerId": target_id,
+                    "spatialLayer": spatial_layer,
+                    "temporalLayer": temporal_layer,
+                },
+            )
 
         return True
 
@@ -937,11 +1048,18 @@ class MediasoupWSAdapter(SFUAdapter):
         try:
             connection = await self._connect(test_room, test_peer)
             await self._request(connection, "getRouterRtpCapabilities")
-            await self.leave_room(test_room, test_peer)
             return True
         except Exception as e:
             logger.warning(f"Health check failed: {e}")
             return False
+        finally:
+            # Always release the probe connection. Leaving it registered on a
+            # failed probe kept the websocket and its receiver task alive, so
+            # every periodic health check leaked one connection.
+            try:
+                await self.leave_room(test_room, test_peer)
+            except Exception as exc:
+                logger.debug(f"Health check cleanup failed: {exc}")
 
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
         """Start recording by creating a recv transport and consuming all audio."""
@@ -1165,6 +1283,13 @@ class MediasoupWSAdapter(SFUAdapter):
                 self._record_recording_teardown_failure(
                     room_id, "adapter closed before recorder teardown completed"
                 )
+
+        # Cancel receiver tasks before closing the sockets they are iterating.
+        receiver_tasks = getattr(self, "_receiver_tasks", {})
+        for task in list(receiver_tasks.values()):
+            if not task.done():
+                task.cancel()
+        receiver_tasks.clear()
 
         for key in list(self._connections.keys()):
             connection = self._connections.pop(key, None)

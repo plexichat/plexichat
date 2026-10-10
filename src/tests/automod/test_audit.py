@@ -26,7 +26,7 @@ class TestAudit:
             reason="Manual test action",
         )
         entries = automod_manager.get_audit_log(server.id)
-        assert len(entries) >= 1
+        assert len(entries) == 1
         assert entries[0].action_type == ActionType.LOG_ONLY
         assert entries[0].moderator_id == owner.id
 

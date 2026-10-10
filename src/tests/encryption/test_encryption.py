@@ -15,7 +15,7 @@ import json
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from src.utils.encryption import (  # noqa: E402
+from src.utils.encryption import (
     hash_password,
     verify_password,
     encrypt_data,
@@ -27,13 +27,13 @@ from src.utils.encryption import (  # noqa: E402
     parse_snowflake_id,
     setup,
 )
-from src.utils.encryption.core import (  # noqa: E402
+from src.utils.encryption.core import (
     EncryptionManager,
     SnowflakeGenerator,
     MessageEncryptor,
     Keyring,
 )
-from src.core.auth.tokens import (  # noqa: E402
+from src.core.auth.tokens import (
     generate_token_secret,
     hash_token,
     verify_token_hash,
@@ -45,8 +45,14 @@ from src.core.auth.tokens import (  # noqa: E402
 
 @pytest.fixture(scope="module")
 def setup_encryption():
-    """Setup encryption module for tests."""
-    setup(worker_id=1, datacenter_id=1)
+    """Setup encryption module for tests (low-cost Argon2 for speed)."""
+    setup(
+        worker_id=1,
+        datacenter_id=1,
+        argon2_time_cost=1,
+        argon2_memory_cost=8,
+        argon2_parallelism=1,
+    )
     yield
 
 
@@ -132,65 +138,84 @@ class TestPasswordHashing:
 
 
 class TestPasswordHashingTimingAttacks:
-    """Test password hashing timing attack resistance."""
+    """Password verification must perform the full Argon2 hash for both
+    correct and incorrect passwords (no early exit), and the final
+    comparison must be constant-time.
 
-    def test_verify_timing_consistency_correct_password(self, setup_encryption):
-        """Test that correct password verification has consistent timing."""
-        password = "correct_password_123"
-        hash_str = hash_password(password)
+    These properties are asserted structurally -- by counting hasher
+    invocations and their arguments -- rather than by measuring wall-clock
+    time.  Microsecond-scale timing assertions are dominated by scheduler
+    noise under parallel test load and produced non-reproducible failures;
+    the structural check below is deterministic and directly proves the
+    security property (both outcomes do the same expensive work).
+    """
 
-        timings = []
-        for _ in range(10):
-            start = time.perf_counter()
-            verify_password(password, hash_str)
-            end = time.perf_counter()
-            timings.append(end - start)
+    @staticmethod
+    def _patch_hasher():
+        from unittest.mock import patch
 
-        avg = sum(timings) / len(timings)
-        for t in timings:
-            assert abs(t - avg) < avg * 0.8
+        from argon2 import PasswordHasher
+        from src.utils.encryption import _get_manager
 
-    def test_verify_timing_consistency_incorrect_password(self, setup_encryption):
-        """Test that incorrect password verification has consistent timing."""
+        hasher = _get_manager().password_hasher
+        # PasswordHasher uses __slots__, so instance-level patching cannot be
+        # undone; patch at the class level and rebind the concrete instance
+        # through the ORIGINAL unbound function (a lambda calling
+        # ``hasher.verify`` would re-enter the patched attribute).
+        original_verify = PasswordHasher.verify
+        return patch.object(
+            PasswordHasher,
+            "verify",
+            wraps=lambda *args, **kwargs: original_verify(hasher, *args, **kwargs),
+        )
+
+    def test_both_outcomes_perform_full_hash(self, setup_encryption):
+        """Correct and incorrect passwords both invoke the full Argon2 verify."""
         password = "correct_password_123"
         wrong_password = "wrong_password_123"
         hash_str = hash_password(password)
 
-        timings = []
-        for _ in range(10):
-            start = time.perf_counter()
-            verify_password(wrong_password, hash_str)
-            end = time.perf_counter()
-            timings.append(end - start)
+        with self._patch_hasher() as verify:
+            assert verify_password(password, hash_str) is True
+            assert verify_password(wrong_password, hash_str) is False
 
-        avg = sum(timings) / len(timings)
-        for t in timings:
-            assert abs(t - avg) < avg * 1.0
+        # Exactly one full hash computation per verification: the wrong
+        # password must not short-circuit before the hasher is invoked.
+        assert verify.call_count == 2
 
-    def test_verify_timing_correct_vs_incorrect(self, setup_encryption):
-        """Test that correct and incorrect passwords take similar time."""
-        password = "test_password_timing"
-        wrong_password = "wrong_password_timing"
+    def test_hasher_called_with_same_arguments_for_both_outcomes(
+        self, setup_encryption
+    ):
+        """The wrong-password path runs the identical hasher call shape as
+        the correct path -- no pre-comparison of the raw password string.
+
+        Since peppering, ``verify_password`` parses the envelope and passes
+        the hasher the stored inner hash plus a pepper prehash of the
+        candidate password (never the raw password, never the envelope).
+        Both outcomes must do exactly that: same inner hash, one hasher
+        call each, with password-derived (hence distinct) secrets.
+        """
+        password = "correct_password_123"
+        wrong_password = "wrong_password_123"
         hash_str = hash_password(password)
 
-        correct_timings = []
-        incorrect_timings = []
-
-        for _ in range(5):
-            start = time.perf_counter()
+        with self._patch_hasher() as verify:
             verify_password(password, hash_str)
-            end = time.perf_counter()
-            correct_timings.append(end - start)
-
-            start = time.perf_counter()
             verify_password(wrong_password, hash_str)
-            end = time.perf_counter()
-            incorrect_timings.append(end - start)
 
-        avg_correct = sum(correct_timings) / len(correct_timings)
-        avg_incorrect = sum(incorrect_timings) / len(incorrect_timings)
-
-        assert abs(avg_correct - avg_incorrect) < max(avg_correct, avg_incorrect) * 0.3
+        calls = [call.args for call in verify.call_args_list]
+        assert len(calls) == 2
+        (inner_ok, secret_ok), (inner_bad, secret_bad) = calls
+        # Same stored inner hash for both outcomes (envelope is parsed,
+        # not passed through).
+        assert inner_ok == inner_bad
+        assert inner_ok != hash_str
+        assert hash_str.endswith(inner_ok)
+        # Password-derived prehashes: distinct per password and never the
+        # raw password string (no raw pre-comparison to leak timing).
+        assert secret_ok != password
+        assert secret_bad != wrong_password
+        assert secret_ok != secret_bad
 
 
 class TestDataEncryption:
@@ -247,6 +272,35 @@ class TestDataEncryption:
         encrypted = encrypt_data(data, key1)
         with pytest.raises(ValueError):
             decrypt_data(encrypted, key2)
+
+    def test_encrypt_decrypt_with_context(self, setup_encryption):
+        """A matching AAD context round-trips."""
+        data = "bound to a record"
+        encrypted = encrypt_data(data, context="row:42")
+        assert decrypt_data(encrypted, context="row:42") == data
+
+    def test_decrypt_with_mismatched_context_fails(self, setup_encryption):
+        """A different AAD context must fail the GCM integrity check.
+
+        This is the invariant behind the account-deletion regression: the
+        TOTP secret was stored without a context but read with one, so every
+        decryption failed. Guarding it here keeps callers from silently
+        drifting out of sync.
+        """
+        encrypted = encrypt_data("secret", context="row:42")
+        with pytest.raises(ValueError) as exc_info:
+            decrypt_data(encrypted, context="row:43")
+        # The failure must name the version and context tried so a rotated
+        # key is distinguishable from a context drift.
+        message = str(exc_info.value)
+        assert "row:43" in message
+        assert "key version" in message
+
+    def test_decrypt_with_missing_context_fails(self, setup_encryption):
+        """Decrypting context-bound data without the context must fail."""
+        encrypted = encrypt_data("secret", context="row:42")
+        with pytest.raises(ValueError):
+            decrypt_data(encrypted)
 
     def test_decrypt_malformed_data(self, setup_encryption):
         """Test decrypting malformed data."""
@@ -497,6 +551,21 @@ class TestSnowflakeIDs:
         assert parsed["worker_id"] == 1
         assert parsed["datacenter_id"] == 1
 
+    def test_parse_snowflake_accepts_numeric_string(self, setup_encryption):
+        """An id that crossed JSON as a string must parse identically."""
+        snowflake_id = generate_snowflake_id()
+        assert parse_snowflake_id(str(snowflake_id)) == parse_snowflake_id(snowflake_id)
+
+    def test_parse_snowflake_rejects_non_numeric_string(self, setup_encryption):
+        """A non-numeric string is not a snowflake id."""
+        with pytest.raises(ValueError):
+            parse_snowflake_id("not-an-id")
+
+    def test_parse_snowflake_rejects_bool(self, setup_encryption):
+        """``bool`` is an ``int`` subclass but not a valid id."""
+        with pytest.raises(ValueError):
+            parse_snowflake_id(True)
+
     def test_snowflake_generator_bounds(self):
         """Test Snowflake generator with boundary values."""
         gen = SnowflakeGenerator(worker_id=0, datacenter_id=0)
@@ -568,6 +637,37 @@ class TestSnowflakeIDs:
         )
         snowflake_id = gen.generate()
         assert snowflake_id > 0
+
+    def test_snowflake_clock_moved_backwards_raises(self, monkeypatch):
+        """A backwards clock must raise rather than emit duplicate IDs."""
+        gen = SnowflakeGenerator(worker_id=1, datacenter_id=1)
+        gen.generate()
+        past = gen.last_timestamp - 1000
+        monkeypatch.setattr(gen, "_get_timestamp", lambda: past)
+        with pytest.raises(RuntimeError, match="Clock moved backwards"):
+            gen.generate()
+
+    def test_snowflake_sequence_wraps_and_waits_for_next_ms(self, monkeypatch):
+        """Sequence exhaustion must wait for the next millisecond."""
+        gen = SnowflakeGenerator(worker_id=1, datacenter_id=1)
+        base = int(time.time() * 1000)
+        calls = {"n": 0}
+
+        def fake_timestamp():
+            calls["n"] += 1
+            return base if calls["n"] == 1 else base + 1
+
+        monkeypatch.setattr(gen, "_get_timestamp", fake_timestamp)
+        gen.last_timestamp = base
+        gen.sequence = 0xFFF
+
+        sid = gen.generate()
+
+        assert gen.sequence == 0
+        assert gen.last_timestamp == base + 1
+        parsed = gen.parse(sid)
+        assert parsed["sequence"] == 0
+        assert parsed["timestamp"] == base + 1
 
 
 class TestKeyRotation:
@@ -687,12 +787,12 @@ class TestMessageEncryption:
         env_key = base64.b64encode(b"a" * 32).decode("utf-8")
         monkeypatch.setenv(env_name, env_key)
 
-        keyring = Keyring(temp_keyring_path, env_var=env_name)
+        keyring = Keyring(temp_keyring_path, kek_env_var=env_name)
         encryptor = MessageEncryptor(keyring=keyring)
 
         encryptor.encrypt_message("hello")
 
-        reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path, kek_env_var=env_name))
         assert reloaded.is_key_auto_generated() is False
 
     def test_legacy_env_backed_keyring_is_not_flagged_auto_generated(
@@ -703,7 +803,7 @@ class TestMessageEncryption:
         env_key = base64.b64encode(b"b" * 32).decode("utf-8")
         monkeypatch.setenv(env_name, env_key)
 
-        keyring = Keyring(temp_keyring_path, env_var=env_name)
+        keyring = Keyring(temp_keyring_path, kek_env_var=env_name)
         MessageEncryptor(keyring=keyring).encrypt_message("hello")
 
         encrypted_data = json.loads(temp_keyring_path.read_text())
@@ -726,7 +826,7 @@ class TestMessageEncryption:
             )
         )
 
-        reloaded = MessageEncryptor(Keyring(temp_keyring_path, env_var=env_name))
+        reloaded = MessageEncryptor(Keyring(temp_keyring_path, kek_env_var=env_name))
         assert reloaded.is_key_auto_generated() is False
 
     def test_generated_message_key_is_flagged_auto_generated(self, temp_keyring_path):
@@ -776,8 +876,11 @@ class TestMessageEncryption:
 
         encrypted = encryptor.encrypt_message(content, message_id)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as exc_info:
             encryptor.decrypt_message(encrypted, wrong_id)
+        message = str(exc_info.value)
+        assert str(wrong_id) in message
+        assert "key version" in message
 
     def test_message_legacy_plaintext_passthrough(self):
         """Test that legacy plaintext messages are returned unchanged."""
@@ -945,29 +1048,32 @@ class TestSecureTokenGeneration:
         assert parsed is None
 
     def test_token_verification_timing_attack_resistance(self):
-        """Test that token verification is timing-attack resistant."""
+        """Token verification must route through the constant-time comparator.
+
+        Wall-clock timing of microsecond-scale SHA-256 comparisons is dominated
+        by scheduler noise (flaky under parallel load), so the constant-time
+        guarantee is asserted structurally: every verification must call the
+        module's constant-time comparison helper.
+        """
+        from unittest.mock import patch
+        from src.core.auth.tokens import _constant_time_compare
+
         secret = generate_token_secret()
         correct_hash = hash_token(secret)
         wrong_secret = generate_token_secret()
 
-        correct_timings = []
-        wrong_timings = []
+        with patch(
+            "src.core.auth.tokens._constant_time_compare",
+            wraps=_constant_time_compare,
+        ) as cmp:
+            assert verify_token_hash(secret, correct_hash) is True
+            assert verify_token_hash(wrong_secret, correct_hash) is False
+        assert cmp.call_count == 2
 
-        for _ in range(100):
-            start = time.perf_counter()
-            verify_token_hash(secret, correct_hash)
-            end = time.perf_counter()
-            correct_timings.append(end - start)
-
-            start = time.perf_counter()
-            verify_token_hash(wrong_secret, correct_hash)
-            end = time.perf_counter()
-            wrong_timings.append(end - start)
-
-        avg_correct = sum(correct_timings) / len(correct_timings)
-        avg_wrong = sum(wrong_timings) / len(wrong_timings)
-
-        assert abs(avg_correct - avg_wrong) < max(avg_correct, avg_wrong) * 0.5
+        # The comparator itself must be correct on both outcomes.
+        assert _constant_time_compare("abcd", "abcd") is True
+        assert _constant_time_compare("abcd", "abce") is False
+        assert _constant_time_compare("abcd", "abc") is False
 
 
 class TestEncryptionManager:
@@ -981,7 +1087,7 @@ class TestEncryptionManager:
     def test_manager_custom_argon2_params(self):
         """Test EncryptionManager with custom Argon2 parameters."""
         manager = EncryptionManager(
-            argon2_time_cost=3, argon2_memory_cost=131072, argon2_parallelism=4
+            argon2_time_cost=2, argon2_memory_cost=1024, argon2_parallelism=2
         )
         password = "test_password"
         hash_str = manager.hash_password(password)
@@ -1154,3 +1260,57 @@ class TestCryptographicEdgeCases:
                 base64.b64decode(parts[2])
             except Exception:
                 pytest.fail("Encrypted data part is not valid base64")
+
+
+class TestBlindIndexStability:
+    """Blind indexes must agree across EncryptionManager instances.
+
+    Regression coverage for the divergence where a long-lived manager
+    (created before any keyring key existed) computed a different blind
+    index than a later manager that lazily generated a *random*
+    ``blind_index_root_key``. Both the module singleton (created at
+    process start) and per-request managers (created later) must agree.
+    """
+
+    def test_blind_index_stable_across_manager_instances(self, monkeypatch, tmp_path):
+        """Different managers derive the same blind index for a value."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Manager created before any key exists (mirrors the module singleton).
+        early = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+
+        # A later manager generates the first keyring key.
+        mid = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+        mid.keyring.get_key()
+
+        # A still-later manager loads the now-populated keyring.
+        late = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+
+        value = "test-encryption@example.com"
+        early_idx = early.blind_index(value, "user_email")
+        mid_idx = mid.blind_index(value, "user_email")
+        late_idx = late.blind_index(value, "user_email")
+
+        assert early_idx == mid_idx == late_idx
+
+    def test_blind_index_survives_keyring_reload(self, monkeypatch, tmp_path):
+        """The persisted root key is reused rather than re-randomised."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        first = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+        value = "stable@example.com"
+        first_idx = first.blind_index(value, "user_email")
+
+        # Reload the same keyring from disk in a fresh manager instance.
+        reloaded = EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+        assert reloaded.blind_index(value, "user_email") == first_idx

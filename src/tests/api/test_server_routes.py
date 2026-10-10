@@ -12,7 +12,7 @@ def test_create_server(test_client, test_user_with_token):
         json={"name": "Test Server"},
     )
     # Server routes might not be fully set up in tests
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code == 200
 
 
 def test_get_server(test_client, test_server, test_user_with_token):
@@ -24,10 +24,10 @@ def test_get_server(test_client, test_server, test_user_with_token):
         headers={"Authorization": f"Bearer {token}"},
     )
     # Server routes might not be fully set up in tests
-    assert response.status_code in [200, 404, 500]
+    assert response.status_code == 200
 
 
 def test_server_without_auth(test_client):
     """Test that server operations without authentication fail."""
     response = test_client.post("/api/v1/servers", json={"name": "Test Server"})
-    assert response.status_code in [401, 404]
+    assert response.status_code == 401

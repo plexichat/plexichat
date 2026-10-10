@@ -1,19 +1,64 @@
 import sqlite3
 import os
+import time
+from datetime import datetime
 from typing import Any, Optional, Dict, List, Tuple
 from .base import BaseEngine
+from .pool import (
+    ConnectionPool,
+    MONITOR_IDLE_RECLAIM_SECONDS,
+    IN_TRANSACTION_ALIVE_GRACE_SECONDS,
+)
 
 import utils.logger as logger
+
+__all__ = [
+    "DEFAULT_BUSY_TIMEOUT_MS",
+    "MONITOR_IDLE_RECLAIM_SECONDS",
+    "IN_TRANSACTION_ALIVE_GRACE_SECONDS",
+    "SqlitePool",
+    "SqliteEngine",
+]
+
+DEFAULT_BUSY_TIMEOUT_MS = 5000
+
+sqlite3.register_adapter(datetime, lambda dt: dt.isoformat(sep=" "))
+
+
+class SqlitePool(ConnectionPool):
+    """Connection pool for SQLite (the shared driver-agnostic implementation).
+
+    The reclaim/accounting logic lives in :class:`~..pool.ConnectionPool` so
+    the PostgreSQL engine reuses it; only the label differs.
+    """
+
+    def __init__(
+        self,
+        create_conn,
+        min_size: int,
+        max_size: int,
+        idle_reclaim_seconds: float = 5.0,
+    ):
+        super().__init__(
+            create_conn=create_conn,
+            min_size=min_size,
+            max_size=max_size,
+            idle_reclaim_seconds=idle_reclaim_seconds,
+            label="SQLite",
+        )
 
 
 class SqliteEngine(BaseEngine):
     """SQLite database engine implementation."""
 
-    def connect(self, pool: Optional[Any] = None) -> sqlite3.Connection:
-        # SQLite doesn't use the pool parameter here but we accept it for signature compatibility
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self._pool: Optional[SqlitePool] = None
+        self._pool_config = config.get("connection_pool", {})
+
+    def _create_single_connection(self) -> sqlite3.Connection:
         db_path = self.config.get("path", "data/database.db")
 
-        # Ensure directory exists
         db_dir = os.path.dirname(db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir)
@@ -26,54 +71,82 @@ class SqliteEngine(BaseEngine):
         )
         conn.row_factory = sqlite3.Row
 
-        # Enable WAL (Write-Ahead Logging) for concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
-
-        # Recommended for WAL mode: allow readers during writes with minimal sync cost
         conn.execute("PRAGMA synchronous=NORMAL;")
 
-        # Set busy timeout to wait for locks
-        conn.execute("PRAGMA busy_timeout=30000;")
+        busy_timeout_ms = self._pool_config.get("busy_timeout", DEFAULT_BUSY_TIMEOUT_MS)
+        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)};")
 
-        # Enforce foreign keys (disabled by default in SQLite)
         conn.execute("PRAGMA foreign_keys=ON;")
 
-        # --- Performance PRAGMAs ---
+        # These PRAGMAs control per-connection memory. The defaults are
+        # tuned for the production server; tests override them via the
+        # ``connection_pool`` config (``cache_size_kb``, ``mmap_size``,
+        # ``journal_size_limit``) so thousands of per-test pools stay tiny
+        # instead of reserving ~32MB page cache + 256MB mmap each.
+        cache_size_kb = self._pool_config.get("cache_size_kb", -32000)
+        conn.execute(f"PRAGMA cache_size={int(cache_size_kb)};")
 
-        # Increase page cache to ~32 MB (negative = KB, default is 2000 pages /
-        # ~2-8 MB depending on page size).  A larger cache means fewer disk reads.
-        conn.execute("PRAGMA cache_size=-32000;")
+        mmap_size = self._pool_config.get("mmap_size", 268435456)
+        conn.execute(f"PRAGMA mmap_size={int(mmap_size)};")
 
-        # Memory-mapped I/O up to 256 MB.  Lets SQLite treat the DB file as if it
-        # were in memory, avoiding read() / write() syscalls entirely for hot pages.
-        conn.execute("PRAGMA mmap_size=268435456;")
+        temp_store = self._pool_config.get("temp_store", "MEMORY")
+        conn.execute(f"PRAGMA temp_store={temp_store};")
 
-        # Store temporary tables, indices, and sort results in memory instead of
-        # in on-disk temp files.  Falls back to disk automatically if needed.
-        conn.execute("PRAGMA temp_store=MEMORY;")
-
-        # Cap the WAL file at ~64 MB so it doesn't grow unbounded between
-        # checkpoints on a long-running server.
-        conn.execute("PRAGMA journal_size_limit=67108864;")
+        journal_size_limit = self._pool_config.get("journal_size_limit", 67108864)
+        conn.execute(f"PRAGMA journal_size_limit={int(journal_size_limit)};")
 
         return conn
 
-    def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
-        """Get SQLite-specific database statistics."""
-        stats = {
-            "active_connections": 0,
-            "idle_connections": 0,
-            "total_connections": 0,
-            "max_connections": 0,
-            "min_connections": 0,
-            "utilization_percent": 0,
-            "database_type": "sqlite",
-        }
-
-        # Try to get SQLite-specific metrics if connection is available
+    def create_pool(self, min_conn: int, max_conn: int) -> SqlitePool:
+        logger.info(f"Creating SQLite connection pool (min={min_conn}, max={max_conn})")
+        start_time = time.time()
         try:
-            # Note: SQLite doesn't have connection pooling like PostgreSQL
-            # These metrics are placeholders for monitoring consistency
+            pool = SqlitePool(
+                create_conn=self._create_single_connection,
+                min_size=min_conn,
+                max_size=max_conn,
+                idle_reclaim_seconds=float(
+                    self._pool_config.get("idle_reclaim_seconds", 5.0)
+                ),
+            )
+            elapsed = time.time() - start_time
+            logger.info(
+                f"SQLite connection pool created successfully in {elapsed:.2f}s"
+            )
+            self._pool = pool
+            return pool
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(
+                f"SQLite connection pool creation FAILED after {elapsed:.2f}s: {e}"
+            )
+            raise
+
+    def connect(self, pool: Optional[Any] = None) -> sqlite3.Connection:
+        if pool is not None and isinstance(pool, SqlitePool):
+            # Honor the configured ``connect_timeout`` (default 30s) so pool
+            # exhaustion surfaces fast instead of every thread blocking the
+            # hardcoded 30s default.
+            timeout = self._pool_config.get("connect_timeout", 30.0)
+            return pool.get_connection(timeout=timeout)
+        return self._create_single_connection()
+
+    def get_pool_stats(self, pool: Any) -> Dict[str, Any]:
+        stats: Dict[str, Any]
+        if isinstance(pool, SqlitePool):
+            stats = pool.get_stats()
+        else:
+            stats = {
+                "active_connections": 0,
+                "idle_connections": 0,
+                "total_connections": 0,
+                "max_connections": 0,
+                "min_connections": 0,
+                "utilization_percent": 0,
+            }
+
+        try:
             stats["database_type"] = "sqlite"
             stats["database_path"] = self.config.get("path", "data/database.db")
         except Exception as e:
@@ -84,7 +157,6 @@ class SqliteEngine(BaseEngine):
     def get_detailed_stats(
         self, conn: Optional[sqlite3.Connection] = None
     ) -> Dict[str, Any]:
-        """Get detailed SQLite database statistics for monitoring."""
         stats = {
             "database_type": "sqlite",
             "database_path": self.config.get("path", "data/database.db"),
@@ -99,19 +171,15 @@ class SqliteEngine(BaseEngine):
             return stats
 
         try:
-            # Get page size
             cursor = conn.cursor()
             cursor.execute("PRAGMA page_size;")
             stats["page_size"] = cursor.fetchone()[0] or 0
 
-            # Get page count
             cursor.execute("PRAGMA page_count;")
             stats["page_count"] = cursor.fetchone()[0] or 0
 
-            # Calculate database size
             stats["database_size_bytes"] = stats["page_size"] * stats["page_count"]
 
-            # Get WAL file size (if WAL mode is enabled)
             cursor.execute("PRAGMA journal_mode;")
             journal_mode = cursor.fetchone()[0] or ""
             if journal_mode.upper() == "WAL":
@@ -132,8 +200,17 @@ class SqliteEngine(BaseEngine):
         pool: Optional[Any] = None,
         close_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if conn:
-            conn.close()
+        if not conn:
+            return
+
+        if isinstance(pool, SqlitePool):
+            should_close = close_params.get("close", False) if close_params else False
+            pool.return_connection(conn, force_close=should_close)
+        else:
+            try:
+                conn.close()
+            except Exception as e:
+                logger.debug(f"Could not close connection: {e}")
 
     def get_table_exists_query(self, table_name: str) -> Tuple[str, Tuple]:
         return "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (
@@ -150,14 +227,12 @@ class SqliteEngine(BaseEngine):
         table: str,
         columns: List[str],
         conflict_columns: List[str],
-        update_columns: List[str],
+        update_columns: Optional[List[str]] = None,
     ) -> str:
-        # SQLite uses the same syntax as Postgres for modern versions (ON CONFLICT)
-        # but Database class implementation for SQLite used ON CONFLICT as well
-        # actually looking at core.py:1221, SQLite used INSERT OR IGNORE
-        # and 1260, upsert used ON CONFLICT.
         safe_cols = ", ".join(columns)
         placeholders = ", ".join(["?"] * len(columns))
         conflict_cols = ", ".join(conflict_columns)
-        updates = ", ".join([f"{c} = EXCLUDED.{c}" for c in update_columns])
-        return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+        if update_columns:
+            updates = ", ".join([f"{c} = excluded.{c}" for c in update_columns])
+            return f"INSERT INTO {table} ({safe_cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_cols}) DO UPDATE SET {updates}"
+        return f"INSERT OR REPLACE INTO {table} ({safe_cols}) VALUES ({placeholders})"

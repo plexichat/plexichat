@@ -13,7 +13,16 @@ class AvatarProcessingMixin(AvatarProtocol):
     """Mixin handling image processing, validation, and resizing."""
 
     def _validate_content_type(self, content_type: str) -> bool:
-        """Validate content type is allowed."""
+        """Validate content type is allowed.
+
+        SECURITY (Agent7 L1): :mod:`svg_guard` block-list applies regardless
+        of operator configuration - an operator must not be able to opt into
+        SVG/HTML/JS avatar types via ``allowed_types``.
+        """
+        from .svg_guard import is_blocked_avatar_content_type
+
+        if is_blocked_avatar_content_type(content_type):
+            return False
         allowed = self._get_allowed_types()
         return content_type.lower() in [t.lower() for t in allowed]
 
@@ -45,6 +54,22 @@ class AvatarProcessingMixin(AvatarProtocol):
 
         Returns: (processed_bytes, width, height, is_animated)
         """
+        # SECURITY (Agent7 L1): reject SVG / active markup BEFORE anything
+        # else - including the Pillow-missing verbatim path below, which would
+        # otherwise store the payload unsanitized. This also catches
+        # MIME-spoofed SVG (e.g. "<svg ..." bytes claimed as image/png).
+        from .svg_guard import (
+            is_blocked_avatar_content_type,
+            is_unsafe_upload_payload,
+        )
+
+        if is_blocked_avatar_content_type(content_type) or is_unsafe_upload_payload(
+            content_type, image_data
+        ):
+            raise ValueError(
+                f"Content type '{content_type}' is not allowed for avatars: "
+                "SVG and active markup are never accepted as avatars."
+            )
         try:
             from PIL import Image
         except ImportError:
@@ -85,6 +110,10 @@ class AvatarProcessingMixin(AvatarProtocol):
             original_format = img.format
             n_frames = getattr(img, "n_frames", 1)
             is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
+            # Capture the animation loop count while positioned on the first
+            # frame: Pillow keeps the loop extension on frame 0, so reading
+            # img.info after seeking to later frames may lose it.
+            loop_count = img.info.get("loop", 0)
         except Exception as e:
             if isinstance(e, ValueError):
                 raise e
@@ -126,12 +155,46 @@ class AvatarProcessingMixin(AvatarProtocol):
                         save_all=True,
                         append_images=frames[1:],
                         duration=durations,
-                        loop=img.info.get("loop", 0),
+                        loop=loop_count,
                     )
                     return output.getvalue(), new_width, new_height, True
                 except Exception as e:
                     logger.warning(
                         f"Failed to process animated GIF: {e}, using first frame"
+                    )
+                    img.seek(0)
+                    is_animated = False
+
+            if is_animated and original_format == "WEBP":
+                # M2: animated WebP needed a resize - keep ALL frames instead
+                # of collapsing to the first one.
+                frames = []
+                durations = []
+
+                try:
+                    for frame_num in range(n_frames):
+                        img.seek(frame_num)
+                        frame = img.copy()
+                        frame = frame.resize(
+                            (new_width, new_height), Image.Resampling.LANCZOS
+                        )
+                        frames.append(frame)
+                        durations.append(img.info.get("duration", 100))
+
+                    output = io.BytesIO()
+                    frames[0].save(
+                        output,
+                        format="WEBP",
+                        save_all=True,
+                        append_images=frames[1:],
+                        duration=durations,
+                        loop=loop_count,
+                        quality=90,
+                    )
+                    return output.getvalue(), new_width, new_height, True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to process animated WebP: {e}, using first frame"
                     )
                     img.seek(0)
                     is_animated = False
@@ -144,12 +207,70 @@ class AvatarProcessingMixin(AvatarProtocol):
         output = io.BytesIO()
 
         if content_type == "image/gif" and is_animated:
-            img.save(output, format="GIF")
+            # M2: Pillow only writes ONE frame unless save_all + append_images
+            # are given, so an animated GIF that needed no resize previously
+            # lost every frame after the first. Re-encode all frames.
+            img.seek(0)
+            frames = []
+            durations = []
+            for frame_num in range(n_frames):
+                img.seek(frame_num)
+                # Copying the frame keeps its palette + transparency info,
+                # so transparent regions survive the re-encode.
+                frames.append(img.copy())
+                durations.append(img.info.get("duration", 100))
+            try:
+                frames[0].save(
+                    output,
+                    format="GIF",
+                    save_all=True,
+                    append_images=frames[1:],
+                    duration=durations,
+                    loop=loop_count,
+                )
+                return output.getvalue(), width, height, True
+            except Exception as e:
+                logger.warning(f"Failed to save animated GIF: {e}, using first frame")
+                img.seek(0)
+                is_animated = False
+        elif content_type == "image/gif":
+            # M4: a static GIF keeps its container (and any transparency)
+            # instead of being silently re-encoded to lossy JPEG. Palette
+            # transparency is preserved via the GIF disposal of the info dict.
+            img.save(output, format="GIF", save_all=False)
         elif content_type == "image/png" or img.mode == "RGBA":
             img.save(output, format="PNG", optimize=True)
             content_type = "image/png"
         elif content_type == "image/webp":
-            img.save(output, format="WEBP", quality=90)
+            if is_animated and n_frames > 1:
+                # M2: animated WebP must also keep all frames. Durations are
+                # collected per frame: reusing the last frame's info for every
+                # frame would mistime the animation.
+                img.seek(0)
+                frames = []
+                durations = []
+                for frame_num in range(n_frames):
+                    img.seek(frame_num)
+                    frames.append(img.copy())
+                    durations.append(img.info.get("duration", 100))
+                try:
+                    frames[0].save(
+                        output,
+                        format="WEBP",
+                        save_all=True,
+                        append_images=frames[1:],
+                        duration=durations,
+                        loop=loop_count,
+                        quality=90,
+                    )
+                    return output.getvalue(), width, height, True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to save animated WebP: {e}, using first frame"
+                    )
+                    img.seek(0)
+            else:
+                img.save(output, format="WEBP", quality=90)
         else:
             # Convert to RGB for JPEG
             if img.mode in ("RGBA", "P"):

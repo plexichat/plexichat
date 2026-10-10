@@ -33,7 +33,13 @@ class DSARHarvester:
         from .audit_log import DSARLog
 
         audit_log = DSARLog()
-        is_valid, count, error = audit_log.verify_chain()
+        try:
+            is_valid, count, error = audit_log.verify_chain()
+        except RuntimeError as chain_err:
+            # rotate_on_broken_chain now FAILS LOUDLY (raises) instead of
+            # silently resetting to a clean bill of health. Treat it like
+            # any other invalid-chain result: halt the harvester loudly.
+            is_valid, count, error = False, 0, str(chain_err)
         audit_config = self._config.get("audit_log", {})
         halt_on_invalid = audit_config.get("halt_on_invalid_audit", True)
 
@@ -179,23 +185,102 @@ class DSARHarvester:
                 )
 
     def _cleanup_expired(self):
-        """Mark expired requests."""
+        """Expire ready requests whose retention window has passed.
+
+        SECURITY (M4): expiring must also DELETE the underlying export
+        file. Flipping the row alone left full PII archives on disk
+        forever for users who never polled their download - a GDPR
+        retention time-bomb.
+        """
         try:
             now = int(time.time())
-            result = self._db.execute(
+            expired = self._db.fetch_all(
                 """
-                UPDATE dsar_requests
-                SET status = 'expired'
+                SELECT * FROM dsar_requests
                 WHERE status = 'ready' AND expires_at < ?
                 """,
                 (now,),
             )
-            if result.rowcount > 0:
-                logger.debug(
-                    f"Harvester: Marked {result.rowcount} expired DSAR requests"
+            for req in expired:
+                try:
+                    from .manager import DSARManager
+
+                    DSARManager(self._db)._scrub_export_files(dict(req))
+                except Exception as scrub_err:
+                    logger.error(
+                        f"Harvester: failed to delete expired export "
+                        f"file for request {req.get('id')}: {scrub_err}"
+                    )
+                self._db.execute(
+                    "UPDATE dsar_requests SET status = 'expired' WHERE id = ?",
+                    (req["id"],),
                 )
+            if expired:
+                logger.info(
+                    f"Harvester: expired and deleted files for "
+                    f"{len(expired)} DSAR requests"
+                )
+            self._sweep_orphaned_files()
         except Exception as e:
             logger.error(f"Harvester: Failed to cleanup expired requests: {e}")
+
+    def _sweep_orphaned_files(self):
+        """Delete orphaned export files from local storage.
+
+        A file is orphaned when it sits in the DSAR export directory,
+        is older than the maximum retention window, and is not
+        referenced by any dsar_requests.storage_path. Only meaningful
+        for the local storage backend.
+        """
+        try:
+            backend = config.get("media", {}).get("storage_backend", "local")
+            if backend != "local":
+                return
+
+            from pathlib import Path
+
+            default_local = str(
+                Path.home() / ".plexichat" / "data" / "exports" / "dsar"
+            )
+            base = Path(config.get("dsar", {}).get("local_path", default_local))
+            if not base.is_dir():
+                return
+
+            referenced = {
+                row["storage_path"]
+                for row in self._db.fetch_all(
+                    """
+                    SELECT DISTINCT storage_path FROM dsar_requests
+                    WHERE storage_path IS NOT NULL
+                    """
+                )
+                or []
+            }
+
+            max_retention_days = max(7, self._harvester_config.get("retention_days", 7))
+            cutoff = time.time() - ((max_retention_days + 1) * 86400)
+
+            removed = 0
+            for path in base.rglob("*"):
+                if not path.is_file():
+                    continue
+                rel = str(path.relative_to(base)).replace("\\", "/")
+                # Referenced paths are stored as f"dsar/{date}/name.ext";
+                # match on the trailing portion so date-dir prefixes line up.
+                if any(str(ref).endswith(rel) for ref in referenced):
+                    continue
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                        removed += 1
+                except OSError as oe:
+                    logger.warning(
+                        f"Harvester: failed to remove orphaned export {path}: {oe}"
+                    )
+            if removed:
+                logger.info(f"Harvester: swept {removed} orphaned DSAR export file(s)")
+        except Exception as e:
+            logger.warning(f"Harvester: orphan sweep skipped: {e}")
 
     def _process_request(self, request: dict):
         """Process a single DSAR request."""
@@ -207,11 +292,22 @@ class DSARHarvester:
             f"Harvester: Processing DSAR request {request_id} for user {user_id}"
         )
 
-        self._db.execute(
-            "UPDATE dsar_requests SET status = 'generating' WHERE id = ?",
+        # SECURITY (M3): the transition to 'generating' must be
+        # conditional. If the user cancelled while this request sat in
+        # the queue, rowcount is 0 and we MUST NOT resurrect it.
+        cursor = self._db.execute(
+            "UPDATE dsar_requests SET status = 'generating' "
+            "WHERE id = ? AND status IN ('approved', 'pending')",
             (request_id,),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            logger.info(
+                f"Harvester: request {request_id} no longer approved "
+                f"(cancelled/denied); skipping generation"
+            )
+            return
 
+        storage_path = None
         try:
             collector = DataCollector(self._db)
             data = collector.collect_all(user_id)
@@ -230,7 +326,12 @@ class DSARHarvester:
                     data, request_id, user_id
                 )
 
-            self._db.execute(
+            # SECURITY (M3): the completion update must be conditional on
+            # the row still being 'generating'. If the user cancelled
+            # while generation ran, rowcount is 0 - we then delete the
+            # freshly written artifact instead of resurrecting a revoked
+            # request as a live downloadable export.
+            cursor = self._db.execute(
                 """
                 UPDATE dsar_requests
                 SET status = 'ready',
@@ -240,7 +341,7 @@ class DSARHarvester:
                     storage_path = ?,
                     checksum = ?,
                     file_size_bytes = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'generating'
                 """,
                 (
                     int(time.time()),
@@ -252,6 +353,13 @@ class DSARHarvester:
                     request_id,
                 ),
             )
+            if getattr(cursor, "rowcount", 0) == 0:
+                logger.warning(
+                    f"Harvester: request {request_id} was cancelled during "
+                    f"generation; deleting generated artifact"
+                )
+                generator.delete(storage_path)
+                return
 
             from .audit_log import DSARLog
 
@@ -268,14 +376,21 @@ class DSARHarvester:
             )
 
         except Exception as e:
+            # Guard the failure transition too: never overwrite a
+            # cancelled row with 'failed'.
             self._db.execute(
                 """
                 UPDATE dsar_requests
                 SET status = 'failed', error_message = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'generating'
                 """,
                 (str(e), request_id),
             )
+            if storage_path:
+                try:
+                    ExportFormatGenerator(db=self._db).delete(storage_path)
+                except Exception:
+                    pass
 
             from .audit_log import DSARLog
 

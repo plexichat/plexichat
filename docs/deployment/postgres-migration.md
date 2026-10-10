@@ -1,58 +1,94 @@
-# SQLite to PostgreSQL Migration Guide
+# Migrate from SQLite to PostgreSQL
 
-This guide provides a comprehensive walkthrough for system administrators migrating a Plexichat production instance from SQLite to PostgreSQL.
+This guide describes how to migrate a Plexichat deployment from SQLite to PostgreSQL 18.
 
-## Why Migrate?
+## Why migrate
 
-While SQLite is excellent for small deployments, PostgreSQL is recommended for:
-- **High Concurrency:** Handle more than 100 daily active users with concurrent writes.
-- **Reliability:** Better crash recovery and data integrity for large datasets.
-- **Performance:** Native full-text search (GIN indexes) and optimized query planning.
-- **Observability:** Detailed connection pool monitoring and statistics.
+Use PostgreSQL for production deployments that need:
 
----
+- **High concurrency** — Handles more than 100 daily active users with concurrent writes.
+- **Reliability** — Better crash recovery and data integrity for large datasets.
+- **Performance** — Native full-text search with GIN indexes and optimized query planning.
+- **Observability** — Detailed connection pool monitoring and statistics.
 
-## Critical: Safety First
+SQLite remains suitable for development and small deployments.
 
-Before starting the migration, you **MUST**:
-1.  **Stop the Plexichat Services:** Ensure no data is written during the migration.
-2.  **Backup your SQLite File:** Copy `data/plexichat.db` to a secure location.
-3.  **Verify PostgreSQL Access:** Ensure your PostgreSQL user has `CREATE` and `SUPERUSER` (or owner) permissions on the target database to handle triggers and sequences.
+## Before you begin
 
----
+Complete these steps before you migrate:
 
-## Migration Steps
+1. Stop the Plexichat services so no data is written during migration.
+2. Back up your SQLite file. By default, this is `~/.plexichat/data/plexichat.db` or `data/plexichat.db`.
+3. Verify that your PostgreSQL user has `CREATE` and owner or `TRIGGER` privileges on the target database. The migration creates triggers and GIN indexes for search.
 
-### 1. Install PostgreSQL Driver
-The migration utility requires the `psycopg2-binary` package.
+The Docker Compose file uses `postgres:18-alpine`. Use the same major version for the target server.
+
+## Migration steps
+
+### 1. Install the PostgreSQL driver
+
+The migration utility uses the server's PostgreSQL driver:
+
 ```bash
-pip install psycopg2-binary
+pip install pg8000
 ```
 
 ### 2. Prepare PostgreSQL
-Create an empty database on your PostgreSQL server.
+
+Create an empty database:
+
 ```sql
 CREATE DATABASE plexichat;
 ```
 
-### 3. Configure Environment Variables
-The migration utility uses environment variables to connect to PostgreSQL.
+### 3. Configure environment variables
+
+The migration utility reads PostgreSQL connection details from environment variables or `DATABASE_URL`. Set one of the following:
+
+**Option A — Individual variables:**
+
 ```bash
 export POSTGRES_HOST=your_host
 export POSTGRES_PORT=5432
 export POSTGRES_USER=plexichat
 export POSTGRES_PASSWORD=your_password
 export POSTGRES_DBNAME=plexichat
+export POSTGRES_SSLMODE=prefer
 ```
 
-### 4. Run the Migration Utility
-Use the built-in `migrate_to_postgres` command. This will initialize the schema, clone data, and set up PG-specific search indices.
+**Option B — Connection URL:**
+
+```bash
+export DATABASE_URL=postgresql://plexichat:your_password@your_host:5432/plexichat
+```
+
+The CLI prefers `DATABASE_URL` when it is set to a `postgres://` or `postgresql://` URL.
+
+### 4. Run the migration utility
+
+Use the built-in CLI. This command initializes the PostgreSQL schema, clones data in 1000-row batches, resets sequences, and creates search indexes:
+
 ```bash
 python -m src.core.migrations.cli migrate_to_postgres --sqlite-path data/plexichat.db
 ```
 
-### 5. Verify the Migration
-The utility will automatically perform a row-count verification. You should see:
+To preview the schema initialization without cloning data:
+
+```bash
+python -m src.core.migrations.cli migrate_to_postgres --sqlite-path data/plexichat.db --dry-run
+```
+
+For the `python main.py` wrapper, use:
+
+```bash
+python main.py migrate-db --dry-run   # preview
+python main.py migrate-db             # apply pending migrations
+```
+
+### 5. Verify the migration
+
+The utility verifies row counts automatically. A successful run prints output similar to:
+
 ```text
 Verifying data integrity...
 Migration SUCCESSFUL!
@@ -60,12 +96,13 @@ Total tables cloned: 32
 Total rows cloned:   15420
 ```
 
----
+If row counts mismatch, review the warning and compare source and target tables before switching.
 
-## Post-Migration Tasks
+## Post-migration tasks
 
-### 1. Update Application Configuration
-Update your `config/config.yaml` to point to the new PostgreSQL database permanently.
+### 1. Update application configuration
+
+Update your `config/config.yaml` or `~/.plexichat/config/config.yaml` to use PostgreSQL permanently:
 
 ```yaml
 database:
@@ -79,37 +116,64 @@ database:
     sslmode: prefer
 ```
 
+Alternatively, keep using environment variable interpolation as in `plexichat/src/config_defaults.py:73`:
+
+```yaml
+database:
+  postgres:
+    host: "${POSTGRES_HOST:-localhost}"
+    password: "${POSTGRES_PASSWORD}"
+```
+
 ### 2. Restart Plexichat
-Restart your systemd services or Docker containers.
+
 ```bash
+# Docker Compose
+docker compose up -d
+
+# systemd
 systemctl restart plexichat-server plexichat-client
 ```
 
----
+Verify health:
 
-## How it Works (Under the Hood)
+```bash
+curl -f http://localhost:8000/api/v1/ready
+curl -f http://localhost:8000/api/v1/health
+```
 
-The `migrate_to_postgres` utility performs the following automated steps:
-1.  **Status Check:** Ensures the SQLite database is healthy and fully migrated.
-2.  **Schema Bootstrap:** Runs the application's migration system on PostgreSQL to create the "perfect" schema (using `BIGINT`, `SERIAL`, etc.).
-3.  **Batch Cloning:** Copies data in 1000-row batches using parameterized queries for safety and performance.
-4.  **Sequence Correction:** Resets PostgreSQL `SERIAL` sequences so new IDs don't collide with migrated data.
-5.  **Search Initialization:** Automatically creates the PostgreSQL Full-Text Search triggers and GIN indexes required by the search module.
+## How it works
+
+The `migrate_to_postgres` command performs these steps:
+
+1. **Status check** — Ensures the SQLite database is healthy and all migrations are applied.
+2. **Schema bootstrap** — Runs the application's migration system on PostgreSQL to create the canonical schema with `BIGINT`, `SERIAL`, and other PostgreSQL types.
+3. **Batch cloning** — Copies data in 1000-row batches with parameterized queries.
+4. **Sequence correction** — Resets PostgreSQL `SERIAL` sequences so new IDs don't collide.
+5. **Search initialization** — Creates PostgreSQL full-text search triggers and GIN indexes.
+
+For implementation details, see `plexichat/src/core/migrations/cli.py:376` and `plexichat/src/core/migrations/cloner.py`.
 
 ## Troubleshooting
 
-### Checksum Mismatch
-If you see a checksum mismatch warning, it means your migration files on disk differ from those used to build the SQLite DB. Verify your codebase version matches the one that created the SQLite database.
+### Checksum mismatch
 
-### Permission Denied (Triggers)
-If the utility fails during "Module Initialization," ensure your PostgreSQL user has the `TRIGGER` privilege or is the owner of the tables.
+You see a checksum mismatch warning. This means migration files on disk differ from those used to build the SQLite database. Verify that your codebase version matches the version that created the SQLite database. Run `python -m src.core.migrations.cli validate_migrations` to check integrity.
 
-### Missing SQLite Path
-If your SQLite file is not at the default `data/plexichat.db`, use the `--sqlite-path` argument to specify its location.
+### Permission denied (triggers)
 
----
+The utility fails during module initialization. Ensure your PostgreSQL user has `TRIGGER` privilege or owns the tables.
 
-**Related Documentation:**
-- [Database Configuration](./configuration.md)
-- [Migration Reference](./migration-reference.md)
-- [Performance Optimization](./performance.md)
+### Missing SQLite path
+
+If your SQLite file is not at `data/plexichat.db`, pass `--sqlite-path`:
+
+```bash
+python -m src.core.migrations.cli migrate_to_postgres --sqlite-path ~/.plexichat/data/plexichat.db
+```
+
+## Related documentation
+
+- [Database configuration](configuration/config-database.md)
+- [Migration reference](../migration-reference.md)
+- [Performance tuning](../performance.md)

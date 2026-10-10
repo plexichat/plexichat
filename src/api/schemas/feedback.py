@@ -5,6 +5,8 @@ Feedback API schemas.
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+from src.api.schemas.common import SnowflakeID
+
 
 class FeedbackCreate(BaseModel):
     """Feedback submission model."""
@@ -25,7 +27,7 @@ class FeedbackResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int = Field(..., description="Feedback ID")
+    id: SnowflakeID = Field(..., description="Feedback ID as string")
     message: str = Field(..., description="Success message")
 
 

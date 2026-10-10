@@ -35,13 +35,10 @@ class TestOpcodes:
         assert GatewayOpcode.HELLO == 10
         assert GatewayOpcode.HEARTBEAT_ACK == 11
 
-    def test_unknown_opcode_handling(self, opcode_handler, connection):
+    @pytest.mark.asyncio
+    async def test_unknown_opcode_handling(self, opcode_handler, connection):
         """Test unknown opcode returns error."""
-        import asyncio
-
-        result = asyncio.get_event_loop().run_until_complete(
-            opcode_handler.handle(connection, 99, None)
-        )
+        result = await opcode_handler.handle(connection, 99, None)
         assert result[2] == GatewayCloseCode.UNKNOWN_OPCODE
 
 
@@ -89,7 +86,8 @@ class TestCompression:
         data = {"op": 0, "d": {"content": "test"}}
         compressed = compress_payload(data)
         assert isinstance(compressed, bytes)
-        assert len(compressed) > 0
+        assert is_compressed(compressed) is True
+        assert decompress_payload(compressed) == data
 
     def test_decompress_payload(self):
         """Test decompressing a payload."""
@@ -125,7 +123,8 @@ class TestZlibCompressor:
         data = {"op": 0, "d": {"content": "test"}}
         compressed = compressor.compress(data)
         assert isinstance(compressed, bytes)
-        assert len(compressed) > 0
+        assert is_compressed(compressed) is True
+        assert ZlibDecompressor().decompress(compressed) == data
 
     def test_compressor_reset(self):
         """Test compressor reset method."""
@@ -151,8 +150,19 @@ class TestZlibDecompressor:
 
     def test_decompressor_reset(self):
         """Test decompressor reset method."""
+        compressor = ZlibCompressor()
         decompressor = ZlibDecompressor()
+
+        data = {"op": 0, "d": {"content": "test"}}
+        compressed = compressor.compress(data)
+        assert decompressor.decompress(compressed) == data
+
+        compressor.reset()
         decompressor.reset()
+
+        data2 = {"op": 0, "d": {"content": "test2"}}
+        compressed2 = compressor.compress(data2)
+        assert decompressor.decompress(compressed2) == data2
 
 
 class TestConnectionEdgeCases:
@@ -233,8 +243,12 @@ class TestSessionEdgeCases:
         assert "active_connections" in stats
         assert "total_sessions" in stats
         assert "unique_users" in stats
-        assert stats["total_connections"] >= 1
-        assert stats["total_sessions"] >= 1
+        # Exactly one connection and one session were created; create_session
+        # marks the connection READY via set_identified()
+        assert stats["total_connections"] == 1
+        assert stats["total_sessions"] == 1
+        assert stats["unique_users"] == 1
+        assert stats["active_connections"] == 1
 
 
 class TestHandlerEdgeCases:

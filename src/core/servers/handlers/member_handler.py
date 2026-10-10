@@ -4,6 +4,8 @@ Member, ban, and invite handler for server operations.
 
 import string
 import secrets
+import threading
+import time
 from typing import Optional, List, Any
 from src.core.base import SnowflakeID
 from ..models import Member, Ban, Invite, ChannelType, AuditLogAction
@@ -20,13 +22,40 @@ from ..exceptions import (
     InviteNotFoundError,
     InviteExpiredError,
     InviteMaxUsesError,
+    InviteRateLimitedError,
+    InviteLimitReachedError,
+    PermissionDeniedError,
+    BanPurgeNotSupportedError,
 )
 from ..permission_utils import can_manage_member
-from src.core.database import cache_delete
 from src.core.database.cache import cached, invalidate_pattern
 from ..manager.converters import _row_to_member, _row_to_ban, _row_to_invite
 import utils.logger as logger
 from src.utils.encryption import encrypt_data
+
+# CORRECTNESS FIX: get_member is wrapped in @cached; with allowlist-only cache
+# reconstruction an unregistered dataclass comes back from a cache hit as a
+# plain dict, crashing attribute-style consumers (e.g. role_handler's
+# member.timeout_until). Register the type so hits reconstruct properly.
+from src.core.database.cache.serialization import register_reconstructable_type
+
+register_reconstructable_type(Member)
+
+
+# Per-user invite-creation sliding window (in-process; the global rate-limit
+# middleware covers transport-level floods, this guards the invite-minting
+# endpoint itself). Keyed by user_id, bounded by config.
+_invite_creation_lock = threading.Lock()
+_invite_creation_windows: dict = {}
+
+
+def _invite_config() -> dict:
+    try:
+        import utils.config as config
+
+        return config.get("invites", {}) or {}
+    except Exception:  # pragma: no cover - config loader always present
+        return {}
 
 
 class MemberHandler:
@@ -125,8 +154,14 @@ class MemberHandler:
         server_id: SnowflakeID,
         user_id: SnowflakeID,
         inviter_id: Optional[SnowflakeID] = None,
+        temporary: bool = False,
     ) -> Member:
-        """Add a user as a member of a server."""
+        """Add a user as a member of a server.
+
+        ``temporary`` marks a membership granted by a temporary invite; it is
+        revoked when the member's last connection closes unless they were
+        granted a role in the meantime (Agent 16 F9).
+        """
         ban = self.db.fetch_one(
             "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
             (server_id, user_id),
@@ -149,9 +184,17 @@ class MemberHandler:
 
         try:
             self.db.execute(
-                """INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at, inviter_id)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (member_id, server_id, user_id, now, now, inviter_id),
+                """INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at, inviter_id, is_temporary)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    member_id,
+                    server_id,
+                    user_id,
+                    now,
+                    now,
+                    inviter_id,
+                    1 if temporary else 0,
+                ),
             )
         except Exception as e:
             if "UniqueViolation" in type(e).__name__ or "duplicate key" in str(e):
@@ -204,16 +247,8 @@ class MemberHandler:
                     f"Error adding member {user_id} to server conversations: {e}"
                 )
 
-        self.manager._cache_invalidate(
-            self.manager._member_cache_prefix, (server_id, user_id)
-        )
-
-        # Invalidate Valkey
-        from src.core.database import cache_delete, invalidate_pattern
-
-        cache_delete(f"is_member:{server_id}:{user_id}")
-        invalidate_pattern(f"perms:{user_id}:{server_id}:*")
-        self.manager.get_servers.invalidate(user_id)  # type: ignore
+        self.manager._invalidate_member_caches(server_id, user_id)
+        self.manager.get_servers.invalidate(user_id)
 
         result = self.get_member(server_id, user_id)
         assert result is not None
@@ -253,15 +288,58 @@ class MemberHandler:
         if not member:
             raise MemberNotFoundError("Member not found")
 
+        # Changes applied to ANOTHER member (moderation fields OR a nickname)
+        # must respect the same hierarchy rules as kick/ban: the actor must be
+        # able to manage the target and the owner can never be targeted. A
+        # moderator holding only ``members.manage_nicknames`` must not be able
+        # to rename members ranked equal to or above them, so the nickname is
+        # part of this gate rather than exempt from it. The system actor
+        # (user_id == 0, e.g. AutoMod) is exempt.
+        # A nickname change applied to ANOTHER member requires the
+        # manage_nicknames permission. Check it before the hierarchy gate so a
+        # caller who simply lacks the permission gets a permission error, while
+        # a moderator who holds it but is outranked gets the hierarchy error.
+        if nickname is not None and user_id != member_user_id:
+            self.manager.require_permission(
+                user_id, server_id, "members.manage_nicknames"
+            )
+
+        moderating_other = (
+            user_id != member_user_id
+            and user_id != 0
+            and any(
+                v is not None
+                for v in (
+                    muted,
+                    deafened,
+                    timeout_until,
+                    timeout_reason,
+                    nickname,
+                )
+            )
+        )
+        if moderating_other:
+            server = self.manager.get_server(server_id, user_id)
+            if not server:
+                raise PermissionDeniedError(
+                    "Not a member of this server", "members.manage_roles"
+                )
+            if server.owner_id == member_user_id:
+                raise CannotModifyOwnerError("Cannot moderate the server owner")
+            user_roles = self.manager._get_member_role_rows(server_id, user_id)
+            target_roles = self.manager._get_member_role_rows(server_id, member_user_id)
+            if not can_manage_member(
+                user_roles, target_roles, server.owner_id == user_id, False
+            ):
+                raise RoleHierarchyError(
+                    "Cannot moderate a member with equal or higher role"
+                )
+
         updates = []
         params: List[Any] = []
         changes = {}
 
         if nickname is not None:
-            if user_id != member_user_id:
-                self.manager.require_permission(
-                    user_id, server_id, "members.manage_nicknames"
-                )
             updates.append("nickname = ?")
             params.append(nickname if nickname else None)
             changes["nickname"] = {"old": member.nickname, "new": nickname}
@@ -277,6 +355,15 @@ class MemberHandler:
             updates.append("deafened = ?")
             params.append(1 if deafened else 0)
             changes["deafened"] = {"old": member.deafened, "new": deafened}
+
+        if timeout_until is not None or timeout_reason is not None:
+            # Timeouts are a moderation action. The system actor (user_id == 0,
+            # e.g. AutoMod) is allowed to apply them without an explicit role,
+            # but a real user must hold members.manage_roles.
+            if user_id != 0:
+                self.manager.require_permission(
+                    user_id, server_id, "members.manage_roles"
+                )
 
         if timeout_until is not None:
             # require permission check if not self? normally members.manage_roles or similar
@@ -297,17 +384,38 @@ class MemberHandler:
             }
 
         if updates:
-            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
-            now = self.manager._get_timestamp()
-            for i, update in enumerate(updates):
+            allowed_columns = {
+                "nickname",
+                "muted",
+                "deafened",
+                "timeout_until",
+                "timeout_reason",
+            }
+
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
-                value = params[i]
-                query = (
-                    "UPDATE srv_members SET "  # nosec: B608
-                    + col_name
-                    + " = ?, updated_at = ? WHERE server_id = ? AND user_id = ?"  # nosec: B608
-                )
-                self.db.execute(query, (value, now, server_id, member_user_id))
+                if col_name not in allowed_columns:
+                    raise ValueError(f"Invalid column name: {col_name}")
+                set_columns.append(col_name)
+                set_params.append(value)
+            now = self.manager._get_timestamp()
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = (
+                "UPDATE srv_members SET "
+                + set_clause
+                + " WHERE server_id = ? AND user_id = ?"
+            )
+            self.db.execute(query, (*set_params, server_id, member_user_id))
             if user_id != member_user_id:
                 self.manager._log_audit(
                     server_id,
@@ -319,8 +427,9 @@ class MemberHandler:
                 )
 
         invalidate_pattern(f"member_data:*{member_user_id}*")
-        # Invalidate permissions cache
-        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+        # Timeout (and other member state) feeds permission computation, so the
+        # user's cached permission snapshots must be dropped across all tiers.
+        self.manager._invalidate_permission_caches(server_id, member_user_id)
         result = self.get_member(server_id, member_user_id)
         assert result is not None
         return result
@@ -334,6 +443,10 @@ class MemberHandler:
     ) -> bool:
         """Kick a member from a server."""
         server = self.manager.get_server(server_id, user_id)
+        if not server:
+            # Actor is not a member of this server (or server missing) -
+            # fail with a permission error instead of dereferencing None.
+            raise PermissionDeniedError("Not a member of this server", "members.kick")
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot kick the server owner")
 
@@ -382,23 +495,7 @@ class MemberHandler:
                     f"Error removing kicked member {member_user_id} from server conversations: {e}"
                 )
 
-        self.manager._cache_invalidate(
-            self.manager._member_cache_prefix, (server_id, member_user_id)
-        )
-        self.manager._cache_invalidate(
-            self.manager._member_cache_prefix, f"is_member:{server_id}:{member_user_id}"
-        )
-        self.manager._cache_invalidate(
-            self.manager._permission_cache_prefix, (member_user_id, server_id, None)
-        )
-
-        # Invalidate Valkey
-        from src.core.database import cache_delete, invalidate_pattern
-
-        cache_delete(f"is_member:{server_id}:{member_user_id}")
-        invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
-
-        invalidate_pattern(f"member_data:*{member_user_id}*")
+        self.manager._invalidate_member_caches(server_id, member_user_id)
         self.manager._log_audit(
             server_id,
             user_id,
@@ -414,6 +511,22 @@ class MemberHandler:
     ) -> bool:
         """Unban a user from a server."""
         self.manager.require_permission(user_id, server_id, "members.ban")
+
+        server = self.manager.get_server(server_id, user_id)
+        is_owner = server is not None and server.owner_id == user_id
+        target_is_owner = server is not None and server.owner_id == banned_user_id
+
+        # The owner can never be banned; guard against it regardless.
+        if target_is_owner:
+            raise CannotModifyOwnerError("Cannot unban the server owner")
+
+        # Apply the same role-hierarchy rules as ban/kick. The banned user may
+        # no longer be a member (their rows are removed on ban), in which case
+        # target_roles is empty and any permitted moderator may unban them.
+        user_roles = self.manager._get_member_role_rows(server_id, user_id)
+        target_roles = self.manager._get_member_role_rows(server_id, banned_user_id)
+        if not can_manage_member(user_roles, target_roles, is_owner, target_is_owner):
+            raise RoleHierarchyError("Cannot unban a member with equal or higher role")
 
         existing = self.db.fetch_one(
             "SELECT 1 FROM srv_bans WHERE server_id = ? AND user_id = ?",
@@ -433,7 +546,18 @@ class MemberHandler:
 
     def get_bans(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Ban]:
         """Get all bans for a server."""
-        self.manager.require_permission(user_id, server_id, "bans.view")
+        # Viewing the ban list is a ban-management action. Allow anyone who can
+        # ban members, or any actor explicitly granted the dedicated bans.view
+        # permission. (bans.view is part of SERVER_PERMISSIONS so owners and
+        # administrators implicitly satisfy it via the all-true permission set.)
+        if not (
+            self.manager.has_permission(user_id, server_id, "members.ban")
+            or self.manager.has_permission(user_id, server_id, "bans.view")
+        ):
+            raise PermissionDeniedError(
+                "Missing required permission: members.ban or bans.view",
+                "members.ban",
+            )
         rows = self.db.fetch_all(
             "SELECT * FROM srv_bans WHERE server_id = ?", (server_id,)
         )
@@ -493,7 +617,12 @@ class MemberHandler:
             )
 
         try:
-            member = self.add_member(invite.server_id, user_id, invite.inviter_id)
+            member = self.add_member(
+                invite.server_id,
+                user_id,
+                invite.inviter_id,
+                temporary=bool(getattr(invite, "temporary", False)),
+            )
         except Exception:
             self.db.execute(
                 "UPDATE srv_invites SET uses = CASE WHEN uses > 0 THEN uses - 1 ELSE 0 END WHERE code = ?",
@@ -508,9 +637,72 @@ class MemberHandler:
 
         return member
 
+    def purge_temporary_members(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Revoke a user's temporary memberships that earned no role.
+
+        A temporary invite grants membership for the session only: when the
+        member's last connection closes, the membership is revoked unless
+        they were granted a role (any role other than the server's default).
+        This is what turns the stored ``temporary`` invite flag into actual
+        behavior instead of a silently ignored value (Agent 16 F9).
+
+        Returns the server IDs the membership was revoked from.
+        """
+        rows = self.db.fetch_all(
+            "SELECT id AS member_id, server_id FROM srv_members "
+            "WHERE user_id = ? AND is_temporary = 1",
+            (user_id,),
+        )
+        revoked: List[SnowflakeID] = []
+        for row in rows or []:
+            member_id = row["member_id"]
+            server_id = row["server_id"]
+
+            # A role other than the server's default makes the membership
+            # permanent (the member contributed/participated).
+            earned = self.db.fetch_one(
+                "SELECT 1 FROM srv_member_roles mr "
+                "JOIN srv_roles r ON r.id = mr.role_id "
+                "WHERE mr.member_id = ? AND r.is_default = 0",
+                (member_id,),
+            )
+            if earned:
+                self.db.execute(
+                    "UPDATE srv_members SET is_temporary = 0 WHERE id = ?",
+                    (member_id,),
+                )
+                continue
+
+            self.db.execute(
+                "DELETE FROM srv_member_roles WHERE member_id = ?", (member_id,)
+            )
+            self.db.execute("DELETE FROM srv_members WHERE id = ?", (member_id,))
+            self.manager._invalidate_member_caches(server_id, user_id)
+            self.manager._log_audit(
+                server_id,
+                user_id,
+                AuditLogAction.MEMBER_LEAVE,
+                "member",
+                user_id,
+            )
+            revoked.append(server_id)
+
+        if revoked:
+            logger.info(
+                f"Revoked {len(revoked)} temporary membership(s) for user {user_id}"
+            )
+        return revoked
+
     def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
-        """Delete an invite."""
-        row = self.db.fetch_one("SELECT * FROM srv_invites WHERE code = ?", (code,))
+        """Revoke an invite (soft-revoke).
+
+        The row is kept with ``revoked = 1`` — every read path
+        (``get_invite``, ``get_invites``, ``use_invite``) filters
+        ``revoked = 0`` — so historical audit references survive.
+        """
+        row = self.db.fetch_one(
+            "SELECT * FROM srv_invites WHERE code = ? AND revoked = 0", (code,)
+        )
         if not row:
             raise InviteNotFoundError("Invite not found")
 
@@ -525,7 +717,10 @@ class MemberHandler:
             if server.owner_id != user_id:
                 self.manager.require_permission(user_id, server_id, "invites.manage")
 
-        self.db.execute("DELETE FROM srv_invites WHERE code = ?", (code,))
+        self.db.execute(
+            "UPDATE srv_invites SET revoked = 1 WHERE code = ? AND revoked = 0",
+            (code,),
+        )
 
         self.manager._log_audit(
             server_id, user_id, AuditLogAction.INVITE_DELETE, "invite", invite_id
@@ -538,9 +733,18 @@ class MemberHandler:
         server_id: SnowflakeID,
         member_user_id: SnowflakeID,
         reason: Optional[str] = None,
+        delete_message_days: int = 0,
     ) -> Ban:
         """Ban a user from a server."""
         server = self.manager.get_server(server_id, user_id)
+        if not server:
+            # Actor is not a member of this server (or server missing) -
+            # fail with a permission error instead of dereferencing None.
+            raise PermissionDeniedError("Not a member of this server", "members.ban")
+        if delete_message_days:
+            raise BanPurgeNotSupportedError(
+                "delete_message_days (message purge on ban) is not supported; pass 0"
+            )
         if server.owner_id == member_user_id:
             raise CannotModifyOwnerError("Cannot ban the server owner")
 
@@ -571,14 +775,7 @@ class MemberHandler:
                 "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                 (server_id, member_user_id),
             )
-            self.manager._cache_invalidate(
-                self.manager._member_cache_prefix, (server_id, member_user_id)
-            )
-
-            cache_delete(f"is_member:{server_id}:{member_user_id}")
-            invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
-
-        invalidate_pattern(f"member_data:*{member_user_id}*")
+        self.manager._invalidate_member_caches(server_id, member_user_id)
 
         now = self.manager._get_timestamp()
         ban_id = self.manager._generate_id()
@@ -611,6 +808,70 @@ class MemberHandler:
             created_at=now,
         )
 
+    def _enforce_invite_quota(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> None:
+        """Rate-limit and cap invite creation per user / per server.
+
+        Configured under the ``invites`` config section:
+        - ``creation_max_per_window`` (default 20) invites per
+          ``creation_window_seconds`` (default 3600) per user;
+        - ``max_active_per_user`` (default 25) and
+          ``max_active_per_server`` (default 100) concurrently-live
+          (unrevoked, unexpired) invites.
+        """
+        cfg = _invite_config()
+
+        # --- Per-user creation rate limit (sliding window) ---
+        window_seconds = int(cfg.get("creation_window_seconds", 3600))
+        window_max = int(cfg.get("creation_max_per_window", 20))
+        if window_max > 0:
+            now = time.monotonic()
+            key = str(user_id)
+            with _invite_creation_lock:
+                timestamps = [
+                    ts
+                    for ts in _invite_creation_windows.get(key, [])
+                    if now - ts < window_seconds
+                ]
+                if len(timestamps) >= window_max:
+                    raise InviteRateLimitedError(
+                        "Invite creation rate limit exceeded",
+                        retry_after_seconds=window_seconds,
+                    )
+                timestamps.append(now)
+                _invite_creation_windows[key] = timestamps
+
+        # --- Active-invite quotas ---
+        now_ms = self.manager._get_timestamp()
+        live_predicate = "(expires_at IS NULL OR expires_at > ?)"
+
+        max_per_user = int(cfg.get("max_active_per_user", 25))
+        if max_per_user > 0:
+            row = self.db.fetch_one(
+                f"SELECT COUNT(*) AS c FROM srv_invites "
+                f"WHERE inviter_id = ? AND revoked = 0 AND {live_predicate}",  # nosec: B608 - constant predicate
+                (user_id, now_ms),
+            )
+            if row and row["c"] >= max_per_user:
+                raise InviteLimitReachedError(
+                    "Active invite limit reached for this user",
+                    limit=max_per_user,
+                )
+
+        max_per_server = int(cfg.get("max_active_per_server", 100))
+        if max_per_server > 0:
+            row = self.db.fetch_one(
+                f"SELECT COUNT(*) AS c FROM srv_invites "
+                f"WHERE server_id = ? AND revoked = 0 AND {live_predicate}",  # nosec: B608 - constant predicate
+                (server_id, now_ms),
+            )
+            if row and row["c"] >= max_per_server:
+                raise InviteLimitReachedError(
+                    "Active invite limit reached for this server",
+                    limit=max_per_server,
+                )
+
     def create_invite(
         self,
         user_id: SnowflakeID,
@@ -626,6 +887,8 @@ class MemberHandler:
         self.manager.require_permission(
             user_id, channel.server_id, "invites.create", channel_id
         )
+
+        self._enforce_invite_quota(user_id, channel.server_id)
 
         now = self.manager._get_timestamp()
         expires_at = now + (max_age * 1000) if max_age > 0 else None

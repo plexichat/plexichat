@@ -56,6 +56,23 @@ CREATE TABLE IF NOT EXISTS poll_votes (
 CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_user ON poll_votes(user_id);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(option_id);
+
+-- Poll voter registry: exactly one row per (poll_id, user_id).  This
+-- provides the authoritative, database-enforced "one vote per user per
+-- poll" guard that a plain per-option ``poll_votes`` row (which can be
+-- one-per-option for multiple-choice polls) cannot express.  The
+-- ``UNIQUE(poll_id, user_id)`` constraint closes the inter-thread race
+-- window that an application-level pre-INSERT check alone cannot.
+CREATE TABLE IF NOT EXISTS poll_voters (
+    poll_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    voted_at INTEGER NOT NULL,
+    PRIMARY KEY (poll_id, user_id),
+    FOREIGN KEY (poll_id) REFERENCES poll_polls(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_poll_voters_poll ON poll_voters(poll_id);
+CREATE INDEX IF NOT EXISTS idx_poll_voters_user ON poll_voters(user_id);
 """
 
 

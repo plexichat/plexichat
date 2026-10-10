@@ -26,12 +26,16 @@ import utils.logger as logger
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.artifacts import (
+    cap_snapshot_payload,
     get_artifact_subscription_registry,
     relay_artifact_op,
+    send_artifact_ack,
+    send_artifact_op_rejected,
     send_artifact_sync,
 )
 from src.core.artifacts.repository import get_artifact
 from src.core.artifacts.capabilities import capability_allows_artifact
+from src.core.artifacts.revision import payload_revision
 
 if TYPE_CHECKING:
     from src.api.websocket.dispatcher import GatewayDispatcher
@@ -99,6 +103,7 @@ class ArtifactHandler:
         self,
         connection: Connection,
         data: Optional[Dict[str, Any]],
+        dispatcher: Any = None,
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle ARTIFACT_SUBSCRIBE opcode."""
         if not connection.is_authenticated:
@@ -129,20 +134,34 @@ class ArtifactHandler:
         # Never register a subscription for an unknown artifact. Otherwise a
         # later artifact with the same id could inherit an unauthorized stale
         # subscription.
+        #
+        # A missing or forbidden artifact must NOT close the gateway: closing
+        # with NOT_AUTHENTICATED (4003) makes clients believe their session
+        # died and re-authenticate in a loop (fresh ticket → identify →
+        # resubscribe → closed again). Auth already succeeded above; deny the
+        # subscription only and keep the connection alive.
         if artifact is None:
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            logger.warning(
+                f"User {connection.user_id} subscribed to unknown artifact {artifact_id}; ignoring"
+            )
+            return None, None, None
         if not self._has_artifact_access(connection, artifact):
             logger.debug(
-                f"User {connection.user_id} denied access to artifact {artifact_id}"
+                f"User {connection.user_id} denied access to artifact {artifact_id}; "
+                "ignoring subscribe"
             )
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            return None, None, None
 
         self._registry.subscribe(
             connection.user_id, artifact_id, connection.connection_id
         )
         logger.debug(f"User {connection.user_id} subscribed to artifact {artifact_id}")
 
-        snapshot = artifact.payload
+        # L36: a payload can reach ~1 MB; cap what the gateway ships to a
+        # late joiner. Oversized payloads are omitted from the sync frame
+        # (flagged) so the client fetches the body over REST instead of the
+        # server pushing N x 1 MB frames for N concurrent joins.
+        snapshot, snapshot_truncated = cap_snapshot_payload(artifact.payload or {})
 
         # Replay the artifact's persisted ops so a late joiner can catch up on
         # changes that happened while it was offline. The client may hint at
@@ -164,10 +183,29 @@ class ArtifactHandler:
             except Exception as e:
                 logger.debug(f"Failed to load artifact ops for replay: {e}")
 
+        rate_limit_per_minute = getattr(dispatcher, "_rate_limit_per_minute", None)
         try:
-            await send_artifact_sync(connection, artifact_id, snapshot, ops=ops)  # type: ignore[arg-type]
+            sent = await send_artifact_sync(
+                connection,
+                artifact_id,
+                snapshot,
+                ops=ops,
+                rate_limit_per_minute=rate_limit_per_minute,
+                snapshot_truncated=snapshot_truncated,
+                rev=getattr(artifact, "rev", 0),
+            )
+            if not sent:
+                # The sync was rejected (rate limit or send failure): do not
+                # leave a half-registered subscription behind that would
+                # silently miss later deltas.
+                self._registry.unsubscribe(
+                    connection.user_id, artifact_id, connection.connection_id
+                )
         except Exception as e:
             logger.debug(f"Failed to send artifact sync: {e}")
+            self._registry.unsubscribe(
+                connection.user_id, artifact_id, connection.connection_id
+            )
 
         return None, None, None
 
@@ -227,6 +265,14 @@ class ArtifactHandler:
         op_type = op.get("op_type")
         if not isinstance(op_type, str) or not op_type or len(op_type) > 64:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        # Preserve (and sanitize) the sender's ``client_id`` so the relay AND
+        # the ack echo both carry it back. Clients use it to recognise their
+        # own ops; without it every echo re-applies as a remote edit.
+        raw_client_id = op.get("client_id")
+        if raw_client_id is not None:
+            normalized_client_id = str(raw_client_id)[:128]
+            if normalized_client_id:
+                op["client_id"] = normalized_client_id
         try:
             import json
 
@@ -245,19 +291,59 @@ class ArtifactHandler:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         # The artifact must exist and the caller must have edit access. Do not
-        # relay operations against placeholder ids.
+        # relay operations against placeholder ids. A missing or forbidden
+        # artifact must not close the gateway with NOT_AUTHENTICATED — that
+        # would trap clients in an auth reconnect loop for a resource-level
+        # denial. Drop the op instead; the connection stays alive.
         db = api.get_db()
         artifact = get_artifact(db, artifact_id) if db else None
         if artifact is None or not self._has_artifact_access(
             connection, artifact, "artifact.edit"
         ):
-            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+            logger.debug(
+                f"User {connection.user_id} op on artifact {artifact_id} denied or "
+                "artifact unknown; dropping op"
+            )
+            return None, None, None
+
+        # Rev guard: an ``edit`` op carrying a numeric ``rev`` that is OLDER
+        # than the artifact's committed revision is stale — a concurrent write
+        # already landed. Persisting or relaying it would pollute the ops log
+        # with superseded full-content edits and let peers re-apply them;
+        # reject it instead and tell the sender to re-fetch/re-base. Ops
+        # without a numeric rev (strokes, cursors, PlexiScribe deltas, or the
+        # equal-rev echo of this tab's own just-committed write) pass through.
+        op_rev = payload_revision(op)
+        if (
+            artifact is not None
+            and op_type == "edit"
+            and op_rev is not None
+            and op_rev < int(getattr(artifact, "rev", 0) or 0)
+        ):
+            logger.debug(
+                f"User {connection.user_id} stale edit op (rev {op_rev} < "
+                f"{artifact.rev}) on artifact {artifact_id}; rejecting"
+            )
+            try:
+                await send_artifact_op_rejected(
+                    connection,
+                    artifact_id,
+                    op,
+                    current_rev=int(getattr(artifact, "rev", 0) or 0),
+                    rate_limit_per_minute=getattr(
+                        dispatcher, "_rate_limit_per_minute", None
+                    ),
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"Failed to send artifact op rejection: {e}")
+            return None, None, None
 
         # Persist the op to the ordered ops log so it survives the relay and
         # can be replayed to late joiners. Persistence is best-effort: a
         # storage failure must never break the live fan-out, and transient op
         # types (cursor, presence, snapshot requests) are skipped. Non-existent
         # artifacts are skipped by ``append_artifact_op`` itself.
+        seq: Optional[int] = None
         if artifact is not None:
             try:
                 from src.core.artifacts.manager import ArtifactManager
@@ -265,7 +351,7 @@ class ArtifactHandler:
                 manager = ArtifactManager(
                     api.get_db(), config.get("artifacts", {}) or {}
                 )
-                await asyncio.to_thread(
+                seq = await asyncio.to_thread(
                     manager.append_op,
                     artifact_id,
                     op.get("op_type") or "op",
@@ -275,16 +361,38 @@ class ArtifactHandler:
             except Exception as e:
                 logger.warning(f"Failed to persist artifact op for {artifact_id}: {e}")
 
-        # Relay to other subscribers.
+        # Relay to the artifact's other subscribers, carrying the
+        # server-assigned seq. Exclude only the ORIGINATING connection, not
+        # the whole user: a second tab of the same user is a distinct
+        # subscriber (own per-tab client_id) and must receive the relay or
+        # its optimistic state diverges until reload. The originating
+        # connection is acknowledged separately below.
         try:
             await relay_artifact_op(
                 dispatcher=dispatcher,
                 artifact_id=artifact_id,
                 op=op,
                 actor_id=connection.user_id,
-                exclude_user_id=connection.user_id,
+                exclude_connection_id=connection.connection_id,
+                seq=seq,
             )
         except Exception as e:
             logger.warning(f"Failed to relay artifact op: {e}")
+
+        # Acknowledge the actor with the assigned seq so it can commit its
+        # optimistic local op (OT). Transient ops (seq is None) are skipped.
+        if seq is not None:
+            try:
+                await send_artifact_ack(
+                    connection,
+                    artifact_id,
+                    op,
+                    seq,
+                    rate_limit_per_minute=getattr(
+                        dispatcher, "_rate_limit_per_minute", None
+                    ),
+                )
+            except Exception as e:
+                logger.debug(f"Failed to ack artifact op for {artifact_id}: {e}")
 
         return None, None, None

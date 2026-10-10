@@ -1,5 +1,5 @@
-from typing import List
-from fastapi import APIRouter, Request, HTTPException, Depends
+from typing import List, Optional
+from fastapi import APIRouter, Request, Response, HTTPException, Depends
 
 import src.api as api
 import utils.logger as logger
@@ -15,12 +15,19 @@ from src.api.schemas.auth import (
     PasskeyRenameRequest,
     LoginResponse,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID, SuccessResponse
 from .helpers import _user_to_response
+from .cookies import (
+    set_session_cookie,
+    session_expiry_seconds,
+    session_token_for_response,
+)
 from src.core.auth.exceptions import (
     InvalidCredentialsError,
     AccountLockedError,
 )
+from src.core.auth.models import AuthStatus
+from src.utils.net import get_client_ip
 
 try:
     from src.core.ratelimit.decorators import rate_limit
@@ -84,12 +91,13 @@ router = APIRouter()
     responses={
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        500: {"model": ErrorResponse, "description": "Passkey support not available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_register_options(
-    body: PasskeyRegisterOptionsRequest,
+    body: Optional[PasskeyRegisterOptionsRequest] = None,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> PasskeyRegisterOptionsResponse:
     auth = api.get_auth()
@@ -102,7 +110,7 @@ async def passkey_register_options(
     try:
         options = auth.generate_passkey_registration_options(
             user_id=current_user.user_id,
-            device_name=body.device_name,
+            device_name=body.device_name if body else None,
         )
 
         if not options:
@@ -121,9 +129,10 @@ async def passkey_register_options(
             options=options["options"],
         )
     except RuntimeError as e:
+        logger.warning(f"Passkey registration options unavailable: {e}")
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey registration options failed: {e}", exc_info=True)
@@ -157,7 +166,7 @@ async def passkey_register(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
 
     try:
         result = auth.verify_passkey_registration(
@@ -188,10 +197,16 @@ async def passkey_register(
             backed_up=result["backed_up"],
             revoked=False,
         )
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except RuntimeError as e:
+        logger.warning(f"Passkey registration unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey registration failed: {e}", exc_info=True)
@@ -207,7 +222,8 @@ async def passkey_register(
     summary="Get passkey authentication options",
     responses={
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
-        500: {"model": ErrorResponse, "description": "Passkey support not available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
 @(rate_limit(requests=10, window_seconds=60) if rate_limit else lambda f: f)
@@ -229,9 +245,10 @@ async def passkey_authenticate_options(
             options=options["options"],
         )
     except RuntimeError as e:
+        logger.warning(f"Passkey authentication options unavailable: {e}")
         raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication options failed: {e}", exc_info=True)
@@ -249,12 +266,14 @@ async def passkey_authenticate_options(
         401: {"model": ErrorResponse, "description": "Authentication failed"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Passkey support not available"},
     },
 )
 @(rate_limit(requests=5, window_seconds=60) if rate_limit else lambda f: f)
 async def passkey_authenticate(
     body: PasskeyAuthenticateRequest,
     request: Request,
+    response: Response,
 ) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
@@ -263,7 +282,7 @@ async def passkey_authenticate(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
     try:
@@ -274,25 +293,60 @@ async def passkey_authenticate(
             user_agent=user_agent,
         )
 
+        if result.status == AuthStatus.TWO_FACTOR_REQUIRED:
+            return LoginResponse(
+                # Enum-safe wire value (see login.py C1 hardening).
+                status=AuthStatus.TWO_FACTOR_REQUIRED.value,
+                token=None,
+                user=None,
+                challenge_token=result.challenge_token,
+                methods=result.methods,
+                expires_in=result.expires_in,
+            )
+
+        # Fail closed: never fall through to "success" with a null token.
+        if result.status != AuthStatus.SUCCESS:
+            logger.error(f"Unexpected auth status in passkey auth: {result.status!r}")
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )
+
+        # M9 (same as login): the session goes to browsers ONLY via the
+        # HttpOnly cookie (previously this route set NO cookie at all —
+        # bearer-only); the body carries a marker plus the session
+        # lifetime, with the raw token echoed back solely for explicit
+        # non-browser opt-in (``X-Plexichat-Token-Mode: bearer``).
+        # Mirror the real session expiry (trusted-device rows are longer-lived).
+        max_age = session_expiry_seconds(result.session)
+        if result.token:
+            set_session_cookie(response, result.token, max_age=max_age)
         return LoginResponse(
-            status="success",
-            token=result.token,
+            status=AuthStatus.SUCCESS.value,
+            token=session_token_for_response(request, result.token),
             user=_user_to_response(result.user) if result.user else None,
+            expires_in=max_age,
         )
-    except InvalidCredentialsError as e:
+    except InvalidCredentialsError:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": 401, "message": str(e)}},
+            detail={"error": {"code": 401, "message": "Authentication required"}},
         )
-    except AccountLockedError as e:
+    except AccountLockedError:
         raise HTTPException(
             status_code=403,
-            detail={"error": {"code": 403, "message": str(e)}},
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Authentication required"}},
+        )
+    except RuntimeError as e:
+        logger.warning(f"Passkey authentication unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"code": 503, "message": "Passkey support not available"}},
         )
     except Exception as e:
         logger.error(f"Passkey authentication failed: {e}", exc_info=True)
@@ -357,7 +411,7 @@ async def list_passkeys(
 )
 @(rate_limit(requests=10, window_seconds=60) if rate_limit else lambda f: f)
 async def revoke_passkey(
-    passkey_id: int,
+    passkey_id: SnowflakeID,
     request: Request,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
@@ -368,12 +422,12 @@ async def revoke_passkey(
             detail={"error": {"code": 500, "message": "Auth module not available"}},
         )
 
-    ip_address = request.client.host if request.client else None
+    ip_address = get_client_ip(request)
 
     try:
         result = auth.revoke_passkey(
             user_id=current_user.user_id,
-            passkey_id=passkey_id,
+            passkey_id=int(passkey_id),
             ip_address=ip_address,
         )
 
@@ -384,6 +438,8 @@ async def revoke_passkey(
             )
 
         return SuccessResponse(success=True, message=None)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Revoke passkey failed: {e}", exc_info=True)
         raise HTTPException(
@@ -404,7 +460,7 @@ async def revoke_passkey(
 )
 @(rate_limit(requests=20, window_seconds=60) if rate_limit else lambda f: f)
 async def rename_passkey(
-    passkey_id: int,
+    passkey_id: SnowflakeID,
     body: PasskeyRenameRequest,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:
@@ -418,7 +474,7 @@ async def rename_passkey(
     try:
         result = auth.rename_passkey(
             user_id=current_user.user_id,
-            passkey_id=passkey_id,
+            passkey_id=int(passkey_id),
             new_name=body.name,
         )
 
@@ -429,6 +485,8 @@ async def rename_passkey(
             )
 
         return SuccessResponse(success=True, message=None)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Rename passkey failed: {e}", exc_info=True)
         raise HTTPException(

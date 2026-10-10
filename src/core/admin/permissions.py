@@ -88,6 +88,31 @@ PERMISSION_SCOPES = {
     # Data export (DSAR)
     "data_export.read": "View and manage data export requests",
     "data_export.process": "Approve, deny, and generate data exports",
+    # Admin audit trail
+    "admin.audit.read": "View and export the admin audit log",
+    # Database migrations
+    "admin.migrations.execute": "Run, apply, and roll back database migrations",
+    # Admin security operations
+    "admin.security.ipblock": "Block and unblock IP addresses platform-wide",
+    "admin.security.tokens": "Create, rotate, and revoke permanent API access tokens",
+    "admin.security.sessions": "Force logout and lock/unlock user accounts",
+    "admin.security.logout_all": "Invalidate every user session platform-wide",
+    "admin.security.usernames": "Manage banned username patterns",
+    # Platform-wide moderation
+    "admin.moderation.bans": "Ban and unban users platform-wide",
+    "admin.moderation.hashes": "Write and remove blocked content hashes",
+    "admin.moderation.rules": "Create, update, and delete AutoMod rules on any server",
+    "admin.moderation.config": "Modify the global AutoMod configuration",
+    # Bulk data operations
+    "admin.data.reindex": "Rebuild the search index (bulk message decryption)",
+    # Artifacts
+    "admin.artifacts.manage": "Force-delete artifacts and manage retention policies",
+    # Dashboard runtime tuning
+    "admin.dashboard.tuning": "Hot-reload cross-worker poll-loop tuning constants",
+    # Licensing / federation / telemetry
+    "admin.license.manage": "Apply and force-revalidate licenses",
+    "admin.plexijoin.manage": "Establish and sever cross-instance federation links",
+    "admin.telemetry.reset": "Reset collected telemetry statistics",
     # Wildcard permissions
     "*": "Full system access (super admin only)",
 }
@@ -100,7 +125,38 @@ APPROVAL_REQUIRED_ACTIONS = {
     "servers.delete": "Deleting servers",
     "config.security": "Modifying security configuration",
     "admin.roles": "Modifying admin roles",
+    # Destructive migration execution
+    "migrations.run": "Running a database migration",
+    "migrations.rollback": "Rolling back a database migration",
+    "migrations.apply_all": "Applying all pending database migrations",
+    "migrations.emergency_override": "Minting an emergency migration delay-bypass token",
+    # Bulk data exposure / destruction
+    "search.reindex": "Full search reindex (mass message decryption)",
+    "artifacts.force_delete": "Force-deleting artifacts across every server",
 }
+
+
+def is_approval_required_action(
+    action: str, approval_config: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    Check whether an action requires approval.
+
+    ``APPROVAL_REQUIRED_ACTIONS`` is the default (canonical) set. Operators
+    may extend — but never shrink — it via the
+    ``approval_workflows.require_approval_for`` config list.
+
+    Args:
+        action: The action being performed
+        approval_config: The ``approval_workflows`` config mapping (optional)
+
+    Returns:
+        True if the action requires approval, False otherwise
+    """
+    if action in APPROVAL_REQUIRED_ACTIONS:
+        return True
+    configured = (approval_config or {}).get("require_approval_for", []) or []
+    return action in set(configured)
 
 
 def check_permission(
@@ -209,8 +265,9 @@ def check_approval_required(
                 # Only one admin - bypass approval
                 return AdminPermission(has_permission=True)
 
-        # Check if this action requires approval
-        requires_approval = action in approval_config.get("require_approval_for", [])
+        # Check if this action requires approval. The canonical default set
+        # (APPROVAL_REQUIRED_ACTIONS) always applies; config may add more.
+        requires_approval = is_approval_required_action(action, approval_config)
 
         if requires_approval:
             # Check if admin has super admin permissions
@@ -281,7 +338,7 @@ def _get_admin_roles(db, admin_id: int) -> List[AdminRole]:
                         permissions=permissions,
                         created_at=row[4],
                         created_by=row[5],
-                        is_system=bool(row[7]) if len(row) > 7 else False,
+                        is_system=bool(row[6]) if len(row) > 6 else False,
                     )
                 )
 
@@ -531,9 +588,9 @@ def get_admin_permissions_summary(db, admin_id: int) -> Dict[str, Any]:
         has_wildcard = all_permissions.get("*", False)
 
         return {
-            "admin_id": admin_id,
+            "admin_id": str(admin_id),
             "roles": [
-                {"id": r.id, "name": r.name, "description": r.description}
+                {"id": str(r.id), "name": r.name, "description": r.description}
                 for r in roles
             ],
             "permissions": all_permissions,
@@ -544,7 +601,7 @@ def get_admin_permissions_summary(db, admin_id: int) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting admin permissions summary: {e}")
         return {
-            "admin_id": admin_id,
+            "admin_id": str(admin_id),
             "roles": [],
             "permissions": {},
             "has_wildcard": False,

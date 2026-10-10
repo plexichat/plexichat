@@ -148,3 +148,48 @@ class TestComponents:
         )
         assert modal.title == "Feedback"
         assert len(modal.components) == 1
+
+    def test_validate_button_rejects_invalid_string_style(self):
+        """Test that validate_button rejects non-int, non-ButtonStyle style values."""
+        from src.core.applications.interactions.components import validate_button
+
+        valid, issues = validate_button(
+            {
+                "type": 2,
+                "style": "invalid_string",
+                "label": "Click",
+                "custom_id": "btn1",
+            }
+        )
+        assert not valid
+        assert any("Invalid button style" in i for i in issues)
+
+    def test_validate_button_accepts_button_style_enum(self):
+        """Test that validate_button accepts ButtonStyle enum values."""
+        from src.core.applications.interactions.components import validate_button
+
+        valid, issues = validate_button(
+            {
+                "type": 2,
+                "style": ButtonStyle.PRIMARY,
+                "label": "Click",
+                "custom_id": "btn1",
+            }
+        )
+        assert valid
+        assert len(issues) == 0
+
+    def test_validate_button_accepts_valid_int_style(self):
+        """Test that validate_button accepts valid integer styles."""
+        from src.core.applications.interactions.components import validate_button
+
+        valid, issues = validate_button(
+            {
+                "type": 2,
+                "style": 1,
+                "label": "Click",
+                "custom_id": "btn1",
+            }
+        )
+        assert valid
+        assert len(issues) == 0

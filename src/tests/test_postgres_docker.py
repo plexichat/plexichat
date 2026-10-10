@@ -17,21 +17,23 @@ Environment Configuration:
     USE_DOCKER: Enable Docker (default: true)
 """
 
+import os
+import threading
+
 import pytest
+
+import utils.config as config
+from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
 pytestmark = [
     pytest.mark.postgres,
-    pytest.mark.skip(reason="PostgreSQL Docker tests require Docker environment"),
+    # NOT skipped unconditionally: the ``postgres_manager`` fixture skips
+    # cleanly ("PostgreSQL not available") when neither Docker/testcontainers
+    # nor a local PostgreSQL is reachable, so these tests appear as VISIBLE
+    # SKIPS in the default run instead of being silently deselected — and
+    # they actually run wherever a PostgreSQL backend is available.
 ]
-import os  # noqa: E402
-import threading  # noqa: E402
-
-# common_utils is now a native package.
-
-
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
 
 
 # Fixture for setup/teardown
@@ -40,9 +42,10 @@ def setup_docker_tests():
     """Setup logging for Docker tests."""
     log_dir = "temp_test_docker"
     os.makedirs(log_dir, exist_ok=True)
-    logger.setup(log_dir=log_dir, level="DEBUG")
-
-    yield
+    # ``isolated_logger`` restores the global level after the module so this
+    # DEBUG setting cannot leak into later tests in the same worker.
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield
 
     # Cleanup
     import shutil
@@ -83,8 +86,12 @@ class TestPostgresDockerConnectivity:
             db.connect()
             connections.append(db)
 
-            # Verify each connection works
-            result = db.fetch_one("SELECT ? as num", (i,))
+            # Verify each connection works. The placeholder is cast so the
+            # comparison stays type-exact: PostgreSQL has no dynamic typing,
+            # so a bare ``SELECT ?`` gives the server no type to infer from
+            # and resolves the placeholder to ``text`` (the int comes back as
+            # '0'), unlike SQLite.
+            result = db.fetch_one("SELECT CAST(? AS BIGINT) as num", (i,))
             assert result["num"] == i
 
         # Cleanup
@@ -161,9 +168,9 @@ class TestPostgresDockerConstraintErrors:
     def test_not_null_constraint_recovery_docker(self, postgres_db_with_constraints):
         """Test recovery from NOT NULL constraint with real PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Insert valid data first
         postgres_db_with_constraints.execute(
@@ -174,7 +181,7 @@ class TestPostgresDockerConstraintErrors:
         # Try to insert NULL in NOT NULL column
         postgres_db_with_constraints.begin_transaction()
 
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             postgres_db_with_constraints.execute(
                 "INSERT INTO constrained_data (username, email, age, balance) VALUES (?, ?, ?, ?)",
                 (None, "null@example.com", 30, 50.00),
@@ -193,9 +200,9 @@ class TestPostgresDockerConstraintErrors:
     def test_unique_constraint_recovery_docker(self, postgres_db_with_constraints):
         """Test recovery from UNIQUE constraint with real PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Insert first user
         postgres_db_with_constraints.execute(
@@ -206,7 +213,7 @@ class TestPostgresDockerConstraintErrors:
         # Try to insert duplicate username
         postgres_db_with_constraints.begin_transaction()
 
-        with pytest.raises(psycopg2.errors.UniqueViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             postgres_db_with_constraints.execute(
                 "INSERT INTO constrained_data (username, email, age, balance) VALUES (?, ?, ?, ?)",
                 ("unique_user", "other@example.com", 30, 50.00),
@@ -225,14 +232,14 @@ class TestPostgresDockerConstraintErrors:
     def test_check_constraint_recovery_docker(self, postgres_db_with_constraints):
         """Test recovery from CHECK constraint with real PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Try to insert invalid age (CHECK age >= 0 AND age <= 150)
         postgres_db_with_constraints.begin_transaction()
 
-        with pytest.raises(psycopg2.errors.CheckViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             postgres_db_with_constraints.execute(
                 "INSERT INTO constrained_data (username, email, age, balance) VALUES (?, ?, ?, ?)",
                 ("invalid_age", "invalid@example.com", 200, 100.00),
@@ -289,7 +296,9 @@ class TestPostgresDockerConnectionPool:
             """Create a connection and execute query."""
             db = Database()
             db.connect()
-            result = db.fetch_one("SELECT ? as idx", (idx,))
+            # CAST keeps the placeholder typed (see
+            # test_multiple_connections_to_docker).
+            result = db.fetch_one("SELECT CAST(? AS BIGINT) as idx", (idx,))
             results.append(result)
             db.close()
 
@@ -356,10 +365,13 @@ class TestPostgresDockerEdgeCases:
             ('{"key": "value", "number": 42}',),
         )
 
-        # Retrieve and verify
+        # Retrieve and verify. pg8000 decodes a JSONB column into a Python
+        # mapping (SQLite, which has no JSON type, hands the raw text back),
+        # so the payload is asserted structurally rather than as a substring.
         result = clean_postgres_db.fetch_one("SELECT data FROM json_test")
         assert result is not None
-        assert "value" in result["data"]
+        assert result["data"]["key"] == "value"
+        assert result["data"]["number"] == 42
 
         # Cleanup
         clean_postgres_db.execute("DROP TABLE json_test")
@@ -371,9 +383,17 @@ class TestPostgresDockerEdgeCases:
 
         config.set("database", config_with_timeout)
 
+        # ``Database`` is a process-wide singleton whose engine and pool are
+        # built from the config seen at construction, so an instance left over
+        # from an earlier test keeps reporting the *old* pool settings. Reset
+        # it so this test observes the config it just installed.
+        Database.reset()
         db = Database()
-        pool_config = db.config.get("connection_pool", {})
-        assert pool_config.get("connect_timeout") == 5
+        try:
+            pool_config = db.config.get("connection_pool", {})
+            assert pool_config.get("connect_timeout") == 5
+        finally:
+            db.close()
 
 
 class TestPostgresDockerErrorHandling:
@@ -392,10 +412,8 @@ class TestPostgresDockerErrorHandling:
     def test_connection_after_error_docker(self, postgres_db):
         """Test that connection is still usable after error."""
         # Cause an error
-        try:
+        with pytest.raises(Exception):
             postgres_db.execute("INVALID QUERY")
-        except Exception:
-            pass
 
         # Connection should still work for valid queries
         result = postgres_db.fetch_one("SELECT 1 as test")
@@ -408,9 +426,9 @@ class TestPostgresDockerDataIntegrity:
     def test_foreign_key_constraint_docker(self, clean_postgres_db):
         """Test foreign key constraints with Docker PostgreSQL."""
         try:
-            import psycopg2.errors
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         # Create tables with foreign key
         clean_postgres_db.execute("""
@@ -441,7 +459,7 @@ class TestPostgresDockerDataIntegrity:
         )
 
         # Try to insert post with invalid foreign key
-        with pytest.raises(psycopg2.errors.ForeignKeyViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             clean_postgres_db.execute(
                 "INSERT INTO posts (user_id, content) VALUES (?, ?)",
                 (999, "Invalid"),

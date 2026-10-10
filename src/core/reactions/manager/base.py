@@ -13,6 +13,11 @@ from .emojis import EmojiOpsMixin
 
 
 class ReactionBase(BaseManager):
+    # NOTE: ``_migrate_emoji_table`` is intentionally NOT declared here. The
+    # real implementation lives in EmojiOpsMixin; a stub in this class would
+    # shadow it via C3 MRO (ReactionBase precedes EmojiOpsMixin in
+    # ReactionManager's bases), silently disabling the legacy-table migration.
+
     def __init__(
         self,
         db,
@@ -28,6 +33,19 @@ class ReactionBase(BaseManager):
         self._relationships = relationships_module
         self._media = media_module
         self._config = self._load_config()
+        # M2: the custom-emoji schema migration was DEFINED but never invoked,
+        # so a table created before the url/size/width/height/created_by/
+        # available columns existed never gained them, and every INSERT with
+        # the new columns failed at runtime. Run it once at construction; it
+        # is idempotent (per-column ALTERs are individually caught) and
+        # safe on fresh installs (missing table short-circuits).
+        try:
+            # Resolved via getattr so static analysis of ReactionBase stays
+            # clean while the EmojiOpsMixin implementation (the only real
+            # one) is what actually runs at runtime.
+            getattr(self, "_migrate_emoji_table")()
+        except Exception as e:
+            logger.warning(f"Failed to migrate react_custom_emoji table: {e}")
         logger.info("Reaction module initialized")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -62,6 +80,12 @@ class ReactionBase(BaseManager):
             (message_id,),
         )
         return row["count"] if row else 0
+
+    def _is_unique_violation(self, e: Exception) -> bool:
+        if type(e).__name__ == "IntegrityError":
+            return True
+        message = str(e).lower()
+        return "unique constraint" in message or "duplicate entry" in message
 
     def _row_to_reaction(self, row) -> Reaction:
         return Reaction(

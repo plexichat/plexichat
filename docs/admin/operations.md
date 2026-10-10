@@ -1,261 +1,181 @@
-# Operations Guide
+# Operations guide
 
-This guide provides comprehensive operational procedures for system administrators managing Plexichat deployments.
+This guide describes how to operate a Plexichat deployment, including daily, weekly, and monthly tasks, incident response, backups, and monitoring.
 
-## Table of Contents
+## Before you begin
 
-1. [Daily Operations](#daily-operations)
-2. [Weekly Operations](#weekly-operations)
-3. [Monthly Operations](#monthly-operations)
-4. [Incident Response](#incident-response)
-5. [Backup and Recovery](#backup-and-recovery)
-6. [Performance Monitoring](#performance-monitoring)
-7. [Security Operations](#security-operations)
-8. [Upgrade Procedures](../deployment/versioning.md)
-9. [Disaster Recovery](#disaster-recovery)
+- Ensure you have an admin account with the appropriate role assignments.
+- Familiarize yourself with the [RBAC guide](rbac.md) and the [security guide](security.md).
+- Keep the [versioning and updates guide](../deployment/versioning.md) handy for upgrades and rollbacks.
 
-## Daily Operations
+## Daily operations
 
-### Morning Checklist
+### Check system health
 
-- [ ] **System Health Check**
-  - Verify all services are running
-  - Check system resource utilization
-  - Review error logs for critical issues
-  - Verify database connectivity
+Complete this checklist each morning:
 
-- [ ] **Security Review**
-  - Check failed login attempts (last 24 hours)
-  - Review new admin account creations
-  - Check for unusual permission changes
-  - Verify 2FA compliance
+- Verify that all services are running.
+- Check CPU, memory, and disk usage.
+- Review error logs for critical issues.
+- Verify database connectivity.
 
-- [ ] **Performance Check**
-  - Review response times
-  - Check database query performance
-  - Monitor memory usage
-  - Verify disk space availability
+### Review security signals
 
-### Monitoring Dashboard
+- Review failed login attempts from the last 24 hours.
+- Check for new admin accounts or permission changes.
+- Verify that two-factor authentication (2FA) compliance is intact.
 
-Key metrics to monitor daily:
-- Active user count
-- Message volume
-- API response times
-- Error rates
-- Database connection pool status
-- System resource utilization
+### Check performance
 
-### Alert Response
+- Review API response times and database query times.
+- Monitor memory usage and disk space.
+- Verify that background jobs and the database connection pool are healthy.
 
-**Critical Alerts** (immediate response required):
-- Service down
-- Database connection failure
-- Security breach detected
-- Disk space critical (< 10%)
-- Memory exhaustion
+### Monitor key metrics
 
-**Warning Alerts** (respond within 4 hours):
-- High error rates
-- Performance degradation
-- Unusual activity patterns
-- Approaching resource limits
+Track these metrics daily:
 
-## Weekly Operations
+| Metric | What to look for |
+|--------|------------------|
+| Active users | Unexpected spikes or drops |
+| Message volume | Throughput trends |
+| API response time | p95 under 500 ms |
+| Error rate | Under 1% |
+| Database connection pool | No exhaustion or long wait times |
+| System resources | CPU and memory under 80%, disk under 70% |
 
-### Security Audit
+### Respond to alerts
 
-- [ ] **Access Review**
-  - Review admin account list
-  - Check for unused accounts
-  - Verify role assignments
-  - Review permission changes
+**Critical alerts — respond immediately:**
 
-- [ ] **Audit Log Review**
-  - Review sensitive actions
-  - Check for unusual patterns
-  - Verify approval workflow compliance
-  - Review failed authentication attempts
+- A service is down.
+- Database connectivity has failed.
+- A security breach is detected.
+- Disk usage is critical (less than 10% free).
+- Memory is exhausted.
 
-- [ ] **Configuration Review**
-  - Verify security settings
-  - Check RBAC configuration
-  - Review approval workflow settings
-  - Verify audit logging status
+**Warning alerts — respond within 4 hours:**
 
-### Performance Review
+- Elevated error rates.
+- Performance degradation.
+- Unusual activity patterns.
+- Resource limits are approaching.
 
-- [ ] **Performance Analysis**
-  - Review response time trends
-  - Analyze database query performance
-  - Check for slow queries
-  - Review cache hit rates
+## Weekly operations
 
-- [ ] **Capacity Planning**
-  - Review growth trends
-  - Check resource utilization trends
-  - Plan for capacity upgrades
-  - Review scaling requirements
+### Audit access and configuration
 
-### Maintenance Tasks
+- Review the admin account list and remove unused accounts.
+- Verify role assignments and recent permission changes.
+- Review audit logs for sensitive actions and unusual patterns.
+- Verify that approval-workflow and audit-logging settings are correct.
+- Verify RBAC settings under `admin_ui.rbac`.
 
-- [ ] **Log Rotation**
-  - Verify log rotation working
-  - Check log file sizes
-  - Archive old logs if needed
-  - Verify log backup completion
+### Review performance
 
-- [ ] **Database Maintenance**
-  - Check database size
-  - Review index performance
-  - Run database statistics
-  - Check for table bloat
+- Review response-time trends and slow queries.
+- Check cache hit rates and database index performance.
+- Review growth trends and plan capacity upgrades.
 
-## Monthly Operations
+### Perform maintenance
 
-### Security Assessment
+- Verify that log rotation is working and check log file sizes.
+- Archive old logs if needed and verify log backups completed.
+- Check database size, index performance, and table bloat.
 
-- [ ] **Vulnerability Scan**
-  - Scan for known vulnerabilities
-  - Review dependency updates
-  - Check security advisories
-  - Plan security updates
+## Monthly operations
 
-- [ ] **Access Certification**
-  - Review all admin access
-  - Certify access requirements
-  - Remove unnecessary access
-  - Document access decisions
+### Assess security and compliance
 
-- [ ] **Compliance Review**
-  - Review compliance requirements
-  - Verify audit trail completeness
-  - Check policy compliance
-  - Document compliance status
+- Run vulnerability scans and review dependency updates and security advisories.
+- Certify admin access: review all admin accounts, remove unnecessary access, and document decisions.
+- Verify audit-trail completeness and policy compliance.
 
-### System Maintenance
+### Maintain the system
 
-- [ ] **System Updates**
-  - Review available updates
-  - Test updates in staging
-  - Schedule production updates
-  - Document update process
+- Review available updates, test them in staging, and schedule production updates.
+- Verify that backups completed and test restoring a backup.
+- Review retention settings and update backup procedures.
+- Identify and implement performance optimizations and document changes.
 
-- [ ] **Backup Verification**
-  - Verify backup completion
-  - Test backup restoration
-  - Review backup retention
-  - Update backup procedures
+### Report status
 
-- [ ] **Performance Tuning**
-  - Review performance metrics
-  - Identify optimization opportunities
-  - Implement performance improvements
-  - Document tuning changes
+Include the following in your monthly report:
 
-### Reporting
+- System availability
+- Performance metrics
+- Security incidents
+- Capacity utilization
+- Summary of changes
 
-- [ ] **Monthly Report**
-  - System availability
-  - Performance metrics
-  - Security incidents
-  - Capacity utilization
-  - Change summary
+## Respond to incidents
 
-## Incident Response
+### Classify the incident
 
-### Incident Classification
+| Severity | Description | Example |
+|----------|-------------|---------|
+| P1 - Critical | System is down, data is lost, or a breach occurred | Outage, data loss |
+| P2 - High | Major functionality is degraded | Significant performance impact |
+| P3 - Medium | Minor functionality is affected | Moderate performance impact |
+| P4 - Low | Cosmetic issue | Minimal user impact |
 
-**Severity Levels**:
-- **P1 - Critical**: System down, data loss, security breach
-- **P2 - High**: Major functionality degraded, significant performance impact
-- **P3 - Medium**: Minor functionality issues, moderate performance impact
-- **P4 - Low**: Cosmetic issues, minimal impact
+### Follow the incident process
 
-### Incident Response Process
+1.  **Detect and identify.** Monitor alerts, determine severity and affected systems, and estimate impact.
+2.  **Contain.** Isolate affected systems, apply temporary workarounds, and protect unaffected systems.
+3.  **Eradicate.** Identify the root cause, remove the threat or fix the issue, and verify resolution.
+4.  **Recover.** Restore affected systems, verify functionality, and monitor for recurrence.
+5.  **Learn.** Document details, run a post-mortem, implement preventive measures, and update procedures.
 
-#### 1. Detection and Identification
-- Monitor alerts and notifications
-- Identify incident severity
-- Determine affected systems
-- Estimate impact scope
+### Communicate
 
-#### 2. Containment
-- Isolate affected systems if needed
-- Implement temporary workarounds
-- Prevent incident spread
-- Protect unaffected systems
+**Internal communication:**
 
-#### 3. Eradication
-- Identify root cause
-- Remove threat or fix issue
-- Verify complete resolution
-- Document root cause
+- Notify the technical team immediately.
+- Provide regular status updates and escalate to management when needed.
+- Document all communication.
 
-#### 4. Recovery
-- Restore affected systems
-- Verify full functionality
-- Monitor for recurrence
-- Return to normal operations
+**External communication (if required):**
 
-#### 5. Post-Incident Activities
-- Document incident details
-- Conduct post-mortem analysis
-- Implement preventive measures
-- Update procedures as needed
+- Prepare user notifications with status and estimated resolution time.
+- Follow up after the incident is resolved.
 
-### Communication Procedures
+## Back up and restore
 
-**Internal Communication**:
-- Notify technical team immediately
-- Provide regular status updates
-- Escalate to management if needed
-- Document all communications
+The Docker Compose stack includes a `backup` service that uses restic and runs on a schedule (default: daily at 02:00). For full configuration options, see [`docker/README.md`](../../docker/README.md).
 
-**External Communication** (if required):
-- Prepare user notifications
-- Provide status updates
-- Estimate resolution time
-- Follow up after resolution
+### Schedule and retention
 
-## Backup and Recovery
+| Frequency | Retention | Environment variable |
+|-----------|-----------|----------------------|
+| Daily (02:00 by default) | 7 daily snapshots | `BACKUP_KEEP_DAILY` |
+| Weekly | 4 weekly snapshots | `BACKUP_KEEP_WEEKLY` |
+| Monthly | 6 monthly snapshots | `BACKUP_KEEP_MONTHLY` |
 
-The Docker Compose stack includes a **restic-based backup container** (`backup` service)
-that runs automatically on a configurable schedule (default daily at 2 AM).
-See [`docker/README.md`](../../docker/README.md) for full configuration reference.
-
-### Backup schedule and retention
-
-| Frequency | Retention | Managed by |
-|-----------|-----------|------------|
-| Daily (default 2 AM) | 7 daily | `BACKUP_KEEP_DAILY` |
-| Weekly | 4 weekly | `BACKUP_KEEP_WEEKLY` |
-| Monthly | 6 monthly | `BACKUP_KEEP_MONTHLY` |
-
-Snapshots are block-level deduplicated — retaining weeks or months of history
-uses minimal extra storage.
+Snapshots use block-level deduplication, so retaining weeks or months of history uses minimal extra storage.
 
 ### What is backed up
 
 Each snapshot contains:
-- `db_dump/plexichat.sql.gz` — full PostgreSQL dump
-- `plexichat-home/` — server config, `.machine_key`, keyrings
-- `minio-data/` — uploaded media and attachments
 
-### Restore procedures
+- `tmp/backup/db/plexichat.sql.gz` — full PostgreSQL dump
+- `plexichat-home/` — server configuration, `.machine_key`, and keyrings
+- `rustfs-data/` — uploaded media and attachments
+
+### Restore
 
 ```bash
 # List available snapshots
 docker exec plexichat-backup-1 /scripts/backup.sh list
 
-# Restore database from latest
+# Restore the database from the latest snapshot
 docker exec plexichat-backup-1 /scripts/backup.sh restore-db latest
 
 # Restore files to /tmp/restore
 docker exec plexichat-backup-1 /scripts/backup.sh restore latest /tmp/restore
 ```
 
-### Verification
+### Verify backups
 
 Verify snapshot integrity periodically:
 
@@ -263,225 +183,189 @@ Verify snapshot integrity periodically:
 docker exec plexichat-backup-1 /scripts/backup.sh check
 ```
 
-Test a full restore on a staging environment before relying on production backups.
-Document test results in your incident-response runbook.
+Test a full restore in a staging environment before you rely on production backups, and document test results in your incident-response runbook.
 
-## Performance Monitoring
+## Monitor webhook delivery retries
 
-### Key Performance Indicators
+Outbound webhook deliveries use a persistent retry queue with exponential backoff. The system does not use fire-and-forget delivery.
 
-**System Metrics**:
-- CPU utilization (< 80%)
-- Memory utilization (< 80%)
-- Disk utilization (< 70%)
-- Network throughput
-- I/O operations
+### How retries work
 
-**Application Metrics**:
-- Response time (< 500ms p95)
-- Error rate (< 1%)
-- Throughput (requests/second)
-- Database query time (< 100ms p95)
-- Cache hit rate (> 90%)
+- When the first delivery attempt fails (non-`2xx` response or transport error), the system enqueues the delivery in `webhook_retry_queue`.
+- The `WebhookDeliveryJob` worker drains due records every `webhooks.delivery_interval_seconds` (default `30`; set to `<= 0` to disable). The server initializer starts the worker automatically after webhook setup.
+- The system retries with exponential backoff and jitter (`1s`, `2s`, `4s`, ... capped at `60s`). After `webhooks.max_retries` (default `5`) failures, the delivery moves to the dead-letter queue (`status = 'dead_letter'`) and is no longer retried automatically.
+- Successful deliveries are recorded as `status = 'delivered'` with the HTTP status.
+- You can retry dead-letter entries manually through the retry-queue API. The system cleans up delivered and dead-letter records after the retention window.
 
-**Business Metrics**:
+### Monitor the queue
+
+The admin dashboard exposes these metrics:
+
+| Metric | Meaning |
+|--------|---------|
+| `webhook_retries_pending` | Deliveries that are due or not yet attempted |
+| `webhook_retries_retrying` | Deliveries in the backoff window |
+| `webhook_retries_dead_letter` | Deliveries that failed permanently |
+
+A growing `webhook_retries_dead_letter` count indicates that a downstream endpoint is persistently rejecting deliveries (HTTP `4xx`/`5xx` or unreachable) and needs attention.
+
+### Operational tasks
+
+- **Investigate dead letters.** List dead-letter entries, inspect `last_error` and `response_status`, fix the downstream endpoint, then trigger a manual retry.
+- **Tune delivery cadence.** Lower `delivery_interval_seconds` for faster retries on critical webhooks, or raise `max_retries` for long outages. Restart the server to apply changes.
+
+## Monitor performance
+
+### Track key indicators
+
+**System metrics:**
+
+- CPU utilization (under 80%)
+- Memory utilization (under 80%)
+- Disk utilization (under 70%)
+- Network throughput and I/O
+
+**Application metrics:**
+
+- Response time (p95 under 500 ms)
+- Error rate (under 1%)
+- Throughput (requests per second)
+- Database query time (p95 under 100 ms)
+- Cache hit rate (over 90%)
+
+**Business metrics:**
+
 - Active users
 - Message volume
 - Server count
 - User growth rate
 
-### Monitoring Tools
+### Use monitoring tools
 
-**System Monitoring**:
-- CPU, memory, disk, network
-- Process monitoring
-- Service health checks
-- Log aggregation
+- **System monitoring:** CPU, memory, disk, network, processes, service health, and log aggregation.
+- **Application monitoring:** Application performance monitoring (APM), database performance, API response times, and error rates.
+- **Business monitoring:** User activity, feature usage, growth trends, and engagement.
 
-**Application Monitoring**:
-- APM (Application Performance Monitoring)
-- Database performance monitoring
-- API response time tracking
-- Error rate monitoring
+### Tune performance
 
-**Business Monitoring**:
-- User activity metrics
-- Feature usage statistics
-- Growth trend analysis
-- Engagement metrics
+- **Database:** Optimize indexes and queries, tune the connection pool, and review caching.
+- **Application:** Optimize code, improve caching, configure load balancing, and allocate resources.
+- **Infrastructure:** Right-size servers, optimize networking and storage, and configure your CDN.
 
-### Performance Tuning
+## Perform security operations
 
-**Database Optimization**:
-- Index optimization
-- Query optimization
-- Connection pool tuning
-- Caching strategy
+### Daily
 
-**Application Optimization**:
-- Code optimization
-- Caching improvements
-- Load balancing
-- Resource allocation
+- Review failed login attempts.
+- Check for new admin accounts and permission changes.
+- Monitor for unusual activity and verify security controls.
 
-**Infrastructure Optimization**:
-- Server sizing
-- Network optimization
-- Storage optimization
-- CDN configuration
+### Weekly
 
-## Security Operations
+- Review security logs.
+- Run vulnerability scans.
+- Review access and verify compliance.
 
-### Daily Security Tasks
+### Monthly
 
-- [ ] Review failed login attempts
-- [ ] Check for new admin accounts
-- [ ] Review permission changes
-- [ ] Monitor for unusual activity
-- [ ] Verify security controls
+- Run a security audit.
+- Run penetration tests.
+- Provide security training.
+- Review policies and run an incident-response drill.
 
-### Weekly Security Tasks
+### Respond to security incidents
 
-- [ ] Security log review
-- [ ] Vulnerability scan
-- [ ] Access review
-- [ ] Compliance check
-- [ ] Security assessment
+1.  **Prepare.** Designate an incident-response team, define communication channels, and document escalation paths.
+2.  **Detect.** Monitor alerts, analyze logs, investigate anomalies, and assess severity.
+3.  **Respond.** Contain the incident, eradicate the threat, recover systems, and document lessons learned.
 
-### Monthly Security Tasks
+## Upgrade
 
-- [ ] Security audit
-- [ ] Penetration testing
-- [ ] Security training
-- [ ] Policy review
-- [ ] Incident response drill
+For versioning, upgrade steps, and rollback strategies, see the [Versioning and updates guide](../deployment/versioning.md).
 
-### Security Incident Response
+### Quick reference
 
-**Preparation**:
-- Establish incident response team
-- Define communication channels
-- Prepare response procedures
-- Document escalation paths
+**Before you upgrade:**
 
-**Detection**:
-- Monitor security alerts
-- Analyze security logs
-- Investigate anomalies
-- Assess incident severity
+- Review upgrade notes and breaking changes.
+- Test the upgrade in staging.
+- Back up the database, configuration, and media.
+- Prepare a rollback plan.
+- Schedule a maintenance window and notify stakeholders.
 
-**Response**:
-- Contain incident
-- Eradicate threat
-- Recover systems
-- Document lessons learned
+**Basic upgrade steps:**
 
-## Upgrade Procedures
+1.  Stop services.
+2.  Apply updates (`git pull`, `docker pull`, or manual install).
+3.  Run database migrations.
+4.  Start services.
+5.  Verify functionality.
 
-For detailed upgrade procedures, versioning information, and rollback strategies, see the [Versioning and Updates Guide](../deployment/versioning.md).
+**When to roll back:**
 
-### Quick Reference
+- Critical functionality is broken.
+- Data corruption is detected.
+- Performance is severely degraded.
+- A security issue is identified.
 
-**Pre-Upgrade Checklist**:
-- [ ] Review upgrade notes and breaking changes
-- [ ] Test in staging environment
-- [ ] Backup current system (database, config, media)
-- [ ] Prepare rollback plan
-- [ ] Schedule maintenance window
-- [ ] Notify stakeholders
+**How to roll back:**
 
-**Basic Update Steps**:
-1. Stop services
-2. Apply updates (git pull, docker pull, or manual install)
-3. Run database migrations
-4. Start services
-5. Verify functionality
+1.  Stop services.
+2.  Restore from backup.
+3.  Verify system state.
+4.  Restart services.
+5.  Validate functionality and document the rollback.
 
-**Rollback Triggers**:
-- Critical functionality broken
-- Data corruption detected
-- Performance severely degraded
-- Security issues identified
+## Recover from disaster
 
-**Rollback Process**:
-1. Stop services
-2. Restore from backup
-3. Verify system state
-4. Restart services
-5. Validate functionality
-6. Document rollback
+### Plan
 
-## Disaster Recovery
+**Scope:** System failures, data corruption, security breaches, natural disasters, and human errors.
 
-### Disaster Recovery Plan
+**Objectives:**
 
-**Scope**:
-- System failures
-- Data corruption
-- Security breaches
-- Natural disasters
-- Human errors
+- Recovery time objective (RTO): 4 hours (1 hour for critical systems)
+- Recovery point objective (RPO): 1 hour (15 minutes for critical systems)
 
-**Recovery Objectives**:
-- RTO (Recovery Time Objective): 4 hours
-- RPO (Recovery Point Objective): 1 hour
-- Critical systems: 1 hour RTO, 15 minutes RPO
+### Recover
 
-### Recovery Procedures
+**System recovery:**
 
-**System Recovery**:
-1. Assess damage
-2. Activate recovery team
-3. Restore from backups
-4. Verify system integrity
-5. Resume operations
-6. Monitor for issues
+1.  Assess damage.
+2.  Activate the recovery team.
+3.  Restore from backups.
+4.  Verify system integrity.
+5.  Resume operations and monitor for issues.
 
-**Data Recovery**:
-1. Identify data loss
-2. Select appropriate backup
-3. Restore data
-4. Verify data integrity
-5. Update applications
-6. Validate functionality
+**Data recovery:**
 
-### Testing
+1.  Identify data loss.
+2.  Select the appropriate backup.
+3.  Restore data and verify integrity.
+4.  Update applications and validate functionality.
 
-**Quarterly Testing**:
-- Test backup restoration
-- Verify recovery procedures
-- Update recovery documentation
-- Train recovery team
+### Test the plan
 
-**Annual Testing**:
-- Full disaster recovery drill
-- Offsite recovery test
-- Complete system restoration
-- Update recovery plan
+- **Quarterly:** Test backup restoration, verify recovery procedures, update documentation, and train the recovery team.
+- **Annually:** Run a full disaster-recovery drill, including an offsite recovery test and complete system restoration, then update the plan.
 
-## Contact Information
+## Maintain documentation
 
-**Emergency Contacts**:
-- Primary Sysadmin: [contact]
-- Secondary Sysadmin: [contact]
+Update this guide when procedures change, new systems are added, contact information changes, you learn lessons from an incident, or regulatory requirements change.
+
+Review the guide quarterly and perform a major revision annually. After any incident, update the guide based on lessons learned.
+
+## Get help
+
+**Emergency contacts:**
+
+- Primary sysadmin: [contact]
+- Secondary sysadmin: [contact]
 - Management: [contact]
-- Security Team: [contact]
+- Security team: [contact]
 
-**Vendor Contacts**:
-- Hosting Provider: [contact]
-- Database Support: [contact]
-- Security Vendor: [contact]
+**Vendor contacts:**
 
-## Documentation Maintenance
-
-**Update This Guide When**:
-- Procedures change
-- New systems added
-- Contact information changes
-- Lessons learned from incidents
-- Regulatory requirements change
-
-**Review Schedule**:
-- Quarterly: Review and update
-- Annually: Major revision
-- After incidents: Update based on lessons learned
+- Hosting provider: [contact]
+- Database support: [contact]
+- Security vendor: [contact]

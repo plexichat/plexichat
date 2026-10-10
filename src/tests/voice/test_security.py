@@ -16,6 +16,7 @@ import hmac
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.core.voice.exceptions import PermissionDeniedError
 from src.core.voice.signaling import (
     setup,
     get_voice_server_info,
@@ -48,7 +49,7 @@ from src.core.voice.signaling.sfu.janus import JanusAdapter
 from src.core.voice.signaling.sfu.mediasoup import MediasoupAdapter
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def security_setup(db_and_modules):
     """Setup signaling module for security tests."""
     db, auth, servers, relationships, presence, voice = db_and_modules
@@ -64,6 +65,36 @@ def security_setup(db_and_modules):
     )
 
     return voice
+
+
+@pytest.fixture
+def mock_janus_session():
+    """Create a mock Janus httpx client (module-level so all classes can use it)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={"janus": "success"})
+
+    mock_session = MagicMock()
+    mock_session.post = AsyncMock(return_value=mock_response)
+    mock_session.aclose = AsyncMock()
+
+    return mock_session, mock_response
+
+
+@pytest.fixture
+def mock_mediasoup_session():
+    """Create a mock mediasoup httpx client (module-level so all classes can use it)."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json = MagicMock(return_value={})
+    mock_response.text = MagicMock(return_value="")
+
+    mock_session = MagicMock()
+    mock_session.request = AsyncMock(return_value=mock_response)
+    mock_session.aclose = AsyncMock()
+
+    return mock_session, mock_response
 
 
 class TestWebRTCExploitation:
@@ -165,9 +196,11 @@ class TestSignalingManipulation:
         info1 = create_voice_connection(member1.id, voice_channel.id)
         session_id = info1.session_id
 
-        with pytest.raises((NotConnectedError, ValueError)):
-            info2 = get_voice_server_info(member2.id, voice_channel.id)
-            assert info2.session_id != session_id
+        # Session hijacking prevention: a different user must receive a
+        # distinct session id, never the connecting user's session.
+        info2 = get_voice_server_info(member2.id, voice_channel.id)
+        assert info2 is not None
+        assert info2.session_id != session_id
 
         disconnect_voice(member1.id)
 
@@ -206,7 +239,10 @@ class TestSignalingManipulation:
 
         fake_user_id = 999999999
 
-        with pytest.raises((ValueError, NotConnectedError, KeyError)):
+        # Agent 34 W5-A: credential issuance now requires voice.connect, so
+        # an unknown/unauthorized user is denied with PermissionDeniedError
+        # (stricter than the legacy NotConnectedError path).
+        with pytest.raises((NotConnectedError, ValueError, PermissionDeniedError)):
             create_voice_connection(fake_user_id, voice_channel.id)
 
     def test_cross_channel_connection_spoofing(self, server_with_voice, security_setup):
@@ -288,16 +324,11 @@ class TestICECandidateInjection:
         parser = ICECandidateParser()
 
         for candidate in malicious_candidates:
-            try:
-                parsed = parser.parse(candidate)
+            parsed = parser.parse(candidate)
+            # Wildcard, broadcast, loopback, and private-address host candidates
+            # must all be rejected outright.
+            with pytest.raises(ICECandidateError):
                 validator.validate(parsed)
-                # Security test: explicitly check for all-interfaces binding which should be rejected
-                if parsed.get("address") == "0.0.0.0":
-                    pytest.fail(
-                        f"Should have rejected malicious candidate: {candidate}"
-                    )
-            except ICECandidateError:
-                pass
 
     def test_relay_candidate_spoofing(self):
         """Test detection of spoofed relay candidates."""
@@ -317,10 +348,9 @@ class TestICECandidateInjection:
         parsed = parser.parse(manipulated_srflx)
 
         validator = ICECandidateValidator()
-        try:
+        # Manipulated srflx candidates referencing private addresses must be rejected.
+        with pytest.raises(ICECandidateError):
             validator.validate(parsed)
-        except ICECandidateError:
-            pass
 
     def test_candidate_priority_manipulation(self):
         """Test detection of manipulated candidate priorities."""
@@ -346,7 +376,9 @@ class TestICECandidateInjection:
             except ICECandidateError:
                 pass
 
-        assert len(candidates) <= 1000
+        # Private (RFC1918) host candidates are legitimate for LAN WebRTC, so
+        # a flood of them must be processed without error or resource blowup.
+        assert len(candidates) == 1000
 
     def test_ipv6_candidate_injection(self):
         """Test handling of malicious IPv6 candidates."""
@@ -360,11 +392,10 @@ class TestICECandidateInjection:
         validator = ICECandidateValidator()
 
         for candidate in malicious_ipv6_candidates:
-            try:
-                parsed = parser.parse(candidate)
+            parsed = parser.parse(candidate)
+            # Loopback, unspecified, and broadcast IPv6 addresses must be rejected.
+            with pytest.raises(ICECandidateError):
                 validator.validate(parsed)
-            except ICECandidateError:
-                pass
 
     def test_tcp_candidate_exploitation(self):
         """Test handling of malicious TCP candidates."""
@@ -411,7 +442,8 @@ class TestMediaStreamHijacking:
 
         create_voice_connection(member1.id, voice_channel.id)
 
-        with pytest.raises((NotConnectedError, ValueError)):
+        # Agent 34 W5-A: credential issuance now requires voice.connect.
+        with pytest.raises((NotConnectedError, ValueError, PermissionDeniedError)):
             create_voice_connection(999999, voice_channel.id)
 
         disconnect_voice(member1.id)
@@ -515,35 +547,18 @@ a=rtpmap:0 PCMU/8000
 class TestJanusSFUSecurity:
     """Security tests specific to Janus SFU implementation."""
 
-    @pytest.fixture
-    def mock_janus_session(self):
-        """Create a mock Janus session."""
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"janus": "success"})
-
-        mock_context = AsyncMock()
-        mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_context.__aexit__ = AsyncMock(return_value=None)
-
-        mock_session = MagicMock()
-        mock_session.post = MagicMock(return_value=mock_context)
-        mock_session.close = AsyncMock()
-
-        return mock_session, mock_response
-
     @pytest.mark.asyncio
     async def test_janus_unauthorized_room_access(self, mock_janus_session):
         """Test prevention of unauthorized room access in Janus."""
         mock_session, mock_response = mock_janus_session
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             return_value={
                 "janus": "error",
                 "error": {"code": 426, "reason": "Unauthorized"},
             }
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -555,23 +570,26 @@ class TestJanusSFUSecurity:
         """Test prevention of session fixation attacks in Janus."""
         mock_session, mock_response = mock_janus_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 side_effect=[
-                    {"janus": "success", "data": {"id": 12345}},
-                    {"janus": "success", "data": {"id": 67890}},
+                    {"janus": "success", "data": {"id": 12345}},  # session
+                    {"janus": "success", "data": {"id": 67890}},  # attach
+                    {"janus": "success", "data": {}},  # videoroom create
                 ]
             )
 
             await adapter.create_room("room1")
             session_id_1 = adapter._session_id
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 side_effect=[
                     {"janus": "success", "data": {"id": 54321}},
+                    {"janus": "success", "data": {"id": 99999}},
+                    {"janus": "success", "data": {}},
                 ]
             )
 
@@ -584,14 +602,14 @@ class TestJanusSFUSecurity:
     async def test_janus_plugin_injection_prevention(self, mock_janus_session):
         """Test prevention of malicious plugin injection in Janus."""
         mock_session, mock_response = mock_janus_session
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             return_value={
                 "janus": "error",
                 "error": {"code": 458, "reason": "Plugin not found"},
             }
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -603,13 +621,13 @@ class TestJanusSFUSecurity:
         """Test prevention of command injection in Janus API calls."""
         mock_session, mock_response = mock_janus_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
             malicious_room_id = "room'; DROP TABLE rooms; --"
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 side_effect=[
                     {"janus": "success", "data": {"id": 12345}},
                     {"janus": "success", "data": {"id": 67890}},
@@ -617,43 +635,52 @@ class TestJanusSFUSecurity:
                 ]
             )
 
-            try:
-                await adapter.create_room(malicious_room_id)
-            except (SFUConnectionError, ValueError):
-                pass
+            from src.core.voice.signaling.sfu import janus as janus_mod
+
+            # The malicious id is never interpolated into commands: it is only
+            # used as an opaque key and fed to the sanitizing helpers. Prove
+            # the id round-trips and is routed through stable_numeric_id.
+            room_info = None
+            with patch(
+                "src.core.voice.signaling.sfu.janus.stable_numeric_id",
+                side_effect=janus_mod.stable_numeric_id,
+            ) as mock_id:
+                room_info = await adapter.create_room(malicious_room_id)
+
+            assert room_info is not None
+            assert room_info.id == malicious_room_id
+            mock_id.assert_called_once_with(malicious_room_id, "room")
 
     @pytest.mark.asyncio
     async def test_janus_rate_limiting(self, mock_janus_session):
         """Test rate limiting for Janus API calls."""
         mock_session, mock_response = mock_janus_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 return_value={
                     "janus": "error",
                     "error": {"code": 429, "reason": "Too many requests"},
                 }
             )
 
-            for _ in range(100):
-                try:
-                    await adapter.health_check()
-                except SFUConnectionError:
-                    break
+            # Every 429 response must be surfaced as an unhealthy check.
+            for _ in range(3):
+                assert await adapter.health_check() is False
 
     @pytest.mark.asyncio
     async def test_janus_publisher_spoofing(self, mock_janus_session):
         """Test prevention of publisher ID spoofing in Janus."""
         mock_session, mock_response = mock_janus_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 side_effect=[
                     {"janus": "success", "data": {"id": 12345}},
                     {"janus": "success", "data": {"id": 67890}},
@@ -679,23 +706,6 @@ class TestJanusSFUSecurity:
 class TestMediasoupSFUSecurity:
     """Security tests specific to mediasoup SFU implementation."""
 
-    @pytest.fixture
-    def mock_mediasoup_session(self):
-        """Create a mock mediasoup session."""
-        mock_response = AsyncMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={})
-        mock_response.text = AsyncMock(return_value="")
-        mock_response.content_type = "application/json"
-
-        mock_session = MagicMock()
-        mock_session.request = MagicMock(
-            return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response))
-        )
-        mock_session.close = AsyncMock()
-
-        return mock_session, mock_response
-
     @pytest.mark.asyncio
     async def test_mediasoup_router_capabilities_tampering(
         self, mock_mediasoup_session
@@ -703,11 +713,11 @@ class TestMediasoupSFUSecurity:
         """Test detection of tampered router capabilities."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 return_value={
                     "codecs": [
                         {
@@ -727,11 +737,11 @@ class TestMediasoupSFUSecurity:
         """Test prevention of transport hijacking in mediasoup."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 return_value={
                     "id": "transport_123",
                     "iceParameters": {"usernameFragment": "test", "password": "test"},
@@ -744,8 +754,8 @@ class TestMediasoupSFUSecurity:
                 "room123", "peer1", TransportDirection.SEND
             )
 
-            mock_response.status = 403
-            mock_response.text = AsyncMock(return_value="Forbidden")
+            mock_response.status_code = 403
+            mock_response.text = MagicMock(return_value="Forbidden")
 
             with pytest.raises(SFUConnectionError):
                 await adapter.connect_transport("room123", "peer2", transport.id, {})
@@ -755,18 +765,18 @@ class TestMediasoupSFUSecurity:
         """Test handling of producer ID collisions."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 return_value={"id": "producer_duplicate", "paused": False}
             )
 
             await adapter.produce("room123", "peer1", "transport1", MediaKind.AUDIO, {})
 
-            mock_response.status = 409
-            mock_response.text = AsyncMock(return_value="Conflict")
+            mock_response.status_code = 409
+            mock_response.text = MagicMock(return_value="Conflict")
 
             with pytest.raises(SFUConnectionError):
                 await adapter.produce(
@@ -778,12 +788,12 @@ class TestMediasoupSFUSecurity:
         """Test prevention of unauthorized consumer creation."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.status = 403
-            mock_response.text = AsyncMock(
+            mock_response.status_code = 403
+            mock_response.text = MagicMock(
                 return_value="Forbidden: Cannot consume this producer"
             )
 
@@ -797,12 +807,12 @@ class TestMediasoupSFUSecurity:
         """Test prevention of simulcast layer manipulation attacks."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.status = 400
-            mock_response.text = AsyncMock(return_value="Invalid layer parameters")
+            mock_response.status_code = 400
+            mock_response.text = MagicMock(return_value="Invalid layer parameters")
 
             with pytest.raises(SFUConnectionError):
                 await adapter.set_preferred_layers(
@@ -818,7 +828,7 @@ class TestMediasoupSFUSecurity:
         """Test rejection of malicious RTP parameters."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
@@ -834,7 +844,7 @@ class TestMediasoupSFUSecurity:
                 "encodings": [{"ssrc": 0xFFFFFFFF}],
             }
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 return_value={"id": "producer_malicious", "paused": False}
             )
 
@@ -849,25 +859,24 @@ class TestMediasoupSFUSecurity:
         """Test prevention of room enumeration attacks."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.status = 404
-            mock_response.text = AsyncMock(return_value="Room not found")
+            mock_response.status_code = 404
+            mock_response.text = MagicMock(return_value="Room not found")
 
-            for room_id in range(1000):
-                try:
-                    await adapter.get_room_info(f"room_{room_id}")
-                except SFUConnectionError:
-                    pass
+            # A nonexistent room must not leak info: the adapter returns None
+            # instead of raising or echoing room details.
+            result = await adapter.get_room_info("room_1")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_mediasoup_dtls_parameter_validation(self, mock_mediasoup_session):
         """Test validation of DTLS parameters to prevent attacks."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
@@ -878,8 +887,8 @@ class TestMediasoupSFUSecurity:
                 ],
             }
 
-            mock_response.status = 400
-            mock_response.text = AsyncMock(return_value="Invalid DTLS parameters")
+            mock_response.status_code = 400
+            mock_response.text = MagicMock(return_value="Invalid DTLS parameters")
 
             with pytest.raises(SFUConnectionError):
                 await adapter.connect_transport(
@@ -895,7 +904,7 @@ class TestCrossProtocolAttacks:
         """Test prevention of WebSocket to WebRTC injection attacks."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
@@ -905,8 +914,8 @@ class TestCrossProtocolAttacks:
                 "candidates": ["malicious_candidate"],
             }
 
-            mock_response.status = 400
-            mock_response.text = AsyncMock(return_value="Invalid request")
+            mock_response.status_code = 400
+            mock_response.text = MagicMock(return_value="Invalid request")
 
             with pytest.raises((SFUConnectionError, ValueError, KeyError)):
                 await adapter.create_room(json.dumps(websocket_payload))
@@ -937,11 +946,11 @@ class TestCrossProtocolAttacks:
         """Test protection against connection exhaustion attacks."""
         mock_session, mock_response = mock_mediasoup_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = MediasoupAdapter(api_url="http://localhost:3000")
             adapter._session = mock_session
 
-            mock_response.json = AsyncMock(
+            mock_response.json = MagicMock(
                 return_value={
                     "id": "transport_flood",
                     "iceParameters": {},

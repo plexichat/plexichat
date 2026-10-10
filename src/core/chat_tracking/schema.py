@@ -9,15 +9,24 @@ from src.core.database.core.schema_splitter import split_sql_statements
 
 SCHEMA = """
 -- Webhook retry queue table
+-- Kept in lockstep with src/core/webhooks/retry.py (WebhookRetryQueue):
+-- the tracker stores per-attempt delivery metadata (event type, endpoint
+-- URL, ephemeral signing headers, response status and delivery time) so
+-- retries can redeliver without losing delivery context.
 CREATE TABLE IF NOT EXISTS webhook_retry_queue (
     id INTEGER PRIMARY KEY,
     webhook_id INTEGER NOT NULL,
+    event_type TEXT,
     payload TEXT NOT NULL,
+    endpoint_url TEXT,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
     next_retry_at INTEGER NOT NULL,
     last_error TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
+    metadata TEXT,
+    response_status INTEGER,
+    delivered_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -28,13 +37,18 @@ CREATE INDEX IF NOT EXISTS idx_wh_retry_next ON webhook_retry_queue(next_retry_a
 CREATE INDEX IF NOT EXISTS idx_wh_retry_status ON webhook_retry_queue(status);
 
 -- Push notification tokens table
+-- SECURITY: `token`, `p256dh` and `auth` hold ENC:v1 encrypted envelopes;
+-- `token_index` is the keyed blind index used for lookups on the plaintext.
 CREATE TABLE IF NOT EXISTS push_tokens (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
     token TEXT NOT NULL,
+    token_index TEXT,
     platform TEXT NOT NULL,
     device_id TEXT,
     app_version TEXT,
+    p256dh TEXT,
+    auth TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     last_used_at INTEGER,
@@ -44,6 +58,7 @@ CREATE TABLE IF NOT EXISTS push_tokens (
 -- Push tokens indexes
 CREATE INDEX IF NOT EXISTS idx_push_token_user ON push_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_push_token_platform ON push_tokens(platform);
+CREATE INDEX IF NOT EXISTS idx_push_token_index ON push_tokens(token_index);
 
 -- Last chat tracking table
 CREATE TABLE IF NOT EXISTS user_last_chat (

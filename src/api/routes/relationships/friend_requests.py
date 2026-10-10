@@ -3,8 +3,9 @@ Friend request mixin - create / accept friend request route handlers.
 """
 
 import asyncio
+import time
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, status
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -18,12 +19,90 @@ from src.core.relationships.exceptions import (
     FriendRequestExistsError,
     FriendRequestNotFoundError,
     PermissionDeniedError,
+    RelationshipValidationError,
     SelfRelationshipError,
     UserBlockedError,
     UserNotFoundError,
 )
 from .base import RelationshipBaseProtocol
 import utils.logger as logger
+
+# Maximum friend requests a single user may send per rolling minute.
+FRIEND_REQUEST_RATE_LIMIT = 10
+
+# Setting key consulted on the recipient's profile. Absent/unreadable → open.
+ALLOW_FRIEND_REQUESTS_SETTING_KEY = "allow_friend_requests"
+
+# Stored values treated as "not accepting friend requests".
+_FRIEND_REQUESTS_DISABLED_VALUES = frozenset(
+    {"0", "false", "off", "no", "disabled", "none"}
+)
+
+
+def _recipient_accepts_friend_requests(recipient_id: int) -> bool:
+    """Best-effort read of the recipient's allow_friend_requests flag.
+
+    Defaults to open (accepting) when the settings module is unavailable,
+    the flag is unset, or the lookup fails — matching the historical
+    behaviour. Never raises.
+    """
+    try:
+        settings = api.get_settings()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request privacy check unavailable: {e}")
+        return True
+    if settings is None:
+        return True
+    try:
+        raw = settings.get(recipient_id, ALLOW_FRIEND_REQUESTS_SETTING_KEY)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request privacy lookup failed for {recipient_id}: {e}")
+        return True
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in _FRIEND_REQUESTS_DISABLED_VALUES
+
+
+async def _check_friend_request_rate_limit(user_id: int) -> None:
+    """Throttle friend-request submission per user (best-effort).
+
+    Reuses the shared rate-limit manager used elsewhere (reports, feedback).
+    If it cannot be initialised we skip the check rather than blocking
+    legitimate requests.
+    """
+    try:
+        import src.core.ratelimit as ratelimit
+        from src.core.ratelimit.storage import MemoryStorage
+
+        if not ratelimit.is_setup():
+            ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
+        manager = ratelimit.get_manager()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request rate limit unavailable, skipping check: {e}")
+        return
+
+    now_seconds = int(time.time())
+    minute_window = now_seconds - (now_seconds % 60)
+    key = f"friend_requests:send:minute:{user_id}:{minute_window}"
+    try:
+        count = await manager.aincrement_custom_usage(key, "count", 0, ttl=120)
+        if count >= FRIEND_REQUEST_RATE_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {
+                        "code": 429,
+                        "message": "Too many friend requests sent. Please slow down.",
+                    }
+                },
+            )
+        await manager.aincrement_custom_usage(key, "count", 1, ttl=120)
+    except HTTPException:
+        raise
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request rate limit increment failed: {e}")
 
 
 class FriendRequestMixin:
@@ -63,6 +142,29 @@ class FriendRequestMixin:
                     detail={"error": {"code": 400, "message": "Invalid user ID"}},
                 )
 
+            await _check_friend_request_rate_limit(current_user.user_id)
+
+            if not _recipient_accepts_friend_requests(target_id):
+                # M2: recipient disabled incoming friend requests. Denied
+                # with 403 (permission/privacy denial, per this file's
+                # PermissionDeniedError convention). This is intentionally
+                # distinct from the M3 generic 404 used for blocked/missing
+                # targets — it reflects the recipient's own public setting,
+                # not a block — and the message says nothing about blocks.
+                logger.debug(
+                    f"User {current_user.user_id} friend request to {target_id} "
+                    f"refused: recipient is not accepting friend requests"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "This user is not accepting friend requests",
+                        }
+                    },
+                )
+
             try:
                 request = relationships.send_friend_request(
                     sender_id=current_user.user_id,
@@ -79,20 +181,39 @@ class FriendRequestMixin:
                         }
                     },
                 )
-            except UserBlockedError as exc:
-                raise HTTPException(
-                    status_code=403,
-                    detail={"error": {"code": 403, "message": str(exc)}},
+            except UserBlockedError as e:
+                # M3: block-status oracle — blocked and nonexistent targets
+                # must be indistinguishable (generic 404). Real reason stays
+                # server-side in the log only.
+                logger.debug(
+                    f"User {current_user.user_id} blocked from sending friend "
+                    f"request to {target_id}: {e}"
                 )
-            except (FriendRequestExistsError, AlreadyFriendsError) as exc:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
+                )
+            except (FriendRequestExistsError, AlreadyFriendsError):
                 raise HTTPException(
                     status_code=409,
-                    detail={"error": {"code": 409, "message": str(exc)}},
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": "Friend request already exists",
+                        }
+                    },
                 )
             except UserNotFoundError:
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "User not found"}},
+                )
+            except RelationshipValidationError:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {"code": 400, "message": "Invalid friend request"}
+                    },
                 )
             except Exception as e:
                 logger.error(
@@ -104,7 +225,7 @@ class FriendRequestMixin:
                     detail={
                         "error": {
                             "code": 500,
-                            "message": f"Failed to send friend request: {str(e)}",
+                            "message": "Failed to send friend request",
                         }
                     },
                 )
@@ -127,31 +248,65 @@ class FriendRequestMixin:
                 except Exception as e:
                     logger.debug(f"Failed to get usernames for relationship event: {e}")
 
-            await asyncio.gather(
-                self._dispatch_relationship_event(
-                    "add",
-                    target_id,
-                    current_user.user_id,
-                    {
-                        "user_id": str(current_user.user_id),
-                        "username": sender_username,
-                        "status": "pending_incoming",
-                        "message": body.message,
-                        "created_at": getattr(request, "created_at", None),
-                    },
-                ),
-                self._dispatch_relationship_event(
-                    "add",
-                    current_user.user_id,
-                    target_id,
-                    {
-                        "user_id": str(target_id),
-                        "username": target_username,
-                        "status": "pending_outgoing",
-                        "created_at": getattr(request, "created_at", None),
-                    },
-                ),
-            )
+            req_status = getattr(request, "status", None)
+            if req_status is not None and hasattr(req_status, "value"):
+                req_status = req_status.value
+            auto_accepted = req_status == "accepted"
+
+            if auto_accepted:
+                # A reverse pending request existed, so send_friend_request auto-accepted
+                # it: both users are now friends. Emit "friend" events, not pending ones.
+                await asyncio.gather(
+                    self._dispatch_relationship_event(
+                        "add",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "username": sender_username,
+                            "status": "friend",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                    self._dispatch_relationship_event(
+                        "add",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                            "username": target_username,
+                            "status": "friend",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                )
+            else:
+                await asyncio.gather(
+                    self._dispatch_relationship_event(
+                        "add",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "username": sender_username,
+                            "status": "pending_incoming",
+                            "message": body.message,
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                    self._dispatch_relationship_event(
+                        "add",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                            "username": target_username,
+                            "status": "pending_outgoing",
+                            "message": body.message,
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                )
 
             try:
                 self._invalidate_relationship_list_cache(
@@ -160,9 +315,11 @@ class FriendRequestMixin:
             except Exception as e:
                 logger.debug(f"Failed to invalidate relationship cache in create: {e}")
 
+            response_status = "friend" if auto_accepted else "pending_outgoing"
+
             return RelationshipResponse(
                 user_id=SnowflakeID(target_id),
-                status="pending_outgoing",
+                status=response_status,
                 created_at=getattr(request, "created_at", None),
             )
         except HTTPException:
@@ -173,7 +330,8 @@ class FriendRequestMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def accept_friend_request(
@@ -219,19 +377,14 @@ class FriendRequestMixin:
                 )
                 request_id = None
 
-                try:
-                    provided_id = int(user_id)
-                except (ValueError, TypeError):
-                    provided_id = 0
-
                 for r in pending:
-                    if r.id == provided_id or r.sender_id == provided_id:
+                    if r.sender_id == sender_id:
                         request_id = r.id
                         break
 
                 if not request_id:
                     logger.warning(
-                        f"Friend request from/with ID {user_id} not found for user {current_user.user_id}. Pending IDs: {[r.id for r in pending]}, Senders: {[r.sender_id for r in pending]}"
+                        f"Friend request from user {sender_id} not found for user {current_user.user_id}. Pending senders: {[r.sender_id for r in pending]}"
                     )
                     raise HTTPException(
                         status_code=404,
@@ -255,10 +408,10 @@ class FriendRequestMixin:
                         "error": {"code": 404, "message": "Friend request not found"}
                     },
                 )
-            except PermissionDeniedError as exc:
+            except PermissionDeniedError:
                 raise HTTPException(
                     status_code=403,
-                    detail={"error": {"code": 403, "message": str(exc)}},
+                    detail={"error": {"code": 403, "message": "Permission denied"}},
                 )
             except Exception as e:
                 logger.error(
@@ -270,7 +423,7 @@ class FriendRequestMixin:
                     detail={
                         "error": {
                             "code": 500,
-                            "message": f"Failed to accept friend request: {str(e)}",
+                            "message": "Failed to accept friend request",
                         }
                     },
                 )
@@ -359,5 +512,6 @@ class FriendRequestMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

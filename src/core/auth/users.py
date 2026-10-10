@@ -29,9 +29,19 @@ def get_user_profiles_bulk(user_ids: List[int]) -> Dict[str, Any]:
     return _get_auth_manager().get_instance().get_user_profiles_bulk(user_ids)
 
 
-def grant_permission(user_id: int, permission: str) -> bool:
-    """Grant a specific permission to a user."""
-    return _get_auth_manager().get_instance().grant_permission(user_id, permission)
+def grant_permission(
+    user_id: int, permission: str, allow_wildcards: bool = False
+) -> bool:
+    """Grant a specific permission to a user.
+
+    Wildcards require explicit ``allow_wildcards=True`` from a privileged
+    caller; the default (False) preserves the M5 hardening.
+    """
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .grant_permission(user_id, permission, allow_wildcards)
+    )
 
 
 __all__ = [

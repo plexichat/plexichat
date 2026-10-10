@@ -1,34 +1,67 @@
 import os
-import sys
-import shutil
 import time
 import logging
 import zipfile
 import pytest
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-
 from utils.logger import Logger
 
 TEMP_LOG_DIR = os.path.abspath("temp/logs")
 
 
+def _cleanup_global_app_logger():
+    """Close and detach handlers/filters on the shared AppLogger singleton.
+
+    ``Logger._setup_logger`` always reuses ``logging.getLogger("AppLogger")``,
+    so without cleanup every ``Logger(...)`` constructed in a test leaks file
+    handlers (and accumulates ``SanitizingFilter`` instances) into the next
+    test. Under pytest-xdist this also keeps file descriptors pointed at log
+    directories that a later teardown has already removed.
+    """
+    app_logger = logging.getLogger("AppLogger")
+    for handler in app_logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass
+        app_logger.removeHandler(handler)
+    for filt in app_logger.filters[:]:
+        if filt.__class__.__name__ == "SanitizingFilter":
+            app_logger.removeFilter(filt)
+
+
 @pytest.fixture
-def clean_log_dir():
-    if os.path.exists(TEMP_LOG_DIR):
-        shutil.rmtree(TEMP_LOG_DIR)
-    yield
-    if os.path.exists(TEMP_LOG_DIR):
-        shutil.rmtree(TEMP_LOG_DIR)
+def clean_log_dir(tmp_path, monkeypatch):
+    """Provide an isolated log directory per test (xdist-safe).
+
+    Historically this fixture wiped a single CWD-relative ``temp/logs``
+    directory shared by every test worker, so parallel runs deleted each
+    other's files mid-test. It now points the module-global ``TEMP_LOG_DIR``
+    at a pytest-provided ``tmp_path`` (unique per test and per worker) via
+    ``monkeypatch``, so existing test bodies keep working unchanged.
+    """
+    import sys
+
+    log_dir = str(tmp_path / "logs")
+    monkeypatch.setattr(sys.modules[__name__], "TEMP_LOG_DIR", log_dir)
+    yield log_dir
+    _cleanup_global_app_logger()
 
 
 def cleanup_logger(logger):
     """Helper to cleanup logger handlers."""
     if hasattr(logger, "handlers"):
         for handler in logger.handlers[:]:
-            handler.close()
+            try:
+                handler.close()
+            except Exception:
+                pass
             logger.removeHandler(handler)
+    if hasattr(logger, "filters"):
+        for filt in logger.filters[:]:
+            if filt.__class__.__name__ == "SanitizingFilter":
+                logger.removeFilter(filt)
 
 
 class TestBasicLoggerCreation:

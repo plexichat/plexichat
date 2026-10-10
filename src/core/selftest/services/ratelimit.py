@@ -1,7 +1,10 @@
 """
 Rate limit test service for SelfTestRunner.
 
-Negative test: sends rapid requests to verify 429 when rate limiting is active.
+Positive test: proves the rate limiter is live by observing its accounting
+headers on two ordinary 2xx responses — the ``X-RateLimit-Remaining`` token
+count must decrement between them. No burst, no 429: tripping the limiter
+would poison the shared IP bucket for the rest of the suite.
 Uses a public endpoint (/api/v1/status) that doesn't require auth tokens or
 API access tokens, so requests go through rate-limit middleware unobstructed.
 """
@@ -12,7 +15,7 @@ from ..context import SelfTestContext
 
 
 class RateLimitTester:
-    """Tests rate-limit enforcement via burst requests."""
+    """Proves rate-limit enforcement via accounting headers (2xx only)."""
 
     def __init__(self, ctx: SelfTestContext):
         self.ctx = ctx
@@ -20,53 +23,58 @@ class RateLimitTester:
     def test_rate_limits(self) -> None:
         logger.info("Testing rate limit enforcement...")
 
-        rate_session = self.ctx.requests_module.Session()
+        rate_session = self.ctx.make_session()
         # No auth headers, no internal-secret header — this session makes
         # unauthenticated requests that still go through rate-limit middleware.
 
         # Use a public endpoint that doesn't require any auth or API access token.
         # The rate-limit middleware runs for ALL paths (no public-endpoint bypass),
-        # so a burst to /api/v1/status will trigger 429 regardless of auth state.
+        # so its accounting headers are present regardless of auth state.
         target = f"{self.ctx.base_url}/api/v1/status"
 
-        burst_count = 70
-        rate_limited = False
-        status_codes = []
-
-        for i in range(burst_count):
-            try:
+        remaining: list[int] = []
+        statuses: list[int] = []
+        ok = False
+        try:
+            for _ in range(2):
                 resp = rate_session.get(target, timeout=3)
-                status_codes.append(resp.status_code)
-                if resp.status_code == 429:
-                    rate_limited = True
-                    logger.debug(f"Rate limit triggered at request {i + 1} (429)")
+                statuses.append(resp.status_code)
+                if resp.status_code != 200:
                     break
-            except Exception as e:
-                logger.debug(f"Rate limit test request {i + 1} exception: {e}")
-                status_codes.append(0)
+                try:
+                    remaining.append(int(resp.headers.get("X-RateLimit-Remaining", "")))
+                except (TypeError, ValueError):
+                    break
+            else:
+                # Both responses 2xx with parseable counters: the second must
+                # show fewer remaining tokens (the bucket spent tokens on our
+                # requests). Strict decrease, not an exact delta: refills are
+                # time-based and other suite traffic shares the IP bucket.
+                ok = len(remaining) == 2 and remaining[1] < remaining[0]
+                if ok:
+                    logger.info(
+                        "Rate limit enforcement PASSED: limiter accounting live "
+                        f"(remaining {remaining[0]} -> {remaining[1]})"
+                    )
+        except Exception as e:
+            logger.debug(f"Rate limit test request exception: {e}")
+            statuses.append(0)
+
+        if not ok:
+            logger.warning(
+                "Rate limit enforcement check FAILED: expected two 200 responses "
+                f"with decrementing X-RateLimit-Remaining (statuses={statuses}, "
+                f"remaining={remaining}). Rate limiting may be disabled."
+            )
 
         self.ctx.results.append(
             {
-                "method": "BURST",
-                "path": "/api/v1/users/@me (no bypass header)",
-                "status_code": 429
-                if rate_limited
-                else (status_codes[-1] if status_codes else 0),
+                "method": "GET",
+                "path": "/api/v1/status (rate-limit accounting)",
+                "status_code": statuses[-1] if statuses else 0,
                 "duration_ms": 0,
-                "success": True,
+                "success": ok,
                 "label": "rate_limit_test",
-                "status_codes": status_codes,
-                "warning": not rate_limited,
+                "status_codes": statuses,
             }
         )
-
-        if rate_limited:
-            logger.info(
-                "Rate limit NEGATIVE TEST PASSED: rate limiting is active (got 429 on burst)"
-            )
-        else:
-            logger.warning(
-                f"Rate limit NEGATIVE TEST WARNING: no 429 received after {burst_count} requests "
-                f"(statuses: {status_codes}). Rate limiting may be disabled, or the effective "
-                f"limit ({30 + 5}) wasn't exhausted."
-            )

@@ -60,6 +60,18 @@ CREATE TABLE IF NOT EXISTS plexijoin_traffic_log (
 CREATE INDEX IF NOT EXISTS idx_plexijoin_traffic_connection ON plexijoin_traffic_log(connection_id);
 CREATE INDEX IF NOT EXISTS idx_plexijoin_traffic_recorded ON plexijoin_traffic_log(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_plexijoin_traffic_direction ON plexijoin_traffic_log(direction);
+
+-- Single-use inbound federation request nonces. The composite key binds a
+-- nonce to the connection whose shared key authenticated it.
+CREATE TABLE IF NOT EXISTS plexijoin_replay_nonces (
+    connection_id INTEGER NOT NULL,
+    nonce TEXT NOT NULL,
+    seen_at INTEGER NOT NULL,
+    PRIMARY KEY (connection_id, nonce),
+    FOREIGN KEY (connection_id) REFERENCES plexijoin_connections(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_plexijoin_replay_seen ON plexijoin_replay_nonces(seen_at);
 """
 
 
@@ -94,6 +106,7 @@ def drop_tables(db):
         "idx_plexijoin_traffic_connection",
         "idx_plexijoin_traffic_recorded",
         "idx_plexijoin_traffic_direction",
+        "idx_plexijoin_replay_seen",
     ]
     for index in indexes:
         db.execute(f"DROP INDEX IF EXISTS {index}")
@@ -102,6 +115,7 @@ def drop_tables(db):
         "plexijoin_traffic_log",
         "plexijoin_inbound_requests",
         "plexijoin_connections",
+        "plexijoin_replay_nonces",
     ]
     for table in tables:
         db.execute(f"DROP TABLE IF EXISTS {table}")

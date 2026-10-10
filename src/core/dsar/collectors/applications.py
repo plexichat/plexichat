@@ -46,8 +46,12 @@ class ApplicationsCollector(BaseCollector):
     def _collect_installations(self, user_id: int) -> List[Dict[str, Any]]:
         """Collect app_installations."""
         try:
+            # app_installations has no `user_id`; the granting user is recorded
+            # as `installer_id`. The old predicate referenced a non-existent
+            # column, so this collector always raised and returned [].
             rows = self._db.fetch_all(
-                "SELECT * FROM app_installations WHERE user_id = ?", (user_id,)
+                "SELECT * FROM app_installations WHERE installer_id = ?",
+                (user_id,),
             )
             return [dict(row) for row in rows]
         except Exception as e:
@@ -59,10 +63,13 @@ class ApplicationsCollector(BaseCollector):
     def _collect_tokens(self, user_id: int) -> List[Dict[str, Any]]:
         """Collect app_oauth_tokens with limited fields."""
         try:
+            # Projected onto the live columns. app_oauth_tokens has no `name`,
+            # `description`, `first_used_at` or `use_count_total`, so the old
+            # projection raised "no such column" and exported no tokens at all.
             rows = self._db.fetch_all(
                 """
-                SELECT id, name, description, created_at, first_used_at,
-                       last_used_at, expires_at, revoked, use_count_total
+                SELECT id, application_id, user_id, scopes, expires_at,
+                       created_at, revoked, last_used_at
                 FROM app_oauth_tokens WHERE user_id = ?
                 """,
                 (user_id,),

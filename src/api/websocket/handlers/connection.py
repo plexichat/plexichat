@@ -16,6 +16,7 @@ from src.core.auth.models import TokenInfo
 if TYPE_CHECKING:
     from src.core.auth.manager import AuthManager
     from src.core.presence.manager import PresenceManager
+    from src.core.servers.manager import ServerManager
 
 
 class ConnectionHandler:
@@ -26,6 +27,7 @@ class ConnectionHandler:
         session_manager: SessionManager,
         auth_module: Optional["AuthManager"] = None,
         presence_module: Optional["PresenceManager"] = None,
+        servers_module: Optional["ServerManager"] = None,
     ):
         """
         Initialize the connection handler.
@@ -34,19 +36,42 @@ class ConnectionHandler:
             session_manager: Session manager instance
             auth_module: Auth module for token verification
             presence_module: Presence module for status updates
+            servers_module: Servers module used to resolve guilds for the
+                READY payload. Injected so the handler never has to reach
+                into the process-global ``src.api`` state.
         """
         self._session_manager = session_manager
         self._auth: Optional["AuthManager"] = auth_module
         self._presence: Optional["PresenceManager"] = presence_module
+        self._servers: Optional["ServerManager"] = servers_module
 
     async def handle_heartbeat(
         self,
         connection: Connection,
         data: Optional[Dict[str, Any]],
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
-        """Handle heartbeat opcode."""
+        """Handle heartbeat opcode.
+
+        Only the RECEIPT is recorded here. The ACK timestamp is recorded by
+        the sender *after* the HEARTBEAT_ACK frame is actually written (see
+        ``gateway`` / ``GatewayDispatcher.send_heartbeat_ack``), so
+        ``latency_ms`` measures a real receive->send interval instead of the
+        near-zero gap between two back-to-back calls (Agent 38 F7).
+        """
         connection.record_heartbeat()
-        connection.record_heartbeat_ack()
+
+        # CORRECTNESS FIX: keep last_seen fresh while the user is connected.
+        # Without this, last_seen stays frozen at the moment they connected
+        # (or went offline), so "last seen" reported stale data for active
+        # users.
+        if self._presence and connection.is_authenticated and connection.user_id:
+            try:
+                await run_in_threadpool(
+                    self._presence.update_last_seen, connection.user_id
+                )
+            except Exception as e:
+                logger.debug(f"Heartbeat last_seen update failed: {e}")
+
         return int(GatewayOpcode.HEARTBEAT_ACK), None, None
 
     async def handle_identify(
@@ -86,6 +111,15 @@ class ConnectionHandler:
         )
         if user_id is None:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
+
+        # Enforce the per-user connection cap before creating a session. A
+        # user flooding new IDENTIFY frames from additional tabs must be
+        # rejected with RATE_LIMITED instead of silently exceeding the limit.
+        if not self._session_manager.can_user_connect(user_id):
+            logger.warning(
+                f"User {user_id} exceeded max connections; identify rejected"
+            )
+            return None, None, int(GatewayCloseCode.RATE_LIMITED)
 
         compress = data.get("compress", False)
         if compress:
@@ -127,7 +161,7 @@ class ConnectionHandler:
         data: Optional[Dict[str, Any]],
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]], Optional[int]]:
         """Handle resume opcode."""
-        if not data:
+        if data is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         token = data.get("token")
@@ -200,7 +234,7 @@ class ConnectionHandler:
         session_id: str,
     ) -> Dict[str, Any]:
         """Build the READY event payload."""
-        user_data = {"id": str(user_id)}
+        user_data: Dict[str, Any] = {"id": str(user_id)}
         guilds = []
 
         if self._auth:
@@ -217,10 +251,34 @@ class ConnectionHandler:
             except Exception:
                 pass
 
-        # Import servers module to get user's servers
-        import src.api as api
+        # P1 parity: the client reads data.user.presence.status on boot to
+        # honour the server-known status (including a persisted idle/dnd).
+        # Without this object every reconnect silently reset to "online".
+        presence_status = "online"
+        if self._presence:
+            try:
+                status_enum = await run_in_threadpool(
+                    self._presence.get_status, user_id
+                )
+                presence_status = (
+                    status_enum.value
+                    if hasattr(status_enum, "value")
+                    else str(status_enum)
+                )
+            except Exception:
+                pass
+        user_data["presence"] = {"status": presence_status}
 
-        servers_mod = api.get_servers()
+        # Resolve guilds through the INJECTED servers boundary only, so the
+        # handler stays fully self-contained (and unit tests never touch a
+        # live database). Reaching into the process-global ``src.api`` here
+        # used to fire a real ``get_servers`` query from an AnyIO worker
+        # thread on every identify; each distinct worker thread then held a
+        # SQLite pool connection in thread-local state forever, exhausting
+        # the shared pool (max 16) and stalling later identifies for the
+        # full connect timeout. The gateway always injects the servers
+        # module, so a handler without one simply reports no guilds.
+        servers_mod = self._servers
         if servers_mod:
             try:
                 servers = await run_in_threadpool(servers_mod.get_servers, user_id)
@@ -245,21 +303,64 @@ class ConnectionHandler:
         }
 
     async def _dispatch_online_presence(self, user_id: int) -> None:
-        """Dispatch online presence to friends when user connects."""
-        # Set presence to online FIRST before dispatching
+        """Dispatch online presence to friends when user connects.
+
+        CORRECTNESS FIX: a persisted idle/dnd status chosen by the user via
+        REST must survive reconnects. Only an OFFLINE user is promoted to
+        ONLINE; invisible users stay scrubbed to offline; the broadcast
+        reflects the persisted custom status instead of wiping it with None.
+        """
+        # Set presence FIRST before dispatching
         if self._presence:
+            from src.core.presence.models import UserStatus
+
             try:
-                from src.core.presence.models import UserStatus
-
-                await run_in_threadpool(
-                    self._presence.set_status, user_id, UserStatus.ONLINE
+                current_status = await run_in_threadpool(
+                    self._presence.get_status, user_id
                 )
-                logger.debug(f"Set user {user_id} presence to ONLINE on connect")
-            except Exception as e:
-                logger.warning(f"Failed to set online presence for user {user_id}: {e}")
+            except Exception:
+                current_status = UserStatus.ONLINE
 
-        # Then dispatch to friends
-        await self._dispatch_presence_to_friends(user_id, "online", None, None)
+            if current_status == UserStatus.INVISIBLE:
+                # An invisible user must stay invisible; dispatch as offline
+                await self._dispatch_presence_to_friends(user_id, "offline", None, None)
+                return
+
+            if current_status == UserStatus.OFFLINE:
+                try:
+                    await run_in_threadpool(
+                        self._presence.set_status, user_id, UserStatus.ONLINE
+                    )
+                    current_status = UserStatus.ONLINE
+                    logger.debug(f"Set user {user_id} presence to ONLINE on connect")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to set online presence for user {user_id}: {e}"
+                    )
+
+            # Reflect the persisted custom status (text and/or emoji-only) so
+            # friends' clients do not see it flash to null on reconnect.
+            custom_text: Optional[str] = None
+            custom_emoji: Optional[str] = None
+            try:
+                pres = await run_in_threadpool(self._presence.get_presence, user_id)
+                if pres and pres.custom_status:
+                    custom_text = pres.custom_status.text
+                    custom_emoji = pres.custom_status.emoji
+            except Exception as e:
+                logger.debug(f"Failed to read custom status for {user_id}: {e}")
+
+            current_str = (
+                current_status.value
+                if hasattr(current_status, "value")
+                else str(current_status)
+            )
+            # Then dispatch to friends with the ACTUAL persisted state.
+            await self._dispatch_presence_to_friends(
+                user_id, current_str, custom_text, custom_emoji
+            )
+        else:
+            await self._dispatch_presence_to_friends(user_id, "online", None, None)
 
     async def _dispatch_presence_to_friends(
         self,

@@ -1,5 +1,7 @@
 """Tests for media image processing (thumbnails, resize, convert)."""
 
+import io
+
 import pytest
 
 from src.core.media.models import MediaType
@@ -97,3 +99,50 @@ class TestImages:
         """Test WebP detection."""
         media_type = media_manager._detect_media_type("image/webp")
         assert media_type == MediaType.IMAGE
+
+
+@pytest.mark.media
+class TestImageDimensionGuard:
+    """`convert_format`/`strip_metadata` must enforce the dimension limit.
+
+    `max_dimension` is documented as the decompression-bomb guard and was
+    enforced on the metadata/thumbnail/resize entry points but skipped by the
+    two re-encode methods reachable from the public media API, so an upload
+    above the in-memory validation limit could be re-encoded at any size.
+    """
+
+    @staticmethod
+    def _png_bytes(width: int, height: int) -> bytes:
+        Image = pytest.importorskip("PIL.Image")
+        buf = io.BytesIO()
+        Image.new("RGB", (width, height), (120, 40, 200)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_convert_format_rejects_oversized_image(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        data = self._png_bytes(200, 200)
+        with pytest.raises(ImageProcessingError):
+            ImageProcessor(max_dimension=100).convert_format(data, "PNG")
+
+    def test_convert_format_allows_image_within_limit(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        data = self._png_bytes(200, 200)
+        out = ImageProcessor(max_dimension=300).convert_format(data, "PNG")
+        assert out[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_strip_metadata_rejects_oversized_image(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        data = self._png_bytes(200, 200)
+        with pytest.raises(ImageProcessingError):
+            ImageProcessor(max_dimension=100).strip_metadata(data)
+
+    def test_strip_metadata_allows_image_within_limit(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        data = self._png_bytes(200, 200)
+        out = ImageProcessor(max_dimension=300).strip_metadata(data)
+        assert isinstance(out, bytes)
+        assert len(out) > 0

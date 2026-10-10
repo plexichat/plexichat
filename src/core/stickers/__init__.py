@@ -137,12 +137,23 @@ def add_sticker(
     size: int,
     tags: Optional[List[str]] = None,
     related_emoji: Optional[str] = None,
+    description: Optional[str] = None,
     width: Optional[int] = None,
     height: Optional[int] = None,
 ) -> Sticker:
     """Add a sticker to a pack."""
     return _get_manager().add_sticker(
-        user_id, pack_id, name, format, url, size, tags, related_emoji, width, height
+        user_id,
+        pack_id,
+        name,
+        format,
+        url,
+        size,
+        tags,
+        related_emoji,
+        description,
+        width,
+        height,
     )
 
 
@@ -159,6 +170,11 @@ def get_pack_stickers(user_id: int, pack_id: int) -> List[Sticker]:
 def remove_sticker(user_id: int, sticker_id: int) -> bool:
     """Remove a sticker from its pack."""
     return _get_manager().delete_sticker(user_id, sticker_id)
+
+
+def can_use_sticker(user_id: int, sticker_id: int) -> bool:
+    """Return True if the user is permitted to use the given sticker."""
+    return _get_manager().can_use_sticker(user_id, sticker_id)
 
 
 def send_sticker(user_id: int, message_id: int, sticker_id: int) -> StickerUsage:
@@ -184,8 +200,16 @@ def create_sticker_from_file(
     content_type: str,
     tags: Optional[List[str]] = None,
     related_emoji: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> Sticker:
     """Create a sticker from an uploaded file."""
     return _get_manager().create_sticker_from_file(
-        user_id, pack_id, name, image_data, content_type, tags, related_emoji
+        user_id,
+        pack_id,
+        name,
+        image_data,
+        content_type,
+        tags,
+        related_emoji,
+        description,
     )

@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS webhook_webhooks (
     -- Ed25519 signing keys for webhook request verification
     signing_key_public BLOB,  -- 32-byte Ed25519 public key for signature verification
     signing_key_private_encrypted TEXT,  -- Encrypted private key (base64 in encrypted envelope)
+    -- When 1, executions WITHOUT a valid Ed25519 signature are rejected
+    -- even if the webhook token itself is valid.
+    require_signed_deliveries INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -50,6 +53,28 @@ CREATE INDEX IF NOT EXISTS idx_webhook_msg_channel ON webhook_messages(channel_i
 """
 
 
+def _ensure_require_signed_deliveries_column(db) -> None:
+    """Add the require_signed_deliveries column to pre-existing tables.
+
+    ``CREATE TABLE IF NOT EXISTS`` does not alter databases created by an
+    older schema; follow the codebase's defensive ALTER TABLE pattern
+    (try the portable form first, then the SQLite/Postgres
+    ``IF NOT EXISTS`` variant).
+    """
+    statements = (
+        "ALTER TABLE webhook_webhooks ADD COLUMN require_signed_deliveries "
+        "INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE webhook_webhooks ADD COLUMN IF NOT EXISTS "
+        "require_signed_deliveries INTEGER NOT NULL DEFAULT 0",
+    )
+    for statement in statements:
+        try:
+            db.execute(statement)
+            return
+        except Exception:
+            continue
+
+
 def create_tables(db):
     """Create all webhook tables."""
     statements = split_sql_statements(SCHEMA)
@@ -66,5 +91,7 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
+
+    _ensure_require_signed_deliveries_column(db)
 
     logger.info("Webhook tables created successfully")

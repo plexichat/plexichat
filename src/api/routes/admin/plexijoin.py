@@ -5,10 +5,66 @@ Admin PlexiJoin federation routes for managing inter-instance connections.
 from fastapi import APIRouter, Request, HTTPException, Query
 from typing import Optional
 
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 import utils.logger as logger
 
 router = APIRouter()
+
+
+def _serialize_connection(conn) -> dict:
+    """Admin-contract shape: snowflakes as decimal strings, rowids numeric.
+
+    ``id`` is the connection's ``INTEGER PRIMARY KEY`` rowid, so it stays a
+    JSON number (a rowid can never reach JS's 2**53 rounding threshold).
+    ``created_by`` is the creating admin's 64-bit snowflake, which must be a
+    decimal string or a JS ``Number`` would round it.
+    """
+    return {
+        # Rowid: stays numeric (see docstring).
+        "id": conn["id"],
+        "remote_instance_id": conn["remote_instance_id"],
+        "remote_url": conn["remote_url"],
+        "status": conn["status"],
+        "connected_at": conn.get("connected_at"),
+        "messages_in": conn.get("messages_in", 0),
+        "messages_out": conn.get("messages_out", 0),
+        "last_activity": conn.get("last_activity"),
+        "note": conn.get("note"),
+        "created_at": conn["created_at"],
+        # created_by is the creating admin's snowflake.
+        "created_by": str(conn["created_by"])
+        if conn.get("created_by") is not None
+        else None,
+    }
+
+
+def _serialize_inbound_request(req) -> dict:
+    """Admin-contract shape for inbound requests.
+
+    As in :func:`_serialize_connection`, ``id`` is an ``INTEGER PRIMARY KEY``
+    rowid and stays numeric; ``reviewed_by`` is an admin snowflake and becomes
+    a decimal string.
+    """
+    return {
+        # Rowid: stays numeric (see docstring).
+        "id": req["id"],
+        "remote_instance_id": req["remote_instance_id"],
+        "remote_url": req["remote_url"],
+        "requested_by": req.get("requested_by"),
+        "note": req.get("note"),
+        "status": req["status"],
+        "requested_at": req["requested_at"],
+        "reviewed_at": req.get("reviewed_at"),
+        # reviewed_by is the reviewing admin's snowflake (or None).
+        "reviewed_by": str(req["reviewed_by"])
+        if req.get("reviewed_by") is not None
+        else None,
+    }
 
 
 def _get_plexijoin_manager(request):
@@ -16,7 +72,7 @@ def _get_plexijoin_manager(request):
     import src.api as api_mod
     from src.core.plexijoin import PlexiJoinManager
     from src.core.admin.logging import get_admin_logger
-    from utils import licensing as license_module  # type: ignore[import]
+    import utils.licensing as license_module
 
     db = api_mod.get_db()
     if db is None:
@@ -74,7 +130,16 @@ def _get_plexijoin_manager(request):
 # === Outbound Connections ===
 
 
-@router.get("/plexijoin/connections")
+@router.get(
+    "/plexijoin/connections",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def list_connections(
     request: Request,
     status: Optional[str] = Query(None, description="Filter by connection status"),
@@ -91,21 +156,7 @@ async def list_connections(
 
         connections_data = []
         for conn in result["connections"]:
-            connections_data.append(
-                {
-                    "id": conn["id"],
-                    "remote_instance_id": conn["remote_instance_id"],
-                    "remote_url": conn["remote_url"],
-                    "status": conn["status"],
-                    "connected_at": conn.get("connected_at"),
-                    "messages_in": conn.get("messages_in", 0),
-                    "messages_out": conn.get("messages_out", 0),
-                    "last_activity": conn.get("last_activity"),
-                    "note": conn.get("note"),
-                    "created_at": conn["created_at"],
-                    "created_by": conn["created_by"],
-                }
-            )
+            connections_data.append(_serialize_connection(conn))
 
         return {
             "connections": connections_data,
@@ -120,12 +171,21 @@ async def list_connections(
         logger.error(f"PlexiJoin list connections error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/plexijoin/connections/{connection_id}")
-async def get_connection(request: Request, connection_id: int):
+@router.get(
+    "/plexijoin/connections/{connection_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Connection not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
+async def get_connection(request: Request, connection_id: SnowflakeIDParam):
     """Get a specific connection by ID."""
     check_host_restriction(request)
     _admin = get_admin_from_token(request)
@@ -140,33 +200,31 @@ async def get_connection(request: Request, connection_id: int):
                 detail={"error": {"code": 404, "message": "Connection not found"}},
             )
 
-        return {
-            "id": connection["id"],
-            "remote_instance_id": connection["remote_instance_id"],
-            "remote_url": connection["remote_url"],
-            "status": connection["status"],
-            "connected_at": connection.get("connected_at"),
-            "messages_in": connection.get("messages_in", 0),
-            "messages_out": connection.get("messages_out", 0),
-            "last_activity": connection.get("last_activity"),
-            "note": connection.get("note"),
-            "created_at": connection["created_at"],
-            "created_by": connection["created_by"],
-        }
+        return _serialize_connection(connection)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"PlexiJoin get connection error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/plexijoin/connections")
+@router.post(
+    "/plexijoin/connections",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def create_connection(request: Request):
     """Create a new outbound federation connection."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         body = await request.json()
@@ -199,27 +257,38 @@ async def create_connection(request: Request):
             user_agent=request.headers.get("user-agent"),
         )
 
+        # ``connection_id`` is the row's INTEGER PRIMARY KEY rowid and stays
+        # numeric, matching _serialize_connection.
         return {"success": True, "connection_id": connection["id"]}
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin create connection error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.delete("/plexijoin/connections/{connection_id}")
-async def delete_connection(request: Request, connection_id: int):
+@router.delete(
+    "/plexijoin/connections/{connection_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Connection not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
+async def delete_connection(request: Request, connection_id: SnowflakeIDParam):
     """Disconnect and delete an outbound connection."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -244,15 +313,24 @@ async def delete_connection(request: Request, connection_id: int):
         logger.error(f"PlexiJoin delete connection error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/plexijoin/connections/{connection_id}/test")
-async def test_connection(request: Request, connection_id: int):
+@router.post(
+    "/plexijoin/connections/{connection_id}/test",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Connection not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
+async def test_connection(request: Request, connection_id: SnowflakeIDParam):
     """Test connectivity to a remote instance."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -265,14 +343,22 @@ async def test_connection(request: Request, connection_id: int):
         logger.error(f"PlexiJoin test connection error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
 # === Inbound Requests ===
 
 
-@router.get("/plexijoin/requests")
+@router.get(
+    "/plexijoin/requests",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def list_requests(
     request: Request,
     status: Optional[str] = Query(None, description="Filter by request status"),
@@ -289,19 +375,7 @@ async def list_requests(
 
         requests_data = []
         for req in result["requests"]:
-            requests_data.append(
-                {
-                    "id": req["id"],
-                    "remote_instance_id": req["remote_instance_id"],
-                    "remote_url": req["remote_url"],
-                    "requested_by": req.get("requested_by"),
-                    "note": req.get("note"),
-                    "status": req["status"],
-                    "requested_at": req["requested_at"],
-                    "reviewed_at": req.get("reviewed_at"),
-                    "reviewed_by": req.get("reviewed_by"),
-                }
-            )
+            requests_data.append(_serialize_inbound_request(req))
 
         return {
             "requests": requests_data,
@@ -316,15 +390,25 @@ async def list_requests(
         logger.error(f"PlexiJoin list requests error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/plexijoin/requests/{request_id}/approve")
-async def approve_request(request: Request, request_id: int):
+@router.post(
+    "/plexijoin/requests/{request_id}/approve",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
+async def approve_request(request: Request, request_id: SnowflakeIDParam):
     """Approve an inbound federation request."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -336,27 +420,37 @@ async def approve_request(request: Request, request_id: int):
             user_agent=request.headers.get("user-agent"),
         )
 
-        return {"success": True, "request": result}
+        return {"success": True, "request": _serialize_inbound_request(result)}
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin approve request error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/plexijoin/requests/{request_id}/deny")
-async def deny_request(request: Request, request_id: int):
+@router.post(
+    "/plexijoin/requests/{request_id}/deny",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Request not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
+async def deny_request(request: Request, request_id: SnowflakeIDParam):
     """Deny an inbound federation request."""
     check_host_restriction(request)
-    _admin = get_admin_from_token(request)
+    _admin = require_admin_permission(request, "admin.plexijoin.manage")
 
     try:
         manager = _get_plexijoin_manager(request)
@@ -368,26 +462,34 @@ async def deny_request(request: Request, request_id: int):
             user_agent=request.headers.get("user-agent"),
         )
 
-        return {"success": True, "request": result}
+        return {"success": True, "request": _serialize_inbound_request(result)}
     except HTTPException:
         raise
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(f"PlexiJoin deny request error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
 # === Status & Analytics ===
 
 
-@router.get("/plexijoin/status")
+@router.get(
+    "/plexijoin/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def get_status(request: Request):
     """Get federation health summary."""
     check_host_restriction(request)
@@ -404,11 +506,20 @@ async def get_status(request: Request):
         logger.error(f"PlexiJoin status error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/plexijoin/traffic")
+@router.get(
+    "/plexijoin/traffic",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+        503: {"model": ErrorResponse, "description": "Service unavailable"},
+    },
+)
 async def get_traffic(
     request: Request,
     hours: int = Query(24, ge=1, le=168),
@@ -428,5 +539,5 @@ async def get_traffic(
         logger.error(f"PlexiJoin traffic error: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

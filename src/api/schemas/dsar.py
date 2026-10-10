@@ -5,6 +5,8 @@ DSAR (Data Subject Access Request) schemas - Request/response models for data ex
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
+from src.api.schemas.common import SnowflakeID
+
 
 class DSARRequestBody(BaseModel):
     """DSAR data export request body."""
@@ -22,7 +24,7 @@ class DSARRequestResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int = Field(..., description="Request ID")
+    id: SnowflakeID = Field(..., description="Request ID")
     status: str = Field(..., description="Request status")
     requested_at: int = Field(..., description="Request timestamp")
     completed_at: Optional[int] = Field(None, description="Completion timestamp")

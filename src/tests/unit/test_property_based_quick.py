@@ -31,7 +31,7 @@ class TestQuickAuthValidation:
     @given(st.text(min_size=0, max_size=50))
     @QUICK_SETTINGS
     @example("")
-    @example("ab")  # Too short
+    @example("a")  # Too short
     @example("a" * 50)  # Too long
     def test_username_length_boundaries(self, username):
         """Test username length validation (quick)."""

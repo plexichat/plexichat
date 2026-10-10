@@ -231,3 +231,4 @@ class TestPrivateThreadMessages:
         msg = threads.send_message(member1.id, thread.id, "Hello!")
 
         assert msg is not None
+        assert msg["content"] == "Hello!"

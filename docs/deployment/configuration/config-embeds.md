@@ -1,10 +1,10 @@
-# Embeds & URL Preview Configuration
+# Embeds and URL preview configuration
 
-This guide covers embed and URL preview configuration for Plexichat. Embeds allow rich content in messages (cards with title, description, images, fields). URL preview automatically fetches and displays link previews when users post URLs.
+This guide describes how to configure embeds and URL previews for Plexichat. Embeds are rich cards with a title, description, images, and fields. URL preview fetches Open Graph metadata for links in messages. All defaults in this guide come from `src/config_defaults.py:801`.
 
-## Configuration Location
+## Before you begin
 
-All embed settings are nested under the `embeds` key in your configuration file:
+You configure embeds under the `embeds` key in `config.yaml`.
 
 ```yaml
 embeds:
@@ -24,9 +24,7 @@ embeds:
     allowed_schemes: ["http", "https"]
 ```
 
-## Embed Limits
-
-### Configuration
+## Configure embed limits
 
 ```yaml
 embeds:
@@ -35,27 +33,17 @@ embeds:
   total_char_limit: 6000
 ```
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `max_embeds_per_message` | `10` | Maximum embeds allowed in a single message. The server returns `400` if a bot or user exceeds this limit. |
+| `max_fields_per_embed` | `25` | Maximum name/value field pairs per embed. |
+| `total_char_limit` | `6000` | Combined character count across all embeds in a message, including title, description, field names, field values, footer text, and author name. |
 
-**Max Embeds Per Message**
-- Default: 10 -- allows bots and integrations to attach multiple embeds per message
-- Lower this (e.g., 3) to reduce message size and rendering cost in the client
-- Bots that send more embeds than the limit will receive a 400 validation error
+For constrained clients, consider reducing `max_embeds_per_message` to `3` to lower rendering cost.
 
-**Max Fields Per Embed**
-- Default: 25 -- each embed can have up to 25 name/value field pairs
-- This matches common chat platform conventions
+## Configure URL preview
 
-**Total Character Limit**
-- Default: 6000 -- combined character count across all embeds in a single message
-- Includes title, description, field names, field values, footer text, and author name
-- Messages exceeding this limit are rejected with a 400 error
-
-## URL Preview
-
-When enabled, Plexichat fetches Open Graph and other metadata from URLs posted in messages and displays them as inline previews.
-
-### Configuration
+When you enable URL preview, the server fetches metadata for URLs in messages and renders an inline preview card.
 
 ```yaml
 embeds:
@@ -72,64 +60,54 @@ embeds:
     allowed_schemes: ["http", "https"]
 ```
 
-### Deployment Considerations
+### Enable or disable URL preview
 
-**Enabling URL Preview**
-- Default: enabled -- URL previews are on by default
-- Disable (`enabled: false`) if your server has limited outbound bandwidth or runs in a restricted network
-- When disabled, URLs are still clickable but no preview card is generated
+Set `enabled` to `false` if your server has limited outbound bandwidth or runs in a restricted network. When disabled, URLs remain clickable but no preview card appears.
 
-**Timeout**
-- Default: 8 seconds -- maximum time to wait for a remote server to respond
-- Increase for slow networks (e.g., 15 seconds), decrease for faster response (e.g., 3 seconds)
-- Long timeouts delay message rendering in the client while the preview loads
+### Timeout
 
-**Max HTML Bytes**
-- Default: 524288 (512KB) -- only the first 512KB of HTML is fetched and parsed
-- This prevents downloading enormous pages that would waste bandwidth and memory
-- Lower for constrained environments (e.g., 131072 for 128KB)
+`timeout_seconds` is `8` by default. It controls how long the server waits for a remote host. Increase it to `15` on slow networks or decrease it to `3` for faster response. Long timeouts delay message rendering while the preview loads.
 
-**Max Redirects**
-- Default: 5 -- follows up to 5 HTTP redirects before giving up
-- Set to 0 to disable redirect following entirely
-- Set to 3 for a tighter redirect limit
+### Maximum HTML size
 
-**Max Image Size**
-- Default: 5242880 (5MB) -- preview images larger than this are not downloaded
-- The server fetches preview images to proxy them to the client (when `proxy_images` is true)
+`max_html_bytes` is `524288` (512 KB) by default. The server fetches only the first 512 KB of HTML. Lower it to `131072` (128 KB) for constrained environments.
 
-**Cache TTL**
-- Default: 3600 seconds (1 hour) -- preview data is cached server-side
-- Increase for less frequent re-fetching (e.g., 86400 for 24 hours)
-- Decrease for fresher previews (e.g., 1800 for 30 minutes)
+### Maximum redirects
 
-**Rate Limiting**
-- Default: 10 requests per 60 seconds per user -- prevents users from triggering excessive URL fetches
-- This is separate from the global API rate limit
-- Increase for busy servers where users share many links
+`max_redirects` is `5` by default. The server follows up to 5 HTTP redirects before it stops. Set it to `0` to disallow redirects or `3` for a tighter limit.
 
-**Proxy Images**
-- Default: true -- preview images are proxied through the Plexichat server
-- When enabled, the client fetches preview images from your server rather than the original URL
-- This protects user privacy (no direct connection to external servers) and allows caching
-- Disable only if you have bandwidth constraints; clients will load images directly from source URLs
+### Maximum image size
 
-**Allowed Schemes**
-- Default: `["http", "https"]` -- only HTTP/HTTPS URLs are fetched for previews
-- Do not add other schemes (e.g., `ftp`, `file`) as this poses security risks
-- Internal network URLs (e.g., `http://10.0.0.5`) will be fetched if accessible from the server
+`max_image_size` is `5242880` (5 MB) by default. The server does not download preview images larger than this limit.
 
-## Security Considerations
+### Cache TTL
 
-- URL preview fetches are made from the server, not the client -- the server acts as a proxy
-- The `allowed_schemes` whitelist prevents SSRF via non-HTTP protocols
-- The `max_redirects` limit prevents redirect loops
-- The `timeout_seconds` and `max_html_bytes` limits prevent resource exhaustion
-- Consider network egress restrictions: URL preview requires outbound internet access from the server
-- If your server runs in a network with restricted egress, disable URL preview or whitelist specific domains in your firewall
+`cache_ttl_seconds` is `3600` (1 hour) by default. Increase it to `86400` (24 hours) to reduce re-fetching or decrease it to `1800` (30 minutes) for fresher previews.
 
-## Related Documentation
+### Rate limiting
 
-- [Media Configuration](deployment/configuration/config-media.md) -- file upload and storage configuration
-- [Authentication Configuration](deployment/configuration/config-authentication.md) -- message encryption and limits
-- [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) -- global and per-user rate limits
+`rate_limit_requests` is `10` and `rate_limit_window_seconds` is `60` by default. A user can trigger 10 URL fetches per 60 seconds. This limit is separate from the global API rate limit defined in `src/config_defaults.py:273`.
+
+### Proxy images
+
+`proxy_images` is `true` by default. When enabled, clients fetch preview images through your server instead of the original host. This protects user privacy and lets the server cache images. Disable it only if you have bandwidth constraints and you accept that clients connect directly to external hosts.
+
+### Allowed schemes
+
+`allowed_schemes` is `["http", "https"]` by default. Do not add schemes such as `ftp` or `file`. The scheme whitelist prevents server-side request forgery (SSRF) through non-HTTP protocols.
+
+## Security considerations
+
+URL preview requests originate from the server, not the client.
+
+*   The `allowed_schemes` whitelist prevents SSRF through non-HTTP protocols.
+*   The `max_redirects` limit prevents redirect loops.
+*   The `timeout_seconds` and `max_html_bytes` limits prevent resource exhaustion.
+*   If your server allows outbound access to internal networks, an attacker can probe internal hosts such as `http://10.0.0.5`. Apply egress firewall rules or disable URL preview in restricted networks.
+*   URL preview requires outbound internet access. If your server cannot reach the internet, disable it.
+
+## Related documentation
+
+*   [Media configuration](config-media.md) — File upload and storage configuration.
+*   [Rate limiting configuration](config-rate-limiting.md) — Global and per-user rate limits.
+*   [Default configuration reference](../../default-config.md) — Complete configuration reference.

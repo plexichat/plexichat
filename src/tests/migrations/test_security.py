@@ -28,7 +28,8 @@ class TestSecurity:
         """Test that DROP TABLE generates a warning."""
         is_safe, warnings = validate_sql_safety("DROP TABLE temp_data")
         assert is_safe is True
-        assert len(warnings) > 0
+        assert len(warnings) == 1
+        assert "DROP TABLE" in warnings[0]
 
     def test_warning_alter_table(self):
         """Test that ALTER TABLE generates a warning."""
@@ -69,7 +70,8 @@ class TestSecurity:
         """Test that warnings work case-insensitively."""
         is_safe, warnings = validate_sql_safety("drop table old_data")
         assert is_safe is True
-        assert len(warnings) > 0
+        assert len(warnings) == 1
+        assert "DROP TABLE" in warnings[0]
 
     def test_empty_sql(self):
         """Test that empty SQL is safe."""

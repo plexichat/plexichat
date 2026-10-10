@@ -6,7 +6,7 @@ Files are encrypted before upload and decrypted after download.
 """
 
 import io
-from typing import BinaryIO, Tuple, Optional
+from typing import BinaryIO, Tuple, Optional, Iterator, cast
 
 import utils.logger as logger
 
@@ -16,6 +16,32 @@ from ..exceptions import StorageReadError, StorageWriteError
 
 # Threshold for streaming encryption (files larger than this use streaming)
 STREAMING_THRESHOLD = 10 * 1024 * 1024  # 10MB
+
+
+class _GeneratorStream(io.RawIOBase):
+    """Adapt an iterator of bytes into a BinaryIO with a ``read`` method."""
+
+    def __init__(self, gen: Iterator[bytes]) -> None:
+        self._gen = gen
+        self._buffer = b""
+
+    def read(self, n: int = -1) -> bytes:
+        if n == -1:
+            chunks = [self._buffer]
+            self._buffer = b""
+            for chunk in self._gen:
+                chunks.append(chunk)
+            return b"".join(chunks)
+        while len(self._buffer) < n:
+            try:
+                chunk = next(self._gen)
+            except StopIteration:
+                break
+            else:
+                self._buffer += chunk
+        result = self._buffer[:n]
+        self._buffer = self._buffer[n:]
+        return result
 
 
 class EncryptedStorage(StorageBackendBase):
@@ -174,24 +200,26 @@ class EncryptedStorage(StorageBackendBase):
         # Try encrypted path first
         enc_path = path + ".enc"
 
-        try:
-            if self._backend.exists(enc_path):
-                if not self._enabled or not self._encryptor:
-                    raise StorageReadError(
-                        "File is encrypted but encryption is disabled", "encrypted"
-                    )
+        if self._backend.exists(enc_path):
+            if not self._enabled or not self._encryptor:
+                raise StorageReadError(
+                    "File is encrypted but encryption is disabled", "encrypted"
+                )
 
-                encrypted_blob = self._backend.retrieve(enc_path)
-                aad = self._get_aad(path)
+            # Decryption failures must propagate (not be masked as a missing
+            # file); only the absent-.enc case falls through to legacy data.
+            encrypted_blob = self._backend.retrieve(enc_path)
+            aad = self._get_aad(path)
 
+            try:
                 data = self._encryptor.decrypt_from_blob(encrypted_blob, aad)
-                logger.debug(f"Retrieved and decrypted: {path}")
-                return data
-        except StorageReadError:
-            pass  # File doesn't exist with .enc, try unencrypted
-        except Exception as e:
-            logger.error(f"Decryption failed for {path}: {e}")
-            raise StorageReadError(f"Decryption failed: {e}", "encrypted")
+            except StorageReadError:
+                raise
+            except Exception as e:
+                logger.error(f"Decryption failed for {path}: {e}")
+                raise StorageReadError(f"Decryption failed: {e}", "encrypted")
+            logger.debug(f"Retrieved and decrypted: {path}")
+            return data
 
         # Fall back to unencrypted path (for legacy files)
         return self._backend.retrieve(path)
@@ -248,7 +276,15 @@ class EncryptedStorage(StorageBackendBase):
                     generator = self._streaming_encryptor.decrypt_stream_generator(
                         fresh_enc_stream, aad
                     )
-                    return cleanup_wrapper(generator, fresh_enc_stream), original_size  # type: ignore
+                    return cast(
+                        Tuple[BinaryIO, int],
+                        (
+                            _GeneratorStream(
+                                cleanup_wrapper(generator, fresh_enc_stream)
+                            ),
+                            original_size,
+                        ),
+                    )
             except Exception as e:
                 logger.error(f"Failed to initialize decrypted stream for {path}: {e}")
                 if enc_stream:

@@ -1,24 +1,22 @@
-# End-User Documentation
+# End-user documentation
 
-This section provides guidance for end-users of the Plexichat platform.
+This section contains guides for people who use Plexichat.
 
-## Security Guides
+## Security guides
 
-- **[Password Guidance](password-guidance.md)** - Creating strong passwords, using password managers, and enabling 2FA based on NIST guidelines
-- **[Two-Factor Authentication](two-factor-authentication.md)** - Setting up and using 2FA, managing sessions, and troubleshooting
-- **[Acoustic Eavesdropping Defense](acoustic-defense.md)** - Protecting against AI keystroke eavesdropping in voice calls
+- [Password guidance](./password-guidance.md) — Create strong passwords and use a password manager.
+- [Two-factor authentication](./two-factor-authentication.md) — Set up 2FA and manage your sessions.
+- [Acoustic eavesdropping defense](./acoustic-defense.md) — Learn how Plexichat reduces the risk of AI keystroke eavesdropping in voice calls.
 
-## User Guides
+## User guides
 
-- **[Getting Started](getting-started.md)** - Creating your account, navigating the interface, and using key features
+- [Get started](./getting-started.md) — Create an account, set up your profile, and use core features.
 
-## Help Pages
+## Help pages
 
-These pages provide information when you encounter specific situations:
-
-- **[Access Blocked](access-blocked.md)** - Information when your access has been restricted
-- **[Security Logout](security-logout.md)** - Information when you've been logged out for security reasons
+- [Access blocked](./access-blocked.md) — What to do when your access is restricted.
+- [Security logout](./security-logout.md) — Why you were logged out and how to recover.
 
 ## Reference
 
-- **[Permissions](permissions.md)** - Overview of permission categories and what they mean
+- [Permissions](./permissions.md) — Permission categories and what they allow.

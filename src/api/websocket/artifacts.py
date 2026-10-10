@@ -17,9 +17,11 @@ circular import between this module and ``dispatcher.py``.
 
 from typing import Dict, Optional, Set, TYPE_CHECKING
 import asyncio
+import json
 import threading
 
 import utils.logger as logger
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
@@ -54,13 +56,17 @@ class ArtifactSubscriptionRegistry:
     def unsubscribe(
         self, user_id: int, artifact_id: int, connection_id: Optional[str] = None
     ) -> None:
-        """Unsubscribe a user/connection from an artifact."""
+        """Unsubscribe a user/connection from an artifact.
+
+        Multi-tab safe: when ``connection_id`` is given, only that
+        connection's subscription is removed. The user is dropped from the
+        global ``_subs`` set only when no remaining connection by the same
+        user is still subscribed to the artifact, so one tab unsubscribing
+        (or closing its artifact panel) cannot silence relays to the user's
+        other tabs.
+        """
         with self._lock:
-            subs = self._subs.get(artifact_id)
-            if subs is not None:
-                subs.discard(user_id)
-                if not subs:
-                    self._subs.pop(artifact_id, None)
+            uid = int(user_id)
             if connection_id:
                 artifacts = self._connection_subs.get(connection_id)
                 if artifacts is not None:
@@ -68,6 +74,17 @@ class ArtifactSubscriptionRegistry:
                     if not artifacts:
                         self._connection_subs.pop(connection_id, None)
                         self._connection_users.pop(connection_id, None)
+            still_subscribed = bool(connection_id) and any(
+                artifact_id in conn_artifacts
+                and self._connection_users.get(conn) == uid
+                for conn, conn_artifacts in self._connection_subs.items()
+            )
+            if not still_subscribed:
+                subs = self._subs.get(artifact_id)
+                if subs is not None:
+                    subs.discard(uid)
+                    if not subs:
+                        self._subs.pop(artifact_id, None)
 
     def get_subscribers(self, artifact_id: int) -> Set[int]:
         """Return the set of subscribed user_ids for an artifact (copy)."""
@@ -114,6 +131,32 @@ class ArtifactSubscriptionRegistry:
 
 _artifact_subscription_registry = ArtifactSubscriptionRegistry()
 
+# L36: artifact payloads can reach ~1 MB (sum workbooks, whiteboards). Shipping
+# the FULL payload to every late joiner turns N joins into N x 1 MB gateway
+# frames. Payloads above this cap are omitted from the sync frame and the
+# client is told to fetch the artifact body over REST instead; the persisted
+# ops replay still delivers recent deltas, so no history is lost.
+_MAX_SNAPSHOT_PAYLOAD_BYTES = 256 * 1024
+
+
+def cap_snapshot_payload(payload: Dict[str, object]) -> tuple:
+    """Return ``(snapshot, truncated)`` for a late-join sync frame.
+
+    ``truncated`` is True when the payload exceeds
+    :data:`_MAX_SNAPSHOT_PAYLOAD_BYTES`; the returned snapshot is then empty
+    and the caller flags the frame so the client fetches the body over REST.
+    A non-dict payload (defensive) is treated as oversized.
+    """
+    if not isinstance(payload, dict):
+        return {}, True
+    try:
+        size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return {}, True
+    if size > _MAX_SNAPSHOT_PAYLOAD_BYTES:
+        return {}, True
+    return payload, False
+
 
 def get_artifact_subscription_registry() -> ArtifactSubscriptionRegistry:
     """Return the process-wide artifact subscription registry."""
@@ -126,6 +169,9 @@ async def relay_artifact_op(
     op: Dict[str, object],
     actor_id: int,
     exclude_user_id: Optional[int] = None,
+    exclude_connection_id: Optional[str] = None,
+    seq: Optional[int] = None,
+    forward_to_federation: bool = True,
 ) -> int:
     """
     Fan out an ARTIFACT_OP delta to the artifact's subscribers.
@@ -140,7 +186,16 @@ async def relay_artifact_op(
         artifact_id: Artifact the op targets.
         op: The realtime op payload (must include ``op_type``).
         actor_id: User id that produced the op.
-        exclude_user_id: Optionally skip one user (typically the actor).
+        exclude_user_id: Optionally skip every connection of one user. Use
+            this only when the user must never see the op on ANY connection
+            (e.g. the actor already applied it and has no cross-tab fabric).
+        exclude_connection_id: Optionally skip exactly one connection
+            (typically the actor's originating connection). A user may hold
+            several connections (multi-tab); excluding by ``user_id`` alone
+            would starve the actor's other tabs of the relay and let their
+            optimistic state diverge until reload. Per-tab ``client_id``
+            stamps let those tabs recognize and drop their own echo, so only
+            the originating connection needs to be skipped here.
 
     Returns:
         Number of connections the op was delivered to.
@@ -149,16 +204,13 @@ async def relay_artifact_op(
     # Subscriptions are only a routing hint. Revalidate the artifact and the
     # recipient's current capability/scope before every relay so access changes
     # take effect without waiting for a reconnect.
-    try:
-        import src.api as api
-        from src.core.artifacts.repository import get_artifact
-        from src.core.artifacts.capabilities import capability_allows_artifact
+    import src.api as api
+    from src.core.artifacts.repository import get_artifact
+    from src.core.artifacts.capabilities import capability_allows_artifact
 
-        db = api.get_db()
-        artifact = get_artifact(db, artifact_id) if db is not None else None
-        if artifact is None or not capability_allows_artifact(artifact.artifact_type):
-            return 0
-    except Exception:
+    db = api.get_db()
+    artifact = get_artifact(db, artifact_id) if db is not None else None
+    if artifact is None or not capability_allows_artifact(artifact.artifact_type):
         return 0
 
     subscribers = registry.get_subscribers(artifact_id)
@@ -170,22 +222,57 @@ async def relay_artifact_op(
 
     session_manager: SessionManager = dispatcher._session_manager
     connections = session_manager.get_connections_for_users(list(subscribers))
+    if exclude_connection_id is not None:
+        # Multi-tab: keep the actor's user in the subscriber set so their
+        # OTHER connections still receive the relay; only the originating
+        # connection is filtered out here (it gets the ack echo instead).
+        connections = [
+            conn for conn in connections if conn.connection_id != exclude_connection_id
+        ]
+    if not connections:
+        return 0
 
+    d: Dict[str, object] = {
+        # Snowflake ids exceed 2^53 — serialize as strings so JS clients
+        # JSON.parse them losslessly (matches the REST SnowflakeID convention).
+        "artifact_id": str(artifact_id),
+        "actor_id": str(actor_id),
+        "op": op,
+    }
+    # Carry the server-assigned op sequence so clients can order ops and
+    # acknowledge their own pending edits (OT convergence).
+    if seq is not None:
+        d["seq"] = int(seq)
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_OP),
-        "d": {
-            "artifact_id": int(artifact_id),
-            "actor_id": int(actor_id),
-            "op": op,
-        },
+        # ``connection.send_json`` bypasses the dispatcher backstop, so
+        # stringify the nested ``op`` dict's ids here as well.
+        "d": stringify_snowflake_ids(d),
     }
 
     sent = 0
     from src.api.websocket.handlers.artifacts import ArtifactHandler
 
     access_checker = ArtifactHandler()
+    # L35: the artifact row is already fetched once above; the remaining cost
+    # was a fresh permission check PER CONNECTION even though access is a
+    # property of the USER (one user with three tabs = three module calls per
+    # op). Memoize per user_id so a relay does at most one access check per
+    # distinct user, then filters their connections in memory.
+    access_cache: dict = {}
     for conn in connections:
-        if not access_checker._has_artifact_access(conn, artifact, "artifact.view"):
+        uid = getattr(conn, "user_id", None)
+        if uid in access_cache:
+            allowed = access_cache[uid]
+        else:
+            try:
+                allowed = access_checker._has_artifact_access(
+                    conn, artifact, "artifact.view"
+                )
+            except Exception:  # a bad check must deny, not crash the relay
+                allowed = False
+            access_cache[uid] = allowed
+        if not allowed:
             continue
         if not (
             hasattr(conn, "is_selftest") and conn.is_selftest
@@ -212,21 +299,24 @@ async def relay_artifact_op(
     # Federation hook: after the local fan-out, forward the op to any
     # federation links whose remote server owns this artifact. This must never
     # break local relay, so failures are isolated to the federation layer.
-    try:
-        from src.core.artifacts.federation import get_artifact_federation_bridge
+    # Inbound (already-federated) relays pass ``forward_to_federation=False``
+    # to avoid ping-ponging the same op between two instances forever.
+    if forward_to_federation:
+        try:
+            from src.core.artifacts.federation import get_artifact_federation_bridge
 
-        bridge = get_artifact_federation_bridge()
-        if bridge is not None:
-            bridge.forward_artifact_op(
-                artifact_id=artifact_id,
-                op=op,
-                actor_id=actor_id,
+            bridge = get_artifact_federation_bridge()
+            if bridge is not None:
+                bridge.forward_artifact_op(
+                    artifact_id=artifact_id,
+                    op=op,
+                    actor_id=actor_id,
+                )
+        except Exception as e:  # pragma: no cover - federation is best-effort
+            logger.debug(
+                f"Federation forward of ARTIFACT_OP for artifact {artifact_id} "
+                f"failed (non-fatal): {e}"
             )
-    except Exception as e:  # pragma: no cover - federation is best-effort
-        logger.debug(
-            f"Federation forward of ARTIFACT_OP for artifact {artifact_id} "
-            f"failed (non-fatal): {e}"
-        )
 
     return sent
 
@@ -236,6 +326,9 @@ async def send_artifact_sync(
     artifact_id: int,
     snapshot: Dict[str, object],
     ops: Optional[list] = None,
+    rate_limit_per_minute: Optional[int] = None,
+    snapshot_truncated: bool = False,
+    rev: Optional[int] = None,
 ) -> bool:
     """
     Send an ARTIFACT_SYNC full snapshot to a single connection.
@@ -245,22 +338,34 @@ async def send_artifact_sync(
     only builds and emits the gateway payload through the connection's own
     send path, respecting its rate limit.
 
-    ``ops`` is an optional list of persisted operations (in ``seq`` order)
-    for late-joiner replay. Each entry is ``{seq, op_type, actor_id,
-    created_at, op}``.
-
     Args:
         connection: Target connection.
         artifact_id: Artifact the snapshot belongs to.
         snapshot: Full snapshot payload (caller-provided).
-        ops: Optional persisted ops to replay to the joiner.
+        ops: Optional persisted ops to replay to the joiner (each entry is
+            ``{seq, op_type, actor_id, created_at, op}``).
+        rate_limit_per_minute: The gateway's configured per-connection
+            limit. When omitted the connection's own default is used, so a
+            tighter operator-configured gateway limit is honored here too
+            (matching ``send_sum_sync``).
+        snapshot_truncated: True when the caller omitted an oversized
+            payload (see :func:`cap_snapshot_payload`); the frame then
+            carries the flag so the client fetches the body over REST.
+        rev: The artifact's current revision (dedicated column). Carried on
+            the frame so a late joiner restores its editor rev chain even
+            though the revision no longer lives inside the payload.
 
     Returns:
         True if the frame was sent successfully.
     """
+    limit = (
+        int(rate_limit_per_minute)
+        if rate_limit_per_minute is not None
+        else getattr(connection, "rate_limit_per_minute", 120)
+    )
     if not (
         hasattr(connection, "is_selftest") and connection.is_selftest
-    ) and not connection.check_rate_limit(120):
+    ) and not connection.check_rate_limit(limit):
         logger.debug(
             f"Artifact sync rate limited for connection {connection.connection_id}"
         )
@@ -268,14 +373,116 @@ async def send_artifact_sync(
 
     payload = {
         "op": int(GatewayOpcode.ARTIFACT_SYNC),
-        "d": {
-            "artifact_id": int(artifact_id),
-            "snapshot": snapshot,
-            "ops": ops or [],
-        },
+        # The caller-provided ``snapshot`` body and replay ``ops`` carry ids
+        # (whiteboard element ids, op ``actor_id``/``block_id``); this path
+        # bypasses the dispatcher backstop, so stringify them here.
+        "d": stringify_snowflake_ids(
+            {
+                # String ids: see note in relay_artifact_op about 2^53.
+                "artifact_id": str(artifact_id),
+                "snapshot": snapshot,
+                "ops": ops or [],
+                # L36: True when the payload was omitted because it exceeded
+                # the snapshot cap; the client must fetch the body over REST.
+                "snapshot_truncated": bool(snapshot_truncated),
+                "rev": rev if rev is not None else 0,
+            }
+        ),
     }
     try:
         return await connection.send_json(payload)
     except Exception as e:  # pragma: no cover - defensive
         logger.debug(f"Failed to send ARTIFACT_SYNC to {connection.connection_id}: {e}")
+        return False
+
+
+async def send_artifact_ack(
+    connection: Connection,
+    artifact_id: int,
+    op: Dict[str, object],
+    seq: int,
+    rate_limit_per_minute: Optional[int] = None,
+) -> bool:
+    """Echo a persisted op back to its actor with the assigned ``seq``.
+
+    The actor already applied the op optimistically, so this frame is not a
+    re-application; the client recognises its own ``client_id`` and treats the
+    echo as an acknowledgement that lets it commit the pending op.
+
+    ``rate_limit_per_minute`` is the gateway's configured per-connection
+    limit; when omitted the connection's own default is used (matching
+    ``send_sum_sync``).
+    """
+    limit = (
+        int(rate_limit_per_minute)
+        if rate_limit_per_minute is not None
+        else getattr(connection, "rate_limit_per_minute", 120)
+    )
+    if not (
+        hasattr(connection, "is_selftest") and connection.is_selftest
+    ) and not connection.check_rate_limit(limit):
+        return False
+
+    actor_id = getattr(connection, "user_id", None)
+    payload = {
+        "op": int(GatewayOpcode.ARTIFACT_OP),
+        "d": stringify_snowflake_ids(
+            {
+                # String ids: see note in relay_artifact_op about 2^53.
+                "artifact_id": str(artifact_id),
+                "actor_id": str(actor_id) if actor_id is not None else None,
+                "seq": int(seq),
+                "op": op,
+            }
+        ),
+    }
+    try:
+        return await connection.send_json(payload)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Failed to ack ARTIFACT_OP to {connection.connection_id}: {e}")
+        return False
+
+
+async def send_artifact_op_rejected(
+    connection: Connection,
+    artifact_id: int,
+    op: Dict[str, object],
+    current_rev: int,
+    reason: str = "stale revision",
+    rate_limit_per_minute: Optional[int] = None,
+) -> bool:
+    """Tell an actor its ARTIFACT_OP was rejected and why.
+
+    Used by the gateway op rev guard: an ``edit`` op whose ``rev`` is older
+    than the artifact's committed revision is not persisted or relayed — the
+    sender must re-fetch and re-base. The frame echoes the offending op so
+    the client can match it against its own ``client_id``.
+    """
+    limit = (
+        int(rate_limit_per_minute)
+        if rate_limit_per_minute is not None
+        else getattr(connection, "rate_limit_per_minute", 120)
+    )
+    if not (
+        hasattr(connection, "is_selftest") and connection.is_selftest
+    ) and not connection.check_rate_limit(limit):
+        return False
+
+    payload = {
+        "op": int(GatewayOpcode.ARTIFACT_OP_REJECTED),
+        "d": stringify_snowflake_ids(
+            {
+                "artifact_id": str(artifact_id),
+                "reason": reason,
+                "current_rev": int(current_rev),
+                "op": op,
+            }
+        ),
+    }
+    try:
+        return await connection.send_json(payload)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(
+            f"Failed to send ARTIFACT_OP_REJECTED to {connection.connection_id}: {e}"
+        )
         return False

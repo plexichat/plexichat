@@ -215,6 +215,33 @@ pytest -m "not slow"
 pytest -m "auth and not slow"
 ```
 
+### Running the Database-Backed Suites
+
+Most of the suite runs against SQLite and an in-memory Valkey double, so
+backend-specific behaviour -- dialect SQL, Lua scripts, driver type coercion
+-- only ever shows up against the real thing. Two throwaway containers cover
+it:
+
+```bash
+docker run -d --name plexichat-test-pg -p 5432:5432 \
+    -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=test_db postgres:15-alpine
+docker run -d --name plexichat-test-valkey -p 6379:6379 \
+    valkey/valkey:8-alpine
+
+USE_DOCKER=false POSTGRES_HOST=localhost VALKEY_HOST=localhost \
+    pytest -m "not slow and not performance" \
+    src/tests/test_postgres_docker.py src/tests/test_transactions.py \
+    src/tests/test_database.py src/tests/test_production_simulation.py \
+    src/tests/test_valkey_docker.py
+```
+
+`USE_DOCKER=false` tells the fixtures (`fixtures/postgres_docker.py`,
+`fixtures/valkey_docker.py`) to attach to those servers rather than start
+their own. With no reachable backend the tests **skip visibly** -- and the
+`test:database_backends` CI job fails the pipeline if any of them skipped,
+so a missing service can never masquerade as a green run.
+
 ### Parallel Execution
 
 ```bash
@@ -225,6 +252,106 @@ pytest -n 4                 # Use 4 workers
 # Parallel with specific markers
 pytest -m "not slow" -n auto
 ```
+
+### Order Independence
+
+The suite must pass in **any** file order. A fixed default order can hide
+order coupling -- a fixture that leaves process-global state behind for a
+later file -- until it fails on a different machine or worker split. Two
+pieces of tooling keep that honest:
+
+**Seeded shuffle.** `--shuffle-seed <n>` runs the files in a reproducible
+random order. Tests inside a file keep their order and stay together, so
+`--dist loadfile` still pins a file to a single xdist worker. Re-running with
+the same seed reproduces a failure exactly:
+
+```bash
+# Replay a CI order-dependence failure locally
+pytest -n auto --dist loadfile --shuffle-seed 424242
+```
+
+**Process-global leak guard.** The autouse `_app_logger_level_guard` in
+`src/tests/_conftest/logger_isolation.py` fails any test or fixture that
+leaves the process-global `"AppLogger"` level changed, naming the offending
+test instead of letting a later file's `caplog` assertion fail mysteriously.
+A fixture that intentionally reconfigures the logger wraps the call in
+`isolated_logger(...)`, which restores the level, propagation flag, handlers,
+filters and module singletons on exit.
+
+CI runs the suite once in the default order (`test:pytest`) and once with a
+fixed `--shuffle-seed` (`test:shuffled_order`), so order dependence is caught
+on every merge request rather than by luck.
+
+### Deterministic Timing
+
+Tests must not wait for a background effect with a fixed `time.sleep`. Under
+`pytest-xdist` the host is oversubscribed, so a sleep tuned on an idle machine
+is a flake on a loaded runner -- the effect is simply later than the guessed
+budget. Two patterns keep timing-sensitive tests exact:
+
+**Wait for the condition.** A test that observes a worker thread's first
+cycle, an executor-driven database update, or a background log line should
+poll the observable state using `wait_until` from
+`src/tests/_conftest/waiting.py`. It returns as soon as the condition holds
+and fails with the caller's message if a bounded timeout elapses, so the happy
+path is as fast as the effect and a genuinely missing effect is a clear
+failure rather than a stall:
+
+```python
+from src.tests._conftest.waiting import wait_until
+
+wait_until(
+    lambda: worker.cycles >= 2,
+    timeout=10.0,
+    message="worker thread did not complete two cycles",
+)
+```
+
+`wait_until_async` is the same contract on an event loop: the predicate may be
+sync or a coroutine, and the wait yields with `asyncio.sleep` between polls so
+timers, transports and background tasks keep running. Pass `timeout` to match
+the effect's budget:
+
+```python
+from src.tests._conftest.waiting import wait_until_async
+
+await wait_until_async(
+    lambda: peer.pc.connectionState == "connected",
+    timeout=CONNECT_TIMEOUT_S,
+    message=lambda: f"never connected: {peer.pc.iceConnectionState}",
+)
+```
+
+`message` accepts a plain string or a zero-argument callable. The callable form
+is only rendered when the timeout is actually reached, so it can read live
+state (an ICE state, a frame count) for the failure instead of snapshotting it
+at call time.
+
+**Drive the clock, don't sleep through it.** Tests of window/TTL/refill logic
+should advance a controlled clock instead of racing real time. The rate limiter
+exposes one via the `rate_limit_clock` fixture, which stands in for the
+manager's `time.time()` and the in-memory storage's `time.monotonic()`:
+
+```python
+def test_window_expires(rate_limit_manager, rate_limit_clock):
+    rate_limit_clock.advance(61)  # exact boundary, no sleep
+```
+
+Sleeps that merely keep two operations apart (so a timestamp increases) or let
+threads start before a concurrent action remain appropriate -- the rule is only
+that a test must not *guess* how long a background effect will take. Every
+such sleep is listed with its reason in
+`src/tests/unit/test_intentional_sleep_sites.py`, and that registry is enforced
+as a test: a new `time.sleep`/`asyncio.sleep` (or an extra one in a listed
+file) fails until it is given a justification or replaced with a bounded wait,
+so the next determinism sweep does not have to re-triage the tree.
+
+Finally, these timing-sensitive suites are also run under deliberate CPU
+contention on every merge request: `test:timing_under_load` (GitLab) and
+`server-timing-under-load` (GitHub Actions) start busy-loop burners that
+oversubscribe the box and then run the suites above. A wait whose budget is
+generous on an idle machine but too tight on a loaded one fails there, instead
+of flaking intermittently later.
 
 ### Coverage Reporting
 
@@ -747,7 +874,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install --require-hashes -r requirements.txt
+        pip install --require-hashes -r requirements-dev.txt
 
     - name: Run tests with coverage
       run: |
@@ -766,7 +893,7 @@ jobs:
 test:
   image: python:3.11
   before_script:
-    - pip install --require-hashes -r requirements.txt
+    - pip install --require-hashes -r requirements-dev.txt
   script:
     - pytest --cov=src --cov-report=term --cov-report=html
   coverage: '/TOTAL.*\s+(\d+%)$/'

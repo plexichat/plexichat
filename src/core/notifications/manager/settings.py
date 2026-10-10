@@ -64,7 +64,7 @@ class SettingsMixin(NotificationProtocol):
     def get_notification_settings(
         self, user_id: SnowflakeID, server_id: Optional[SnowflakeID] = None
     ) -> NotificationSettings:
-        cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
+        cache_key = f"notif_settings:{user_id}:{server_id if server_id is not None else 'global'}"
         if valkey_available():
             cached = cache_get(cache_key)
             if cached:
@@ -78,7 +78,7 @@ class SettingsMixin(NotificationProtocol):
                     mobile_push=cached["mobile_push"],
                 )
 
-        if server_id:
+        if server_id is not None:
             row = self._db.fetch_one(
                 "SELECT * FROM notif_settings WHERE user_id = ? AND server_id = ?",
                 (user_id, server_id),
@@ -114,7 +114,7 @@ class SettingsMixin(NotificationProtocol):
                     "suppress_roles": settings.suppress_roles,
                     "mobile_push": settings.mobile_push,
                 },
-                ttl=600,
+                ttl=60,
             )
 
         return settings
@@ -124,7 +124,7 @@ class SettingsMixin(NotificationProtocol):
     ) -> NotificationSettings:
         now = self._get_timestamp()
 
-        if server_id:
+        if server_id is not None:
             existing = self._db.fetch_one(
                 "SELECT id FROM notif_settings WHERE user_id = ? AND server_id = ?",
                 (user_id, server_id),
@@ -181,7 +181,7 @@ class SettingsMixin(NotificationProtocol):
                 ),
             )
 
-        cache_key = f"notif_settings:{user_id}:{server_id or 'global'}"
+        cache_key = f"notif_settings:{user_id}:{server_id if server_id is not None else 'global'}"
         if valkey_available():
             cache_delete(cache_key)
 

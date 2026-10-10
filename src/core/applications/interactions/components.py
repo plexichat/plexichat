@@ -195,6 +195,10 @@ def validate_button(button: Dict[str, Any]) -> Tuple[bool, List[str]]:
         try:
             if isinstance(style, int):
                 ButtonStyle(style)
+            elif isinstance(style, ButtonStyle):
+                pass
+            else:
+                issues.append(f"Invalid button style: {style}")
         except ValueError:
             issues.append(f"Invalid button style: {style}")
 

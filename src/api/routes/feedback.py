@@ -14,7 +14,7 @@ from src.api.schemas.feedback import (
     FeedbackResponse,
     FeedbackStatusResponse,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 from src.core import ratelimit
 
 
@@ -62,7 +62,7 @@ async def submit_feedback(
             )
 
         # Check rate limit
-        rl_result = ratelimit.check_rate_limit(
+        rl_result = await ratelimit.acheck_rate_limit(
             user_id=user_id,
             route="POST /feedback",
             is_internal=getattr(request.state, "is_internal", False),
@@ -127,7 +127,9 @@ async def submit_feedback(
 
         logger.info(f"Feedback {feedback_id} submitted by user {user_id}")
 
-        return FeedbackResponse(id=feedback_id, message="Thank you for your feedback!")
+        return FeedbackResponse(
+            id=SnowflakeID(feedback_id), message="Thank you for your feedback!"
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -137,7 +139,7 @@ async def submit_feedback(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -164,7 +166,7 @@ async def get_feedback_status(
         bucket_key = manager._generate_bucket_key(
             BucketType.ROUTE, user_id=user_id, route="POST /feedback"
         )
-        bucket_info = ratelimit.get_bucket_info(bucket_key)
+        bucket_info = await ratelimit.aget_bucket_info(bucket_key)
 
         max_per_hour = config.get("feedback.rate_limit.max_per_hour", 5)
         max_per_day = config.get("feedback.rate_limit.max_per_day", 20)
@@ -186,5 +188,5 @@ async def get_feedback_status(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )

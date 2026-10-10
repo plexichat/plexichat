@@ -29,6 +29,13 @@ from .models import (
     VoiceStateEvent,
     ReactionEvent,
 )
+from .message_events import (
+    apply_server_scope,
+    build_message_create,
+    build_message_update,
+    build_message_delete,
+    build_flat_message_create,
+)
 from .payloads import (
     create_ready_event,
     create_message_create,
@@ -46,6 +53,7 @@ from .payloads import (
     create_guild_member_remove,
     create_guild_member_update,
     create_guild_members_chunk,
+    create_gateway_error,
     create_voice_state_update,
     create_reaction_add,
     create_reaction_remove,
@@ -72,6 +80,11 @@ __all__ = [
     "GuildMemberEvent",
     "VoiceStateEvent",
     "ReactionEvent",
+    "apply_server_scope",
+    "build_message_create",
+    "build_message_update",
+    "build_message_delete",
+    "build_flat_message_create",
     "create_ready_event",
     "create_message_create",
     "create_message_update",
@@ -88,6 +101,7 @@ __all__ = [
     "create_guild_member_remove",
     "create_guild_member_update",
     "create_guild_members_chunk",
+    "create_gateway_error",
     "create_voice_state_update",
     "create_reaction_add",
     "create_reaction_remove",
@@ -95,6 +109,20 @@ __all__ = [
 
 _manager = None
 _setup_complete = False
+
+
+def __getattr__(name: str):
+    """PEP 562 module attribute fallback.
+
+    ``event_manager`` is a public alias consumed by observability routes
+    (e.g. ``src/api/routes/health.py`` reads
+    ``events_module.event_manager.get_loss_metrics()``). Before ``setup()``
+    the manager is ``None`` so callers can distinguish "not initialized" from
+    a live-but-empty manager.
+    """
+    if name == "event_manager":
+        return _manager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def setup(
@@ -238,3 +266,22 @@ def set_worker_id(worker_id: str) -> None:
     can skip their own echoes.
     """
     _get_manager().set_worker_id(worker_id)
+
+
+async def start_consumer() -> None:
+    """Start the dispatch-queue consumer on the current event loop.
+
+    Call from the application lifespan so events queued by
+    :func:`dispatch` are actually fanned out to regular subscribers.
+    Idempotent; raises if the module is not set up.
+    """
+    await _get_manager().start_consumer()
+
+
+async def stop_consumer() -> None:
+    """Stop the dispatch-queue consumer and drain the queue.
+
+    Call during lifespan shutdown so queued events are delivered
+    before the event loop closes. Safe when no consumer is running.
+    """
+    await _get_manager().stop_consumer()

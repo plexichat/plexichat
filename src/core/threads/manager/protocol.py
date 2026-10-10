@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from ..models import Thread, ThreadMember
 
@@ -17,28 +17,28 @@ class ThreadProtocol:
     _is_member: Any = None
 
     def _get_timestamp(self) -> int:
-        return super()._get_timestamp()  # type: ignore[misc]
+        return cast(ThreadProtocol, super())._get_timestamp()
 
     def _generate_id(self) -> int:
-        return super()._generate_id()  # type: ignore[misc]
+        return cast(ThreadProtocol, super())._generate_id()
 
     def can_view_thread(self, user_id: int, thread_id: int) -> bool:
-        return super().can_view_thread(user_id, thread_id)  # type: ignore[misc]
+        return cast(ThreadProtocol, super()).can_view_thread(user_id, thread_id)
 
     def can_send_in_thread(self, user_id: int, thread_id: int) -> bool:
-        return super().can_send_in_thread(user_id, thread_id)  # type: ignore[misc]
+        return cast(ThreadProtocol, super()).can_send_in_thread(user_id, thread_id)
 
     def can_manage_thread(self, user_id: int, thread_id: int) -> bool:
-        return super().can_manage_thread(user_id, thread_id)  # type: ignore[misc]
+        return cast(ThreadProtocol, super()).can_manage_thread(user_id, thread_id)
 
     def join_thread(self, user_id: int, thread_id: int) -> ThreadMember:
-        return super().join_thread(user_id, thread_id)  # type: ignore[misc]
+        return cast(ThreadProtocol, super()).join_thread(user_id, thread_id)
 
     def _validate_thread_name(self, name: str) -> str:
-        return super()._validate_thread_name(name)  # type: ignore[misc]
+        return cast(ThreadProtocol, super())._validate_thread_name(name)
 
     def get_thread(self, user_id: int, thread_id: int) -> Optional[Thread]:
-        return super().get_thread(user_id, thread_id)  # type: ignore[misc]
+        return cast(ThreadProtocol, super()).get_thread(user_id, thread_id)
 
     def _unarchive_thread_internal(self, thread_id: int) -> None:
-        super()._unarchive_thread_internal(thread_id)  # type: ignore[misc]
+        cast(ThreadProtocol, super())._unarchive_thread_internal(thread_id)

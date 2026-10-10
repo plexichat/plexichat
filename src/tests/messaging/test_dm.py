@@ -3,6 +3,55 @@
 from unittest.mock import patch
 
 
+class TestDMCreateRaceRecovery:
+    """M13: concurrent DM creation must not depend on exception-message
+    sniffing ("UNIQUE"/"integrity") to recover the winner's conversation.
+
+    When two users race to create the same DM, the loser's lookup INSERT
+    fails. Recovery must re-query the lookup — regardless of how the
+    driver phrases the error — and return the winner's conversation.
+    """
+
+    def test_lookup_race_recovers_without_message_sniffing(
+        self, db, auth_manager, messaging_manager
+    ):
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register("m13u1", "m13u1@example.com", "TestPass123!")
+            user2 = auth_manager.register("m13u2", "m13u2@example.com", "TestPass123!")
+
+        # The winner's DM already exists.
+        winner = messaging_manager.create_dm(user1.id, user2.id)
+        assert winner is not None
+
+        svc = messaging_manager._conversation_svc
+        real_lookup = svc._repo.get_dm_lookup
+
+        state = {"pre_check_done": False}
+
+        def miss_once_then_find(u1, u2):
+            # First read (create_dm's pre-check) misses so the code proceeds
+            # to create; the recovery re-query finds the winner's row.
+            if not state["pre_check_done"]:
+                state["pre_check_done"] = True
+                return None
+            return real_lookup(u1, u2)
+
+        def explode(*args, **kwargs):
+            # Driver-agnostic failure text: no "unique"/"integrity" substrings.
+            raise RuntimeError("storage exploded")
+
+        with (
+            patch.object(svc._repo, "get_dm_lookup", side_effect=miss_once_then_find),
+            patch.object(svc._repo, "create_dm_lookup", side_effect=explode),
+        ):
+            recovered = messaging_manager.create_dm(user1.id, user2.id)
+
+        assert recovered is not None
+        assert recovered.id == winner.id
+
+
 class TestDM:
     """Test direct message functionality."""
 

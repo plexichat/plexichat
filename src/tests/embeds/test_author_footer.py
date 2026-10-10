@@ -48,11 +48,11 @@ class TestEmbedAuthor:
         embed = embeds._manager.create_embed(
             user_id=user.id,
             title="Author URL Test",
-            author={"name": "Jane Doe", "url": "https://jane.example.com"},
+            author={"name": "Jane Doe", "url": "https://example.com/jane"},
         )
 
         assert embed.author.name == "Jane Doe"
-        assert embed.author.url == "https://jane.example.com"
+        assert embed.author.url == "https://example.com/jane"
 
     def test_create_embed_with_author_icon(self, db, auth_manager):
         """Test creating embed with author icon."""
@@ -93,14 +93,14 @@ class TestEmbedAuthor:
             title="Full Author",
             author={
                 "name": "Alice Johnson",
-                "url": "https://alice.example.com",
-                "icon_url": "https://alice.example.com/avatar.png",
+                "url": "https://example.com/alice",
+                "icon_url": "https://example.com/alice/avatar.png",
             },
         )
 
         assert embed.author.name == "Alice Johnson"
-        assert embed.author.url == "https://alice.example.com"
-        assert embed.author.icon_url == "https://alice.example.com/avatar.png"
+        assert embed.author.url == "https://example.com/alice"
+        assert embed.author.icon_url == "https://example.com/alice/avatar.png"
 
     def test_author_name_max_length(self, db, auth_manager):
         """Test author name at max length (256 chars)."""
@@ -314,7 +314,7 @@ class TestAuthorAndFooterTogether:
         embed = embeds._manager.create_embed(
             user_id=user.id,
             title="Author and Footer",
-            author={"name": "Author Name", "url": "https://author.com"},
+            author={"name": "Author Name", "url": "https://example.com/author"},
             footer={"text": "Footer text", "icon_url": "https://example.com/icon.png"},
         )
 
@@ -390,6 +390,7 @@ class TestAuthorFooterCharacterCount:
         )
 
         assert embed is not None
+        assert embed.title == title
 
     def test_footer_text_counts_toward_total(self, db, auth_manager):
         """Test footer text counts toward total character limit."""
@@ -414,6 +415,7 @@ class TestAuthorFooterCharacterCount:
         )
 
         assert embed is not None
+        assert embed.title == title
 
     def test_author_and_footer_exceed_total(self, db, auth_manager):
         """Test author and footer together can exceed total limit."""

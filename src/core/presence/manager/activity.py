@@ -9,7 +9,6 @@ from typing import Optional, Dict, Union
 import utils.logger as logger
 from src.core.database import (
     cache_set,
-    valkey_available,
 )
 
 from .base import PresenceManagerBase
@@ -51,13 +50,25 @@ class ActivityMixin(PresenceManagerBase):
             try:
                 activity_type = ActivityType(activity_type.lower())
             except ValueError:
-                activity_type = ActivityType.PLAYING
+                raise InvalidActivityError(
+                    f"Invalid activity type: {activity_type}"
+                ) from None
 
         self._validate_user(user_id)
         self._ensure_presence_record(user_id)
 
         if not name or not name.strip():
             raise InvalidActivityError("Activity name cannot be empty")
+
+        name = name[:128]
+        if details:
+            details = details[:1024]
+        if state:
+            state = state[:1024]
+        if url:
+            if not (url.startswith("http://") or url.startswith("https://")):
+                raise InvalidActivityError("Invalid activity URL")
+            url = url[:1024]
 
         now = self._get_timestamp()
 
@@ -120,13 +131,15 @@ class ActivityMixin(PresenceManagerBase):
             "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
-        if valkey_available():
+        try:
             presence = self.get_presence(user_id, use_cache=False)
             cache_set(
                 f"presence:{user_id}",
                 self._presence_to_dict(presence),
                 ttl=self._presence_timeout_ms // 1000,
             )
+        except Exception as e:
+            logger.debug(f"Failed to cache presence for user {user_id}: {e}")
 
         logger.debug(f"User {user_id} activity set to {activity_type.value}: {name}")
 
@@ -142,20 +155,23 @@ class ActivityMixin(PresenceManagerBase):
         if not row:
             return None
 
-        return Activity(
-            activity_type=ActivityType(row["activity_type"]),
-            name=row["name"],
-            details=row["details"],
-            url=row["url"],
-            state=row["state"],
-            start_timestamp=row["start_timestamp"],
-            end_timestamp=row["end_timestamp"],
-            large_image=row["large_image"],
-            large_text=row["large_text"],
-            small_image=row["small_image"],
-            small_text=row["small_text"],
-            created_at=row["created_at"],
-        )
+        try:
+            return Activity(
+                activity_type=ActivityType(row["activity_type"]),
+                name=row["name"],
+                details=row["details"],
+                url=row["url"],
+                state=row["state"],
+                start_timestamp=row["start_timestamp"],
+                end_timestamp=row["end_timestamp"],
+                large_image=row["large_image"],
+                large_text=row["large_text"],
+                small_image=row["small_image"],
+                small_text=row["small_text"],
+                created_at=row["created_at"],
+            )
+        except ValueError:
+            return None
 
     def clear_activity(self, user_id: int) -> Presence:
         """Clear user's current activity."""
@@ -168,13 +184,15 @@ class ActivityMixin(PresenceManagerBase):
             "UPDATE pres_presence SET updated_at = ? WHERE user_id = ?", (now, user_id)
         )
 
-        if valkey_available():
+        try:
             presence = self.get_presence(user_id, use_cache=False)
             cache_set(
                 f"presence:{user_id}",
                 self._presence_to_dict(presence),
                 ttl=self._presence_timeout_ms // 1000,
             )
+        except Exception as e:
+            logger.debug(f"Failed to cache presence for user {user_id}: {e}")
 
         result = self.get_presence(user_id)
         return result

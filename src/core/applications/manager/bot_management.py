@@ -49,8 +49,11 @@ class BotManagementMixin(ApplicationManagerProtocol):
         permissions: str = "{}",
         bot_name: Optional[str] = None,
     ) -> ApprovedBot:
-        self._check_bot_license()
+        # SECURITY: authorize before licensing so a user without
+        # ``server.manage`` gets PermissionDeniedError rather than a
+        # license error (which would leak feature availability).
         self._require_server_manage_permission(approved_by, server_id)
+        self._check_bot_license()
 
         existing = self._db.fetch_one(
             "SELECT id FROM app_approved_bots WHERE server_id = ? AND application_id = ? AND status = 'approved'",
@@ -133,10 +136,21 @@ class BotManagementMixin(ApplicationManagerProtocol):
         self._require_server_manage_permission(user_id, server_id)
         now = self._get_timestamp()
 
-        self._db.execute(
-            "UPDATE app_approved_bots SET status = 'removed', updated_at = ? WHERE server_id = ? AND application_id = ?",
+        # SECURITY: only transition rows that are in an active state
+        # (approved or pending).  Previously the UPDATE targeted ALL rows
+        # regardless of current status, which would silently flip
+        # previously-denied requests to 'removed' — erasing audit
+        # history and allowing re-approval via the request-bot flow.
+        cursor = self._db.execute(
+            "UPDATE app_approved_bots SET status = 'removed', updated_at = ? "
+            "WHERE server_id = ? AND application_id = ? AND status IN ('approved', 'pending')",
             (now, server_id, application_id),
         )
+        rows = getattr(cursor, "rowcount", 0)
+        if rows == 0:
+            raise InstallationNotFoundError(
+                f"No active bot installation found for app {application_id} on server {server_id}"
+            )
 
         try:
             self.uninstall_application(application_id, server_id, user_id)
@@ -145,7 +159,10 @@ class BotManagementMixin(ApplicationManagerProtocol):
         except Exception as e:
             logger.warning(f"Failed to uninstall bot on removal: {e}")
 
-        logger.info(f"Bot {application_id} removed from server {server_id}")
+        logger.info(
+            f"Bot {application_id} removed from server {server_id} "
+            f"({rows} row(s) transitioned)"
+        )
         return True
 
     def get_approved_bots(
@@ -203,6 +220,21 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if already_approved:
             raise BotAlreadyApprovedError("Bot is already approved on this server")
 
+        import utils.config as cfg
+
+        bot_config = cfg.get("bots", {})
+        max_pending = bot_config.get("max_requests_pending_per_user", 5)
+        pending_count = self._db.fetch_one(
+            "SELECT COUNT(*) as count FROM app_bot_requests WHERE requester_id = ? AND status = 'pending'",
+            (requester_id,),
+        )
+        current_pending = pending_count["count"] if pending_count else 0
+        if current_pending >= max_pending:
+            raise BotRequestError(
+                f"Maximum of {max_pending} pending bot requests per user",
+                request_id=None,
+            )
+
         request_id = self._generate_id()
         now = self._get_timestamp()
 
@@ -248,6 +280,18 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         if row["server_id"] != server_id:
             raise BotRequestError("Bot request not found", request_id)
+
+        if row["status"] != "pending":
+            raise BotRequestError(f"Request already {row['status']}", request_id)
+
+        # SECURITY: prevent self-review.  A requester must not approve or
+        # deny their own bot request — that would bypass the second-party
+        # review that the approval flow is designed to enforce.
+        if row["requester_id"] == reviewer_id:
+            raise PermissionDeniedError(
+                "Requesters cannot review their own bot request",
+                "bots.review",
+            )
 
         self._require_server_manage_permission(reviewer_id, row["server_id"])
 
@@ -318,16 +362,34 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         return [row_to_bot_request(row) for row in rows]
 
-    def get_bot_profile(self, application_id: SnowflakeID) -> Optional[BotProfile]:
+    def get_bot_profile(
+        self, application_id: SnowflakeID, viewer_id: Optional[SnowflakeID] = None
+    ) -> Optional[BotProfile]:
+        """Get a bot's profile.
+
+        A profile marked private is only returned to the application owner
+        (``viewer_id``). The directory already filters private entries, so
+        answering a direct lookup without this check would leak them anyway.
+        Returns ``None`` for a hidden profile exactly as for a missing one, so
+        the caller cannot distinguish "private" from "does not exist".
+        """
         row = self._db.fetch_one(
-            """SELECT application_id, description, short_description, avatar_url, banner_url,
-                      website_url, support_url, github_url, tags, nsfw, private, updated_at
-               FROM app_bot_profiles WHERE application_id = ?""",
+            """SELECT bp.application_id, bp.description, bp.short_description,
+                      bp.avatar_url, bp.banner_url, bp.website_url, bp.support_url,
+                      bp.github_url, bp.tags, bp.nsfw, bp.private, bp.updated_at,
+                      a.owner_id
+               FROM app_bot_profiles bp
+               JOIN app_applications a ON a.id = bp.application_id
+               WHERE bp.application_id = ?""",
             (application_id,),
         )
 
         if not row:
             return None
+
+        if row["private"]:
+            if viewer_id is None or int(row["owner_id"]) != int(viewer_id):
+                return None
 
         return row_to_bot_profile(row)
 
@@ -352,7 +414,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
         if app.owner_id != user_id:
             raise ApplicationAccessDeniedError("You do not own this application")
 
-        existing = self.get_bot_profile(application_id)
+        existing = self.get_bot_profile(application_id, viewer_id=user_id)
         now = self._get_timestamp()
 
         if existing:
@@ -421,35 +483,55 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         logger.info(f"Bot profile updated for application {application_id}")
 
-        result = self.get_bot_profile(application_id)
-        assert result is not None
+        result = self.get_bot_profile(application_id, viewer_id=user_id)
+        if result is None:
+            raise ApplicationNotFoundError("Bot profile not found after save")
         return result
 
     def get_user_authorized_apps(
         self, user_id: SnowflakeID
     ) -> List[UserAuthorizedApplication]:
+        # M12: expired or revoked tokens must never surface as authorized.
+        # The SQL WHERE clause is the primary filter; the Python loop below
+        # is defense-in-depth so a row that slips past the query (quirky
+        # driver, clock skew between layers) can never leak an expired or
+        # revoked grant into the authorized list.
+        now_ms = self._get_timestamp()
         rows = self._db.fetch_all(
             """SELECT t.id, t.application_id, t.scopes, t.created_at, t.expires_at,
+                      t.revoked, t.last_used_at,
                       a.name as app_name, a.icon_url as app_icon
                FROM app_oauth_tokens t
                JOIN app_applications a ON t.application_id = a.id
-               WHERE t.user_id = ? AND t.revoked = 0
+               WHERE t.user_id = ? AND t.revoked = 0 AND t.expires_at > ?
                ORDER BY t.created_at DESC""",
-            (user_id,),
+            (user_id, now_ms),
         )
 
-        return [
-            UserAuthorizedApplication(
-                id=row["id"],
-                application_id=row["application_id"],
-                application_name=row["app_name"],
-                application_icon=row["app_icon"],
-                scopes=json.loads(row["scopes"]) if row["scopes"] else [],
-                authorized_at=row["created_at"],
-                last_used_at=row["expires_at"],
+        apps = []
+        for row in rows:
+            try:
+                revoked = int(row["revoked"]) if row["revoked"] is not None else 0
+            except (TypeError, ValueError):
+                continue  # fail closed: unreadable flag -> not authorized
+            try:
+                expires_at = int(row["expires_at"])
+            except (TypeError, ValueError):
+                continue  # fail closed: no parseable expiry -> not authorized
+            if revoked or expires_at <= now_ms:
+                continue
+            apps.append(
+                UserAuthorizedApplication(
+                    id=row["id"],
+                    application_id=row["application_id"],
+                    application_name=row["app_name"],
+                    application_icon=row["app_icon"],
+                    scopes=json.loads(row["scopes"]) if row["scopes"] else [],
+                    authorized_at=row["created_at"],
+                    last_used_at=row["last_used_at"],
+                )
             )
-            for row in rows
-        ]
+        return apps
 
     def revoke_authorized_app(
         self, token_id: SnowflakeID, user_id: SnowflakeID

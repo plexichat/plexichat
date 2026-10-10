@@ -12,18 +12,15 @@ class ApplicationManagerProtocol:
     _oauth: Any = None
     _commands: Any = None
     _interactions: Any = None
-    _rate_limits: Dict[int, Dict[str, int]] = {}
+    _rate_limits: Dict[int, Dict[str, Any]] = {}
 
-    def _get_timestamp(self) -> int:
-        return super()._get_timestamp()  # type: ignore[misc]
+    def _get_timestamp(self) -> int: ...
 
-    def _generate_id(self) -> int:
-        return super()._generate_id()  # type: ignore[misc]
+    def _generate_id(self) -> int: ...
 
     def get_application(
         self, application_id: int, user_id: Optional[int] = None
-    ) -> Optional[Application]:
-        return super().get_application(application_id, user_id)  # type: ignore[misc]
+    ) -> Optional[Application]: ...
 
     def install_application(
         self,
@@ -32,12 +29,8 @@ class ApplicationManagerProtocol:
         installer_id: int,
         permissions: str = "0",
         scopes: Optional[list[str]] = None,
-    ) -> ApplicationInstallation:
-        return super().install_application(  # type: ignore[reportAttributeAccessIssue]
-            application_id, server_id, installer_id, permissions, scopes
-        )
+    ) -> ApplicationInstallation: ...
 
     def uninstall_application(
         self, application_id: int, server_id: int, user_id: int
-    ) -> bool:
-        return super().uninstall_application(application_id, server_id, user_id)  # type: ignore[misc]
+    ) -> bool: ...

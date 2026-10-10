@@ -129,6 +129,9 @@ class AvatarUserMixin(AvatarProtocol):
         self._cache_binary(
             f"user_avatar_meta:{user_id}", f"{content_type}|{checksum}".encode()
         )
+        # Invalidate any previously cached ETag/checksum so 304 caching
+        # cannot serve a stale avatar after an update.
+        self._delete_cached_binary(f"user_avatar_checksum:{user_id}")
 
         logger.info(
             f"Avatar uploaded for user {user_id}: {width}x{height}, {len(processed_data)} bytes"
@@ -185,7 +188,20 @@ class AvatarUserMixin(AvatarProtocol):
         if bin_data and meta_data:
             try:
                 content_type, checksum = meta_data.decode().split("|")
-                return bin_data, content_type, checksum
+                # SECURITY (Agent7 L1): never hand out a stored SVG /
+                # script-carrying payload raw, even from cache (legacy rows
+                # written before the upload guard existed).
+                from .svg_guard import is_unsafe_serve_payload
+
+                if is_unsafe_serve_payload(content_type, bin_data):
+                    logger.warning(
+                        f"Blocked unsafe cached avatar for user {user_id} "
+                        f"(type={content_type})"
+                    )
+                    self._delete_cached_binary(f"user_avatar_bin:{user_id}")
+                    self._delete_cached_binary(f"user_avatar_meta:{user_id}")
+                else:
+                    return bin_data, content_type, checksum
             except Exception:
                 pass  # Fall back to DB if cache format is weird
 
@@ -197,6 +213,18 @@ class AvatarUserMixin(AvatarProtocol):
         )
 
         if not row:
+            return None
+
+        # SECURITY (Agent7 L1): a poisoned legacy row (SVG/script stored
+        # before the upload guard) must never be served raw. Returning None
+        # makes the route fall back to the generated default SVG.
+        from .svg_guard import is_unsafe_serve_payload as _is_unsafe
+
+        if _is_unsafe(row["content_type"], row["avatar_data"]):
+            logger.warning(
+                f"Blocked unsafe stored avatar for user {user_id} "
+                f"(type={row['content_type']})"
+            )
             return None
 
         # 3. Cache result
@@ -229,6 +257,7 @@ class AvatarUserMixin(AvatarProtocol):
         # Invalidate cache
         self._delete_cached_binary(f"user_avatar_bin:{user_id}")
         self._delete_cached_binary(f"user_avatar_meta:{user_id}")
+        self._delete_cached_binary(f"user_avatar_checksum:{user_id}")
 
         deleted = result.rowcount if hasattr(result, "rowcount") else 0
         if deleted:

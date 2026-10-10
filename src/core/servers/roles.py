@@ -52,10 +52,11 @@ def update_role(
     color: Optional[str] = None,
     hoist: Optional[bool] = None,
     mentionable: Optional[bool] = None,
+    position: Optional[int] = None,
 ) -> Role:
     """Update role settings."""
     return _get_manager().update_role(
-        user_id, role_id, name, permissions, color, hoist, mentionable
+        user_id, role_id, name, permissions, color, hoist, mentionable, position
     )
 
 

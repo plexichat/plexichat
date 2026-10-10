@@ -6,7 +6,10 @@ imports because the DB access is lazy (imported inside the function body).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def record_system_alert(
@@ -19,8 +22,9 @@ def record_system_alert(
 ) -> None:
     """Persist a system alert to the database.
 
-    Best-effort — failures are silently swallowed so callers are
-    never disrupted by DB issues.
+    Best-effort — failures never propagate to callers, but they are
+    logged at WARNING (instead of silently dropped) so a broken alert
+    pipeline is diagnosable.
 
     Args:
         source: Subsystem identifier (cross_worker, valkey, db_pool, approvals, …).
@@ -45,10 +49,19 @@ def record_system_alert(
                 source,
                 event_type,
                 severity,
-                _json.dumps(details) if details else None,
+                _json.dumps(details) if details is not None else None,
                 target_path,
                 int(time.time()),
             ),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Stay non-raising so callers are never disrupted by DB issues,
+        # but surface the loss at WARNING: a failing alert pipeline would
+        # otherwise drop alerts with zero diagnosability.
+        logger.warning(
+            "system_alerts: failed to record %r alert (source=%r, severity=%r): %s",
+            event_type,
+            source,
+            severity,
+            exc,
+        )

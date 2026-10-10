@@ -1,15 +1,15 @@
-# Access Blocked
+# Access blocked
 
-Your access to this Plexichat server has been restricted.
+Your access to this Plexichat server is restricted.
 
-This usually happens for one of the following reasons:
+This can happen for the following reasons:
 
-1. **Abuse Prevention:** automated systems detected abusive or suspicious traffic from your IP address.
-2. **Manual Block:** an administrator manually blocked the IP address or network you are using.
-3. **Policy Enforcement:** repeated violations triggered a temporary or permanent access restriction.
+- **Abuse prevention** — Automated systems detected suspicious or abusive traffic from your IP address or network.
+- **Manual block** — An administrator blocked your IP address or network.
+- **Policy enforcement** — Repeated violations triggered a temporary or permanent restriction.
 
-## What to do next?
+## What you can do next
 
-If you believe this was a mistake, wait for any temporary restriction to expire or contact the server administrator through another channel.
+If you believe this is a mistake, wait for a temporary restriction to expire or contact the server administrator through another channel.
 
-If you are an administrator, review the admin security tools before removing the block.
+If you are an administrator, review the security and IP blocking settings in the admin panel before you remove the block.

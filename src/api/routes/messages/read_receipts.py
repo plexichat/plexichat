@@ -82,7 +82,7 @@ async def get_unread_count(
             messaging.get_unread_count, current_user.user_id, conv_id
         )
         return UnreadCountResponse(
-            channel_id=SnowflakeID(channel_id), unread_count=counts.get(cid, 0)
+            channel_id=SnowflakeID(channel_id), unread_count=counts.get(conv_id, 0)
         )
     except HTTPException:
         raise
@@ -347,6 +347,77 @@ async def acknowledge_messages(
         )
 
 
+async def _dispatch_message_ack_broadcast(
+    *,
+    channel_id: int,
+    message_id: Optional[int],
+    current_user_id: int,
+) -> None:
+    """Fan out a MESSAGE_ACK event for a channel after read tracking.
+
+    Shared by the single-channel ack and the bulk ack paths so every route
+    that marks messages read broadcasts the real-time event other
+    participants rely on for live read checkmarks (B4). Best-effort: any
+    failure to resolve targets or dispatch is logged and never breaks the
+    ack response.
+    """
+    try:
+        from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
+
+        if not ws_is_setup():
+            return
+        dispatcher = get_dispatcher()
+
+        msg_manager = api.get_messaging()
+        servers_mod = api.get_servers()
+        user_ids = []
+        is_server_channel = False
+        server_id = None
+        if servers_mod:
+            try:
+                channel = servers_mod.get_channel(channel_id, current_user_id)
+                if channel:
+                    is_server_channel = True
+                    server_id = getattr(channel, "server_id", None)
+            except Exception:
+                pass  # Fall through to the participant lookup below.
+        try:
+            if is_server_channel and server_id is not None and servers_mod is not None:
+                user_ids = servers_mod.get_member_user_ids(int(server_id))
+            elif msg_manager is not None:
+                user_ids = msg_manager.get_manager().get_participant_ids(channel_id)
+        except Exception as e:
+            logger.debug(
+                f"Bulk ACK: failed to resolve MESSAGE_ACK targets for {channel_id}: {e}"
+            )
+            return
+
+        user_ids = [uid for uid in user_ids if int(uid) != int(current_user_id)]
+        if not user_ids:
+            return
+
+        event = Event(
+            event_type=EventType.MESSAGE_ACK,
+            data={
+                "channel_id": str(channel_id),
+                "user_id": str(current_user_id),
+                "message_id": str(message_id) if message_id is not None else None,
+            },
+        )
+        await dispatcher.dispatch_event(event, user_ids)
+        logger.debug(
+            f"Bulk ACK: broadcast MESSAGE_ACK for channel {channel_id} "
+            f"to {len(user_ids)} users"
+        )
+    except Exception as e:
+        logger.error(
+            f"Bulk ACK: failed to broadcast MESSAGE_ACK for channel {channel_id}: {e}",
+            exc_info=True,
+        )
+
+
 @router.post(
     "/channels/ack/bulk",
     response_model=SuccessResponse,
@@ -374,12 +445,53 @@ async def acknowledge_messages_bulk(
             },
         )
 
+    max_channels = 100
+    if len(body) > max_channels:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": f"Too many channels (max {max_channels})",
+                }
+            },
+        )
+
     try:
+        import asyncio
+
         for channel_id, message_id in body.items():
             try:
                 cid = int(channel_id)
                 mid = int(message_id) if message_id else None
-                msg_manager.mark_read(current_user.user_id, cid, mid)
+                # ``mark_read`` is synchronous; keep it off the event loop so
+                # one request cannot block the whole worker.
+                marked = await run_in_threadpool(
+                    msg_manager.mark_read, current_user.user_id, cid, mid
+                )
+                if not marked:
+                    continue
+
+                # Mirror the single-channel ack: clear the channel's
+                # notifications and broadcast MESSAGE_ACK so other
+                # participants see live read checkmarks (B4).
+                notif_mod = api.get_notifications()
+                if notif_mod:
+                    try:
+                        notif_mod.mark_channel_read(current_user.user_id, cid)
+                    except Exception as ne:
+                        logger.debug(
+                            f"Bulk ACK: failed to mark notifications read for "
+                            f"channel {cid}: {ne}"
+                        )
+
+                asyncio.create_task(
+                    _dispatch_message_ack_broadcast(
+                        channel_id=cid,
+                        message_id=mid,
+                        current_user_id=current_user.user_id,
+                    )
+                )
             except Exception as e:
                 logger.warning(f"Bulk ACK: Failed for channel {channel_id}: {e}")
 

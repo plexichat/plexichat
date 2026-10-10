@@ -3,12 +3,49 @@ Admin role management routes.
 """
 
 from fastapi import APIRouter, Request, HTTPException
-from src.api.schemas.common import SuccessResponse
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeID,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
 from .utils import check_host_restriction, require_admin_permission
 from typing import Optional
 from pydantic import BaseModel, Field
 
 router = APIRouter()
+
+
+def _serialize_role_row(row) -> dict:
+    """Serialize an ``admin_roles`` row, stringifying its snowflake ids.
+
+    Role ids and the creating admin's id are snowflakes (see
+    ``generate_snowflake_id``); a JS Number cannot hold a 64-bit id exactly,
+    so emitting them as numbers would round them in the admin UI.
+    """
+    if isinstance(row, dict):
+        created_by = row.get("created_by")
+        return {
+            "id": str(row["id"]),
+            "name": row["name"],
+            "description": row["description"],
+            "permissions": row["permissions"],
+            "created_at": row["created_at"],
+            "created_by": str(created_by) if created_by is not None else None,
+            "updated_at": row.get("updated_at"),
+            "is_system": bool(row["is_system"]),
+        }
+    created_by = row[5] if len(row) > 5 else None
+    return {
+        "id": str(row[0]),
+        "name": row[1],
+        "description": row[2],
+        "permissions": row[3],
+        "created_at": row[4],
+        "created_by": str(created_by) if created_by is not None else None,
+        "updated_at": row[6] if len(row) > 6 else None,
+        "is_system": bool(row[7]) if len(row) > 7 else False,
+    }
 
 
 class RoleCreate(BaseModel):
@@ -17,6 +54,7 @@ class RoleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
     description: str = Field(..., max_length=500)
     permissions: dict = Field(...)
+    position: Optional[int] = Field(None, ge=0, le=99)
 
 
 class RoleUpdate(BaseModel):
@@ -29,11 +67,18 @@ class RoleUpdate(BaseModel):
 class RoleAssignment(BaseModel):
     """Request to assign a role to an admin."""
 
-    admin_id: int
-    role_id: int
+    admin_id: SnowflakeID
+    role_id: SnowflakeID
 
 
-@router.get("/roles")
+@router.get(
+    "/roles",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_roles(request: Request):
     """
     List all available admin roles.
@@ -56,40 +101,19 @@ async def list_roles(request: Request):
         ORDER BY is_system DESC, name ASC
     """)
 
-    roles = []
-    for row in rows:
-        if isinstance(row, dict):
-            roles.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "description": row["description"],
-                    "permissions": row["permissions"],
-                    "created_at": row["created_at"],
-                    "created_by": row["created_by"],
-                    "updated_at": row.get("updated_at"),
-                    "is_system": bool(row["is_system"]),
-                }
-            )
-        else:
-            roles.append(
-                {
-                    "id": row[0],
-                    "name": row[1],
-                    "description": row[2],
-                    "permissions": row[3],
-                    "created_at": row[4],
-                    "created_by": row[5],
-                    "updated_at": row[6] if len(row) > 6 else None,
-                    "is_system": bool(row[7]) if len(row) > 7 else False,
-                }
-            )
-
-    return {"roles": roles}
+    return {"roles": [_serialize_role_row(row) for row in rows]}
 
 
-@router.get("/roles/{role_id}")
-async def get_role(request: Request, role_id: int):
+@router.get(
+    "/roles/{role_id}",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_role(request: Request, role_id: SnowflakeIDParam):
     """
     Get details of a specific role.
     """
@@ -120,31 +144,19 @@ async def get_role(request: Request, role_id: int):
             detail={"error": {"code": 404, "message": "Role not found"}},
         )
 
-    if isinstance(row, dict):
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "description": row["description"],
-            "permissions": row["permissions"],
-            "created_at": row["created_at"],
-            "created_by": row["created_by"],
-            "updated_at": row.get("updated_at"),
-            "is_system": bool(row["is_system"]),
-        }
-    else:
-        return {
-            "id": row[0],
-            "name": row[1],
-            "description": row[2],
-            "permissions": row[3],
-            "created_at": row[4],
-            "created_by": row[5],
-            "updated_at": row[6] if len(row) > 6 else None,
-            "is_system": bool(row[7]) if len(row) > 7 else False,
-        }
+    return _serialize_role_row(row)
 
 
-@router.post("/roles", response_model=SuccessResponse)
+@router.post(
+    "/roles",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_role(request: Request, role_data: RoleCreate):
     """
     Create a new admin role.
@@ -168,7 +180,47 @@ async def create_role(request: Request, role_data: RoleCreate):
     now = int(time.time() * 1000)
     role_id = generate_snowflake_id()
 
-    # Validate permissions JSON
+    # Only documented, non-wildcard scopes may be delegated. The wildcard
+    # permission is reserved for the seeded system super_admin role.
+    from src.core.admin.permissions import PERMISSION_SCOPES, get_admin_max_position
+
+    if not isinstance(role_data.permissions, dict) or any(
+        not isinstance(name, str)
+        or name == "*"
+        or name.endswith(".*")
+        or name not in PERMISSION_SCOPES
+        or not isinstance(granted, bool)
+        for name, granted in role_data.permissions.items()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "Invalid or non-delegable permission scope",
+                }
+            },
+        )
+
+    actor_position = get_admin_max_position(db, admin_id)
+    requested_position = (
+        actor_position - 1 if role_data.position is None else role_data.position
+    )
+    if (
+        actor_position <= 0
+        or requested_position < 0
+        or requested_position >= actor_position
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Role position must be below your own",
+                }
+            },
+        )
+
     try:
         permissions_json = json.dumps(role_data.permissions)
     except (TypeError, ValueError):
@@ -189,8 +241,9 @@ async def create_role(request: Request, role_data: RoleCreate):
 
     db.execute(
         """
-        INSERT INTO admin_roles (id, name, description, permissions, created_at, created_by, is_system)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO admin_roles
+            (id, name, description, permissions, created_at, created_by, is_system, position)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
     """,
         (
             role_id,
@@ -199,6 +252,7 @@ async def create_role(request: Request, role_data: RoleCreate):
             permissions_json,
             now,
             admin_id,
+            requested_position,
         ),
     )
 
@@ -218,8 +272,20 @@ async def create_role(request: Request, role_data: RoleCreate):
     return SuccessResponse(success=True, message="Role updated successfully")
 
 
-@router.put("/roles/{role_id}", response_model=SuccessResponse)
-async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
+@router.put(
+    "/roles/{role_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def update_role(
+    request: Request, role_id: SnowflakeIDParam, role_data: RoleUpdate
+):
     """
     Update an existing admin role.
     """
@@ -278,6 +344,25 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
         params.append(role_data.description)
 
     if role_data.permissions is not None:
+        from src.core.admin.permissions import PERMISSION_SCOPES
+
+        if not isinstance(role_data.permissions, dict) or any(
+            not isinstance(name, str)
+            or name == "*"
+            or name.endswith(".*")
+            or name not in PERMISSION_SCOPES
+            or not isinstance(granted, bool)
+            for name, granted in role_data.permissions.items()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "Invalid or non-delegable permission scope",
+                    }
+                },
+            )
         try:
             permissions_json = json.dumps(role_data.permissions)
             updates.append("permissions = ?")
@@ -316,8 +401,18 @@ async def update_role(request: Request, role_id: int, role_data: RoleUpdate):
     return SuccessResponse(success=True, message="Role updated successfully")
 
 
-@router.delete("/roles/{role_id}", response_model=SuccessResponse)
-async def delete_role(request: Request, role_id: int):
+@router.delete(
+    "/roles/{role_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def delete_role(request: Request, role_id: SnowflakeIDParam):
     """
     Delete an admin role.
     """
@@ -402,13 +497,25 @@ async def delete_role(request: Request, role_id: int):
     return SuccessResponse(success=True, message="Role deleted successfully")
 
 
-@router.post("/roles/assign", response_model=SuccessResponse)
+@router.post(
+    "/roles/assign",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role or admin not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def assign_role(request: Request, assignment: RoleAssignment):
     """
     Assign a role to an admin.
     """
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "admin.roles")
+    target_admin_id = int(assignment.admin_id)
+    target_role_id = int(assignment.role_id)
 
     import src.api as api
 
@@ -424,9 +531,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     now = int(time.time() * 1000)
 
     # Check if role exists
-    role = db.fetch_one(
-        "SELECT id FROM admin_roles WHERE id = ?", (assignment.role_id,)
-    )
+    role = db.fetch_one("SELECT id FROM admin_roles WHERE id = ?", (target_role_id,))
     if not role:
         raise HTTPException(
             status_code=404,
@@ -434,9 +539,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         )
 
     # Check if admin exists
-    admin = db.fetch_one(
-        "SELECT id FROM admin_users WHERE id = ?", (assignment.admin_id,)
-    )
+    admin = db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (target_admin_id,))
     if not admin:
         raise HTTPException(
             status_code=404,
@@ -446,7 +549,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     # Enforce hierarchy: can only assign roles if you can manage the target admin AND the role
     from src.core.admin.permissions import can_manage_admin, can_manage_role
 
-    if not can_manage_admin(db, admin_id, assignment.admin_id):
+    if not can_manage_admin(db, admin_id, target_admin_id):
         raise HTTPException(
             status_code=403,
             detail={
@@ -456,7 +559,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
                 }
             },
         )
-    if not can_manage_role(db, admin_id, assignment.role_id):
+    if not can_manage_role(db, admin_id, target_role_id):
         raise HTTPException(
             status_code=403,
             detail={
@@ -470,7 +573,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     # Check if assignment already exists
     existing = db.fetch_one(
         "SELECT admin_id FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",
-        (assignment.admin_id, assignment.role_id),
+        (target_admin_id, target_role_id),
     )
     if existing:
         raise HTTPException(
@@ -485,7 +588,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
         VALUES (?, ?, ?, ?)
     """,
-        (assignment.admin_id, assignment.role_id, now, admin_id),
+        (target_admin_id, target_role_id, now, admin_id),
     )
 
     # Log the action
@@ -496,21 +599,33 @@ async def assign_role(request: Request, assignment: RoleAssignment):
         admin_id,
         "role.assign",
         "admin_user",
-        assignment.admin_id,
-        {"role_id": assignment.role_id},
+        target_admin_id,
+        {"role_id": target_role_id},
         request.client.host if request.client else "unknown",
     )
 
     return SuccessResponse(success=True, message="Role assigned successfully")
 
 
-@router.delete("/roles/{admin_id}/{role_id}", response_model=SuccessResponse)
-async def revoke_role(request: Request, admin_id: int, role_id: int):
+@router.delete(
+    "/roles/{admin_id}/{role_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Role assignment not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def revoke_role(
+    request: Request, admin_id: SnowflakeIDParam, role_id: SnowflakeIDParam
+):
     """
     Revoke a role from an admin.
     """
     check_host_restriction(request)
-    current_admin_id = require_admin_permission(request, "admin.roles.assign")
+    current_admin_id = require_admin_permission(request, "admin.roles")
 
     import src.api as api
 
@@ -577,13 +692,21 @@ async def revoke_role(request: Request, admin_id: int, role_id: int):
     return SuccessResponse(success=True, message="Role revoked successfully")
 
 
-@router.get("/admins/{admin_id}/roles")
-async def get_admin_roles(request: Request, admin_id: int):
+@router.get(
+    "/admins/{admin_id}/roles",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_admin_roles(request: Request, admin_id: SnowflakeIDParam):
     """
     Get all roles assigned to a specific admin.
     """
     check_host_restriction(request)
-    require_admin_permission(request, "admin.roles.read")
+    require_admin_permission(request, "admin.roles")
 
     import src.api as api
 
@@ -608,28 +731,34 @@ async def get_admin_roles(request: Request, admin_id: int):
     roles = []
     for row in rows:
         if isinstance(row, dict):
+            assigned_by = row.get("assigned_by")
             roles.append(
                 {
-                    "id": row["id"],
+                    "id": str(row["id"]),
                     "name": row["name"],
                     "description": row["description"],
                     "permissions": row["permissions"],
                     "is_system": bool(row["is_system"]),
                     "assigned_at": row["assigned_at"],
-                    "assigned_by": row["assigned_by"],
+                    "assigned_by": (
+                        str(assigned_by) if assigned_by is not None else None
+                    ),
                 }
             )
         else:
+            assigned_by = row[6] if len(row) > 6 else None
             roles.append(
                 {
-                    "id": row[0],
+                    "id": str(row[0]),
                     "name": row[1],
                     "description": row[2],
                     "permissions": row[3],
                     "is_system": bool(row[4]),
                     "assigned_at": row[5],
-                    "assigned_by": row[6],
+                    "assigned_by": (
+                        str(assigned_by) if assigned_by is not None else None
+                    ),
                 }
             )
 
-    return {"admin_id": admin_id, "roles": roles}
+    return {"admin_id": str(admin_id), "roles": roles}

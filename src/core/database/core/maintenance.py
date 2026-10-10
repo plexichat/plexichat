@@ -29,17 +29,25 @@ class _DatabaseMaintenanceProtocol(Protocol):
         self, query: str, params: Optional[tuple] = None
     ) -> Optional[dict]: ...
     def fetch_all(self, query: str, params: Optional[tuple] = None) -> list: ...
-    def execute(self, query: str, params: Optional[tuple] = None) -> None: ...
+    def execute(self, query: str, params: Optional[tuple] = None) -> DbCursor: ...
     def table_exists(self, table: str) -> bool: ...
     def column_exists(self, table: str, column: str) -> bool: ...
     def index_exists(self, index_name: str) -> bool: ...
     def _sanitize_identifier(self, identifier: str) -> str: ...
+    def _validate_transaction_state(self) -> None: ...
+    def _handle_execution_error(
+        self, conn: Any, cursor: Any, e: BaseException, query: str
+    ) -> None: ...
+    def _get_conn(self, auto_connect: bool = True) -> DbConnection: ...
+    def _invalidate_query_cache(self) -> None: ...
+    def _touch_pool(self, conn: Any, in_transaction: bool = False) -> None: ...
+    def _generate_correlation_id(self) -> str: ...
 
 
 class DatabaseMaintenanceMixin:
-    def _validate_transaction_state(self):
-        if self.type == "postgres" and hasattr(self._local, "connection"):  # pyright: ignore[reportAttributeAccessIssue]
-            conn = self._local.connection  # pyright: ignore[reportAttributeAccessIssue]
+    def _validate_transaction_state(self: _DatabaseMaintenanceProtocol) -> None:
+        if self.type == "postgres" and hasattr(self._local, "connection"):
+            conn = self._local.connection
             try:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
@@ -71,28 +79,71 @@ class DatabaseMaintenanceMixin:
                         self.in_transaction = False
 
     def _handle_execution_error(
-        self,
-        conn: DbConnection,
-        cursor: DbCursor,
-        e: Exception,
+        self: _DatabaseMaintenanceProtocol,
+        conn: Any,
+        cursor: Any,
+        e: BaseException,
         query: str,
-    ):
+    ) -> None:
         error_type = type(e).__name__
-        logger.error(f"Query failed ({error_type}): {str(e)[:100]}")
+        logger.error(f"Query execution failed ({error_type}): {str(e)[:100]}")
 
+        fatal_cleanup_error: Optional[RuntimeError] = None
         try:
-            if self.type == "postgres":  # pyright: ignore[reportAttributeAccessIssue]
+            if self.type == "postgres":
                 if conn and getattr(conn, "closed", 0) > 0:
                     self.transaction_depth = 0
                     self.in_transaction = False
-                elif conn and self.transaction_depth > 0:
+                elif conn and self.transaction_depth > 1:
                     try:
                         if cursor is not None:
                             cursor.execute(
                                 f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}"
                             )
-                    except Exception:
+                    except Exception as rb_e:
+                        # The savepoint could not be rolled back, so the only
+                        # safe recovery is a FULL rollback. That aborts the
+                        # caller's entire outer transaction — silently reset-
+                        # ting depth here previously let the caller believe it
+                        # was still inside a live transaction and later
+                        # commits became silent no-ops (partial-commit data
+                        # loss). Surface it loudly instead.
+                        logger.error(
+                            "Savepoint rollback failed during error cleanup; "
+                            f"rolling back ENTIRE transaction: {rb_e}"
+                        )
+                        try:
+                            conn.rollback()
+                        except Exception as full_rb_e:
+                            logger.error(
+                                f"Full rollback also failed during cleanup: {full_rb_e}"
+                            )
+                        finally:
+                            self.transaction_depth = 0
+                            self.in_transaction = False
+                        fatal_cleanup_error = RuntimeError(
+                            "Savepoint rollback failed; the outer transaction "
+                            f"was fully rolled back: {rb_e}"
+                        )
+                elif conn and self.transaction_depth == 1:
+                    # Outermost transaction: ``begin_transaction`` only issues
+                    # a SAVEPOINT for depth >= 2, so ``ROLLBACK TO SAVEPOINT
+                    # sp_1`` does not exist and itself fails with 3B001 -- the
+                    # recovery below then masked the ORIGINAL error with a
+                    # RuntimeError, so callers never saw the failure they
+                    # caused. PostgreSQL also refuses to serve further
+                    # statements (25P02) until the aborted transaction is
+                    # closed, so a full rollback is the only recovery. Reset
+                    # the depth so the caller's next ``commit()`` cannot
+                    # silently no-op (partial-commit data loss), and let the
+                    # original error propagate unchanged.
+                    try:
                         conn.rollback()
+                    except Exception as full_rb_e:
+                        logger.error(
+                            f"Full rollback also failed during cleanup: {full_rb_e}"
+                        )
+                    finally:
                         self.transaction_depth = 0
                         self.in_transaction = False
                 elif conn:
@@ -104,9 +155,14 @@ class DatabaseMaintenanceMixin:
             logger.error(f"Error during error cleanup: {cleanup_e}")
         finally:
             if cursor is not None:
-                cursor.close()
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+        if fatal_cleanup_error is not None:
+            raise fatal_cleanup_error from e
 
-    def convert_schema(self, schema: str) -> str:
+    def convert_schema(self: _DatabaseMaintenanceProtocol, schema: str) -> str:
         """Convert a SQLite-authored schema into a PostgreSQL-compatible one.
 
         The codebase writes a single canonical schema string in SQLite dialect
@@ -134,7 +190,7 @@ class DatabaseMaintenanceMixin:
         type names and a few well-defined constructs, not the contents
         of string literals or comments.
         """
-        if self.type != "postgres":  # pyright: ignore[reportAttributeAccessIssue]
+        if self.type != "postgres":
             return schema
 
         import re
@@ -176,23 +232,25 @@ class DatabaseMaintenanceMixin:
 
         return converted
 
-    def _sanitize_identifier(self, identifier: str) -> str:
-        return dialect.sanitize_identifier(identifier, self.type)  # pyright: ignore[reportAttributeAccessIssue]
+    def _sanitize_identifier(
+        self: _DatabaseMaintenanceProtocol, identifier: str
+    ) -> str:
+        return dialect.sanitize_identifier(identifier, self.type)
 
-    def _convert_placeholders(self, query: str) -> str:
-        return dialect.convert_placeholders(query, self.type)  # pyright: ignore[reportAttributeAccessIssue]
+    def _convert_placeholders(self: _DatabaseMaintenanceProtocol, query: str) -> str:
+        return dialect.convert_placeholders(query, self.type)
 
-    def _check_connection_age(self, conn_id: int):
-        self.monitor.check_connection_age(conn_id)  # pyright: ignore[reportAttributeAccessIssue]
+    def _check_connection_age(self: _DatabaseMaintenanceProtocol, conn_id: int) -> None:
+        self.monitor.check_connection_age(conn_id)
 
-    def _format_log_context(self, **kwargs) -> str:
+    def _format_log_context(self: _DatabaseMaintenanceProtocol, **kwargs) -> str:
         ctx = [f"{k}={v}" for k, v in kwargs.items()]
-        correlation_id = self.get_correlation_id()  # pyright: ignore[reportAttributeAccessIssue]
+        correlation_id = self.get_correlation_id()
         if correlation_id:
             ctx.append(f"correlation_id={correlation_id}")
         return f"[{' '.join(ctx)}]"
 
-    def table_exists(self, table_name: str) -> bool:
+    def table_exists(self: _DatabaseMaintenanceProtocol, table_name: str) -> bool:
         """
         Check if a table exists in the database.
 
@@ -206,20 +264,22 @@ class DatabaseMaintenanceMixin:
             logger.warning(f"Invalid table name for existence check: {table_name}")
             return False
 
-        if self.type == "postgres":  # pyright: ignore[reportAttributeAccessIssue]
-            row = self.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        if self.type == "postgres":
+            row = self.fetch_one(
                 "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
                 (table_name,),
             )
             return row is not None
         else:
-            row = self.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+            row = self.fetch_one(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
                 (table_name,),
             )
             return row is not None
 
-    def column_exists(self, table_name: str, column_name: str) -> bool:
+    def column_exists(
+        self: _DatabaseMaintenanceProtocol, table_name: str, column_name: str
+    ) -> bool:
         """
         Check if a column exists in a table.
 
@@ -241,18 +301,18 @@ class DatabaseMaintenanceMixin:
         if not self.table_exists(table_name):
             return False
 
-        if self.type == "postgres":  # pyright: ignore[reportAttributeAccessIssue]
-            row = self.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        if self.type == "postgres":
+            row = self.fetch_one(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
                 (table_name, column_name),
             )
             return row is not None
         else:
             safe_table = self._sanitize_identifier(table_name)
-            rows = self.fetch_all(f"PRAGMA table_info({safe_table})")  # pyright: ignore[reportAttributeAccessIssue]
+            rows = self.fetch_all(f"PRAGMA table_info({safe_table})")
             return any(row["name"] == column_name for row in rows)
 
-    def index_exists(self, index_name: str) -> bool:
+    def index_exists(self: _DatabaseMaintenanceProtocol, index_name: str) -> bool:
         """
         Check if an index exists in the database.
 
@@ -266,14 +326,14 @@ class DatabaseMaintenanceMixin:
             logger.warning(f"Invalid index name for existence check: {index_name}")
             return False
 
-        if self.type == "postgres":  # pyright: ignore[reportAttributeAccessIssue]
-            row = self.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+        if self.type == "postgres":
+            row = self.fetch_one(
                 "SELECT 1 FROM pg_indexes WHERE indexname = ?",
                 (index_name,),
             )
             return row is not None
         else:
-            row = self.fetch_one(  # pyright: ignore[reportAttributeAccessIssue]
+            row = self.fetch_one(
                 "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
                 (index_name,),
             )

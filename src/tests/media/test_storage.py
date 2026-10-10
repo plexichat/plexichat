@@ -12,6 +12,8 @@ class TestStorage:
     def test_default_storage_is_local(self, media_manager):
         """Test that default storage backend is local."""
         assert media_manager._storage is not None
+        assert media_manager._config.get("storage_backend", "local") == "local"
+        assert callable(media_manager._storage.store)
 
     def test_storage_backend_enum_values(self):
         """Test StorageBackend enum values."""

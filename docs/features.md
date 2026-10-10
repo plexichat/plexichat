@@ -1,225 +1,228 @@
-# Feature Overview
+# Feature overview
 
-This page provides a comprehensive overview of Plexichat's feature areas. Each section links to detailed documentation for configuration and API usage.
+This page summarizes Plexichat's feature areas. Each section links to configuration and API reference.
 
-## Core Platform
+## Core platform
 
-### Authentication and Identity
+### Authentication and identity
 
-Plexichat provides a complete authentication system with multiple layers:
+Plexichat provides multiple authentication layers:
 
-- **Session-based authentication**: Bearer tokens for users, dedicated tokens for bots
-- **TOTP two-factor authentication**: Configurable 2FA with backup codes, compatible with standard authenticator apps
-- **Password policy**: Configurable minimum length (12 default), complexity requirements, and Argon2id hashing
-- **Account lockout**: Configurable failed-attempt threshold and lockout duration
-- **Account deletion**: GDPR-compliant deletion with grace period, content anonymization, and audit logging
-- **OAuth login**: Google, GitHub, and Microsoft OAuth with PKCE protection
+- **Session authentication** — Bearer tokens for users and dedicated tokens for bots.
+- **TOTP two-factor authentication** — Configurable 2FA with backup codes, compatible with standard authenticator apps.
+- **Password policy** — Configurable minimum length (12 by default), complexity requirements, and Argon2id hashing.
+- **Account lockout** — Configurable failed-attempt threshold and lockout duration.
+- **Account deletion** — GDPR-compliant deletion with grace period, content anonymization, and audit logging.
+- **OAuth login** — Google, GitHub, and Microsoft OAuth with PKCE protection.
 
-Configuration: [Authentication Configuration](config-authentication.md) | API: [Authentication Routes](api/authentication.md)
+Configuration: [Authentication configuration](config-authentication.md) · API: [Authentication routes](api/authentication.md)
 
-### Users and Profiles
+### Users and profiles
 
-- User profiles with avatars, display names, bios, and banner images
-- User notes (personal annotations on other users)
-- User settings (theme, notifications, privacy)
-- Feature flags and tier-based capabilities (standard, alpha, premium, staff)
-- Badges and achievements
+- User profiles with avatars, display names, bios, and banner images.
+- User notes (personal annotations on other users).
+- User settings (theme, notifications, privacy).
+- Feature flags and tier-based capabilities (`standard`, `alpha`, `premium`, `staff`).
+- Badges and achievements.
 
-API: [Users Routes](api/users.md) | [Avatars Routes](api/avatars.md) | [Features Routes](api/features.md)
+API: [Users routes](api/users.md) · [Avatars routes](api/avatars.md) · [Features routes](api/features.md)
 
 ### Relationships
 
-- Friend requests with accept/decline flows
-- Block list for preventing unwanted contact
-- Mutual relationship queries (is friend, is blocked)
+- Friend requests with accept and decline flows.
+- Block list that prevents unwanted contact.
+- Mutual relationship queries (is friend, is blocked).
 
-API: [Relationships Routes](api/relationships.md)
+API: [Relationships routes](api/relationships.md)
 
-### Servers and Channels
+### Servers and channels
 
-- Guild-style organization with roles, permissions, and channel hierarchy
-- Text and voice channels with per-channel permission overrides
-- Server invites with configurable codes and limits
-- Server templates for quick setup (configurable channels, roles, onboarding steps)
-- Events system for scheduled and recurring events
-- Server discovery with tags, bumping, and member thresholds
+- Guild-style organization with roles, permissions, and channel hierarchy.
+- Text and voice channels with per-channel permission overrides.
+- Server invites with configurable codes and limits.
+- Server templates for quick setup (configurable channels, roles, and onboarding steps).
+- Events system for scheduled and recurring events.
+- Server discovery with tags, bumping, and member thresholds.
 
-Configuration: See `servers` section in [Default Configuration Reference](default-config.md) | API: [Servers Routes](api/servers.md) | [Channels Routes](api/channels.md)
+Configuration: `servers` section in [Default configuration reference](default-config.md) · API: [Servers routes](api/servers.md) · [Channels routes](api/channels.md)
 
 ### Messaging
 
-- Message creation, editing, deletion with read state tracking
-- Message replies (threaded conversations)
-- Message pins (per-channel)
-- Reactions with emoji and custom emoji support
-- Message search (see Search below)
-- Attachment handling with resumable uploads (see Media below)
-- Message encryption at rest (configurable)
-- Per-user message length settings (tier-based)
+- Message creation, editing, and deletion with read-state tracking.
+- Message replies (threaded conversations).
+- Message pins (per channel).
+- Reactions with emoji and custom emoji support.
+- Message search (see Search below).
+- Attachment handling with resumable uploads (see Media below).
+- Message encryption at rest (configurable).
+- Per-user message length settings (tier-based).
 
-Configuration: See `messaging` section in [Default Configuration Reference](default-config.md) | API: [Messages Routes](api/messages.md) | [Reactions Routes](api/reactions.md)
+Configuration: `messaging` section in [Default configuration reference](default-config.md) · API: [Messages routes](api/messages.md) · [Reactions routes](api/reactions.md)
 
----
+### Message tools
 
-## Real-Time Communication
+- **Bookmarks** — Save messages for later; list per user with an optional conversation filter.
+- **Message forwarding** — Copy a message into another conversation where you can post.
+- **Scheduled messages** — Queue a message for future delivery; list and cancel pending sends.
 
-### WebSocket Gateway
+API: [Features routes](api/features.md)
 
-The gateway provides persistent, real-time communication using a heartbeat + dispatch model:
+## Real-time communication
 
-- **Connection flow**: Connect -> HELLO -> IDENTIFY -> Heartbeat -> Events
-- **Resume support**: Reconnect and resume missed events without full re-sync
-- **Dispatch events**: MESSAGE_CREATE, PRESENCE_UPDATE, TYPING_START, and more
-- **Gateway intents**: Subscribe to specific event categories (configurable, some require privileges)
-- **Compression**: Per-message deflate (RFC 7692) for bandwidth savings
+### WebSocket gateway
 
-Configuration: [WebSocket Configuration](deployment/configuration/config-websocket.md) | Docs: [Gateway Overview](websocket/index.md) | [Events](websocket/events.md) | [Intents](websocket/intents.md)
+The gateway provides persistent, real-time communication with a heartbeat and dispatch model:
 
-### Presence and Typing
+- **Connection flow** — Connect, then `HELLO`, then `IDENTIFY`, then heartbeat and events.
+- **Resume support** — Reconnect and resume missed events without a full re-sync.
+- **Dispatch events** — `MESSAGE_CREATE`, `PRESENCE_UPDATE`, `TYPING_START`, and others. See [Gateway events](websocket/events.md) for the full list.
+- **Gateway intents** — Subscribe to specific event categories. See [Gateway intents](websocket/intents.md). Default intents include `ARTIFACTS` (`1<<20`) and `SUMS` (`1<<21`); privileged intents are `GUILD_MEMBERS` (`1<<1`), `GUILD_PRESENCES` (`1<<8`), and `MESSAGE_CONTENT` (`1<<15`) (`src/core/events/types.py:97`).
+- **Compression** — Per-message deflate (RFC 7692).
 
-- Online/idle/DND/invisible status with automatic idle detection
-- Typing indicators with configurable timeout (10 seconds default)
-- Presence updates pushed via gateway events
+Configuration: [WebSocket configuration](deployment/configuration/config-websocket.md) · Docs: [Gateway overview](websocket/index.md) · [Events](websocket/events.md) · [Intents](websocket/intents.md)
 
-API: [Presence Routes](api/presence.md)
+### Presence and typing
+
+- Online, idle, DND, and invisible status with automatic idle detection.
+- Typing indicators with a configurable timeout (10 seconds by default).
+- Presence updates pushed through gateway events.
+
+API: [Presence routes](api/presence.md)
 
 ### Voice
 
-- WebRTC-based voice channels with ICE server discovery
-- SFU (Selective Forwarding Unit) backend: mediasoup (default) or Janus
-- STUN/TURN server configuration for NAT traversal
-- Voice connection metadata and signaling via gateway
+- WebRTC-based voice channels with ICE server discovery and TURN credential generation (HMAC-SHA1, RFC 5389).
+- Signaling is relayed through the gateway. Media is peer-to-peer mesh by default; you can enable an SFU backend for larger channels.
+- Supported SFU backends (`src/core/voice/signaling/sfu/__init__.py:45`):
+  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py:399`).
+  - `mediasoup` — REST adapter for a custom mediasoup server.
+  - `mediasoup-ws` — WebSocket adapter for mediasoup-demo.
+  - `janus` — REST adapter for Janus Gateway.
+- STUN and TURN server configuration for NAT traversal.
+- Voice-channel lifecycle tied to channel occupancy (call starts when the first participant joins, ends when the last leaves).
 
-Configuration: [Voice Configuration](config-voice.md) | API: [Voice Routes](api/voice.md)
+Configuration: [Voice configuration](config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: [Voice module](src/core/voice/README.md)
 
 ### Notifications
 
-- Unread notification feed with per-notification read state
-- Read-all and per-notification read operations
-- Pushed via gateway events for real-time updates
+- Unread notification feed with per-notification read state.
+- Read-all and per-notification read operations.
+- Pushed through gateway events for real-time updates.
 
-API: [Notifications Routes](api/notifications.md)
+API: [Notifications routes](api/notifications.md)
 
----
-
-## Content and Safety
+## Content and safety
 
 ### Media
 
-- File uploads with resumable upload sessions for large files
-- Multiple storage backends: local filesystem, S3-compatible, database blob
-- Image optimization and thumbnail generation (configurable sizes: 64, 128, 256, 512)
-- Perceptual hashing (phash) for duplicate and similar-image detection
-- Content deduplication with automatic blocking of known-hash files
-- Virus scanning via ClamAV (optional, requires dedicated scanner)
-- Media URL signing with time-limited, tamper-proof URLs
-- Auto-routing of small text-based files to database storage
-- Type-specific size limits (image: 10MB, video: 100MB, audio: 50MB, document: 25MB)
-- At-rest encryption for stored media
+- File uploads with resumable upload sessions for large files.
+- Multiple storage backends: local filesystem, S3-compatible, or database blob.
+- Image optimization and thumbnail generation (configurable sizes: 64, 128, 256, 512).
+- Perceptual hashing (phash) for duplicate and similar-image detection.
+- Content deduplication with automatic blocking of known-hash files.
+- Virus scanning through ClamAV (optional, requires a dedicated scanner).
+- Media URL signing with time-limited, tamper-proof URLs.
+- Auto-routing of small text-based files to database storage.
+- Type-specific size limits (image: 10 MB, video: 100 MB, audio: 50 MB, document: 25 MB).
+- At-rest encryption for stored media.
 
-Configuration: [Media Configuration](config-media.md) | API: [Media Routes](api/media.md)
+Configuration: [Media configuration](config-media.md) · API: [Media routes](api/media.md)
 
-### Search and Discovery
+### Search and discovery
 
-- Full-text search powered by SQLite FTS5 (default backend)
-- Message, user, and server search
-- Server discovery directory with tags, bumping, and member thresholds
-- Write-time indexing for immediate searchability of new content
+- Full-text search powered by SQLite FTS5 (default backend).
+- Message, user, and server search.
+- Server discovery directory with tags, bumping, and member thresholds.
+- Write-time indexing for immediate searchability of new content.
 
-Configuration: [Search Configuration](deployment/configuration/config-search.md) | API: [Search Routes](api/search.md)
+Configuration: [Search configuration](deployment/configuration/config-search.md) · API: [Search routes](api/search.md)
 
-### Reports and Feedback
+### Reports and feedback
 
-- User-submitted reports for content and behavior violations
-- Feedback submission with rate-limited endpoints
-- Auto-moderation (automod) with configurable rules and AI-backed detection
+- User-submitted reports for content and behavior violations.
+- Feedback submission with rate-limited endpoints.
+- Auto-moderation (automod) with configurable rules and AI-backed detection.
 
-API: [Reports Routes](api/reports.md) | [Feedback Routes](api/feedback.md)
+API: [Reports routes](api/reports.md) · [Feedback routes](api/feedback.md)
 
-### Rate Limiting
+### Rate limiting
 
-- Multi-tier rate limiting: global, per-user, per-IP, per-route
-- Bot and webhook multipliers for appropriate scaling
-- Admin and internal bypass options
-- Configurable bypass secret for service-to-service communication
+- Multi-tier rate limiting: global, per-user, per-IP, per-route.
+- Bot and webhook multipliers for appropriate scaling.
+- Admin and internal bypass options.
+- Internal services skip rate limits through the runtime-generated internal secret header.
 
-Configuration: [Rate Limiting Configuration](deployment/configuration/config-rate-limiting.md) | Docs: [Rate Limits](rate-limits.md)
-
----
+Configuration: [Rate limiting configuration](deployment/configuration/config-rate-limiting.md) · Docs: [Rate limits](rate-limits.md)
 
 ## Extensibility
 
-### Applications and Bots
+### Applications and bots
 
-- Bot accounts with dedicated authentication tokens
-- Application system for OAuth2 integrations
-- Slash commands and interaction handling
-- Webhook execution for inbound integrations
-- Per-application rate limits
+- Bot accounts with dedicated authentication tokens.
+- Application system (inbound OAuth2 provider login; acting as an OAuth2 authorization server is not yet implemented).
+- Interaction handling through the applications callback route (slash-command registration is not yet implemented).
+- Webhook execution for inbound integrations.
+- Per-application rate limits.
 
-Configuration: See `applications` section in [Default Configuration Reference](default-config.md) | API: [Webhooks Routes](api/webhooks.md)
+Configuration: `applications` section in [Default configuration reference](default-config.md) · API: [Webhooks routes](api/webhooks.md)
 
 ### Webhooks
 
-- Inbound webhook execution (post messages from external services)
-- Webhook management (create, update, delete)
-- Signature verification for webhook authenticity
+- Inbound webhook execution (post messages from external services).
+- Webhook management (create, update, delete).
+- Signature verification for webhook authenticity.
 
-Configuration: See `webhooks` section in [Default Configuration Reference](default-config.md)
+Configuration: `webhooks` section in [Default configuration reference](default-config.md)
 
 ### Polls
 
-- Message-attached polls with configurable option count and duration
-- Vote tracking and result aggregation
-- Duration limits: 1 hour minimum, 168 hours (7 days) maximum
+- Message-attached polls with configurable option count and duration.
+- Vote tracking and result aggregation.
+- Duration limits: 1 hour minimum, 168 hours (7 days) maximum.
 
-Configuration: See `polls` section in [Default Configuration Reference](default-config.md) | API: [Polls Routes](api/polls.md)
+Configuration: `polls` section in [Default configuration reference](default-config.md) · API: [Polls routes](api/polls.md)
 
-### Emojis, Stickers, and Soundboard
+### Emojis, stickers, and soundboard
 
-- Custom emoji support (up to 50 per server, 256KB max size)
-- Animated emoji support
-- Sticker packs with per-server and per-pack limits
-- Soundboard with configurable cooldowns and size limits
+- Custom emoji support (up to 50 per server, 256 KB max size).
+- Animated emoji support.
+- Sticker packs with per-server and per-pack limits.
+- Soundboard with configurable cooldowns and size limits.
 
-Configuration: See `emojis`, `stickers`, `soundboard` sections in [Default Configuration Reference](default-config.md) | API: [Emojis Routes](api/emojis.md)
+Configuration: `emojis`, `stickers`, `soundboard` sections in [Default configuration reference](default-config.md) · API: [Emojis routes](api/emojis.md), [Soundboard API](api/soundboard.md)
 
----
-
-## Operations and Administration
+## Operations and administration
 
 ### Admin UI
 
-- Web-based admin dashboard
-- User management, server oversight, and configuration editing
-- Protected by OTP requirement and host restriction by default
-- Separate rate limiting from API endpoints
+- Web-based admin dashboard.
+- User management, server oversight, and configuration editing.
+- Protected by OTP requirement and host restriction by default.
+- Separate rate limiting from API endpoints.
 
-Configuration: See `admin_ui` section in [Default Configuration Reference](default-config.md) | API: [Admin Routes](api/admin.md)
+Configuration: `admin_ui` section in [Default configuration reference](default-config.md) · API: [Admin routes](api/admin.md)
 
-### Monitoring and Telemetry
+### Monitoring and telemetry
 
-- Built-in telemetry for endpoint response times
-- Configurable alert thresholds for CPU, memory, database, and API performance
-- Slow query detection and alerting
-- Health and status endpoints for external monitoring
+- Built-in telemetry for endpoint response times.
+- Configurable alert thresholds for CPU, memory, database, and API performance.
+- Slow-query detection and alerting.
+- Health and status endpoints for external monitoring.
 
-Configuration: See `monitoring` section in [Default Configuration Reference](default-config.md) | API: [Telemetry Routes](api/telemetry.md) | [System Routes](api/system.md)
+Configuration: `monitoring` section in [Default configuration reference](default-config.md) · API: [Telemetry routes](api/telemetry.md) · [System routes](api/system.md)
 
-### Self-Test Infrastructure
+### Self-test infrastructure
 
-- Built-in self-test suite for validating API behavior
-- Configurable test scope (excluded endpoints, stack trace capture)
-- Safe for production (auto-generated random credentials, cleans up after itself)
+- Built-in self-test suite for validating API behavior.
+- Configurable test scope (excluded endpoints, stack-trace capture).
+- Safe for production (auto-generated random credentials, cleans up after itself).
 
-Configuration: See `selftest` section in [Default Configuration Reference](default-config.md)
+Configuration: `selftest` section in [Default configuration reference](default-config.md)
 
----
+## Related documentation
 
-## Related Documentation
-
-- [Getting Started](getting-started.md) - First steps with the API
-- [Configuration Overview](configuration.md) - How to configure your server
-- [Security Best Practices](security.md) - Production security guidance
-- [Performance Tuning](performance.md) - Scaling and optimization
-- [API Reference](api/index.md) - Detailed route documentation
+- [Getting started](getting-started.md) — First steps with the API.
+- [Configuration overview](configuration.md) — How to configure your server.
+- [Security best practices](security.md) — Production security guidance.
+- [Performance tuning](performance.md) — Scaling and optimization.
+- [API reference](api/index.md) — Detailed route documentation.

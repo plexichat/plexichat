@@ -19,23 +19,63 @@ from .protocol import ReactionProtocol
 
 class EmojiOpsMixin(ReactionProtocol):
     def _migrate_emoji_table(self):
+        # Only migrate an EXISTING table that predates the new columns. A
+        # missing table means a fresh install whose schema is created later -
+        # nothing to migrate and no misleading log. Non-sqlite dialects fall
+        # back to the column check directly.
+        try:
+            row = self._db.fetch_one(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'react_custom_emoji'"
+            )
+            if not row:
+                return
+        except Exception:
+            pass
         try:
             self._db.execute("SELECT url FROM react_custom_emoji LIMIT 1")
+            return  # columns already present
         except Exception:
-            logger.info("Migrating react_custom_emoji table with new columns")
-            migrations = [
-                "ALTER TABLE react_custom_emoji ADD COLUMN url TEXT NOT NULL DEFAULT ''",
-                "ALTER TABLE react_custom_emoji ADD COLUMN size INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE react_custom_emoji ADD COLUMN width INTEGER",
-                "ALTER TABLE react_custom_emoji ADD COLUMN height INTEGER",
-                "ALTER TABLE react_custom_emoji ADD COLUMN created_by INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE react_custom_emoji ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
-            ]
-            for sql in migrations:
-                try:
-                    self._db.execute(sql)
-                except Exception as e:
-                    logger.debug(f"Migration step failed (possibly column exists): {e}")
+            pass
+        logger.info("Migrating react_custom_emoji table with new columns")
+        migrations = [
+            "ALTER TABLE react_custom_emoji ADD COLUMN url TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE react_custom_emoji ADD COLUMN size INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE react_custom_emoji ADD COLUMN width INTEGER",
+            "ALTER TABLE react_custom_emoji ADD COLUMN height INTEGER",
+            "ALTER TABLE react_custom_emoji ADD COLUMN created_by INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE react_custom_emoji ADD COLUMN available INTEGER NOT NULL DEFAULT 1",
+        ]
+        for sql in migrations:
+            try:
+                self._db.execute(sql)
+            except Exception as e:
+                logger.debug(f"Migration step failed (possibly column exists): {e}")
+
+    def _require_manage_server(
+        self, user_id: SnowflakeID, server_id: SnowflakeID
+    ) -> None:
+        """Enforce ``server.manage`` for server-scoped custom-emoji writes.
+
+        SECURITY: fail CLOSED when the servers module is not wired. The
+        previous ``if self._servers:`` guard skipped the check entirely in
+        that state, so any authenticated caller could create/update/delete a
+        server's custom emojis without authorization. This mirrors
+        ``_check_server_permission``, which also denies what it cannot
+        verify.
+        """
+        if not self._servers:
+            logger.error(
+                "Servers module unavailable; denying custom-emoji management "
+                f"for user {user_id} in server {server_id}"
+            )
+            raise PermissionDeniedError(
+                "Missing permission to manage server", "server.manage"
+            )
+        if not self._servers.has_permission(user_id, server_id, "server.manage"):
+            raise PermissionDeniedError(
+                "Missing permission to manage server", "server.manage"
+            )
 
     def _check_emoji_limits(self, server_id: SnowflakeID, animated: bool) -> None:
         if animated:
@@ -68,11 +108,7 @@ class EmojiOpsMixin(ReactionProtocol):
         image_data: bytes,
         content_type: str,
     ) -> CustomEmoji:
-        if self._servers:
-            if not self._servers.has_permission(user_id, server_id, "server.manage"):
-                raise PermissionDeniedError(
-                    "Missing permission to manage server", "server.manage"
-                )
+        self._require_manage_server(user_id, server_id)
 
         name = self._validate_emoji_name(name)
 
@@ -209,13 +245,7 @@ class EmojiOpsMixin(ReactionProtocol):
         if not emoji:
             raise CustomEmojiNotFoundError("Custom emoji not found")
 
-        if self._servers:
-            if not self._servers.has_permission(
-                user_id, emoji.server_id, "server.manage"
-            ):
-                raise PermissionDeniedError(
-                    "Missing permission to manage server", "server.manage"
-                )
+        self._require_manage_server(user_id, emoji.server_id)
 
         if name is not None:
             name = self._validate_emoji_name(name)
@@ -253,13 +283,7 @@ class EmojiOpsMixin(ReactionProtocol):
         if not emoji:
             raise CustomEmojiNotFoundError("Custom emoji not found")
 
-        if self._servers:
-            if not self._servers.has_permission(
-                user_id, emoji.server_id, "server.manage"
-            ):
-                raise PermissionDeniedError(
-                    "Missing permission to manage server", "server.manage"
-                )
+        self._require_manage_server(user_id, emoji.server_id)
 
         try:
             self._db.begin_transaction()

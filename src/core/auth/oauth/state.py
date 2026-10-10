@@ -20,13 +20,13 @@ Configuration (in oauth section of config.yaml):
     max_states_per_ip: 10        # Max pending states per IP (0 = unlimited)
 """
 
-import time
 import secrets
 import hashlib
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple
 
 import utils.logger as logger
+from src.core.base import timestamp_ms, generate_id
 
 
 # Default configuration values
@@ -70,6 +70,12 @@ class OAuthState:
 
     ip_address: Optional[str] = None
     """IP address that initiated the OAuth flow (for audit)."""
+
+    cookie_issued: bool = False
+    """Whether a state-binding HttpOnly cookie was handed to the browser.
+
+    When true, the callback MUST see the matching cookie or the flow is
+    rejected (login-CSRF defense)."""
 
     # Not stored in DB, only set on creation
     state_token: Optional[str] = field(default=None, repr=False)
@@ -124,13 +130,30 @@ class OAuthStateManager:
             used INTEGER DEFAULT 0,
             nonce_hash TEXT,
             pkce_challenge TEXT,
-            ip_address TEXT
+            ip_address TEXT,
+            cookie_issued INTEGER DEFAULT 0
         )
         """
         # Convert for PostgreSQL if needed
         if hasattr(self._db, "convert_schema"):
             schema = self._db.convert_schema(schema)
         self._db.execute(schema)
+
+        # Lazy column addition for databases created before cookie binding.
+        try:
+            self._db.fetch_one("SELECT cookie_issued FROM auth_oauth_states LIMIT 1")
+        except Exception:
+            try:
+                col = (
+                    self._db.convert_schema(
+                        "ALTER TABLE auth_oauth_states ADD COLUMN cookie_issued INTEGER DEFAULT 0"
+                    )
+                    if hasattr(self._db, "convert_schema")
+                    else "ALTER TABLE auth_oauth_states ADD COLUMN cookie_issued INTEGER DEFAULT 0"
+                )
+                self._db.execute(col)
+            except Exception:
+                pass  # Column added concurrently.
 
         # Index for cleanup queries
         self._db.execute(
@@ -146,17 +169,50 @@ class OAuthStateManager:
 
     def _generate_id(self) -> int:
         """Generate a snowflake ID."""
-        from src.utils.encryption import generate_snowflake_id
-
-        return generate_snowflake_id()
+        return generate_id()
 
     def _current_time(self) -> int:
         """Get current Unix timestamp in milliseconds."""
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _hash_token(self, token: str) -> str:
         """Hash a token for storage using SHA-256."""
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def verify_nonce(
+        self,
+        stored_nonce_hash: Optional[str],
+        presented_nonce: Optional[str],
+    ) -> bool:
+        """
+        Verify a presented OIDC nonce against the stored hash (M6).
+
+        The raw nonce is never persisted — only its SHA-256 hash is stored
+        with the state record. Verification re-hashes the presented value
+        and compares in constant time.
+
+        Fail-closed semantics:
+          - No nonce bound to this state (stored hash is None) -> True
+            (caller skips the check; non-OIDC provider).
+          - Nonce bound but presented value missing/empty -> False.
+          - Mismatch -> False.
+
+        Args:
+            stored_nonce_hash: SHA-256 hex digest stored with the state.
+            presented_nonce: Raw ``nonce`` claim from the IdP id_token.
+
+        Returns:
+            True only on match (or when no nonce was bound).
+        """
+        if not stored_nonce_hash:
+            return True
+        if not presented_nonce or not isinstance(presented_nonce, str):
+            return False
+        candidate_hash = self._hash_token(presented_nonce)
+        try:
+            return secrets.compare_digest(candidate_hash, stored_nonce_hash)
+        except Exception:
+            return False
 
     def _check_ip_rate_limit(self, ip_address: Optional[str]) -> bool:
         """
@@ -193,6 +249,7 @@ class OAuthStateManager:
         pkce_challenge: Optional[str] = None,
         ip_address: Optional[str] = None,
         ttl_seconds: Optional[int] = None,
+        cookie_issued: bool = False,
     ) -> Optional[OAuthState]:
         """
         Create a new OAuth state for CSRF protection.
@@ -201,9 +258,11 @@ class OAuthStateManager:
             provider: OAuth provider name.
             redirect_uri: The redirect URI for this request.
             include_nonce: Whether to generate a nonce (for OIDC).
-            pkce_challenge: Optional PKCE code_challenge.
+            pkce_challenge: Optional PKCE challenge for public clients.
             ip_address: Client IP address for audit.
             ttl_seconds: Custom TTL (default from config or 600s).
+            cookie_issued: Whether a state-binding HttpOnly cookie accompanies
+                this state; if so the callback requires it to match.
 
         Returns:
             OAuthState with state_token set (only available on creation),
@@ -250,8 +309,8 @@ class OAuthStateManager:
         self._db.execute(
             """INSERT INTO auth_oauth_states
                (id, state_hash, provider, redirect_uri, created_at, expires_at,
-                nonce_hash, pkce_challenge, ip_address)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                nonce_hash, pkce_challenge, ip_address, cookie_issued)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 state_id,
                 state_hash,
@@ -262,6 +321,7 @@ class OAuthStateManager:
                 nonce_hash,
                 pkce_challenge,
                 ip_address,
+                1 if cookie_issued else 0,
             ),
         )
 
@@ -280,6 +340,7 @@ class OAuthStateManager:
             nonce=nonce_hash,
             pkce_challenge=pkce_challenge,
             ip_address=ip_address,
+            cookie_issued=cookie_issued,
             state_token=state_token,
             nonce_value=nonce_value,
         )
@@ -317,7 +378,8 @@ class OAuthStateManager:
         # Look up state by hash
         row = self._db.fetch_one(
             """SELECT id, state_hash, provider, redirect_uri, created_at, expires_at,
-                      used, nonce_hash, pkce_challenge, ip_address
+                      used, nonce_hash, pkce_challenge, ip_address,
+                      COALESCE(cookie_issued, 0) AS cookie_issued
                FROM auth_oauth_states WHERE state_hash = ?""",
             (state_hash,),
         )
@@ -372,6 +434,7 @@ class OAuthStateManager:
             nonce=row["nonce_hash"],
             pkce_challenge=row["pkce_challenge"],
             ip_address=row["ip_address"],
+            cookie_issued=bool(row.get("cookie_issued", 0)),
         )
 
         return True, state, None
@@ -427,6 +490,7 @@ def create_oauth_state(
     include_nonce: bool = False,
     pkce_challenge: Optional[str] = None,
     ip_address: Optional[str] = None,
+    cookie_issued: bool = False,
 ) -> Optional[OAuthState]:
     """
     Create a new OAuth state (convenience function).
@@ -437,6 +501,7 @@ def create_oauth_state(
         include_nonce: Whether to include a nonce.
         pkce_challenge: Optional PKCE challenge.
         ip_address: Client IP address.
+        cookie_issued: Whether the caller set a state-binding cookie.
 
     Returns:
         OAuthState or None if manager not initialized or rate limited.
@@ -450,6 +515,7 @@ def create_oauth_state(
         include_nonce=include_nonce,
         pkce_challenge=pkce_challenge,
         ip_address=ip_address,
+        cookie_issued=cookie_issued,
     )
 
 
@@ -485,3 +551,31 @@ def cleanup_expired_states() -> int:
     if _state_manager is None:
         return 0
     return _state_manager.cleanup_expired()
+
+
+def verify_oauth_nonce(
+    stored_nonce_hash: Optional[str],
+    presented_nonce: Optional[str],
+) -> bool:
+    """
+    Verify a presented OIDC nonce against a stored hash (M6).
+
+    Constant-time comparison via :meth:`OAuthStateManager.verify_nonce`;
+    fails closed when a nonce is bound but the presented value is
+    missing or mismatched. Returns True when no nonce was bound
+    (non-OIDC provider) so callers can skip the check.
+
+    Falls back to a direct constant-time string comparison when no
+    manager is initialised (same fail-closed contract).
+    """
+    if not stored_nonce_hash:
+        return True
+    if not presented_nonce or not isinstance(presented_nonce, str):
+        return False
+    if _state_manager is not None:
+        return _state_manager.verify_nonce(stored_nonce_hash, presented_nonce)
+    try:
+        candidate = hashlib.sha256(presented_nonce.encode("utf-8")).hexdigest()
+        return secrets.compare_digest(candidate, stored_nonce_hash)
+    except Exception:
+        return False

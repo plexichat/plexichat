@@ -58,19 +58,65 @@ def isolated_temp_dir(tmp_path):
 
 @pytest.fixture(scope="function", autouse=True)
 def reset_singletons():
-    yield
+    """Isolate the module-level config/logger singletons between tests.
+
+    Snapshots the pre-test state and restores it afterwards, so tests that
+    mutate the singletons (via ``setup()``) cannot leak into each other —
+    while preserving any configuration performed by an outer test suite
+    (e.g. ``src/tests/conftest.py``) that shares this worker process under
+    xdist ``--dist loadfile``. Previously this fixture unconditionally
+    clobbered the singletons, which broke every later ``src/tests`` file in
+    the same worker with "Config not configured".
+
+    It also restores the process-global ``"AppLogger"`` level. Constructing
+    ``Logger(...)`` (as ``tests/logger/test_logger.py`` does, with the default
+    ``INFO`` level) runs ``_setup_logger`` and calls
+    ``logging.getLogger("AppLogger").setLevel(...)``; without this restore
+    that level leaks into every later ``src/tests`` file in the worker.
+
+    Handlers/filters are detached before the test so a ``setup()`` inside
+    the test cannot close the outer suite's handlers; the scoped handlers
+    are closed afterwards and the originals re-attached.
+    """
+    import logging
 
     import utils.logger as logger
     import utils.config as config
 
-    if hasattr(logger, "_logger_instance"):
-        logger._logger_instance = None
-    if hasattr(logger, "_setup_called"):
-        logger._setup_called = False
-    if hasattr(config, "_config_instance"):
-        config._config_instance = None
-    if hasattr(config, "_setup_called"):
-        config._setup_called = False
+    app_logger = logging.getLogger("AppLogger")
+    snapshot = (
+        getattr(config, "_setup_called", False),
+        getattr(config, "_config_instance", None),
+        getattr(logger, "_setup_called", False),
+        getattr(logger, "_logger_instance", None),
+        app_logger.level,
+        app_logger.propagate,
+        app_logger.handlers[:],
+        app_logger.filters[:],
+    )
+    for handler in snapshot[6]:
+        app_logger.removeHandler(handler)
+    for filt in snapshot[7]:
+        app_logger.removeFilter(filt)
+    yield
+    for handler in app_logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass
+        app_logger.removeHandler(handler)
+    for filt in app_logger.filters[:]:
+        app_logger.removeFilter(filt)
+    for handler in snapshot[6]:
+        app_logger.addHandler(handler)
+    for filt in snapshot[7]:
+        app_logger.addFilter(filt)
+    config._setup_called = snapshot[0]
+    config._config_instance = snapshot[1]
+    logger._setup_called = snapshot[2]
+    logger._logger_instance = snapshot[3]
+    app_logger.setLevel(snapshot[4])
+    app_logger.propagate = snapshot[5]
 
 
 @pytest.fixture(scope="function")

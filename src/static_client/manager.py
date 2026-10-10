@@ -8,7 +8,9 @@ runtime config.js, and exposes the on-disk install path to the router.
 
 from __future__ import annotations
 
+import json as _json
 import re as _re
+import shutil as _shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +27,7 @@ from src.utils.common_utils.utils.version.core import (
 
 from .config import StaticClientConfig, get_static_client_config
 from .fetcher import (
+    _UNCOMPRESSED_FACTOR,
     FetchError,
     GitLabReleaseClient,
     InstalledVersion,
@@ -40,13 +43,32 @@ from .fetcher import (
 )
 
 from .manifest import (
+    VERIFY_HMAC_MISMATCH,
+    VERIFY_OK,
+    files_match_manifest,
     get_signing_key,
+    key_epoch,
+    read_key_epoch,
     regenerate_manifest,
-    verify_manifest,
+    verify_manifest_detailed,
 )
 
 # Re-export InstallResult to keep callers stable
 from . import fetcher as _fetcher  # noqa: F401  (kept for back-compat)
+
+
+def _js_escape(value: str) -> str:
+    """Escape *value* for safe interpolation into a double-quoted JS string.
+
+    ``origin`` and ``version`` are derived from request headers (``Host`` /
+    ``Origin``) and on-disk markers, so they must be treated as untrusted.
+    ``json.dumps`` emits a valid JS string literal (JSON strings are a subset
+    of JS string literals); stripping the surrounding quotes yields the inner
+    content safe to drop between the template's own double quotes.
+    """
+    if not value:
+        return ""
+    return _json.dumps(value)[1:-1]
 
 
 def _render_config_js(template: str, origin: str, version: str) -> str:
@@ -54,10 +76,14 @@ def _render_config_js(template: str, origin: str, version: str) -> str:
 
     Uses ``str.format`` so the canonical ``{{origin}}`` / ``{{version}}``
     placeholders expand to ``{origin}`` / ``{version}`` in the output
-    JS object literal. After formatting, any trailing literal backslash
-    artifacts (``\\n``, ``\\t``, trailing ``\\``) that would produce
-    "invalid escape sequence" in the browser are stripped.
+    JS object literal. Both values are JS-escaped first so a malicious
+    ``Host`` header can't break out of the string literal (XSS). After
+    formatting, any trailing literal backslash artifacts (``\\n``, ``\\t``,
+    trailing ``\\``) that would produce "invalid escape sequence" in the
+    browser are stripped.
     """
+    origin = _js_escape(origin)
+    version = _js_escape(version)
     try:
         rendered = template.format(origin=origin, version=version)
     except (KeyError, IndexError):
@@ -224,7 +250,7 @@ class StaticClientManager:
         if current is not None:
             try:
                 current_parsed = parse_version(current)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 current_parsed = None
 
         logger.info(
@@ -238,24 +264,41 @@ class StaticClientManager:
             if current_parsed is not None:
                 try:
                     cmp = compare_version_objects(parsed, current_parsed)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     cmp = 1
                 if cmp < 0:
                     continue
                 if cmp == 0:
-                    # Verify manifest integrity on startup
+                    # Verify manifest integrity on startup.
                     path = self._install_dir / format_release_tag(parsed)
                     key = get_signing_key()
                     if key is not None and path.is_dir():
-                        if not verify_manifest(path, key):
+                        status = verify_manifest_detailed(path, key)
+                        if status != VERIFY_OK:
                             logger.info(
-                                f"static_client: manifest invalid for "
-                                f"{format_release_tag(parsed)}, attempting repair"
+                                f"static_client: manifest invalid "
+                                f"(status={status}) for "
+                                f"{format_release_tag(parsed)}, evaluating repair"
                             )
-                            if not regenerate_manifest(path, key):
+                            repaired = False
+                            if status == VERIFY_HMAC_MISMATCH:
+                                repaired = self._maybe_repair_key_migration(path, key)
+                            if not repaired:
+                                # HMAC/hash failure that is not a proven key
+                                # migration means the install is UNTRUSTED:
+                                # never re-sign whatever happens to be on
+                                # disk — quarantine the tampered bytes so they
+                                # can never be served, then re-download from
+                                # the release source.
                                 logger.warning(
-                                    f"static_client: manifest repair failed, "
-                                    f"re-downloading {format_release_tag(parsed)}"
+                                    f"static_client: install "
+                                    f"{format_release_tag(parsed)} untrusted "
+                                    f"(status={status}); re-downloading"
+                                )
+                                self._quarantine_untrusted_install(
+                                    path,
+                                    format_release_tag(parsed),
+                                    status,
                                 )
                                 return self._fetch_and_install(parsed, asset)
                     logger.info(
@@ -284,6 +327,91 @@ class StaticClientManager:
             error="below_min_age",
         )
 
+    def _quarantine_untrusted_install(
+        self, path: Path, tag: str, status: str
+    ) -> Optional[Path]:
+        """Quarantine an UNTRUSTED install so tampered bytes can never run.
+
+        Moves *path* aside into ``<install_dir>/.quarantine/<tag>.untrusted-
+        <epoch>-<status>`` (never re-signs it) and logs a warning carrying
+        only the file identity (tag/status/dir name — no key or hash
+        material). Falls back to deleting the directory if the move fails,
+        so tampered bytes are never left at the live path. Returns the
+        quarantine location, or ``None`` if nothing remained to move.
+        """
+        try:
+            if not path.exists():
+                return None
+        except OSError:
+            return None
+        logger.warning(
+            "static_client: quarantining untrusted install "
+            f"{tag} (status={status}) at {path.name}; "
+            "manifest NOT re-signed, forcing re-download"
+        )
+        quarantine_root = self._install_dir / ".quarantine"
+        try:
+            quarantine_root.mkdir(parents=True, exist_ok=True)
+            dest = quarantine_root / f"{tag}.untrusted-{int(time.time())}-{status}"
+            suffix = 0
+            final = dest
+            while final.exists():
+                suffix += 1
+                final = dest.with_name(f"{dest.name}-{suffix}")
+            _shutil.move(str(path), str(final))
+            try:
+                (final / ".untrusted").write_text(
+                    f"tag={tag} status={status}\n", encoding="utf-8"
+                )
+            except OSError:
+                pass
+            return final
+        except OSError as exc:
+            logger.warning(
+                f"static_client: quarantine move failed for {tag} "
+                f"(status={status}): {exc}; deleting untrusted bytes"
+            )
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    _shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+
+    def _maybe_repair_key_migration(self, path: Path, key: bytes) -> bool:
+        """Re-sign the manifest ONLY for a proven key migration.
+
+        Narrow window: the stored key epoch differs from the current key
+        (i.e. the manifest was signed under a since-retired key) AND every
+        on-disk file still matches the signed hash list. Anything else —
+        missing epoch marker, matching epoch (same-key HMAC failure =
+        tampering), or any file hash drift — is rejected so tampered
+        installs get re-downloaded instead of silently re-signed.
+        """
+        stored_epoch = read_key_epoch(path)
+        current_epoch = key_epoch(key)
+        if stored_epoch is None or stored_epoch == current_epoch:
+            logger.warning(
+                "static_client: HMAC mismatch with unchanged key epoch "
+                "(or missing epoch marker); treating install as tampered"
+            )
+            return False
+        if not files_match_manifest(path):
+            logger.warning(
+                "static_client: file hashes diverge from signed manifest "
+                "during suspected key migration; refusing to re-sign"
+            )
+            return False
+        logger.info(
+            "static_client: confirmed key migration (epoch %s -> %s) with "
+            "intact files; re-signing manifest under new key",
+            stored_epoch,
+            current_epoch,
+        )
+        return regenerate_manifest(path, key)
+
     def _fetch_and_install(self, parsed: Version, asset: ReleaseAsset) -> InstallResult:
         target_dir = self._install_dir / format_release_tag(parsed)
         tag = format_release_tag(parsed)
@@ -295,7 +423,13 @@ class StaticClientManager:
             zip_path, _sha = download_and_verify_release(
                 asset, self._cfg.git_lab, self._cfg.max_zip_size_bytes
             )
-            install_zip_at(zip_path, target_dir)
+            install_zip_at(
+                zip_path,
+                target_dir,
+                max_uncompressed_bytes=(
+                    self._cfg.max_zip_size_bytes * _UNCOMPRESSED_FACTOR
+                ),
+            )
 
             # Generate and sign integrity manifest
             from .manifest import generate_manifest, write_manifest
@@ -308,7 +442,7 @@ class StaticClientManager:
                     logger.info(
                         f"static_client: wrote manifest for {tag} ({len(files)} files)"
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     f"static_client: failed to write manifest for {tag}: {exc}"
                 )
@@ -319,7 +453,7 @@ class StaticClientManager:
                 already_current=True,
                 error=str(exc),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(
                 f"static_client: unexpected error installing {tag}: {exc}",
                 exc_info=True,

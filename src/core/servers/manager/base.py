@@ -15,22 +15,46 @@ from ..models import (
     Ban,
     ChannelType,
     AuditLogAction,
+    OnboardingStepType,
+    ScheduledEventType,
+    ScheduledEventStatus,
+    RSVPStatus,
 )
 from ..exceptions import (
     ServerAccessDeniedError,
+    ServerNotFoundError,
     PermissionDeniedError,
+    ChannelNotFoundError,
+    ChannelAccessDeniedError,
+    ChannelTypeError,
+    CategoryNotFoundError,
     InvalidChannelNameError,
     OwnerCannotLeaveError,
     MemberExistsError,
+    MemberNotFoundError,
     InviteNotFoundError,
+    InviteExpiredError,
     InviteMaxUsesError,
     UserBannedError,
     BanNotFoundError,
     BanExistsError,
     RoleHierarchyError,
+    RoleNotFoundError,
+    RoleAccessDeniedError,
     DefaultRoleError,
     InvalidRoleNameError,
     CannotModifyOwnerError,
+    ScheduledEventNotFoundError,
+    ScheduledEventError,
+    InvalidEventTimeError,
+    TemplateNotFoundError,
+    TemplateError,
+    InvalidTemplateCodeError,
+    WelcomeScreenNotFoundError,
+    OnboardingStepNotFoundError,
+    OnboardingError,
+    InvalidPermissionKeyError,
+    BanPurgeNotSupportedError,
 )
 from .converters import (
     _row_to_channel,
@@ -44,6 +68,11 @@ from .member_ops import MemberOpsMixin
 from .permission_ops import PermissionOpsMixin
 from .invite_ops import InviteOpsMixin
 
+from ..onboarding_mixin import OnboardingMixin
+from ..event_mixin import EventMixin
+from ..template_mixin import TemplateMixin
+from ..welcome_mixin import WelcomeMixin
+
 
 class ServerManager(
     ServerOpsMixin,
@@ -53,37 +82,82 @@ class ServerManager(
     MemberOpsMixin,
     PermissionOpsMixin,
     InviteOpsMixin,
+    OnboardingMixin,
+    EventMixin,
+    TemplateMixin,
+    WelcomeMixin,
     BaseManager,
 ):
     """Core server manager handling all operations."""
 
     ChannelType = ChannelType
     AuditLogAction = AuditLogAction
+    OnboardingStepType = OnboardingStepType
+    ScheduledEventType = ScheduledEventType
+    ScheduledEventStatus = ScheduledEventStatus
+    RSVPStatus = RSVPStatus
 
     ServerAccessDeniedError = ServerAccessDeniedError
+    ServerNotFoundError = ServerNotFoundError
     PermissionDeniedError = PermissionDeniedError
+    ChannelNotFoundError = ChannelNotFoundError
+    ChannelAccessDeniedError = ChannelAccessDeniedError
+    ChannelTypeError = ChannelTypeError
+    CategoryNotFoundError = CategoryNotFoundError
     InvalidChannelNameError = InvalidChannelNameError
     OwnerCannotLeaveError = OwnerCannotLeaveError
     CannotModifyOwnerError = CannotModifyOwnerError
     MemberExistsError = MemberExistsError
+    MemberNotFoundError = MemberNotFoundError
     InviteNotFoundError = InviteNotFoundError
+    InviteExpiredError = InviteExpiredError
     InviteMaxUsesError = InviteMaxUsesError
     UserBannedError = UserBannedError
     BanNotFoundError = BanNotFoundError
     BanExistsError = BanExistsError
     RoleHierarchyError = RoleHierarchyError
+    RoleNotFoundError = RoleNotFoundError
+    RoleAccessDeniedError = RoleAccessDeniedError
     DefaultRoleError = DefaultRoleError
     InvalidRoleNameError = InvalidRoleNameError
+    ScheduledEventNotFoundError = ScheduledEventNotFoundError
+    ScheduledEventError = ScheduledEventError
+    InvalidEventTimeError = InvalidEventTimeError
+    TemplateNotFoundError = TemplateNotFoundError
+    TemplateError = TemplateError
+    InvalidTemplateCodeError = InvalidTemplateCodeError
+    WelcomeScreenNotFoundError = WelcomeScreenNotFoundError
+    OnboardingStepNotFoundError = OnboardingStepNotFoundError
+    OnboardingError = OnboardingError
+    InvalidPermissionKeyError = InvalidPermissionKeyError
+    BanPurgeNotSupportedError = BanPurgeNotSupportedError
 
     def _get_manager(self):
         """Compatibility helper for older tests and call sites."""
         return self
 
-    def __init__(self, db, auth_module=None, messaging_module=None):
+    def __init__(
+        self,
+        db,
+        auth_module=None,
+        messaging_module=None,
+        notifications_module=None,
+        events_module=None,
+    ):
         """Initialize the server manager."""
         super().__init__(db, auth_module)
         self._messaging = messaging_module
         self._config = self._load_config()
+
+        from .onboarding_ops import OnboardingManager
+        from .scheduled_event_ops import ScheduledEventManager
+        from .template_ops import TemplateManager
+
+        self._onboarding_manager = OnboardingManager(db, self)
+        self._event_manager = ScheduledEventManager(
+            db, self, notifications_module, events_module
+        )
+        self._template_manager = TemplateManager(db, self)
         self._encrypt_descriptions = config.get(
             "encryption.encrypt_descriptions", False
         )
@@ -203,12 +277,15 @@ class ServerManager(
 
         if cached_row is None:
             row = self._db.fetch_one(
-                "SELECT * FROM srv_channels WHERE id = ?", (channel_id,)
+                "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0",
+                (channel_id,),
             )
             if row is None:
                 return None
             self._cache_set(self._channel_cache_prefix, cache_key, dict(row))
             cached_row = dict(row)
+        if cached_row.get("deleted"):
+            return None
         server_id = cached_row["server_id"]
 
         if not self._is_member(server_id, user_id):
@@ -267,6 +344,43 @@ class ServerManager(
             return bool(row["exists"])
         except KeyError:
             return False
+
+    def get_channel_conversation_id(
+        self, channel_id: SnowflakeID
+    ) -> Optional[SnowflakeID]:
+        """Membership-agnostic lookup of the conversation linked to a channel.
+
+        Returns the ``conversation_id`` of the server channel, or ``None``
+        when the channel does not exist (or has no linked conversation).
+        No membership or permission filtering: callers use this to map a
+        URL channel id onto the underlying conversation id.
+        """
+        row = self._db.fetch_one(
+            "SELECT conversation_id FROM srv_channels WHERE id = ? AND deleted = 0",
+            (channel_id,),
+        )
+        if row is None:
+            return None
+        return row["conversation_id"]
+
+    def get_channel_by_conversation(
+        self, conversation_id: SnowflakeID
+    ) -> Optional[Dict[str, Any]]:
+        """Membership-agnostic reverse lookup: server channel for a conversation.
+
+        Returns ``{"id": <channel_id>, "server_id": <server_id>}`` for the
+        (first, undeleted) server channel linked to ``conversation_id``, or
+        ``None`` when the conversation is not backed by a server channel.
+        Used by messaging to resolve server-side moderation permissions.
+        """
+        row = self._db.fetch_one(
+            "SELECT id, server_id FROM srv_channels "
+            "WHERE conversation_id = ? AND deleted = 0 LIMIT 1",
+            (conversation_id,),
+        )
+        if row is None:
+            return None
+        return {"id": row["id"], "server_id": row["server_id"]}
 
     def get_channels(
         self,
@@ -344,10 +458,11 @@ class ServerManager(
         color: Optional[str] = None,
         hoist: Optional[bool] = None,
         mentionable: Optional[bool] = None,
+        position: Optional[int] = None,
     ) -> Role:
         """Update role settings."""
         return self.role_handler.update_role(
-            user_id, role_id, name, permissions, color, hoist, mentionable
+            user_id, role_id, name, permissions, color, hoist, mentionable, position
         )
 
     def delete_role(self, user_id: SnowflakeID, role_id: SnowflakeID) -> bool:
@@ -422,7 +537,7 @@ class ServerManager(
     ) -> Ban:
         """Ban a user from a server."""
         return self.member_handler.ban_member(
-            user_id, server_id, member_user_id, reason
+            user_id, server_id, member_user_id, reason, delete_message_days
         )
 
     def unban_member(
@@ -532,3 +647,11 @@ class ServerManager(
     def delete_invite(self, user_id: SnowflakeID, code: str) -> bool:
         """Delete an invite."""
         return self.member_handler.delete_invite(user_id, code)
+
+    def purge_temporary_members(self, user_id: SnowflakeID) -> List[SnowflakeID]:
+        """Revoke a user's temporary-invite memberships (Agent 16 F9).
+
+        Called on the user's last connection close; memberships granted by a
+        temporary invite are removed unless the member earned a role.
+        """
+        return self.member_handler.purge_temporary_members(user_id)

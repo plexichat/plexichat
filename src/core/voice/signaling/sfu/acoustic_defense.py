@@ -175,6 +175,7 @@ class AudioProcessingTrack:
         self._samples_per_frame = int(
             self._sample_rate * self._frame_duration_ms / 1000.0
         )
+        self._stopped = False
 
     @property
     def kind(self) -> str:
@@ -208,18 +209,45 @@ class AudioProcessingTrack:
     def onended(self, handler: Any) -> None:
         self._source.onended = handler
 
-    def clone(self) -> "AudioProcessingTrack":
-        return AudioProcessingTrack(self._source, self._config)
-
     def stop(self) -> None:
+        """Stop this wrapper and the track it wraps.
+
+        Per-sender views are :class:`~.fanout.FanoutView` objects, so this
+        wrapper is only ever the *source* the relay reads; aiortc never stops
+        it on a sender's behalf. Stopping it here therefore ends the shared
+        source deliberately, not as a side effect of one peer leaving.
+        """
+        self._stopped = True
         self._source.stop()
+
+    async def _read_source(self) -> Any:
+        """Read the next frame from the wrapped track.
+
+        aiortc consumes any track through ``recv()``; ``_read`` is the legacy
+        hook an earlier wrapper API used. Prefer whichever the source offers,
+        so the wrapper works both with a real incoming receiver track (which
+        only has ``recv``) and with a source-shaped fake, instead of raising
+        ``AttributeError`` inside the sender's RTP task and silently killing
+        audio for every peer the track is forwarded to.
+        """
+        reader = getattr(self._source, "recv", None)
+        if reader is not None:
+            return await reader()
+        return await self._source._read()
+
+    async def recv(self) -> Any:
+        """aiortc's consumption entry point (see :meth:`_read`)."""
+        return await self._read()
 
     async def _read(self) -> Any:
         """Read and process the next audio frame from the source track."""
-        if not self._enabled:
-            return await self._source._read()
+        if self._stopped:
+            return None
 
-        frame = await self._source._read()
+        if not self._enabled:
+            return await self._read_source()
+
+        frame = await self._read_source()
 
         if frame is None:
             return None

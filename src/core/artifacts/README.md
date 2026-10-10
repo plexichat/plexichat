@@ -1,582 +1,292 @@
-# Artifacts Module
+# Artifacts
 
-The artifacts module owns the database schema for Plexichat's **Artifacts**
-feature: first-class, persistent records that represent durable outputs of a
-conversation such as voice calls, whiteboards, uploads, files, transcripts,
-and future artifact types.
+This document describes the artifacts module for Plexichat. Use it to persist, query, and manage durable outputs of a conversation, such as voice calls, whiteboards, uploads, and transcripts.
 
-This stage adds the **domain logic** for artifacts (Group 4): dataclass models,
-a repository (DB access), and a manager (business logic). No routes, no
-websocket handlers, and no voice-call-specific logic are included here — those
-are added by later groups.
+Artifacts are first-class records. This module owns the database schema, domain models, repository, and manager. Routes, WebSocket handlers, and voice-call-specific wiring are provided by other modules.
 
-## Contents
+## Overview
 
-- `schema.py` — exposes `create_tables(db)` which creates the three tables
-  described below. It follows the same execution style as the voice and
-  messaging modules: the schema SQL is split with
-  `src.core.database.core.schema_splitter.split_sql_statements`, each
-  statement is passed through `db.convert_schema(...)` when available, and
-  executed via `db.execute(...)`. All statements use `CREATE TABLE IF NOT
-  EXISTS` / `CREATE INDEX IF NOT EXISTS` so creation is idempotent.
-- `__init__.py` — package marker and module docstring.
-- `capabilities.py` — the **capability / availability service** (see
-  [Capability service](#capability-service) below). It evaluates the runtime
-  availability of every artifacts feature and is exposed via API endpoints.
-
-The tables are created by migration
-`src/core/migrations/migrations/047_add_artifacts_tables.py`, which imports
-`create_tables` from `schema.py` in its `up(db)` and drops the tables in its
-`down(db)`.
+| File | Responsibility |
+| --- | --- |
+| `schema.py` | Defines `create_tables(db)` for the three tables below. Uses `split_sql_statements` and `db.convert_schema` when available, and executes with `CREATE TABLE IF NOT EXISTS` so creation is idempotent. Migration `047_add_artifacts_tables.py` calls `create_tables` in `up` and drops tables in `down`. |
+| `models.py` | Dataclasses `Artifact` and `VoiceCall`, plus enums `ArtifactType` and `ArtifactStatus`. |
+| `repository.py` | Low-level database functions for creating, reading, and listing artifacts. |
+| `manager.py` | `ArtifactManager` business logic, including retention handling and `convert_upload_to_artifact`. |
+| `voice_calls.py` | `VoiceCallManager` lifecycle for voice calls. |
+| `capabilities.py` | Computes availability of each artifact feature. |
+| `retention.py` | `purge_expired` and `RetentionCleanupJob` background worker. |
+| `federation.py` | `FederationArtifactBridge` for PlexiJoin. |
+| `privacy.py` | `anonymize_user_artifacts` for erasure. |
 
 ## ID convention
 
-All identifiers use the Snowflake format and are stored as `INTEGER`, matching
-the convention used by the voice and messaging modules. The one exception is
-`artifact_ops.id`, which is an auto-incrementing local row id
-(`INTEGER PRIMARY KEY AUTOINCREMENT`); artifact ordering is expressed via the
-`seq` column rather than the primary key.
+All identifiers use Snowflake integers and are stored as `INTEGER`. The exception is `artifact_ops.id`, which is an auto-incrementing local row ID (`INTEGER PRIMARY KEY AUTOINCREMENT`). Ordering within an artifact uses the `seq` column.
 
-## Tables
+## Schema
 
 ### `artifacts`
 
 The central record for every artifact.
 
-| Column            | Type    | Notes |
-|-------------------|---------|-------|
-| `id`              | INTEGER | Snowflake primary key. |
-| `conversation_id` | INTEGER | Nullable; owning conversation (some future artifact types are not tied to a conversation). |
-| `channel_id`      | INTEGER | Nullable; owning channel. |
-| `server_id`       | INTEGER | Nullable; owning server. |
-| `author_id`       | INTEGER | NOT NULL; user who created the artifact. |
-| `artifact_type`   | TEXT    | NOT NULL; one of `voice_call`, `whiteboard`, `upload`, `file`, `transcript`, `future`. |
-| `title`           | TEXT    | NOT NULL; display title. |
-| `summary`         | TEXT    | Nullable; short summary/description. |
-| `status`          | TEXT    | NOT NULL, default `completed`; one of `live`, `completed`, `archived`. |
-| `recorded`        | INTEGER | NOT NULL, default `0`; boolean (0/1) indicating the artifact was recorded. |
-| `has_transcript`  | INTEGER | NOT NULL, default `0`; boolean (0/1) indicating a transcript exists. |
-| `payload`         | TEXT    | Nullable; JSON-encoded, type-specific data stored as text. |
-| `retention_policy`| TEXT    | Nullable; per-artifact retention override (JSON or a days string). |
-| `expires_at`      | INTEGER | Nullable; expiry timestamp. `NULL` means never expire. |
-| `license_feature` | TEXT    | Nullable; license feature flag gating the artifact, e.g. `artifacts_whiteboard`. |
-| `created_at`      | INTEGER | NOT NULL; creation timestamp. |
-| `updated_at`      | INTEGER | NOT NULL; last-update timestamp. |
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Snowflake primary key. |
+| `conversation_id` | INTEGER | Nullable. Owning conversation. |
+| `channel_id` | INTEGER | Nullable. Owning channel. |
+| `server_id` | INTEGER | Nullable. Owning server. |
+| `author_id` | INTEGER | NOT NULL. Creator. |
+| `artifact_type` | TEXT | NOT NULL. One of `voice_call`, `whiteboard`, `upload`, `file`, `transcript`, `future`. |
+| `title` | TEXT | NOT NULL. Display title. |
+| `summary` | TEXT | Nullable. Short description. |
+| `status` | TEXT | NOT NULL, default `completed`. One of `live`, `completed`, `archived`. |
+| `recorded` | INTEGER | NOT NULL, default `0`. Boolean flag. |
+| `has_transcript` | INTEGER | NOT NULL, default `0`. Boolean flag. |
+| `payload` | TEXT | Nullable. JSON-encoded type-specific data. |
+| `retention_policy` | TEXT | Nullable. Per-artifact retention override. |
+| `expires_at` | INTEGER | Nullable. Expiry timestamp in milliseconds. `NULL` means never expire. |
+| `license_feature` | TEXT | Nullable. Feature flag, for example `artifacts_whiteboard`. |
+| `created_at` | INTEGER | NOT NULL. Creation timestamp. |
+| `updated_at` | INTEGER | NOT NULL. Last-update timestamp. |
 
-Indexes: `conversation_id`, `server_id`, `author_id`, `artifact_type`,
-`created_at`.
+Indexes: `conversation_id`, `server_id`, `author_id`, `artifact_type`, `created_at`.
 
 ### `voice_calls`
 
-Call-specific metadata. A completed call typically produces an `artifacts`
-row of type `voice_call`; `artifact_id` links back to it.
+Call-specific metadata. A completed call typically creates an `artifacts` row with `artifact_type = voice_call`.
 
-| Column                   | Type    | Notes |
-|--------------------------|---------|-------|
-| `id`                     | INTEGER | Snowflake primary key. |
-| `artifact_id`            | INTEGER | Nullable; references `artifacts.id`. |
-| `conversation_id`        | INTEGER | Nullable; owning conversation. |
-| `channel_id`             | INTEGER | Nullable; owning channel. |
-| `server_id`              | INTEGER | Nullable; owning server. |
-| `initiator_id`          | INTEGER | User who started the call. |
-| `started_at`             | INTEGER | NOT NULL; call start timestamp. |
-| `ended_at`               | INTEGER | Nullable; call end timestamp. |
-| `duration_seconds`       | INTEGER | Nullable; total call duration. |
-| `recorded`               | INTEGER | NOT NULL, default `0`; boolean (0/1). |
-| `transcript_artifact_id` | INTEGER | Nullable; artifact id of the transcript, if any. |
-| `consented_participants` | TEXT    | Nullable; JSON list of user ids that consented to recording. |
-| `participant_count`      | INTEGER | Default `0`; number of participants. |
-| `created_at`             | INTEGER | NOT NULL. |
-| `updated_at`             | INTEGER | NOT NULL. |
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Snowflake primary key. |
+| `artifact_id` | INTEGER | Nullable. References `artifacts.id`. |
+| `conversation_id` | INTEGER | Nullable. |
+| `channel_id` | INTEGER | Nullable. |
+| `server_id` | INTEGER | Nullable. |
+| `initiator_id` | INTEGER | User who started the call. |
+| `started_at` | INTEGER | NOT NULL. Call start timestamp. |
+| `ended_at` | INTEGER | Nullable. |
+| `duration_seconds` | INTEGER | Nullable. |
+| `recorded` | INTEGER | NOT NULL, default `0`. Boolean. |
+| `transcript_artifact_id` | INTEGER | Nullable. Linked transcript artifact. |
+| `consented_participants` | TEXT | Nullable. JSON list of user IDs that consented to recording. |
+| `participant_count` | INTEGER | Default `0`. |
+| `created_at` | INTEGER | NOT NULL. |
+| `updated_at` | INTEGER | NOT NULL. |
 
 Indexes: `artifact_id`, `conversation_id`, `server_id`.
 
 ### `artifact_ops`
 
-An ordered, append-only operations log for collaborative artifacts (for
-example whiteboard strokes and edits). Operations are ordered per artifact by
-`seq`.
+Append-only operations log for collaborative artifacts such as whiteboards. Operations are ordered per artifact by `seq`.
 
-| Column       | Type    | Notes |
-|--------------|---------|-------|
-| `id`         | INTEGER | Auto-incrementing local row id (`PRIMARY KEY AUTOINCREMENT`). |
-| `artifact_id`| INTEGER | NOT NULL; the artifact this op belongs to. |
-| `seq`        | INTEGER | NOT NULL; monotonic per-artifact sequence number. |
-| `op_type`    | TEXT    | NOT NULL; e.g. `stroke`, `edit`, `cursor`, `snapshot`. |
-| `actor_id`   | INTEGER | Nullable; user who produced the op. |
-| `data`       | TEXT    | NOT NULL; JSON-encoded op payload. |
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER | Auto-incrementing row ID. |
+| `artifact_id` | INTEGER | NOT NULL. Owning artifact. |
+| `seq` | INTEGER | NOT NULL. Monotonic per artifact. |
+| `op_type` | TEXT | NOT NULL. For example `stroke`, `edit`, `cursor`, `snapshot`. PlexiScribe persists `text`, `ins_block`, `del_block`, `set_type`, `set_style`, `set_marks`, `replace_all`; `presence`, `presence_leave`, `cursor`, `typing`, `selection` are transient. |
+| `actor_id` | INTEGER | Nullable. Producer. |
+| `data` | TEXT | NOT NULL. JSON-encoded payload. |
 | `created_at` | INTEGER | NOT NULL. |
 
-Constraints: `UNIQUE(artifact_id, seq)`.
-Indexes: `artifact_id`, and the composite `(artifact_id, seq)`.
+Constraint: `UNIQUE(artifact_id, seq)`. Indexes: `artifact_id`, `(artifact_id, seq)`.
 
-## How later groups use this module
+## Models
 
-Later groups will add:
+Defined in `models.py` as pure dataclasses. Boolean columns are `int` in the database and `bool` on the model.
 
-- Snowflake-backed domain models mapping to these tables.
-- A manager/service layer for creating and querying artifacts, recording voice
-  calls, and appending/replaying `artifact_ops`.
-- API routes and real-time delivery.
+*   `ArtifactType` — `VOICE_CALL`, `WHITEBOARD`, `UPLOAD`, `FILE`, `TRANSCRIPT`, `FUTURE`, `PLEXISCRIBE`, `PLEXISCRIPT`, `SUM`. Unknown persisted values map to `FUTURE`.
+*   `ArtifactStatus` — `LIVE`, `COMPLETED`, `ARCHIVED`.
+*   `Artifact` — Fields: `id`, `conversation_id`, `channel_id`, `server_id`, `author_id`, `artifact_type`, `title`, `summary`, `status`, `recorded`, `has_transcript`, `payload` (`dict`), `created_at`, `updated_at`, `retention_policy`, `expires_at`, `license_feature`.
+*   `VoiceCall` — Fields: `id`, `artifact_id`, `conversation_id`, `channel_id`, `server_id`, `initiator_id`, `started_at`, `ended_at`, `duration_seconds`, `recorded`, `transcript_artifact_id`, `consented_participants` (`list[int]`), `participant_count`, `created_at`, `updated_at`.
 
-Those groups should depend on the tables and columns documented here rather
-than redefining schema.
+## Repository
 
-## Voice call artifacts
+`repository.py` operates on a `db` connection with parameterized SQL. Sort keys are restricted to an allow-list.
 
-When a voice call ends it produces a `voice_call` record plus a corresponding
-`voice_call` Artifact, so the call appears in chat history and the artifacts
-pane carrying recording/transcript flags and participant consent.
+| Function | Description |
+| --- | --- |
+| `create_artifact(db, artifact)` | Inserts the artifact and returns it. |
+| `get_artifact(db, artifact_id)` | Returns an `Artifact` or `None`. |
+| `update_artifact(db, artifact_id, **fields)` | Updates only known columns. Normalizes enums, booleans, and JSON. |
+| `delete_artifact(db, artifact_id)` | Deletes the row. Returns `True` if a row was removed. |
+| `list_artifacts(db, filters)` | Lists artifacts. See filters below. |
+| `count_artifacts(db, filters)` | Counts artifacts matching filters. |
+| `row_to_artifact(row)` | Converts a database row to `Artifact`. |
+| `artifact_to_row(artifact)` | Converts an `Artifact` to a database row. |
 
-### Lifecycle
+`list_artifacts` supports: `conversation_id`, `channel_id`, `server_id`, `author_id`, `artifact_type` (single value or list), `status`, `recorded` (`bool`), `has_transcript` (`bool`), `search` (`LIKE` on title and summary), `sort_by` (`created_at`, `title`, `type`, `duration` where `duration` joins `voice_calls`), `sort_order` (`asc` or `desc`), `limit`, `offset`.
 
-A "call" is an aggregate over a voice channel. It is created lazily, keyed by
-`channel_id`:
+## Manager
 
-- **Start** — when the first participant joins a channel (see
-  `VoiceCallManager.start_call`), a `voice_calls` row is inserted
-  (`started_at` now, `participant_count` 1) and a linked `voice_call` Artifact
-  is created via `ArtifactManager.create(...)` with `artifact_type =
-  ArtifactType.VOICE_CALL`, `status = ArtifactStatus.LIVE`, `recorded`
-  reflecting the `allow_recording` config, and the `voice_calls.id` stored in
-  the artifact `payload`.
-- **End** — when the last participant leaves the channel (`VoiceCallManager.
-  end_call`), `ended_at`, `duration_seconds`, and `participant_count` are set on
-  the `voice_calls` row and the linked artifact is transitioned to
-  `ArtifactStatus.COMPLETED`.
+`ArtifactManager(BaseManager)` wraps the repository and the `artifacts` config.
 
-The voice module wraps every call/artifact interaction so a failure there never
-breaks voice: when the artifacts layer is unavailable (or the call manager is
-not attached), calls simply are not recorded. Voice keeps working regardless.
+```python
+from src.core.artifacts.manager import ArtifactManager
 
-### Recording flag
+manager = ArtifactManager(db, config=None)
 
-`config["artifacts"]["voice"]["allow_recording"]` gates whether calls may be
-recorded. When it is `False`, `VoiceCallManager.mark_recorded(..., True)` is
-clamped to `False` and the artifact's `recorded` flag is never set. The flag is
-mirrored on both the `voice_calls` row and the linked `artifacts` row so the
-history and the call metadata agree.
+artifact = manager.create(
+    conversation_id=123,
+    author_id=456,
+    artifact_type="upload",
+    title="Design doc",
+)
+fetched = manager.get(artifact.id)
+results = manager.list_with_filters({"artifact_type": "voice_call"}, server_id=1)
+count = manager.count({"author_id": 456})
+manager.delete(artifact.id)
+```
 
-### Consent
+Key behaviors:
 
-`VoiceCallManager.add_consent(call_id, user_id)` appends a user to the
-`consented_participants` JSON list on the `voice_calls` row (deduped). This is
-the set of participants that agreed to recording; it is surfaced on the call
-record and used by later groups to gate/annotate recordings.
-
-### Transcript link
-
-`VoiceCallManager.set_transcript(call_id, transcript_artifact_id)` links a
-transcript artifact (produced by a later transcription group) to the call via
-`transcript_artifact_id` and sets `has_transcript = True` on the linked
-artifact.
-
-## Transcription framework (`transcription/`)
-
-`src/core/artifacts/transcription/` implements the voice-call transcription
-framework. See `transcription/README.md` for the full detail; the essentials:
-
-- **Providers** (`provider.py`): `LocalWhisperProvider` (runs OpenAI Whisper
-  in-process), `OpenAIWhisperProvider` (real OpenAI Whisper API call), and
-  `AzureSpeechProvider` (Azure Speech SDK or REST batch transcription). All
-  return a `TranscriptionResult` with timestamped, optionally speaker-attributed
-  segments. `get_transcription_provider(config)` is the single decision point
-  and raises `ValueError` on inconsistent config (this becomes the capability
-  `misconfigured` state).
-- **Worker** (`worker.py`): `transcribe_call(call_id, db, config)` loads the
-  `voice_calls` row, enforces gating (enabled + auto_transcribe + capability
-  `AVAILABLE` + recorded + consent), resolves the recording reference from the
-  linked `voice_call` artifact `payload["recording_ref"]`, runs the provider,
-  creates a `TRANSCRIPT` artifact, links it via `set_transcript`, and emits
-  `ARTIFACT_UPDATE`. `schedule_transcribe_call` is the fire-and-forget
-  scheduler (asyncio task or bounded queue).
-- **Auto-wiring**: when a call ends (`VoiceCallManager.end_call`, reached from
-  the voice lifecycle hook in `src/core/voice/manager/calls.py`), and
-  transcription is enabled + auto_transcribe + licensed, the transcription job
-  is scheduled automatically.
-- **Capability reuse**: `capabilities.py` evaluates `voice_transcription` by
-  calling `get_transcription_provider(...).is_available()`, so the
-  `DEPENDENCY_MISSING` / `MISCONFIGURED` state is the single source of truth
-  shared by the admin panel and the worker.
-- **DSAR**: `src/core/dsar/collector.py` includes the user's `voice_calls`
-  (initiator or consented participant) and their `voice_call` / `transcript`
-  artifacts, with transcript text surfaced inline.
-
-## DSAR / privacy
-
-Artifacts (including voice-call records and transcripts) are treated as
-personal data and are covered by the DSAR (GDPR data-portability / erasure)
-flows:
-
-- **Export (right to data portability).** `src/core/dsar/collector.py`
-  `_collect_voice` returns the user's `voice_states`, `voice_calls` (calls they
-  initiated or consented to), and the linked `artifacts` rows of type
-  `voice_call` and `transcript` that they authored. Transcript text is pulled
-  out of the `payload` JSON into a readable `transcript_text` field so the
-  JSON / ZIP export is human-readable without re-parsing segments. The DSAR
-  preview counts (`count_records`) include `content_artifacts`,
-  `content_transcripts`, and `voice_voice_calls` so the user sees how much
-  artifact data will be exported. Every export format (JSON and ZIP, which
-  dumps the whole collected dict) serializes these categories, so transcripts
-  are always present in the download.
-- **Deletion / anonymization (right to erasure).** On account purge the
-  account reaper calls `anonymize_user_artifacts(db, user_id, config)` from
-  `src/core/artifacts/privacy.py` (wired into `AccountReaper.purge_user`).
-  This honors the same `anonymize_content` policy used for messages:
-  - `anonymize_content=True` (default) — keeps the rows but removes the
-    identifiable link: `author_id` is set to a sentinel anonymized id,
-    inline transcript text is stripped from the `payload`, the user is removed
-    from `consented_participants` on calls they only consented to, and their
-    `actor_id` entries in `artifact_ops` are deleted. Calls they initiated are
-    anonymized (initiator_id → sentinel) rather than deleted.
-  - `anonymize_content=False` — deletes artifacts the user authored, the
-    linked `artifact_ops` for those artifacts, and any `voice_calls` rows they
-    initiated; consented-participant entries are removed from calls they did
-    not start.
-
-  The function returns the number of rows touched so the reaper's audit log can
-  record the erasure.
-
-### Manager surface (`voice_calls.py`)
-
-`VoiceCallManager(db, artifact_manager=None, config=None)` exposes:
-
-- `start_call(channel_id, server_id, initiator_id, conversation_id=None) -> VoiceCall`
-- `end_call(call_id, participant_ids=None) -> VoiceCall`
-- `mark_recorded(call_id, recorded: bool) -> VoiceCall`
-- `add_consent(call_id, user_id) -> VoiceCall`
-- `set_transcript(call_id, transcript_artifact_id) -> VoiceCall`
-- `get_active_by_channel(channel_id) -> Optional[VoiceCall]`
-
-## Models (`models.py`)
-
-Pure dataclasses (same style as the messaging module) mapping to the tables
-above. All IDs are Snowflake `int`s; boolean DB columns are exposed as `bool`.
-
-- **`ArtifactType(str, Enum)`** — `VOICE_CALL`, `WHITEBOARD`, `UPLOAD`, `FILE`,
-  `TRANSCRIPT`, `FUTURE` (values match the `artifact_type` column).
-- **`ArtifactStatus(str, Enum)`** — `LIVE`, `COMPLETED`, `ARCHIVED`.
-- **`Artifact`** — fields: `id`, `conversation_id`, `channel_id`, `server_id`,
-  `author_id`, `artifact_type`, `title`, `summary`, `status`, `recorded`,
-  `has_transcript`, `payload` (dict), `created_at`, `updated_at`,
-  `retention_policy` (optional dict/str), `expires_at` (optional int),
-  `license_feature` (optional str).
-- **`VoiceCall`** — fields: `id`, `artifact_id`, `conversation_id`, `channel_id`,
-  `server_id`, `initiator_id`, `started_at`, `ended_at`, `duration_seconds`,
-  `recorded`, `transcript_artifact_id`, `consented_participants` (list[int]),
-  `participant_count`, `created_at`, `updated_at`. Defined here for later
-  voice-call groups but kept independent of call lifecycle logic.
-
-## Repository (`repository.py`)
-
-Functions operating on a `db` connection (parameterized SQL, no value
-interpolation; sort keys restricted to an allow-list):
-
-- `create_artifact(db, artifact) -> Artifact`
-- `get_artifact(db, artifact_id) -> Optional[Artifact]`
-- `update_artifact(db, artifact_id, **fields) -> Optional[Artifact]` — accepts
-  only known columns; enum/bool/JSON fields are normalized.
-- `delete_artifact(db, artifact_id) -> bool` — True if a row was removed.
-- `list_artifacts(db, filters) -> list[Artifact]` — `filters` supports:
-  `conversation_id`, `channel_id`, `server_id`, `author_id`, `artifact_type`
-  (single value or a list), `status`, `recorded` (bool), `has_transcript`
-  (bool), `search` (title/summary LIKE), `sort_by` (`created_at` | `title` |
-  `type` | `duration` — `duration` joins `voice_calls`), `sort_order`
-  (`asc` | `desc`), `limit`, `offset`.
-- `count_artifacts(db, filters) -> int`
-- `row_to_artifact(row)` / `artifact_to_row(artifact)` — row ↔ dataclass
-  conversion (JSON columns encoded/decoded transparently).
-
-## Manager (`manager.py`)
-
-`ArtifactManager(BaseManager)` wraps the repository and the artifacts config.
-
-- `__init__(db, config=None)` — config defaults to `utils.config.get("artifacts", {})`.
-- `create(...)` — builds an `Artifact` with a fresh Snowflake id, derives
-  `expires_at` from the resolved retention period (see below), and persists it.
-- `get(artifact_id)`, `update(artifact_id, **fields)`, `delete(artifact_id)`
-  (deletes the metadata row only; media purge / cascade cleanup of linked
-  `voice_calls` and `artifact_ops` is deferred to later groups).
-- `list_with_filters(filters, conversation_id=None, server_id=None,
-  channel_id=None, author_id=None)` — merges scope args into the filters and
-  delegates to `list_artifacts`. Visibility/permission enforcement is the
-  responsibility of the route layer.
-- `count(filters)`.
-- `convert_upload_to_artifact(attachment, conversation_id, author_id,
-  title=None, artifact_type=UPLOAD, server_id=None, channel_id=None) ->
-  Artifact` — creates an `UPLOAD`/`FILE` artifact referencing an **existing**
-  attachment. The `attachment` dict must carry an `attachment_id` (or `id`);
-  `filename`, `content_type`, `size`, `url`, and `metadata` are copied into the
-  artifact `payload`. This is the backend for the later retroactive-convert
-  client flow and intentionally does not couple to the media module.
+*   `create(...)` — Generates a Snowflake ID, computes `expires_at` from the resolved retention period, and persists the artifact.
+*   `list_with_filters(filters, conversation_id, server_id, channel_id, author_id)` — Merges scope arguments into filters and delegates to `list_artifacts`. The route layer enforces visibility and permissions.
+*   `delete(artifact_id)` — Deletes the metadata row only. Cascade cleanup of `voice_calls` and `artifact_ops` is deferred to later groups.
+*   `convert_upload_to_artifact(attachment, conversation_id, author_id, title, artifact_type, server_id, channel_id)` — Creates an `UPLOAD` or `FILE` artifact from an existing attachment. The `attachment` dict must contain `attachment_id` or `id`; `filename`, `content_type`, `size`, `url`, and `metadata` are copied into `payload`. It queries `msg_attachments` with `deleted = 0`.
 
 ### Retention logic
 
-`compute_expires_at(retention_days, created_at) -> Optional[int]` returns the
-expiry timestamp in milliseconds, or `None` when `retention_days` is `None` or
-non-positive (i.e. never expires). `_resolve_retention_days` computes the
-effective period with this priority:
+`compute_expires_at(retention_days, created_at)` returns an expiry timestamp in milliseconds, or `None` if `retention_days` is `None` or not positive. `_resolve_retention_days` resolves the effective period in priority order:
 
-1. An explicit per-artifact `retention_policy` carrying `days`.
-2. A per-server override — only when `allow_per_server_override` is set and
-   `artifacts.servers.<server_id>.retention_days` exists.
-3. The global `default_retention_days` (`None` ⇒ no expiry).
+1.  Per-artifact `retention_policy` containing `days`.
+2.  Per-server override when `allow_per_server_override` is `True` and `artifacts.servers.<server_id>.retention_days` exists.
+3.  Global `default_retention_days` (`None` means never expire).
 
-When `default_retention_days` is `None`, created artifacts never expire.
+## Voice call lifecycle
+
+`VoiceCallManager(db, artifact_manager, config)` mediates between `voice_calls` and the linked `voice_call` artifact. The voice module wraps all calls so a failure in the artifacts layer does not break voice.
+
+| Method | Description |
+| --- | --- |
+| `start_call(channel_id, server_id, initiator_id, conversation_id)` | Inserts a `voice_calls` row (`started_at = now`, `participant_count = 1`) and creates a linked artifact with `status = LIVE` and `recorded` from `artifacts.voice.allow_recording`. |
+| `end_call(call_id, participant_ids)` | Sets `ended_at`, `duration_seconds`, and `participant_count`, and transitions the artifact to `COMPLETED`. |
+| `mark_recorded(call_id, recorded)` | Sets the `recorded` flag. Clamped to `False` when `allow_recording` is `False`. |
+| `add_consent(call_id, user_id)` | Appends a user to `consented_participants` (deduped JSON list). |
+| `set_transcript(call_id, transcript_artifact_id)` | Links a transcript artifact and sets `has_transcript = True` on the source artifact. |
+| `get_active_by_channel(channel_id)` | Returns the active call for a channel or `None`. |
 
 ## Capability service
 
-`capabilities.py` computes the **availability state** of each artifacts feature
-so the admin panel (and clients) can show banners explaining why a feature is
-unavailable.
+`capabilities.py` computes the availability of each feature for the admin panel and clients.
 
-### `CapabilityState` enum
+### States
 
-Each feature resolves to exactly one state:
+Each feature resolves to one `CapabilityState`:
 
-| State                  | Meaning |
-|------------------------|---------|
-| `available`            | The feature is fully usable. |
-| `disabled_by_config`   | Turned off via server config. |
-| `disabled_by_license`  | Off because the required license feature is absent. |
-| `dependency_missing`   | A runtime dependency (e.g. Whisper) is not installed. |
-| `misconfigured`        | Enabled and licensed, but required configuration (e.g. an API key) is missing, or the provider is unknown. |
+| State | Meaning |
+| --- | --- |
+| `available` | The feature is usable. |
+| `disabled_by_config` | Disabled via config. |
+| `disabled_by_license` | Disabled because the required license feature is absent. |
+| `dependency_missing` | A runtime dependency is not installed. |
+| `misconfigured` | Enabled and licensed, but required configuration is missing or the provider is unknown. |
 
-`CapabilityInfo` carries `feature`, `state`, `message` (human-readable,
-admin-facing), and `details` (optional extras such as the selected provider).
+`CapabilityInfo` contains `feature`, `state`, `message`, and optional `details`.
 
 ### Evaluated features
 
-`get_artifact_capabilities(config=None)` returns a dict keyed by feature name:
+`get_artifact_capabilities(config)` returns a dict keyed by feature name:
 
-- **`artifacts`** — master switch; `disabled_by_config` when
-  `artifacts.enabled is False`, else `available`.
-- **`plexiscribe`** — `disabled_by_config` when `artifacts.plexiscribe.enabled is False` or `artifacts.enabled is False`; `disabled_by_license` when `has_feature("plexiscribe")` is false; else `available`.
-- **`plexiscript`** — `disabled_by_config` when `artifacts.plexiscript.enabled is False` or `artifacts.enabled is False`; `disabled_by_license` when `has_feature("plexiscript")` is false; else `available`.
-- **`artifacts_whiteboard`** — `disabled_by_config` when `artifacts.whiteboard.enabled is False` or `artifacts.enabled is False`;
-  `disabled_by_license` when `has_feature("artifacts_whiteboard")` is false;
-  else `available`.
-- **`voice_transcription`** — `disabled_by_config` when
-  `artifacts.voice.transcription.enabled is False` or `artifacts.enabled is
-  False`; `disabled_by_license` when `has_feature("voice_transcription")` is
-  false; otherwise evaluated by provider:
-  - `local_whisper` → `dependency_missing` if Whisper is not importable, else
-    `available`.
-  - `openai` / `azure` → `misconfigured` if the corresponding API key is empty,
-    else `available`.
-  - unknown provider → `misconfigured`.
-- **`voice_recording`** — `disabled_by_config` when
-  `artifacts.voice.allow_recording is False`, else `available`.
+*   `artifacts` — `disabled_by_config` when `artifacts.enabled is False`, else `available`.
+*   `plexiscribe` — `disabled_by_config` when `artifacts.enabled` or `artifacts.plexiscribe.enabled` is `False`; `disabled_by_license` when `has_feature("plexiscribe")` is `False`.
+*   `plexiscript` — Same gating as `plexiscribe` with its own config and license flag.
+*   `artifacts_whiteboard` — `disabled_by_config` when `artifacts.enabled` or `artifacts.whiteboard.enabled` is `False`; `disabled_by_license` when `has_feature("artifacts_whiteboard")` is `False`.
+*   `voice_transcription` — `disabled_by_config` when `artifacts.enabled` or `artifacts.voice.transcription.enabled` is `False`; `disabled_by_license` when `has_feature("voice_transcription")` is `False`; otherwise delegated to `get_transcription_provider(config).is_available()`:
+    *   `local_whisper` — `dependency_missing` if Whisper is not importable, else `available`.
+    *   `openai` or `azure` — `misconfigured` if the API key is empty, else `available`.
+    *   Unknown provider — `misconfigured`.
+*   `voice_recording` — `disabled_by_config` when `artifacts.voice.allow_recording is False`, else `available`.
 
-Both functions accept an optional `config` dict; when omitted the artifacts
-config is loaded through the standard config accessor. Neither function ever
-raises. `get_capability(feature, config=None)` returns the info for one feature.
+Both `get_artifact_capabilities` and `get_capability(feature, config)` accept an optional config dict and never raise.
 
 ### API endpoints
 
-- `GET /api/v1/capabilities` (auth required, user scope) — returns the per-feature
-  capability dict (`{feature: {state, message, details}}`) for client notices.
-  Defined in `src/api/routes/capabilities.py`.
-- `GET /api/v1/admin/capabilities` (admin guarded) — returns the same
-  per-feature breakdown plus a top-level `summary` (counts and a `by_state`
-  grouping). Defined in `src/api/routes/admin/capabilities.py`.
+*   `GET /api/v1/capabilities` — Authenticated, user scope. Returns `{feature: {state, message, details}}`.
+*   `GET /api/v1/admin/capabilities` — Admin-guarded. Returns the same per-feature breakdown plus a top-level `summary` with counts grouped by `by_state`.
 
-## REST API (Group 6)
+## REST API
 
-The artifact REST API lives in `src/api/routes/artifacts.py` (user scope) and
-`src/api/routes/admin/artifacts.py` (admin guarded), mounted under
-`/api/v1/artifacts` and `/api/v1/admin/artifacts`. All user endpoints require
-a valid auth token; admin endpoints additionally enforce host restriction and an
-admin token.
+User routes live in `src/api/routes/artifacts.py` under `/api/v1/artifacts`. Admin routes live in `src/api/routes/admin/artifacts.py` under `/api/v1/admin/artifacts`.
 
 ### User endpoints
 
-| Method | Path | Permission | Purpose |
-|--------|------|------------|---------|
-| `POST` | `/artifacts` | `artifact.create` | Create an artifact + emit a transcript message. |
+| Method | Path | Permission | Description |
+| --- | --- | --- | --- |
+| `POST` | `/artifacts` | `artifact.create` | Create an artifact and emit a transcript message. |
 | `GET` | `/artifacts` | `artifact.view` | List artifacts with filters. |
-| `GET` | `/artifacts/{artifact_id}` | `artifact.view` | Fetch one artifact; `404` when missing. |
-| `PATCH` | `/artifacts/{artifact_id}` | `artifact.edit` (or author) | Update mutable fields; `404` when missing. |
-| `DELETE` | `/artifacts/{artifact_id}` | `artifact.delete` (or author) | Delete an artifact; `404` when missing. |
-| `POST` | `/artifacts/convert-upload` | `artifact.create` | Convert an existing `msg_attachments` row into an `UPLOAD` artifact; `404` when the attachment is missing. |
+| `GET` | `/artifacts/{artifact_id}` | `artifact.view` | Fetch one artifact. Returns `404` if missing. |
+| `PATCH` | `/artifacts/{artifact_id}` | `artifact.edit` or author | Update mutable fields. Returns `404` if missing. |
+| `DELETE` | `/artifacts/{artifact_id}` | `artifact.delete` or author | Delete an artifact. Returns `404` if missing. |
+| `POST` | `/artifacts/convert-upload` | `artifact.create` | Convert an existing `msg_attachments` row to an `UPLOAD` artifact. Returns `404` if the attachment is missing. |
 
-`convert_upload` queries the real `msg_attachments` table (filtered on
-`deleted = 0`) and returns `404` (not `500`) when no such attachment exists.
-`create_artifact` maps its request body directly onto
-`ArtifactManager.create(...)` (the `conversation_id`/`author_id`/`artifact_type`
-`title`/`summary`/`channel_id`/`server_id`/`status`/`recorded`/`has_transcript`
-`payload`/`retention_policy`/`license_feature` arguments match exactly). After a
-create/convert, an inline `MESSAGE_CREATE` is emitted via
-`events.create_message_create(message_id, channel_id, author_id, content,
-server_id, author)` with `data["type"] = 0`, `data["message_type"] =
-"artifact"`, and `data["metadata"] = {"artifact_id": ...}`.
+After create or convert, the route emits `MESSAGE_CREATE` via `events.create_message_create` with `data["type"] = 0`, `data["message_type"] = "artifact"`, and `data["metadata"] = {"artifact_id": ...}`.
 
 ### Admin endpoints
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/artifacts` | List all artifacts across every server. |
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/artifacts` | List all artifacts across servers. |
 | `DELETE` | `/artifacts/{artifact_id}` | Force-delete any artifact. |
-| `POST` | `/artifacts/retention/purge` | Run `purge_expired` (see below). Returns `{purged: <count>}`. |
+| `POST` | `/artifacts/retention/purge` | Call `purge_expired` and return `{purged: <count>}`. |
 
-### Permission names
+Permission names resolved through server RBAC: `artifact.view`, `artifact.create`, `artifact.edit`, `artifact.delete`, `artifact.manage_retention`.
 
-The route layer resolves these permission names through the server RBAC
-`require_permission`:
+## Retention purge
 
-- `artifact.view`
-- `artifact.create`
-- `artifact.edit`
-- `artifact.delete`
-- `artifact.manage_retention` (reserved for retention management; the admin
-  purge endpoint is admin-guarded instead).
+`purge_expired(db, config)` deletes rows where `expires_at IS NOT NULL AND expires_at <= now` and returns the count. `RetentionCleanupJob(db, config)` is a daemon thread started by `src/server/initializer.py` and stored in `modules_store["artifact_retention"]`. It runs only when `artifacts.retention.run_cleanup_interval_minutes > 0`.
 
-## Retention purge (`retention.py`)
+Each cycle runs:
 
-`purge_expired(db, config=None) -> int` deletes every row in the `artifacts`
-table where `expires_at IS NOT NULL AND expires_at <= <now-ms>` and returns the
-number of rows removed (`0` on a `None` db or on error). This is the real
-implementation backing the admin `/artifacts/retention/purge` endpoint. Media
-and linked-row cascade cleanup remain out of scope, matching the manager's
-`delete` semantics.
+1.  `_apply_retention_windows(db, config)` — For every artifact with a `retention_policy` but `NULL` `expires_at`, sets `expires_at = created_at + resolved_days`.
+2.  `purge_expired(db, config)` — Deletes expired rows. Skipped when `artifacts.retention.purge_expired` is `False`.
 
-### Scheduled cleanup job
+Use `resolve_retention_days(server_id, config)` to get the effective period for a server. It returns `None` for never expire. Priority:
 
-`RetentionCleanupJob(db, config=None)` is a scheduled background worker (daemon
-thread) mirroring the `AccountReaper` pattern. It is started at boot by
-`src/server/initializer.py` (stored in `modules_store["artifact_retention"]`)
-and runs only when `artifacts.retention.run_cleanup_interval_minutes > 0`.
+1.  Per-server row in `server_artifact_settings.retention_days` when `allow_per_server_override` is `True`.
+2.  Global `artifacts.default_retention_days`.
 
-Each cycle calls `run_once(db)` which:
-
-1. `_apply_retention_windows(db, config)` — for every artifact that has a
-   `retention_policy` but a `NULL expires_at`, stamps `expires_at =
-   created_at + <resolved retention days>`. Artifacts with no resolvable
-   retention period are left untouched (never expire).
-2. `purge_expired(db, config)` — removes rows whose window has elapsed. When
-   `artifacts.retention.purge_expired` is `False`, the cycle only applies
-   windows and does not delete anything.
-
-The loop sleeps `run_cleanup_interval_minutes` (in minutes) between cycles,
-with the sleep broken into small increments so `stop()` can shut it down
-promptly.
-
-### Per-server override
-
-`resolve_retention_days(server_id, config=None) -> Optional[int]` resolves the
-effective retention period (in days) for a server, returning `None` to mean
-"never expire". Resolution priority:
-
-1. A per-server override from the `server_artifact_settings` table
-   (`retention_days`), but only when `artifacts.allow_per_server_override` is
-   `True` and a row exists for the server. The table is created by migration
-   `048_add_server_artifact_settings.py`.
-2. The global `artifacts.default_retention_days` (`None` ⇒ never expire by
-   default).
-
-**No expire by default:** when `default_retention_days` is `None` (the
-documented default), artifacts never expire unless a per-artifact
-`retention_policy` or a per-server override explicitly sets a positive number
-of days. The cleanup interval gates how often the job runs, not whether data is
-deleted.
+When `default_retention_days` is `None`, artifacts never expire unless a per-artifact policy or server override sets a positive value.
 
 ## Real-time fabric
 
-The collaborative layer that lets live whiteboards and shared code editors
-sync in real time is implemented in the WebSocket gateway (Group 5), on top of
-the schema and domain models documented above. It does not touch the REST
-routes (those arrive in a later group).
+The WebSocket gateway provides live collaboration for whiteboards and editors. It reuses the dispatcher send path and per-connection rate limits.
 
-### Gateway opcodes (60-63)
+*   Gateway opcodes (`src/api/websocket/opcodes.GatewayOpcode`) — `ARTIFACT_SUBSCRIBE = 60`, `ARTIFACT_UNSUBSCRIBE = 61`, `ARTIFACT_OP = 62`, `ARTIFACT_SYNC = 63`.
+*   Event types (`src/core/events/types.EventType`) — `ARTIFACT_CREATE`, `ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`.
+*   Gateway intent — `GatewayIntent.ARTIFACTS = 1 << 20`, included in `default_intents()` and `all_intents()`.
+*   Helpers in `src/api/websocket/artifacts.py`:
+    *   `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id, seq)` — Fans an `ARTIFACT_OP` to other subscribers. Persists are handled by the opcode handler. `seq` is carried in `d.seq` for ordering.
+    *   `send_artifact_ack(connection, artifact_id, op, seq)` — Echoes a persisted op to its actor as an acknowledgement.
+    *   `send_artifact_sync(connection, artifact_id, snapshot)` — Sends a full snapshot to a late joiner.
 
-Defined in `src/api.websocket.opcodes.GatewayOpcode`:
+## Federation
 
-- `ARTIFACT_SUBSCRIBE = 60` — client subscribes to an artifact's live updates.
-- `ARTIFACT_UNSUBSCRIBE = 61` — client withdraws a subscription.
-- `ARTIFACT_OP = 62` — a realtime delta op for an artifact; relayed to the
-  artifact's other subscribers.
-- `ARTIFACT_SYNC = 63` — a full snapshot, sent to late joiners.
+`src/core/artifacts/federation.py` defines `FederationArtifactBridge(db, plexijoin_manager)`, which shares live operations and artifact events across federated instances without assuming a cross-instance transport.
 
-### Event types
+*   `forward_artifact_op(artifact_id, op, actor_id)` — Forwards a live delta to active federation connections for the artifact's server.
+*   `forward_artifact_event(event_type, artifact)` — Forwards create, update, or delete events.
+*   `get_federated_artifact_visibility(server_id)` — Returns `True` if at least one active federation link exists for the server.
 
-Defined in `src.core.events.types.EventType`: `ARTIFACT_CREATE`,
-`ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`.
+Both forward methods record traffic via `PlexiJoinManager.record_traffic` and invoke an injectable transport set by `set_federation_transport(fn)`. The default transport logs the intent; a deployment replaces it with a real network send. The bridge only forwards. It does not grant permissions to remote participants.
 
-### Gateway intent
+`relay_artifact_op` calls `bridge.forward_artifact_op` after local fan-out. Federation errors are caught and do not break local relay.
 
-`src.core.events.types.GatewayIntent.ARTIFACTS = 1 << 20` gates delivery of
-the artifact event types. It is part of both `default_intents()` and
-`all_intents()`.
+## Privacy
 
-### Relay helpers
+Artifacts are personal data. Two flows handle portability and erasure:
 
-`src/api/websocket/artifacts.py` owns the subscription registry
-(`subscribe` / `unsubscribe` / `get_subscribers`) and the async relay
-helpers used by the opcode handlers:
+*   Export — `src/core/dsar/collector.py` `_collect_voice` returns `voice_states`, `voice_calls` where the user is initiator or consented participant, and `voice_call` and `transcript` artifacts authored by the user. Transcript text is extracted to `transcript_text` for human-readable export.
+*   Erasure — `anonymize_user_artifacts(db, user_id, config)` in `src/core/artifacts/privacy.py`, called from `AccountReaper.purge_user`:
+    *   `anonymize_content = True` — Replace `author_id` with a sentinel, strip inline transcript text from `payload`, remove the user from `consented_participants`, and delete their `actor_id` rows in `artifact_ops`.
+    *   `anonymize_content = False` — Delete authored artifacts, their `artifact_ops`, and `voice_calls` initiated by the user; remove consented entries otherwise.
 
-- `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id)`
-  fans an `ARTIFACT_OP` out to all other subscribers of an artifact. It only
-  relays — persistence of the op is the responsibility of a later group
-  (editor / ops persistence).
-- `send_artifact_sync(connection, artifact_id, snapshot)` emits an
-  `ARTIFACT_SYNC` full snapshot to a single connection (bootstrap for late
-  joiners). The snapshot dict is fetched by the caller.
+## Related code
 
-Delivery reuses the existing dispatcher send path and the per-connection rate
-limit; no new rate-limit mechanism is introduced.
-
-## Federation (PlexiJoin)
-
-When two Plexichat instances are federated via PlexiJoin, artifacts that belong
-to a federated server can have their live operations and artifact-level events
-shared across the link. The integration lives in
-`src/core/artifacts/federation.py` (`FederationArtifactBridge`) and integrates at
-the manager level — it does **not** assume or build a cross-instance realtime
-transport (that external layer lives outside this repo).
-
-### `FederationArtifactBridge`
-
-Constructed with `(db, plexijoin_manager)`. Responsibilities:
-
-- Resolves an artifact's owning `server_id` (via the artifacts repository) and
-  maps it to the active federation connection(s) for that server. Links are
-  matched on `plexijoin_connections.remote_instance_id == server_id` and only
-  `active` links are considered.
-- `forward_artifact_op(artifact_id, op, actor_id)` — after a local relay,
-  forwards a live `ARTIFACT_OP` delta to the matching federation connection(s).
-- `forward_artifact_event(event_type, artifact)` — forwards an artifact-level
-  event (create/update/delete) to the matching federation connection(s).
-- `get_federated_artifact_visibility(server_id) -> bool` — returns whether
-  artifacts on `server_id` are shareable cross-instance (i.e. at least one
-  active federation link exists for that server). Exposed to the
-  capability/visibility layer.
-
-Both `forward_*` methods account for the forwarded traffic against each
-federation connection via `PlexiJoinManager.record_traffic` (so federation
-accounting stays accurate) and then invoke an injectable transport callback.
-
-### Injectable transport
-
-The real cross-instance transport is registered via
-`set_federation_transport(fn)`. The injected callable receives
-`(artifact_id, payload, actor_id, connection_ids)` and is responsible for
-actually shipping the payload to each remote instance. The **default transport is
-real, not a stub**: it records the traffic (via `record_traffic`) and logs the
-forwarding intent. A deployment that wires up the external transport simply
-replaces it with a function that performs the network send.
-
-### Wiring & hook
-
-- The initializer constructs `FederationArtifactBridge(db, plexijoin_manager)`
-  when PlexiJoin is licensed and its encryption service is available, and attaches
-  it to the WS artifact layer via `set_artifact_federation_bridge(bridge)`.
-- `relay_artifact_op` (in `src/api/websocket/artifacts.py`) calls
-  `bridge.forward_artifact_op(...)` after the local fan-out. The federation call
-  is wrapped in try/except and never breaks local relay if federation is
-  unavailable.
-
-### Permissions
-
-The bridge only **forwards** ops/events. It never auto-grants local permissions
-to remote participants — remote participants are not local users, and visibility
-of federated artifacts remains gated by the local route/permission layer.
+*   `plexichat/src/core/artifacts/schema.py` — `create_tables`
+*   `plexichat/src/core/artifacts/models.py:17` — `ArtifactType`
+*   `plexichat/src/core/artifacts/repository.py` — `list_artifacts`, `row_to_artifact`
+*   `plexichat/src/core/artifacts/manager.py` — `ArtifactManager`
+*   `plexichat/src/core/artifacts/voice_calls.py` — `VoiceCallManager`
+*   `plexichat/src/core/artifacts/capabilities.py` — `get_artifact_capabilities`
+*   `plexichat/src/core/artifacts/retention.py` — `purge_expired`, `RetentionCleanupJob`
+*   `plexichat/src/core/artifacts/federation.py` — `FederationArtifactBridge`

@@ -10,16 +10,19 @@ from unittest.mock import MagicMock
 # common_utils is now a native package.
 
 
-import src.utils.config as config  # noqa: E402
-import src.utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import src.utils.config as config
+from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
 
 @pytest.fixture(scope="module")
 def setup_logging(tmp_path_factory):
     temp_dir = tmp_path_factory.mktemp("test_pool")
-    logger.setup(log_dir=str(temp_dir / "logs"), level="DEBUG")
-    yield temp_dir
+    # ``logger.setup()`` mutates the process-global "AppLogger" singleton;
+    # ``isolated_logger`` restores the level on teardown so this module's
+    # DEBUG setting cannot leak into later tests in the same worker.
+    with isolated_logger(log_dir=str(temp_dir / "logs"), level="DEBUG"):
+        yield temp_dir
 
 
 def test_connection_age_eviction(setup_logging):
@@ -29,19 +32,24 @@ def test_connection_age_eviction(setup_logging):
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    # Configure with very short max age (1 second)
+    # Configure with very short max age (0.5 seconds)
     db_config = {
         "database": {
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_connection_age_hours": 1 / 3600.0  # 1 second
+                "max_connection_age_hours": 0.5 / 3600.0  # 0.5 seconds
             },
         }
     }
     config.setup(
         config_path=str(temp_dir / "config_age.yaml"), default_config=db_config
     )
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once — drop it so this test's ``Database()`` re-initialises against the
+    # short max-age config above instead of a stale earlier instance.
+    Database.reset()
 
     db = Database()
     db.connect()
@@ -50,8 +58,8 @@ def test_connection_age_eviction(setup_logging):
     first_id = id(first_conn)
     assert first_conn is not None
 
-    # Wait for connection to exceed max age
-    time.sleep(1.5)
+    # Wait for connection to exceed max age (eviction is lazy on _get_conn)
+    time.sleep(0.8)
 
     # Next call to _get_conn should evict and create new connection
     second_conn = db._get_conn()
@@ -70,13 +78,13 @@ def test_connection_idle_eviction(setup_logging):
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    # Configure with very short max idle time (1 second)
+    # Configure with very short max idle time (0.5 seconds)
     db_config = {
         "database": {
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_idle_time": 1,
+                "max_idle_time": 0.5,
                 "max_connection_age_hours": 1,  # 1 hour
             },
         }
@@ -85,14 +93,19 @@ def test_connection_idle_eviction(setup_logging):
         config_path=str(temp_dir / "config_idle.yaml"), default_config=db_config
     )
 
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once — drop it so this test's ``Database()`` re-initialises against the
+    # short max-idle config above instead of a stale earlier instance.
+    Database.reset()
+
     db = Database()
     db.connect()
 
     first_conn = db._local.connection
     first_id = id(first_conn)
 
-    # Wait for connection to exceed max idle time
-    time.sleep(1.5)
+    # Wait for connection to exceed max idle time (eviction is lazy on _get_conn)
+    time.sleep(0.8)
 
     # Next call to _get_conn should evict and create new connection
     second_conn = db._get_conn()
@@ -116,7 +129,7 @@ def test_close_forces_closure_for_old_connections(setup_logging):
             "type": "sqlite",
             "path": db_path,
             "connection_pool": {
-                "max_connection_age_hours": 1 / 3600.0  # 1 second
+                "max_connection_age_hours": 0.5 / 3600.0  # 0.5 seconds
             },
         }
     }
@@ -131,7 +144,7 @@ def test_close_forces_closure_for_old_connections(setup_logging):
     db.engine.close_connection = MagicMock()
 
     # Wait for connection to exceed max age
-    time.sleep(1.5)
+    time.sleep(0.8)
 
     # Call close
     db.close()
@@ -153,6 +166,12 @@ def test_monitoring_log_interval_config(setup_logging):
     config.setup(
         config_path=str(temp_dir / "config_mon.yaml"), default_config=db_config
     )
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so drop it here — otherwise ``Database()`` returns the instance
+    # bound to whatever config an earlier test in the process used (interval
+    # 30 instead of 42) and this test sees stale monitor settings.
+    Database.reset()
 
     db = Database()
     assert db.monitor._periodic_log_interval == 42

@@ -45,7 +45,7 @@ class AvatarMixin:
                     detail={
                         "error": {
                             "code": 400,
-                            "message": f"Failed to read file: {str(e)}",
+                            "message": "Failed to read file",
                         }
                     },
                 )
@@ -64,12 +64,27 @@ class AvatarMixin:
                         f"Cache invalidation failed for user {current_user.user_id}: {ce}"
                     )
 
+                # H1: also drop the avatars route's in-process checksum cache so
+                # clients stop receiving 304 for the old avatar after re-upload
+                # (the Valkey invalidation above never touches that local dict).
+                try:
+                    from src.api.routes.avatars import (
+                        _invalidate_user_avatar_cache,
+                    )
+
+                    _invalidate_user_avatar_cache(current_user.user_id)
+                except Exception as ie:
+                    logger.debug(
+                        f"Local avatar checksum invalidation failed "
+                        f"for user {current_user.user_id}: {ie}"
+                    )
+
                 try:
                     from src.core.events.gateway_emit import emit_user_update
 
                     emit_user_update(
                         {
-                            "id": current_user.user_id,
+                            "id": str(current_user.user_id),
                             "username": "",
                             "avatar_url": result["url"],
                         },
@@ -86,9 +101,13 @@ class AvatarMixin:
                     size=result["size"],
                     animated=result["animated"],
                 )
-            except ValueError as e:
+            except (ValueError, TypeError):
+                # M1: invalid image data is a client error; use the same
+                # message as the sibling /avatars/users/@me endpoint so the
+                # two upload paths behave identically.
                 raise HTTPException(
-                    status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid image file"}},
                 )
             except Exception as e:
                 logger.error(
@@ -97,9 +116,7 @@ class AvatarMixin:
                 )
                 raise HTTPException(
                     status_code=500,
-                    detail={
-                        "error": {"code": 500, "message": f"Upload failed: {str(e)}"}
-                    },
+                    detail={"error": {"code": 500, "message": "Upload failed"}},
                 )
         except HTTPException:
             raise
@@ -109,5 +126,6 @@ class AvatarMixin:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

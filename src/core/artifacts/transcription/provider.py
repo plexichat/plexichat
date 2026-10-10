@@ -23,6 +23,7 @@ so the provider selection logic lives here and nowhere else.
 
 import asyncio
 import importlib.util
+import re
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -30,6 +31,59 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.utils.security import URLValidator
+
+
+# Azure Speech timespans arrive in several encodings depending on API surface:
+# tick strings ("10000000" = 1s of 100ns ticks), ISO-8601 durations
+# ("PT0.05S", the v3.1 batch REST format), plain numbers (the SDK reports
+# ticks as ints), and occasionally trailing "Z"-suffixed datetime offsets.
+_ISO_DURATION_RE = re.compile(
+    r"^(?P<sign>-)?P"
+    r"(?:(?P<days>\d+(?:\.\d+)?)D)?"
+    r"(?:T"
+    r"(?:(?P<hours>\d+(?:\.\d+)?)H)?"
+    r"(?:(?P<minutes>\d+(?:\.\d+)?)M)?"
+    r"(?:(?P<seconds>\d+(?:\.\d+)?)S)?"
+    r")?$",
+    re.IGNORECASE,
+)
+_AZURE_TICKS_PER_SECOND = 10_000_000
+
+
+def azure_timespan_to_ms(value: Any) -> int:
+    """Normalize an Azure offset/duration value to integer milliseconds.
+
+    Accepts ISO-8601 durations (``PT0.05S``), 100ns tick values as strings or
+    numbers (``10000000`` / ``10000000.0``, optional trailing ``Z``), already-
+    numeric millisecond-ish floats from odd SDK builds, and ``None``/garbage
+    (which become ``0`` instead of raising). A malformed value must never abort
+    a finished multi-minute transcription job.
+    """
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        # The Speech SDK reports ticks; batch JSON never uses bare numbers.
+        return int(round(float(value) / _AZURE_TICKS_PER_SECOND * 1000))
+    text = str(value).strip()
+    if not text:
+        return 0
+    negative = text.startswith("-")
+    text = text.lstrip("-").rstrip("Zz").strip()
+    match = _ISO_DURATION_RE.match(text)
+    if match:
+        days = float(match.group("days") or 0)
+        hours = float(match.group("hours") or 0)
+        minutes = float(match.group("minutes") or 0)
+        seconds = float(match.group("seconds") or 0)
+        total_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
+        ms = int(round(total_seconds * 1000))
+        return -ms if negative else ms
+    try:
+        ticks = float(text)
+    except (TypeError, ValueError):
+        return 0
+    ms = int(round(ticks / _AZURE_TICKS_PER_SECOND * 1000))
+    return -ms if negative else ms
 
 
 @dataclass
@@ -136,6 +190,7 @@ class LocalWhisperProvider(TranscriptionProvider):
         self._module_name: Optional[str] = _find_whisper_module()
         self._diarization_module: Optional[str] = None
         self._diarizer: Any = None
+        self._diarization_failed: bool = False
         self._availability: Optional[bool] = None
         self._model_lock = threading.Lock()
 
@@ -205,9 +260,15 @@ class LocalWhisperProvider(TranscriptionProvider):
     def _ensure_diarizer(self) -> Any:
         if self._diarizer is not None or self._diarization_module is not None:
             return self._diarizer
+        if self._diarization_failed:
+            # L30: a failed module discovery / import used to retry network
+            # and import work on EVERY call (e.g. pyannote discovery when no
+            # HF token is configured). Memoize the failure so transcription
+            # runs with "unknown" speakers instead of repeatedly probing.
+            return None
         module_name = _find_diarization_module()
         if module_name is None:
-            self._diarizer = None
+            self._diarization_failed = True
             return None
         try:
             import importlib
@@ -222,6 +283,7 @@ class LocalWhisperProvider(TranscriptionProvider):
             self._diarization_module = module_name
         except Exception:
             self._diarizer = None
+            self._diarization_failed = True
         return self._diarizer
 
     async def transcribe(
@@ -373,8 +435,19 @@ class OpenAIWhisperProvider(TranscriptionProvider):
                 form["language"] = (None, language)
 
             headers = {"Authorization": f"Bearer {self._api_key}"}
+            # Split the timeout: a short connect window stops a dead or
+            # unresponsive endpoint from holding a transcription worker for
+            # the whole read budget, while the read timeout still bounds a
+            # legitimate large upload/response.
+            connect_timeout = float(
+                self._config.get("openai_connect_timeout", 10) or 10
+            )
+            read_timeout = float(self._config.get("openai_read_timeout", 600) or 600)
             response = requests.post(
-                self._api_url, files=form, headers=headers, timeout=600
+                self._api_url,
+                files=form,
+                headers=headers,
+                timeout=(connect_timeout, read_timeout),
             )
 
         if response.status_code != 200:
@@ -482,8 +555,11 @@ class AzureSpeechProvider(TranscriptionProvider):
         segments: List[Dict[str, Any]] = []
         text_parts: List[str] = []
         for phrase in phrases:
-            start_ms = int(phrase.get("Offset", 0) or 0)
-            duration_ms = int(phrase.get("Duration", 0) or 0)
+            # Offsets/durations may be ISO-8601 durations, tick strings, or
+            # SDK tick integers depending on the API surface that produced
+            # them; normalize everything to milliseconds here.
+            start_ms = azure_timespan_to_ms(phrase.get("Offset", 0))
+            duration_ms = azure_timespan_to_ms(phrase.get("Duration", 0))
             start_s = start_ms / 1000.0
             end_s = (start_ms + duration_ms) / 1000.0
             text = str(phrase.get("DisplayText", phrase.get("Text", ""))).strip()
@@ -635,14 +711,15 @@ class AzureSpeechProvider(TranscriptionProvider):
         data = content.json()
         phrases: List[Dict[str, Any]] = []
         for phrase in data.get("recognizedPhrases", []):
-            offset = int(phrase.get("offset", "0").rstrip("Z") or 0)
-            duration = int(phrase.get("duration", "0").rstrip("Z") or 0)
+            # Raw values are passed through; ``_build_segments_from_results``
+            # normalizes both the v3.1 ISO-8601 duration format ("PT0.05S")
+            # and legacy tick strings via ``azure_timespan_to_ms``.
             display = phrase.get("nBest", [{}])[0].get("display", "")
             speaker = phrase.get("speaker")
             phrases.append(
                 {
-                    "Offset": offset,
-                    "Duration": duration,
+                    "Offset": phrase.get("offset", "0"),
+                    "Duration": phrase.get("duration", "0"),
                     "DisplayText": display,
                     "SpeakerId": speaker,
                 }

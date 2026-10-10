@@ -15,6 +15,7 @@ import io
 import json
 import time
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, Optional, Tuple
 
@@ -89,7 +90,9 @@ class ExportFormatGenerator:
         The path is intentionally similar to media storage paths so it can be
         served through the same download pipeline.
         """
-        date_dir = time.strftime("%Y/%m")
+        # UTC month-bucket so exports correlate across hosts regardless of
+        # each server's local zone (matches media storage paths).
+        date_dir = datetime.now(timezone.utc).strftime("%Y/%m")
         return f"dsar/{date_dir}/dsar_{request_id}.{extension}"
 
     def _store(

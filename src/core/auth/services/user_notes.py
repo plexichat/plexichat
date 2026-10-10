@@ -3,9 +3,8 @@ User notes service - Business logic for private user notes.
 """
 
 from typing import Optional, List, Dict, Any
-import time
 
-from src.core.base import SnowflakeID
+from src.core.base import SnowflakeID, timestamp_ms, generate_id
 from src.utils.encryption import encrypt_data, decrypt_data
 import utils.logger as logger
 
@@ -15,7 +14,7 @@ class UserNotesService:
 
     def __init__(self, db: Any, encryption_enabled: bool = True) -> None:
         """Initialize user notes service."""
-        from .repositories.user_notes import UserNotesRepository  # type: ignore
+        from ..repositories.user_notes import UserNotesRepository
 
         self._db = db
         self._repo = UserNotesRepository(db)
@@ -63,7 +62,7 @@ class UserNotesService:
                 logger.warning(f"Failed to encrypt user note: {e}")
                 # Fall back to plaintext if encryption fails
 
-        now = int(time.time() * 1000)
+        now = timestamp_ms()
         note_id = self._generate_id()
 
         self._repo.create(
@@ -119,7 +118,7 @@ class UserNotesService:
             except Exception as e:
                 logger.warning(f"Failed to encrypt user note: {e}")
 
-        now = int(time.time() * 1000)
+        now = timestamp_ms()
         self._repo.update(existing["id"], note_encrypted or note, now)
 
         logger.debug(f"User {user_id} updated note about user {target_user_id}")
@@ -221,6 +220,4 @@ class UserNotesService:
 
     def _generate_id(self) -> SnowflakeID:
         """Generate a new Snowflake ID."""
-        from src.utils.encryption import generate_snowflake_id
-
-        return generate_snowflake_id()
+        return generate_id()

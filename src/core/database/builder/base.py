@@ -19,7 +19,11 @@ from .protocol import QueryBuilderProtocol
 T = TypeVar("T", bound=BaseModel)
 
 if TYPE_CHECKING:
+    from .delete import DeleteQuery
+    from .insert import InsertQuery
     from .schema_registry import SchemaRegistry
+    from .select import SelectQuery
+    from .update import UpdateQuery
 
 
 class QueryBuilderException(Exception):
@@ -68,9 +72,39 @@ class Query(ABC, QueryBuilderProtocol):
         """
         self.connection = connection
         self.db_type = db_type
+        # Optional back-reference to the owning Database facade so write
+        # queries can invalidate its internal query-result cache exactly
+        # like ``Database.execute()`` does. Set by ``QueryBuilder``.
+        self.database: Any = None
         self._validation_model: Optional[Type[BaseModel]] = None
         self._sql = ""
         self._params: List[Parameter] = []
+
+    def _invalidate_database_query_cache(self) -> None:
+        """Clear the Database facade's query-result cache after a write.
+
+        Builder writes run on the raw thread-local connection and would
+        otherwise leave stale fetch_one/fetch_all results cached for up to
+        ``_query_cache_ttl`` (read-your-write violation).
+        """
+        invalidator = getattr(self.database, "_invalidate_query_cache", None)
+        if callable(invalidator):
+            invalidator()
+
+    def _should_autocommit(self) -> bool:
+        """Whether a builder write should commit (and roll back) locally.
+
+        A write executed inside ``db.begin_transaction()`` must not commit
+        the enclosing transaction early, or a later ``rollback()`` can no
+        longer undo it. This mirrors the guard in ``Database.execute()``
+        (``core/execution.py``: ``if auto_commit and not self.in_transaction``).
+        Standalone builder usage has no facade back-reference and keeps the
+        historical auto-commit behaviour.
+        """
+        db = self.database
+        if db is None:
+            return True
+        return not bool(getattr(db, "in_transaction", False))
 
     @abstractmethod
     def build(self) -> tuple[str, list]:
@@ -109,6 +143,10 @@ class Query(ABC, QueryBuilderProtocol):
 
     def execute(self) -> Any:
         """Execute the query and return results."""
+        # Imported here (not at module level) to avoid a circular import:
+        # select.py imports from this module.
+        from .select import SelectQuery
+
         sql, params = self.build()
 
         # Sanitize params for logging
@@ -125,15 +163,17 @@ class Query(ABC, QueryBuilderProtocol):
                 ]
                 cursor.execute(sql, param_values)
 
-                if isinstance(self, SelectQuery):  # type: ignore  # Forward reference
+                if isinstance(self, SelectQuery):  # Forward reference
                     results = cursor.fetchall()
                     logger.debug(f"Query returned {len(results)} rows")
                     return results
                 else:
-                    self.connection.commit()
+                    if self._should_autocommit():
+                        self.connection.commit()
                     row_count = cursor.rowcount
                     logger.debug(f"Query affected {row_count} rows")
                     cursor.close()
+                    self._invalidate_database_query_cache()
                     return row_count
             else:  # postgres
                 cursor = self.connection.cursor()
@@ -146,23 +186,28 @@ class Query(ABC, QueryBuilderProtocol):
                     pg_sql = dialect.convert_placeholders(sql, self.db_type)
                     cursor.execute(pg_sql, param_values)
 
-                    if isinstance(self, SelectQuery):  # type: ignore
+                    if isinstance(self, SelectQuery):
                         results = cursor.fetchall()
                         logger.debug(f"Query returned {len(results)} rows")
                         return results
                     else:
                         row_count = cursor.rowcount
-                        self.connection.commit()
+                        if self._should_autocommit():
+                            self.connection.commit()
                         logger.debug(f"Query affected {row_count} rows")
+                        self._invalidate_database_query_cache()
                         return row_count
                 finally:
                     cursor.close()
         except Exception as e:
             logger.error(f"Query execution failed: {str(e)}")
-            try:
-                self.connection.rollback()
-            except Exception:
-                pass
+            # Only roll back when the builder owns the transaction; inside an
+            # enclosing transaction the caller decides whether to abort.
+            if self._should_autocommit():
+                try:
+                    self.connection.rollback()
+                except Exception:
+                    pass
             raise
 
 
@@ -180,7 +225,7 @@ class TableQuery(Query):
         self.table_name = self._validate_identifier(table_name, "table")
         self.schema_registry = schema_registry
 
-    def insert(self, data: Dict[str, Any]) -> "InsertQuery":  # type: ignore
+    def insert(self, data: Dict[str, Any]) -> "InsertQuery":
         """Start building an INSERT query."""
         from .insert import InsertQuery
 
@@ -189,23 +234,27 @@ class TableQuery(Query):
         if not data:
             raise ValueError("Insert data cannot be empty")
 
-        return InsertQuery(
+        query = InsertQuery(
             self.connection, self.table_name, data, self.db_type, self.schema_registry
         )
+        query.database = self.database
+        return query
 
-    def select(self, columns: Optional[List[str]] = None) -> "SelectQuery":  # type: ignore
+    def select(self, columns: Optional[List[str]] = None) -> "SelectQuery":
         """Start building a SELECT query."""
         from .select import SelectQuery
 
-        return SelectQuery(
+        query = SelectQuery(
             self.connection,
             self.table_name,
             columns,
             self.db_type,
             self.schema_registry,
         )
+        query.database = self.database
+        return query
 
-    def update(self, data: Dict[str, Any]) -> "UpdateQuery":  # type: ignore
+    def update(self, data: Dict[str, Any]) -> "UpdateQuery":
         """Start building an UPDATE query."""
         from .update import UpdateQuery
 
@@ -214,27 +263,24 @@ class TableQuery(Query):
         if not data:
             raise ValueError("Update data cannot be empty")
 
-        return UpdateQuery(
+        query = UpdateQuery(
             self.connection, self.table_name, data, self.db_type, self.schema_registry
         )
+        query.database = self.database
+        return query
 
-    def delete(self) -> "DeleteQuery":  # type: ignore
+    def delete(self) -> "DeleteQuery":
         """Start building a DELETE query."""
         from .delete import DeleteQuery
 
-        return DeleteQuery(
+        query = DeleteQuery(
             self.connection, self.table_name, self.db_type, self.schema_registry
         )
+        query.database = self.database
+        return query
 
     def build(self) -> tuple[str, list]:
         """Not implemented for TableQuery."""
         raise NotImplementedError(
             "TableQuery cannot be executed directly. Use insert(), select(), update(), or delete()."
         )
-
-
-# Late imports to avoid circular dependencies
-from .insert import InsertQuery  # noqa: E402, F811
-from .select import SelectQuery  # noqa: E402, F811
-from .update import UpdateQuery  # noqa: E402, F811
-from .delete import DeleteQuery  # noqa: E402, F811

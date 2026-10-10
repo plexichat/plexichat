@@ -47,6 +47,15 @@ class MessageUpdateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     content: str = Field(..., max_length=4000, description="New message content")
+    expected_edited_at: Optional[int] = Field(
+        None,
+        description=(
+            "Optional optimistic-concurrency token: the edited_at (or "
+            "created-time fallback) revision the client last saw. When "
+            "provided and stale the edit is rejected with 409. Omit to "
+            "keep last-write-wins behaviour."
+        ),
+    )
 
 
 class BulkDeleteRequest(BaseModel):
@@ -93,6 +102,10 @@ class MessageResponse(BaseModel):
     content: Optional[str] = Field(None, description="Message content")
     created_at: int = Field(..., description="Creation timestamp")
     edited_at: Optional[int] = Field(None, description="Edit timestamp")
+    deleted: bool = Field(
+        False,
+        description="Whether the message was deleted (renders a 'Message deleted by user' tombstone)",
+    )
     reply_to_id: Optional[SnowflakeID] = Field(
         None, description="Reply target message ID"
     )
@@ -120,6 +133,10 @@ class MessageResponse(BaseModel):
     author_avatar_url: Optional[str] = Field(None, description="Author's avatar URL")
     author_badges: List[str] = Field(
         default_factory=list, description="Author's profile badges"
+    )
+    mentions: List[str] = Field(
+        default_factory=list,
+        description="IDs of users @mentioned in the message content",
     )
     reactions: List[ReactionResponse] = Field(
         default_factory=list, description="Message reactions"

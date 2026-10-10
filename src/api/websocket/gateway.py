@@ -11,6 +11,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import src.api as api
 import utils.logger as logger
 
+from src.core.events.snowflakes import stringify_snowflake_ids
+
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
@@ -27,6 +29,35 @@ if TYPE_CHECKING:
 
 router = APIRouter()
 
+# H2 follow-up: periodically sweep signaling connections whose media plane
+# went silent past the idle threshold. Runs once per process, started lazily
+# alongside the per-connection heartbeat/cleanup tasks.
+VOICE_SWEEP_INTERVAL_SECONDS = 60.0
+_voice_sweeper_task: Optional[asyncio.Task] = None
+
+
+async def _voice_stale_connection_sweeper() -> None:
+    """Periodically disconnect orphaned voice signaling connections."""
+    while True:
+        try:
+            from src.core.voice import signaling
+
+            swept = await signaling.sweep_stale_connections()
+            if swept:
+                logger.info(f"Voice stale-connection sweep disconnected users: {swept}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"Voice stale-connection sweep failed: {e}")
+        await asyncio.sleep(VOICE_SWEEP_INTERVAL_SECONDS)
+
+
+def _ensure_voice_sweeper_task() -> None:
+    """Start the shared voice sweeper task if it is not already running."""
+    global _voice_sweeper_task
+    if _voice_sweeper_task is None or _voice_sweeper_task.done():
+        _voice_sweeper_task = asyncio.create_task(_voice_stale_connection_sweeper())
+
 
 async def _cleanup_voice_connection(user_id: int) -> None:
     """Clean up voice connection when WebSocket disconnects."""
@@ -40,11 +71,81 @@ async def _cleanup_voice_connection(user_id: int) -> None:
 
 
 async def _dispatch_offline_presence(
-    user_id: int, presence_module: Optional[Any], dispatcher: "GatewayDispatcher"
+    user_id: int,
+    presence_module: Optional[Any],
+    dispatcher: "GatewayDispatcher",
+    session_manager: Optional[Any] = None,
 ) -> None:
-    """Dispatch offline presence to friends and server members when user disconnects."""
+    """Dispatch offline presence to friends and server members when user disconnects.
+
+    The caller MUST unregister this connection from the session manager BEFORE
+    invoking this function, so the remaining-connection count reflects only the
+    user's OTHER live connections.
+    """
     try:
         import src.api as api
+
+        # CORRECTNESS FIX: a user with several tabs/connections must only go
+        # offline once their LAST connection drops. This connection has
+        # already been unregistered by the caller, so any remaining count
+        # means at least one other active connection exists and we must stay
+        # online. Evaluating the count AFTER removal removes the concurrent-
+        # close race where two tabs each saw the other still registered and
+        # neither dispatched the offline transition.
+        if session_manager is not None:
+            try:
+                if session_manager.get_user_connection_count(user_id) > 0:
+                    logger.debug(
+                        f"User {user_id} still has active connections; staying online"
+                    )
+                    return
+            except Exception as e:
+                logger.debug(
+                    f"Failed to check remaining connections for user {user_id}: {e}"
+                )
+
+        # CORRECTNESS FIX: mark OFFLINE unconditionally BEFORE any target
+        # fan-out logic. Previously an early return for users with no
+        # presence targets (no friends / no shared servers) skipped the DB
+        # update entirely, leaving the persisted status stuck on a live
+        # value after disconnect.
+        if presence_module:
+            try:
+                from starlette.concurrency import run_in_threadpool
+
+                from src.core.presence.models import UserStatus
+
+                await run_in_threadpool(
+                    presence_module.set_status, user_id, UserStatus.OFFLINE
+                )
+            except Exception as e:
+                logger.debug(f"Failed to persist offline status for {user_id}: {e}")
+
+            # Lightweight reconciliation: even if the DB write failed above,
+            # drop any stale membership from the Valkey online-users index so
+            # ghost entries cannot survive a last-connection close.
+            try:
+                from src.core.database import get_valkey_client, valkey_available
+
+                if valkey_available():
+                    client = get_valkey_client()
+                    if client:
+                        client.srem("presence:online_users", str(user_id))
+            except Exception as e:
+                logger.debug(f"Valkey presence reconciliation failed: {e}")
+
+        # Temporary-invite enforcement (Agent 16 F9): once the user's LAST
+        # connection drops, revoke any membership granted by a temporary
+        # invite unless the member was granted a role. Best-effort so a
+        # failure here can never break the disconnect path.
+        try:
+            servers_module = api.get_servers()
+            if servers_module and hasattr(servers_module, "purge_temporary_members"):
+                from starlette.concurrency import run_in_threadpool
+
+                await run_in_threadpool(servers_module.purge_temporary_members, user_id)
+        except Exception as e:
+            logger.debug(f"Temporary-member purge failed for {user_id}: {e}")
 
         # Collect all user IDs who should receive this presence update
         target_user_ids = set()
@@ -71,30 +172,55 @@ async def _dispatch_offline_presence(
                     f"Failed to get shared server members for offline presence: {e}"
                 )
 
-        # Clear typing indicators and dispatch TYPING_STOP events
+        # Remove self for safety
+        target_user_ids.discard(user_id)
+
+        # Filter out blocked users
+        if relationships:
+            try:
+                blocked_ids = relationships.get_all_blocked_ids(user_id)
+                for bid in blocked_ids:
+                    try:
+                        target_user_ids.discard(int(bid))
+                    except (ValueError, TypeError):
+                        continue
+            except Exception:
+                pass
+
+        # Clear typing indicators and dispatch TYPING_STOP events to the
+        # channel members who were actually able to see the typing
+        # (CORRECTNESS FIX: previously the stop went to every friend and
+        # shared-server member, leaking presence outside the channel).
         if presence_module:
             try:
                 typing_channels = presence_module.clear_all_typing(user_id)
                 if typing_channels:
                     from src.core.events.models import Event
                     from src.core.events.types import EventType
+                    from src.api.websocket.handlers.presence import (
+                        _get_channel_recipients,
+                    )
 
                     # Dispatch TYPING_STOP for each channel in parallel
                     tasks = []
                     for channel_id in typing_channels:
+                        from starlette.concurrency import run_in_threadpool
+
+                        recipients, server_id = await run_in_threadpool(
+                            _get_channel_recipients, user_id, channel_id
+                        )
+                        if not recipients:
+                            continue
                         event = Event(
                             event_type=EventType.TYPING_STOP,
                             data={
                                 "channel_id": str(channel_id),
                                 "user_id": str(user_id),
                             },
+                            server_id=server_id,
                             channel_id=channel_id,
                         )
-                        # Dispatch to all potential viewers
-                        if target_user_ids:
-                            tasks.append(
-                                dispatcher.dispatch_event(event, list(target_user_ids))
-                            )
+                        tasks.append(dispatcher.dispatch_event(event, list(recipients)))
 
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
@@ -106,15 +232,6 @@ async def _dispatch_offline_presence(
 
         if not target_user_ids:
             return
-
-        # Update presence to offline
-        if presence_module:
-            try:
-                from src.core.presence.models import UserStatus
-
-                presence_module.set_status(user_id, UserStatus.OFFLINE)
-            except Exception:
-                pass
 
         # Dispatch presence update to all relevant users
         from src.core.events.models import Event
@@ -197,7 +314,12 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         dispatcher=dispatcher,
     )
 
-    dispatcher.set_event_loop(asyncio.get_event_loop())
+    # C7: bind the *running* loop. asyncio.get_event_loop() is deprecated
+    # when no loop is running (DeprecationWarning on 3.10+, detached-loop
+    # risk on 3.12+ startup ordering) and could bind the dispatcher to the
+    # wrong loop so events never dispatch. This coroutine always executes
+    # inside the serving loop, so get_running_loop() is exact.
+    dispatcher.set_event_loop(asyncio.get_running_loop())
 
     logger.debug(f"New gateway connection: {connection_id}")
 
@@ -205,6 +327,7 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         await dispatcher.send_hello(connection)
 
         heartbeat_task = asyncio.create_task(_heartbeat_monitor(connection, dispatcher))
+        _ensure_voice_sweeper_task()
 
         try:
             await _message_loop(connection, handler, dispatcher)
@@ -220,11 +343,23 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     except Exception as e:
         logger.error(f"Gateway error for {connection_id}: {e}")
     finally:
+        # CORRECTNESS FIX: unregister THIS connection from the session manager
+        # BEFORE evaluating remaining connections for the offline transition.
+        # Previously removal happened after _dispatch_offline_presence, so two
+        # tabs closing concurrently both counted each other, both observed
+        # count > 1 and neither marked the user offline. Removing first makes
+        # the last real disconnect always see a zero remaining count.
+        connection.set_disconnected()
+        session_manager.remove_connection(connection_id)
+
         # Clean up voice connection when WebSocket disconnects
         if connection.is_authenticated and connection.user_id:
             await _cleanup_voice_connection(connection.user_id)
             await _dispatch_offline_presence(
-                connection.user_id, presence_module, dispatcher
+                connection.user_id,
+                presence_module,
+                dispatcher,
+                session_manager=session_manager,
             )
 
         # Remove only this connection's artifact subscriptions. A user may
@@ -238,8 +373,16 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
         except Exception as exc:
             logger.debug("Artifact subscription cleanup failed: %s", exc)
 
-        connection.set_disconnected()
-        session_manager.remove_connection(connection_id)
+        # Remove only this connection's PlexiSum workbook subscriptions.
+        try:
+            from .sum import get_sum_subscription_registry
+
+            get_sum_subscription_registry().unsubscribe_connection(
+                connection_id, connection.user_id
+            )
+        except Exception as exc:
+            logger.debug("Sum subscription cleanup failed: %s", exc)
+
         logger.debug(f"Connection {connection_id} cleaned up")
 
 
@@ -253,19 +396,21 @@ async def _message_loop(
         ConnectionState.DISCONNECTING,
         ConnectionState.DISCONNECTED,
     ):
+        # NOTE: no wait_for() around receive(). Cancelling a pending
+        # ASGI receive on timeout can discard a message that was
+        # already dequeued (IDENTIFY/HEARTBEAT frames racing the
+        # deadline were silently lost, feeding spurious
+        # SESSION_TIMED_OUT closes). Liveness is enforced by
+        # _heartbeat_monitor instead, which closes dead connections
+        # with SESSION_TIMED_OUT after missed heartbeats; that close
+        # surfaces here as a disconnect message/exception.
         try:
-            message = await asyncio.wait_for(
-                connection.websocket.receive(),
-                timeout=connection.heartbeat_interval_ms / 1000 * 2,
-            )
-        except asyncio.TimeoutError:
-            if not connection.is_alive:
-                await _close_connection(
-                    connection,
-                    GatewayCloseCode.SESSION_TIMED_OUT,
-                )
-                return
-            continue
+            message = await connection.websocket.receive()
+        except WebSocketDisconnect:
+            return
+        except Exception as e:
+            logger.debug(f"Connection {connection.connection_id}: receive failed: {e}")
+            return
 
         if message["type"] == "websocket.disconnect":
             return
@@ -318,6 +463,17 @@ async def _message_loop(
         if data is None:
             continue
 
+        # F6: frames must be JSON objects. A client sending ``[]``, ``42``
+        # or a bare string previously reached ``data.get(...)`` and raised
+        # AttributeError inside the receive loop instead of failing the
+        # protocol handshake cleanly.
+        if not isinstance(data, dict):
+            logger.warning(
+                f"Connection {connection.connection_id}: message is not a JSON object: {data!r:.200}"
+            )
+            await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+            return
+
         opcode: Optional[Any] = data.get("op")
         payload: Optional[Any] = data.get("d")
 
@@ -350,7 +506,7 @@ async def _message_loop(
                         "op": int(GatewayOpcode.DISPATCH),
                         "t": event_type,
                         "s": seq,
-                        "d": event_data,
+                        "d": stringify_snowflake_ids(event_data),
                     }
                 )
 
@@ -359,6 +515,10 @@ async def _message_loop(
                     await dispatcher.replay_events(connection, replay_seq)
             elif response_op == GatewayOpcode.HEARTBEAT_ACK:
                 await connection.send_json({"op": int(GatewayOpcode.HEARTBEAT_ACK)})
+                # Record the ACK timestamp only after the frame is written, so
+                # ``latency_ms`` reflects the real receive->send interval and
+                # not two back-to-back clock reads (Agent 38 F7).
+                connection.record_heartbeat_ack()
             elif response_op == GatewayOpcode.INVALID_SESSION:
                 resumable: bool = (
                     response_data.get("d", False) if response_data else False
@@ -373,7 +533,7 @@ async def _message_loop(
                 await connection.send_json(
                     {
                         "op": int(response_op),
-                        "d": response_data,
+                        "d": stringify_snowflake_ids(response_data),
                     }
                 )
 

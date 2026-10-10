@@ -5,6 +5,7 @@ from typing import Optional
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
+from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -45,7 +46,7 @@ async def create_scheduled_message(
         content=body.content,
         scheduled_at=body.scheduled_at,
     )
-    return {"success": True, "scheduled_message": result}
+    return {"success": True, "scheduled_message": stringify_snowflake_ids(result)}
 
 
 @router.get(
@@ -63,9 +64,9 @@ async def list_scheduled_messages(
     from src.core.messaging.services.scheduled import ScheduledMessageService
 
     svc = ScheduledMessageService(db)
-    conv_id = int(conversation_id) if conversation_id else None
+    conv_id = parse_id(conversation_id, "conversation ID") if conversation_id else None
     results = svc.list_scheduled_messages(current_user.user_id, conv_id, status, limit)
-    return {"scheduled_messages": results}
+    return {"scheduled_messages": stringify_snowflake_ids(results or [])}
 
 
 @router.delete(

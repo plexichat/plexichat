@@ -1,99 +1,78 @@
-# TLS Module
+# TLS module
 
-Automatic self-signed TLS certificate generation for Plexichat server.
-
-## Overview
-
-This module enables automatic generation of self-signed TLS certificates, allowing HTTPS to be enabled without manual certificate setup. This is particularly useful for:
-
-- Development and testing environments
-- Voice/video features that require HTTPS (WebRTC)
-- Quick local deployments
+The TLS module generates and manages self-signed TLS certificates for
+development and testing environments. It allows Plexichat to serve HTTPS
+without manual certificate setup.
 
 ## Features
 
-- **Auto-Generation**: Creates self-signed certificates on startup if none exist
-- **Validity Checking**: Regenerates certificates before they expire
-- **SAN Support**: Includes localhost, 127.0.0.1, and ::1 in Subject Alternative Names
-- **Secure Storage**: Private keys stored with restrictive permissions
-- **Configurable**: Paths, validity period, and hostname are configurable
+- Generates a self-signed certificate on startup when none exists.
+- Checks for certificate expiration and regenerates before expiry.
+- Includes `localhost`, `127.0.0.1`, and `::1` in the Subject Alternative
+  Names (SANs).
+- Stores private keys with restrictive file permissions (`0600`).
+- Supports configurable paths, validity period, and hostname.
 
-## Usage
+## Configuration
 
-### Configuration
-
-Add to `config.yaml`:
+Add the following to `config.yaml`:
 
 ```yaml
 tls:
-  # Enable automatic self-signed certificate generation
+  # Enable automatic self-signed certificate generation.
   auto_generate_self_signed: false
-  
-  # Certificate file paths (default: ~/.plexichat/certs/)
+
+  # Certificate file paths (default: ~/.plexichat/certs/).
   cert_path: ~/.plexichat/certs/server.crt
   key_path: ~/.plexichat/certs/server.key
-  
-  # Certificate validity period in days
+
+  # Hostname embedded in the certificate CN and SANs.
+  # On auto-renewal the original hostname and SANs are preserved.
+  # Valid range for cert_days: 1–3650. Invalid values abort startup.
+  # Missing or unreadable certificates when TLS is enabled also
+  # abort startup rather than falling back to plain HTTP.
+  hostname: localhost
   cert_days: 365
 ```
 
-### Programmatic Usage
+## Usage
+
+### Programmatic usage
 
 ```python
 from src.core import tls
 
-# Ensure certificates exist (generates if needed)
+# Ensure certificates exist (generates if needed).
 cert_path, key_path = tls.ensure_certificates()
 
-# Check if TLS is enabled
+# Check whether TLS is enabled.
 if tls.is_tls_enabled():
     ssl_config = tls.get_tls_config()
-    # Use ssl_config with uvicorn
+    # Pass ssl_config to uvicorn.
 ```
 
-### Server Startup
+### Server startup
 
-When TLS is enabled, the server will:
+When TLS is enabled, the server performs the following steps:
 
-1. Check if certificates exist at configured paths
-2. Validate certificate expiration
-3. Generate new self-signed certificates if needed
-4. Start uvicorn with SSL configuration
+1. Checks whether certificates exist at the configured paths.
+2. Validates certificate expiration.
+3. Generates new self-signed certificates if needed.
+4. Starts uvicorn with the SSL configuration.
 
-## Security Warning
+## Certificate details
 
-Self-signed certificates are **NOT** suitable for production use:
+Generated certificates use the following properties:
 
-- Browsers will show security warnings
-- Clients must explicitly trust the certificate
-- No chain of trust to a Certificate Authority
+- **Key size:** 2048-bit RSA
+- **Signature algorithm:** SHA-256
+- **Subject Alternative Names:**
+  - `DNS: localhost`
+  - `DNS:` configured hostname
+  - `IP: 127.0.0.1`
+  - `IP: ::1`
 
-For production, use certificates from:
-- Let's Encrypt (free, automated)
-- Commercial Certificate Authorities
-- Your internal CA certificates (for intranet use)
-
-## Dependencies
-
-Requires the `cryptography` library:
-
-```bash
-pip install cryptography
-```
-
-## Certificate Details
-
-Generated certificates include:
-
-- **Key Size**: 2048-bit RSA
-- **Signature**: SHA-256
-- **Subject Alternative Names**:
-  - DNS: localhost
-  - DNS: configured hostname
-  - IP: 127.0.0.1
-  - IP: ::1
-
-## File Locations
+## File locations
 
 Default certificate storage:
 
@@ -103,3 +82,25 @@ Default certificate storage:
     server.crt    # Certificate (PEM format)
     server.key    # Private key (PEM format, mode 0600)
 ```
+
+## Dependencies
+
+Requires the `cryptography` library:
+
+```bash
+pip install cryptography
+```
+
+## Security warning
+
+Self-signed certificates are **not** suitable for production use:
+
+- Browsers display security warnings.
+- Clients must explicitly trust the certificate.
+- No chain of trust to a Certificate Authority exists.
+
+For production environments, use certificates from one of the following:
+
+- [Let's Encrypt](https://letsencrypt.org/) (free, automated)
+- Commercial Certificate Authorities
+- An internal CA (for intranet use)

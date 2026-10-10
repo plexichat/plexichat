@@ -26,6 +26,87 @@ class CallLifecycleMixin(VoiceProtocol):
         """Attach a ``VoiceCallManager`` (may be ``None`` to disable records)."""
         self._voice_call_manager = voice_call_manager
 
+    def record_call_consent(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
+        """Record a participant's recording consent for the active call.
+
+        This is the delivery half of the client's consent dialog: the client
+        has always sent ``consented: true`` on ``VOICE_STATE_UPDATE`` and the
+        gateway never read it, while ``VoiceCallManager.add_consent`` -- the
+        only writer of ``consented_participants`` -- had no caller at all. A
+        recording requires every live channel member to appear in that list,
+        so without this no recording could ever (legitimately) start.
+
+        Reporting ``True`` means the call manager accepted the consent. Every
+        failure -- no manager, no active call, a caller who is not in the
+        channel (``add_consent`` re-checks membership against the live
+        roster), or a persistence error -- is swallowed and reported as
+        ``False``: consent bookkeeping must never break the voice state
+        update it arrived with, and an unrecorded consent fails closed (the
+        recording simply does not start).
+        """
+        manager = self._voice_call_manager
+        if manager is None:
+            return False
+        try:
+            call = manager.get_active_by_channel(channel_id)
+            if call is None:
+                return False
+            manager.add_consent(call.id, user_id)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to record voice consent for user {user_id} in "
+                f"channel {channel_id}: {exc}"
+            )
+            return False
+        return True
+
+    def revoke_call_consent(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> bool:
+        """Withdraw a participant's recording consent wherever it is held.
+
+        The delivery half of a *declined* consent dialog (``consented: false``
+        on ``VOICE_STATE_UPDATE``). Without it a participant could never take
+        consent back, and a recording started while they were away would keep
+        running over them.
+
+        ANNEX AB delivered the withdrawal only to the active call of the
+        channel the dialog named, and recorded the gap: a withdrawal has to
+        reach the recordings the participant is actually part of. The channel
+        is a hint; live participation is the authorization fact. Consent is
+        therefore removed from every active call whose roster contains the
+        user, and every live recording segment still covering them is stopped
+        -- including a segment whose call is no longer the active one.
+
+        Report-and-do-not-raise for the same reason as
+        :meth:`record_call_consent`; a withdrawal that cannot be persisted
+        fails closed because the call manager refuses to keep recording
+        without every live participant's consent. ``True`` means the
+        withdrawal took effect somewhere (a consent set changed, or a live
+        segment was stopped).
+        """
+        manager = self._voice_call_manager
+        if manager is None:
+            return False
+        revoked = False
+        try:
+            call = manager.get_active_by_channel(channel_id)
+            if call is not None:
+                manager.remove_consent(call.id, user_id)
+                revoked = True
+            if manager.revoke_consent_everywhere(user_id):
+                revoked = True
+        except Exception as exc:
+            logger.warning(
+                f"Failed to revoke voice consent for user {user_id} in "
+                f"channel {channel_id}: {exc}"
+            )
+        if manager.stop_live_recordings_for_user(user_id):
+            revoked = True
+        return revoked
+
     def _resolve_conversation_for_channel(
         self, channel_id: SnowflakeID
     ) -> Optional[SnowflakeID]:
@@ -34,15 +115,12 @@ class CallLifecycleMixin(VoiceProtocol):
         Voice channels are not always tied to a conversation; when one cannot be
         resolved we return ``None`` and the call is recorded without one.
         """
-        try:
-            row = self._db.fetch_one(
-                "SELECT conversation_id FROM srv_channels WHERE id = ?",
-                (channel_id,),
-            )
-            if row and row.get("conversation_id"):
-                return row["conversation_id"]
-        except Exception:
-            return None
+        row = self._db.fetch_one(
+            "SELECT conversation_id FROM srv_channels WHERE id = ?",
+            (channel_id,),
+        )
+        if row and row.get("conversation_id"):
+            return row["conversation_id"]
         return None
 
     def _on_member_joined(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:

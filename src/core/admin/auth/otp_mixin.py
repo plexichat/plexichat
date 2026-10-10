@@ -14,6 +14,7 @@ from .dataclasses import AdminLoginResult
 from .helpers import (
     _consume_otp_challenge,
     _validate_otp_challenge,
+    _check_otp_attempt_limit,
 )
 from .session_mixin import SessionMixin
 from .password_mixin import PasswordMixin
@@ -32,6 +33,14 @@ class OTPMixin(SessionMixin, PasswordMixin):
             return AdminLoginResult(
                 success=False, error="Invalid or expired OTP challenge"
             )
+        if not _check_otp_attempt_limit(challenge_token):
+            _consume_otp_challenge(challenge_token)
+            return AdminLoginResult(success=False, error="Too many OTP attempts")
+        # OTP challenges are single-attempt credentials. Consuming the
+        # challenge before verification prevents a failed code from leaving
+        # a reusable five-minute guessing window; callers can start a fresh
+        # challenge after correcting the code.
+        _consume_otp_challenge(challenge_token)
 
         db = self._db
         row = db.fetch_one(
@@ -53,7 +62,10 @@ class OTPMixin(SessionMixin, PasswordMixin):
 
                 secret = _decrypt(encrypted_secret, context=f"admin_totp:{admin_id}")
             except Exception:
-                secret = plaintext_secret
+                # Do not fall back to a plaintext secret when decryption fails;
+                # a crypto failure must fail closed rather than silently
+                # downgrading OTP protection.
+                return AdminLoginResult(success=False, error="OTP unavailable")
         else:
             secret = plaintext_secret
         if not secret:
@@ -77,10 +89,16 @@ class OTPMixin(SessionMixin, PasswordMixin):
         if not pyotp.TOTP(secret).verify(code, valid_window=1):
             return AdminLoginResult(success=False, error="Invalid OTP code")
 
-        db.execute(
-            "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ? WHERE id = ?",
-            (code, int(time.time() * 1000), admin_id),
+        now_ms = int(time.time() * 1000)
+        cursor = db.execute(
+            "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ? "
+            "WHERE id = ? AND (otp_last_used_code IS NULL OR otp_last_used_code <> ?)",
+            (code, now_ms, admin_id, code),
         )
+        if getattr(cursor, "rowcount", 0) != 1:
+            return AdminLoginResult(
+                success=False, error="Code already used — wait for next code"
+            )
         db.execute(
             "UPDATE admin_users SET totp_enabled = 1, must_setup_otp = 0 WHERE id = ?",
             (admin_id,),
@@ -112,6 +130,14 @@ class OTPMixin(SessionMixin, PasswordMixin):
             return AdminLoginResult(
                 success=False, error="Invalid or expired OTP challenge"
             )
+        if not _check_otp_attempt_limit(challenge_token):
+            _consume_otp_challenge(challenge_token)
+            return AdminLoginResult(success=False, error="Too many OTP attempts")
+        # OTP challenges are single-attempt credentials. Consuming the
+        # challenge before verification prevents a failed code from leaving
+        # a reusable five-minute guessing window; callers can start a fresh
+        # challenge after correcting the code.
+        _consume_otp_challenge(challenge_token)
 
         db = self._db
         row = db.fetch_one(
@@ -138,7 +164,10 @@ class OTPMixin(SessionMixin, PasswordMixin):
 
                 secret = _decrypt(encrypted_secret, context=f"admin_totp:{admin_id}")
             except Exception:
-                secret = plaintext_secret
+                # Do not fall back to a plaintext secret when decryption fails;
+                # a crypto failure must fail closed rather than silently
+                # downgrading OTP protection.
+                return AdminLoginResult(success=False, error="OTP unavailable")
         else:
             secret = plaintext_secret
         if not secret:
@@ -160,10 +189,21 @@ class OTPMixin(SessionMixin, PasswordMixin):
                 )
 
         if pyotp.TOTP(secret).verify(code, valid_window=1):
-            db.execute(
-                "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ?, last_login = ? WHERE id = ?",
-                (code, int(time.time() * 1000), int(time.time() * 1000), admin_id),
+            # Single-use claim: the pre-check above is racy (two concurrent
+            # logins both read the same "last used" value), so the UPDATE must
+            # itself refuse a code another request already consumed. Mirror
+            # verify_otp_setup/disable_otp and only issue a session when the
+            # claim actually lands.
+            now_ms = int(time.time() * 1000)
+            cursor = db.execute(
+                "UPDATE admin_users SET otp_last_used_code = ?, otp_last_used_at = ?, last_login = ? "
+                "WHERE id = ? AND (otp_last_used_code IS NULL OR otp_last_used_code <> ?)",
+                (code, now_ms, now_ms, admin_id, code),
             )
+            if getattr(cursor, "rowcount", 0) != 1:
+                return AdminLoginResult(
+                    success=False, error="Code already used — wait for next code"
+                )
             _consume_otp_challenge(challenge_token)
 
             requires_password_change = self.check_password_change_required(admin_id)
@@ -191,10 +231,20 @@ class OTPMixin(SessionMixin, PasswordMixin):
                     normalized.lower(), hashed_str
                 ):
                     hashed_list.pop(i)
-                    db.execute(
-                        "UPDATE admin_users SET backup_codes_hash = ?, last_login = ? WHERE id = ?",
-                        (json.dumps(hashed_list), int(time.time() * 1000), admin_id),
+                    cursor = db.execute(
+                        "UPDATE admin_users SET backup_codes_hash = ?, last_login = ? "
+                        "WHERE id = ? AND backup_codes_hash = ?",
+                        (
+                            json.dumps(hashed_list),
+                            int(time.time() * 1000),
+                            admin_id,
+                            backup_codes_hashed,
+                        ),
                     )
+                    if getattr(cursor, "rowcount", 0) != 1:
+                        return AdminLoginResult(
+                            success=False, error="Backup code already used"
+                        )
                     _consume_otp_challenge(challenge_token)
 
                     requires_password_change = self.check_password_change_required(
@@ -216,10 +266,20 @@ class OTPMixin(SessionMixin, PasswordMixin):
                     for c in codes
                     if c.strip()
                 ]
-                db.execute(
-                    "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ?, last_login = ? WHERE id = ?",
-                    (json.dumps(hashed_remaining), int(time.time() * 1000), admin_id),
+                cursor = db.execute(
+                    "UPDATE admin_users SET backup_codes = NULL, backup_codes_hash = ?, last_login = ? "
+                    "WHERE id = ? AND backup_codes = ?",
+                    (
+                        json.dumps(hashed_remaining),
+                        int(time.time() * 1000),
+                        admin_id,
+                        backup_codes_plaintext,
+                    ),
                 )
+                if getattr(cursor, "rowcount", 0) != 1:
+                    return AdminLoginResult(
+                        success=False, error="Backup code already used"
+                    )
                 _consume_otp_challenge(challenge_token)
 
                 requires_password_change = self.check_password_change_required(admin_id)

@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS app_oauth_tokens (
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0,
+    last_used_at INTEGER,
     FOREIGN KEY (application_id) REFERENCES app_applications(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
@@ -148,8 +149,6 @@ CREATE TABLE IF NOT EXISTS app_interactions (
     application_id INTEGER NOT NULL,
     interaction_type INTEGER NOT NULL,
     data TEXT,
-    -- Encrypted interaction payload (commit c7d02342)
-    data_encrypted TEXT,
     server_id INTEGER,
     channel_id INTEGER,
     user_id INTEGER NOT NULL,
@@ -160,6 +159,7 @@ CREATE TABLE IF NOT EXISTS app_interactions (
     server_locale TEXT,
     created_at INTEGER NOT NULL,
     responded INTEGER NOT NULL DEFAULT 0,
+    response_payload_encrypted TEXT,
     FOREIGN KEY (application_id) REFERENCES app_applications(id) ON DELETE CASCADE
 );
 

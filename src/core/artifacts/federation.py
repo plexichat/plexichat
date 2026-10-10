@@ -11,7 +11,10 @@ We deliberately do NOT build a full cross-instance realtime transport here: the
 external transport layer lives outside this repo. Instead this bridge provides
 the integration HOOKS:
 
-- it resolves which federation connections belong to an artifact's server,
+- it resolves the active federation connections for this instance (the
+  ``plexijoin_connections`` table is instance-scoped with no per-server column,
+  so an artifact's ops/events are forwarded to every active federation link
+  regardless of its local server),
 - it exposes pluggable forwarders ``forward_artifact_op`` and
   ``forward_artifact_event`` that call into an injectable transport callback,
   and
@@ -32,11 +35,23 @@ local users, so visibility of federated artifacts remains gated by the local
 route/permission layer; this module does not relax any local access check.
 """
 
+import concurrent.futures
+import hashlib
+import hmac as _hmac
+import json
+import secrets
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import utils.logger as logger
 
 from src.core.artifacts.repository import get_artifact
+
+# Inbound route paths (relative to the remote instance's base URL) that receive
+# forwarded artifact ops/events. Mirrors the route registered in
+# ``src/api/routes/federation.py``.
+FEDERATION_OP_PATH = "/api/v1/federation/artifact-op"
+FEDERATION_EVENT_PATH = "/api/v1/federation/artifact-event"
 
 
 # Signature of the injectable external transport callback.
@@ -61,12 +76,13 @@ def _default_transport(
     actor_id: int,
     connection_ids: List[int],
 ) -> None:
-    """Default transport: logs the forwarding intent and warns, but does not ship bytes.
+    """Fallback transport (no PlexiJoin manager available): logs only.
 
     The bridge accounts for traffic separately via
     ``PlexiJoinManager.record_traffic`` in the calling method, not here.
-    A deployed external transport replaces this function to actually deliver
-    the payload to each remote instance.
+    This fallback is only used when the bridge has no PlexiJoin manager to
+    resolve connection URLs/secrets; the default transport otherwise ships
+    bytes via :class:`HttpFederationTransport`.
     """
     global _default_transport_warned
     if not connection_ids:
@@ -74,9 +90,8 @@ def _default_transport(
     if not _default_transport_warned:
         _default_transport_warned = True
         logger.warning(
-            "FederationArtifactBridge: using default (log-only) transport — "
-            "no bytes are being shipped to remote instances. Call "
-            "set_federation_transport() to register a real transport."
+            "FederationArtifactBridge: no PlexiJoin manager available — "
+            "artifact ops are not being shipped to remote instances."
         )
     logger.info(
         "FederationArtifactBridge: forwarding artifact %s op from actor %s "
@@ -86,6 +101,154 @@ def _default_transport(
         len(connection_ids),
         connection_ids,
     )
+
+
+def _signature_material(
+    body: bytes, timestamp: Optional[str] = None, nonce: Optional[str] = None
+) -> bytes:
+    """Build the signed federation envelope.
+
+    The legacy body-only form remains available to callers of the primitive,
+    while network transports always include freshness and uniqueness metadata.
+    """
+    if timestamp is None or nonce is None:
+        return body
+    return body + b"\n" + timestamp.encode("ascii") + b"\n" + nonce.encode("ascii")
+
+
+def _sign_payload(
+    shared_key: str,
+    body: bytes,
+    timestamp: Optional[str] = None,
+    nonce: Optional[str] = None,
+) -> str:
+    """HMAC-SHA256 signature over the federation envelope."""
+    return _hmac.new(
+        shared_key.encode("utf-8"),
+        _signature_material(body, timestamp, nonce),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_payload_signature(
+    shared_key: Optional[str],
+    body: bytes,
+    signature: Optional[str],
+    timestamp: Optional[str] = None,
+    nonce: Optional[str] = None,
+) -> bool:
+    """Constant-time verification of a federation payload signature."""
+    if not shared_key or not signature:
+        return False
+    expected = _sign_payload(shared_key, body, timestamp, nonce)
+    return _hmac.compare_digest(expected, signature)
+
+
+class HttpFederationTransport:
+    """Real cross-instance transport: ships artifact ops/events over HTTP(S).
+
+    For each target connection the payload is signed with the connection's
+    shared key (HMAC-SHA256) and POSTed to the remote instance's inbound
+    federation endpoint. Delivery runs on a daemon thread so the live relay
+    loop is never blocked, and transient failures are retried with a short
+    backoff so a single hiccup does not drop collaborative traffic.
+
+    This is the *shipped* default transport; deployments that need a custom
+    transport (e.g. an internal message bus) can still override it via
+    ``FederationArtifactBridge.set_federation_transport``.
+    """
+
+    def __init__(
+        self,
+        plexijoin_manager: Any,
+        timeout: float = 5.0,
+        max_retries: int = 2,
+        max_workers: int = 16,
+    ) -> None:
+        self._plexijoin = plexijoin_manager
+        self._timeout = timeout
+        self._max_retries = max(0, int(max_retries))
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, int(max_workers)),
+            thread_name_prefix="plexijoin-artifact",
+        )
+
+    def _connection(self, conn_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            return self._plexijoin.get_connection(int(conn_id))
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    def __call__(
+        self,
+        artifact_id: int,
+        payload: Dict[str, Any],
+        actor_id: int,
+        connection_ids: List[int],
+    ) -> None:
+        path = FEDERATION_EVENT_PATH if "event_type" in payload else FEDERATION_OP_PATH
+        for conn_id in connection_ids:
+            conn = self._connection(conn_id)
+            if not conn:
+                continue
+            remote_url = conn.get("remote_url")
+            if not remote_url:
+                continue
+            shared_key = conn.get("shared_key")
+            if not shared_key:
+                logger.error(
+                    "FederationArtifactBridge: refusing unsigned delivery for connection %s",
+                    conn_id,
+                )
+                continue
+            self._executor.submit(
+                self._post_with_retry,
+                remote_url,
+                shared_key,
+                payload,
+                path,
+            )
+
+    def _post_with_retry(
+        self,
+        remote_url: str,
+        shared_key: Optional[str],
+        payload: Dict[str, Any],
+        path: str,
+    ) -> None:
+        import httpx
+
+        body = json.dumps(payload).encode("utf-8")
+        if not shared_key:
+            logger.error(
+                "FederationArtifactBridge: refusing unsigned delivery to %s", remote_url
+            )
+            return
+        timestamp = str(int(time.time()))
+        nonce = secrets.token_urlsafe(24)
+        headers = {
+            "content-type": "application/json",
+            "x-plexijoin-timestamp": timestamp,
+            "x-plexijoin-nonce": nonce,
+        }
+        headers["x-plexijoin-signature"] = _sign_payload(
+            shared_key, body, timestamp, nonce
+        )
+        url = remote_url.rstrip("/") + path
+        for attempt in range(self._max_retries + 1):
+            try:
+                with httpx.Client(timeout=self._timeout) as client:
+                    client.post(url, content=body, headers=headers)
+                return
+            except Exception as e:  # pragma: no cover - network failure
+                if attempt < self._max_retries:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+                logger.debug(
+                    "FederationArtifactBridge: transport POST to %s failed: %s",
+                    url,
+                    e,
+                )
 
 
 class FederationArtifactBridge:
@@ -102,7 +265,15 @@ class FederationArtifactBridge:
         """
         self._db = db
         self._plexijoin = plexijoin_manager
-        self._transport: FederationTransport = _default_transport
+        # Ship a real transport by default: when a PlexiJoin manager is
+        # available the bridge delivers bytes over HTTP(S) to each remote
+        # instance; otherwise it falls back to the log-only transport.
+        if plexijoin_manager is not None:
+            self._transport: FederationTransport = HttpFederationTransport(
+                plexijoin_manager
+            )
+        else:
+            self._transport: FederationTransport = _default_transport
 
     def set_federation_transport(self, transport: FederationTransport) -> None:
         """Inject the external transport used to deliver payloads remotely.
@@ -142,14 +313,13 @@ class FederationArtifactBridge:
         return int(server_id) if server_id is not None else None
 
     def _resolve_connection_ids(self, server_id: Optional[int]) -> List[int]:
-        """Return the active federation connection ids for a server.
+        """Return the active federation connection ids for this instance.
 
-        Federation links are keyed by the remote instance id, which in this
-        deployment is the remote server's id. We match on the
-        ``remote_instance_id`` column of ``plexijoin_connections`` and only
-        consider links in the ``active`` state.
+        ``plexijoin_connections`` is instance-scoped (there is no per-server
+        column), so an artifact's ops/events are forwarded to every active
+        federation link regardless of its local server.
         """
-        if self._plexijoin is None or server_id is None:
+        if self._plexijoin is None:
             return []
         try:
             result = self._plexijoin.list_connections(status="active")
@@ -164,14 +334,11 @@ class FederationArtifactBridge:
             return []
         matched: List[int] = []
         for conn in connections:
-            remote_instance_id = conn.get("remote_instance_id")
-            if remote_instance_id is None:
+            conn_id = conn.get("id")
+            if conn_id is None:
                 continue
             try:
-                if int(remote_instance_id) == int(server_id):
-                    conn_id = conn.get("id")
-                    if conn_id is not None:
-                        matched.append(int(conn_id))
+                matched.append(int(conn_id))
             except (TypeError, ValueError):
                 continue
         return matched
@@ -213,6 +380,12 @@ class FederationArtifactBridge:
         local permission.
         """
         server_id = self._resolve_server_id(artifact_id)
+        if server_id is None:
+            # Artifact does not exist locally (or is not server-scoped), so
+            # there is nothing valid to forward for it. Forwarding an op for
+            # a nonexistent artifact to every active link would only push
+            # garbage to remote instances.
+            return 0
         connection_ids = self._resolve_connection_ids(server_id)
         if not connection_ids:
             return 0

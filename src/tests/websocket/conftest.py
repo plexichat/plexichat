@@ -12,11 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 # Config is already setup in the main conftest.py at import time
 # No need to setup again here
 
-from src.api.websocket.connection import Connection, ConnectionState  # noqa: E402
-from src.api.websocket.dispatcher import GatewayDispatcher  # noqa: E402
-from src.api.websocket.handlers import OpcodeHandler  # noqa: E402
-from src.api.websocket.session import SessionManager  # noqa: E402
-from src.core.auth.models import AccountType, TokenInfo  # noqa: E402
+from src.api.websocket.connection import Connection
+from src.api.websocket.dispatcher import GatewayDispatcher
+from src.api.websocket.handlers import OpcodeHandler
+from src.api.websocket.session import SessionManager
+from src.core.auth.models import AccountType, TokenInfo
 
 
 @pytest.fixture
@@ -57,7 +57,16 @@ def mock_auth_module():
         username="test-user",
         account_type=AccountType.USER,
     )
-    auth.get_user.return_value = None
+    # READY payloads are enriched from get_user when a record exists; return
+    # a real user shape so identify tests assert the documented payload
+    # contract (id + username) rather than the empty fallback.
+    auth.get_user.return_value = SimpleNamespace(
+        id=12345,
+        username="test-user",
+        discriminator="0",
+        avatar=None,
+        bot=False,
+    )
     return auth
 
 
@@ -67,6 +76,11 @@ def opcode_handler(session_manager, mock_auth_module):
     return OpcodeHandler(
         session_manager=session_manager,
         auth_module=mock_auth_module,
+        # Servers boundary as a Mock so channel-visibility filtering helpers
+        # (typing recipients, voice state targets) are exercisable without a
+        # live database — and so the READY payload path (which now resolves
+        # guilds through this injected boundary) stays DB-free in tests.
+        servers_module=Mock(get_servers=Mock(return_value=[])),
     )
 
 
@@ -87,10 +101,53 @@ def connection(mock_websocket):
 
 
 @pytest.fixture
-def authenticated_connection(connection):
-    """Concrete READY connection for authenticated opcode tests."""
-    connection.set_identified(12345, "test-session", 513)
+def connect_as(session_manager, mock_websocket):
+    """Factory creating a READY connection for an arbitrary real user id.
+
+    ``authenticated_connection`` is pinned to the mock auth user (12345);
+    end-to-end suites that create real users need a connection identified as
+    a specific one of them, with real session bookkeeping behind it.
+    """
+    from src.core.events.types import GatewayIntent
+
+    def _connect(user_id: int) -> Connection:
+        conn = Connection(
+            websocket=mock_websocket,
+            connection_id=session_manager.generate_connection_id(),
+            heartbeat_interval_ms=45000,
+        )
+        session_manager.add_connection(conn)
+        session = session_manager.create_session(
+            conn, user_id=user_id, intents=GatewayIntent.all_intents()
+        )
+        conn.set_identified(user_id, session.session_id, GatewayIntent.all_intents())
+        return conn
+
+    return _connect
+
+
+@pytest.fixture
+def authenticated_connection(connection, session_manager):
+    """Concrete READY connection for authenticated opcode tests.
+
+    Creates a real session through the session manager so dispatcher
+    bookkeeping (event recording, replay buffers) actually runs; a bare
+    ``set_identified`` leaves the session invisible to ``record_event``.
+    """
+    session = session_manager.create_session(connection, user_id=12345, intents=513)
+    connection.set_identified(12345, session.session_id, 513)
     return connection
+
+
+@pytest.fixture
+def sample_presence_update_payload():
+    """Valid PRESENCE_UPDATE payload shared by gateway tests."""
+    return {
+        "status": "online",
+        "custom_status": None,
+        "custom_emoji": None,
+        "activities": [],
+    }
 
 
 @pytest.fixture

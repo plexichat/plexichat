@@ -146,7 +146,7 @@ class VisibilityMixin(PresenceManagerBase):
         Returns:
             True if viewer can see real presence
         """
-        if viewer_id == target_id:
+        if int(viewer_id) == int(target_id):
             return True
 
         if self._relationships:

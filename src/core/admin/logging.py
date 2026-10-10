@@ -81,17 +81,17 @@ class AdminLogger:
                     logging.INFO if entry.status == "success" else logging.WARNING
                 )
                 self.file_logger.log(log_level, log_message)
-            except Exception as e:
+            except Exception:
                 success = False
-                print(f"Failed to log admin action to file: {e}")
+                self.file_logger.exception("Failed to log admin action to file")
 
         # Log to database
         if log_to_db and self._db_logging_enabled:
             try:
                 self._log_to_database(db, entry)
-            except Exception as e:
+            except Exception:
                 success = False
-                print(f"Failed to log admin action to database: {e}")
+                self.file_logger.exception("Failed to log admin action to database")
 
         return success
 

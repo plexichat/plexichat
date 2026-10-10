@@ -51,7 +51,9 @@ class TestIdentifyHandler:
         )
 
         assert connection.session_id is not None
-        assert len(connection.session_id) > 0
+        # Session IDs are secrets.token_hex(16) -> exactly 32 hex chars
+        assert len(connection.session_id) == 32
+        assert all(c in "0123456789abcdef" for c in connection.session_id)
 
     @pytest.mark.asyncio
     async def test_identify_sets_intents(

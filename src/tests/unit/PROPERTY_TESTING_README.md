@@ -238,7 +238,7 @@ In CI pipelines:
 # .gitlab-ci.yml
 test:
   script:
-    - pip install --require-hashes -r requirements.txt
+    - pip install --require-hashes -r requirements-dev.txt
     - pytest src/tests/unit/test_property_based*.py -v --hypothesis-profile=ci
 ```
 

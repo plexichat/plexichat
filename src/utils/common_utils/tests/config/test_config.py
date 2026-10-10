@@ -1,11 +1,7 @@
 import os
-import sys
-import shutil
 import pytest
 import yaml
 import json
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from utils.config import ConfigLoader, MalformedConfigAction
 
@@ -13,13 +9,22 @@ TEMP_CONFIG_DIR = os.path.abspath("temp/config")
 
 
 @pytest.fixture
-def clean_config_dir():
-    if os.path.exists(TEMP_CONFIG_DIR):
-        shutil.rmtree(TEMP_CONFIG_DIR)
-    os.makedirs(TEMP_CONFIG_DIR)
-    yield
-    if os.path.exists(TEMP_CONFIG_DIR):
-        shutil.rmtree(TEMP_CONFIG_DIR)
+def clean_config_dir(tmp_path, monkeypatch):
+    """Provide an isolated config directory per test (xdist-safe).
+
+    Historically this fixture wiped a single CWD-relative ``temp/config``
+    directory shared by every test worker, so parallel runs deleted each
+    other's files mid-test. It now points the module-global
+    ``TEMP_CONFIG_DIR`` at a pytest-provided ``tmp_path`` (unique per test
+    and per worker) via ``monkeypatch``, so existing test bodies keep working
+    unchanged.
+    """
+    import sys
+
+    config_dir = str(tmp_path / "config")
+    os.makedirs(config_dir, exist_ok=True)
+    monkeypatch.setattr(sys.modules[__name__], "TEMP_CONFIG_DIR", config_dir)
+    yield config_dir
 
 
 class TestBasicConfigLoading:
@@ -375,15 +380,20 @@ class TestSecurityConfigInjection:
         assert loader.get("key") == value_with_null
 
     def test_very_large_config_file(self, clean_config_dir):
+        # Write the 1000-key file once instead of calling ``set()`` 1000
+        # times (each ``set()`` persists the whole config — O(n^2)). The
+        # round-trip through the real YAML load path is what's asserted.
+        import yaml
+
         path = os.path.join(TEMP_CONFIG_DIR, "large.yaml")
+        data = {f"key{i}": f"value{i}" for i in range(1000)}
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+
         loader = ConfigLoader(path)
-
-        for i in range(1000):
-            loader.set(f"key{i}", f"value{i}")
-
-        loader2 = ConfigLoader(path)
-        assert loader2.get("key0") == "value0"
-        assert loader2.get("key999") == "value999"
+        assert loader.get("key0") == "value0"
+        assert loader.get("key999") == "value999"
+        assert len(loader.config) == 1000
 
     def test_deeply_nested_structure(self, clean_config_dir):
         path = os.path.join(TEMP_CONFIG_DIR, "config.yaml")

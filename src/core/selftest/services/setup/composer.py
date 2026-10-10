@@ -55,6 +55,11 @@ class SetupService(
             if self.ctx.test_other_user_id:
                 self.setup_other_admin_user()
             logger.debug(f"Test other user ID: {self.ctx.test_other_user_id}")
+            self.create_third_user()
+            logger.debug(f"Test third user ID: {self.ctx.test_third_user_id}")
+            if self.ctx.test_third_user_id:
+                self.promote_third_to_support_admin()
+            self.create_fourth_user()
 
             if not self.login_main_user():
                 return False
@@ -72,12 +77,14 @@ class SetupService(
             self.join_other_user_to_server()
             self.create_test_webhook()
             self.create_dummy_test_file()
+            self.create_test_sound()
             self.resolve_log_filename()
             self.create_test_settings()
             self.create_test_application_and_bot()
             self.create_test_notification()
             self.create_test_reports()
             self.create_test_automod_rule()
+            self.create_test_automod_violation()
             self.create_test_access_token()
             self.create_test_ticket()
             self.create_test_poll()
@@ -85,12 +92,16 @@ class SetupService(
             self.create_test_emoji()
             self.create_test_sticker()
             self.create_test_thread()
-            self.create_test_plexijoin_resources()
+            if not self.ctx.unlicensed:
+                # PlexiJoin is license-gated: on an unlicensed/free-tier
+                # install the POST returns 403, so skip seeding test
+                # resources for it entirely.
+                self.create_test_plexijoin_resources()
             self.ensure_approval_comments_table()
 
             logger.info(
                 f"Resources created: Server={self.ctx.test_server_id}, Channel={self.ctx.test_channel_id}, Role={self.ctx.test_role_id}, "
-                f"AutoMod={self.ctx.test_automod_rule_id}, Token={self.ctx.test_access_token_id}, Ticket={self.ctx.test_ticket_id}, "
+                f"AutoMod={self.ctx.test_automod_rule_id}, AutoModV={self.ctx.test_automod_violation_id}, Token={self.ctx.test_access_token_id}, Ticket={self.ctx.test_ticket_id}, "
                 f"Poll={self.ctx.test_poll_id}, Thread={self.ctx.test_thread_id}"
             )
             return True

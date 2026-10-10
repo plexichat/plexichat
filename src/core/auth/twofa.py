@@ -23,9 +23,22 @@ def confirm_2fa(user_id: int, code: str) -> bool:
     return _get_auth_manager().get_instance().confirm_2fa(user_id, code)
 
 
-def disable_2fa(user_id: int, password: str, code: str) -> bool:
-    """Disable 2FA. Requires password and current TOTP code."""
-    return _get_auth_manager().get_instance().disable_2fa(user_id, password, code)
+def disable_2fa(
+    user_id: int,
+    password: str,
+    code: str,
+    except_session_id=None,
+) -> bool:
+    """Disable 2FA. Requires password and current TOTP code.
+
+    ``except_session_id`` preserves the caller's session while revoking
+    all others (F8 policy); pass None to revoke every session.
+    """
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .disable_2fa(user_id, password, code, except_session_id)
+    )
 
 
 def regenerate_backup_codes(user_id: int, password: str) -> List[str]:

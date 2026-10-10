@@ -1,14 +1,128 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from typing import Optional
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 import utils.logger as logger
 import src.api as api
+from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import parse_id, raise_bad_request, raise_internal
+from .common import (
+    parse_id,
+    raise_bad_request,
+    raise_forbidden,
+    raise_internal,
+)
 
 router = APIRouter()
+
+# M3 FIX: the JSON variant previously trusted client-supplied attachment
+# metadata verbatim (url/filename/content_type/size), unlike the multipart
+# variant which validates server-side. Apply the same class of checks here.
+ALLOWED_CONTENT_TYPES = {
+    "audio/webm",
+    "audio/ogg",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/opus",
+}
+ALLOWED_EXTENSIONS = {"webm", "ogg", "mp3", "wav", "opus"}
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # matches the multipart variant
+MAX_DURATION_MS = 600000
+ALLOWED_URL_PREFIXES = ("/api/v1/media/", "/media/", "/uploads/")
+ALLOWED_URL_SCHEMES = ("http://", "https://")
+
+
+def _validate_voice_metadata(
+    filename: str, content_type: str, size: int, duration_ms: int, url: str
+) -> None:
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        raise_bad_request(
+            f"Invalid content type '{content_type}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_CONTENT_TYPES))}"
+        )
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise_bad_request(
+            f"Unsupported voice format '{ext}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
+
+    if size <= 0:
+        raise_bad_request("Voice file is empty")
+    if size > MAX_UPLOAD_SIZE:
+        raise_bad_request("Audio file exceeds 10MB maximum size")
+
+    if duration_ms <= 0:
+        raise_bad_request("Duration must be positive")
+    if duration_ms > MAX_DURATION_MS:
+        raise_bad_request("Voice message exceeds 10 minute maximum duration")
+
+    candidate = url.strip()
+    lowered = candidate.lower()
+    if lowered.startswith(("javascript:", "data:", "file:", "blob:")):
+        raise_bad_request("Invalid storage URL")
+    if candidate.startswith(ALLOWED_URL_PREFIXES):
+        return
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise_bad_request("Invalid storage URL")
+    if parsed.username or parsed.password:
+        raise_bad_request("Invalid storage URL")
+    # The DNS + IP screening is deliberately NOT done here: see
+    # _assert_public_storage_host, which the route awaits off the event loop.
+
+
+def _assert_public_storage_host(hostname: str) -> None:
+    """Resolve `hostname` and reject any non-public address.
+
+    Separate from the metadata checks because it performs blocking I/O.
+    """
+    try:
+        addresses = [
+            ipaddress.ip_address(info[4][0])
+            for info in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        ]
+    except (OSError, ValueError):
+        raise_bad_request("Invalid storage URL")
+    if not addresses or any(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        for address in addresses
+    ):
+        raise_bad_request("Invalid storage URL")
+    # External URLs are accepted only after DNS/IP safety checks. This keeps
+    # legacy JSON clients working while preventing loopback/private targets.
+
+
+async def _validate_voice_storage_url(url: str) -> None:
+    """Run the storage-URL safety checks without blocking the event loop.
+
+    ``socket.getaddrinfo`` is a synchronous syscall that can block for the
+    full resolver timeout. Calling it directly from this module's ``async def``
+    route stalled the entire worker for every concurrent request whenever the
+    hostname was slow to resolve -- and the hostname is supplied by the
+    client, so a handful of requests pointing at a black-hole DNS name was
+    enough to stall a worker. Offloading to the threadpool keeps the loop
+    responsive; the media proxy already uses this pattern for the same reason.
+    """
+    candidate = url.strip()
+    if not candidate or candidate.startswith(ALLOWED_URL_PREFIXES):
+        return
+    parsed = urlparse(candidate)
+    if parsed.hostname:
+        await run_in_threadpool(_assert_public_storage_host, parsed.hostname)
 
 
 class VoiceMessageRequest(BaseModel):
@@ -29,6 +143,19 @@ class VoiceMessageRequest(BaseModel):
 async def send_voice_message(
     body: VoiceMessageRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
+    conv_id = parse_id(body.conversation_id, "conversation ID")
+
+    _validate_voice_metadata(
+        filename=body.filename,
+        content_type=body.content_type,
+        size=body.size,
+        duration_ms=body.duration_ms,
+        url=body.url,
+    )
+
+    # DNS-backed SSRF screening, run off the event loop.
+    await _validate_voice_storage_url(body.url)
+
     db = api.get_db()
     messaging = api.get_messaging()
     participant_svc = (
@@ -42,7 +169,7 @@ async def send_voice_message(
     try:
         result = svc.create_voice_message(
             user_id=current_user.user_id,
-            conversation_id=int(body.conversation_id),
+            conversation_id=conv_id,
             duration_ms=body.duration_ms,
             filename=body.filename,
             content_type=body.content_type,
@@ -72,7 +199,7 @@ async def send_voice_message(
             try:
                 msg = messaging.send_message(
                     user_id=current_user.user_id,
-                    conversation_id=int(body.conversation_id),
+                    conversation_id=conv_id,
                     content="Voice message",
                     attachments=[attachment_data],
                 )
@@ -83,9 +210,13 @@ async def send_voice_message(
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
 
-        return {"success": True, "voice_message": result}
-    except ValueError as e:
-        raise_bad_request(str(e))
+        return {"success": True, "voice_message": stringify_snowflake_ids(result)}
+    except ValueError:
+        raise_bad_request("Invalid voice message data")
+    except PermissionError:
+        # M6 FIX: authorization failures are 403 with a static message,
+        # never a 500 echoing the exception text.
+        raise_forbidden("Not a participant in this conversation")
 
 
 @router.post(
@@ -111,8 +242,7 @@ async def upload_voice_message(
     }
     if not audio.content_type or audio.content_type not in allowed_content_types:
         raise_bad_request(
-            f"Invalid content type '{audio.content_type}'. "
-            f"Allowed: {', '.join(sorted(allowed_content_types))}"
+            f"Invalid content type. Allowed: {', '.join(sorted(allowed_content_types))}"
         )
 
     MAX_UPLOAD_SIZE = 10 * 1024 * 1024
@@ -219,8 +349,9 @@ async def upload_voice_message(
                     setattr(result, "message_id", msg.id)
             except Exception as e:
                 logger.error(f"Failed to send voice message via messaging: {e}")
-        return {"success": True, "voice_message": result}
-    except ValueError as e:
-        raise_bad_request(str(e))
-    except PermissionError as e:
-        raise_internal(str(e))
+        return {"success": True, "voice_message": stringify_snowflake_ids(result)}
+    except ValueError:
+        raise_bad_request("Invalid voice message data")
+    except PermissionError:
+        # M6 FIX: static 403 instead of raise_internal(str(e)).
+        raise_forbidden("Not a participant in this conversation")

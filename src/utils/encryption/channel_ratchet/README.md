@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Server-managed, per-channel message encryption for PlexiChat. The
+Server-managed, per-channel message encryption for Plexichat. The
 ratchet protects historical channel content from being silently
 re-decrypted after a message is hard-deleted, even by a client
 device that previously fetched the active ratchet key.
@@ -20,7 +20,7 @@ In scope:
 
 Out of scope (this is server-orchestrated, not E2EE):
 
-* Active compromise of the PlexiChat server process.
+* Active compromise of the Plexichat server process.
 * Physical access to the keyring file plus the KEK.
 * Clients that keep a separate out-of-band copy of ciphertext.
 

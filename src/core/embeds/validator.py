@@ -8,6 +8,12 @@ import re
 import unicodedata
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+from urllib.parse import urlparse, urlunparse
+
+try:
+    import utils.config as config
+except ImportError:  # pragma: no cover - config always present in production
+    config = None
 
 from .exceptions import (
     EmbedValidationError,
@@ -41,13 +47,75 @@ MAX_EMBEDS_PER_MESSAGE = 10
 # ``src.utils.security`` is the canonical place that resolves DNS
 # and rejects private/loopback/link-local/multicast/unspecified
 # ranges. URL_PATTERN here only enforces shape.
+#
+# NOTE: the TLD is any well-formed DNS label (not just ``[A-Z]{2,6}``)
+# so punycode / IDN TLDs (e.g. ``xn--p1ai`` for ``.рф``) are accepted.
+# At least one dot is still required (single-label hosts are not
+# allowed because they commonly resolve to internal networks); the
+# SSRF checks in ``src.utils.security.URLValidator`` remain the
+# authoritative gate.
 URL_PATTERN = re.compile(
     r"^https?://"
-    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?)"
+    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+"
+    r"[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)"
     r"(?::\d+)?"
     r"(?:/?|[/?]\S+)$",
     re.IGNORECASE,
 )
+
+# Characters that enable HTML attribute breakout when a URL is
+# interpolated into a quoted ``src="..."`` / ``href="..."`` attribute on
+# the client. A stored embed URL such as
+# ``https://e.com/a.png"onerror="alert(1)`` contains no whitespace and
+# previously passed every server gate; the injected quote terminated the
+# client-side attribute value and the remainder was parsed as markup
+# (stored XSS for every viewer). These characters have no legitimate
+# role in an http(s) URL we are willing to serve, so they are rejected.
+URL_ATTRIBUTE_BREAKOUT_PATTERN = re.compile(r"""["'<>`]""")
+
+# Raw C0 control characters (including tab/newline/CR) and DEL. Control
+# characters inside a URL-shaped string are never legitimate here: they
+# are either an smuggling primitive or corrupt downstream consumers.
+_URL_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+
+# Server-relative media-pipeline paths accepted by ``validate_url``.
+# Strictly shaped: exactly one leading slash, then only safe path
+# characters under the /api/v1/media/ prefix. Anything else (query
+# strings, backslashes, encoded characters, other prefixes) is rejected
+# as it would be for an absolute URL.
+_RELATIVE_MEDIA_PATTERN = re.compile(r"^/api/v1/media/[A-Za-z0-9._\-/]*$")
+
+
+def _public_media_origin() -> Optional[str]:
+    """Return the public absolute origin media URLs should be lifted to.
+
+    Uses ``static_client.config_injection.public_server_url`` when it is
+    configured with a public (non-local) host; falls back to
+    ``http://localhost:<server.port>`` otherwise. Returns ``None`` when
+    no public origin is available so callers can keep the relative form.
+    """
+    origin = ""
+    try:
+        static_cfg = (config.get("static_client", {}) if config else {}) or {}
+        injection = static_cfg.get("config_injection", {}) or {}
+        origin = str(injection.get("public_server_url") or "").strip()
+    except Exception:
+        origin = ""
+    if origin:
+        parsed = urlparse(origin)
+        host = (parsed.hostname or "").lower()
+        if (
+            not host
+            or host in {"localhost", "127.0.0.1", "::1"}
+            or host.endswith((".local", ".internal"))
+        ):
+            return None
+        return f"{parsed.scheme.lower() or 'https'}://{parsed.netloc}"
+    # No explicit override: the localhost:<port> fallback is NOT a
+    # public origin, so report None and let the caller keep the
+    # same-origin relative path.
+    return None
+
 
 # Color validation pattern (hex color)
 COLOR_PATTERN = re.compile(r"^#?([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$")
@@ -60,16 +128,54 @@ TIMESTAMP_PATTERN = re.compile(
     r"(?:Z|[+-]\d{2}:?\d{2})?)?$"
 )
 
-# Dangerous patterns for XSS prevention
+# Dangerous patterns for XSS prevention.
+#
+# SECURITY NOTE: these are matched against the raw content, the
+# percent/entity-decoded content, AND the whitespace-stripped,
+# lower-cased normalization. Token-boundary and tag-context anchors
+# keep legitimate prose (e.g. "done=", "phone=", "onboarding=",
+# "description") from tripping the blocklist while still catching real
+# payloads (``<script>``, ``javascript:``, ``onclick=``, ``<iframe>``,
+# ...).
 DANGEROUS_PATTERNS = [
-    re.compile(r"<script", re.IGNORECASE),
-    re.compile(r"javascript:", re.IGNORECASE),
-    re.compile(r"data:", re.IGNORECASE),
-    re.compile(r"vbscript:", re.IGNORECASE),
-    re.compile(r"on\w+\s*=", re.IGNORECASE),
-    re.compile(r"<iframe", re.IGNORECASE),
-    re.compile(r"<object", re.IGNORECASE),
-    re.compile(r"<embed", re.IGNORECASE),
+    re.compile(r"<\s*script\b", re.IGNORECASE),
+    re.compile(r"<\s*(?:iframe|object|embed)\b", re.IGNORECASE),
+    re.compile(r"\bjavascript\s*:", re.IGNORECASE),
+    re.compile(r"\bvbscript\s*:", re.IGNORECASE),
+    re.compile(r"\bdata\s*:", re.IGNORECASE),
+    # Event handlers inside an HTML-style tag (whitespace-tolerant).
+    re.compile(r"<\s*[^>]*\s*on\w+\s*=", re.IGNORECASE),
+    # Active-content / unknown-element tags. ``<form>`` and ``<math>``
+    # are mXSS/DOM-clobbering primitives in HTML-consuming consumers
+    # even though they carry no event handler of their own; ``<base>``
+    # rewrites every relative URL on the page, and the remaining
+    # elements enable framing/inclusion tricks. Legitimate embed text
+    # never needs these as literal markup.
+    re.compile(
+        r"<\s*/?\s*(?:form|math|base|template|noscript|frame|frameset|"
+        r"applet|meta|link|object|embed)\b",
+        re.IGNORECASE,
+    ),
+    # Known standalone event-handler attributes without surrounding tags.
+    re.compile(
+        r"\bon(?:click|auxclick|dblclick|load|error|abort|focus|blur|"
+        r"focusin|focusout|change|input|submit|reset|select|selectstart|"
+        r"keydown|keypress|keyup|mousedown|mouseup|mouseover|mouseout|"
+        r"mousemove|mouseenter|mouseleave|contextmenu|pointerdown|"
+        r"pointerup|pointermove|pointerover|pointerout|pointerenter|"
+        r"pointerleave|pointercancel|gotpointercapture|lostpointercapture|"
+        r"touchstart|touchend|touchmove|touchcancel|scroll|wheel|drag|"
+        r"dragstart|dragend|dragenter|dragover|dragleave|drop|copy|cut|"
+        r"paste|animationstart|animationend|animationiteration|"
+        r"transitionend|toggle|open|close|invalid|message|online|offline|"
+        r"storage|popstate|hashchange|resize|timeupdate|volumechange|"
+        r"canplay|canplaythrough|durationchange|emptied|ended|loadeddata|"
+        r"loadedmetadata|loadstart|pause|play|playing|progress|ratechange|"
+        r"seeked|seeking|stalled|suspend|waiting|cuechange|"
+        r"fullscreenchange"
+        r")\b\s*=",
+        re.IGNORECASE,
+    ),
 ]
 
 
@@ -111,11 +217,24 @@ def validate_url(url: str, field_name: str = "url") -> str:
     if lower_url.startswith("vbscript:"):
         raise InvalidUrlError(f"VBScript URLs not allowed in {field_name}", url)
 
-    # Must be http or https
-    if not (lower_url.startswith("http://") or lower_url.startswith("https://")):
-        raise InvalidUrlError(
-            f"URL must use http or https protocol in {field_name}", url
-        )
+    # SECURITY (attribute-breakout defence): reject quote, angle-bracket
+    # and backtick characters plus raw control characters BEFORE any
+    # normalization. These enable the stored-XSS attribute breakout
+    # chain: a URL like ``https://e.com/a.png"onerror="alert(1)``
+    # contains no whitespace and would previously pass every other gate,
+    # then break out of the client's double-quoted ``src="..."``
+    # attribute. Checked against BOTH the raw input and the
+    # unicode-stripped form so invisible-character obfuscation cannot
+    # smuggle them past this check either.
+    for candidate in (url, _strip_url_dangerous_unicode(url)):
+        if URL_ATTRIBUTE_BREAKOUT_PATTERN.search(candidate):
+            raise InvalidUrlError(
+                f"URL contains characters not allowed in {field_name}", url
+            )
+        if _URL_CONTROL_CHAR_PATTERN.search(candidate):
+            raise InvalidUrlError(
+                f"URL contains control characters in {field_name}", url
+            )
 
     # SECURITY: a URL-shaped string is the one context where
     # bidi-override / zero-width characters MUST be stripped before
@@ -123,6 +242,52 @@ def validate_url(url: str, field_name: str = "url") -> str:
     # invisible character inside the host doesn't let a malicious
     # URL slip past.
     url = _strip_url_dangerous_unicode(url)
+
+    # Server-relative media-pipeline URLs are legitimate embed targets:
+    # uploads come back as ``/api/v1/media/...`` paths. Accept ONLY the
+    # strictly-shaped form (single leading slash, safe path characters,
+    # no traversal) and lift it against the configured public origin so
+    # the full absolute validation below (shape + SSRF) still runs.
+    if url.startswith("/") and _RELATIVE_MEDIA_PATTERN.match(url):
+        if ".." in url.split("/"):
+            raise InvalidUrlError(f"Path traversal not allowed in {field_name}", url)
+        base = _public_media_origin()
+        if not base:
+            # No public origin configured: keep the relative path, but
+            # only after re-checking it carries no breakout payloads.
+            return url
+        url = base.rstrip("/") + url
+
+    # Must be http or https (absolute URLs only from here on)
+    if not (url.lower().startswith("http://") or url.lower().startswith("https://")):
+        raise InvalidUrlError(
+            f"URL must use http or https protocol in {field_name}", url
+        )
+
+    # Normalise internationalised (non-ASCII) hostnames to their
+    # punycode form so IDN sites (e.g. ``https://пример.рф``) pass the
+    # ASCII shape check and resolve correctly downstream. The rebuilt
+    # URL keeps scheme, port, path, query and fragment intact.
+    parsed_host = urlparse(url)
+    if parsed_host.hostname and any(ord(c) > 127 for c in parsed_host.hostname):
+        try:
+            ascii_host = parsed_host.hostname.encode("idna").decode("ascii")
+            port = ""
+            if parsed_host.port:
+                port = f":{parsed_host.port}"
+        except (UnicodeError, ValueError):
+            raise InvalidUrlError(f"Invalid URL format in {field_name}", url)
+        netloc = f"{ascii_host}{port}"
+        url = urlunparse(
+            (
+                parsed_host.scheme,
+                netloc,
+                parsed_host.path,
+                parsed_host.params,
+                parsed_host.query,
+                parsed_host.fragment,
+            )
+        )
 
     # Validate URL shape first
     if not URL_PATTERN.match(url):
@@ -290,39 +455,36 @@ def sanitize_content(content: str, field_name: str = "content") -> str:
     decoded = _ulr.unquote(content)
     decoded = _html.unescape(decoded)
     normalized_full = unicodedata.normalize("NFKC", decoded)
+    # SECURITY: strip C0/C1 control characters (tab, newline, NUL, ...)
+    # from a dedicated matching form BEFORE pattern matching. A payload
+    # like ``jav&#x09;ascript:`` decodes to ``jav\tascript:`` and relies
+    # on the embedded control character splitting the ``javascript:``
+    # token inside the whitespace-preserving forms. The control-char
+    # stripped form collapses the token so the blocklist sees it, while
+    # the RETURNED content is untouched (legitimate multilingual text
+    # containing formatting controls is not mutilated).
+    normalized_no_ctrl = "".join(
+        ch for ch in normalized_full if not (ord(ch) < 0x20 or ord(ch) == 0x7F)
+    )
     normalized_no_ws = _re.sub(r"\s+", "", normalized_full).lower()
 
-    dangerous_children = (
-        "script",
-        "javascript",
-        "vbscript",
-        "data",
-        "iframe",
-        "object",
-        "embed",
-        "onload",
-        "onerror",
-        "onclick",
-        "onmouseover",
-    )
-    for child in dangerous_children:
-        if child in normalized_no_ws:
-            if child == "data" and (
-                "data:text" not in normalized_no_ws
-                and "data:application" not in normalized_no_ws
-                and "data:image" not in normalized_no_ws
-            ):
-                continue
-            raise EmbedSanitizationError(
-                f"Potentially unsafe content detected in {field_name}",
-                field_name,
-            )
-
-    for pattern in DANGEROUS_PATTERNS:
-        if pattern.search(content):
-            raise EmbedSanitizationError(
-                f"Potentially unsafe content detected in {field_name}", field_name
-            )
+    # The raw content and each progressively-decoded/normalized form are
+    # all matched so a payload hidden behind whitespace, control
+    # characters, entities, or percent-encoding cannot slip past the
+    # blocklist.
+    for target in (
+        content,
+        decoded,
+        normalized_no_ws,
+        normalized_no_ctrl.lower(),
+        _re.sub(r"\s+", "", normalized_no_ctrl).lower(),
+    ):
+        for pattern in DANGEROUS_PATTERNS:
+            if pattern.search(target):
+                raise EmbedSanitizationError(
+                    f"Potentially unsafe content detected in {field_name}",
+                    field_name,
+                )
 
     return content
 
@@ -367,6 +529,200 @@ def validate_string_length(value: str, max_length: int, field_name: str) -> str:
     return value
 
 
+_MESSAGE_EMBED_URL_KEYS = {"url", "icon_url"}
+_MESSAGE_EMBED_DIMENSION_KEYS = {"width", "height"}
+
+
+def sanitize_message_embeds(
+    embeds: Optional[List[Dict[str, Any]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    Validate and sanitize a list of embeds for message storage.
+
+    The message-send API accepts raw embed dicts that are stored verbatim
+    and later rendered by the client. Without server-side sanitization a
+    malicious embed (e.g. a ``server_invite`` whose ``fields`` value is
+    ``<img src=x onerror=...>``) becomes stored XSS.
+
+    This sanitizes every string field, validates URL fields (http/https
+    plus SSRF via ``validate_url``), validates colors/timestamps and
+    coerces dimensions, and enforces the per-message embed limit.
+
+    Args:
+        embeds: List of raw embed dicts from the message request body.
+
+    Returns:
+        Sanitized copy of the embed list (``None`` if input was ``None``).
+
+    Raises:
+        EmbedValidationError: If the list is malformed, exceeds
+            ``MAX_EMBEDS_PER_MESSAGE``, or any embed contains unsafe
+            content. ``sanitize_content`` / ``validate_url`` /
+            ``validate_color`` exceptions propagate.
+    """
+    if not embeds:
+        return embeds
+    if not isinstance(embeds, list):
+        raise EmbedValidationError("embeds must be a list", ["embeds"])
+    if len(embeds) > MAX_EMBEDS_PER_MESSAGE:
+        raise EmbedValidationError(
+            f"Message cannot have more than {MAX_EMBEDS_PER_MESSAGE} embeds",
+            [f"embeds: {len(embeds)}/{MAX_EMBEDS_PER_MESSAGE}"],
+        )
+    return [
+        _sanitize_message_embed(embed, f"embeds[{i}]") for i, embed in enumerate(embeds)
+    ]
+
+
+def _sanitize_message_embed(embed: Any, path: str) -> Dict[str, Any]:
+    """Recursively sanitize a single message embed dict."""
+    if not isinstance(embed, dict):
+        raise EmbedValidationError(f"{path} must be an object", [path])
+
+    sanitized: Dict[str, Any] = {}
+    for key, value in embed.items():
+        if value is None:
+            sanitized[key] = None
+            continue
+        if key in _MESSAGE_EMBED_URL_KEYS:
+            validated = validate_url(str(value), f"{path}.{key}")
+            # SECURITY: ``validate_url`` enforces URL shape + SSRF but a
+            # shape-valid https URL can still carry XSS payloads in its
+            # path/query (e.g. an ``onerror=`` handler fragment destined
+            # for a client attribute sink). Apply the same dangerous-
+            # pattern blocklist used for text fields to URL-typed keys.
+            sanitize_content(str(value), f"{path}.{key}")
+            sanitized[key] = validated
+        elif key == "color":
+            sanitized[key] = _validate_message_color(value, f"{path}.color")
+        elif key == "timestamp":
+            sanitized[key] = validate_timestamp(str(value))
+        elif key in _MESSAGE_EMBED_DIMENSION_KEYS:
+            issues: List[str] = []
+            n = _coerce_dimension(value, f"{path}.{key}", issues)
+            if issues:
+                raise EmbedValidationError(issues[0], [f"{path}.{key}"])
+            sanitized[key] = n
+        elif key == "fields":
+            sanitized[key] = _sanitize_message_fields(value, f"{path}.fields")
+        elif isinstance(value, dict):
+            sanitized[key] = _sanitize_message_embed(value, f"{path}.{key}")
+        elif isinstance(value, list):
+            sanitized[key] = [
+                _sanitize_message_embed(v, f"{path}.{key}[{j}]")
+                if isinstance(v, dict)
+                else (
+                    sanitize_content(str(v), f"{path}.{key}[{j}]")
+                    if isinstance(v, str)
+                    else v
+                )
+                for j, v in enumerate(value)
+            ]
+        elif isinstance(value, str):
+            sanitized[key] = sanitize_content(value, f"{path}.{key}")
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _sanitize_message_fields(fields: Any, path: str) -> List[Dict[str, Any]]:
+    """Validate and sanitize an embed's ``fields`` list."""
+    if not isinstance(fields, list):
+        raise EmbedValidationError(f"{path} must be a list", [path])
+    if len(fields) > MAX_FIELDS:
+        raise EmbedValidationError(
+            f"{path} cannot have more than {MAX_FIELDS} fields",
+            [f"{path}: {len(fields)}/{MAX_FIELDS}"],
+        )
+
+    result: List[Dict[str, Any]] = []
+    for j, field in enumerate(fields):
+        if not isinstance(field, dict):
+            raise EmbedValidationError(
+                f"{path}[{j}] must be an object", [f"{path}[{j}]"]
+            )
+        name = field.get("name")
+        value = field.get("value")
+        if name is None:
+            raise EmbedValidationError(
+                f"{path}[{j}].name is required", [f"{path}[{j}].name"]
+            )
+        if value is None:
+            raise EmbedValidationError(
+                f"{path}[{j}].value is required", [f"{path}[{j}].value"]
+            )
+        result.append(
+            {
+                "name": validate_string_length(
+                    sanitize_content(str(name), f"{path}[{j}].name"),
+                    FIELD_NAME_MAX_LENGTH,
+                    f"{path}[{j}].name",
+                ),
+                "value": validate_string_length(
+                    sanitize_content(str(value), f"{path}[{j}].value"),
+                    FIELD_VALUE_MAX_LENGTH,
+                    f"{path}[{j}].value",
+                ),
+                "inline": bool(field.get("inline", False)),
+            }
+        )
+    return result
+
+
+def _validate_message_color(value: Any, path: str) -> str:
+    """Validate an embed color that may be an int or hex string."""
+    if isinstance(value, bool):
+        raise InvalidColorError(f"{path} must be a valid hex color", str(value))
+    if isinstance(value, int):
+        if value < 0 or value > 0xFFFFFF:
+            raise InvalidColorError(f"{path} must be a valid hex color", str(value))
+        return f"#{value:06X}"
+    return validate_color(str(value))
+
+
+def _coerce_dimension(value: Any, field_name: str, issues: List[str]) -> Optional[int]:
+    """
+    Coerce a dimension (width/height) to a non-negative integer.
+
+    Malformed values are reported as validation issues rather than
+    raising an uncaught ``ValueError``/``TypeError``.
+
+    Args:
+        value: Raw dimension value
+        field_name: Name of field for error messages
+        issues: Issue accumulator
+
+    Returns:
+        Coerced non-negative int, or None if missing/invalid
+    """
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, bool):
+        issues.append(f"{field_name} must be an integer")
+        return None
+
+    try:
+        if isinstance(value, int):
+            number = value
+        elif isinstance(value, float):
+            if not value.is_integer():
+                issues.append(f"{field_name} must be an integer")
+                return None
+            number = int(value)
+        else:
+            number = int(str(value).strip())
+    except (TypeError, ValueError):
+        issues.append(f"{field_name} must be an integer")
+        return None
+
+    if number < 0:
+        issues.append(f"{field_name} must be a non-negative integer")
+        return None
+
+    return number
+
+
 def calculate_embed_chars(embed_data: Dict[str, Any]) -> int:
     """
     Calculate total character count for an embed.
@@ -380,22 +736,25 @@ def calculate_embed_chars(embed_data: Dict[str, Any]) -> int:
     total = 0
 
     if embed_data.get("title"):
-        total += len(embed_data["title"])
+        total += len(str(embed_data["title"]))
 
     if embed_data.get("description"):
-        total += len(embed_data["description"])
+        total += len(str(embed_data["description"]))
 
     if embed_data.get("footer") and embed_data["footer"].get("text"):
-        total += len(embed_data["footer"]["text"])
+        total += len(str(embed_data["footer"]["text"]))
 
     if embed_data.get("author") and embed_data["author"].get("name"):
-        total += len(embed_data["author"]["name"])
+        total += len(str(embed_data["author"]["name"]))
 
-    for field in embed_data.get("fields", []):
-        if field.get("name"):
-            total += len(field["name"])
-        if field.get("value"):
-            total += len(field["value"])
+    fields = embed_data.get("fields", [])
+    if isinstance(fields, list):
+        for field in fields:
+            if isinstance(field, dict):
+                if field.get("name"):
+                    total += len(str(field["name"]))
+                if field.get("value"):
+                    total += len(str(field["value"]))
 
     return total
 
@@ -416,7 +775,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     # Validate title
     if embed_data.get("title"):
         try:
-            title = sanitize_content(embed_data["title"], "title")
+            title = sanitize_content(str(embed_data["title"]), "title")
             title = validate_string_length(title, TITLE_MAX_LENGTH, "title")
             sanitized["title"] = title
         except (EmbedValidationError, EmbedSanitizationError) as e:
@@ -425,7 +784,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     # Validate description
     if embed_data.get("description"):
         try:
-            desc = sanitize_content(embed_data["description"], "description")
+            desc = sanitize_content(str(embed_data["description"]), "description")
             desc = validate_string_length(desc, DESCRIPTION_MAX_LENGTH, "description")
             sanitized["description"] = desc
         except (EmbedValidationError, EmbedSanitizationError) as e:
@@ -434,21 +793,21 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     # Validate URL
     if embed_data.get("url"):
         try:
-            sanitized["url"] = validate_url(embed_data["url"], "url")
+            sanitized["url"] = validate_url(str(embed_data["url"]), "url")
         except InvalidUrlError as e:
             issues.append(str(e))
 
     # Validate timestamp
     if embed_data.get("timestamp"):
         try:
-            sanitized["timestamp"] = validate_timestamp(embed_data["timestamp"])
+            sanitized["timestamp"] = validate_timestamp(str(embed_data["timestamp"]))
         except EmbedValidationError as e:
             issues.append(str(e))
 
     # Validate color
     if embed_data.get("color"):
         try:
-            sanitized["color"] = validate_color(embed_data["color"])
+            sanitized["color"] = validate_color(str(embed_data["color"]))
         except InvalidColorError as e:
             issues.append(str(e))
 
@@ -456,24 +815,26 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     if embed_data.get("footer"):
         footer = embed_data["footer"]
         sanitized_footer = {}
+        if isinstance(footer, dict):
+            if footer.get("text"):
+                try:
+                    text = sanitize_content(str(footer["text"]), "footer.text")
+                    text = validate_string_length(
+                        text, FOOTER_TEXT_MAX_LENGTH, "footer.text"
+                    )
+                    sanitized_footer["text"] = text
+                except (EmbedValidationError, EmbedSanitizationError) as e:
+                    issues.append(str(e))
 
-        if footer.get("text"):
-            try:
-                text = sanitize_content(footer["text"], "footer.text")
-                text = validate_string_length(
-                    text, FOOTER_TEXT_MAX_LENGTH, "footer.text"
-                )
-                sanitized_footer["text"] = text
-            except (EmbedValidationError, EmbedSanitizationError) as e:
-                issues.append(str(e))
-
-        if footer.get("icon_url"):
-            try:
-                sanitized_footer["icon_url"] = validate_url(
-                    footer["icon_url"], "footer.icon_url"
-                )
-            except InvalidUrlError as e:
-                issues.append(str(e))
+            if footer.get("icon_url"):
+                try:
+                    sanitized_footer["icon_url"] = validate_url(
+                        str(footer["icon_url"]), "footer.icon_url"
+                    )
+                except InvalidUrlError as e:
+                    issues.append(str(e))
+        else:
+            issues.append("footer must be an object")
 
         if sanitized_footer:
             sanitized["footer"] = sanitized_footer
@@ -482,17 +843,23 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     if embed_data.get("image"):
         image = embed_data["image"]
         sanitized_image = {}
+        if isinstance(image, dict):
+            if image.get("url"):
+                try:
+                    sanitized_image["url"] = validate_url(
+                        str(image["url"]), "image.url"
+                    )
+                except InvalidUrlError as e:
+                    issues.append(str(e))
 
-        if image.get("url"):
-            try:
-                sanitized_image["url"] = validate_url(image["url"], "image.url")
-            except InvalidUrlError as e:
-                issues.append(str(e))
-
-        if image.get("width"):
-            sanitized_image["width"] = int(image["width"])
-        if image.get("height"):
-            sanitized_image["height"] = int(image["height"])
+            width = _coerce_dimension(image.get("width"), "image.width", issues)
+            if width is not None:
+                sanitized_image["width"] = width
+            height = _coerce_dimension(image.get("height"), "image.height", issues)
+            if height is not None:
+                sanitized_image["height"] = height
+        else:
+            issues.append("image must be an object")
 
         if sanitized_image:
             sanitized["image"] = sanitized_image
@@ -501,19 +868,25 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     if embed_data.get("thumbnail"):
         thumbnail = embed_data["thumbnail"]
         sanitized_thumbnail = {}
+        if isinstance(thumbnail, dict):
+            if thumbnail.get("url"):
+                try:
+                    sanitized_thumbnail["url"] = validate_url(
+                        str(thumbnail["url"]), "thumbnail.url"
+                    )
+                except InvalidUrlError as e:
+                    issues.append(str(e))
 
-        if thumbnail.get("url"):
-            try:
-                sanitized_thumbnail["url"] = validate_url(
-                    thumbnail["url"], "thumbnail.url"
-                )
-            except InvalidUrlError as e:
-                issues.append(str(e))
-
-        if thumbnail.get("width"):
-            sanitized_thumbnail["width"] = int(thumbnail["width"])
-        if thumbnail.get("height"):
-            sanitized_thumbnail["height"] = int(thumbnail["height"])
+            width = _coerce_dimension(thumbnail.get("width"), "thumbnail.width", issues)
+            if width is not None:
+                sanitized_thumbnail["width"] = width
+            height = _coerce_dimension(
+                thumbnail.get("height"), "thumbnail.height", issues
+            )
+            if height is not None:
+                sanitized_thumbnail["height"] = height
+        else:
+            issues.append("thumbnail must be an object")
 
         if sanitized_thumbnail:
             sanitized["thumbnail"] = sanitized_thumbnail
@@ -522,30 +895,34 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     if embed_data.get("author"):
         author = embed_data["author"]
         sanitized_author = {}
+        if isinstance(author, dict):
+            if author.get("name"):
+                try:
+                    name = sanitize_content(str(author["name"]), "author.name")
+                    name = validate_string_length(
+                        name, AUTHOR_NAME_MAX_LENGTH, "author.name"
+                    )
+                    sanitized_author["name"] = name
+                except (EmbedValidationError, EmbedSanitizationError) as e:
+                    issues.append(str(e))
 
-        if author.get("name"):
-            try:
-                name = sanitize_content(author["name"], "author.name")
-                name = validate_string_length(
-                    name, AUTHOR_NAME_MAX_LENGTH, "author.name"
-                )
-                sanitized_author["name"] = name
-            except (EmbedValidationError, EmbedSanitizationError) as e:
-                issues.append(str(e))
+            if author.get("url"):
+                try:
+                    sanitized_author["url"] = validate_url(
+                        str(author["url"]), "author.url"
+                    )
+                except InvalidUrlError as e:
+                    issues.append(str(e))
 
-        if author.get("url"):
-            try:
-                sanitized_author["url"] = validate_url(author["url"], "author.url")
-            except InvalidUrlError as e:
-                issues.append(str(e))
-
-        if author.get("icon_url"):
-            try:
-                sanitized_author["icon_url"] = validate_url(
-                    author["icon_url"], "author.icon_url"
-                )
-            except InvalidUrlError as e:
-                issues.append(str(e))
+            if author.get("icon_url"):
+                try:
+                    sanitized_author["icon_url"] = validate_url(
+                        str(author["icon_url"]), "author.icon_url"
+                    )
+                except InvalidUrlError as e:
+                    issues.append(str(e))
+        else:
+            issues.append("author must be an object")
 
         if sanitized_author:
             sanitized["author"] = sanitized_author
@@ -554,38 +931,46 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     if embed_data.get("provider"):
         provider = embed_data["provider"]
         sanitized_provider = {}
+        if isinstance(provider, dict):
+            if provider.get("name"):
+                try:
+                    sanitized_provider["name"] = sanitize_content(
+                        str(provider["name"]), "provider.name"
+                    )
+                except EmbedSanitizationError as e:
+                    issues.append(str(e))
 
-        if provider.get("name"):
-            try:
-                sanitized_provider["name"] = sanitize_content(
-                    provider["name"], "provider.name"
-                )
-            except EmbedSanitizationError as e:
-                issues.append(str(e))
-
-        if provider.get("url"):
-            try:
-                sanitized_provider["url"] = validate_url(
-                    provider["url"], "provider.url"
-                )
-            except InvalidUrlError as e:
-                issues.append(str(e))
+            if provider.get("url"):
+                try:
+                    sanitized_provider["url"] = validate_url(
+                        str(provider["url"]), "provider.url"
+                    )
+                except InvalidUrlError as e:
+                    issues.append(str(e))
+        else:
+            issues.append("provider must be an object")
 
         if sanitized_provider:
             sanitized["provider"] = sanitized_provider
 
     # Validate fields
     fields = embed_data.get("fields", [])
-    if len(fields) > MAX_FIELDS:
+    if not isinstance(fields, list):
+        issues.append("fields must be a list")
+    elif len(fields) > MAX_FIELDS:
         issues.append(f"Embed cannot have more than {MAX_FIELDS} fields")
     else:
         sanitized_fields = []
         for i, field in enumerate(fields):
             sanitized_field = {}
 
-            if field.get("name"):
+            if not isinstance(field, dict):
+                issues.append(f"fields[{i}] must be an object")
+                continue
+
+            if field.get("name") is not None:
                 try:
-                    name = sanitize_content(field["name"], f"fields[{i}].name")
+                    name = sanitize_content(str(field["name"]), f"fields[{i}].name")
                     name = validate_string_length(
                         name, FIELD_NAME_MAX_LENGTH, f"fields[{i}].name"
                     )
@@ -595,9 +980,9 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
             else:
                 issues.append(f"fields[{i}].name is required")
 
-            if field.get("value"):
+            if field.get("value") is not None:
                 try:
-                    value = sanitize_content(field["value"], f"fields[{i}].value")
+                    value = sanitize_content(str(field["value"]), f"fields[{i}].value")
                     value = validate_string_length(
                         value, FIELD_VALUE_MAX_LENGTH, f"fields[{i}].value"
                     )

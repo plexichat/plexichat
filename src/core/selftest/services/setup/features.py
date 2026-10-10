@@ -86,8 +86,8 @@ class FeatureSetupMixin(SetupServiceBase):
                         notif_id,
                         self.ctx.test_user_id,
                         self.ctx.test_user_id,
-                        0,
-                        0,
+                        self.ctx.test_message_id or 0,
+                        self.ctx.test_conversation_id or 0,
                         "user",
                         "Self-test notification body",
                         0,
@@ -110,11 +110,10 @@ class FeatureSetupMixin(SetupServiceBase):
         if not _r_db:
             return
         try:
-            existing_report = _r_db.fetch_one(
-                "SELECT id FROM user_reports WHERE reporter_id = ?",
-                (self.ctx.test_user_id,),
-            )
-            if not existing_report and self.ctx.test_other_user_id:
+            # Always seed fresh reports for this run: reusing rows from a
+            # previous run would leave the context ids unset (or point at
+            # already-reviewed reports), making the review endpoints fail.
+            if self.ctx.test_other_user_id:
                 report_id = self.ctx.data.generate_snowflake()
                 _r_db.execute(
                     "INSERT INTO user_reports (id, reporter_id, reported_user_id, reason, category, status, reported_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -209,6 +208,46 @@ class FeatureSetupMixin(SetupServiceBase):
             )
         except Exception as e:
             logger.warning(f"Failed to create test automod rule: {e}")
+
+    def create_test_automod_violation(self) -> None:
+        if not self.ctx.test_automod_rule_id or not self.ctx.test_server_id:
+            return
+        try:
+            from src.core import automod
+            from src.core.automod.models import (
+                RuleMatch,
+                RuleType,
+                ViolationSeverity,
+                RuleAction,
+                ActionType,
+            )
+
+            match = RuleMatch(
+                rule_id=self.ctx.test_automod_rule_id,
+                rule_type=RuleType.KEYWORD,
+                matched=True,
+                matched_content="test-bad-word",
+                severity=ViolationSeverity.MEDIUM,
+            )
+            user_id = self.ctx.test_other_user_id or self.ctx.test_user_id
+            assert user_id is not None, (
+                "No test user id available for automod violation"
+            )
+            violation = automod.process_violation(
+                server_id=self.ctx.test_server_id,
+                channel_id=self.ctx.test_channel_id or 0,
+                user_id=user_id,
+                message_id=None,
+                match=match,
+                actions=[RuleAction(action_type=ActionType.LOG_ONLY)],
+                context={"source": "selftest"},
+            )
+            self.ctx.test_automod_violation_id = violation.id
+            logger.debug(
+                f"Created test automod violation ID: {self.ctx.test_automod_violation_id}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create test automod violation: {e}")
 
     def create_test_access_token(self) -> None:
         try:
@@ -386,74 +425,57 @@ class FeatureSetupMixin(SetupServiceBase):
         try:
             db_s = api.get_db()
             if db_s:
-                existing_pack = db_s.fetch_one(
-                    "SELECT id FROM sticker_packs WHERE name = ?",
-                    ("selftest_pack",),
+                # Fresh pack per run bound to THIS run's server: reusing a
+                # name-keyed pack from a previous run points at a deleted
+                # server, which fails the server-membership use check (403).
+                _uniq = secrets.token_hex(4)
+                _pack_name = f"selftest_pack_{_uniq}"
+                pack_id = self.ctx.data.generate_snowflake()
+                db_s.execute(
+                    "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        pack_id,
+                        _pack_name,
+                        "Self-test pack",
+                        "server",
+                        self.ctx.test_server_id,
+                        self.ctx.test_user_id,
+                        int(time.time()),
+                        int(time.time()),
+                    ),
                 )
-                if existing_pack:
-                    pack_id = (
-                        existing_pack["id"]
-                        if isinstance(existing_pack, dict)
-                        else existing_pack[0]
-                    )
-                else:
-                    pack_id = self.ctx.data.generate_snowflake()
+                sticker_id = self.ctx.data.generate_snowflake()
+                try:
                     db_s.execute(
-                        "INSERT INTO sticker_packs (id, name, description_encrypted, pack_type, server_id, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO sticker_stickers (id, name, pack_id, format, description, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
+                            sticker_id,
+                            f"selftest_sticker_{_uniq}",
                             pack_id,
-                            "selftest_pack",
-                            "Self-test pack",
-                            "server",
-                            self.ctx.test_server_id,
-                            self.ctx.test_user_id,
-                            int(time.time()),
+                            "png",
+                            "Self-test sticker",
+                            '["test"]',
+                            "https://example.com/sticker.png",
+                            1024,
                             int(time.time()),
                         ),
                     )
-                existing_sticker = db_s.fetch_one(
-                    "SELECT id FROM sticker_stickers WHERE name = ?",
-                    ("selftest_sticker",),
-                )
-                if not existing_sticker:
-                    sticker_id = self.ctx.data.generate_snowflake()
-                    try:
-                        db_s.execute(
-                            "INSERT INTO sticker_stickers (id, name, pack_id, format, description, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                sticker_id,
-                                "selftest_sticker",
-                                pack_id,
-                                "png",
-                                "Self-test sticker",
-                                '["test"]',
-                                "https://example.com/sticker.png",
-                                1024,
-                                int(time.time()),
-                            ),
-                        )
-                    except Exception:
-                        db_s.execute(
-                            "INSERT INTO sticker_stickers (id, name, pack_id, format, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                sticker_id,
-                                "selftest_sticker",
-                                pack_id,
-                                "png",
-                                '["test"]',
-                                "https://example.com/sticker.png",
-                                1024,
-                                int(time.time()),
-                            ),
-                        )
-                    self.ctx.test_sticker_id = sticker_id
-                    logger.debug(f"Created test sticker ID: {self.ctx.test_sticker_id}")
-                else:
-                    self.ctx.test_sticker_id = (
-                        existing_sticker["id"]
-                        if isinstance(existing_sticker, dict)
-                        else existing_sticker[0]
+                except Exception:
+                    db_s.execute(
+                        "INSERT INTO sticker_stickers (id, name, pack_id, format, tags, url, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            sticker_id,
+                            f"selftest_sticker_{_uniq}",
+                            pack_id,
+                            "png",
+                            '["test"]',
+                            "https://example.com/sticker.png",
+                            1024,
+                            int(time.time()),
+                        ),
                     )
+                self.ctx.test_sticker_id = sticker_id
+                logger.debug(f"Created test sticker ID: {self.ctx.test_sticker_id}")
         except Exception as e:
             logger.warning(f"Failed to create test sticker: {e}")
 
@@ -524,8 +546,33 @@ class FeatureSetupMixin(SetupServiceBase):
             return
         try:
             threads_mod = api.get_threads()
+            servers_mod = api.get_servers()
             if threads_mod:
                 from src.core.threads import AutoArchiveDuration
+
+                # Ensure other_user is member of the test server/channel so they can view/join the thread
+                if (
+                    self.ctx.test_other_user_id
+                    and self.ctx.test_server_id
+                    and servers_mod
+                ):
+                    try:
+                        # Add other_user to server if not already member
+                        try:
+                            servers_mod.add_member(
+                                self.ctx.test_server_id, self.ctx.test_other_user_id
+                            )
+                            logger.debug(
+                                "Added other_user to test server for thread access"
+                            )
+                        except Exception as se:
+                            if (
+                                "already" not in str(se).lower()
+                                and "exists" not in type(se).__name__.lower()
+                            ):
+                                logger.debug(f"Add other_user to server note: {se}")
+                    except Exception as se2:
+                        logger.debug(f"Server add member note: {se2}")
 
                 thread = threads_mod.create_thread_from_message(
                     user_id=self.ctx.test_user_id,
@@ -535,5 +582,21 @@ class FeatureSetupMixin(SetupServiceBase):
                 )
                 self.ctx.test_thread_id = thread.id
                 logger.debug(f"Created test thread ID: {self.ctx.test_thread_id}")
+                # Add other_user as member so leave/join auto_loop can succeed
+                # without owner-leave 403: other_user can join (already) and leave
+                if self.ctx.test_other_user_id:
+                    try:
+                        try:
+                            threads_mod.join_thread(
+                                self.ctx.test_other_user_id, thread.id
+                            )
+                            logger.debug(
+                                f"Added other_user {self.ctx.test_other_user_id} to test thread"
+                            )
+                        except Exception as je:
+                            if "MemberExists" not in type(je).__name__:
+                                logger.debug(f"Other user join thread note: {je}")
+                    except Exception as e2:
+                        logger.debug(f"Failed to add other_user to thread: {e2}")
         except Exception as e:
             logger.warning(f"Failed to create test thread: {e}")

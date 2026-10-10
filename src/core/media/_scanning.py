@@ -51,12 +51,64 @@ class _ScanningMixin:
         a WSS MESSAGE_UPDATE so clients drop the attachment.
         """
         try:
-            if not self._scanner or not self._scanner.is_available():
+            if not self._config.get("scanner_enabled", False):
+                # Scanning is intentionally disabled: SKIPPED is the correct
+                # terminal state and the serve gate treats it as servable.
                 self._db.execute(
                     "UPDATE media_files SET scan_status = ? WHERE id = ?",
                     (ScanStatus.SKIPPED.value, file_id),
                 )
                 return
+
+            if not self._scanner:
+                # Scanning is enabled but no scanner object exists: fail
+                # closed (block) rather than serve the file unscanned.
+                logger.error(
+                    f"Background scan: scanner not initialised for file {file_id}"
+                )
+                self._db.execute(
+                    "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                    (ScanStatus.ERROR.value, "scanner not initialised", file_id),
+                )
+                return
+
+            if not self._scanner.is_available():
+                # Scanner is configured but unreachable. Do NOT record
+                # SKIPPED here: the serve gate treats SKIPPED as "scanning
+                # disabled" and would serve the file unscanned. Record ERROR
+                # so the file stays blocked until it is actually scanned.
+                logger.error(
+                    f"Background scan: scanner unreachable for file {file_id}; "
+                    "recording scan ERROR"
+                )
+                self._db.execute(
+                    "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                    (ScanStatus.ERROR.value, "scanner unavailable", file_id),
+                )
+                return
+
+            # Large / streamed uploads are written to storage before the scan
+            # runs, so the original bytes are no longer held in memory. Read
+            # them back from storage so they still get scanned. (Fix: previously
+            # the scan was only dispatched when ``file_data`` was in memory,
+            # leaving streamed/chunked uploads stuck in PENDING forever.)
+            if file_data is None:
+                file = self.get_file(file_id)
+                if file is None:
+                    logger.error(f"Background scan: file {file_id} not found")
+                    self._db.execute(
+                        "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                        (ScanStatus.ERROR.value, "file not found", file_id),
+                    )
+                    return
+                file_data = self._storage.retrieve(file.storage_path)
+                if file_data is None:
+                    logger.error(f"Background scan: could not read file {file_id}")
+                    self._db.execute(
+                        "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
+                        (ScanStatus.ERROR.value, "could not read file", file_id),
+                    )
+                    return
 
             status, result = self._scanner.scan_bytes(file_data)
             self._db.execute(
@@ -77,8 +129,10 @@ class _ScanningMixin:
                     "UPDATE media_files SET scan_status = ?, scan_result = ? WHERE id = ?",
                     (ScanStatus.ERROR.value, str(e), file_id),
                 )
-            except Exception:
-                pass
+            except Exception as mark_err:
+                logger.error(
+                    f"Failed to persist scan ERROR status for file {file_id}: {mark_err}"
+                )
 
     def _handle_infected_file(
         self,
@@ -136,8 +190,7 @@ class _ScanningMixin:
             import asyncio
 
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
-            from src.core.events.models import Event
-            from src.core.events.types import EventType
+            from src.core.events import build_message_update
 
             if not ws_is_setup():
                 return
@@ -145,8 +198,12 @@ class _ScanningMixin:
             dispatcher = get_dispatcher()
 
             async def _broadcast():
-                # Resolve user_ids from channel_id
+                # Resolve recipients and scope from channel_id. server_id is
+                # resolved once here so the payload can carry the canonical
+                # scope key (clients drop MESSAGE_UPDATE payloads whose
+                # channel/server context they cannot verify).
                 user_ids = []
+                server_id = None
                 if channel_id:
                     try:
                         import src.api as api_module
@@ -206,10 +263,10 @@ class _ScanningMixin:
                             ],
                         }
 
-                        event = Event(
-                            event_type=EventType.MESSAGE_UPDATE,
-                            data=event_data,
+                        event = build_message_update(
+                            event_data,
                             channel_id=channel_id,
+                            server_id=server_id,
                         )
                         await dispatcher.dispatch_event(event, user_ids)
                     except Exception as e:

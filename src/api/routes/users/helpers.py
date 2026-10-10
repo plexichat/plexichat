@@ -82,8 +82,9 @@ def _user_to_dict(user) -> dict:
         account_type = getattr(user, "account_type", None)
         if account_type is not None and hasattr(account_type, "value"):
             account_type = account_type.value
+        user_id = getattr(user, "id", None)
         return {
-            "id": user.id,
+            "id": None if user_id is None else str(user_id),
             "username": user.username,
             "email": getattr(user, "email", None),
             "avatar_url": getattr(user, "avatar_url", None),

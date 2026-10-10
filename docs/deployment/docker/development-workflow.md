@@ -1,357 +1,428 @@
-# Development Workflow
+# Development workflow
 
-Local development setup with hot reload, testing, and debugging.
+Set up a local development environment with Docker.
 
-## Start Development Environment
+## Start the development environment
+
+Start all services with development defaults:
 
 ```bash
-docker compose --profile dev up
+docker compose up -d
 ```
 
-This starts all services with development defaults:
-- Code hot-reload enabled (`./src` bind-mounted)
-- Debug logging (LOG_LEVEL=DEBUG)
-- Auto-restart on failure
+This starts PostgreSQL 18, Valkey 9.1.1, RustFS, ClamAV, the backend, the client, and the backup service. The backend image is `python:3.14.8-slim-trixie` and the health check pings `GET /api/v1/ready`.
 
-## Hot Code Reload
+Check that all services are healthy:
 
-Backend code changes auto-reload without restarting the container.
-
-### Editing Backend Code
-
-1. Edit any file in `./src`
-2. Uvicorn detects changes and auto-reloads
-3. Refresh browser to see changes
-
-Example:
 ```bash
-# Terminal 1: Watch logs
+docker compose ps
+docker compose logs -f backend
+```
+
+## Code changes
+
+The default `docker compose up` stack runs published images from the registry. It mounts only `config/docker-config.yaml` and `docker/runtime/client-config.js`. It does not bind-mount `./src` or the client source, so code changes require a rebuild.
+
+### Edit backend code
+
+1.  Edit files in `src/`.
+2.  Rebuild the backend image and restart it.
+
+```bash
+# Terminal 1: watch logs
 docker compose logs -f backend
 
-# Terminal 2: Edit code
+# Terminal 2: edit code, then rebuild
 nano src/api/app.py
-
-# Result: Backend auto-reloads, new code runs immediately
+docker compose build backend
+docker compose up -d backend
 ```
 
-### Editing Frontend Code
+If you changed dependencies, rebuild without cache:
 
-Frontend is also bind-mounted for development:
 ```bash
-# Terminal 1: Watch frontend
-docker compose logs -f client
-
-# Terminal 2: Edit code
-nano ../plexichat-client/src/App.vue
-
-# Result: Vite rebuilds and browser hot-reloads
+docker compose build --no-cache backend
+docker compose up -d backend
 ```
 
-## Viewing Logs
+### Edit frontend code
 
-Stream logs in real-time:
+The `client` container serves the published Nginx build (`nginx:stable-alpine`). It does not bind-mount the client source. For frontend iteration, run the Vite dev server locally and point it at the stack:
+
+```bash
+# Terminal 1: run Vite locally
+npm run dev --prefix plexichat-client
+
+# Terminal 2: keep the stack running
+docker compose up -d
+```
+
+When you are ready to test the production build, rebuild the client image:
+
+```bash
+docker compose build client
+docker compose up -d client
+```
+
+## View logs
+
+Stream logs for a specific service:
+
 ```bash
 docker compose logs -f backend
+docker compose logs -f db
+docker compose logs -f valkey
+docker compose logs -f rustfs
 ```
 
-Only last 50 lines:
+Show only the last 50 lines:
+
 ```bash
 docker compose logs -n 50 backend
 ```
 
-All services:
+Follow all services:
+
 ```bash
 docker compose logs -f
 ```
 
-Specific service:
-```bash
-docker compose logs -f redis
-docker compose logs -f db
-```
+## Run tests
 
-## Running Tests
+### Unit tests
 
-### Unit Tests
+The runtime image deliberately ships no test framework: `pytest` and its
+plugins live in `requirements-dev.txt`. Install the dev lock into the running
+container once, then run the suite:
 
 ```bash
+docker compose exec backend pip install --require-hashes -r requirements-dev.txt
 docker compose exec backend pytest
 ```
 
 With coverage:
+
 ```bash
 docker compose exec backend pytest --cov=src
 ```
 
-Specific test file:
+Run a specific file:
+
 ```bash
 docker compose exec backend pytest tests/test_auth.py
 ```
 
-Watch mode (re-run on file changes):
+Watch mode:
+
 ```bash
 docker compose exec backend pytest-watch
 ```
 
-### Self-Test (API Verification)
+### Self-test (API verification)
 
-Comprehensive API and connectivity check:
+Run a comprehensive connectivity check that covers authentication, messaging, servers, media, and WebSocket:
+
 ```bash
 docker compose exec backend python main.py self-test
 ```
 
-Tests authentication, messaging, servers, media, WebSocket, and more.
+This exercises real endpoints. It is non-destructive: cleanup only removes rows owned by its own `selftest_%` test accounts, so it is safe to run against a live deployment.
 
-## Database Operations
+## Database operations
 
-### View Database
+### Open a psql shell
 
-Connect directly with psql:
 ```bash
 docker compose exec db psql -U plexichat -d plexichat
 ```
 
 Then run SQL:
+
 ```sql
-SELECT COUNT(*) FROM auth_users;
-SELECT COUNT(*) FROM msg_messages;
+SELECT count(*) FROM auth_users;
+SELECT count(*) FROM msg_messages;
 ```
 
-### Run Migrations
+### Run migrations
 
-Automatic on startup, but manually trigger:
+Migrations run automatically on startup. To trigger them manually:
+
 ```bash
 docker compose exec backend python main.py --db-migrate
 ```
 
-### Backup Database
+### Back up the database
 
-Export to SQL file:
+Export to a SQL file:
+
 ```bash
 docker compose exec db pg_dump -U plexichat plexichat > backup.sql
 ```
 
-Compressed backup:
+Create a compressed backup:
+
 ```bash
 docker compose exec db pg_dump -U plexichat plexichat | gzip > backup.sql.gz
 ```
 
-### Restore Database
+### Restore the database
 
 ```bash
 cat backup.sql | docker compose exec -T db psql -U plexichat plexichat
 ```
 
-## Debugging
+For file and media restores, use the Restic CLI in the backup container:
 
-### Python Debugger (pdb)
+```bash
+docker exec backup /scripts/backup.sh list
+docker exec backup /scripts/backup.sh restore-db
+docker exec backup /scripts/backup.sh restore <snapshot>
+```
 
-Insert breakpoint in code:
+## Debug
+
+### Python debugger (pdb)
+
+Add a breakpoint:
+
 ```python
 import pdb; pdb.set_trace()
 ```
 
-Then attach to running container:
+Attach to the running container:
+
 ```bash
 docker compose attach backend
 ```
 
-Type `n` (next), `s` (step), `c` (continue), `p variable` (print)
+Use `n` for next, `s` for step, `c` for continue, and `p variable` to print.
 
-### Print Statements
+### Log-based debugging
 
-Fast debugging with logs:
 ```python
 import utils.logger as logger
 logger.debug(f"User ID: {user_id}")
 ```
 
-View in logs:
+View the output:
+
 ```bash
 docker compose logs -f backend
 ```
 
-### Environment Variables
+### Environment variables
 
-Check what's set in a container:
+Check variables inside a container:
+
 ```bash
 docker compose exec backend env | grep LOG_LEVEL
-```
-
-View all:
-```bash
 docker compose exec backend env | sort
 ```
 
-## Performance Profiling
+View the resolved Compose config:
 
-### Slow Query Detection
-
-Queries slower than 1000ms are logged:
 ```bash
-docker compose logs backend | grep "slow query"
+docker compose config | grep -A 3 "depends_on"
 ```
 
-Check threshold in config:
+## Performance profiling
+
+### Slow query detection
+
+Queries slower than `slow_query_threshold_ms` (1000 ms by default) are logged:
+
 ```bash
-docker compose exec backend grep "slow_query_threshold" config/docker-config.yaml
+docker compose logs backend | grep -i "slow query"
+docker compose exec backend grep "slow_query_threshold" /app/config/docker-config.yaml
 ```
 
-### Memory Usage
+### Memory usage
 
 Check container memory:
+
 ```bash
 docker stats plexichat-backend-1
 ```
 
-Watch real-time:
+Watch all containers:
+
 ```bash
 docker stats --no-stream
 ```
 
-### API Response Times
+### API response times
 
-Enable timing headers in backend logs:
+Set `LOG_LEVEL=DEBUG` to include timing in structured logs:
+
 ```bash
-LOG_LEVEL=DEBUG docker compose up backend
+LOG_LEVEL=DEBUG docker compose up -d backend
+docker compose logs -f backend | grep -i timing
 ```
 
-Look for timing in structured logs.
-
-## Manual Service Restart
+## Restart services
 
 Restart a specific service:
+
 ```bash
 docker compose restart backend
 ```
 
-Restart without stopping:
+Stop and start without recreating:
+
 ```bash
-docker compose stop backend && docker compose start backend
+docker compose stop backend
+docker compose start backend
 ```
 
-Restart all:
+Restart all services:
+
 ```bash
 docker compose restart
 ```
 
-## Clean Build
+Rebuild both images without cache:
 
-Force rebuild image (after dependency changes):
-```bash
-docker compose build --no-cache backend
-docker compose up backend
-```
-
-Both backend and frontend:
 ```bash
 docker compose build --no-cache
-docker compose up
+docker compose up -d
 ```
 
-## Accessing Services
+## Access services
 
 ### Backend API
 
+The backend is available directly at `http://localhost:8000` in single-replica mode. In scaled mode, remove the `8000:8000` port mapping and use the client proxy.
+
 ```bash
-curl http://localhost:8000/api/v1
+curl http://localhost:8000/api/v1/ready
+curl http://localhost:8000/api/v1/health
+curl http://localhost:8000/health
 ```
 
 ### Valkey CLI
 
+Valkey requires authentication. Use `REDISCLI_AUTH` so the password does not leak into the process list:
+
 ```bash
-docker compose exec valkey redis-cli
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli'
 ```
 
-Then use Valkey commands:
+Common commands inside `redis-cli`:
+
+```text
+PING
+KEYS plexichat:*
+GET key_name
+DEL key_name
+INFO stats
 ```
-PING                    # Test connection
-KEYS *                  # List all keys
-GET key_name            # Get value
-DEL key_name            # Delete key
-```
 
-### MinIO Console
+### RustFS console
 
-Open browser: http://localhost:9001
+Open `http://localhost:9001` in a browser only if you publish the port for local debugging. By default, RustFS ports are exposed internally. Credentials are `S3_ACCESS_KEY` and `S3_SECRET_KEY`:
 
-Login with credentials from `.env.generated`:
 ```bash
-grep MINIO .env.generated
+grep S3_ .env
+```
+
+Check health directly:
+
+```bash
+curl http://localhost:9000/health
+curl http://localhost:9001/rustfs/console/health
+# From inside the Docker network:
+docker compose exec backend curl -f http://rustfs:9000/health
 ```
 
 ### PostgreSQL CLI
 
 ```bash
 docker compose exec db psql -U plexichat -d plexichat
+docker compose exec db pg_isready -U plexichat
 ```
 
-## Debugging WebSocket Connections
+## Debug WebSocket connections
 
-View WebSocket gateway logs:
+View gateway logs:
+
 ```bash
-docker compose logs -f backend | grep gateway
-docker compose logs -f backend | grep websocket
+docker compose logs -f backend | grep -i gateway
+docker compose logs -f backend | grep -i websocket
 ```
 
-Test WebSocket manually:
+Test the gateway manually:
+
 ```bash
 websocat ws://localhost:8000/gateway
 ```
 
-(Install websocat: `cargo install websocat`)
+Install `websocat` with `cargo install websocat`.
 
-## Environment Customization
+## Environment customization
 
-Override variables per-session:
+Override variables for a single session:
+
 ```bash
-LOG_LEVEL=DEBUG DB_POOL_MAX_CONNECTIONS=50 docker compose up
+LOG_LEVEL=DEBUG DB_POOL_MAX_CONNECTIONS=50 docker compose up -d
 ```
 
-Or update `.env` and restart:
-```bash
-# Edit .env
-nano .env
+Or edit `.env` and restart:
 
-# Restart services
+```bash
+nano .env
 docker compose restart
 ```
 
-## Accessing Container Shell
+For GPU-accelerated Shieldstral or external search, enable Compose profiles:
 
-Execute shell in running container:
+```bash
+# Local AI moderation (downloads model to ./models/shieldstral)
+docker compose --profile ai up -d
+
+# Meilisearch
+docker compose --profile search-meilisearch up -d
+
+# Elasticsearch
+docker compose --profile search-elastic up -d
+```
+
+## Access the container shell
+
 ```bash
 docker compose exec backend bash
 ```
 
-Then explore:
+Inside the container:
+
 ```bash
 ls -la /app
-cat config/docker-config.yaml
+cat /app/config/docker-config.yaml
 python -c "import sys; print(sys.version)"
 ```
 
-## Health Monitoring
+## Health monitoring
 
-Check all service health:
+Check service health:
+
 ```bash
 docker compose ps
+docker inspect plexichat-backend-1 --format='{{json .State.Health}}' | python3 -m json.tool
 ```
 
-View detailed health:
+Manual health checks:
+
 ```bash
-docker inspect plexichat-backend-1 | grep -A 5 "Health"
+curl -f http://localhost:8000/api/v1/ready
+curl -f http://localhost:8000/health
+docker compose exec db pg_isready -U plexichat -d plexichat
+docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping | grep PONG'
+docker compose exec rustfs sh -c 'curl -f http://127.0.0.1:9000/health && curl -f http://127.0.0.1:9001/rustfs/console/health'
+docker compose exec clamav sh -c 'echo PING | nc -w 2 localhost 3310 | grep PONG'
+docker exec backup /scripts/healthcheck.sh
 ```
 
-Manual health check:
-```bash
-curl http://localhost:8000/health
-docker exec plexichat-db-1 pg_isready -U plexichat
-docker exec plexichat-redis-1 redis-cli ping
-```
+## Next steps
 
-## Next Steps
-
-- [Configuration](configuration.md) - Custom settings
-- [Production Setup](production-setup.md) - Deploy to production
-- [Troubleshooting](troubleshooting.md) - Solve problems
+*   [Configuration](configuration.md) for settings
+*   [Architecture](architecture.md) for service topology
+*   [Healthchecks](healthchecks.md) for probe details

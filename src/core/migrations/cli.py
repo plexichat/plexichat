@@ -20,16 +20,16 @@ import sys
 import os
 from pathlib import Path
 
-import argparse  # noqa: E402
-import logging  # noqa: E402
+import argparse
+import logging
 
 # Import utilities from common_utils subpackage
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database import Database  # noqa: E402
-from . import run_migrations, rollback, get_status  # noqa: E402
-from .manager import MigrationManager  # noqa: E402
-from .cloner import DataCloner  # noqa: E402
+import utils.config as config
+import utils.logger as logger
+from src.core.database import Database
+from . import run_migrations, rollback, get_status
+from .manager import MigrationManager, RETIRED_MIGRATIONS
+from .cloner import DataCloner
 
 
 logging.basicConfig(
@@ -40,30 +40,40 @@ logging.basicConfig(
 cli_logger = logging.getLogger(__name__)
 
 
-def setup_config():
+def setup_config(force_reload: bool = False):
     """Ensure config is setup for the CLI.
 
     Resolution order:
-    1. If config is already loaded (e.g. from config.yaml), use it as-is.
+    1. If config is already loaded (e.g. from config.yaml), use it as-is
+       (unless force_reload=True).
     2. If DATABASE_URL or POSTGRES_HOST env vars are set, build config from them.
     3. Fall back to default SQLite path.
 
     A warning is logged whenever the database type differs from what the
     existing config (if any) specifies, to help detect misconfiguration.
+
+    Args:
+        force_reload: Re-resolve the database section from the environment even
+            if a config is already loaded. REQUIRED when the caller mutated the
+            environment between calls (e.g. migrate_to_postgres swaps postgres
+            env vars to point first at the SQLite source and then at the PG
+            target) - without it the second call short-circuits and both the
+            source and target connections resolve to the SAME database.
     """
     import os
 
     # 1. Try to use existing config if already loaded
-    try:
-        existing_db = config.get("database")
-        if existing_db:
-            cli_logger.info(
-                "Using existing database config: type=%s",
-                existing_db.get("type", "unknown"),
-            )
-            return
-    except RuntimeError:
-        pass  # Config not loaded yet
+    if not force_reload:
+        try:
+            existing_db = config.get("database")
+            if existing_db:
+                cli_logger.info(
+                    "Using existing database config: type=%s",
+                    existing_db.get("type", "unknown"),
+                )
+                return
+        except RuntimeError:
+            pass  # Config not loaded yet
 
     # 2. Build config from environment or defaults
     db_config = {"type": "sqlite", "path": "data/plexichat.db"}
@@ -104,13 +114,19 @@ def setup_config():
         }
         env_source = "POSTGRES_HOST"
 
+    database_type = str(db_config.get("type", "sqlite"))
+    postgres_config = db_config.get("postgres")
+    postgres_host = (
+        postgres_config.get("host", "") if isinstance(postgres_config, dict) else ""
+    )
+    database_path = db_config.get("path", "")
     cli_logger.info(
         "Database config resolved from %s: type=%s%s",
         env_source,
-        db_config["type"],
-        f" host={db_config.get('postgres', {}).get('host', '')}"  # type: ignore[union-attr]
-        if db_config["type"] == "postgres"
-        else f" path={db_config.get('path', '')}",
+        database_type,
+        f" host={postgres_host}"
+        if database_type == "postgres"
+        else f" path={database_path}",
     )
 
     # 3. Check if config.yaml exists on disk — if so, prefer it over env-only config
@@ -154,6 +170,19 @@ def setup_config():
             },
         )
 
+    if force_reload:
+        # Force the freshly env-resolved database section into the global
+        # config. Without this, an already-loaded config.yaml database
+        # section (or a previous call's resolution) wins and the caller's
+        # environment swap is silently ignored - which is how
+        # migrate_to_postgres could end up pointing BOTH connections at the
+        # SQLite source.
+        config.set("database", db_config)
+        cli_logger.info(
+            "Database config force-reloaded from environment: type=%s",
+            db_config.get("type", "unknown"),
+        )
+
     # Initialize logger
     log_config = config.get("logging", {})
     logger.setup(log_dir="logs", level=log_config.get("level", "INFO"))
@@ -181,7 +210,12 @@ def create_migration(name: str) -> None:
             except ValueError:
                 pass
 
-    next_version = max(existing_versions) + 1 if existing_versions else 1
+    # Retired versions (002-004) were deleted from disk but their history
+    # records survive on upgraded databases - a new migration reusing those
+    # numbers would be silently skipped forever there.
+    retired_versions = [int(v) for v in RETIRED_MIGRATIONS]
+
+    next_version = max(existing_versions + retired_versions, default=0) + 1
     version_str = f"{next_version:03d}"
 
     # Create filename from description
@@ -343,6 +377,8 @@ def migrate_to_postgres(sqlite_path: str, dry_run: bool = False) -> None:
     """
     Execute full migration from SQLite to PostgreSQL.
     """
+    from src.core.database import Database as _Database
+
     print("\nStarting SQLite to PostgreSQL migration...")
     print(f"Source: {sqlite_path}")
 
@@ -359,8 +395,12 @@ def migrate_to_postgres(sqlite_path: str, dry_run: bool = False) -> None:
         "POSTGRES_DBNAME",
     ]:
         saved_env[key] = os.environ.pop(key, None)
-    setup_config()
-    source_db = Database()
+    # force_reload=True: the environment was just mutated, so any previously
+    # loaded config must be re-resolved or the source would inherit whatever
+    # database section was already loaded.
+    setup_config(force_reload=True)
+    _Database.reset()
+    source_db = _Database()
     source_db.connect()
 
     # 2. Connect to Target (PostgreSQL) - uses env vars
@@ -368,8 +408,13 @@ def migrate_to_postgres(sqlite_path: str, dry_run: bool = False) -> None:
     for key, value in saved_env.items():
         if value is not None:
             os.environ[key] = value
-    setup_config()
-    target_db = Database()
+    # force_reload=True + reset(): without them the second setup_config()
+    # call short-circuits on the already-resolved (source) config AND
+    # Database() returns its singleton - target_db would be the SAME object
+    # as source_db and DataCloner would DELETE FROM the live source tables.
+    setup_config(force_reload=True)
+    _Database.reset()
+    target_db = _Database()
     target_db.connect()
 
     cloner = DataCloner(source_db, target_db)

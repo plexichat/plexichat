@@ -1,23 +1,10 @@
-# Email Configuration
+# Email configuration
 
-This guide covers email configuration for Plexichat. Email is used for email verification during registration, password reset flows, and notification delivery. If you enable `require_email_verification` or need password reset functionality, you must configure SMTP settings.
+This guide describes how to configure email for Plexichat. Plexichat uses email for verification during registration, password reset, and notification delivery. If you set `authentication.accounts.require_email_verification` to `true` or you use password reset, you must configure SMTP. All defaults in this guide come from `src/config_defaults.py:607`.
 
-## Configuration Location
+## Before you begin
 
-All email settings are nested under the `email` key in your configuration file:
-
-```yaml
-email:
-  smtp_host: "localhost"
-  smtp_port: 587
-  smtp_user: ""
-  from_email: "noreply@plexichat.internal"
-  use_tls: true
-```
-
-## SMTP Settings
-
-### Configuration
+You configure email under the `email` key in `config.yaml`.
 
 ```yaml
 email:
@@ -28,47 +15,60 @@ email:
   use_tls: true
 ```
 
-### Deployment Considerations
+## Configure SMTP
 
-**SMTP Host**
+```yaml
+email:
+  smtp_host: "localhost"
+  smtp_port: 587
+  smtp_user: ""
+  from_email: "noreply@plexichat.internal"
+  use_tls: true
+```
 
-- **Default**: `localhost` -- assumes a local mail server (Postfix, Exim, etc.)
-- **External SMTP**: Use your email provider's SMTP server (e.g., `smtp.gmail.com`, `smtp.sendgrid.net`)
-- **Transaction Email Services**: Consider SendGrid, Mailgun, Amazon SES, or Postmark for reliable delivery
+| Field | Default | Description |
+|---|---|---|
+| `smtp_host` | `localhost` | Hostname of the SMTP server. Use `localhost` for a local mail server or the provider host such as `smtp.sendgrid.net`. |
+| `smtp_port` | `587` | Port for SMTP. Use `587` for STARTTLS, `465` for implicit TLS, and avoid `25` in production. |
+| `smtp_user` | `""` | Username or API key for SMTP authentication. Leave empty for local servers that do not require authentication. |
+| `from_email` | `noreply@plexichat.internal` | Address in the `From` header. Use an address authorized by your provider. |
+| `use_tls` | `true` | When `true`, the server uses TLS for SMTP. Set to `false` only for local development without TLS. |
 
-**SMTP Port**
-
-- **587** (default): SMTP with STARTTLS -- the standard port for mail submission
-- **465**: SMTPS (implicit TLS) -- use if your provider requires it
-- **25**: Unencrypted SMTP -- never use in production
-
-**SMTP User**
-
-- Leave empty for local mail servers that do not require authentication
-- Set to your provider's username/API key for external SMTP services
-- Never commit credentials to version control; use environment variables:
+Do not commit credentials to version control. Use environment variable substitution in `config.yaml`:
 
 ```yaml
 email:
   smtp_user: "${SMTP_USER}"
+  smtp_host: "${SMTP_HOST:-localhost}"
 ```
 
-**From Email**
+### SMTP host
 
-- The address that appears in the "From" header of outgoing emails
-- **Default**: `noreply@plexichat.internal` -- change this to a real address on your domain
-- Must be an address authorized by your SMTP provider (especially for transactional email services)
-- Consider using a dedicated subdomain like `noreply@mail.yourdomain.com`
+*   For local delivery, keep `localhost` and run Postfix, Exim, or a similar mail server.
+*   For external delivery, use your provider host such as `smtp.gmail.com` or `smtp.sendgrid.net`.
+*   For reliable delivery at scale, consider a transactional service such as SendGrid, Mailgun, Amazon SES, or Postmark.
 
-**Use TLS**
+### SMTP port
 
-- **Default**: `true` -- always use TLS in production
-- Set to `false` only for local development with a non-TLS mail server
-- Never disable TLS when sending credentials over the network
+*   Use `587` for SMTP with STARTTLS. This is the standard mail submission port.
+*   Use `465` only if your provider requires SMTPS with implicit TLS.
+*   Do not use `25` in production. It sends mail without encryption.
 
-## When Email Is Required
+### SMTP user
 
-Email must be configured if you enable any of these features:
+Leave `smtp_user` empty for local servers. For external providers, set it to your username or API key and provide the password through an environment variable.
+
+### From email
+
+The `from_email` default `noreply@plexichat.internal` does not exist on public mail infrastructure. Change it to a real address on your domain, such as `noreply@mail.yourdomain.com`, and verify it with your provider.
+
+### TLS
+
+Keep `use_tls` set to `true` in production. If you set it to `false`, credentials travel in clear text.
+
+## When you need email
+
+You must configure email if you enable either of these features:
 
 ```yaml
 authentication:
@@ -76,11 +76,9 @@ authentication:
     require_email_verification: true
 ```
 
-When `require_email_verification: true`, new registrations receive a verification email and must click the link before their account is activated. Without a working SMTP configuration, users will be unable to complete registration.
+When `require_email_verification` is `true`, new users receive a verification email and must click the link before the server activates their account. Without working SMTP settings, users cannot complete registration. Password reset also requires email to deliver the reset link.
 
-Password reset functionality also requires email to send the reset link.
-
-## Example: SendGrid Configuration
+## Example: SendGrid
 
 ```yaml
 email:
@@ -91,13 +89,13 @@ email:
   use_tls: true
 ```
 
-Set the SMTP password via environment variable:
+Provide the API key through an environment variable:
 
 ```bash
 export SMTP_PASSWORD="your_sendgrid_api_key"
 ```
 
-## Example: Gmail Configuration
+## Example: Gmail
 
 ```yaml
 email:
@@ -108,9 +106,9 @@ email:
   use_tls: true
 ```
 
-**Note**: Gmail requires an "App Password" for SMTP access. Generate one in your Google Account settings under Security > App passwords.
+Gmail requires an app password. Generate one in your Google Account under **Security > App passwords**.
 
-## Related Documentation
+## Related documentation
 
-- [Authentication Configuration](config-authentication.md) -- email verification and registration settings
-- [Default Configuration Reference](../../default-config.md) -- complete config reference
+*   [Authentication configuration](config-authentication.md) — Email verification and registration settings.
+*   [Default configuration reference](../../default-config.md) — Complete configuration reference.

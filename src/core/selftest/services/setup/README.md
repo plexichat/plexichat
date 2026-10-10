@@ -1,65 +1,74 @@
-# Setup Service
+# Setup service
 
-## Purpose
-Creates and configures test users, servers, channels, messages, roles,
-invites, applications, bots, and all other resources for endpoint testing.
+Use this service to create and configure the test data that endpoint validation requires.
 
-## Primary Responsibilities
-- Create main test user (admin) and other test user (non-admin)
-- Grant admin permissions and set up admin roles (super_admin, support_admin, moderation_admin)
-- Login both users and obtain auth tokens
-- Create test server, channel, message, role, invite, webhook
-- Join other user to server via invite
-- Create dummy media file and resolve log filenames
-- Create test settings, application, and bot
-- Create test notification, reports (user, hash, message)
-- Create automod rule, access token, support ticket
-- Create poll with options, friend request, emoji, sticker, thread
-- Block selftest_ username prefix in username blacklist
-- Ensure admin_approval_comments table exists
+## Overview
 
-## Architecture (Mixin-based)
-The `SetupService` class is composed via mixins:
+`SetupService` at `plexichat/src/core/selftest/services/setup/composer.py:19` composes feature-specific mixins into a single class. Call `run_setup()` to create users, servers, channels, and supporting resources in the correct order.
 
-| File | Mixin | Responsibility |
-|------|-------|---------------|
-| `composer.py` | `SetupService` | Orchestrates the full setup flow |
-| `base.py` | `SetupServiceBase` | Typed `self.ctx` attribute + `__init__` |
-| `auth.py` | `AuthSetupMixin` | Security headers, main user creation, login, other user registration, username blacklist |
-| `admin.py` | `AdminSetupMixin` | Admin grant, admin_users sync, admin roles (super/support/moderation/test), role assignments, approvals, approval_comments table |
-| `server.py` | `ServerSetupMixin` | Server creation, channel, message, role, invite, webhook, server join |
-| `media.py` | `MediaSetupMixin` | Dummy media file creation, log filename resolution |
-| `features.py` | `FeatureSetupMixin` | Settings, apps/bots, notifications, reports, automod, access tokens, tickets, polls, friend requests, emoji, stickers, threads |
+## Mixins
 
-### Pyright Compatibility
-`SetupServiceBase` declares `ctx: SelfTestContext` as a class-level typed
-attribute. Every mixin inherits from this base class, so pyright sees
-`self.ctx` as a known, typed attribute on every `self` reference. No
-`# type: ignore` comments or file-level suppressions are needed.
+Each mixin inherits from `SetupServiceBase` at `plexichat/src/core/selftest/services/setup/base.py`, which declares `ctx: SelfTestContext` as a typed attribute. This gives `pyright` a known type for `self.ctx` without suppression comments.
 
-## Usage
+| File | Mixin | Responsibilities |
+| --- | --- | --- |
+| `composer.py` | `SetupService` | Orchestrate the full setup flow and return `True` on success. |
+| `base.py` | `SetupServiceBase` | Define `ctx` type, `__init__`, and shared helpers such as `_ensure_password()`. |
+| `auth.py` | `AuthSetupMixin` | Configure security headers, create the main admin user and two additional test users, handle login, register the secondary user, and block the `selftest_` username prefix. |
+| `admin.py` | `AdminSetupMixin` | Grant admin permissions, sync `admin_users`, create admin roles (`super_admin`, `support_admin`, `moderation_admin`, `test`), assign roles, and ensure approval tables exist. |
+| `server.py` | `ServerSetupMixin` | Create the test server, channel, message, conversation, role, invite, and webhook, and join the secondary user to the server through an invite. |
+| `media.py` | `MediaSetupMixin` | Create a dummy media file and resolve log filenames for media tests. |
+| `features.py` | `FeatureSetupMixin` | Create settings, applications and bots, notifications, reports (user, hash, message), automod rules and violations, access tokens, support tickets, polls, friend requests, emoji, stickers, threads, and PlexiJoin resources. |
+
+## Before you begin
+
+Ensure the following conditions are met:
+
+*   The database and `auth` and `servers` modules are available through `src.api` at `plexichat/src/core/selftest/services/setup/composer.py:38`. `run_setup()` returns `False` if either module is unavailable.
+*   The shared context at `plexichat/src/core/selftest/context.py:11` has `base_url`, `config`, and `requests_module` set.
+
+## Use the service
+
+Create the service with a shared context and call the single entry point:
 
 ```python
-from src.core.selftest.services.setup import SetupService
-from src.core.selftest.context import SelfTestContext
+from plexichat.src.core.selftest.context import SelfTestContext
+from plexichat.src.core.selftest.services.setup import SetupService
+import requests
 
+ctx = SelfTestContext(base_url="http://localhost:8000", config={}, requests_module=requests)
 service = SetupService(ctx)
-service.run_setup()
+
+if not service.run_setup():
+    raise RuntimeError("Setup failed")
 ```
 
-## Dependencies
-- `SelfTestContext` -- shared mutable state (sessions, IDs, results)
-- `requests` library for HTTP calls
-- `src.api` for module references, DB access, and internal-secret
-- `src.utils.encryption` for password hashing
-- `src.core.automod` / `src.core.polls` / `src.core.threads` for feature resources
+The call sequence inside `run_setup()` at `plexichat/src/core/selftest/services/setup/composer.py:34` is fixed:
 
-## Notes
-- The setup intentionally does NOT wrap in a single DB transaction.
-  The server runs in a background thread, and SQLite serializes writes
-  across connections. Holding a transaction in the main thread while
-  making HTTP calls to the background thread would deadlock.
-- The `run_setup()` method is the single entry point that orchestrates
-  all setup phases in the correct order.
-- Each mixin method is idempotent where possible -- it checks for existing
-  resources before creating new ones.
+1.  Set up security headers and ensure the test password exists.
+2.  Create the main user and optionally grant admin roles, then create the second and third test users.
+3.  Log in the main and secondary users, configure session headers, and block the `selftest_` prefix.
+4.  Create the server, channel, message, role, invite, and webhook, and join the secondary user.
+5.  Seed media, settings, applications, reports, automod, tokens, tickets, polls, and other feature resources.
+6.  Optionally seed PlexiJoin resources when `ctx.unlicensed` is `False`.
+7.  Ensure the `admin_approval_comments` table exists.
+
+## Behavior
+
+*   The service does not wrap setup in a single database transaction. The server runs in a background thread and SQLite serializes writes across connections. Holding a transaction in the main thread while issuing HTTP calls to the background thread causes a deadlock. See the note at `plexichat/src/core/selftest/services/setup/README.md` context in `composer.py:34`.
+*   Each mixin method is idempotent where possible. It checks for existing resources before creating new ones, so you can rerun setup after a partial failure.
+*   PlexiJoin seeding is license-gated. When `ctx.unlicensed` is `True`, `run_setup()` skips `create_test_plexijoin_resources()` because the licensed endpoint returns `403` on an unlicensed install. See `plexichat/src/core/selftest/services/setup/composer.py:91`.
+
+## Dependencies
+
+*   `SelfTestContext` — holds `test_server_id`, `test_channel_id`, tokens, and other IDs that later phases read.
+*   `requests` — executes HTTP calls to create users and log in.
+*   `src.api` — provides database access, module references, and internal secrets.
+*   `src.utils.encryption` — hashes passwords for user creation.
+*   `src.core.automod`, `src.core.polls`, `src.core.threads` — create feature-specific resources when seeding fails through the HTTP path.
+
+## Related documentation
+
+*   [Self-test module](../README.md) — overall execution order and configuration.
+*   `plexichat/src/core/selftest/context.py:11` — all context fields populated during setup, including `test_other_user_id` and `test_thread_id`.
+*   `plexichat/src/core/selftest/services/cleanup.py:23` — pre-test cleanup that runs before setup to remove stale `selftest_%` data.

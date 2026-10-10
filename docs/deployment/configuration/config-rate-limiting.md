@@ -1,111 +1,124 @@
-# Rate Limiting Configuration
+# Rate limiting configuration
 
-This guide covers rate limiting configuration for deploying Plexichat in production. Rate limiting protects your server from abuse, ensures fair resource allocation, and maintains service availability under load. Proper configuration balances security against user experience.
+This guide describes how to configure rate limiting for Plexichat. Rate limiting protects the server from abuse, ensures fair resource allocation, and keeps the service available under load. All defaults in this guide come from `src/config_defaults.py:273`.
 
-## Configuration Location
+## Before you begin
 
-All rate limiting settings are nested under the `rate_limiting` key in your configuration file:
-
-```yaml
-rate_limiting:
-  # All rate limiting settings go here
-```
-
-## Global Limits
-
-### Configuration
+You configure rate limiting under the `rate_limiting` key in `config.yaml`. The server reloads this configuration at startup.
 
 ```yaml
 rate_limiting:
   enabled: true
   global:
-    requests: 100
+    requests: 25000
     window_seconds: 60.0
-    burst: 50
+    burst: 5000
 ```
 
-### Deployment Considerations
+## Enable rate limiting
 
-**Rate Limiting Enabled (true default)**
+```yaml
+rate_limiting:
+  enabled: true
+```
 
-- When enabled, all API and WebSocket requests are subject to rate limiting. Disabling removes all protection against abuse.
-- **Production**: Always keep enabled. Disabling rate limiting in production is a serious security risk.
-- **Development**: Can disable for easier testing, but re-enable before deploying.
+Set `enabled` to `true` in production. When you set it to `false`, the server disables all API and WebSocket rate limiting. Disable rate limiting only for local development and testing.
 
-**Global Limits (100 requests/60 seconds/50 burst)**
+## Global limits
 
-- Applies to all requests across the entire server, regardless of source. This is a backstop to prevent total server overload.
-- `requests`: Maximum number of requests allowed within the window.
-- `window_seconds`: The time window in seconds. Use decimal values for sub-minute windows (e.g., `30.0` for 30 seconds).
-- `burst`: Maximum number of requests that can be made instantaneously. Burst capacity refills at the regular rate.
-- **Standard Deployment**: 100/60s/50 burst is appropriate for servers with up to ~500 concurrent users.
-- **High-Traffic**: Scale proportionally. For 5000 users, consider 500-1000/60s with 200 burst.
-- **Resource-Constrained**: Reduce to 50/60s/20 burst for small servers.
+Global limits apply to all requests regardless of source. They act as a backstop against total server overload.
 
----
+```yaml
+rate_limiting:
+  global:
+    requests: 25000
+    window_seconds: 60.0
+    burst: 5000
+```
 
-## Per-User Limits
+| Field | Default | Description |
+|---|---|---|
+| `requests` | `25000` | Maximum requests allowed in the window. |
+| `window_seconds` | `60.0` | Length of the window in seconds. |
+| `burst` | `5000` | Maximum requests allowed in a single burst. Burst capacity refills at the normal rate. |
 
-### Configuration
+Do not use the stale values `100` requests and `50` burst from older documentation.
+
+Tune global limits for your deployment size:
+
+*   **Small server (up to 500 concurrent users):** The default `25000/60s` with `5000` burst handles typical chat traffic.
+*   **High-traffic server (thousands of users):** Increase proportionally if you see frequent `429` responses under normal load.
+*   **Resource-constrained server:** Reduce limits only after you confirm the server cannot handle the default throughput.
+
+## Per-user limits
+
+Per-user limits apply to each authenticated user. This tier handles most normal API usage.
 
 ```yaml
 rate_limiting:
   user:
-    requests: 120
+    requests: 10000
     window_seconds: 60.0
-    burst: 20
-    hourly_limit: 3600
-    daily_limit: 50000
+    burst: 2500
+    hourly_limit: 300000
+    daily_limit: 5000000
 ```
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `requests` | `10000` | Requests per minute per user. |
+| `window_seconds` | `60.0` | Window length in seconds. |
+| `burst` | `2500` | Burst capacity per user. |
+| `hourly_limit` | `300000` | Maximum requests per hour per user. |
+| `daily_limit` | `5000000` | Maximum requests per day per user. |
 
-**Per-User Limits (120 requests/60 seconds/20 burst)**
+The `hourly_limit` and `daily_limit` provide secondary ceilings. A user can hit these limits even if they stay under the per-minute rate.
 
-- Applies per authenticated user. This is the primary rate limiting tier for normal API usage.
-- The default is 120 requests per minute, not 50 as some previous documentation stated.
-- `hourly_limit: 3600` and `daily_limit: 50000` provide secondary ceilings that prevent sustained high usage even if per-minute limits are periodically reset.
-- **Standard Deployment**: 120/60s is generous for normal usage patterns (chat, browsing, moderate bot interaction).
-- **Bot-Heavy Communities**: Users running multiple bots may hit limits. Consider increasing to 180-240/60s.
-- **Strict**: Reduce to 60-80/60s for public-facing servers where abuse is a concern.
+Do not use the stale values `120` requests, `20` burst, `3600` hourly, or `50000` daily from older documentation.
 
-**Understanding Burst vs Rate**
+### Burst and rate
 
-- `requests: 120` with `burst: 20` means: a user can make 20 requests instantly (burst), then must wait for the rate to refill (2 requests/second). Over a full minute, they can make up to 120 total.
-- Burst is useful for legitimate usage patterns like loading a channel (which triggers multiple API calls rapidly).
-- Setting burst too low causes legitimate page loads to fail. Setting it too high allows brief spikes of abuse.
+With `requests: 10000` and `burst: 2500`, a user can send 2500 requests immediately, then sends at the refill rate of about 166 requests per second. Over a full minute, the user can send up to 10000 requests. A burst that is too low causes legitimate page loads to fail because loading a channel triggers several API calls at once. A burst that is too high allows short spikes of abuse.
 
----
+### When to adjust
 
-## Per-IP Limits
+*   **Standard deployment:** Keep the default. It is generous for chat, browsing, and moderate bot use.
+*   **Bot-heavy communities:** Increase to `12000`–`15000` per minute if users run multiple bots that aggregate traffic under one account.
+*   **Public-facing servers with abuse concerns:** Decrease to `6000`–`8000` per minute.
 
-### Configuration
+## Per-IP limits
+
+Per-IP limits apply to each client IP address regardless of authentication. They catch unauthenticated abuse and credential-stuffing attempts.
 
 ```yaml
 rate_limiting:
   ip:
-    requests: 60
+    requests: 5000
     window_seconds: 60.0
-    burst: 10
-    hourly_limit: 1800
-    daily_limit: 10000
+    burst: 1500
+    hourly_limit: 150000
+    daily_limit: 1000000
 ```
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `requests` | `5000` | Requests per minute per IP. |
+| `window_seconds` | `60.0` | Window length in seconds. |
+| `burst` | `1500` | Burst capacity per IP. |
+| `hourly_limit` | `150000` | Maximum requests per hour per IP. |
+| `daily_limit` | `1000000` | Maximum requests per day per IP. |
 
-**Per-IP Limits (60 requests/60 seconds/10 burst)**
+Do not use the stale values `60` requests, `10` burst, `1800` hourly, or `10000` daily from older documentation.
 
-- Applies per client IP address, regardless of authentication status. Catches unauthenticated abuse and prevents credential stuffing.
-- Stricter than per-user limits because a single IP should not be making many requests without authentication.
-- **Standard Deployment**: 60/60s/10 burst is appropriate.
-- **Behind Reverse Proxy**: Ensure `api.trusted_proxies` and `api.trust_x_forwarded_for` are configured correctly, or all traffic will appear to come from the proxy IP and legitimate users will be rate-limited collectively. See [API & Server Configuration](config-api.md).
-- **NAT/Corporate Networks**: Users behind a shared NAT may all share one IP. Consider increasing to 120/60s for deployments in corporate or educational environments.
+Per-IP limits are stricter than per-user limits because a single IP should not generate high unauthenticated traffic.
 
----
+If you run Plexichat behind a reverse proxy, configure `api.trusted_proxies` and `api.trust_x_forwarded_for`. Otherwise all traffic appears to come from the proxy IP and legitimate users share a single rate-limit bucket. See [API and server configuration](config-api.md).
 
-## Multipliers and Bypass
+If many users share one IP through NAT, such as in a corporate or educational network, consider increasing the per-IP limit to `10000`–`12000` per minute.
 
-### Configuration
+## Multipliers and bypass
+
+### Bot and webhook multipliers
 
 ```yaml
 rate_limiting:
@@ -113,85 +126,87 @@ rate_limiting:
   webhook_multiplier: 1.0
   admin_bypass: true
   internal_bypass: true
-  bypass_secret: "<auto-generated-hex>"
 ```
 
-### Deployment Considerations
+| Field | Default | Description |
+|---|---|---|
+| `bot_multiplier` | `1.5` | Multiplier applied to the per-user limit for bot accounts. At `1.5`, a bot gets `15000` requests per minute when users get `10000`. |
+| `webhook_multiplier` | `1.0` | Multiplier for webhook delivery requests. |
+| `admin_bypass` | `true` | When `true`, users with admin permissions bypass per-user limits. Global and IP limits still apply. |
+| `internal_bypass` | `true` | When `true`, internal service-to-service requests bypass rate limiting. |
 
-**Bot Multiplier (1.5x default)**
+Do not use the stale values `bot_multiplier: 0.5` or `webhook_multiplier: 2.0` from older documentation. A multiplier below `1.0` restricts bots below user levels, which you rarely want.
 
-- Bots receive 1.5x the rate limit of regular users. This means a bot gets 180 requests/minute when users get 120.
-- The default is 1.5, **not 0.5** as some previous documentation stated. A multiplier below 1.0 would restrict bots below user levels, which is rarely desired since bots need to process events for all their subscribers.
-- **Standard Deployment**: 1.5x gives bots adequate headroom for normal operation.
-- **Restrictive**: Set to 1.0 to give bots exactly the same limits as users.
-- **Developer-Friendly**: Set to 2.0-3.0 for communities with many active bots.
+*   To restrict bots to the same limit as users, set `bot_multiplier` to `1.0`.
+*   For communities with many active bots, set `bot_multiplier` to `2.0`–`3.0`.
+*   For high webhook volume, increase `webhook_multiplier` to `1.5`–`2.0`.
+*   Keep `admin_bypass` enabled unless you need to enforce limits on admins for compliance.
+*   Keep `internal_bypass` enabled unless you are testing rate-limiting behavior on internal requests.
 
-**Webhook Multiplier (1.0x default)**
+The server also supports a bypass secret in the `X-RateLimit-Bypass` header. The default is auto-generated. Do not set it to a predictable value and do not expose it to clients or frontend code.
 
-- Webhook delivery requests are multiplied by this factor. At 1.0x, webhooks get the same rate limit as the base user rate.
-- **Standard Deployment**: 1.0x is appropriate since webhook delivery is typically not bursty.
-- **High Webhook Volume**: Increase to 1.5-2.0 if your deployment has many applications sending frequent webhooks.
+## Route-specific limits
 
-**Admin Bypass (true default)**
+Route-specific limits apply to the static client handler when you serve the web client from the server.
 
-- When enabled, users with admin permissions bypass per-user rate limits entirely. They are still subject to global and IP limits.
-- **Standard Deployment**: Keep enabled so admins can perform bulk operations without being rate-limited.
-- **Strict**: Disable to enforce rate limits even for admins. Useful in compliance-sensitive environments.
+```yaml
+rate_limiting:
+  routes:
+    static_client_html:
+      requests: 300
+      window_seconds: 60.0
+      burst: 100
+      hourly_limit: 6000
+    static_client_assets:
+      requests: 5000
+      window_seconds: 60.0
+      burst: 1000
+      hourly_limit: 180000
+```
 
-**Internal Bypass (true default)**
+These limits protect HTML and asset routes without affecting API traffic.
 
-- When enabled, internal service-to-service requests bypass rate limiting. This prevents rate limiting from interfering with internal operations like session validation and cache updates.
-- **Always keep enabled** unless you have a specific reason to test rate limiting behavior on internal requests.
-
-**Bypass Secret (auto-generated default)**
-
-- A secret string that, when provided in the `X-RateLimit-Bypass` header, bypasses all rate limiting. Used for internal service communication and testing.
-- **Production**: The default auto-generated value is secure. Do not set this to a predictable value.
-- **Never expose** this secret to clients or include it in frontend code.
-
----
-
-## Complete Production Example
+## Complete example
 
 ```yaml
 rate_limiting:
   enabled: true
   global:
-    requests: 100
+    requests: 25000
     window_seconds: 60.0
-    burst: 50
+    burst: 5000
   user:
-    requests: 120
+    requests: 10000
     window_seconds: 60.0
-    burst: 20
-    hourly_limit: 3600
-    daily_limit: 50000
+    burst: 2500
+    hourly_limit: 300000
+    daily_limit: 5000000
   ip:
-    requests: 60
+    requests: 5000
     window_seconds: 60.0
-    burst: 10
-    hourly_limit: 1800
-    daily_limit: 10000
+    burst: 1500
+    hourly_limit: 150000
+    daily_limit: 1000000
+  routes:
+    static_client_html:
+      requests: 300
+      window_seconds: 60.0
+      burst: 100
+      hourly_limit: 6000
+    static_client_assets:
+      requests: 5000
+      window_seconds: 60.0
+      burst: 1000
+      hourly_limit: 180000
   bot_multiplier: 1.5
   webhook_multiplier: 1.0
   admin_bypass: true
   internal_bypass: true
-  bypass_secret: "${RATE_LIMIT_BYPASS_SECRET}"
 ```
 
----
+## Related documentation
 
-## Key Name Accuracy
-
-- ``user.requests: 50`` (`user.requests: 120`): Default is 120, not 50
-- ``bot_multiplier: 0.5`` (`bot_multiplier: 1.5`): Bots get 1.5x, not 0.5x
-- ``webhook_multiplier: 2.0`` (`webhook_multiplier: 1.0`): Webhooks get 1.0x, not 2.0x
-
----
-
-## Related Documentation
-
-- [Default Configuration Reference](../../default-config.md) - Complete configuration reference
-- [API & Server Configuration](config-api.md) - Trusted proxies, CORS, debug mode
-- [WebSocket Configuration](config-websocket.md) - WebSocket-specific rate limits
-- [Rate Limits](../../rate-limits.md) - Dynamic rate limit reference (auto-generated from config)
+*   [Default configuration reference](../../default-config.md) — Complete configuration reference with values from `src/config_defaults.py`.
+*   [API and server configuration](config-api.md) — Trusted proxies, CORS, and debug mode.
+*   [WebSocket configuration](config-websocket.md) — WebSocket-specific limits.
+*   [Rate limits](../../rate-limits.md) — Dynamic rate limit reference.

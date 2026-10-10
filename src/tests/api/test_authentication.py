@@ -44,7 +44,7 @@ def test_register_duplicate_username(test_client):
     )
     # Route may not exist or may return different status code
     # Accept 404 (route not found) or 409 (conflict)
-    assert response.status_code in [404, 409]
+    assert response.status_code == 409
 
 
 def test_register_weak_password(test_client):

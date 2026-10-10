@@ -48,8 +48,9 @@ class TestSecuritySpoofing:
             )
 
     def test_script_in_svg_filename(self, media_manager, test_user):
-        """Test that SVG with script content is handled safely."""
-        # SVG may or may not be in the allowed types
+        """SVG with script content is either rejected or stored intact."""
+        # SVG may or may not be in the allowed types -- both are safe, but
+        # any OTHER error type is a real failure.
         try:
             result = media_manager.upload_file(
                 user_id=test_user.id,
@@ -57,11 +58,13 @@ class TestSecuritySpoofing:
                 filename="xss.svg",
                 content_type="image/svg+xml",
             )
-            # If upload succeeds, the content should be stored safely
-            assert result is not None
         except FileTypeError:
-            # SVG may not be allowed, which is also safe
-            pass
+            return
+        # Upload accepted: the file must be retrievable with intact content.
+        file = media_manager.get_file(result.file_id)
+        assert file is not None
+        data, _ = media_manager.get_file_data(result.file_id)
+        assert data == b'<svg onload="alert(1)"></svg>'
 
     def test_double_extension_traversal(self, media_manager, test_user):
         """Test that double extensions are sanitized."""
@@ -71,8 +74,9 @@ class TestSecuritySpoofing:
             filename="test.exe.png",
             content_type="image/png",
         )
-        # Should be sanitized
+        # Should be sanitized: accepted with a safe image extension
         assert result is not None
+        assert result.filename.endswith(".png")
 
     def test_magic_bytes_validation_for_jpeg(self, media_manager):
         """Test magic byte validation for JPEG."""

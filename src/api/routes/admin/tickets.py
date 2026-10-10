@@ -10,14 +10,26 @@ from src.api.schemas.admin import (
     NoteResponse,
     InternalNoteCreate,
 )
-from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
+from .utils import check_host_restriction, require_admin_permission
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/tickets", response_model=List[TicketResponse])
+@router.get(
+    "/tickets",
+    response_model=List[TicketResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_tickets(
     request: Request,
     status_filter: Optional[str] = None,
@@ -30,7 +42,7 @@ async def get_tickets(
     Allows filtering by status and supports pagination.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "tickets.read")
     from src.core import admin
 
     try:
@@ -53,17 +65,25 @@ async def get_tickets(
     except Exception as e:
         logger.error(f"Tickets error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/tickets/{ticket_id}", response_model=TicketResponse)
-async def get_ticket(ticket_id: int, request: Request):
+@router.get(
+    "/tickets/{ticket_id}",
+    response_model=TicketResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+    },
+)
+async def get_ticket(ticket_id: SnowflakeIDParam, request: Request):
     """
     Retrieve detailed information for a specific feedback ticket.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "tickets.read")
     from src.core import admin
 
     ticket = admin.get_ticket(ticket_id)
@@ -86,15 +106,25 @@ async def get_ticket(ticket_id: int, request: Request):
     )
 
 
-@router.patch("/tickets/{ticket_id}/status", response_model=SuccessResponse)
+@router.patch(
+    "/tickets/{ticket_id}/status",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+    },
+)
 async def update_ticket_status(
-    ticket_id: int, update: TicketStatusUpdate, request: Request
+    ticket_id: SnowflakeIDParam,
+    update: TicketStatusUpdate,
+    request: Request,
 ):
     """
     Update the processing status of a feedback ticket.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "tickets.close")
     from src.core import admin
 
     if not admin.get_ticket(ticket_id):
@@ -106,13 +136,21 @@ async def update_ticket_status(
     return SuccessResponse(success=True, message=None)
 
 
-@router.get("/tickets/{ticket_id}/notes", response_model=List[NoteResponse])
-async def get_ticket_notes(ticket_id: int, request: Request):
+@router.get(
+    "/tickets/{ticket_id}/notes",
+    response_model=List[NoteResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+    },
+)
+async def get_ticket_notes(ticket_id: SnowflakeIDParam, request: Request):
     """
     Retrieve all internal administrator notes associated with a ticket.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "tickets.read")
     from src.core import admin
 
     if not admin.get_ticket(ticket_id):
@@ -134,13 +172,24 @@ async def get_ticket_notes(ticket_id: int, request: Request):
     ]
 
 
-@router.post("/tickets/{ticket_id}/notes", response_model=NoteResponse)
-async def add_ticket_note(ticket_id: int, note: InternalNoteCreate, request: Request):
+@router.post(
+    "/tickets/{ticket_id}/notes",
+    response_model=NoteResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        404: {"model": ErrorResponse, "description": "Ticket not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def add_ticket_note(
+    ticket_id: SnowflakeIDParam, note: InternalNoteCreate, request: Request
+):
     """
     Add a new internal administrator note to a ticket.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "tickets.respond")
     from src.core import admin
 
     if not admin.get_ticket(ticket_id):

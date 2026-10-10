@@ -111,12 +111,46 @@ class TestAPIRouteSecurity:
                 )
 
     def test_api_rate_limiting_enforced(self, auth_manager):
-        """Test that API rate limiting is enforced."""
-        for i in range(20):
+        """Test that repeated failed logins eventually lock the account.
+
+        NOTE: lockout is asserted via a CORRECT password being refused.
+        Wrong-password attempts must keep returning InvalidCredentialsError
+        (uniformly) so attackers cannot use the lockout state to enumerate
+        accounts; the counter still accumulates on every failure.
+        """
+        import uuid
+        from unittest.mock import patch
+
+        import pytest as _pytest
+
+        from src.core.auth.exceptions import AccountLockedError, InvalidCredentialsError
+        from src.utils import encryption
+
+        username = f"ratelimit_{uuid.uuid4().hex[:8]}"
+        auth_manager.register(username, f"{username}@example.com", "TestPass123!")
+
+        # Simulate repeated wrong passwords; each must fail uniformly.
+        with patch.object(encryption, "verify_password", return_value=False):
+            for _ in range(10):
+                try:
+                    auth_manager.login(username, "WrongPassword!")
+                except AccountLockedError:
+                    _pytest.fail(
+                        "AccountLockedError leaked for a wrong password "
+                        "(account enumeration oracle)"
+                    )
+                except InvalidCredentialsError:
+                    continue
+
+        # The failed attempts must have tripped the lockout: even the
+        # correct credential is now refused until the lock expires.
+        with patch.object(encryption, "verify_password", return_value=True):
             try:
-                auth_manager.login("nonexistent", "password")
-            except Exception:
+                auth_manager.login(username, "TestPass123!")
+            except AccountLockedError:
                 pass
+            else:
+                _pytest.fail("Account was not locked after repeated failures")
 
     def test_api_error_messages_dont_leak_info(self, auth_manager):
         """Test that error messages don't leak sensitive information."""
@@ -169,15 +203,12 @@ class TestAPIRouteSecurity:
 
         dm = messaging_manager.create_dm(user1.id, user2.id)
 
-        try:
-            embeds = [
-                {"title": "Test", "fields": [{"name": "Field", "value": "Value"}]}
-            ]
-            messaging_manager.send_message(
-                user_id=user1.id, conversation_id=dm.id, content="Test", embeds=embeds
-            )
-        except Exception:
-            pass
+        embeds = [{"title": "Test", "fields": [{"name": "Field", "value": "Value"}]}]
+        msg = messaging_manager.send_message(
+            user_id=user1.id, conversation_id=dm.id, content="Test", embeds=embeds
+        )
+        assert msg is not None
+        assert msg.content == "Test"
 
     def test_api_validates_array_bounds(self, messaging_manager, test_user):
         """Test that API validates array bounds."""

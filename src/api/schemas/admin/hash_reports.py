@@ -20,7 +20,10 @@ class ManualBlockHashRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    hash_value: str = Field(..., min_length=64, max_length=128)
+    # SHA-256 is 64 hex chars; perceptual hashes are shorter (typically
+    # 16-32 hex chars). The route validates the exact format for the selected
+    # hash type after parsing this request.
+    hash_value: str = Field(..., min_length=16, max_length=128)
     reason: str = Field(..., min_length=1, max_length=500)
 
 
@@ -73,6 +76,8 @@ class HashReportCountsResponse(BaseModel):
     pending: int = Field(0, description="Pending reports")
     blocked: int = Field(0, description="Blocked reports")
     cleared: int = Field(0, description="Cleared reports")
+    dismissed: int = Field(0, description="Dismissed reports")
+    reviewed: int = Field(0, description="Reviewed reports")
     total: int = Field(0, description="Total reports")
 
 

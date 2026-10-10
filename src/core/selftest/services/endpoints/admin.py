@@ -15,8 +15,41 @@ from .base import EndpointTesterBase
 class AdminMixin(EndpointTesterBase):
     """Tests admin-related API endpoints."""
 
+    # -- Approval ceremony -------------------------------------------------
+    # Destructive endpoints (migrations, reindex, emergency override) are
+    # approval-gated: they require a *consumed* APPROVED request for their
+    # action. The ceremony below performs the real multi-admin flow —
+    # request (other admin) -> approve (main) -> approve (third admin via
+    # an admin-session login) -> execute — so the gates themselves are
+    # exercised instead of bypassed.
+
+    def _third_user_session(self):
+        from src.core.selftest.services.approval_ceremony import (
+            third_user_session as _shared_third,
+        )
+
+        return _shared_third(self.ctx)
+
+    def _ensure_user_session(self, session, username: str) -> bool:
+        from src.core.selftest.services.approval_ceremony import (
+            ensure_user_session as _shared_ensure,
+        )
+
+        return bool(_shared_ensure(self.ctx, session, username))
+
+    def _approval_ceremony(self, action_type: str):
+        from src.core.selftest.services.approval_ceremony import (
+            run_ceremony as _shared_ceremony,
+        )
+
+        return bool(_shared_ceremony(self.ctx, action_type))
+
     def test_migration_endpoints(self) -> None:
-        """Test migration apply and rollback using the 001 selftest no-op migration."""
+        """Test migration apply and rollback using the 001 selftest no-op migration.
+
+        Approval-gated: each execution is preceded by the real multi-admin
+        ceremony (request + 2 approvals), so the gates are exercised.
+        """
         if not self.ctx.standalone_mode:
             return
         if not self.ctx.session.headers.get("Authorization"):
@@ -33,6 +66,19 @@ class AdminMixin(EndpointTesterBase):
         logger.info(
             "Testing POST /api/v1/admin/database/migrations/rollback/001 (pre-test)..."
         )
+        if not self._approval_ceremony("migrations.rollback"):
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": mig_path_rollback,
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "migration_rollback_pre",
+                    "error": "approval ceremony failed",
+                }
+            )
+            return
         rb1_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
@@ -58,10 +104,21 @@ class AdminMixin(EndpointTesterBase):
                 f"Migration rollback 001 (pre-test) -> {resp.status_code}: {resp.text[:200]}"
             )
 
-        time.sleep(0.05)
-
         # --- Apply migration 001 ---
         logger.info("Testing POST /api/v1/admin/database/migrations/apply/001...")
+        if not self._approval_ceremony("migrations.run"):
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": mig_path_apply,
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "migration_apply",
+                    "error": "approval ceremony failed",
+                }
+            )
+            return
         mig_apply_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_apply}",
@@ -86,10 +143,21 @@ class AdminMixin(EndpointTesterBase):
                 f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
-        time.sleep(0.05)
-
         # --- Rollback migration 001 ---
         logger.info("Testing POST /api/v1/admin/database/migrations/rollback/001...")
+        if not self._approval_ceremony("migrations.rollback"):
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": mig_path_rollback,
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "migration_rollback",
+                    "error": "approval ceremony failed",
+                }
+            )
+            return
         mig_rollback_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
@@ -115,7 +183,15 @@ class AdminMixin(EndpointTesterBase):
             )
 
     def test_access_token_rotate(self) -> None:
-        """Test access token create -> rotate -> delete cycle."""
+        """Test the full access-token lifecycle: rotate -> revoke -> unrevoke.
+
+        Rotation values are always generated server-side (caller-supplied
+        values are rejected with 400 by design), so the rotate posts an
+        empty body. Revoke/unrevoke are stateful (404 unless the state
+        matches), hence the strict lifecycle order here — the generic
+        auto-loop cannot satisfy it, so these three endpoints are covered
+        here instead of there.
+        """
         if not self.ctx.standalone_mode:
             return
         if not self.ctx.test_access_token_id:
@@ -123,84 +199,104 @@ class AdminMixin(EndpointTesterBase):
             return
 
         session = self.ctx.session
+        base = self.ctx.base_url
         token_id = self.ctx.test_access_token_id
 
-        # --- Rotate ---
+        def _record(label, method, path, resp):
+            ok = resp is not None and 200 <= resp.status_code < 300
+            self.ctx.results.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "status_code": resp.status_code if resp is not None else 0,
+                    "duration_ms": 0,
+                    "success": ok,
+                    "label": label,
+                }
+            )
+            if ok:
+                logger.info(f"Access token {label} PASSED")
+            else:
+                logger.warning(
+                    f"Access token {label} -> "
+                    f"{resp.status_code if resp is not None else 0}: "
+                    f"{resp.text[:200] if resp is not None else 'no response'}"
+                )
+            return ok
+
+        # --- Rotate (empty body: value generated server-side) ---
         logger.info(
             f"Testing POST /api/v1/admin/security/access-tokens/{token_id}/rotate..."
         )
-        rotate_start = time.time()
         resp = session.post(
-            f"{self.ctx.base_url}/api/v1/admin/security/access-tokens/{token_id}/rotate",
-            json={"token": secrets.token_urlsafe(48)},
+            f"{base}/api/v1/admin/security/access-tokens/{token_id}/rotate",
+            json={},
             timeout=5,
         )
-        duration = (time.time() - rotate_start) * 1000
-        success = 200 <= resp.status_code < 300
-        self.ctx.results.append(
-            {
-                "method": "POST",
-                "path": f"/api/v1/admin/security/access-tokens/{token_id}/rotate",
-                "status_code": resp.status_code,
-                "duration_ms": duration,
-                "success": success,
-                "label": "access_token_rotate",
-            }
-        )
+        if not _record(
+            "rotate",
+            "POST",
+            f"/api/v1/admin/security/access-tokens/{token_id}/rotate",
+            resp,
+        ):
+            return
         rotated_token_id = token_id
-        if success:
-            logger.info(f"Access token rotate PASSED -> {resp.status_code}")
-            try:
-                rotate_data = resp.json()
-                # The rotate endpoint nests the new token under "access_token".
-                # Capture the new id so we revoke the fresh token, not the old one.
-                new_id = (
-                    rotate_data.get("access_token", {}).get("id")
-                    or rotate_data.get("id")
-                    or rotate_data.get("token_id")
-                )
-                if new_id:
-                    rotated_token_id = int(new_id)
-                    logger.debug(f"Rotate returned new token id: {rotated_token_id}")
-            except Exception:
-                pass
-        else:
-            logger.warning(
-                f"Access token rotate -> {resp.status_code}: {resp.text[:200]}"
+        try:
+            rotate_data = resp.json()
+            new_id = (
+                rotate_data.get("access_token", {}).get("id")
+                or rotate_data.get("id")
+                or rotate_data.get("token_id")
             )
+            if new_id:
+                rotated_token_id = int(new_id)
+                logger.debug(f"Rotate returned new token id: {rotated_token_id}")
+        except Exception:
+            pass
+        # The rotated-away original is revoked by rotation; point tracking
+        # at the live replacement so cleanup deletes the right row.
+        self.ctx.test_access_token_id = rotated_token_id
 
-        time.sleep(0.05)
-
-        # --- Revoke ---
-        # The admin API route is POST /security/access-tokens/{token_id}/revoke
-        # (defined in admin/security.py).
+        # --- Revoke the replacement ---
         logger.info(
             f"Testing POST /api/v1/admin/security/access-tokens/{rotated_token_id}/revoke..."
         )
-        revoke_token_start = time.time()
         resp = session.post(
-            f"{self.ctx.base_url}/api/v1/admin/security/access-tokens/{rotated_token_id}/revoke",
+            f"{base}/api/v1/admin/security/access-tokens/{rotated_token_id}/revoke",
             timeout=5,
         )
-        duration = (time.time() - revoke_token_start) * 1000
-        success = 200 <= resp.status_code < 300
-        self.ctx.results.append(
-            {
-                "method": "POST",
-                "path": f"/api/v1/admin/security/access-tokens/{rotated_token_id}/revoke",
-                "status_code": resp.status_code,
-                "duration_ms": duration,
-                "success": success,
-                "label": "access_token_revoke",
-            }
+        if not _record(
+            "revoke",
+            "POST",
+            f"/api/v1/admin/security/access-tokens/{rotated_token_id}/revoke",
+            resp,
+        ):
+            return
+
+        # --- Unrevoke (valid only because the token is now revoked) ---
+        logger.info(
+            f"Testing POST /api/v1/admin/security/access-tokens/{rotated_token_id}/unrevoke..."
         )
-        if success:
-            logger.info(f"Access token revoke PASSED -> {resp.status_code}")
-            self.ctx.test_access_token_id = None
-        else:
-            logger.warning(
-                f"Access token revoke -> {resp.status_code}: {resp.text[:200]}"
-            )
+        resp = session.post(
+            f"{base}/api/v1/admin/security/access-tokens/{rotated_token_id}/unrevoke",
+            timeout=5,
+        )
+        if not _record(
+            "unrevoke",
+            "POST",
+            f"/api/v1/admin/security/access-tokens/{rotated_token_id}/unrevoke",
+            resp,
+        ):
+            return
+
+        # --- Revoke again so no live credential survives the suite ---
+        logger.info(f"Re-revoking access token {rotated_token_id} (suite hygiene)...")
+        resp = session.post(
+            f"{base}/api/v1/admin/security/access-tokens/{rotated_token_id}/revoke",
+            timeout=5,
+        )
+        if resp is not None and 200 <= resp.status_code < 300:
+            logger.info("Re-revoke PASSED (not separately scored)")
 
     def test_delay_deletion(self) -> None:
         """Test delay-deletion using the API-created other_user."""
@@ -281,7 +377,6 @@ class AdminMixin(EndpointTesterBase):
         channel_id = self.ctx.test_channel_id
 
         # Step 1: Guarantee the channel has at least one message to export.
-        time.sleep(0.05)
         msg_start = time.time()
         msg_resp = session.post(
             f"{self.ctx.base_url}/api/v1/channels/{channel_id}/messages",
@@ -306,8 +401,6 @@ class AdminMixin(EndpointTesterBase):
                 f"{msg_resp.text[:200]}"
             )
             return
-
-        time.sleep(0.05)
 
         # Step 2: Request the transcript export.
         logger.info(
@@ -351,8 +444,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning("Transcript export response missing export_id")
             return
 
-        time.sleep(0.05)
-
         # Step 3: Fetch the export status using the real export_id.
         logger.info(
             f"Testing GET /api/v1/channels/{channel_id}/messages/export/"
@@ -382,8 +473,6 @@ class AdminMixin(EndpointTesterBase):
             logger.warning(
                 f"Transcript export status -> {resp.status_code}: {resp.text[:200]}"
             )
-
-        time.sleep(0.05)
 
         # Step 4: Download the export using the real export_id.
         logger.info(
@@ -444,8 +533,6 @@ class AdminMixin(EndpointTesterBase):
 
         dsar_request_id = None
 
-        time.sleep(0.05)
-
         # Step 1: User requests a data export.
         logger.info(
             "Testing POST /api/v1/users/@me/data-export (request data export)..."
@@ -473,8 +560,6 @@ class AdminMixin(EndpointTesterBase):
         else:
             logger.warning(f"DSAR request -> {resp.status_code}: {resp.text[:200]}")
             return  # nothing else to test if the request itself failed
-
-        time.sleep(0.05)
 
         # Step 2: User lists their data export requests.
         logger.info("Testing GET /api/v1/users/@me/data-export (list)...")
@@ -516,8 +601,6 @@ class AdminMixin(EndpointTesterBase):
         if not dsar_request_id:
             return
 
-        time.sleep(0.05)
-
         # Step 3: User fetches a single request status.
         logger.info(
             f"Testing GET /api/v1/users/@me/data-export/{dsar_request_id} (status)..."
@@ -544,7 +627,7 @@ class AdminMixin(EndpointTesterBase):
         else:
             logger.warning(f"DSAR status -> {resp.status_code}: {resp.text[:200]}")
 
-        time.sleep(0.05)
+        # Step 4: User cancels the request (cleanup).
 
         # Step 4: User cancels the request (cleanup).
         logger.info(
@@ -573,12 +656,147 @@ class AdminMixin(EndpointTesterBase):
         else:
             logger.warning(f"DSAR cancel -> {resp.status_code}: {resp.text[:200]}")
 
+        # Step 5: admin lifecycle on a second request (detail -> approve
+        # -> generate). Uses its own row because approve/generate move the
+        # first request out of the cancellable states.
+        logger.info("Testing DSAR admin lifecycle (second request)...")
+        resp = session.post(
+            f"{self.ctx.base_url}/api/v1/users/@me/data-export",
+            json={"password": test_pass, "format": "json"},
+            timeout=10,
+        )
+        if 200 <= resp.status_code < 300:
+            admin_id = None
+            try:
+                import src.api as _api3
+
+                _db3 = _api3.get_db()
+                if _db3:
+                    _row3 = _db3.fetch_one(
+                        "SELECT id FROM dsar_requests WHERE user_id = ? "
+                        "AND status = 'pending' ORDER BY requested_at DESC LIMIT 1",
+                        (self.ctx.test_user_id,),
+                    )
+                    if _row3:
+                        admin_id = int(
+                            _row3["id"] if isinstance(_row3, dict) else _row3[0]
+                        )
+            except Exception:
+                pass
+            if admin_id:
+                base = self.ctx.base_url
+                for method, path, label in [
+                    (
+                        "GET",
+                        f"/api/v1/admin/data-export/{admin_id}",
+                        "dsar_admin_get",
+                    ),
+                    (
+                        "POST",
+                        f"/api/v1/admin/data-export/{admin_id}/approve",
+                        "dsar_admin_approve",
+                    ),
+                    (
+                        "POST",
+                        f"/api/v1/admin/data-export/{admin_id}/generate",
+                        "dsar_admin_generate",
+                    ),
+                ]:
+                    try:
+                        if method == "GET":
+                            r = session.get(f"{base}{path}", timeout=15)
+                        else:
+                            r = session.post(f"{base}{path}", json={}, timeout=60)
+                        ok = 200 <= r.status_code < 300
+                        self.ctx.results.append(
+                            {
+                                "method": method,
+                                "path": path,
+                                "status_code": r.status_code,
+                                "duration_ms": 0,
+                                "success": ok,
+                                "label": label,
+                            }
+                        )
+                        if ok:
+                            logger.info(f"DSAR {label} PASSED -> {r.status_code}")
+                        else:
+                            logger.warning(
+                                f"DSAR {label} -> {r.status_code}: {r.text[:200]}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"DSAR {label} exception: {e}")
+                        self.ctx.results.append(
+                            {
+                                "method": method,
+                                "path": path,
+                                "status_code": 0,
+                                "duration_ms": 0,
+                                "success": False,
+                                "label": label,
+                                "error": str(e)[:200],
+                            }
+                        )
+
+        # Step 6: deny flow on a third request (deny requires pending, so
+        # it needs its own row). The denied row is terminal by design.
+        logger.info("Testing DSAR deny flow (second request)...")
+        resp = session.post(
+            f"{self.ctx.base_url}/api/v1/users/@me/data-export",
+            json={"password": test_pass, "format": "json"},
+            timeout=10,
+        )
+        if 200 <= resp.status_code < 300:
+            deny_id = None
+            try:
+                import src.api as _api2
+
+                _db2 = _api2.get_db()
+                if _db2:
+                    _row2 = _db2.fetch_one(
+                        "SELECT id FROM dsar_requests WHERE user_id = ? "
+                        "AND status = 'pending' ORDER BY requested_at DESC LIMIT 1",
+                        (self.ctx.test_user_id,),
+                    )
+                    if _row2:
+                        deny_id = int(
+                            _row2["id"] if isinstance(_row2, dict) else _row2[0]
+                        )
+            except Exception:
+                pass
+            if deny_id:
+                deny_resp = session.post(
+                    f"{self.ctx.base_url}/api/v1/admin/data-export/{deny_id}/deny",
+                    json={"reason": "self-test deny flow"},
+                    timeout=15,
+                )
+                deny_ok = 200 <= deny_resp.status_code < 300
+                self.ctx.results.append(
+                    {
+                        "method": "POST",
+                        "path": f"/api/v1/admin/data-export/{deny_id}/deny",
+                        "status_code": deny_resp.status_code,
+                        "duration_ms": 0,
+                        "success": deny_ok,
+                        "label": "dsar_admin_deny",
+                    }
+                )
+                if deny_ok:
+                    logger.info("DSAR admin deny PASSED")
+                else:
+                    logger.warning(
+                        f"DSAR admin deny -> {deny_resp.status_code}: "
+                        f"{deny_resp.text[:200]}"
+                    )
+
     def test_new_migration_endpoints(self) -> None:
         """Test the new migration run/rollback endpoints (admin/migrations.py).
 
         Unlike the legacy /admin/database/migrations/* endpoints tested in
         test_migration_endpoints(), these use the richer MigrationRunRequest
-        body with dry_run support and irreversible-migration checks.
+        body with dry_run support and irreversible-migration checks. The run
+        applies 001 for real (the rollback step needs it applied); both are
+        approval-gated: the real multi-admin ceremony precedes each.
         """
         if not self.ctx.standalone_mode:
             return
@@ -591,11 +809,27 @@ class AdminMixin(EndpointTesterBase):
         mig_rollback = "/api/v1/admin/migrations/001/rollback"
 
         # --- Run (apply) migration 001 via new endpoint ---
+        # Applied for real (not dry-run): the rollback step below needs an
+        # applied 001 to roll back, and the legacy test may have left it
+        # rolled back. Net DB effect across both tests is zero.
         logger.info("Testing POST /api/v1/admin/migrations/001/run (apply)...")
+        if not self._approval_ceremony("migrations.run"):
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": mig_run,
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "new_migration_apply",
+                    "error": "approval ceremony failed",
+                }
+            )
+            return
         run_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_run}",
-            json={},
+            json={"dry_run": False},
             timeout=10,
         )
         duration = (time.time() - run_start) * 1000
@@ -617,10 +851,21 @@ class AdminMixin(EndpointTesterBase):
                 f"Migration apply 001 -> {resp.status_code}: {resp.text[:200]}"
             )
 
-        time.sleep(0.05)
-
         # --- Rollback 001 via new endpoint ---
         logger.info("Testing POST /api/v1/admin/migrations/001/rollback...")
+        if not self._approval_ceremony("migrations.rollback"):
+            self.ctx.results.append(
+                {
+                    "method": "POST",
+                    "path": mig_rollback,
+                    "status_code": 0,
+                    "duration_ms": 0,
+                    "success": False,
+                    "label": "new_migration_rollback",
+                    "error": "approval ceremony failed",
+                }
+            )
+            return
         rb_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_rollback}",
@@ -644,3 +889,106 @@ class AdminMixin(EndpointTesterBase):
             logger.warning(
                 f"Migration rollback 001 -> {resp.status_code}: {resp.text[:200]}"
             )
+
+    def test_approval_gated_actions(self) -> None:
+        """Execute the remaining approval-gated endpoints with real approvals.
+
+        Each gated action consumes a single-use approval, so the ceremony
+        (request + 2 approvals) runs per action. Safe variants are used
+        throughout: dry-runs for apply-all, short-lived override tokens,
+        and the tiny test corpus for reindex.
+        """
+        if not self.ctx.standalone_mode:
+            return
+        if not self.ctx.session.headers.get("Authorization"):
+            return
+        session = self.ctx.session
+        base = self.ctx.base_url
+
+        cases = [
+            # (label, action, method, path, json_body, params)
+            (
+                "migration_apply_all",
+                "migrations.apply_all",
+                "POST",
+                "/api/v1/admin/database/migrations/apply-all",
+                None,
+                {"dry_run": "true"},
+            ),
+            (
+                "migration_emergency_override",
+                "migrations.emergency_override",
+                "POST",
+                "/api/v1/admin/migrations/emergency-override",
+                {"reason": "self-test ceremony", "expires_minutes": 5},
+                None,
+            ),
+            (
+                "search_reindex",
+                "search.reindex",
+                "POST",
+                "/api/v1/admin/search/reindex",
+                {},
+                None,
+            ),
+            (
+                "search_reindex_standalone",
+                "search.reindex",
+                "POST",
+                "/api/v1/admin/search/reindex/standalone",
+                {},
+                None,
+            ),
+        ]
+        for label, action, method, path, body, params in cases:
+            logger.info(f"Approval-gated test {label} ({method} {path})...")
+            if not self._approval_ceremony(action):
+                self.ctx.results.append(
+                    {
+                        "method": method,
+                        "path": path,
+                        "status_code": 0,
+                        "duration_ms": 0,
+                        "success": False,
+                        "label": label,
+                        "error": "approval ceremony failed",
+                    }
+                )
+                continue
+            start = time.time()
+            try:
+                resp = session.request(
+                    method, f"{base}{path}", json=body, params=params, timeout=60
+                )
+                duration = (time.time() - start) * 1000
+                ok = 200 <= resp.status_code < 300
+                self.ctx.results.append(
+                    {
+                        "method": method,
+                        "path": path,
+                        "status_code": resp.status_code,
+                        "duration_ms": duration,
+                        "success": ok,
+                        "label": label,
+                    }
+                )
+                if ok:
+                    logger.info(f"Approval-gated {label} PASSED -> {resp.status_code}")
+                else:
+                    logger.warning(
+                        f"Approval-gated {label} -> {resp.status_code}: "
+                        f"{resp.text[:200]}"
+                    )
+            except Exception as e:
+                logger.warning(f"Approval-gated {label} exception: {e}")
+                self.ctx.results.append(
+                    {
+                        "method": method,
+                        "path": path,
+                        "status_code": 0,
+                        "duration_ms": 0,
+                        "success": False,
+                        "label": label,
+                        "error": str(e)[:200],
+                    }
+                )

@@ -14,6 +14,68 @@ from .security.validation import BLOCKED_MIME_TYPES
 
 logger = logging.getLogger(__name__)
 
+# SECURITY: browser-executable / renderable content types are rejected
+# unconditionally, independent of any configured allow-list. Serving these
+# under the application origin enables stored XSS / script injection, so no
+# configuration may opt in to them. (SVG is deliberately NOT listed here:
+# it must pass the defusedxml allow-list sanitizer wired into the upload
+# pipeline and stays excluded from the default allow-lists.)
+_ALWAYS_BLOCKED_CONTENT_TYPES = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "text/javascript",
+        "application/javascript",
+        "application/x-javascript",
+        "application/ecmascript",
+        "text/ecmascript",
+    }
+)
+
+# Neutral opaque binary used by clients as the universal fallback when the
+# real MIME type is unknown. It cannot be rendered by browsers (it is always
+# served with ``Content-Disposition: attachment``), so it remains permitted
+# as a fallback even when the "other" category is unconfigured.
+_FALLBACK_CONTENT_TYPE = "application/octet-stream"
+
+# Content types classified as documents for size-limit bucketing. Shared by
+# the direct upload path and the chunked-upload session path so both apply
+# the same "document" size limit (e.g. .docx/.xlsx/.pptx/.zip land in the
+# document bucket, not the narrower 10MB "other" bucket).
+_DOCUMENT_CONTENT_TYPES = frozenset(
+    {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/rtf",
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/zip",
+        "application/x-7z-compressed",
+        "application/gzip",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+)
+
+
+def detect_media_type(content_type: str) -> MediaType:
+    """Map a content-type string to its :class:`MediaType` bucket."""
+    ct = (content_type or "").lower()
+    if ct.startswith("image/"):
+        return MediaType.IMAGE
+    elif ct.startswith("video/"):
+        return MediaType.VIDEO
+    elif ct.startswith("audio/"):
+        return MediaType.AUDIO
+    elif ct in _DOCUMENT_CONTENT_TYPES:
+        return MediaType.DOCUMENT
+    return MediaType.OTHER
+
 
 class _ValidationMixin:
     """Validation helpers mixed into MediaManager."""
@@ -53,16 +115,7 @@ class _ValidationMixin:
 
     def _detect_media_type(self, content_type: str) -> MediaType:
         """Map content-type string to MediaType enum."""
-        ct = content_type.lower()
-        if ct.startswith("image/"):
-            return MediaType.IMAGE
-        elif ct.startswith("video/"):
-            return MediaType.VIDEO
-        elif ct.startswith("audio/"):
-            return MediaType.AUDIO
-        elif ct in ("application/pdf", "text/plain", "application/msword"):
-            return MediaType.DOCUMENT
-        return MediaType.OTHER
+        return detect_media_type(content_type)
 
     # -- magic-byte validation ---------------------------------------------------
 
@@ -130,25 +183,32 @@ class _ValidationMixin:
                 content_type,
                 ["Contact an administrator for more information"],
             )
-        if type_key in allowed:
-            if ct_lower not in allowed[type_key]:
-                raise FileTypeError(
-                    f"Content type '{content_type}' is not allowed for {type_key} uploads.",
-                    content_type,
-                    allowed[type_key],
-                )
-        elif type_key == "other":
-            other_allowed = allowed.get("other", [])
-            if (
-                other_allowed
-                and ct_lower not in other_allowed
-                and "*" not in other_allowed
-            ):
-                raise FileTypeError(
-                    f"File type '{content_type}' is not supported.",
-                    content_type,
-                    other_allowed,
-                )
+        if ct_lower in _ALWAYS_BLOCKED_CONTENT_TYPES:
+            raise FileTypeError(
+                f"Content type '{content_type}' is not allowed for security reasons.",
+                content_type,
+                ["Executable or renderable content types are blocked"],
+            )
+        # SECURITY: fail closed. Only content types explicitly listed in the
+        # configured allow-list for their category (or the "other" list) may
+        # pass. Previously, any unlisted type (e.g. text/html) silently passed
+        # when no "other" key was configured and was then served inline.
+        type_allowed = allowed.get(type_key)
+        if type_allowed is None:
+            type_allowed = allowed.get("other", [])
+            # The neutral opaque-binary fallback stays available for the
+            # unconfigured "other" category; it is inert (always served as a
+            # download) and is what clients send when the MIME type is unknown.
+            if type_key == MediaType.OTHER.value and ct_lower == _FALLBACK_CONTENT_TYPE:
+                return
+        if not type_allowed or (
+            ct_lower not in type_allowed and "*" not in type_allowed
+        ):
+            raise FileTypeError(
+                f"Content type '{content_type}' is not allowed for {type_key} uploads.",
+                content_type,
+                list(type_allowed),
+            )
 
     # -- file-size validation ----------------------------------------------------
 
@@ -159,6 +219,26 @@ class _ValidationMixin:
         limits = self._config.get("size_limits", DEFAULT_SIZE_LIMITS)
         type_key = media_type.value
         max_size = limits.get(type_key, limits.get("other", 10 * 1024 * 1024))
+
+        # A license "max_file_size_mb" limit acts as an absolute upper bound on
+        # top of the per-type configuration limits. Only applied when a license
+        # is present (free tier keeps its configured limits unchanged).
+        try:
+            from utils.licensing import (
+                get_license_limit,
+                is_free_tier,
+                is_limit_enforced,
+            )
+
+            if not is_free_tier():
+                _mb = get_license_limit("max_file_size_mb", default=-1)
+                if is_limit_enforced(_mb):
+                    _lic_bytes = _mb * 1024 * 1024
+                    if _lic_bytes < max_size:
+                        max_size = _lic_bytes
+        except (RuntimeError, ImportError):
+            pass
+
         if size > max_size:
             raise FileSizeError(
                 f"File size {size} exceeds limit {max_size}",

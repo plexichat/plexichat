@@ -21,7 +21,13 @@ class SessionsCollector(BaseCollector):
         }
 
     def _collect_sessions(self, user_id: int) -> List[Dict[str, Any]]:
-        """Collect auth_sessions."""
+        """Collect auth_sessions.
+
+        ``ip_encrypted`` / ``ua_encrypted`` are deterministic ciphertext
+        (linkable PII if a KEK is ever compromised) with no decryptable
+        context in an export; per the DSAR redaction policy they are
+        replaced by "(encrypted)" placeholders.
+        """
         try:
             rows = self._db.fetch_all(
                 """
@@ -31,7 +37,9 @@ class SessionsCollector(BaseCollector):
                 """,
                 (user_id,),
             )
-            return [dict(row) for row in rows]
+            return self.serialize_rows(
+                rows, redact_fields=["ip_encrypted", "ua_encrypted"]
+            )
         except Exception as e:
             import utils.logger as logger
 

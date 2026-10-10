@@ -43,16 +43,29 @@ class VoiceCollector(BaseCollector):
             rows = self._db.fetch_all(
                 """
                 SELECT * FROM voice_calls
-                WHERE initiator_id = ?
-                   OR (consented_participants IS NOT NULL
-                       AND EXISTS (
-                           SELECT 1 FROM json_each(consented_participants)
-                           WHERE value = ?
-                       ))
+                WHERE initiator_id = ? OR consented_participants IS NOT NULL
                 """,
-                (user_id, user_id),
+                (user_id,),
             )
-            return [dict(row) for row in rows]
+            if not rows:
+                return []
+            filtered = []
+            for row in rows:
+                if int(row.get("initiator_id") or 0) == user_id:
+                    filtered.append(dict(row))
+                    continue
+                consented = row.get("consented_participants")
+                try:
+                    parsed = (
+                        json.loads(consented)
+                        if isinstance(consented, str)
+                        else consented
+                    )
+                except (ValueError, TypeError):
+                    parsed = None
+                if isinstance(parsed, list) and user_id in parsed:
+                    filtered.append(dict(row))
+            return filtered
         except Exception as e:
             import utils.logger as logger
 

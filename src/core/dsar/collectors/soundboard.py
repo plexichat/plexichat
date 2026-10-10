@@ -13,8 +13,13 @@ class SoundboardCollector(BaseCollector):
     """Collects soundboard usage data."""
 
     def collect(self, user_id: int) -> Dict[str, Any]:
-        """Collect soundboard usage."""
-        return {"soundboard_usage": self._collect_table("soundboard_usage", user_id)}
+        """Collect soundboard usage and per-user cooldown rows."""
+        return {
+            "soundboard_usage": self._collect_table("soundboard_usage", user_id),
+            "soundboard_user_cooldowns": self._collect_table(
+                "soundboard_user_cooldowns", user_id
+            ),
+        }
 
     def _collect_table(self, table: str, user_id: int) -> List[Dict[str, Any]]:
         """Collect all rows from a table for a user."""

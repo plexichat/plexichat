@@ -18,7 +18,7 @@ Threat model in scope:
 
 Threat model out of scope:
 
-* active compromise of the PlexiChat server process;
+* active compromise of the Plexichat server process;
 * physical access to the encrypted keyring files together with
   the KEK;
 * clients that intentionally keep a separate copy of ciphertext

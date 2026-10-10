@@ -100,6 +100,37 @@ class TestSessions:
         with pytest.raises(TokenInvalidError):
             auth_manager.verify_token(result.token)
 
+    def test_logout_requires_valid_secret(self, db, auth_manager):
+        """A correct session id with a wrong secret must not revoke anything.
+
+        The session id is enumerable (it appears in the token, logs and
+        metrics); the secret is the credential. Before the fix logout revoked
+        on the id alone, so leaking an id was enough to force a logout.
+        """
+        from src.utils import encryption
+        from src.core.auth.exceptions import TokenInvalidError
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            auth_manager.register(
+                username="logout_secret_test",
+                email="logout_secret_test@example.com",
+                password="TestPass123!",
+            )
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login("logout_secret_test", "TestPass123!")
+
+        session_id = result.token.split(".")[0]
+
+        # Right id, wrong secret: refused, and the real session survives.
+        assert auth_manager.logout(f"{session_id}.not-the-real-secret") is False
+        assert auth_manager.verify_token(result.token).valid is True
+
+        # The token's own secret still logs the session out.
+        assert auth_manager.logout(result.token) is True
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(result.token)
+
     def test_logout_returns_false_for_invalid(self, db, auth_manager):
         """Test logout returns False for invalid token."""
         result = auth_manager.logout("invalid.token")

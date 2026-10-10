@@ -8,6 +8,44 @@ import time
 from src.core.base import SnowflakeID
 from src.core.database.collections import CappedDict
 import utils.config as config
+import utils.logger as logger
+
+# Single source of truth for the ``messaging.encrypt_messages`` default.
+# Both the message-send path (which decides actual storage behaviour) and
+# the conversation-creation path (which stamps the ``encrypted`` flag on
+# msg_conversations rows) MUST read the config through this default so the
+# stored flag can never disagree with what send_message actually does.
+ENCRYPT_MESSAGES_DEFAULT = True
+
+
+def get_encrypt_messages_default() -> bool:
+    """Configured encryption-at-rest default (single source of truth)."""
+    return bool(
+        config.get("messaging", {}).get("encrypt_messages", ENCRYPT_MESSAGES_DEFAULT)
+    )
+
+
+def _get_relationships_module():
+    """Return the initialized relationships module, else None.
+
+    Used by DM privacy checks (block enforcement / friends-only DMs).
+    Resolves ``src.core.relationships`` directly rather than through the
+    ``src.api`` service-locator registry so the check always consults the
+    manager bound to the caller's database. A lazy lookup keeps
+    ``core.messaging`` decoupled from ``core.relationships`` and preserves
+    behaviour for embedders that never set relationships up.
+    """
+    try:
+        from src.core import relationships
+
+        if (
+            getattr(relationships, "_setup_complete", False)
+            and getattr(relationships, "_manager", None) is not None
+        ):
+            return relationships
+    except Exception as e:
+        logger.debug(f"Relationships module unavailable for DM privacy checks: {e}")
+    return None
 
 
 class BaseService:
@@ -30,7 +68,9 @@ class BaseService:
         self._db = db
         self._config = config.get(config_section, {})
 
-        max_cache = cache_max_size or config.get("redis.cache_max_items", 1000)
+        # cache_max_items lives under the "valkey" (or legacy "redis") block.
+        valkey_cfg = config.get("valkey") or config.get("redis") or {}
+        max_cache = cache_max_size or valkey_cfg.get("cache_max_items", 1000)
         self._cache: CappedDict = CappedDict(max_size=max_cache)
         self._cache_ttl = 60.0  # 60 second cache TTL
 

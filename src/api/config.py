@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 import os
-import sys
 import time
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -64,6 +63,9 @@ class APIConfig:
     openapi_url: Optional[str] = "/openapi.json"
     # Maximum request body size in bytes (default 10MB for voice message uploads)
     max_request_body_size: int = 10 * 1024 * 1024  # 10MB
+    # Cap on the AnyIO default thread limiter used by run_in_threadpool for
+    # sync endpoint handlers (default 16, not anyio's oversubscribed 40).
+    max_worker_threads: int = 16
 
 
 def get_api_config() -> APIConfig:
@@ -113,10 +115,9 @@ def get_api_config() -> APIConfig:
 
     import utils.logger as logger
 
-    if "pytest" in sys.modules:
-        print(f"[DEBUG] Raw api_conf: {api_conf}")
-        print(f"[DEBUG] cors_origins from conf: {cors_origins}")
-        print(f"[DEBUG] allow_wildcard from conf: {allow_wildcard}")
+    logger.debug(f"Raw api_conf: {api_conf}")
+    logger.debug(f"cors_origins from conf: {cors_origins}")
+    logger.debug(f"allow_wildcard from conf: {allow_wildcard}")
 
     if (cors_origins == ["*"] or "*" in cors_origins) and not allow_wildcard:
         logger.error(
@@ -177,6 +178,7 @@ def get_api_config() -> APIConfig:
         redoc_url=api_conf.get("redoc_url", "/redoc"),
         openapi_url=api_conf.get("openapi_url", "/openapi.json"),
         max_request_body_size=api_conf.get("max_request_body_size", 10 * 1024 * 1024),
+        max_worker_threads=api_conf.get("max_worker_threads", 16),
     )
     _api_config_cache = result
     _api_config_cache_time = now

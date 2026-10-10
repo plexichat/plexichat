@@ -193,6 +193,10 @@ class MessagingManager(BaseManager):
         """Get a conversation by ID if user has access."""
         return self._conversation_svc.get_conversation(conversation_id, user_id)
 
+    def conversation_exists(self, conversation_id: SnowflakeID) -> bool:
+        """Membership-agnostic existence probe."""
+        return self._conversation_svc.conversation_exists(conversation_id)
+
     def get_conversations(
         self,
         user_id: SnowflakeID,
@@ -229,7 +233,12 @@ class MessagingManager(BaseManager):
         """Leave a conversation."""
         result = self._conversation_svc.leave_conversation(user_id, conversation_id)
 
-        if result:
+        # M14: leaving a DM (or being the last group member to leave)
+        # deletes the conversation; a system message cannot be posted into
+        # a deleted conversation, so only broadcast when it still exists.
+        # Previously this raised ConversationNotFoundError (HTTP 500) on
+        # every DM leave.
+        if result and self._conversation_svc.conversation_exists(conversation_id):
             # Send system message
             self.send_system_message(
                 conversation_id,
@@ -482,18 +491,39 @@ class MessagingManager(BaseManager):
         )
 
     def edit_message(
-        self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        content: str,
+        expected_edited_at: Optional[int] = None,
     ) -> Message:
         """Edit a message (own messages only)."""
-        return self._message_svc.edit_message(user_id, message_id, content)
+        return self._message_svc.edit_message(
+            user_id, message_id, content, expected_edited_at=expected_edited_at
+        )
 
     def update_message_metadata(
         self,
+        user_id: SnowflakeID,
         message_id: SnowflakeID,
         metadata: Optional[Dict[str, Any]],
         merge: bool = True,
     ) -> Message:
-        return self._message_svc.update_message_metadata(message_id, metadata, merge)
+        return self._message_svc.update_message_metadata(
+            user_id, message_id, metadata, merge
+        )
+
+    def automod_remove_message(
+        self,
+        message_id: SnowflakeID,
+        violation_id: Optional[SnowflakeID] = None,
+        rule_name: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Message]:
+        """Replace a message with an AutoMod removal placeholder (system op)."""
+        return self._message_svc.automod_remove_message(
+            message_id, violation_id, rule_name, reason
+        )
 
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
@@ -509,18 +539,22 @@ class MessagingManager(BaseManager):
     ) -> List[int]:
         """Bulk-delete messages from a channel.
 
-        Only messages the caller is permitted to delete (author or channel
-        moderator) are removed. Returns the list of message IDs that were
-        actually deleted so the caller can broadcast a precise event.
+        Only messages the caller is permitted to delete (author, conversation
+        OWNER/ADMIN, or server ``messages.manage`` moderator) AND that belong
+        to the requested channel (its linked conversation) are removed.
+        Returns the list of message IDs that were actually deleted so the
+        caller can broadcast a precise event.
 
-        Delegates to the message service's bulk-delete (which skips messages
-        the caller may not delete and missing messages) rather than looping
-        the single-delete path that raises on the first failure.
+        Delegates to the message service's bulk-delete (which scopes every
+        candidate to the requested channel and skips messages the caller may
+        not delete or missing messages) rather than looping the single-delete
+        path that raises on the first failure.
         """
         requested = [int(m) for m in message_ids]
-        result = self._message_svc.delete_messages_bulk(user_id, requested)
-        failed = {int(f) for f in result.get("failed_ids", [])}
-        return [mid for mid in requested if mid not in failed]
+        result = self._message_svc.delete_messages_bulk(
+            user_id, requested, conversation_id=int(channel_id)
+        )
+        return result.get("deleted_ids", [])
 
     def get_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID

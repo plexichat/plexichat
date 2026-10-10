@@ -7,6 +7,8 @@ from .two_factor import router as two_factor_router
 from .sessions import router as sessions_router
 from .password import router as password_router
 from .passkeys import router as passkeys_router
+from .email_verification import router as email_verification_router
+from .devices import router as devices_router
 
 router = APIRouter(tags=["Authentication"])
 
@@ -17,5 +19,7 @@ router.include_router(two_factor_router)
 router.include_router(sessions_router)
 router.include_router(password_router)
 router.include_router(passkeys_router)
+router.include_router(email_verification_router)
+router.include_router(devices_router)
 
 __all__ = ["router"]

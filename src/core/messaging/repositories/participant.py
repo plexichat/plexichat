@@ -109,9 +109,11 @@ class ParticipantRepository(BaseRepository[Participant]):
             "SELECT user_id FROM msg_participants WHERE conversation_id = ?"
         ]
         if offset and offset > 0:
-            sql_parts.append(f"OFFSET {int(offset)}")
+            sql_parts.append("OFFSET ?")
+            params.append(int(offset))
         if limit is not None and limit > 0:
-            sql_parts.append(f"LIMIT {int(limit)}")
+            sql_parts.append("LIMIT ?")
+            params.append(int(limit))
         sql = " ".join(sql_parts)
         rows = self._fetch_all(sql, tuple(params))
         return [row["user_id"] for row in rows]

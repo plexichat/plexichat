@@ -17,11 +17,19 @@ class SelfTestContext:
         config: dict,
         requests_module: Any,
         standalone_mode: bool = True,
+        unlicensed: bool = False,
+        status_only: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.config = config
         self.requests_module = requests_module
         self.standalone_mode = standalone_mode
+        # True when the operator passed ``--unlicensed`` to the self-test
+        # command. Free-tier detection (no license file on this machine) is
+        # handled separately via discovery.plexijoin_expected_statuses().
+        self.unlicensed = unlicensed
+        # True when the runner only probes live status (no app config).
+        self.status_only = status_only
 
         self._test_password: Optional[str] = None
         self._setup_other_username: Optional[str] = None
@@ -30,8 +38,12 @@ class SelfTestContext:
         self.other_token: Optional[str] = None
         self.test_user_id: Optional[int] = None
         self.test_other_user_id: Optional[int] = None
+        self.test_third_user_id: Optional[int] = None
+        self.test_third_username: Optional[str] = None
+        self.test_fourth_user_id: Optional[int] = None
         self.test_server_id: Optional[int] = None
         self.test_channel_id: Optional[int] = None
+        self.test_voice_channel_id: Optional[int] = None
         self.test_conversation_id: Optional[int] = None
         self.test_message_id: Optional[int] = None
         self.test_artifact_id: Optional[int] = None
@@ -52,10 +64,14 @@ class SelfTestContext:
         self.test_application_id: Optional[int] = None
         self.test_bot_id: Optional[int] = None
         self.test_sticker_id: Optional[int] = None
+        self.test_device_id: Optional[int] = None
+        self.test_device_fingerprint: Optional[str] = None
+        self.test_soundboard_id: Optional[int] = None
         self.test_friend_request_id: Optional[int] = None
         self.test_bot_request_id: Optional[int] = None
         self.test_passkey_challenge_id: Optional[str] = None
         self.test_automod_rule_id: Optional[int] = None
+        self.test_automod_violation_id: Optional[int] = None
         self.test_ticket_id: Optional[int] = None
         self.test_access_token_id: Optional[int] = None
         self.test_emoji_id: Optional[int] = None
@@ -78,16 +94,18 @@ class SelfTestContext:
         self.test_plexijoin_connection_id: Optional[int] = None
         self.test_plexijoin_request_id: Optional[int] = None
         self.test_plexijoin_deny_request_id: Optional[int] = None
+        self.test_stash_collection_id: Optional[str] = None
+        self.test_stash_item_id: Optional[str] = None
+        self.test_sum_workbook_id: Optional[str] = None
+        self.test_sum_sheet_id: Optional[str] = None
+        self.test_sum_operation_id: Optional[str] = None
 
         self.results: List[Dict[str, Any]] = []
         self.start_time = 0.0
-        self.session = requests_module.Session()
-        self.other_session = requests_module.Session()
-        self.openapi_spec: Dict[str, Any] = {}
+        self.ram_monitor: Any = None
 
         self._other_session_paths: set = set()
         self._admin_role_super_id: Optional[int] = None
-        self._admin_role_support_id: Optional[int] = None
 
         # Service references (populated by SelfTestRunner.__init__)
         self.data: Any = None
@@ -97,7 +115,33 @@ class SelfTestContext:
         self.endpoints: Any = None
         self.ws: Any = None
         self.artifacts: Any = None
+        self.sum: Any = None
         self.ratelimit: Any = None
         self.static_client: Any = None
         self.docs: Any = None
         self.report: Any = None
+        # Persistent journal of privileged test artifacts (grants/elevated
+        # accounts) so a crashed run can be reconciled by the next run.
+        self.journal: Any = None
+
+        self.session = self.make_session()
+        self.other_session = self.make_session()
+        self.openapi_spec: Dict[str, Any] = {}
+
+    def make_session(self, copy_headers_from: Any = None) -> Any:
+        """Create a fresh HTTP session against the running server."""
+        session = self.requests_module.Session()
+        if copy_headers_from is not None:
+            session.headers.update(copy_headers_from)
+        return session
+
+    def close_sessions(self) -> None:
+        """Close all long-lived HTTP sessions (full teardown helper)."""
+        for attr in ("session", "other_session"):
+            session = getattr(self, attr, None)
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)

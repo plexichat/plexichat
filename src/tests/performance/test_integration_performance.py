@@ -33,11 +33,17 @@ class TestCompleteUserJourney:
 
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user = auth_manager.register("perfuser", "perf@example.com", "Password123!")
+            partner = auth_manager.register(
+                "perfuser2", "perf2@example.com", "Password123!"
+            )
         with patch.object(encryption, "verify_password", return_value=True):
             auth_manager.login("perfuser", "Password123!")
-        dm = messaging_manager.create_dm(user.id, user.id)
-        msg = messaging_manager.send_message(user.id, dm.id, "Test message")
+        dm = messaging_manager.create_dm(user.id, partner.id)
+        # Only the steady-state send is benchmarked (setup runs once above;
+        # sending is repeatable so every benchmark round measures real work).
+        msg = benchmark(messaging_manager.send_message, user.id, dm.id, "Test message")
         assert msg is not None
+        assert msg.content == "Test message"
 
     @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_server_creation_to_messaging(
@@ -52,8 +58,12 @@ class TestCompleteUserJourney:
             )
         server = server_manager.create_server(user.id, "Perf Server")
         channel = server_manager.create_channel(user.id, server.id, "general")
-        msg = messaging_manager.send_message(user.id, channel.id, "Test message")
+        # Benchmark the repeatable send (setup above runs once).
+        msg = benchmark(
+            server_manager.send_channel_message, user.id, channel.id, "Test message"
+        )
         assert msg is not None
+        assert msg.content == "Test message"
 
 
 class TestServerPerformance:
@@ -73,6 +83,7 @@ class TestServerPerformance:
             )
         server = server_manager.create_server(user.id, "Test Server")
         assert server is not None
+        assert server.name == "Test Server"
 
     @pytest.mark.skipif(not HAS_BENCHMARK, reason="Requires pytest-benchmark plugin")
     def test_permission_check_performance(
@@ -85,7 +96,8 @@ class TestServerPerformance:
         with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
             user = auth_manager.register("permuser", "perm@example.com", "Password123!")
         server = server_manager.create_server(user.id, "Test Server")
-        has_perm = server_manager.has_permission(user.id, server.id, "admin")
+        # Permission checks are read-only and repeatable: benchmark directly.
+        has_perm = benchmark(server_manager.has_permission, user.id, server.id, "admin")
         assert isinstance(has_perm, bool)
 
     @pytest.mark.slow
@@ -101,6 +113,7 @@ class TestServerPerformance:
         server = server_manager.create_server(user.id, "Test Server")
         channel = server_manager.create_channel(user.id, server.id, "general")
         assert channel is not None
+        assert channel.name == "general"
 
 
 class TestCrossModulePerformance:
@@ -110,19 +123,37 @@ class TestCrossModulePerformance:
     def test_relationship_and_messaging(
         self, benchmark, rel_manager, messaging_manager, auth_manager, user_pool
     ):
-        """Test relationships + messaging integration."""
+        """Benchmark friend-request creation (repeatable via fresh users)."""
         # Basic relationship test
         from src.utils import encryption
 
-        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
-            user1 = auth_manager.register(
-                "reluser1", "rel1@example.com", "Password123!"
-            )
-            user2 = auth_manager.register(
-                "reluser2", "rel2@example.com", "Password123!"
-            )
-        rel_manager.send_friend_request(user1.id, user2.id)
-        assert rel_manager is not None
+        counter = [0]
+        seen_pairs = []
+
+        def _setup():
+            # Friend requests are single-use per pair, so every benchmark
+            # round gets a fresh sender/recipient pair.
+            counter[0] += 1
+            i = counter[0]
+            with patch.object(
+                encryption, "hash_password", return_value="fake_hash_$test"
+            ):
+                user1 = auth_manager.register(
+                    f"relbench{i}a", f"relbench{i}a@example.com", "Password123!"
+                )
+                user2 = auth_manager.register(
+                    f"relbench{i}b", f"relbench{i}b@example.com", "Password123!"
+                )
+            seen_pairs.append((user1.id, user2.id))
+            return (user1.id, user2.id), {}
+
+        request = benchmark.pedantic(
+            lambda u1, u2: rel_manager.send_friend_request(u1, u2),
+            setup=_setup,
+            rounds=5,
+        )
+        assert request is not None
+        assert request.sender_id in [a for a, _ in seen_pairs]
 
     @pytest.mark.slow
     def test_presence_and_messaging(
@@ -136,8 +167,10 @@ class TestCrossModulePerformance:
             user = auth_manager.register(
                 "presenceuser", "presence@example.com", "Password123!"
             )
-        presence_manager.set_presence(user.id, "online")
-        assert presence_manager is not None
+        presence_manager.set_status(user.id, "online")
+        presence = presence_manager.get_presence(user.id)
+        assert presence is not None
+        assert presence.status.value == "online"
 
     @pytest.mark.slow
     def test_notifications_and_messaging(
@@ -157,6 +190,7 @@ class TestCrossModulePerformance:
         dm = messaging_manager.create_dm(user1.id, user2.id)
         msg = messaging_manager.send_message(user1.id, dm.id, "Test message")
         assert msg is not None
+        assert msg.content == "Test message"
 
 
 class TestConcurrentWorkflows:
@@ -173,6 +207,7 @@ class TestConcurrentWorkflows:
                 "concurrentuser", "concurrent@example.com", "Password123!"
             )
         assert user is not None
+        assert user.username == "concurrentuser"
 
     @pytest.mark.slow
     def test_concurrent_server_operations(
@@ -188,6 +223,7 @@ class TestConcurrentWorkflows:
             )
         server = server_manager.create_server(user.id, "Test Server")
         assert server is not None
+        assert server.name == "Test Server"
 
 
 class TestRealWorldScenarios:
@@ -211,6 +247,7 @@ class TestRealWorldScenarios:
         dm = messaging_manager.create_dm(user1.id, user2.id)
         msg = messaging_manager.send_message(user1.id, dm.id, "Test message")
         assert msg is not None
+        assert msg.content == "Test message"
 
     @pytest.mark.slow
     def test_server_with_active_channels(
@@ -228,6 +265,9 @@ class TestRealWorldScenarios:
         channel1 = server_manager.create_channel(user.id, server.id, "general")
         channel2 = server_manager.create_channel(user.id, server.id, "random")
         assert channel1 is not None and channel2 is not None
+        assert channel1.name == "general" and channel1.server_id == server.id
+        assert channel2.name == "random" and channel2.server_id == server.id
+        assert channel1.conversation_id != channel2.conversation_id
 
     @pytest.mark.slow
     def test_peak_load_simulation(
@@ -241,5 +281,6 @@ class TestRealWorldScenarios:
             user = auth_manager.register("peakuser", "peak@example.com", "Password123!")
         server = server_manager.create_server(user.id, "Test Server")
         channel = server_manager.create_channel(user.id, server.id, "general")
-        msg = messaging_manager.send_message(user.id, channel.id, "Test message")
+        msg = server_manager.send_channel_message(user.id, channel.id, "Test message")
         assert msg is not None
+        assert msg.content == "Test message"

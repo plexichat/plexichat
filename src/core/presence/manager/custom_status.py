@@ -45,15 +45,31 @@ class CustomStatusMixin(PresenceManagerBase):
         self._validate_user(user_id)
         self._ensure_presence_record(user_id)
 
-        now = self._get_timestamp()
-
+        # Normalize inputs. A custom status may be emoji-only: an empty /
+        # whitespace-only ``text`` is only treated as "clear" when there is no
+        # emoji either. With an emoji present we keep an emoji-only status
+        # (storing an empty ``text``), which previously was silently dropped.
+        normalized_text = (text or "").strip()
+        emoji = (emoji or "").strip() if emoji else None
         if emoji and len(emoji) > 64:
             emoji = emoji[:64]
+
+        if not normalized_text and not emoji:
+            return self.clear_custom_status(user_id)
+
+        if not normalized_text:
+            normalized_text = ""
+
+        max_len = self._config.get("max_custom_status_length", 128)
+        if len(normalized_text) > max_len:
+            normalized_text = normalized_text[:max_len]
+
+        now = self._get_timestamp()
 
         self._db.upsert(
             "pres_custom_status",
             ["user_id", "text", "emoji", "expires_at", "created_at"],
-            (user_id, text, emoji, expires_at, now),
+            (user_id, normalized_text, emoji, expires_at, now),
             ["user_id"],
             ["text", "emoji", "expires_at"],
         )
@@ -64,8 +80,7 @@ class CustomStatusMixin(PresenceManagerBase):
 
         logger.debug(f"User {user_id} custom status set")
 
-        result = self.get_presence(user_id)
-        return result
+        return self._reseed_presence_cache(user_id)
 
     def get_custom_status(self, user_id: int) -> Optional[CustomStatus]:
         """Get user's custom status."""
@@ -97,4 +112,4 @@ class CustomStatusMixin(PresenceManagerBase):
 
         logger.debug(f"User {user_id} custom status cleared")
 
-        return self.get_presence(user_id)
+        return self._reseed_presence_cache(user_id)

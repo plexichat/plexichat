@@ -40,6 +40,7 @@ from .models import (
     OnboardingStep,
     OnboardingProgress,
     OnboardingStepType,
+    DEFAULT_EVERYONE_PERMISSIONS,
 )
 from .exceptions import (
     ServerError,
@@ -76,6 +77,8 @@ from .exceptions import (
     WelcomeScreenNotFoundError,
     OnboardingStepNotFoundError,
     OnboardingError,
+    InvalidPermissionKeyError,
+    BanPurgeNotSupportedError,
 )
 
 # Re-export from submodules
@@ -84,6 +87,8 @@ from .channels import (
     create_category,
     get_channel,
     channel_exists,
+    get_channel_conversation_id,
+    get_channel_by_conversation,
     get_channels,
     update_channel,
     delete_channel,
@@ -187,6 +192,8 @@ __all__ = [
     "create_category",
     "get_channel",
     "channel_exists",
+    "get_channel_conversation_id",
+    "get_channel_by_conversation",
     "get_channels",
     "update_channel",
     "delete_channel",
@@ -324,10 +331,66 @@ __all__ = [
     "WelcomeScreenNotFoundError",
     "OnboardingStepNotFoundError",
     "OnboardingError",
+    "InvalidPermissionKeyError",
+    "BanPurgeNotSupportedError",
 ]
 
 _manager: Optional[ServersManager] = None
 _setup_complete = False
+
+
+def backfill_default_role_permissions(db: Any) -> int:
+    """Merge any newly-added default permissions into existing ``@everyone`` roles.
+
+    New deployments create the ``@everyone`` role with the current
+    ``DEFAULT_EVERYONE_PERMISSIONS`` snapshot, but servers created by an older
+    build keep their original permission JSON forever. Without this idempotent
+    backfill those members would silently lose every permission we add to the
+    default set (e.g. the ``artifact.*`` suite permissions) and would hit 403s
+    the moment a new feature ships.
+
+    Only *missing* keys are added; an explicit ``False`` left by an admin is
+    preserved, so this can never re-grant a permission someone removed on
+    purpose. Returns the number of roles updated.
+    """
+    import json
+    import time
+
+    try:
+        rows = db.fetch_all(
+            "SELECT id, permissions FROM srv_roles WHERE is_default = 1"
+        )
+    except Exception:  # pragma: no cover - defensive
+        return 0
+
+    updated = 0
+    for row in rows:
+        perms = row.get("permissions") if isinstance(row, dict) else None
+        if isinstance(perms, str):
+            try:
+                perms = json.loads(perms)
+            except (TypeError, ValueError):
+                perms = {}
+        if not isinstance(perms, dict):
+            perms = {}
+
+        changed = False
+        for key, value in DEFAULT_EVERYONE_PERMISSIONS.items():
+            if key not in perms:
+                perms[key] = value
+                changed = True
+        if not changed:
+            continue
+
+        try:
+            db.execute(
+                "UPDATE srv_roles SET permissions = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(perms), int(time.time()), int(row["id"])),
+            )
+            updated += 1
+        except Exception:  # pragma: no cover - defensive
+            continue
+    return updated
 
 
 def setup(
@@ -344,6 +407,7 @@ def setup(
         db, auth_module, messaging_module, notifications_module, events_module
     )
     _setup_complete = True
+    backfill_default_role_permissions(db)
 
 
 def _get_manager() -> ServersManager:
@@ -361,9 +425,12 @@ def create_server(
     name: str,
     description: Optional[str] = None,
     icon_url: Optional[str] = None,
+    is_public: Optional[bool] = None,
 ) -> Server:
     """Create a new server."""
-    return _get_manager().create_server(owner_id, name, description, icon_url)
+    return _get_manager().create_server(
+        owner_id, name, description, icon_url, is_public
+    )
 
 
 def get_server(server_id: int, user_id: int) -> Optional[Server]:
@@ -388,10 +455,23 @@ def update_server(
     description: Optional[str] = None,
     icon_url: Optional[str] = None,
     default_channel_id: Optional[int] = None,
+    system_channel_id: Optional[int] = None,
+    verification_level: Optional[int] = None,
+    default_message_notifications: Optional[int] = None,
+    max_reactions_per_message: Optional[int] = None,
 ) -> Server:
     """Update server settings."""
     return _get_manager().update_server(
-        user_id, server_id, name, description, icon_url, default_channel_id
+        user_id,
+        server_id,
+        name,
+        description,
+        icon_url,
+        default_channel_id,
+        system_channel_id,
+        verification_level,
+        default_message_notifications,
+        max_reactions_per_message,
     )
 
 

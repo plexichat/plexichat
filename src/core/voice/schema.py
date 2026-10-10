@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS voice_states (
 -- Voice state indexes
 CREATE INDEX IF NOT EXISTS idx_voice_states_channel ON voice_states(channel_id);
 CREATE INDEX IF NOT EXISTS idx_voice_states_server ON voice_states(server_id);
+CREATE INDEX IF NOT EXISTS idx_voice_states_user ON voice_states(user_id);
 
 -- Voice channel settings table (extends srv_channels)
 CREATE TABLE IF NOT EXISTS voice_channel_settings (

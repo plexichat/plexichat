@@ -1,8 +1,8 @@
 """
 Media collector for media_files, user_avatars, auth_api_access_tokens tables.
 
-Collects media file metadata (not blobs), avatar metadata, and API tokens
-(without secrets).
+Collects media file metadata (not blobs), avatar metadata (not blob data),
+and API tokens (without secrets).
 """
 
 from typing import Any, Dict, List
@@ -22,38 +22,49 @@ class MediaCollector(BaseCollector):
         }
 
     def _collect_media_files(self, user_id: int) -> List[Dict[str, Any]]:
-        """Collect media_files metadata."""
+        """Collect media_files metadata.
+
+        Real columns are filename/original_filename/content_type/size/
+        media_type/checksum/uploaded_by/uploaded_at/... (NOT file_name/
+        file_type/file_size). Internal storage paths are excluded from
+        the export.
+        """
         try:
             rows = self._db.fetch_all(
                 """
-                SELECT id, file_name, file_type, file_size, width, height,
-                       duration, hash, created_at, accessed_at
-                FROM media_files WHERE uploaded_by = ?
+                SELECT id, filename, original_filename, content_type,
+                       size, media_type, checksum, uploaded_at,
+                       scan_status
+                FROM media_files
+                WHERE uploaded_by = ? AND deleted = 0
                 """,
                 (user_id,),
             )
             return [dict(row) for row in rows]
         except Exception as e:
-            import utils.logger as logger
-
-            logger.error(f"Failed to collect media files for user {user_id}: {e}")
+            self.record_error(f"Failed to collect media files: {e}")
             return []
 
     def _collect_avatars(self, user_id: int) -> List[Dict[str, Any]]:
-        """Collect user_avatars metadata."""
+        """Collect user_avatars metadata.
+
+        user_avatars stores the avatar as an ``avatar_data`` BLOB with
+        content_type/width/height/size/checksum/uploaded_at columns -
+        there is NO avatar_url column anywhere. The BLOB itself is not
+        exported; only its metadata is included.
+        """
         try:
             rows = self._db.fetch_all(
                 """
-                SELECT id, avatar_url, is_default, created_at
+                SELECT id, content_type, width, height, size, checksum,
+                       animated, uploaded_at
                 FROM user_avatars WHERE user_id = ?
                 """,
                 (user_id,),
             )
             return [dict(row) for row in rows]
         except Exception as e:
-            import utils.logger as logger
-
-            logger.error(f"Failed to collect avatars for user {user_id}: {e}")
+            self.record_error(f"Failed to collect avatars: {e}")
             return []
 
     def _collect_api_tokens(self, user_id: int) -> List[Dict[str, Any]]:
@@ -76,7 +87,5 @@ class MediaCollector(BaseCollector):
                 result.append(r)
             return result
         except Exception as e:
-            import utils.logger as logger
-
-            logger.error(f"Failed to collect API tokens for user {user_id}: {e}")
+            self.record_error(f"Failed to collect API tokens: {e}")
             return []

@@ -4,6 +4,7 @@ Tests for thread archive functionality.
 
 import pytest
 from src.core.threads import (
+    ThreadArchivedError,
     ThreadState,
     AutoArchiveDuration,
     ThreadNotFoundError,
@@ -107,21 +108,22 @@ class TestUnarchiveThread:
         with pytest.raises(ThreadNotFoundError):
             threads.unarchive_thread(owner.id, 999999999)
 
-    def test_member_can_unarchive_by_sending_message(self, server_with_channel):
-        """Test that member can unarchive by sending message."""
+    def test_member_send_to_archived_thread_rejected(self, server_with_channel):
+        """Test that a member send to an archived thread is rejected."""
         owner, member1, member2, server, channel, servers, threads = server_with_channel
 
         thread = threads.create_thread(
-            user_id=owner.id, channel_id=channel.id, name="Member Unarchive Test"
+            user_id=owner.id, channel_id=channel.id, name="Member Archived Send Test"
         )
 
         threads.join_thread(member1.id, thread.id)
         threads.archive_thread(owner.id, thread.id)
 
-        threads.send_message(member1.id, thread.id, "Unarchive!")
+        with pytest.raises(ThreadArchivedError):
+            threads.send_message(member1.id, thread.id, "Should fail")
 
         updated = threads.get_thread(owner.id, thread.id)
-        assert updated.state == ThreadState.ACTIVE
+        assert updated.state == ThreadState.ARCHIVED
 
 
 class TestAutoArchive:

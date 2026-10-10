@@ -2,11 +2,7 @@
 Unit tests for the version utility with comprehensive coverage including security tests.
 """
 
-import os
-import sys
 import pytest
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from utils.version import (
     Version,
@@ -373,7 +369,7 @@ class TestVersionDataclass:
     def test_version_immutable(self):
         ver = Version(VersionStage.ALPHA, 1, 0, 1)
         with pytest.raises(AttributeError):
-            ver.major = 2  # type: ignore
+            setattr(ver, "major", 2)
 
     def test_version_equality(self):
         v1 = Version(VersionStage.ALPHA, 1, 0, 1)
@@ -401,7 +397,7 @@ class TestVersionDataclass:
     def test_version_frozen(self):
         ver = Version(VersionStage.ALPHA, 1, 0, 1)
         with pytest.raises(AttributeError):
-            ver.stage = VersionStage.BETA  # type: ignore
+            setattr(ver, "stage", VersionStage.BETA)
 
 
 class TestVersionConstraints:
@@ -438,7 +434,9 @@ class TestVersionPattern:
     def test_pattern_matches_valid(self):
         valid_versions = ["a.1.0-1", "b.2.3-15", "c.99.99-999", "r.1.0-1"]
         for version in valid_versions:
-            assert VERSION_PATTERN.match(version.lower()) is not None
+            match = VERSION_PATTERN.match(version.lower())
+            assert match is not None
+            assert match.group(0) == version.lower()
 
     def test_pattern_rejects_invalid(self):
         invalid_versions = ["1.0.0", "v1.0.0", "a.1.0", "a-1-0-1", "x.1.0-1"]

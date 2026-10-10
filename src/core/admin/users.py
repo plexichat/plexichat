@@ -55,12 +55,16 @@ def search_users(
             (user_id, limit, offset),
         )
     except ValueError:
+        # Escape LIKE metacharacters so an admin search for `%` or `_` is a
+        # literal search rather than a wildcard probe.
+        escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped_q}%"
         rows = db.fetch_all(
             """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
-               WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
-            (f"%{q}%", f"%{q}%", limit, offset),
+               WHERE u.username LIKE ? ESCAPE '\\' OR u.email_index LIKE ? ESCAPE '\\' LIMIT ? OFFSET ?""",
+            (pattern, pattern, limit, offset),
         )
 
     users = []
@@ -403,6 +407,14 @@ def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
             "UPDATE auth_users SET permissions = ? WHERE id = ?",
             (permissions_to_json(perms), user_id),
         )
+        try:
+            from src.core.database import cache_delete
+
+            invalidate_pattern("token_verify:*")
+            invalidate_pattern("user_data:*")
+            cache_delete(f"user_profile:{user_id}")
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error(f"Failed to set admin status: {e}")
@@ -448,17 +460,25 @@ def get_user_notes(db: Any, user_id: int) -> str:
         (user_id,),
     )
     if row:
-        notes = (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
-        # Decrypt if encryption is enabled and encrypted data exists
-        if encrypt_internal_notes and row.get("internal_notes_encrypted"):
-            from src.utils.encryption import decrypt_data
+        if isinstance(row, dict):
+            plaintext = row.get("internal_notes")
+            encrypted = row.get("internal_notes_encrypted")
+        else:
+            plaintext = row[0] if len(row) > 0 else None
+            encrypted = row[1] if len(row) > 1 else None
 
-            try:
-                notes = decrypt_data(row["internal_notes_encrypted"])
-            except Exception as e:
-                logger.warning(f"Failed to decrypt user notes {user_id}: {e}")
-                notes = row["internal_notes"] or ""  # Fallback to unencrypted
-        return notes
+        if not encrypt_internal_notes:
+            return plaintext or ""
+        if not encrypted:
+            return ""
+
+        from src.utils.encryption import decrypt_data
+
+        try:
+            return decrypt_data(encrypted)
+        except Exception as e:
+            logger.warning(f"Failed to decrypt user notes {user_id}: {e}")
+            return ""
     return ""
 
 
@@ -475,8 +495,8 @@ def save_user_notes(db: Any, user_id: int, notes: str, admin_id: int) -> bool:
 
     if encrypt_internal_notes:
         db.execute(
-            "UPDATE auth_users SET internal_notes = ?, internal_notes_encrypted = ? WHERE id = ?",
-            (notes, notes_encrypted, user_id),
+            "UPDATE auth_users SET internal_notes = NULL, internal_notes_encrypted = ? WHERE id = ?",
+            (notes_encrypted, user_id),
         )
     else:
         db.execute(

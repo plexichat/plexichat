@@ -36,6 +36,26 @@ class ServerUpdateRequest(BaseModel):
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID to select when joining"
     )
+    system_channel_id: Optional[SnowflakeID] = Field(
+        None, description='System messages channel ID (send "0" to clear)'
+    )
+    verification_level: Optional[int] = Field(
+        None, ge=0, le=4, description="Verification level required to join"
+    )
+    default_message_notifications: Optional[int] = Field(
+        None, ge=0, le=1, description="Default notification level"
+    )
+    max_reactions_per_message: Optional[int] = Field(
+        None, ge=1, le=200, description="Maximum reactions per message"
+    )
+
+
+class TransferOwnershipRequest(BaseModel):
+    """Transfer server ownership to another member (owner-only)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    new_owner_id: SnowflakeID = Field(..., description="Member receiving ownership")
 
 
 class ServerResponse(BaseModel):
@@ -57,6 +77,9 @@ class ServerResponse(BaseModel):
     )
     default_message_notifications: int = Field(
         0, description="Default notification level"
+    )
+    max_reactions_per_message: int = Field(
+        20, description="Maximum reactions per message"
     )
     created_at: int = Field(..., description="Creation timestamp")
 
@@ -160,6 +183,29 @@ class MemberResponse(BaseModel):
     timeout_reason: Optional[str] = Field(None, description="Reason for timeout")
 
 
+class MemberListResponse(BaseModel):
+    """Paginated server member list response."""
+
+    items: List[MemberResponse] = Field(default_factory=list, description="Member page")
+    has_more: bool = Field(
+        False, description="Whether more members exist after this page"
+    )
+
+
+class MemberUpdateRequest(BaseModel):
+    """Request body for updating a server member."""
+
+    nickname: Optional[str] = Field(
+        None, description="Server-specific nickname", max_length=100
+    )
+    muted: Optional[bool] = Field(None, description="Server mute state")
+    deafened: Optional[bool] = Field(None, description="Server deafen state")
+    timeout_until: Optional[int] = Field(
+        None, description="Timestamp (ms) until the member is timed out"
+    )
+    timeout_reason: Optional[str] = Field(None, description="Reason for the timeout")
+
+
 class RoleResponse(BaseModel):
     """Role information response."""
 
@@ -215,6 +261,9 @@ class BanResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     user_id: SnowflakeID = Field(..., description="Banned user ID")
+    user: Optional[UserPublicResponse] = Field(
+        default=None, description="Public info of the banned user"
+    )
     reason: Optional[str] = Field(None, description="Reason for ban")
     banned_by: Optional[SnowflakeID] = Field(
         None, description="User who performed the ban"
@@ -230,6 +279,14 @@ class BanCreateRequest(BaseModel):
     delete_message_days: int = Field(
         0, ge=0, le=7, description="Number of days of messages to delete"
     )
+
+
+class KickMemberRequest(BaseModel):
+    """Optional body for kick-member so the collected reason reaches the
+    audit trail instead of being discarded."""
+
+    model_config = ConfigDict(from_attributes=True)
+    reason: Optional[str] = Field(None, max_length=512, description="Reason for kick")
 
 
 class AuditLogEntryResponse(BaseModel):
@@ -278,6 +335,9 @@ class InviteResponse(BaseModel):
     channel_id: Optional[SnowflakeID] = Field(default=None, description="Channel ID")
     inviter_id: Optional[SnowflakeID] = Field(
         default=None, description="Inviter user ID"
+    )
+    inviter: Optional[UserPublicResponse] = Field(
+        default=None, description="Public info of the inviter"
     )
     uses: int = Field(default=0, description="Number of uses")
     max_uses: int = Field(default=0, description="Maximum uses (0 = unlimited)")

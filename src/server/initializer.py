@@ -2,10 +2,14 @@ import os
 import secrets
 import threading
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Protocol, Tuple, cast
 
 import utils.logger as logger
 import utils.config as config
+
+
+class _ServerQueryDatabase(Protocol):
+    def fetch_all(self, query: str, params: tuple = ()) -> list[dict[str, Any]]: ...
 
 
 def initialize_modules(
@@ -21,12 +25,14 @@ def initialize_modules(
         presence,
         reactions,
         stickers,
+        soundboard,
         embeds,
         webhooks,
         settings,
         media,
         events,
         automod,
+        antispam,
         search,
     )
     from src.core import voice, notifications, threads
@@ -43,12 +49,6 @@ def initialize_modules(
         config.set("applications", app_config)
         logger.info("Generated and persisted webhook_signature_secret")
 
-    rl_config = config.get("rate_limiting", {})
-    if not rl_config.get("bypass_secret"):
-        rl_config["bypass_secret"] = secrets.token_hex(32)
-        config.set("rate_limiting", rl_config)
-        logger.info("Generated and persisted rate-limit bypass_secret")
-
     failed_modules = []
 
     logger.info("Initializing database...")
@@ -58,16 +58,6 @@ def initialize_modules(
 
     try:
         migration_result = run_migrations(db)
-
-        # Ensure admin tables (including system_alerts) are created
-        # regardless of migration state — CREATE TABLE IF NOT EXISTS
-        # makes this safe to call on every startup.
-        try:
-            from src.core.admin.schema import create_admin_tables
-
-            create_admin_tables(db)
-        except Exception:
-            pass
 
         if migration_result["success"]:
             logger.info(
@@ -176,11 +166,55 @@ def initialize_modules(
         for t in threads_list:
             t.join()
 
+    # PlexiSum workbook files are independent SQLite databases (``.plexisum``)
+    # stored through the main file-storage adapter. Wire the blob boundary now
+    # that media is available so workbook reads/writes never touch the main
+    # database. Schema creation already happened through migration 000.
+    from src.core.suite import stash as stash_domain
+    from src.core.suite import sum as sum_domain
+
+    stash_domain.setup(db, servers_module=servers, media=media)
+    sum_domain.setup(
+        db,
+        servers_module=servers,
+        media=media,
+    )
+    logger.info("PlexiStash and PlexiSum storage wired to media adapter")
+
+    # Stash background cleanup job: purge soft-deleted items past their
+    # retention window and expire one-time download tickets. Runs only when
+    # the plexistash capability is available and an interval is configured.
+    try:
+        from src.core.artifacts.capabilities import (
+            get_capability,
+            is_usable,
+        )
+
+        if is_usable(get_capability("plexistash").state):
+            from src.core.suite.stash.cleanup import StashCleanupJob
+
+            stash_cfg = config.get("artifacts", {}).get("plexistash", {}) or {}
+            try:
+                cleanup_interval = int(
+                    stash_cfg.get("cleanup_interval_minutes", 60) or 0
+                )
+            except (TypeError, ValueError):
+                cleanup_interval = 60
+            if cleanup_interval > 0:
+                stash_cleanup = StashCleanupJob(db, config.get("artifacts", {}))
+                stash_cleanup.start()
+                modules_store["stash_cleanup"] = stash_cleanup
+                logger.info("Stash cleanup job started")
+            else:
+                logger.info("Stash cleanup disabled (cleanup_interval_minutes <= 0)")
+    except Exception as e:
+        logger.warning(f"Failed to start Stash cleanup job: {e}")
+
     email_config = config.get("email", {})
     email_sender = None
     smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
     if email_config.get("smtp_host") and smtp_password:
-        from src.utils.email import SMTPEmailSender
+        from src.utils.mailer import SMTPEmailSender
 
         email_sender = SMTPEmailSender(
             host=email_config["smtp_host"],
@@ -239,8 +273,20 @@ def initialize_modules(
 
     init_independent()
 
-    timed_init("search", lambda: search.setup(db, auth, messaging, servers))
-    modules_store["search"] = search
+    try:
+        timed_init("search", lambda: search.setup(db, auth, messaging, servers))
+        modules_store["search"] = search
+    except Exception as e:
+        import utils.logger as _log
+
+        _log.warning(
+            f"Search module failed to initialize ({e}); continuing with low-resource blind-index fallback"
+        )
+        try:
+            # still expose a minimal search module so API returns degraded responses instead of 500
+            modules_store["search"] = search
+        except Exception:
+            pass
 
     def init_dependent():
         threads_list = []
@@ -321,7 +367,10 @@ def initialize_modules(
         threads_list.append(threading.Thread(target=init_embeds, name="InitEmbeds"))
 
         def init_polls():
-            timed_init("polls", lambda: polls.setup(db, messaging))
+            timed_init(
+                "polls",
+                lambda: polls.setup(db, messaging, auth_module=auth),
+            )
             modules_store["polls"] = polls
 
         threads_list.append(threading.Thread(target=init_polls, name="InitPolls"))
@@ -361,12 +410,44 @@ def initialize_modules(
 
         threads_list.append(threading.Thread(target=init_stickers, name="InitStickers"))
 
+        def init_soundboard():
+            timed_init(
+                "soundboard",
+                lambda: soundboard.setup(
+                    db,
+                    servers_module=servers,
+                    media_module=media,
+                ),
+            )
+            modules_store["soundboard"] = soundboard
+
+        threads_list.append(
+            threading.Thread(target=init_soundboard, name="InitSoundboard")
+        )
+
         for t in threads_list:
             t.start()
         for t in threads_list:
             t.join()
 
     init_dependent()
+
+    # Push module depends on notifications (user push preferences); it must
+    # be initialized BEFORE any notification creation runs so device
+    # delivery has a manager. Failure to init push is non-fatal — chat
+    # keeps working without mobile delivery.
+    try:
+        from src.core import push
+
+        timed_init(
+            "push",
+            lambda: push.setup(
+                db, notifications_module=modules_store.get("notifications")
+            ),
+        )
+        modules_store["push"] = push
+    except Exception as e:
+        logger.warning(f"Failed to initialize push module: {e}")
 
     timed_init(
         "automod",
@@ -379,8 +460,14 @@ def initialize_modules(
     )
     modules_store["automod"] = automod
 
+    timed_init(
+        "antispam",
+        lambda: antispam.setup(db),
+    )
+    modules_store["antispam"] = antispam
+
     try:
-        all_servers = db.fetch_all(
+        all_servers = cast(_ServerQueryDatabase, db).fetch_all(
             "SELECT id, owner_id FROM srv_servers WHERE deleted = 0"
         )
         server_count = 0
@@ -420,6 +507,26 @@ def initialize_modules(
         lambda: webhooks.setup(db, auth, messaging, servers, embeds),
     )
     modules_store["webhooks"] = webhooks
+
+    # Outbound webhook retry-delivery job: periodically drains the
+    # ``webhook_retry_queue`` so failed deliveries get their backoff attempts.
+    # Disabled when ``webhooks.delivery_interval_seconds <= 0``.
+    try:
+        from src.core.webhooks.delivery import WebhookDeliveryJob
+
+        webhook_cfg = config.get("webhooks", {}) or {}
+        delivery_job = WebhookDeliveryJob(db, webhook_cfg)
+        delivery_job.start()
+        if delivery_job._is_running:
+            modules_store["webhook_delivery"] = delivery_job
+            logger.info("Webhook retry delivery job started")
+        else:
+            logger.info(
+                "Webhook retry delivery job disabled "
+                "(delivery_interval_seconds <= 0 or no database)"
+            )
+    except Exception as e:
+        logger.error(f"Failed to start webhook retry delivery job: {e}")
 
     try:
         timed_init("threads", lambda: threads.setup(db, auth, messaging, servers))
@@ -663,7 +770,8 @@ def initialize_modules(
             failed_modules.append("ratelimit")
 
     telemetry_config = config.get("telemetry") or {}
-    if telemetry_config.get("enabled", True):
+    # Opt-in only: telemetry stays disabled unless explicitly enabled.
+    if telemetry_config.get("enabled", False):
         try:
             from src.core import telemetry
 

@@ -76,21 +76,41 @@ async def upload_server_icon(
             content_type=file.content_type,
         )
 
+        # H2: parity with /avatars/servers/{id} — push the new icon to
+        # connected clients so open sessions are not stale.
+        try:
+            from src.core.events.gateway_emit import emit_guild_update
+
+            emit_guild_update(sid, icon=result["url"])
+        except Exception as ge:
+            logger.debug(f"emit_guild_update (icon upload) failed: {ge}")
+
         server = servers_mod.update_server(
             current_user.user_id, sid, icon_url=result["url"]
         )
         return _server_to_response(server)
     except HTTPException:
         raise
+    except (ValueError, TypeError):
+        # M1: invalid image bytes are a CLIENT error - same static message
+        # as the sibling /avatars endpoints; never leak str(e).
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid image file"}},
+        )
     except Exception as e:
         exc_name = type(e).__name__
+        # M1: invalid image data (size/type/blocked/malware) is a CLIENT
+        # error - the response must say so, not "Internal server error".
         if "Size" in exc_name or "Type" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid image file"}},
             )
         elif "Blocked" in exc_name or "Malware" in exc_name:
             raise HTTPException(
-                status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid image file"}},
             )
 
         logger.error(

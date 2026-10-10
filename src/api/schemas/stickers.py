@@ -20,6 +20,7 @@ class StickerResponse(BaseModel):
     ] = Field(..., description="Pack ID")
     name: str = Field(..., description="Sticker name")
     format: str = Field(..., description="Sticker format (png, apng, json)")
+    description: Optional[str] = Field(None, description="Sticker description")
     tags: List[str] = Field(default_factory=list, description="Sticker tags")
     related_emoji: Optional[str] = Field(None, description="Related unicode emoji")
     url: str = Field(..., description="Sticker URL")

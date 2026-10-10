@@ -2,6 +2,7 @@ import secrets
 import ipaddress
 from typing import Optional, List, Dict, Any, Tuple
 
+import utils.logger as logger
 from src.core.database import cached, invalidate_pattern
 
 from ..models import AccessToken, AuditEventType
@@ -342,14 +343,24 @@ class ApiTokenMixin(AuthManagerProtocol):
         )
         recent_events = [self._row_to_access_token_event(row) for row in recent_rows]
 
+        # Each event's IP is sealed with AAD bound to its own row id
+        # (``context=str(event_id)``), so the ciphertext of an arbitrary
+        # member of the group cannot be decrypted. Join back to the most
+        # recent event per ip_index and decrypt using that row's id, rather
+        # than aggregating ciphertext with MAX() (which no context can open).
         ip_rows = self._db.fetch_all(
-            """SELECT ip_index, MAX(ip_encrypted) AS ip_encrypted, COUNT(*) AS request_count,
-                      MAX(used_at) AS last_seen_at,
-                      SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count
-               FROM auth_api_access_token_events
-               WHERE token_id = ? AND ip_index IS NOT NULL
-               GROUP BY ip_index
-               ORDER BY request_count DESC, last_seen_at DESC
+            """SELECT g.ip_index, g.max_id, e.ip_encrypted,
+                      g.request_count, g.last_seen_at, g.denied_count
+               FROM (
+                   SELECT ip_index, MAX(id) AS max_id, COUNT(*) AS request_count,
+                          MAX(used_at) AS last_seen_at,
+                          SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied_count
+                   FROM auth_api_access_token_events
+                   WHERE token_id = ? AND ip_index IS NOT NULL
+                   GROUP BY ip_index
+               ) g
+               JOIN auth_api_access_token_events e ON e.id = g.max_id
+               ORDER BY g.request_count DESC, g.last_seen_at DESC
                LIMIT 50""",
             (token_id,),
         )
@@ -359,7 +370,7 @@ class ApiTokenMixin(AuthManagerProtocol):
             if row.get("ip_encrypted"):
                 try:
                     ip_address = self.crypto.decrypt_data(
-                        row["ip_encrypted"], context="api_access_token_event"
+                        row["ip_encrypted"], context=str(row["max_id"])
                     )
                 except Exception:
                     ip_address = "[decryption failed]"
@@ -523,8 +534,11 @@ class ApiTokenMixin(AuthManagerProtocol):
             api_cfg = get_api_config()
             if not api_cfg.access_token_required:
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(
+                f"is_api_access_token_required: failed to read access token config: {e}"
+            )
+            return True
         try:
             now = self._get_timestamp()
             row = self._db.fetch_one(
@@ -534,8 +548,11 @@ class ApiTokenMixin(AuthManagerProtocol):
                 (now,),
             )
             return bool(row)
-        except Exception:
-            return False
+        except Exception as e:
+            logger.error(
+                f"is_api_access_token_required: failed to query access tokens: {e}"
+            )
+            return True
 
     def _normalize_access_token_scope_mode(self, scope_mode: str) -> str:
         normalized = (scope_mode or "none").strip().lower()

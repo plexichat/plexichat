@@ -2,7 +2,7 @@ import os
 import logging
 import zipfile
 import glob
-from datetime import datetime
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from typing import Optional, List, Union
 
@@ -154,7 +154,9 @@ class Logger:
 
     def _get_log_filename(self) -> str:
         """Generates a log filename based on the format."""
-        filename = datetime.now().strftime(self.log_name_format)
+        # Rendered in UTC so dated logs correlate across hosts regardless
+        # of each server's local zone (matches the admin/API UTC timestamps).
+        filename = datetime.now(timezone.utc).strftime(self.log_name_format)
         filepath = os.path.join(self.log_dir, filename)
 
         # Handle collision if file already exists
@@ -211,7 +213,7 @@ class Logger:
 
         # 2. Enforce max_zip_age_days
         if self.max_zip_age_days is not None:
-            cutoff_time = datetime.now().timestamp() - (
+            cutoff_time = datetime.now(timezone.utc).timestamp() - (
                 self.max_zip_age_days * 24 * 60 * 60
             )
             for filepath, mtime in zip_files:
@@ -226,6 +228,12 @@ class Logger:
         logger = logging.getLogger("AppLogger")
         logger.setLevel(self.level)
 
+        # Remove any stale sanitizing filters left by previous Logger instances
+        # (getLogger returns a global singleton, so filters would otherwise
+        # accumulate once per Logger construction).
+        for existing in logger.filters[:]:
+            if isinstance(existing, SanitizingFilter):
+                logger.removeFilter(existing)
         # Add sanitizing filter
         logger.addFilter(SanitizingFilter())
 

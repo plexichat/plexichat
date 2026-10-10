@@ -14,7 +14,8 @@ from src.api.schemas.polls import (
     PollResultsResponse,
     PollOptionResponse,
 )
-from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.api.schemas.common import ErrorResponse, SuccessResponse, SnowflakeID
+from typing import List
 from src.core.polls import (
     PollResultsVisibility,
     PollNotFoundError,
@@ -28,6 +29,7 @@ from src.core.polls import (
     MultipleVoteNotAllowedError,
     PermissionDeniedError,
     MessageNotFoundError,
+    PollAlreadyExistsError,
 )
 
 router = APIRouter(prefix="/polls", tags=["Polls"])
@@ -92,6 +94,7 @@ def _results_to_response(results) -> PollResultsResponse:
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         404: {"model": ErrorResponse, "description": "Message not found"},
+        409: {"model": ErrorResponse, "description": "Message already has a poll"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -123,7 +126,9 @@ async def create_poll(
 
         if messaging:
             try:
-                messaging.update_message_metadata(poll.message_id, {"poll_id": poll.id})
+                messaging.update_message_metadata(
+                    current_user.user_id, poll.message_id, {"poll_id": poll.id}
+                )
             except Exception:
                 logger.debug("Failed to update poll metadata on message")
 
@@ -135,17 +140,25 @@ async def create_poll(
         InvalidPollDurationError,
         AlreadyVotedError,
         MultipleVoteNotAllowedError,
-    ) as e:
+    ):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except MessageNotFoundError as e:
+    except PollAlreadyExistsError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=409,
+            detail={"error": {"code": 409, "message": "Resource already exists"}},
         )
-    except PermissionDeniedError as e:
+    except MessageNotFoundError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
+        )
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
@@ -194,9 +207,10 @@ async def get_poll(
         if not poll:
             raise PollNotFoundError("Poll not found")
         return _poll_to_response(poll)
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except HTTPException:
         raise
@@ -243,14 +257,77 @@ async def get_poll_results(
     try:
         results = polls_module.get_results(pid, current_user.user_id)
         return _results_to_response(results)
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get poll results {poll_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/{poll_id}/voters",
+    response_model=List[SnowflakeID],
+    summary="Get poll voters",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid poll ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Poll not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_poll_voters(
+    poll_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> List[SnowflakeID]:
+    """
+    Retrieve the discrete voter roster for a specific poll.
+
+    Only the poll creator (or a moderator with
+    ``admin.polls.view_voters``) may view the roster. The response honors
+    the poll's results-visibility setting: ``AFTER_VOTE`` polls never
+    expose voters, and ``AFTER_END`` polls only once ended. Voter ids are
+    serialized as decimal strings so a browser client never rounds them.
+    """
+    polls_module = api.get_polls()
+    if not polls_module:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Polls module not available"}},
+        )
+    try:
+        pid = int(poll_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
+        )
+
+    try:
+        voters = polls_module.get_voters(pid, current_user.user_id)
+        return [SnowflakeID(str(v)) for v in voters]
+    except PollNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
+        )
+    except PermissionDeniedError:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get poll voters {poll_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
@@ -302,22 +379,91 @@ async def vote_on_poll(
         PollEndedError,
         AlreadyVotedError,
         MultipleVoteNotAllowedError,
-    ) as e:
+        InvalidPollOptionError,
+    ):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to vote on poll {poll_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.put(
+    "/{poll_id}/vote",
+    response_model=PollResultsResponse,
+    summary="Change vote on poll",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid poll vote"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        404: {"model": ErrorResponse, "description": "Poll not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def change_vote_on_poll(
+    poll_id: str,
+    body: PollVoteRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> PollResultsResponse:
+    """
+    Replace the current user's existing vote on a poll with a new selection.
+    """
+    polls_module = api.get_polls()
+    if not polls_module:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Polls module not available"}},
+        )
+    try:
+        pid = int(poll_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
+        )
+
+    try:
+        results = polls_module.change_vote(
+            user_id=current_user.user_id,
+            poll_id=pid,
+            option_ids=[int(x) for x in body.option_ids],
+        )
+        return _results_to_response(results)
+    except (
+        PollOptionNotFoundError,
+        PollEndedError,
+        MultipleVoteNotAllowedError,
+        InvalidPollOptionError,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except PollNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to change vote on poll {poll_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
@@ -360,17 +506,20 @@ async def close_poll(
     try:
         poll = polls_module.close_poll(current_user.user_id, pid)
         return _poll_to_response(poll)
-    except (PollEndedError, InvalidPollDurationError) as e:
+    except (PollEndedError, InvalidPollDurationError):
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise
@@ -418,13 +567,15 @@ async def delete_poll(
     try:
         polls_module.delete_poll(current_user.user_id, pid)
         return SuccessResponse(success=True, message=None)
-    except PollNotFoundError as e:
+    except PollNotFoundError:
         raise HTTPException(
-            status_code=404, detail={"error": {"code": 404, "message": str(e)}}
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Resource not found"}},
         )
-    except PermissionDeniedError as e:
+    except PermissionDeniedError:
         raise HTTPException(
-            status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+            status_code=403,
+            detail={"error": {"code": 403, "message": "Access denied"}},
         )
     except HTTPException:
         raise

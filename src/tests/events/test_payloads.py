@@ -110,6 +110,11 @@ class TestPresencePayloads:
         assert event.channel_id == 456
         assert event.data["user_id"] == "123"
         assert event.data["channel_id"] == "456"
+        # Timestamps are Unix milliseconds (same contract as REST and the
+        # other gateway live events): the payload value must match the
+        # event timestamp instead of truncating to seconds.
+        assert event.data["timestamp"] == event.timestamp
+        assert event.data["timestamp"] >= 1_700_000_000_000
 
     def test_create_typing_start_with_server(self):
         """Test TYPING_START with server ID."""
@@ -344,3 +349,900 @@ class TestEventToDict:
         data = event.data
         assert isinstance(data["id"], str)
         assert isinstance(data["channel_id"], str)
+
+
+class TestChannelPinsUpdatePayload:
+    """CHANNEL_PINS_UPDATE carries string IDs like the message family."""
+
+    def test_pins_update_stringifies_ids(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["event_type"] = event_type
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_channel_pins_update(
+            123, guild_id=456, pinned_message_ids=[7, 8]
+        )
+
+        assert captured["event_type"] == EventType.CHANNEL_PINS_UPDATE
+        data = captured["data"]
+        assert data["channel_id"] == "123"
+        assert data["server_id"] == "456"
+        assert data["guild_id"] == "456"
+        assert data["pinned_message_ids"] == ["7", "8"]
+        # Routing keys stay ints, as with the sibling emitters.
+        assert captured["kwargs"]["channel_id"] == 123
+        assert captured["kwargs"]["server_id"] == 456
+
+    def test_pins_update_without_guild_or_pins(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["data"] = data
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_channel_pins_update(123)
+
+        data = captured["data"]
+        assert data["channel_id"] == "123"
+        assert data["server_id"] is None
+        assert data["guild_id"] is None
+        assert data["pinned_message_ids"] == []
+
+
+class TestWorkbookUpdatePayload:
+    """WORKBOOK_UPDATE always carries its identifiers from the arguments."""
+
+    def test_workbook_update_injects_ids(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["event_type"] = event_type
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_workbook_update(
+            42,
+            7,
+            99,
+            {"note": "hello"},
+            user_ids=[1, 2],
+            exclude_user_ids=[99],
+        )
+
+        assert captured["event_type"] == EventType.WORKBOOK_UPDATE
+        data = captured["data"]
+        assert data["workbook_id"] == "42"
+        assert data["revision"] == 7
+        assert data["actor_id"] == "99"
+        assert data["note"] == "hello"
+        assert captured["kwargs"]["user_ids"] == [1, 2]
+        assert captured["kwargs"]["exclude_user_ids"] == [99]
+
+    def test_workbook_update_overrides_stale_ids_and_keeps_caller_dict(
+        self, monkeypatch
+    ):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["data"] = data
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        extra = {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
+        gateway_emit.emit_workbook_update(42, 7, 99, extra)
+
+        data = captured["data"]
+        assert data["workbook_id"] == "42"
+        assert data["revision"] == 7
+        assert data["actor_id"] == "99"
+        # The caller's dict is not mutated.
+        assert extra == {"workbook_id": "stale", "revision": 1, "actor_id": "stale"}
+
+    def test_workbook_update_stringifies_nested_id_extras(self, monkeypatch):
+        """Nested snowflakes inside ``data`` extras must not leak as numbers."""
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["data"] = data
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        extra = {
+            "kind": "comment",
+            "comment": {"id": 1234567890123456789, "row": 3},
+            "mentioned_user_ids": [1234567890123456789],
+            "like_count": 5,
+        }
+        gateway_emit.emit_workbook_update(42, 7, 99, extra)
+
+        data = captured["data"]
+        assert data["comment"] == {"id": "1234567890123456789", "row": 3}
+        assert data["mentioned_user_ids"] == ["1234567890123456789"]
+        assert data["like_count"] == 5
+        assert data["revision"] == 7
+        # The caller's dict is not mutated.
+        assert extra["comment"] == {"id": 1234567890123456789, "row": 3}
+
+
+class TestUserUpdatePayload:
+    """USER_UPDATE must carry snowflake ids as strings."""
+
+    def test_user_update_stringifies_ids(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        captured = {}
+
+        def fake_emit(event_type, data, **kwargs):
+            captured["event_type"] = event_type
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(gateway_emit, "_emit", fake_emit)
+        gateway_emit.emit_user_update(
+            {"id": 1234567890123456789, "username": "alice"},
+            exclude_user_id=42,
+        )
+
+        assert captured["event_type"] == EventType.USER_UPDATE
+        assert captured["data"]["user"]["id"] == "1234567890123456789"
+        assert captured["data"]["user"]["username"] == "alice"
+        # Routing keys stay ints, matching the sibling emitters.
+        assert captured["kwargs"]["user_ids"] == [1234567890123456789]
+        assert captured["kwargs"]["exclude_user_ids"] == [42]
+
+
+def test_user_update_does_not_mutate_caller_dict(monkeypatch):
+    from src.core.events import gateway_emit
+
+    monkeypatch.setattr(gateway_emit, "_emit", lambda *a, **k: None)
+    user = {"id": 1234567890123456789, "username": "alice"}
+    gateway_emit.emit_user_update(user)
+    assert user["id"] == 1234567890123456789
+
+
+class TestNonRaisingEmitters:
+    """Emitters must never raise into the REST handler (module contract)."""
+
+    def test_user_update_with_malformed_id_does_not_raise(self):
+        from src.core.events import gateway_emit
+
+        # int("abc") used to propagate ValueError out of the helper.
+        assert gateway_emit.emit_user_update({"id": "abc"}) is None
+
+    def test_workbook_update_with_malformed_revision_does_not_raise(self):
+        from src.core.events import gateway_emit
+
+        assert gateway_emit.emit_workbook_update(42, "not-a-number", 99, {}) is None
+
+    def test_broken_payload_build_does_not_raise(self, monkeypatch):
+        from src.core.events import gateway_emit
+
+        class BadStr:
+            def __str__(self):
+                raise RuntimeError("boom")
+
+        # str() coercion inside the helper must also stay non-raising.
+        assert gateway_emit.emit_channel_pins_update(BadStr()) is None
+
+
+class TestExplicitZeroTimestamps:
+    """Explicit ``0`` timestamps must survive instead of falling back to now.
+
+    The payload factories used ``value or now`` for their optional timestamp
+    defaults, so a caller that passed ``0`` (epoch, or a backfill sentinel)
+    silently received the current clock instead. The flat message builder
+    (``message_events.build_flat_message_create``) already guards with
+    ``is not None``; these tests pin the same contract on the
+    Discord-style factories.
+    """
+
+    def test_message_create_preserves_zero_timestamp(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            timestamp=0,
+        )
+        assert event.timestamp == 0
+        assert event.data["timestamp"] == 0
+
+    def test_message_update_preserves_zero_edited_timestamp(self):
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            content="Updated content",
+            edited_timestamp=0,
+        )
+        assert event.edited_timestamp == 0
+        assert event.data["edited_timestamp"] == 0
+
+    def test_guild_member_add_preserves_zero_joined_at(self):
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            joined_at=0,
+        )
+        assert event.joined_at == 0
+        assert event.data["joined_at"] == 0
+
+
+class TestExplicitZeroIds:
+    """Explicit ``0`` ids must survive instead of being treated as absent.
+
+    The payload factories guarded their optional id scope keys with truthiness
+    (``if server_id:``), so a caller that passed ``0`` silently lost the
+    scope keys from ``data``. The sibling ``gateway_emit`` helpers already
+    guard with ``is not None``; these tests pin the same contract on the
+    Discord-style factories.
+    """
+
+    def test_message_create_preserves_zero_server_id(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["server_id"] == "0"
+        assert event.data["guild_id"] == "0"
+
+    def test_message_update_preserves_zero_server_id(self):
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            content="Updated content",
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["server_id"] == "0"
+        assert event.data["guild_id"] == "0"
+
+    def test_message_delete_preserves_zero_server_id(self):
+        event = events.create_message_delete(
+            message_id=123,
+            channel_id=456,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["server_id"] == "0"
+        assert event.data["guild_id"] == "0"
+
+    def test_presence_update_preserves_zero_server_id(self):
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_typing_start_preserves_zero_server_id(self):
+        event = events.create_typing_start(
+            user_id=123,
+            channel_id=456,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_channel_create_preserves_zero_ids(self):
+        event = events.create_channel_create(
+            channel_id=123,
+            channel_type=0,
+            server_id=0,
+            parent_id=0,
+        )
+        assert event.server_id == 0
+        assert event.parent_id == 0
+        assert event.data["guild_id"] == "0"
+        assert event.data["parent_id"] == "0"
+
+    def test_channel_update_preserves_zero_ids(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+            server_id=0,
+            parent_id=0,
+        )
+        assert event.server_id == 0
+        assert event.parent_id == 0
+        assert event.data["guild_id"] == "0"
+        assert event.data["parent_id"] == "0"
+
+    def test_channel_delete_preserves_zero_server_id(self):
+        event = events.create_channel_delete(
+            channel_id=123,
+            channel_type=0,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_guild_update_preserves_zero_owner_id(self):
+        event = events.create_guild_update(
+            server_id=123,
+            owner_id=0,
+        )
+        assert event.owner_id == 0
+        assert event.data["owner_id"] == "0"
+
+    def test_guild_member_add_preserves_empty_nick(self):
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            nick="",
+        )
+        assert event.nick == ""
+        assert event.data["nick"] == ""
+
+    def test_voice_state_update_preserves_zero_server_id(self):
+        event = events.create_voice_state_update(
+            user_id=123,
+            channel_id=456,
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_reaction_add_preserves_zero_server_id(self):
+        event = events.create_reaction_add(
+            user_id=123,
+            message_id=456,
+            channel_id=789,
+            emoji={"name": "thumbsup", "id": None},
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+    def test_reaction_remove_preserves_zero_server_id(self):
+        event = events.create_reaction_remove(
+            user_id=123,
+            message_id=456,
+            channel_id=789,
+            emoji={"name": "thumbsup", "id": None},
+            server_id=0,
+        )
+        assert event.server_id == 0
+        assert event.data["guild_id"] == "0"
+
+
+class TestExplicitEmptyClears:
+    """Explicit ``""`` clears must survive instead of being dropped.
+
+    The GUILD_UPDATE factory guarded ``name``/``icon`` with truthiness,
+    so a caller that passed ``""`` (e.g. clearing a server icon) silently
+    produced a payload without the key. ``gateway_emit.emit_guild_update``
+    already guards with ``is not None`` for exactly this reason; these
+    tests pin the same contract on the payload factory.
+    """
+
+    def test_guild_update_preserves_empty_name(self):
+        event = events.create_guild_update(
+            server_id=123,
+            name="",
+        )
+        assert event.name == ""
+        assert event.data["name"] == ""
+
+    def test_guild_update_preserves_empty_icon(self):
+        event = events.create_guild_update(
+            server_id=123,
+            icon="",
+        )
+        assert event.icon == ""
+        assert event.data["icon"] == ""
+
+    def test_guild_update_omits_unset_name_and_icon(self):
+        event = events.create_guild_update(
+            server_id=123,
+        )
+        assert "name" not in event.data
+        assert "icon" not in event.data
+
+    def test_channel_update_preserves_empty_name(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+            name="",
+        )
+        assert event.name == ""
+        assert event.data["name"] == ""
+
+    def test_channel_update_preserves_empty_topic(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+            topic="",
+        )
+        assert event.topic == ""
+        assert event.data["topic"] == ""
+
+    def test_channel_update_omits_unset_name_and_topic(self):
+        event = events.create_channel_update(
+            channel_id=123,
+            channel_type=0,
+        )
+        assert "name" not in event.data
+        assert "topic" not in event.data
+
+
+class TestExplicitEmptyCreateClears:
+    """Explicit ``""``/``{}`` optionals must survive on the sibling factories.
+
+    ``create_channel_update``/``create_guild_update`` already guard with
+    ``is not None`` so explicit clears are preserved; the create/delete and
+    accessory-field factories guarded with truthiness and silently dropped
+    them. These tests pin the same contract everywhere.
+    """
+
+    def test_channel_create_preserves_empty_name_and_topic(self):
+        event = events.create_channel_create(
+            channel_id=123,
+            channel_type=0,
+            name="",
+            topic="",
+        )
+        assert event.name == ""
+        assert event.topic == ""
+        assert event.data["name"] == ""
+        assert event.data["topic"] == ""
+
+    def test_channel_create_omits_unset_name_and_topic(self):
+        event = events.create_channel_create(
+            channel_id=123,
+            channel_type=0,
+        )
+        assert "name" not in event.data
+        assert "topic" not in event.data
+
+    def test_channel_delete_preserves_empty_name(self):
+        event = events.create_channel_delete(
+            channel_id=123,
+            channel_type=0,
+            name="",
+        )
+        assert event.name == ""
+        assert event.data["name"] == ""
+
+    def test_guild_create_preserves_empty_icon(self):
+        event = events.create_guild_create(
+            server_id=123,
+            name="Test Server",
+            owner_id=456,
+            icon="",
+        )
+        assert event.icon == ""
+        assert event.data["icon"] == ""
+
+    def test_message_update_preserves_empty_author(self):
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            author={},
+        )
+        assert event.author == {}
+        assert event.data["author"] == {}
+
+    def test_typing_start_preserves_empty_member(self):
+        event = events.create_typing_start(
+            user_id=123,
+            channel_id=456,
+            member={},
+        )
+        assert event.data["member"] == {}
+
+    def test_voice_state_update_preserves_empty_session_and_member(self):
+        event = events.create_voice_state_update(
+            user_id=123,
+            channel_id=456,
+            session_id="",
+            member={},
+        )
+        assert event.data["session_id"] == ""
+        assert event.data["member"] == {}
+
+    def test_reaction_add_preserves_empty_member(self):
+        event = events.create_reaction_add(
+            user_id=123,
+            message_id=456,
+            channel_id=789,
+            emoji={"name": "thumbsup", "id": None},
+            member={},
+        )
+        assert event.member == {}
+        assert event.data["member"] == {}
+
+    def test_gateway_error_preserves_empty_message(self):
+        event = events.create_gateway_error(
+            "guild_members_denied",
+            message="",
+        )
+        assert event.data["message"] == ""
+
+    def test_gateway_error_omits_unset_message(self):
+        event = events.create_gateway_error("guild_members_denied")
+        assert "message" not in event.data
+
+
+class TestFlatMessageBuilderExplicitEmpties:
+    """Explicit empty optionals in the flat message builders must survive.
+
+    ``build_flat_message_create`` guarded ``metadata`` with truthiness, so
+    an explicit ``metadata={}`` collapsed to ``None``. The Discord-style
+    factories already guard with ``is not None``; these tests pin the same
+    contract on the flat family.
+    """
+
+    def test_flat_message_create_preserves_empty_metadata(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+            metadata={},
+        )
+        assert event.data["metadata"] == {}
+
+    def test_flat_message_create_omits_unset_metadata_as_none(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+        )
+        assert event.data["metadata"] is None
+
+    def test_flat_message_create_preserves_nonempty_metadata(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+            metadata={"artifact_id": "7"},
+        )
+        assert event.data["metadata"] == {"artifact_id": "7"}
+
+
+class TestExplicitEmptyAuthorUserFallbacks:
+    """Explicit ``{}`` author/user/client_status must survive the defaults.
+
+    The message/presence/member factories fell back with ``value or
+    default``, so an explicit empty dict collapsed to the synthesized
+    ``{"id": ...}`` (or ``{"desktop": status}``) default. The sibling
+    optional-field factories already guard with ``is not None``; these
+    tests pin the same contract here. The flat message builder's
+    ``author_username`` had the same shape (``or f"User {aid}"``), so an
+    explicit ``""`` collapsed to the fallback.
+    """
+
+    def test_message_create_preserves_empty_author(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+            author={},
+        )
+        assert event.author == {}
+        assert event.data["author"] == {}
+
+    def test_message_create_omits_unset_author_default(self):
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="Hello!",
+        )
+        assert event.data["author"] == {"id": "789"}
+
+    def test_presence_update_preserves_empty_user_and_client_status(self):
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            user={},
+            client_status={},
+        )
+        assert event.data["user"] == {}
+        assert event.data["client_status"] == {}
+
+    def test_presence_update_omits_unset_user_default(self):
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+        )
+        assert event.data["user"] == {"id": "123"}
+        assert event.data["client_status"] == {"desktop": "online"}
+
+    def test_guild_member_add_preserves_empty_user(self):
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            user={},
+        )
+        assert event.data["user"] == {}
+
+    def test_guild_member_remove_preserves_empty_user(self):
+        event = events.create_guild_member_remove(
+            server_id=123,
+            user_id=456,
+            user={},
+        )
+        assert event.data["user"] == {}
+
+    def test_guild_member_update_preserves_empty_user(self):
+        event = events.create_guild_member_update(
+            server_id=123,
+            user_id=456,
+            user={},
+        )
+        assert event.data["user"] == {}
+
+    def test_flat_message_create_preserves_empty_author_username(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+            author_username="",
+        )
+        assert event.data["author_username"] == ""
+
+    def test_flat_message_create_falls_back_unset_author_username(self):
+        from src.core.events import build_flat_message_create
+
+        event = build_flat_message_create(
+            message_id=1,
+            channel_id=2,
+            author_id=3,
+            content="hi",
+        )
+        assert event.data["author_username"] == "User 3"
+
+
+class TestPayloadListCopies:
+    """List args must be copied, never aliased, by payload factories.
+
+    The factories built ``data``/model fields with ``arg or []``, so the
+    event held the caller's list object: mutating the caller's list after
+    the build corrupted the already-built event, and ``data`` and model
+    fields shared one object. Each field must be an independent copy.
+    """
+
+    def test_message_create_copies_mentions_attachments_embeds(self):
+        mentions = [{"id": "1"}]
+        attachments = [{"id": "a"}]
+        embeds = [{"type": "rich"}]
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="hi",
+            mentions=mentions,
+            attachments=attachments,
+            embeds=embeds,
+        )
+        assert event.data["mentions"] == mentions
+        assert event.data["mentions"] is not mentions
+        assert event.mentions is not mentions
+        assert event.data["mentions"] is not event.mentions
+        assert event.data["attachments"] is not attachments
+        assert event.data["embeds"] is not embeds
+        mentions.append({"id": "2"})
+        attachments.append({"id": "b"})
+        assert event.data["mentions"] == [{"id": "1"}]
+        assert event.mentions == [{"id": "1"}]
+        assert event.data["attachments"] == [{"id": "a"}]
+
+    def test_presence_update_copies_activities(self):
+        activities = [{"name": "chess"}]
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            activities=activities,
+        )
+        assert event.data["activities"] is not activities
+        assert event.activities is not activities
+        activities.append({"name": "go"})
+        assert event.data["activities"] == [{"name": "chess"}]
+        assert event.activities == [{"name": "chess"}]
+
+    def test_guild_create_copies_channels_roles_members(self):
+        channels = [{"id": "1"}]
+        roles = [{"id": "2"}]
+        members = [{"id": "3"}]
+        event = events.create_guild_create(
+            server_id=123,
+            name="guild",
+            owner_id=456,
+            channels=channels,
+            roles=roles,
+            members=members,
+        )
+        assert event.data["channels"] is not channels
+        assert event.channels is not channels
+        assert event.data["members"] is not members
+        channels.append({"id": "9"})
+        assert event.data["channels"] == [{"id": "1"}]
+        assert event.channels == [{"id": "1"}]
+
+    def test_guild_member_add_copies_roles(self):
+        roles = [1, 2]
+        event = events.create_guild_member_add(
+            server_id=123,
+            user_id=456,
+            roles=roles,
+        )
+        assert event.roles is not roles
+        assert event.roles == [1, 2]
+        assert event.data["roles"] == ["1", "2"]
+        roles.append(3)
+        assert event.roles == [1, 2]
+        assert event.data["roles"] == ["1", "2"]
+
+    def test_ready_event_copies_user_and_guilds(self):
+        user = {"id": "1", "username": "alice"}
+        guilds = [{"id": "g1"}]
+        event = events.create_ready_event("session-1", user, guilds)
+        assert event.data["user"] == user
+        assert event.data["user"] is not user
+        assert event.user is not user
+        assert event.data["user"] is not event.user
+        assert event.data["guilds"] == guilds
+        assert event.data["guilds"] is not guilds
+        assert event.guilds is not guilds
+        assert event.data["guilds"] is not event.guilds
+        user["username"] = "mallory"
+        guilds.append({"id": "g2"})
+        assert event.data["user"] == {"id": "1", "username": "alice"}
+        assert event.user == {"id": "1", "username": "alice"}
+        assert event.data["guilds"] == [{"id": "g1"}]
+        assert event.guilds == [{"id": "g1"}]
+
+    def test_guild_members_chunk_copies_members(self):
+        members = [{"id": "m1"}]
+        event = events.create_guild_members_chunk(123, members)
+        assert event.data["members"] == members
+        assert event.data["members"] is not members
+        members.append({"id": "m2"})
+        assert event.data["members"] == [{"id": "m1"}]
+
+
+class TestCallerDictCopies:
+    """Caller-owned dicts must be copied, never aliased, by the factories.
+
+    ``create_ready_event`` and ``create_guild_members_chunk`` already copy
+    their containers; the message/presence factories must too, so mutating
+    the dict passed in after the build cannot corrupt the already-built
+    event (which may be queued for session replay).
+    """
+
+    def test_message_create_copies_author(self):
+        author = {"id": "789", "username": "alice"}
+        event = events.create_message_create(
+            message_id=123,
+            channel_id=456,
+            author_id=789,
+            content="hi",
+            author=author,
+        )
+        assert event.data["author"] == author
+        assert event.data["author"] is not author
+        assert event.author is not author
+        author["username"] = "mallory"
+        assert event.data["author"] == {"id": "789", "username": "alice"}
+        assert event.author == {"id": "789", "username": "alice"}
+
+    def test_message_update_copies_author(self):
+        author = {"id": "789", "username": "alice"}
+        event = events.create_message_update(
+            message_id=123,
+            channel_id=456,
+            content="edited",
+            author=author,
+        )
+        assert event.data["author"] == author
+        assert event.data["author"] is not author
+        assert event.author is not author
+        author["username"] = "mallory"
+        assert event.data["author"] == {"id": "789", "username": "alice"}
+        assert event.author == {"id": "789", "username": "alice"}
+
+    def test_presence_update_copies_user_and_client_status(self):
+        user = {"id": "123", "username": "bob"}
+        client_status = {"desktop": "online"}
+        event = events.create_presence_update(
+            user_id=123,
+            status="online",
+            user=user,
+            client_status=client_status,
+        )
+        assert event.data["user"] == user
+        assert event.data["user"] is not user
+        assert event.data["client_status"] == client_status
+        assert event.data["client_status"] is not client_status
+        assert event.client_status is not client_status
+        user["username"] = "mallory"
+        client_status["desktop"] = "idle"
+        assert event.data["user"] == {"id": "123", "username": "bob"}
+        assert event.data["client_status"] == {"desktop": "online"}
+        assert event.client_status == {"desktop": "online"}
+
+    def test_typing_start_copies_member(self):
+        member = {"id": "9", "nick": "n"}
+        event = events.create_typing_start(user_id=1, channel_id=2, member=member)
+        assert event.data["member"] == member
+        assert event.data["member"] is not member
+        member["nick"] = "mutated"
+        assert event.data["member"] == {"id": "9", "nick": "n"}
+
+    def test_guild_member_factories_copy_user(self):
+        for factory in (
+            events.create_guild_member_add,
+            events.create_guild_member_remove,
+            events.create_guild_member_update,
+        ):
+            user = {"id": "9", "username": "carol"}
+            event = factory(server_id=1, user_id=9, user=user)
+            assert event.data["user"] == user
+            assert event.data["user"] is not user
+            user["username"] = "mallory"
+            assert event.data["user"] == {"id": "9", "username": "carol"}
+
+    def test_voice_state_update_copies_member(self):
+        member = {"id": "9", "nick": "n"}
+        event = events.create_voice_state_update(user_id=1, channel_id=2, member=member)
+        assert event.data["member"] == member
+        assert event.data["member"] is not member
+        member["nick"] = "mutated"
+        assert event.data["member"] == {"id": "9", "nick": "n"}
+
+    def test_reaction_factories_copy_emoji_and_member(self):
+        emoji = {"id": "1", "name": "thumbsup"}
+        member = {"id": "9", "nick": "n"}
+        event = events.create_reaction_add(
+            user_id=1, message_id=2, channel_id=3, emoji=emoji, member=member
+        )
+        assert event.data["emoji"] == emoji
+        assert event.data["emoji"] is not emoji
+        assert event.emoji is not emoji
+        assert event.data["member"] == member
+        assert event.data["member"] is not member
+        emoji["name"] = "mutated"
+        member["nick"] = "mutated"
+        assert event.data["emoji"] == {"id": "1", "name": "thumbsup"}
+        assert event.emoji == {"id": "1", "name": "thumbsup"}
+        assert event.data["member"] == {"id": "9", "nick": "n"}
+
+        emoji2 = {"id": "1", "name": "thumbsup"}
+        removed = events.create_reaction_remove(
+            user_id=1, message_id=2, channel_id=3, emoji=emoji2
+        )
+        assert removed.data["emoji"] == emoji2
+        assert removed.data["emoji"] is not emoji2
+        emoji2["name"] = "mutated"
+        assert removed.data["emoji"] == {"id": "1", "name": "thumbsup"}

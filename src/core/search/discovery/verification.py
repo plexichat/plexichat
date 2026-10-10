@@ -7,7 +7,6 @@ from typing import Optional, Dict, Any
 import utils.logger as logger
 
 from ..models import VerificationLevel
-from ..exceptions import ServerNotListedError
 
 
 class VerificationManager:
@@ -38,9 +37,9 @@ class VerificationManager:
         """
         listing = self._get_listing(server_id)
         if not listing:
-            raise ServerNotListedError(
-                "Server is not listed in discovery", server_id=server_id
-            )
+            # Verification is exposed as a boolean mutation API. A stale or
+            # already-removed listing is an idempotent no-op, not an error.
+            return False
 
         is_verified = level in (VerificationLevel.HIGH, VerificationLevel.VERIFIED)
 

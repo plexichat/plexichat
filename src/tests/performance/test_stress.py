@@ -14,6 +14,10 @@ import concurrent.futures
 import time
 from datetime import datetime
 
+# Load/stress suite with wall-clock bounds: excluded from the default fast
+# run (pytest.ini deselects ``performance``). Run explicitly when needed.
+pytestmark = pytest.mark.performance
+
 
 class TestConnectionLimits:
     """Test behavior at connection limits."""
@@ -119,15 +123,12 @@ class TestLargeData:
         )
 
         for user in stress_test_users[1:40]:
-            try:
-                server_manager.add_member(server.id, user.id)
-            except Exception:
-                pass
+            server_manager.add_member(server.id, user.id)
 
         times = []
         for _ in range(10):
             start = datetime.now()
-            server_manager.get_members(server.id)
+            server_manager.get_members(owner.id, server.id)
             elapsed = (datetime.now() - start).total_seconds()
             times.append(elapsed)
 
@@ -231,12 +232,14 @@ class TestConcurrencyStress:
         """Test extreme concurrent operations on server."""
         server, owner, members = load_test_server
 
-        channels = server_manager.get_channels(server.id)
+        channels = server_manager.get_channels(owner.id, server.id)
         if not channels:
             pytest.skip("No channels in test server")
 
         channel = channels[0]
         conv_id = channel.conversation_id
+        if not conv_id:
+            pytest.skip("Test server channel has no conversation id")
 
         def mixed_operation(op_id):
             user = members[op_id % len(members)]
@@ -248,7 +251,7 @@ class TestConcurrencyStress:
                     user.id, conv_id, f"Stress {op_id}"
                 )
             elif op_id % 4 == 2:
-                return server_manager.get_members(server.id)
+                return server_manager.get_members(owner.id, server.id)
             else:
                 return presence_manager.set_status(user.id, "online")
 
@@ -316,12 +319,11 @@ class TestRecovery:
         peak_increase = peak - initial
         final_increase = final - initial
 
-        recovery_ratio = (
-            (peak_increase - final_increase) / peak_increase if peak_increase > 0 else 0
-        )
-
-        assert recovery_ratio > 0.3, (
-            f"Poor memory recovery: {recovery_ratio * 100:.1f}%"
+        # A leak check rather than a fragile RSS recovery ratio: after a GC
+        # pass the process RSS must not keep growing beyond a modest bound.
+        assert peak_increase < 80, f"Peak memory grew by {peak_increase}MB during load"
+        assert final_increase < 40, (
+            f"Memory did not recover after load: final increase {final_increase}MB"
         )
 
 
@@ -330,15 +332,14 @@ class TestEdgeCases:
 
     def test_empty_message_handling(self, messaging_manager, test_dm):
         """Test handling of edge case message content."""
+        from src.core.messaging.exceptions import InvalidContentError
+
         dm, user1, user2 = test_dm
 
-        try:
+        with pytest.raises(InvalidContentError):
             messaging_manager.send_message(
                 user_id=user1.id, conversation_id=dm.id, content=""
             )
-            assert False, "Should not allow empty message"
-        except Exception:
-            pass
 
     def test_special_characters_message(self, messaging_manager, test_dm):
         """Test message with special characters."""
@@ -392,4 +393,6 @@ class TestEdgeCases:
         server = server_manager.create_server(owner_id=test_user.id, name=max_name)
 
         assert server is not None
-        assert len(server.name) <= 100
+        # create_server validates length (raises above 100) but does not truncate.
+        assert len(server.name) == 100
+        assert server.name == max_name

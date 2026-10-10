@@ -13,11 +13,36 @@ from typing import List, Dict, Any, Optional
 from src.core.database import cached
 
 from . import validator
+from .validator import RETIRED_MIGRATIONS  # noqa: F401 (re-exported for compat)
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
 from .progress import ProgressBar
 
 logger = logging.getLogger(__name__)
+
+
+def _migration_status_cache_key(manager: "MigrationManager") -> str:
+    """Scope the status cache to the database instance (M8).
+
+    The default key (``migration_status:Core:MigrationManager``) is shared
+    across every manager in every worker, so a migration applied by worker
+    A leaves workers B/C serving a stale status for up to the TTL. Embedding
+    the database identity keeps instances isolated; the ``migration_status:*``
+    invalidation pattern still matches because the key keeps the same prefix.
+    """
+    import os
+
+    cfg = getattr(manager.db, "config", None) or {}
+    db_type = getattr(manager.db, "type", None) or str(cfg.get("type", "unknown"))
+    if db_type == "sqlite":
+        path = os.path.abspath(os.path.expanduser(str(cfg.get("path", ""))))
+        scope = f"sqlite:{path}"
+    else:
+        pg = cfg.get("postgres", {}) or {}
+        scope = (
+            f"postgres:{pg.get('host', '')}:{pg.get('port', '')}:{pg.get('dbname', '')}"
+        )
+    return f"migration_status:{scope}:status"
 
 
 class Migration:
@@ -145,6 +170,29 @@ class MigrationManager:
 
         return []
 
+    def _migration_file_is_irreversible(self, file_path: str) -> bool:
+        """Check the codebase's irreversible marker for a migration file (M3).
+
+        The canonical marker is ``MIGRATION_METADATA`` with
+        ``"irreversible": true`` in the module docstring (see
+        ``validator.migration_is_irreversible`` and
+        ``migrations/README.md``). Missing/unreadable files fail open
+        (return False) so dependency validation never blocks on I/O.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        try:
+            import ast
+
+            module_doc = ast.get_docstring(ast.parse(content))
+            metadata = validator.migration_metadata_from_docstring(module_doc)
+        except Exception:
+            return False
+        return bool(metadata.get("irreversible"))
+
     def validate_dependencies(self, migration: Migration, applied: List[str]) -> bool:
         """
         Validate that all dependencies for a migration are satisfied.
@@ -160,6 +208,18 @@ class MigrationManager:
             ValueError: If dependencies are not satisfied
         """
         if not migration.depends_on:
+            if self._migration_file_is_irreversible(migration.file_path):
+                raise ValueError(
+                    f"Migration {migration.version} is marked irreversible but "
+                    "declares no depends_on ordering dependency (missing "
+                    "Depends: header). Irreversible migrations must declare "
+                    "depends_on so the ordering gate has an explicit anchor."
+                )
+            logger.warning(
+                "Migration %s declares no depends_on ordering dependency; "
+                "dependency/ordering gate skipped for this reversible migration",
+                migration.version,
+            )
             return True
 
         applied_set = set(applied)
@@ -205,22 +265,49 @@ class MigrationManager:
         applied = self.tracker.get_applied_migrations()
         self.validate_dependencies(migration, applied)
 
-        # Check if irreversible migration can be run (skip for dry-run)
+        # Serialize single-migration runs with batch runs (same lock path).
+        # Without this, an admin API apply_migration races apply_all_pending.
         if not dry_run:
-            import utils.config as config
+            if not self.tracker.acquire_lock():
+                raise Exception(
+                    "Could not acquire migration lock - another migration may be in progress"
+                )
 
-            delay_days = config.get(
-                "database.migrations.irreversible_migration_delay_days", 7
+        try:
+            # Check if irreversible migration can be run (skip for dry-run).
+            # The gate check only PEEKS at the emergency override so read-only
+            # callers never burn it; when the gate passes via override the
+            # token is atomically claimed exactly once here, before executing
+            # (fail closed if it was raced or expired since the peek), and the
+            # tamper guard below reuses that claim instead of consuming again.
+            override_consumed = False
+            if not dry_run:
+                import utils.config as config
+
+                delay_days = config.get(
+                    "database.migrations.irreversible_migration_delay_days", 7
+                )
+                delay_hours = delay_days * 24
+
+                can_run, reason = self.tracker.can_run_irreversible_migration(
+                    version, delay_hours
+                )
+                if not can_run:
+                    raise ValueError(f"Cannot run migration {version}: {reason}")
+                if reason == self.tracker.EMERGENCY_OVERRIDE_ACTIVE_REASON:
+                    if not self.tracker.try_consume_emergency_override_from_env():
+                        raise ValueError(
+                            f"Cannot run migration {version}: emergency override "
+                            "token is no longer valid (already used or expired)."
+                        )
+                    override_consumed = True
+
+            return self._execute_migration(
+                migration, dry_run, _override_consumed=override_consumed
             )
-            delay_hours = delay_days * 24
-
-            can_run, reason = self.tracker.can_run_irreversible_migration(
-                version, delay_hours
-            )
-            if not can_run:
-                raise ValueError(f"Cannot run migration {version}: {reason}")
-
-        return self._execute_migration(migration, dry_run)
+        finally:
+            if not dry_run:
+                self.tracker.release_lock()
 
     def apply_all_pending(self, dry_run: bool = False) -> Dict[str, Any]:
         """
@@ -371,6 +458,14 @@ class MigrationManager:
         if migration_file is None:
             raise ValueError(f"Migration file for version {version} not found")
 
+        # Serialize single-migration rollbacks with the apply paths (same lock
+        # path). Without this, an admin rollback races an in-flight
+        # apply_all_pending on the shared database and migrations_history.
+        if not self.tracker.acquire_lock():
+            raise Exception(
+                "Could not acquire migration lock - another migration may be in progress"
+            )
+
         try:
             runner = MigrationRunner(self.db, self.tracker)
             runner.validate_migration_file(migration_file)
@@ -394,8 +489,11 @@ class MigrationManager:
         except Exception as e:
             logger.error(f"Rollback of migration {version} failed: {str(e)}")
             raise
+        finally:
+            # Always release the lock we took above.
+            self.tracker.release_lock()
 
-    @cached(ttl=15, prefix="migration_status")
+    @cached(ttl=15, prefix="migration_status", key_builder=_migration_status_cache_key)
     def get_migration_status(self) -> Dict[str, Any]:
         """
         Get current migration status (cached for 15s to reduce admin dashboard DB load).
@@ -433,7 +531,12 @@ class MigrationManager:
         self.tracker.ensure_table_exists()
 
         records = self.tracker.get_all_migration_records()
-        results = {"valid": True, "checked": 0, "mismatches": []}
+        results = {
+            "valid": True,
+            "checked": 0,
+            "mismatches": [],
+            "retired": [],
+        }
 
         try:
             migration_files = validator.get_migration_files(str(self.migrations_dir))
@@ -452,6 +555,12 @@ class MigrationManager:
             results["checked"] += 1
 
             if version not in migration_dict:
+                if version in RETIRED_MIGRATIONS:
+                    # 002-004 were folded into the authoritative initial
+                    # schema. Preserve their historical records without
+                    # requiring deleted migration source files.
+                    results["retired"].append(version)
+                    continue
                 results["valid"] = False
                 results["mismatches"].append(
                     {"version": version, "error": "Migration file not found"}
@@ -475,7 +584,10 @@ class MigrationManager:
         return results
 
     def _execute_migration(
-        self, migration: Migration, dry_run: bool = False
+        self,
+        migration: Migration,
+        dry_run: bool = False,
+        _override_consumed: bool = False,
     ) -> Dict[str, Any]:
         """
         Internal method to execute a migration.
@@ -483,6 +595,10 @@ class MigrationManager:
         Args:
             migration: Migration object to execute
             dry_run: If True, execute without committing or persisting tracker state
+            _override_consumed: If True, a single-use emergency override token
+                was already atomically claimed for this run (by the
+                irreversible gate); the tamper guard reuses that claim
+                instead of consuming a second time.
 
         Returns:
             Dictionary with execution result
@@ -503,11 +619,35 @@ class MigrationManager:
                             actual_checksum = validator.calculate_checksum(content)
 
                         if actual_checksum != existing_status["checksum"]:
-                            logger.warning(
-                                f"Migration checksum mismatch for {migration.version}: "
-                                f"recorded={existing_status['checksum']}, actual={actual_checksum}. "
-                                "Proceeding anyway."
+                            # TAMPERING GUARD: a migration file that differs from
+                            # the recorded checksum must never silently re-execute
+                            # against production data. Block unless the operator
+                            # explicitly consumes a valid single-use emergency
+                            # override token.
+                            logger.error(
+                                f"BLOCKED migration {migration.version}: checksum "
+                                f"mismatch (recorded={existing_status['checksum']}, "
+                                f"actual={actual_checksum}). The migration file was "
+                                "modified after being recorded. Execution is blocked; "
+                                "set a valid single-use EMERGENCY_MIGRATION_OVERRIDE "
+                                "token to proceed."
                             )
+                            if (
+                                not _override_consumed
+                                and not self.tracker.try_consume_emergency_override_from_env()
+                            ):
+                                raise ValueError(
+                                    f"Migration {migration.version} is BLOCKED: "
+                                    "checksum mismatch with recorded history and no "
+                                    "valid EMERGENCY_MIGRATION_OVERRIDE token was "
+                                    "provided."
+                                )
+                            logger.error(
+                                f"Emergency override accepted (single-use) for tampered "
+                                f"migration {migration.version}; proceeding once"
+                            )
+                    except ValueError:
+                        raise
                     except Exception as e:
                         logger.warning(
                             f"Could not verify checksum for migration {migration.version}: {e}"

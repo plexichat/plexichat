@@ -22,7 +22,12 @@ CREATE TABLE IF NOT EXISTS notif_notifications (
     content_preview TEXT NOT NULL DEFAULT '',
     content_preview_encrypted TEXT,
     read INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, message_id),
+    FOREIGN KEY (user_id) REFERENCES auth_users(id),
+    FOREIGN KEY (sender_id) REFERENCES auth_users(id),
+    FOREIGN KEY (message_id) REFERENCES msg_messages(id),
+    FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id)
 );
 
 -- Notifications indexes

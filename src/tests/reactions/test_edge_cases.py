@@ -20,7 +20,7 @@ class TestMessageEdgeCases:
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.add_reaction(user1.id, 999999999999, "nonexistent")
+            reaction_manager.add_reaction(user1.id, 999999999999, ":nonexistent:")
 
     def test_get_reactions_nonexistent_message(self, users_with_dm_and_reaction):
         """Test getting reactions from nonexistent message."""
@@ -34,14 +34,14 @@ class TestMessageEdgeCases:
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.get_reaction_users(user1.id, 999999999999, "emoji")
+            reaction_manager.get_reaction_users(user1.id, 999999999999, ":emoji:")
 
     def test_remove_reaction_nonexistent_message(self, users_with_dm_and_reaction):
         """Test removing reaction from nonexistent message."""
         user1, user2, dm, msg, reaction_manager = users_with_dm_and_reaction
 
         with pytest.raises(MessageNotFoundError):
-            reaction_manager.remove_reaction(user1.id, 999999999999, "emoji")
+            reaction_manager.remove_reaction(user1.id, 999999999999, ":emoji:")
 
 
 class TestEmojiEdgeCases:
@@ -80,9 +80,10 @@ class TestEmojiEdgeCases:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction = reaction_manager.add_reaction(user1.id, msg.id, "test123")
+        reaction = reaction_manager.add_reaction(user1.id, msg.id, ":test123:")
 
         assert reaction is not None
+        assert reaction.emoji == ":test123:"
 
 
 class TestReactionEdgeCases:
@@ -104,11 +105,11 @@ class TestReactionEdgeCases:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "remove_twice")
-        reaction_manager.remove_reaction(user1.id, msg.id, "remove_twice")
+        reaction_manager.add_reaction(user1.id, msg.id, ":remove_twice:")
+        reaction_manager.remove_reaction(user1.id, msg.id, ":remove_twice:")
 
         with pytest.raises(ReactionNotFoundError):
-            reaction_manager.remove_reaction(user1.id, msg.id, "remove_twice")
+            reaction_manager.remove_reaction(user1.id, msg.id, ":remove_twice:")
 
     def test_add_same_reaction_twice(self, fresh_users_with_dm_and_relationships):
         """Test adding same reaction twice."""
@@ -116,10 +117,10 @@ class TestReactionEdgeCases:
             fresh_users_with_dm_and_relationships
         )
 
-        reaction_manager.add_reaction(user1.id, msg.id, "duplicate")
+        reaction_manager.add_reaction(user1.id, msg.id, ":duplicate:")
 
         with pytest.raises(ReactionExistsError):
-            reaction_manager.add_reaction(user1.id, msg.id, "duplicate")
+            reaction_manager.add_reaction(user1.id, msg.id, ":duplicate:")
 
     def test_reaction_id_uniqueness(self, fresh_users_with_dm_and_relationships):
         """Test reaction IDs are unique."""
@@ -127,9 +128,9 @@ class TestReactionEdgeCases:
             fresh_users_with_dm_and_relationships
         )
 
-        r1 = reaction_manager.add_reaction(user1.id, msg.id, "unique1")
-        r2 = reaction_manager.add_reaction(user1.id, msg.id, "unique2")
-        r3 = reaction_manager.add_reaction(user2.id, msg.id, "unique1")
+        r1 = reaction_manager.add_reaction(user1.id, msg.id, ":unique1:")
+        r2 = reaction_manager.add_reaction(user1.id, msg.id, ":unique2:")
+        r3 = reaction_manager.add_reaction(user2.id, msg.id, ":unique1:")
 
         assert r1.id != r2.id
         assert r1.id != r3.id
@@ -164,7 +165,7 @@ class TestAccessControl:
         dm = messaging_manager.create_dm(user1.id, user2.id)
         msg = messaging_manager.send_message(user1.id, dm.id, "Private")
 
-        reaction_manager.add_reaction(user1.id, msg.id, "private")
+        reaction_manager.add_reaction(user1.id, msg.id, ":private:")
 
         with pytest.raises(MessageNotFoundError):
             reaction_manager.get_reactions(outsider.id, msg.id)
@@ -207,9 +208,9 @@ class TestConcurrentOperations:
             group_with_message
         )
 
-        r1 = reaction_manager.add_reaction(owner.id, msg.id, "concurrent")
-        r2 = reaction_manager.add_reaction(member1.id, msg.id, "concurrent")
-        r3 = reaction_manager.add_reaction(member2.id, msg.id, "concurrent")
+        r1 = reaction_manager.add_reaction(owner.id, msg.id, ":concurrent:")
+        r2 = reaction_manager.add_reaction(member1.id, msg.id, ":concurrent:")
+        r3 = reaction_manager.add_reaction(member2.id, msg.id, ":concurrent:")
 
         assert r1 is not None
         assert r2 is not None
@@ -217,7 +218,7 @@ class TestConcurrentOperations:
 
         msg_reactions = reaction_manager.get_reactions(owner.id, msg.id)
         concurrent = next(
-            (r for r in msg_reactions.reactions if r.emoji == "concurrent"), None
+            (r for r in msg_reactions.reactions if r.emoji == ":concurrent:"), None
         )
 
         assert concurrent is not None
@@ -230,12 +231,12 @@ class TestConcurrentOperations:
         )
 
         for i in range(10):
-            reaction_manager.add_reaction(user1.id, msg.id, f"rapid_{i}")
-            reaction_manager.remove_reaction(user1.id, msg.id, f"rapid_{i}")
+            reaction_manager.add_reaction(user1.id, msg.id, f":rapid_{i}:")
+            reaction_manager.remove_reaction(user1.id, msg.id, f":rapid_{i}:")
 
         msg_reactions = reaction_manager.get_reactions(user1.id, msg.id)
         rapid_reactions = [
-            r for r in msg_reactions.reactions if r.emoji.startswith("rapid_")
+            r for r in msg_reactions.reactions if r.emoji.startswith(":rapid_")
         ]
 
         assert len(rapid_reactions) == 0
@@ -252,7 +253,7 @@ class TestDataIntegrity:
         import time
 
         before = int(time.time() * 1000)
-        reaction = reaction_manager.add_reaction(user1.id, msg.id, "timestamp")
+        reaction = reaction_manager.add_reaction(user1.id, msg.id, ":timestamp:")
         after = int(time.time() * 1000)
 
         assert reaction.created_at >= before
@@ -266,19 +267,21 @@ class TestDataIntegrity:
             fresh_users_with_dm_and_relationships
         )
 
-        test_emojis = ["thumbsup", "THUMBSUP", "Thumbs_Up", "100"]
+        test_emojis = [":thumbsup:", ":THUMBSUP:", ":Thumbs_Up:", ":100:"]
 
         for emoji in test_emojis:
             reaction = reaction_manager.add_reaction(user1.id, msg.id, emoji)
             assert reaction.emoji == emoji
 
-    def test_custom_emoji_id_preserved(self, users_with_server):
+    def test_custom_emoji_id_preserved(self, users_with_server, sample_image):
         """Test custom emoji ID is preserved correctly."""
         owner, member, server, group, msg, server_manager, reaction_manager = (
             users_with_server
         )
 
-        emoji = reaction_manager.create_custom_emoji(owner.id, server.id, "preserve_id")
+        emoji = reaction_manager.create_custom_emoji(
+            owner.id, server.id, "preserve_id", sample_image, "image/png"
+        )
         custom_str = f"<:preserve_id:{emoji.id}>"
 
         reaction = reaction_manager.add_reaction(owner.id, msg.id, custom_str)

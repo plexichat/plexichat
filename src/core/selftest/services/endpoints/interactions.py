@@ -71,12 +71,17 @@ class InteractionMixin(EndpointTesterBase):
 
         logger.info(f"Seeded interaction {interaction_id} in DB")
 
-        # Call the callback endpoint
+        # Call the callback endpoint (application_id is required by the
+        # request schema; the seeded row belongs to the test application).
         logger.info("Testing POST /api/v1/applications/interactions/.../callback...")
         start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}/api/v1/applications/interactions/{full_token}/callback",
-            json={"type": 4, "data": {"content": "Pong from selftest!"}},
+            json={
+                "application_id": int(self.ctx.test_application_id),
+                "type": 4,
+                "data": {"content": "Pong from selftest!"},
+            },
             timeout=5,
         )
         duration = (time.time() - start) * 1000

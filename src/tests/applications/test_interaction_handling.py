@@ -1,7 +1,10 @@
 """Tests for application interaction handling."""
 
 import pytest
+from fastapi import HTTPException
+from unittest.mock import patch
 
+from src.core.applications.exceptions import InteractionNotFoundError
 from src.core.applications.models import (
     InteractionType,
     InteractionResponseType,
@@ -103,3 +106,160 @@ class TestInteractionHandling:
             data={"name": "test"},
         )
         assert interaction.server_id == server.id
+
+    def test_interaction_expiry_is_in_milliseconds(self, app_manager, test_user):
+        """Test that interaction token expiry uses millisecond units."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Expiry App")
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.APPLICATION_COMMAND,
+            user_id=test_user.id,
+            data={"name": "test"},
+        )
+        handler = app_manager._interactions
+        created_at = interaction.created_at
+        timeout_config = handler._config.get("interaction_timeout", 900)
+        now = handler._current_time()
+        remaining = (created_at + timeout_config * 1000) - now
+        assert remaining > 800000, f"Interaction expiry too short: {remaining}ms"
+
+    def test_dispatch_interaction_calls_events(self, app_manager, test_user):
+        """Test that dispatch_interaction actually dispatches events."""
+        from unittest.mock import MagicMock
+
+        mock_events = MagicMock()
+        app_manager._interactions._events = mock_events
+
+        app = app_manager.create_application(owner_id=test_user.id, name="Dispatch App")
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.APPLICATION_COMMAND,
+            user_id=test_user.id,
+            data={"name": "test"},
+        )
+        assert interaction is not None
+        assert interaction.application_id == app.id
+        mock_events.dispatch.assert_called()
+        call_args = mock_events.dispatch.call_args
+        event = call_args[0][0]
+        assert event.event_type.value == "INTERACTION_CREATE"
+
+    def test_response_rejects_mismatched_application(self, app_manager, test_user):
+        """An interaction token cannot be used for another application."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Bound App")
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.APPLICATION_COMMAND,
+            user_id=test_user.id,
+        )
+        response = InteractionResponse(
+            response_type=InteractionResponseType.PONG,
+        )
+
+        with pytest.raises(InteractionNotFoundError):
+            app_manager.create_interaction_response(
+                interaction.token,
+                response,
+                application_id=app.id + 1,
+            )
+
+        # The mismatch must not consume the one-shot interaction.
+        assert (
+            app_manager.create_interaction_response(
+                interaction.token,
+                response,
+                application_id=app.id,
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_callback_binds_application_and_passes_payload(self):
+        """The HTTP callback forwards the verified application binding."""
+        from src.api.routes import applications as application_routes
+
+        body = application_routes.InteractionCallbackRequest(
+            application_id=42,
+            type=InteractionResponseType.PONG,
+        )
+        with patch.object(
+            application_routes, "check_rate_limit", return_value=(True, 29)
+        ):
+            with patch.object(
+                application_routes.applications,
+                "create_interaction_response",
+                return_value=True,
+            ) as create_response:
+                result = await application_routes.respond_to_interaction(
+                    "int.123.secret", body
+                )
+
+        assert result is None
+        create_response.assert_called_once()
+        assert create_response.call_args.kwargs["application_id"] == 42
+
+    @pytest.mark.asyncio
+    async def test_callback_rate_limit_rejects_before_token_processing(self):
+        """Exhausted callbacks return 429 without invoking interaction code."""
+        from src.api.routes import applications as application_routes
+
+        body = application_routes.InteractionCallbackRequest(
+            application_id=42,
+            type=InteractionResponseType.PONG,
+        )
+        with patch.object(
+            application_routes, "check_rate_limit", return_value=(False, 0)
+        ):
+            with patch.object(
+                application_routes.applications,
+                "create_interaction_response",
+            ) as create_response:
+                with pytest.raises(HTTPException) as error:
+                    await application_routes.respond_to_interaction(
+                        "int.123.secret", body
+                    )
+
+        assert error.value.status_code == 429
+        assert error.value.headers["Retry-After"] == "60"
+        create_response.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_maps_application_mismatch_to_not_found(self):
+        """A token cannot be replayed against a different application."""
+        from src.api.routes import applications as application_routes
+
+        body = application_routes.InteractionCallbackRequest(
+            application_id=99,
+            type=InteractionResponseType.PONG,
+        )
+        with patch.object(
+            application_routes, "check_rate_limit", return_value=(True, 29)
+        ):
+            with patch.object(
+                application_routes.applications,
+                "create_interaction_response",
+                side_effect=InteractionNotFoundError("wrong application"),
+            ):
+                with pytest.raises(HTTPException) as error:
+                    await application_routes.respond_to_interaction(
+                        "int.123.secret", body
+                    )
+
+        assert error.value.status_code == 404
+
+    def test_component_response_rejects_pong(self, app_manager, test_user):
+        """Test that message component interactions cannot respond with PONG."""
+        app = app_manager.create_application(
+            owner_id=test_user.id, name="CompReject App"
+        )
+        interaction = app_manager.handle_interaction(
+            application_id=app.id,
+            interaction_type=InteractionType.MESSAGE_COMPONENT,
+            user_id=test_user.id,
+            data={"custom_id": "btn", "component_type": 2},
+        )
+        response = InteractionResponse(
+            response_type=InteractionResponseType.PONG,
+        )
+        with pytest.raises(Exception):
+            app_manager.create_interaction_response(interaction.token, response)

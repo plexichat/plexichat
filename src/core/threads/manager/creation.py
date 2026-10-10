@@ -1,4 +1,6 @@
 import utils.logger as logger
+from typing import Optional
+
 from ..models import Thread, ThreadType, ThreadState, AutoArchiveDuration
 from ..exceptions import (
     ThreadError,
@@ -56,10 +58,12 @@ class ThreadCreationMixin(ThreadProtocol):
         thread_id = self._generate_id()
 
         name_encrypted = None
+        stored_name = name
         if self._encrypt_thread_names:
             from src.utils.encryption import encrypt_data
 
             name_encrypted = encrypt_data(name)
+            stored_name = "[encrypted]"
 
         conversation_id = None
         if self._messaging:
@@ -81,7 +85,7 @@ class ThreadCreationMixin(ThreadProtocol):
                 channel_id,
                 server_id,
                 user_id,
-                name,
+                stored_name,
                 name_encrypted,
                 thread_type.value,
                 ThreadState.ACTIVE.value,
@@ -114,8 +118,15 @@ class ThreadCreationMixin(ThreadProtocol):
         name: str,
         thread_type: ThreadType = ThreadType.PUBLIC,
         auto_archive_duration: AutoArchiveDuration = AutoArchiveDuration.ONE_DAY,
+        expected_channel_id: Optional[int] = None,
     ) -> Thread:
         name = self._validate_thread_name(name)
+
+        if expected_channel_id is not None:
+            try:
+                expected_channel_id = int(expected_channel_id)
+            except (TypeError, ValueError):
+                raise ChannelNotFoundError(f"Channel {expected_channel_id} not found")
 
         message = _get_message(self._db, message_id)
         if not message:
@@ -150,6 +161,16 @@ class ThreadCreationMixin(ThreadProtocol):
         if not channel_id:
             raise ThreadError("Cannot determine channel_id for thread creation")
 
+        # URL/body channel binding: the resolved parent-message channel
+        # must match the channel the caller addressed, otherwise a thread
+        # could be spawned into a channel the request never mentioned.
+        if expected_channel_id is not None and int(channel_id) != int(
+            expected_channel_id
+        ):
+            raise ChannelNotFoundError(
+                f"Message {message_id} is not in channel {expected_channel_id}"
+            )
+
         channel_row = self._db.fetch_one(
             "SELECT server_id FROM srv_channels WHERE id = ?",
             (channel_id,),
@@ -173,10 +194,12 @@ class ThreadCreationMixin(ThreadProtocol):
         thread_id = self._generate_id()
 
         name_encrypted = None
+        stored_name = name
         if self._encrypt_thread_names:
             from src.utils.encryption import encrypt_data
 
             name_encrypted = encrypt_data(name)
+            stored_name = "[encrypted]"
 
         conversation_id = None
         if self._messaging:
@@ -199,7 +222,7 @@ class ThreadCreationMixin(ThreadProtocol):
                 channel_id,
                 server_id,
                 user_id,
-                name,
+                stored_name,
                 name_encrypted,
                 thread_type.value,
                 ThreadState.ACTIVE.value,

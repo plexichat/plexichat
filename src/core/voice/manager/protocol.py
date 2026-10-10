@@ -12,22 +12,22 @@ class VoiceProtocol:
     _presence: Any = None
 
     def _get_timestamp(self) -> int:
-        return super()._get_timestamp()  # type: ignore[misc]
+        return 0
 
     def _generate_id(self) -> int:
-        return super()._generate_id()  # type: ignore[misc]
+        return 0
 
     def _user_exists(self, user_id: SnowflakeID) -> bool:
-        return super()._user_exists(user_id)  # type: ignore[misc]
+        return False
 
     def _validate_user(self, user_id: SnowflakeID) -> None:
-        super()._validate_user(user_id)  # type: ignore[misc]
+        pass
 
     def _get_server_channel(self, channel_id: SnowflakeID) -> Optional[Dict[str, Any]]:
-        return super()._get_server_channel(channel_id)  # type: ignore[misc]
+        return None
 
     def _is_voice_channel(self, channel_type: str) -> bool:
-        return super()._is_voice_channel(channel_type)  # type: ignore[misc]
+        return False
 
     def _check_permission(
         self,
@@ -36,7 +36,7 @@ class VoiceProtocol:
         permission: str,
         channel_id: Optional[SnowflakeID] = None,
     ) -> bool:
-        return super()._check_permission(user_id, server_id, permission, channel_id)  # type: ignore[misc]
+        return True
 
     def _require_permission(
         self,
@@ -45,45 +45,49 @@ class VoiceProtocol:
         permission: str,
         channel_id: Optional[SnowflakeID] = None,
     ) -> None:
-        super()._require_permission(user_id, server_id, permission, channel_id)  # type: ignore[misc]
+        pass
 
     def _get_channel_user_count(self, channel_id: SnowflakeID) -> int:
-        return super()._get_channel_user_count(channel_id)  # type: ignore[misc]
+        return 0
+
+    def _get_channel_user_counts_bulk(
+        self, channel_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, int]:
+        return {}
 
     def _get_channel_settings(self, channel_id: SnowflakeID) -> Dict[str, Any]:
-        return super()._get_channel_settings(channel_id)  # type: ignore[misc]
+        return {}
 
     def _ensure_channel_settings(self, channel_id: SnowflakeID) -> None:
-        super()._ensure_channel_settings(channel_id)  # type: ignore[misc]
+        pass
 
     def _row_to_voice_state(self, row: Dict[str, Any]) -> VoiceState:
-        return super()._row_to_voice_state(row)  # type: ignore[misc]
+        raise NotImplementedError
 
     def _row_to_voice_channel(
-        self, channel_row: Dict[str, Any], settings: Dict[str, Any]
+        self,
+        channel_row: Dict[str, Any],
+        settings: Dict[str, Any],
+        prefetched_counts: Optional[Dict[SnowflakeID, int]] = None,
     ) -> VoiceChannel:
-        return super()._row_to_voice_channel(channel_row, settings)  # type: ignore[misc]
+        raise NotImplementedError
 
     def get_voice_state(self, user_id: SnowflakeID) -> Optional[VoiceState]:
-        return super().get_voice_state(user_id)  # type: ignore[misc]
+        return None
 
     def get_channel_members(self, channel_id: SnowflakeID) -> List[Any]:
-        return super().get_channel_members(channel_id)  # type: ignore[misc]
+        return []
 
     def _on_member_joined(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
-        # mixin hook — subclasses (e.g. CallLifecycleMixin) override this
-        # mixin hook — override in subclass
-        return super()._on_member_joined(user_id, channel_id)  # type: ignore[misc]
+        pass
 
     def _on_member_left(self, user_id: SnowflakeID, channel_id: SnowflakeID) -> None:
-        # mixin hook — subclasses (e.g. CallLifecycleMixin) override this
-        # mixin hook — override in subclass
-        return super()._on_member_left(user_id, channel_id)  # type: ignore[misc]
+        pass
 
     def get_voice_channel(
         self, channel_id: SnowflakeID, user_id: SnowflakeID
     ) -> Optional[VoiceChannel]:
-        return super().get_voice_channel(channel_id, user_id)  # type: ignore[misc]
+        return None
 
     def move_member(
         self,
@@ -91,7 +95,7 @@ class VoiceProtocol:
         target_user_id: SnowflakeID,
         channel_id: SnowflakeID,
     ) -> VoiceState:
-        return super().move_member(moderator_id, target_user_id, channel_id)  # type: ignore[misc]
+        raise NotImplementedError
 
     def get_stage(self, channel_id: SnowflakeID) -> Optional[Any]:
-        return super().get_stage(channel_id)  # type: ignore[misc]
+        return None

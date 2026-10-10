@@ -91,16 +91,16 @@ class StateMixin(VoiceProtocol):
         updates = []
         params = []
 
-        if self_mute is not None:
-            updates.append("self_mute = ?")
-            params.append(1 if self_mute else 0)
-
         if self_deaf is not None:
             updates.append("self_deaf = ?")
             params.append(1 if self_deaf else 0)
             if self_deaf:
                 updates.append("self_mute = ?")
                 params.append(1)
+
+        if self_mute is not None:
+            updates.append("self_mute = ?")
+            params.append(1 if self_mute else 0)
 
         if streaming is not None:
             updates.append("streaming = ?")
@@ -117,97 +117,43 @@ class StateMixin(VoiceProtocol):
             params.append(user_id)
 
             allowed_columns = {
-                "channel_id",
-                "guild_id",
-                "session_id",
-                "deaf",
-                "mute",
                 "self_deaf",
                 "self_mute",
-                "self_video",
                 "suppress",
-                "request_to_speak_timestamp",
                 "streaming",
                 "video",
                 "last_activity",
             }
-            for update in updates:
+            for i, update in enumerate(updates):
                 col_name = update.split(" = ")[0]
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
 
-            for update in updates:
-                if "channel_id = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET channel_id = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "guild_id = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET guild_id = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "session_id = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET session_id = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "deaf = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET deaf = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "mute = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET mute = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "self_deaf = ?" in update:
-                    idx = updates.index(update)
+            for i, update in enumerate(updates):
+                if "self_deaf = ?" in update:
                     self._db.execute(
                         "UPDATE voice_states SET self_deaf = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
+                        (params[i], now, user_id),
                     )
                 elif "self_mute = ?" in update:
-                    idx = updates.index(update)
                     self._db.execute(
                         "UPDATE voice_states SET self_mute = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "self_video = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET self_video = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
+                        (params[i], now, user_id),
                     )
                 elif "suppress = ?" in update:
-                    idx = updates.index(update)
                     self._db.execute(
                         "UPDATE voice_states SET suppress = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
-                    )
-                elif "request_to_speak_timestamp = ?" in update:
-                    idx = updates.index(update)
-                    self._db.execute(
-                        "UPDATE voice_states SET request_to_speak_timestamp = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
+                        (params[i], now, user_id),
                     )
                 elif "streaming = ?" in update:
-                    idx = updates.index(update)
                     self._db.execute(
                         "UPDATE voice_states SET streaming = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
+                        (params[i], now, user_id),
                     )
                 elif "video = ?" in update:
-                    idx = updates.index(update)
                     self._db.execute(
                         "UPDATE voice_states SET video = ?, last_activity = ? WHERE user_id = ?",
-                        (params[idx], now, user_id),
+                        (params[i], now, user_id),
                     )
 
         result = self.get_voice_state(user_id)

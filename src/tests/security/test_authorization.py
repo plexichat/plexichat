@@ -169,12 +169,11 @@ class TestAuthorizationChecks:
 
         server_manager.add_member(server.id, user2.id)
 
-        try:
+        with pytest.raises(Exception) as exc_info:
             server_manager.update_server(
                 user_id=user2.id, server_id=server.id, name="New Name"
             )
-        except Exception:
-            pass
+        assert "Missing required permission" in str(exc_info.value)
 
     def test_bot_permissions_respected(self, auth_manager, test_user):
         """Test that bot permissions are properly enforced."""
@@ -228,13 +227,35 @@ class TestAuthorizationChecks:
         result = server_manager.get_channel(user2.id, channel.id)
         assert result is None
 
-    def test_invite_code_validation(self, server_manager, test_user):
+    def test_invite_code_validation(self, server_manager, two_users):
         """Test that invite codes properly validate access."""
-        server_manager.create_server(owner_id=test_user.id, name="Test Server")
+        user1, user2 = two_users
 
-        # Skip invite test for now - requires additional setup
-        # The channel creation and invite system may have additional requirements
-        pass
+        server = server_manager.create_server(owner_id=user1.id, name="Test Server")
+        channels = server_manager.get_channels(user1.id, server.id)
+        channel = (
+            channels[0]
+            if channels
+            else server_manager.create_channel(
+                user_id=user1.id,
+                server_id=server.id,
+                name="general",
+                channel_type="text",
+            )
+        )
+
+        invite = server_manager.create_invite(user1.id, channel.id, max_uses=1)
+        assert invite.code is not None
+        assert server_manager.get_invite(invite.code) is not None
+
+        member = server_manager.use_invite(user2.id, invite.code)
+        assert member is not None
+        assert member.user_id == user2.id
+
+        member_ids = [
+            m.user_id for m in server_manager.get_members(user1.id, server.id)
+        ]
+        assert user2.id in member_ids
 
     def test_role_based_permissions(self, server_manager, two_users):
         """Test role-based permission enforcement."""
@@ -242,16 +263,10 @@ class TestAuthorizationChecks:
 
         server = server_manager.create_server(owner_id=user1.id, name="Test Server")
 
-        try:
-            role = server_manager.create_role(
-                server_id=server.id,
-                creator_id=user1.id,
-                name="Test Role",
-                permissions={"messages.send": True},
-            )
+        role = server_manager.create_role(
+            user1.id, server.id, "Test Role", permissions={"messages.send": True}
+        )
+        assert role.permissions.get("messages.send") is True
 
-            server_manager.add_member(server.id, user2.id)
-
-            server_manager.assign_role(user1.id, server.id, user2.id, role.id)
-        except Exception:
-            pass
+        server_manager.add_member(server.id, user2.id)
+        server_manager.assign_role(user1.id, server.id, user2.id, role.id)

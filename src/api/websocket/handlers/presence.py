@@ -2,6 +2,7 @@
 Presence handlers - Handle presence-related opcodes (presence_update, typing).
 """
 
+import time
 from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 
 import utils.logger as logger
@@ -12,6 +13,91 @@ from src.api.websocket.opcodes import GatewayCloseCode
 
 if TYPE_CHECKING:
     from src.core.presence.manager import PresenceManager
+
+# F12: the typing-event audience for a server channel is a per-channel
+# property, not a per-sender one, so a typing burst in a large server used
+# to re-run a per-member permission sweep for every frame. The resolved
+# audience is cached per (server_id, channel_id) for a short TTL — the
+# finding's "cached member list" — turning each subsequent event into a
+# dict lookup. Typing indicators are ephemeral, and the cache is only ever
+# consulted for the next few seconds, so a just-revoked member may receive
+# at most one stale burst before the entry expires.
+_TYPING_AUDIENCE_TTL_S = 10.0
+_MAX_TYPING_AUDIENCE_ENTRIES = 4096
+_typing_audience_cache: Dict[Tuple[int, int], Tuple[float, Tuple[int, ...]]] = {}
+
+
+def _get_channel_recipients(
+    user_id: int, channel_id: int
+) -> Tuple[List[int], Optional[int]]:
+    """Resolve the users who should receive typing events for a channel.
+
+    Server channels: the members who can still view the channel. DM
+    conversations: the other participants. Returns ``([], None)`` when the
+    user has no access to the channel (or it does not exist), which callers
+    use both to build the correct audience and to validate the channel.
+
+    Returns:
+        Tuple of (recipient_user_ids, server_id_or_None)
+    """
+    import src.api as api
+
+    user_ids: List[int] = []
+    server_id: Optional[int] = None
+
+    servers_mod = api.get_servers()
+    if servers_mod:
+        try:
+            # CORRECTNESS FIX: resolve the channel ONCE for the sender, then
+            # filter members with cached permission checks. Previously every
+            # member triggered a full get_channel() (channel row lookup +
+            # membership query + permission check) per typing event.
+            channel = servers_mod.get_channel(channel_id, user_id)
+            if channel:
+                sid = getattr(channel, "server_id", None)
+                if sid:
+                    server_id = sid
+                    cache_key = (int(sid), int(channel_id))
+                    now = time.monotonic()
+                    cached = _typing_audience_cache.get(cache_key)
+                    if cached is not None and now - cached[0] < _TYPING_AUDIENCE_TTL_S:
+                        return list(cached[1]), server_id
+
+                    member_user_ids = servers_mod.get_member_user_ids(
+                        sid, exclude_user_id=user_id
+                    )
+                    has_perm = getattr(servers_mod, "has_permission", None)
+                    for member_user_id in member_user_ids:
+                        try:
+                            if callable(has_perm):
+                                if has_perm(
+                                    member_user_id, sid, "channels.view", channel_id
+                                ):
+                                    user_ids.append(member_user_id)
+                            elif servers_mod.get_channel(channel_id, member_user_id):
+                                user_ids.append(member_user_id)
+                        except Exception:
+                            continue
+
+                    # Cache the resolved audience; bound the map so a flood of
+                    # distinct channels cannot grow it without limit.
+                    if len(_typing_audience_cache) >= _MAX_TYPING_AUDIENCE_ENTRIES:
+                        _typing_audience_cache.clear()
+                    _typing_audience_cache[cache_key] = (now, tuple(user_ids))
+        except Exception:
+            pass
+
+    if not user_ids:
+        messaging = api.get_messaging()
+        if messaging:
+            try:
+                participants = messaging.get_participants(user_id, channel_id)
+                if participants:
+                    user_ids = [p.user_id for p in participants if p.user_id != user_id]
+            except Exception:
+                pass
+
+    return user_ids, server_id
 
 
 class PresenceHandler:
@@ -47,32 +133,95 @@ class PresenceHandler:
             from src.core.presence import UserStatus
 
             status_enum = UserStatus(status)
-            assert connection.user_id is not None
-            await run_in_threadpool(
-                self._presence.set_status, connection.user_id, status_enum
+        except ValueError:
+            logger.warning(
+                f"User {connection.user_id} sent invalid presence status: {status}"
             )
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-            if activities:
-                activity = activities[0]
+        activity = None
+        if activities:
+            try:
                 from src.core.presence import ActivityType
 
-                activity_type = ActivityType(activity.get("type", "custom"))
-                await run_in_threadpool(
-                    self._presence.set_activity,
-                    connection.user_id,
-                    activity_type,
-                    activity.get("name", ""),
-                    details=activity.get("details"),
-                    state=activity.get("state"),
+                activity_type = ActivityType(activities[0].get("type", "custom"))
+                activity = {
+                    "activity_type": activity_type,
+                    "name": activities[0].get("name", ""),
+                    "details": activities[0].get("details"),
+                    "state": activities[0].get("state"),
+                }
+            except (ValueError, KeyError, TypeError):
+                logger.warning(
+                    f"User {connection.user_id} sent invalid activity data: {activities[0]}"
                 )
+                return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
-            # Dispatch presence update to friends
+        try:
             assert connection.user_id is not None
+            uid = connection.user_id
+            await run_in_threadpool(self._presence.set_status, uid, status_enum)
+
+            if activity:
+                activity_name = activity.get("name", "").strip()
+                if activity_name:
+                    try:
+                        await run_in_threadpool(
+                            self._presence.set_activity,
+                            uid,
+                            activity["activity_type"],
+                            activity_name,
+                            details=activity["details"],
+                            state=activity["state"],
+                        )
+                    except Exception:
+                        logger.warning(f"Failed to set activity for user {uid}")
+
+            # Persist + broadcast custom status. (P2 fix)
+            #
+            # ``custom_status`` is only present when the client is explicitly
+            # updating it. When it is omitted (e.g. a reconnect that just
+            # re-asserts the connection status) we must NOT wipe the existing
+            # persisted custom status, so we leave it untouched and simply
+            # reflect it in the broadcast.
+            broadcast_status = status if status != "invisible" else "offline"
+            broadcast_custom: Optional[str] = None
+            broadcast_emoji: Optional[str] = None
+            if custom_status is not None or custom_emoji is not None:
+                text = (custom_status or "").strip()
+                emoji = (custom_emoji or "").strip() if custom_emoji else None
+                # CORRECTNESS FIX: an emoji-only status (empty text, non-empty
+                # emoji) is a valid persisted status — the core manager
+                # explicitly supports it. Only empty-text AND empty-emoji is
+                # a clear.
+                if text or emoji:
+                    await run_in_threadpool(
+                        self._presence.set_custom_status, uid, text, emoji
+                    )
+                    broadcast_custom = text if broadcast_status != "offline" else None
+                    broadcast_emoji = emoji if broadcast_status != "offline" else None
+                else:
+                    await run_in_threadpool(self._presence.clear_custom_status, uid)
+            else:
+                try:
+                    pres = await run_in_threadpool(self._presence.get_presence, uid)
+                    if pres and pres.custom_status:
+                        cs_text = pres.custom_status.text
+                        cs_emoji = pres.custom_status.emoji
+                        broadcast_custom = (
+                            cs_text if broadcast_status != "offline" else None
+                        )
+                        broadcast_emoji = (
+                            cs_emoji if broadcast_status != "offline" else None
+                        )
+                except Exception:
+                    logger.debug(f"Failed to read persisted presence for {uid}")
+
             await self._dispatch_presence_to_friends(
-                connection.user_id,
-                status if status != "invisible" else "offline",
-                custom_status,
-                custom_emoji,
+                uid,
+                broadcast_status,
+                broadcast_custom,
+                broadcast_emoji,
             )
         except Exception as e:
             logger.warning(f"Presence update failed: {e}")
@@ -102,6 +251,15 @@ class PresenceHandler:
 
         assert connection.user_id is not None
 
+        # Resolve the channel and its viewers first. This doubles as channel
+        # validation: typing must never be recorded for a channel the user
+        # cannot access (CORRECTNESS FIX).
+        recipients, server_id = await run_in_threadpool(
+            _get_channel_recipients, connection.user_id, channel_id
+        )
+        if not recipients:
+            return None, None, None
+
         # Get username for the typing event
         username = None
         import src.api as api
@@ -126,7 +284,12 @@ class PresenceHandler:
 
         # Dispatch typing event to channel members
         await self._dispatch_typing_event(
-            connection.user_id, channel_id, username, is_start=True
+            connection.user_id,
+            channel_id,
+            username,
+            is_start=True,
+            recipients=recipients,
+            server_id=server_id,
         )
 
         return None, None, None
@@ -163,9 +326,20 @@ class PresenceHandler:
             except Exception:
                 pass
 
-        # Dispatch typing stop event to channel members
+        # Dispatch typing stop event only to channel members
+        recipients, server_id = await run_in_threadpool(
+            _get_channel_recipients, connection.user_id, channel_id
+        )
+        if not recipients:
+            return None, None, None
+
         await self._dispatch_typing_event(
-            connection.user_id, channel_id, None, is_start=False
+            connection.user_id,
+            channel_id,
+            None,
+            is_start=False,
+            recipients=recipients,
+            server_id=server_id,
         )
 
         return None, None, None
@@ -179,7 +353,10 @@ class PresenceHandler:
     ) -> None:
         """Dispatch presence update to friends and server members."""
         try:
-            from src.api.routes.presence import _get_presence_targets
+            from src.api.routes.presence import (
+                _get_presence_targets,
+                _build_presence_event_data,
+            )
 
             target_user_ids = _get_presence_targets(user_id)
 
@@ -194,12 +371,9 @@ class PresenceHandler:
                 dispatcher = get_dispatcher()
                 event = Event(
                     event_type=EventType.PRESENCE_UPDATE,
-                    data={
-                        "user_id": str(user_id),
-                        "status": status,
-                        "custom_status": custom_status,
-                        "custom_emoji": custom_emoji,
-                    },
+                    data=_build_presence_event_data(
+                        user_id, status, custom_status, custom_emoji
+                    ),
                 )
                 await dispatcher.dispatch_event(event, list(target_user_ids))
                 logger.debug(
@@ -214,10 +388,11 @@ class PresenceHandler:
         channel_id: int,
         username: Optional[str],
         is_start: bool,
+        recipients: Optional[List[int]] = None,
+        server_id: Optional[int] = None,
     ) -> None:
         """Dispatch typing start/stop event to channel members."""
         try:
-            import src.api as api
             from src.api.websocket import get_dispatcher, is_setup as ws_is_setup
             from src.core.events.models import Event
             from src.core.events.types import EventType
@@ -226,44 +401,13 @@ class PresenceHandler:
                 return
 
             dispatcher = get_dispatcher()
-            user_ids: List[int] = []
-            server_id: Optional[int] = None
 
-            # Try to get channel members from servers module
-            servers_mod = api.get_servers()
-            if servers_mod:
-                try:
-                    channel = await run_in_threadpool(
-                        servers_mod.get_channel, channel_id, user_id
-                    )
-                    if channel:
-                        server_id = getattr(channel, "server_id", None)
-                        if server_id:
-                            user_ids = await run_in_threadpool(
-                                self._get_typing_recipient_ids,
-                                user_id,
-                                channel_id,
-                                server_id,
-                            )
-                except Exception:
-                    pass
+            if recipients is None:
+                recipients, server_id = await run_in_threadpool(
+                    _get_channel_recipients, user_id, channel_id
+                )
 
-            # If not a server channel, try DM
-            if not user_ids:
-                messaging = api.get_messaging()
-                if messaging:
-                    try:
-                        participants = await run_in_threadpool(
-                            messaging.get_participants, user_id, channel_id
-                        )
-                        if participants:
-                            user_ids = [
-                                p.user_id for p in participants if p.user_id != user_id
-                            ]
-                    except Exception:
-                        pass
-
-            if not user_ids:
+            if not recipients:
                 return
 
             if is_start:
@@ -288,30 +432,6 @@ class PresenceHandler:
                     channel_id=channel_id,
                 )
 
-            await dispatcher.dispatch_event(event, user_ids)
+            await dispatcher.dispatch_event(event, recipients)
         except Exception as e:
             logger.debug(f"Failed to dispatch typing event: {e}")
-
-    def _get_typing_recipient_ids(
-        self, user_id: int, channel_id: int, server_id: int, include_self: bool = False
-    ) -> List[int]:
-        """Return only members who can still view a channel."""
-        import src.api as api
-
-        servers_mod = api.get_servers()
-        if not servers_mod:
-            return []
-
-        member_user_ids = servers_mod.get_member_user_ids(
-            server_id, exclude_user_id=None if include_self else user_id
-        )
-
-        visible_user_ids: List[int] = []
-        for member_user_id in member_user_ids:
-            try:
-                if servers_mod.get_channel(channel_id, member_user_id):
-                    visible_user_ids.append(member_user_id)
-            except Exception:
-                continue
-
-        return visible_user_ids

@@ -27,13 +27,50 @@ from src.api.schemas.admin import (
     AutomodConfigResponse,
     AutomodConfigUpdateRequest,
 )
-from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import (
+    ErrorResponse,
+    SnowflakeIDParam,
+    SuccessResponse,
+)
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
 import src.api as api
 import utils.logger as logger
 import utils.config as config
 
 router = APIRouter()
+
+
+def _ensure_can_target_admin(admin_id: int, target_user_id: int) -> None:
+    """Platform-wide bans must not bypass the admin hierarchy.
+
+    If ``target_user_id`` is an admin account, the acting admin may only
+    proceed when they can manage that admin per the role-position hierarchy.
+    """
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    row = db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (target_user_id,))
+    if not row:
+        return
+    from src.core.admin.permissions import can_manage_admin
+
+    if not can_manage_admin(db, int(admin_id), int(target_user_id)):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Insufficient role position to moderate this admin",
+                }
+            },
+        )
 
 
 def _get_reports_module():
@@ -89,7 +126,16 @@ def _user_report_to_response(report) -> UserReportResponse:
     )
 
 
-@router.get("/hash-reports", response_model=List[HashReportResponse])
+@router.get(
+    "/hash-reports",
+    response_model=List[HashReportResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_hash_reports(
     request: Request,
     status_filter: Optional[str] = None,
@@ -131,11 +177,20 @@ async def get_hash_reports(
     except Exception as e:
         logger.error(f"Hash reports error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/hash-reports/counts", response_model=HashReportCountsResponse)
+@router.get(
+    "/hash-reports/counts",
+    response_model=HashReportCountsResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_hash_report_counts(request: Request):
     """
     Get the total number of content hash reports, grouped by status.
@@ -148,10 +203,20 @@ async def get_hash_report_counts(request: Request):
 
 
 @router.post(
-    "/hash-reports/{report_id}/review", response_model=HashReportReviewResponse
+    "/hash-reports/{report_id}/review",
+    response_model=HashReportReviewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Report not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def review_hash_report(
-    report_id: int, review: HashReportReviewRequest, request: Request
+    report_id: SnowflakeIDParam,
+    review: HashReportReviewRequest,
+    request: Request,
 ):
     """
     Submit a review for a specific content hash report.
@@ -159,7 +224,7 @@ async def review_hash_report(
     Updates the report status and optionally takes action against the reported content.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "reports.action")
     from src.core import admin
 
     if not admin.review_hash_report(report_id, admin_id, review.action, review.notes):
@@ -170,7 +235,16 @@ async def review_hash_report(
     return HashReportReviewResponse(success=True, action=review.action)
 
 
-@router.get("/message-reports", response_model=List[MessageReportResponse])
+@router.get(
+    "/message-reports",
+    response_model=List[MessageReportResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_message_reports(
     request: Request,
     status_filter: Optional[str] = None,
@@ -190,11 +264,20 @@ async def get_message_reports(
     except Exception as e:
         logger.error(f"Message reports error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/message-reports/counts", response_model=ModerationReportCountsResponse)
+@router.get(
+    "/message-reports/counts",
+    response_model=ModerationReportCountsResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_message_report_counts(request: Request):
     """Get message report counts grouped by status."""
     check_host_restriction(request)
@@ -204,16 +287,106 @@ async def get_message_report_counts(request: Request):
     )
 
 
+@router.get(
+    "/reports",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_enhanced_reports(
+    request: Request,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List enhanced (``reports`` table) reports for moderator review.
+
+    The enhanced submission pipeline persists to the ``reports`` table, which
+    is separate from ``message_reports``/``user_reports``. Exposing it here
+    keeps those reports visible in the moderator queue instead of orphaned.
+    """
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database unavailable"}},
+        )
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    clauses = []
+    params: List[Any] = []
+    if status_filter:
+        clauses.append("status = ?")
+        params.append(status_filter)
+    where = (" AND ".join(clauses)) if clauses else "1=1"
+    rows = db.fetch_all(
+        f"SELECT * FROM reports WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        tuple(params + [limit, offset]),
+    )
+    total_row = db.fetch_one(
+        f"SELECT COUNT(*) AS count FROM reports WHERE {where}", tuple(params)
+    )
+    total = int(total_row["count"]) if total_row else 0
+    return {
+        "items": [dict(row) for row in rows],
+        "total": total,
+        "has_more": offset + len(rows) < total,
+    }
+
+
+@router.get(
+    "/reports/counts",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_enhanced_report_counts(request: Request):
+    """Counts of enhanced reports grouped by status."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database unavailable"}},
+        )
+    counts: Dict[str, int] = {}
+    rows = db.fetch_all("SELECT status, COUNT(*) as count FROM reports GROUP BY status")
+    total = 0
+    for row in rows:
+        status = row["status"]
+        count = int(row["count"])
+        counts[status] = count
+        total += count
+    counts["total"] = total
+    return counts
+
+
 @router.post(
     "/message-reports/{report_id}/review",
     response_model=ModerationReportReviewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Report not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def review_message_report(
-    report_id: int, review: ModerationReportReviewRequest, request: Request
+    report_id: SnowflakeIDParam,
+    review: ModerationReportReviewRequest,
+    request: Request,
 ):
     """Review a specific message report."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "reports.action")
     reports = _get_reports_module()
 
     if not reports.review_message_report(
@@ -226,7 +399,16 @@ async def review_message_report(
     return ModerationReportReviewResponse(success=True, action=review.action)
 
 
-@router.get("/user-reports", response_model=List[UserReportResponse])
+@router.get(
+    "/user-reports",
+    response_model=List[UserReportResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_user_reports(
     request: Request,
     status_filter: Optional[str] = None,
@@ -246,11 +428,20 @@ async def get_user_reports(
     except Exception as e:
         logger.error(f"User reports error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/user-reports/counts", response_model=ModerationReportCountsResponse)
+@router.get(
+    "/user-reports/counts",
+    response_model=ModerationReportCountsResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_user_report_counts(request: Request):
     """Get user report counts grouped by status."""
     check_host_restriction(request)
@@ -263,13 +454,22 @@ async def get_user_report_counts(request: Request):
 @router.post(
     "/user-reports/{report_id}/review",
     response_model=ModerationReportReviewResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Report not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def review_user_report(
-    report_id: int, review: ModerationReportReviewRequest, request: Request
+    report_id: SnowflakeIDParam,
+    review: ModerationReportReviewRequest,
+    request: Request,
 ):
     """Review a specific user report."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "reports.action")
     reports = _get_reports_module()
 
     if not reports.review_user_report(report_id, admin_id, review.action, review.notes):
@@ -280,7 +480,16 @@ async def review_user_report(
     return ModerationReportReviewResponse(success=True, action=review.action)
 
 
-@router.get("/blocked-hashes", response_model=List[BlockedHashResponse])
+@router.get(
+    "/blocked-hashes",
+    response_model=List[BlockedHashResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0):
     """
     List all currently blocked content hashes.
@@ -303,19 +512,37 @@ async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0
     ]
 
 
-@router.post("/blocked-hashes", response_model=BlockHashResponse)
+@router.post(
+    "/blocked-hashes",
+    response_model=BlockHashResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_hash_manually(block_request: ManualBlockHashRequest, request: Request):
     """
     Manually add a content hash to the blocklist.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.hashes")
     from src.core import admin
 
-    hash_type = "phash" if len(block_request.hash_value) <= 32 else "sha256"
+    hash_value = block_request.hash_value.strip().lower()
+    hash_type = "phash" if len(hash_value) <= 32 else "sha256"
+    valid_lengths = (16, 32) if hash_type == "phash" else (64,)
+    if len(hash_value) not in valid_lengths or any(
+        c not in "0123456789abcdef" for c in hash_value
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {hash_type} hash"}},
+        )
     phash_threshold = 10 if hash_type == "phash" else 0
     if not admin.block_hash(
-        block_request.hash_value,
+        hash_value,
         block_request.reason,
         admin_id,
         hash_type,
@@ -325,18 +552,25 @@ async def block_hash_manually(block_request: ManualBlockHashRequest, request: Re
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to block hash"}},
         )
-    return BlockHashResponse(
-        success=True, hash_value=block_request.hash_value, hash_type=hash_type
-    )
+    return BlockHashResponse(success=True, hash_value=hash_value, hash_type=hash_type)
 
 
-@router.delete("/blocked-hashes/{hash_value}", response_model=SuccessResponse)
+@router.delete(
+    "/blocked-hashes/{hash_value}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_hash(hash_value: str, request: Request):
     """
     Remove a content hash from the blocklist.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.moderation.hashes")
     from src.core import admin
 
     if not admin.unblock_hash(hash_value):
@@ -347,7 +581,16 @@ async def unblock_hash(hash_value: str, request: Request):
     return SuccessResponse(success=True, message=None)
 
 
-@router.get("/blocked-users", response_model=List[BlockedUserResponse])
+@router.get(
+    "/blocked-users",
+    response_model=List[BlockedUserResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0):
     """
     Retrieve a list of all currently blocked or banned users.
@@ -369,17 +612,28 @@ async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0)
     ]
 
 
-@router.post("/blocked-users", response_model=BlockUserResponse)
+@router.post(
+    "/blocked-users",
+    response_model=BlockUserResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_user(block_request: BlockUserRequest, request: Request):
     """
     Block or ban a specific user from the platform.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.bans")
     from src.core import admin
 
+    target_id = int(block_request.user_id)
+    _ensure_can_target_admin(admin_id, target_id)
     if not admin.block_user(
-        int(block_request.user_id),
+        target_id,
         block_request.reason,
         admin_id,
         block_request.duration_hours,
@@ -391,16 +645,27 @@ async def block_user(block_request: BlockUserRequest, request: Request):
     return BlockUserResponse(success=True, user_id=block_request.user_id)
 
 
-@router.delete("/blocked-users/{user_id}", response_model=SuccessResponse)
+@router.delete(
+    "/blocked-users/{user_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_user(user_id: str, request: Request):
     """
     Lift a block or ban from a specific user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.bans")
     from src.core import admin
 
-    if not admin.unblock_user(int(user_id)):
+    target_id = int(user_id)
+    _ensure_can_target_admin(admin_id, target_id)
+    if not admin.unblock_user(target_id):
         raise HTTPException(
             status_code=500,
             detail={"error": {"code": 500, "message": "Failed to unblock user"}},
@@ -440,7 +705,16 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
     )
 
 
-@router.get("/automod/rules", response_model=List[AutomodRuleResponse])
+@router.get(
+    "/automod/rules",
+    response_model=List[AutomodRuleResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_automod_rules(request: Request, server_id: str):
     """
     Retrieve the list of AutoMod rules configured for a specific server.
@@ -455,17 +729,27 @@ async def get_automod_rules(request: Request, server_id: str):
     except Exception as e:
         logger.error(f"Automod rules error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/automod/rules", response_model=AutomodRuleResponse)
+@router.post(
+    "/automod/rules",
+    response_model=AutomodRuleResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
     """
     Create a new AutoMod rule for a server.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.rules")
     from src.core import automod
     from src.core.automod.models import RuleType
 
@@ -488,27 +772,43 @@ async def create_automod_rule(body: AutomodRuleCreateRequest, request: Request):
             exempt_channels=body.exempt_channels,
             priority=body.priority or 0,
             check_all=bool(body.check_all),
+            # Platform admins are authorized via admin.moderation.rules above,
+            # not server.automod membership; skip the manager-layer guard.
+            _skip_authz=True,
         )
         if body.enabled is False:
-            automod.set_rule_enabled(int(admin_id), rule.id, False)
+            automod.set_rule_enabled(int(admin_id), rule.id, False, _skip_authz=True)
             rule = automod.get_rule(rule.id)
         return _rule_to_response(rule)
     except Exception as e:
         logger.error(f"Create automod rule error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Failed to create rule"}},
         )
 
 
-@router.patch("/automod/rules/{rule_id}", response_model=AutomodRuleResponse)
+@router.patch(
+    "/automod/rules/{rule_id}",
+    response_model=AutomodRuleResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Rule not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_automod_rule(
-    rule_id: int, body: AutomodRuleUpdateRequest, request: Request
+    rule_id: SnowflakeIDParam,
+    body: AutomodRuleUpdateRequest,
+    request: Request,
 ):
     """
     Update an existing AutoMod rule.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.rules")
     from src.core import automod
 
     try:
@@ -528,9 +828,17 @@ async def update_automod_rule(
         if body.check_all is not None:
             update_kwargs["check_all"] = body.check_all
         if update_kwargs:
-            automod.update_rule(user_id=int(admin_id), rule_id=rule_id, **update_kwargs)
+            automod.update_rule(
+                user_id=int(admin_id),
+                rule_id=rule_id,
+                # Authorized via admin.moderation.rules above.
+                _skip_authz=True,
+                **update_kwargs,
+            )
         if body.enabled is not None:
-            automod.set_rule_enabled(int(admin_id), rule_id, body.enabled)
+            automod.set_rule_enabled(
+                int(admin_id), rule_id, body.enabled, _skip_authz=True
+            )
         rule = automod.get_rule(rule_id)
         if not rule:
             raise HTTPException(
@@ -543,21 +851,34 @@ async def update_automod_rule(
     except Exception as e:
         logger.error(f"Update automod rule error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=400, detail={"error": {"code": 400, "message": str(e)}}
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Failed to update rule"}},
         )
 
 
-@router.delete("/automod/rules/{rule_id}", response_model=SuccessResponse)
-async def delete_automod_rule(rule_id: int, request: Request):
+@router.delete(
+    "/automod/rules/{rule_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        404: {"model": ErrorResponse, "description": "Rule not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def delete_automod_rule(rule_id: SnowflakeIDParam, request: Request):
     """
     Permanently delete an AutoMod rule.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.moderation.rules")
     from src.core import automod
 
     try:
-        if not automod.delete_rule(user_id=int(admin_id), rule_id=rule_id):
+        if not automod.delete_rule(
+            user_id=int(admin_id), rule_id=rule_id, _skip_authz=True
+        ):
             raise HTTPException(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Rule not found"}},
@@ -568,11 +889,19 @@ async def delete_automod_rule(rule_id: int, request: Request):
     except Exception as e:
         logger.error(f"Delete automod rule error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.get("/automod/config", response_model=AutomodConfigResponse)
+@router.get(
+    "/automod/config",
+    response_model=AutomodConfigResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+    },
+)
 async def get_automod_config(request: Request):
     """
     Retrieve the global configuration settings for the AutoMod system.
@@ -586,13 +915,22 @@ async def get_automod_config(request: Request):
     )
 
 
-@router.put("/automod/config", response_model=AutomodConfigResponse)
+@router.put(
+    "/automod/config",
+    response_model=AutomodConfigResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Insufficient permissions"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def update_automod_config(body: AutomodConfigUpdateRequest, request: Request):
     """
     Update the global AutoMod configuration settings.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.moderation.config")
     current = config.get("automod", {}) or {}
     if body.enabled is not None:
         current["enabled"] = body.enabled

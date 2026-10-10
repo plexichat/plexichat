@@ -10,13 +10,13 @@ import base64
 import json
 import os
 import secrets
-import time
 from dataclasses import dataclass
 
 import utils.config as config
 import utils.logger as logger
 
 from src.utils.encryption import EncryptionManager
+from src.core.base import timestamp_ms, generate_id
 
 from ._lazy import _get_auth_manager
 
@@ -92,13 +92,14 @@ def rename_passkey(user_id: int, passkey_id: int, new_name: str) -> bool:
 
 
 try:
-    from webauthn import (  # type: ignore
+    from webauthn import (
         generate_authentication_options,
         generate_registration_options,
         verify_authentication_response,
         verify_registration_response,
     )
-    from webauthn.helpers.structs import (  # type: ignore
+    from webauthn.helpers import options_to_json
+    from webauthn.helpers.structs import (
         AttestationConveyancePreference,
         AuthenticatorSelectionCriteria,
         PublicKeyCredentialDescriptor,
@@ -109,19 +110,25 @@ try:
     WEBAUTHN_AVAILABLE = True
 except ImportError:
     WEBAUTHN_AVAILABLE = False
-    logger.warning("webauthn library not installed. Passkey support disabled.")
+    try:
+        logger.warning("webauthn library not installed. Passkey support disabled.")
+    except RuntimeError:
+        # Logger not configured yet (import runs before setup_logging()).
+        # The notice is best-effort; passkey calls raise at use time.
+        pass
 
     from typing import Any
 
-    generate_authentication_options: Any = None  # type: ignore
-    generate_registration_options: Any = None  # type: ignore
-    verify_authentication_response: Any = None  # type: ignore
-    verify_registration_response: Any = None  # type: ignore
-    AttestationConveyancePreference: Any = None  # type: ignore
-    AuthenticatorSelectionCriteria: Any = None  # type: ignore
-    PublicKeyCredentialDescriptor: Any = None  # type: ignore
-    ResidentKeyRequirement: Any = None  # type: ignore
-    UserVerificationRequirement: Any = None  # type: ignore
+    generate_authentication_options: Any = None
+    generate_registration_options: Any = None
+    verify_authentication_response: Any = None
+    verify_registration_response: Any = None
+    options_to_json: Any = None
+    AttestationConveyancePreference: Any = None
+    AuthenticatorSelectionCriteria: Any = None
+    PublicKeyCredentialDescriptor: Any = None
+    ResidentKeyRequirement: Any = None
+    UserVerificationRequirement: Any = None
 
 
 @dataclass
@@ -182,6 +189,16 @@ class PasskeyManager:
         self._challenge_ttl = self._config.get("challenge_ttl_seconds", 300)
 
         # Get RP configuration
+        # SECURITY/CONFIG: rp_id and origin MUST be set explicitly for
+        # production. When behind a TLS-terminating proxy (nginx, Cloudflare),
+        # the origin seen by the browser is https://<public-host> while the
+        # app's direct host may be localhost. Set:
+        #   authentication.passkeys.rp_id: "example.com"
+        #   authentication.passkeys.origin: "https://example.com"
+        # or env PASSKEY_RP_ID / PASSKEY_ORIGIN. Defaults use http://localhost
+        # and will fail closed (verification rejects) if mismatched. The server
+        # host default is intentionally not https so misconfiguration is visible.
+        # Always use https origin in production; http is only for plain-HTTP dev.
         server_config = config.get("server", {})
         self._rp_name = self._config.get("rp_name", "Plexichat")
         self._rp_id = self._config.get("rp_id", server_config.get("host", "localhost"))
@@ -193,13 +210,11 @@ class PasskeyManager:
 
     def _get_timestamp(self) -> int:
         """Get current Unix timestamp in milliseconds."""
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
         """Generate a snowflake ID."""
-        from src.utils.encryption import generate_snowflake_id
-
-        return generate_snowflake_id()
+        return generate_id()
 
     def _base64url_encode(self, data: bytes) -> str:
         """Base64url encode bytes without padding."""
@@ -354,7 +369,7 @@ class PasskeyManager:
             attestation=AttestationConveyancePreference.DIRECT,
         )
 
-        options_dict = json.loads(options.json())
+        options_dict = json.loads(options_to_json(options=options))
 
         return RegistrationOptions(
             challenge_id=challenge_id,
@@ -395,11 +410,6 @@ class PasskeyManager:
         challenge = challenge_row["challenge"]
         device_name = challenge_row.get("device_name")
 
-        self._db.execute(
-            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ?",
-            (challenge_row["id"],),
-        )
-
         try:
             verification = verify_registration_response(
                 credential=credential_response,
@@ -410,6 +420,16 @@ class PasskeyManager:
         except Exception as e:
             logger.error(f"Passkey registration verification failed: {e}")
             raise ValueError(f"Registration verification failed: {e}")
+
+        # Atomically consume the challenge only AFTER verification succeeds so
+        # transient failures do not burn the challenge; the conditional update
+        # also makes single-use semantics race-free.
+        cursor = self._db.execute(
+            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ? AND used = 0",
+            (challenge_row["id"],),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Challenge already used")
 
         credential_id = self._base64url_encode(verification.credential_id)
         credential_public_key = verification.credential_public_key
@@ -497,25 +517,64 @@ class PasskeyManager:
         expires_at = self._get_timestamp() + (self._challenge_ttl * 1000)
 
         allow_credentials = []
-        if username:
-            email_index = self._crypto.blind_index(username, "user_email")
+        # M7: normalize the probe so whitespace-only input follows the
+        # discoverable-credential path exactly like an omitted username
+        # (no per-user lookup, hence no oracle either way).
+        probe = username.strip() if isinstance(username, str) else username
+        if probe:
+            email_index = self._crypto.blind_index(probe, "user_email")
             user_row = self._db.fetch_one(
                 "SELECT id, webauthn_user_handle FROM auth_users WHERE username = ? OR email_index = ?",
-                (username, email_index),
+                (probe, email_index),
             )
             if user_row:
-                user_id = user_row["id"]
+                user_id = user_row["id"] if isinstance(user_row, dict) else user_row[0]
                 creds = self._db.fetch_all(
                     "SELECT credential_id FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
                     (user_id,),
                 )
                 for row in creds:
-                    cred_id = row["credential_id"]
+                    cred_id = row["credential_id"] if isinstance(row, dict) else row[0]
                     allow_credentials.append(
                         PublicKeyCredentialDescriptor(
                             id=self._base64url_decode(cred_id)
                         )
                     )
+            else:
+                # M7: same-timing dummy work for unknown users. The
+                # known-user path above performs a second DB roundtrip
+                # (credential lookup) plus per-credential base64 decodes;
+                # without this, an unknown username returns measurably
+                # faster, preserving the enumeration oracle via latency.
+                # The result is discarded; cost is what matters.
+                try:
+                    self._db.fetch_all(
+                        "SELECT credential_id FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
+                        (-1,),
+                    )
+                except Exception:  # nosec B110 - timing ballast only
+                    pass
+                try:
+                    self._base64url_decode(self._base64url_encode(os.urandom(32)))
+                except Exception:  # nosec B110 - timing ballast only
+                    pass
+            # M7: enumeration mitigation — unknown users and known users
+            # with no passkeys both receive a single random dummy
+            # credential, so allowCredentials shape is indistinguishable
+            # from a single-credential account and the endpoint never
+            # 404s on unknown users (always 200 + challenge). This is
+            # unconditional: the legacy
+            # authentication.passkeys.dummy_credential=false opt-out is
+            # retired because disabling the dummy reintroduces the
+            # username-existence oracle. Multi-credential accounts still
+            # differ in count by WebAuthn design (each entry is needed
+            # for authentication); the "has any passkey" oracle is
+            # closed, which is what this finding covers. The endpoint
+            # remains rate-limited 10/min (see api/routes/auth/passkeys.py)
+            # as defense-in-depth.
+            if not allow_credentials:
+                dummy_id = os.urandom(32)
+                allow_credentials.append(PublicKeyCredentialDescriptor(id=dummy_id))
 
         self._db.execute(
             """
@@ -541,7 +600,7 @@ class PasskeyManager:
             user_verification=UserVerificationRequirement.PREFERRED,
         )
 
-        options_dict = json.loads(options.json())
+        options_dict = json.loads(options_to_json(options=options))
 
         return AuthenticationOptions(
             challenge_id=challenge_id,
@@ -574,11 +633,6 @@ class PasskeyManager:
 
         challenge = challenge_row["challenge"]
 
-        self._db.execute(
-            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ?",
-            (challenge_row["id"],),
-        )
-
         credential_id_b64 = credential_response.get("id", "")
 
         cred_row = self._db.fetch_one(
@@ -603,6 +657,14 @@ class PasskeyManager:
         except Exception as e:
             logger.error(f"Passkey authentication verification failed: {e}")
             raise ValueError(f"Authentication verification failed: {e}")
+
+        # Consume the challenge atomically only after successful verification.
+        cursor = self._db.execute(
+            "UPDATE auth_passkey_challenges SET used = 1 WHERE id = ? AND used = 0",
+            (challenge_row["id"],),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Challenge already used")
 
         new_sign_count = verification.new_sign_count
         now = self._get_timestamp()
@@ -666,10 +728,12 @@ class PasskeyManager:
         if not WEBAUTHN_AVAILABLE:
             return False
 
-        self._db.execute(
-            "UPDATE auth_passkeys SET revoked = 1 WHERE id = ? AND user_id = ?",
+        cursor = self._db.execute(
+            "UPDATE auth_passkeys SET revoked = 1 WHERE id = ? AND user_id = ? AND revoked = 0",
             (passkey_id, user_id),
         )
+        if getattr(cursor, "rowcount", 0) == 0:
+            return False
 
         remaining = self._db.fetch_one(
             "SELECT COUNT(*) as count FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
@@ -690,12 +754,12 @@ class PasskeyManager:
         if not WEBAUTHN_AVAILABLE:
             return False
 
-        self._db.execute(
-            "UPDATE auth_passkeys SET device_name = ? WHERE id = ? AND user_id = ?",
+        cursor = self._db.execute(
+            "UPDATE auth_passkeys SET device_name = ? WHERE id = ? AND user_id = ? AND revoked = 0",
             (new_name, passkey_id, user_id),
         )
 
-        return True
+        return getattr(cursor, "rowcount", 0) > 0
 
     def cleanup_expired_challenges(self) -> int:
         """Clean up expired challenges."""

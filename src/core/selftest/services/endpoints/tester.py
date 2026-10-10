@@ -15,6 +15,9 @@ from .bots import BotMixin
 from .features import FeatureMixin
 from .twofa import TwoFAMixin
 from .interactions import InteractionMixin
+from .suite import SuiteMixin
+from .extended import ExtendedCoverageMixin
+from .federation import FederationMixin
 
 
 class EndpointTester(
@@ -29,6 +32,9 @@ class EndpointTester(
     FeatureMixin,
     TwoFAMixin,
     InteractionMixin,
+    SuiteMixin,
+    ExtendedCoverageMixin,
+    FederationMixin,
     EndpointTesterBase,
 ):
     """Endpoint test execution service for SelfTestRunner.

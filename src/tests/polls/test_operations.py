@@ -136,6 +136,7 @@ class TestPollCreation:
             user.id, msg.id, "Question?", ["A", "B"], duration_hours=24
         )
         assert poll.ends_at is not None
+        assert poll.ends_at > poll.created_at
 
     def test_create_multiple_choice_poll(self, poll_manager, user_with_dm):
         """Create multiple choice poll."""
@@ -246,7 +247,8 @@ class TestPollResults:
         )
         poll_manager.vote(user.id, poll.id, [poll.options[0].id])
         voters = poll_manager.get_voters(poll.id, user.id)
-        assert len(voters) >= 1
+        assert len(voters) == 1
+        assert voters[0] == user.id
 
 
 class TestPollManagement:
@@ -284,7 +286,9 @@ class TestPollManagement:
         poll = poll_manager.create_poll(user.id, msg.id, "Question?", ["A", "B"])
         poll_manager.vote(user.id, poll.id, [poll.options[0].id])
         votes = poll_manager.get_user_votes(user.id)
-        assert len(votes) >= 1
+        assert len(votes) == 1
+        assert votes[0].poll_id == poll.id
+        assert votes[0].user_id == user.id
 
     def test_has_voted(self, poll_manager, user_with_dm):
         """Check if user voted."""

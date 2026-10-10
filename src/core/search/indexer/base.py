@@ -129,7 +129,7 @@ class BaseIndexer(ABC):
         Returns:
             List of search results
         """
-        pass
+        raise NotImplementedError()
 
     def search_messages_page(
         self,
@@ -184,7 +184,7 @@ class BaseIndexer(ABC):
         Returns:
             True if indexed successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def remove_user(self, user_id: int) -> bool:
@@ -197,7 +197,7 @@ class BaseIndexer(ABC):
         Returns:
             True if removed successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def search_users(
@@ -217,7 +217,7 @@ class BaseIndexer(ABC):
         Returns:
             List of user search results
         """
-        pass
+        raise NotImplementedError()
 
     def search_users_page(
         self,
@@ -256,7 +256,7 @@ class BaseIndexer(ABC):
         Returns:
             True if indexed successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def remove_server(self, server_id: int) -> bool:
@@ -269,7 +269,7 @@ class BaseIndexer(ABC):
         Returns:
             True if removed successfully
         """
-        pass
+        raise NotImplementedError()
 
     @abstractmethod
     def search_servers(
@@ -293,7 +293,7 @@ class BaseIndexer(ABC):
         Returns:
             List of server search results
         """
-        pass
+        raise NotImplementedError()
 
     def search_servers_page(
         self,
@@ -339,7 +339,7 @@ class BaseIndexer(ABC):
         Returns:
             Dict with stats (message_count, user_count, server_count, etc.)
         """
-        pass
+        raise NotImplementedError()
 
     def health_check(self) -> bool:
         """

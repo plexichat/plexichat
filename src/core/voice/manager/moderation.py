@@ -4,6 +4,7 @@ from ..models import VoiceState
 from ..exceptions import (
     ChannelNotFoundError,
     ChannelAccessDeniedError,
+    ChannelFullError,
     ChannelTypeError,
     UserNotInChannelError,
 )
@@ -151,8 +152,27 @@ class ModerationMixin(VoiceProtocol):
                 f"User {target_user_id} is not in a voice channel"
             )
 
+        # Agent 34 M3: moving a member into a channel they cannot connect to
+        # (or that is full) must fail just like a normal join_channel.
+        self._require_permission(target_user_id, server_id, "voice.connect", channel_id)
+
+        settings = self._get_channel_settings(channel_id)
+        user_limit = settings.get("user_limit", 0)
+        if user_limit > 0 and state.channel_id != channel_id:
+            current_count = self._get_channel_user_count(channel_id)
+            if current_count >= user_limit:
+                raise ChannelFullError(
+                    f"Channel is full ({current_count}/{user_limit})",
+                    limit=user_limit,
+                    current=current_count,
+                )
+
+        # Scope the cleanup to the channel being LEFT so pending speaker
+        # requests in unrelated voice channels are preserved.
+        old_channel_id = state.channel_id
         self._db.execute(
-            "DELETE FROM voice_speaker_requests WHERE user_id = ?", (target_user_id,)
+            "DELETE FROM voice_speaker_requests WHERE user_id = ? AND channel_id = ?",
+            (target_user_id, old_channel_id),
         )
 
         now = self._get_timestamp()
@@ -164,6 +184,14 @@ class ModerationMixin(VoiceProtocol):
                WHERE user_id = ?""",
             (channel_id, server_id, 1 if suppress else 0, now, target_user_id),
         )
+
+        # A moderation move is a leave+join: fire the same call-lifecycle
+        # hooks so the old channel's call is ended (and its participant
+        # snapshot pruned) and the new channel's call starts. Run them AFTER
+        # the UPDATE so each hook observes the new membership.
+        if old_channel_id != channel_id:
+            self._on_member_left(target_user_id, old_channel_id)
+            self._on_member_joined(target_user_id, channel_id)
 
         logger.debug(
             f"User {target_user_id} moved to channel {channel_id} by {moderator_id}"
@@ -197,6 +225,14 @@ class ModerationMixin(VoiceProtocol):
         self._db.execute(
             "DELETE FROM voice_states WHERE user_id = ?", (target_user_id,)
         )
+
+        # Mirror leave_channel: without this the moderation teardown skips the
+        # call-lifecycle hook, so disconnecting the last member left the
+        # channel's call active forever (duration growing, no transcription)
+        # and a later rejoin was seen as an existing membership, bypassing the
+        # recording-consent gate. Run it after the DELETEs so the channel
+        # already reports the user as gone.
+        self._on_member_left(target_user_id, state.channel_id)
 
         logger.debug(f"User {target_user_id} disconnected from voice by {moderator_id}")
 

@@ -19,6 +19,7 @@ from .operations import (
     cache_get,
     cache_set,
     cache_delete,
+    cache_get_many,
     invalidate_cached,
     invalidate_pattern,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "cache_get",
     "cache_set",
     "cache_delete",
+    "cache_get_many",
     "invalidate_cached",
     "invalidate_pattern",
     "cache_stats",

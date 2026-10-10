@@ -4,7 +4,7 @@ DSAR (Data Subject Access Request) mixin - Data export route handlers.
 
 from typing import Optional
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 
 import src.api as api
@@ -16,14 +16,16 @@ from src.api.schemas.dsar import (
     DSARRequestResponse,
     DSARRequestListResponse,
 )
-from src.core.database.cache.rate_limit import check_rate_limit
 from src.core.dsar import (
     request_data_export as dsar_request_export,
     get_user_requests,
     get_request_status,
     cancel_request as dsar_cancel_request,
     get_export_file,
+    mark_export_downloaded,
 )
+from src.core.ratelimit.decorators import custom_rate_limit
+from src.core.ratelimit.models import RateLimitConfig
 
 
 class DataExportMixin:
@@ -71,25 +73,14 @@ class DataExportMixin:
             return False
         return True
 
-    def _check_dsar_rate_limit(self, user_id: int) -> None:
-        rate_limit_key = f"dsar:user:{user_id}"
-        allowed, remaining = check_rate_limit(
-            rate_limit_key, limit=1, window_seconds=86400
-        )
-        if not allowed:
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": {
-                        "code": 429,
-                        "message": "Data export request limit exceeded. Please wait 24 hours between requests.",
-                    }
-                },
-            )
-
+    # One export per user per day, enforced by the shared rate limiter
+    # (per-user-per-route bucket). Internal/self-test requests bypass via
+    # the manager, like every other limit; real users keep the envelope.
+    @custom_rate_limit(config=RateLimitConfig(requests=1, window_seconds=86400))
     async def request_data_export(
         self,
         body: DSARRequestBody,
+        request: Request,
         current_user: TokenInfo = Depends(get_current_user),
     ) -> SuccessResponse:
         auth = api.get_auth()
@@ -113,8 +104,6 @@ class DataExportMixin:
                 },
             )
 
-        self._check_dsar_rate_limit(user_id)
-
         try:
             format_value = body.format if body.format else "json"
             dsar_request_export(user_id, format=format_value)
@@ -133,7 +122,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def get_data_export_requests(
@@ -169,7 +158,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def get_data_export_status(
@@ -212,7 +201,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def cancel_data_export_request(
@@ -231,13 +220,18 @@ class DataExportMixin:
                     detail={"error": {"code": 404, "message": "Request not found"}},
                 )
 
-            if request_data["status"] not in ("pending", "approved"):
+            # M2 parity: the client offers "Cancel request" while a
+            # request is generating and DSARManager.cancel_request
+            # permits it; the route must not hard-reject 'generating'.
+            # The generation worker's conditional status updates ensure
+            # an in-flight generation cannot resurrect a cancelled row.
+            if request_data["status"] not in ("pending", "approved", "generating"):
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "error": {
                             "code": 400,
-                            "message": "Only pending or approved requests can be cancelled",
+                            "message": "Only pending, approved or generating requests can be cancelled",
                         }
                     },
                 )
@@ -263,7 +257,7 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def download_data_export(
@@ -282,13 +276,18 @@ class DataExportMixin:
                     detail={"error": {"code": 404, "message": "Request not found"}},
                 )
 
-            if request_data["status"] != "ready":
+            # M2 parity: allow re-download while the export is still
+            # within its retention window. The manager deliberately
+            # accepts 'downloaded' rows so "Download again" works; only
+            # statuses that genuinely have no downloadable artifact are
+            # rejected.
+            if request_data["status"] not in ("ready", "downloaded"):
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "error": {
                             "code": 400,
-                            "message": "Export is not ready for download",
+                            "message": "Export is not available for download",
                         }
                     },
                 )
@@ -328,9 +327,13 @@ class DataExportMixin:
 
             from src.core.dsar.export_formats import ExportFormatGenerator
 
-            generator = ExportFormatGenerator()
+            # M5: pass the database handle so the database storage
+            # backend (DB-blob deployments) can be constructed; without
+            # it ExportFormatGenerator raises in __init__ and EVERY
+            # download 500s even though generation succeeded.
+            generator = ExportFormatGenerator(db=api.get_db())
             try:
-                stream, size = generator.retrieve_stream(storage_path)
+                raw_stream, size = generator.retrieve_stream(storage_path)
             except Exception as e:
                 logger.error(
                     f"Failed to open export stream for {storage_path}: {e}",
@@ -358,6 +361,31 @@ class DataExportMixin:
                 f"({size} bytes, {export_format}, sha256={checksum[:16]}...)"
             )
 
+            # M1: the one-shot download marker fires ONLY after the
+            # bytes have been fully streamed. The marker is NOT in a
+            # finally block: when the client disconnects mid-stream the
+            # generator is closed with GeneratorExit, which propagates
+            # out of the for-loop and SKIPS the status flip, leaving
+            # the export re-downloadable.
+            def _stream_with_marker():
+                try:
+                    for chunk in raw_stream:
+                        yield chunk
+                finally:
+                    try:
+                        raw_stream.close()
+                    except Exception:
+                        pass
+
+                # Reached only when the loop above completed without
+                # GeneratorExit/cancellation (i.e. all bytes sent).
+                try:
+                    mark_export_downloaded(req_id, user_id)
+                except Exception as me:
+                    logger.warning(
+                        f"Failed to mark DSAR export {req_id} downloaded: {me}"
+                    )
+
             headers = {
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Length": str(size),
@@ -366,7 +394,7 @@ class DataExportMixin:
             }
 
             return StreamingResponse(
-                stream,
+                _stream_with_marker(),
                 media_type=media_type,
                 headers=headers,
             )
@@ -384,5 +412,5 @@ class DataExportMixin:
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

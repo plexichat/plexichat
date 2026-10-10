@@ -34,6 +34,24 @@ class LifecycleMixin(AdminUsersRouterProtocol):
                         user.username, body.reason or "Forced change", admin_id, False
                     )
             admin.force_username_change(uid, True)
+
+            # SECURITY: audit trail for admin-initiated username changes.
+            try:
+                from src.core.admin.logging import get_admin_logger
+                import src.api as _api
+
+                _db = _api.get_db()
+                if _db is not None:
+                    get_admin_logger().log_user_action(
+                        _db,
+                        admin_id=admin_id,
+                        action="force_username_change",
+                        target_user_id=uid,
+                        details=body.reason or None,
+                    )
+            except Exception:
+                logger.warning("Failed to audit force_username_change", exc_info=True)
+
             return SuccessResponse(
                 success=True, message="Username change forced successfully"
             )
@@ -57,11 +75,16 @@ class LifecycleMixin(AdminUsersRouterProtocol):
             return SuccessResponse(
                 success=True, message="Account deletion cancelled successfully"
             )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}},
+            )
         except Exception as e:
             logger.error(f"Admin failed to cancel deletion for {user_id}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def admin_delay_account_deletion(
@@ -110,13 +133,13 @@ class LifecycleMixin(AdminUsersRouterProtocol):
                 logger.warning(f"Admin failed to delay deletion for {user_id}: {e}")
                 raise HTTPException(
                     status_code=400,
-                    detail={"error": {"code": 400, "message": str(e)}},
+                    detail={"error": {"code": 400, "message": "Invalid input"}},
                 )
 
             logger.error(f"Admin failed to delay deletion for {user_id}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
     async def admin_force_purge_account(self, request: Request, user_id: str):
@@ -138,7 +161,7 @@ class LifecycleMixin(AdminUsersRouterProtocol):
 
                 record_system_alert(
                     "user_purged",
-                    {"user_id": str(uid), "purged_by": admin_id},
+                    {"user_id": str(uid), "purged_by": str(admin_id)},
                     source="admin",
                     severity="warning",
                     target_path="#users",
@@ -147,9 +170,14 @@ class LifecycleMixin(AdminUsersRouterProtocol):
                 pass
 
             return SuccessResponse(success=True, message="Account purged successfully")
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}},
+            )
         except Exception as e:
             logger.error(f"Admin failed to force purge {user_id}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail={"error": {"code": 500, "message": str(e)}},
+                detail={"error": {"code": 500, "message": "Internal server error"}},
             )

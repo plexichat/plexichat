@@ -123,71 +123,69 @@ def get_hash_reports(
 
 def get_hash_report_counts(db: Any) -> Dict[str, int]:
     """Get counts of hash reports by status."""
-    counts = {"pending": 0, "blocked": 0, "cleared": 0, "total": 0}
-    try:
-        rows = db.fetch_all(
-            "SELECT status, COUNT(*) as count FROM media_hash_reports GROUP BY status"
-        )
-        for row in rows:
-            status = row["status"] if isinstance(row, dict) else row[0]
-            count = row["count"] if isinstance(row, dict) else row[1]
-            if status in counts:
-                counts[status] = count
-            counts["total"] += count
-    except Exception:
-        pass
+    counts = {
+        "pending": 0,
+        "blocked": 0,
+        "cleared": 0,
+        "dismissed": 0,
+        "reviewed": 0,
+        "total": 0,
+    }
+    rows = db.fetch_all(
+        "SELECT status, COUNT(*) as count FROM media_hash_reports GROUP BY status"
+    )
+    for row in rows:
+        status = row["status"] if isinstance(row, dict) else row[0]
+        count = row["count"] if isinstance(row, dict) else row[1]
+        if status in counts:
+            counts[status] = count
+        counts["total"] += count
     return counts
 
 
 def get_blocked_hashes(db: Any, limit: int = 100, offset: int = 0) -> List[BlockedHash]:
     """Get list of blocked hashes."""
-    try:
-        rows = db.fetch_all(
-            """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked,
-                      hash_type, phash_threshold
-               FROM media_blocked_hashes
-               ORDER BY blocked_at DESC
-               LIMIT ? OFFSET ?""",
-            (limit, offset),
-        )
-        result = []
-        for row in rows:
-            if isinstance(row, dict):
-                result.append(
-                    BlockedHash(
-                        hash_value=row["hash_value"],
-                        reason=row["reason"],
-                        blocked_at=row["blocked_at"],
-                        blocked_by=row["blocked_by"],
-                        auto_blocked=bool(row["auto_blocked"]),
-                        hash_type=row.get("hash_type", "sha256"),
-                        phash_threshold=row.get("phash_threshold", 10),
-                    )
+    rows = db.fetch_all(
+        """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked,
+                  hash_type, phash_threshold
+           FROM media_blocked_hashes
+           ORDER BY blocked_at DESC
+           LIMIT ? OFFSET ?""",
+        (limit, offset),
+    )
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append(
+                BlockedHash(
+                    hash_value=row["hash_value"],
+                    reason=row["reason"],
+                    blocked_at=row["blocked_at"],
+                    blocked_by=row["blocked_by"],
+                    auto_blocked=bool(row["auto_blocked"]),
+                    hash_type=row.get("hash_type", "sha256"),
+                    phash_threshold=row.get("phash_threshold", 10),
                 )
-            else:
-                result.append(
-                    BlockedHash(
-                        hash_value=row[0],
-                        reason=row[1],
-                        blocked_at=row[2],
-                        blocked_by=row[3],
-                        auto_blocked=bool(row[4]),
-                        hash_type=row[5] if len(row) > 5 else "sha256",
-                        phash_threshold=row[6] if len(row) > 6 else 10,
-                    )
+            )
+        else:
+            result.append(
+                BlockedHash(
+                    hash_value=row[0],
+                    reason=row[1],
+                    blocked_at=row[2],
+                    blocked_by=row[3],
+                    auto_blocked=bool(row[4]),
+                    hash_type=row[5] if len(row) > 5 else "sha256",
+                    phash_threshold=row[6] if len(row) > 6 else 10,
                 )
-        return result
-    except Exception:
-        return []
+            )
+    return result
 
 
 def get_blocked_hash_count(db: Any) -> int:
     """Get count of blocked hashes."""
-    try:
-        row = db.fetch_one("SELECT COUNT(*) as count FROM media_blocked_hashes")
-        return row["count"] if isinstance(row, dict) else row[0] if row else 0
-    except Exception:
-        return 0
+    row = db.fetch_one("SELECT COUNT(*) as count FROM media_blocked_hashes")
+    return row["count"] if isinstance(row, dict) else row[0] if row else 0
 
 
 def review_hash_report(
@@ -217,6 +215,8 @@ def review_hash_report(
         status = "blocked"
     elif action == "clear":
         status = "cleared"
+    elif action == "dismiss":
+        status = "dismissed"
     else:
         status = "reviewed"
 
@@ -274,42 +274,39 @@ def block_hash(
 
 def get_blocked_users(db: Any, limit: int = 100, offset: int = 0) -> List[BlockedUser]:
     """Get list of users blocked from uploading media."""
-    try:
-        rows = db.fetch_all(
-            """SELECT b.user_id, u.username, b.reason, b.blocked_at, b.blocked_by, b.expires_at
-               FROM media_blocked_users b
-               LEFT JOIN auth_users u ON b.user_id = u.id
-               ORDER BY b.blocked_at DESC
-               LIMIT ? OFFSET ?""",
-            (limit, offset),
-        )
-        result = []
-        for row in rows:
-            if isinstance(row, dict):
-                result.append(
-                    BlockedUser(
-                        user_id=row["user_id"],
-                        username=row.get("username"),
-                        reason=row["reason"],
-                        blocked_at=row["blocked_at"],
-                        blocked_by=row["blocked_by"],
-                        expires_at=row.get("expires_at"),
-                    )
+    rows = db.fetch_all(
+        """SELECT b.user_id, u.username, b.reason, b.blocked_at, b.blocked_by, b.expires_at
+           FROM media_blocked_users b
+           LEFT JOIN auth_users u ON b.user_id = u.id
+           ORDER BY b.blocked_at DESC
+           LIMIT ? OFFSET ?""",
+        (limit, offset),
+    )
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append(
+                BlockedUser(
+                    user_id=row["user_id"],
+                    username=row.get("username"),
+                    reason=row["reason"],
+                    blocked_at=row["blocked_at"],
+                    blocked_by=row["blocked_by"],
+                    expires_at=row.get("expires_at"),
                 )
-            else:
-                result.append(
-                    BlockedUser(
-                        user_id=row[0],
-                        username=row[1],
-                        reason=row[2],
-                        blocked_at=row[3],
-                        blocked_by=row[4],
-                        expires_at=row[5] if len(row) > 5 else None,
-                    )
+            )
+        else:
+            result.append(
+                BlockedUser(
+                    user_id=row[0],
+                    username=row[1],
+                    reason=row[2],
+                    blocked_at=row[3],
+                    blocked_by=row[4],
+                    expires_at=row[5] if len(row) > 5 else None,
                 )
-        return result
-    except Exception:
-        return []
+            )
+    return result
 
 
 def block_user(

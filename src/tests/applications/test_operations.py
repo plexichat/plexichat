@@ -110,10 +110,9 @@ class TestOperations:
         app_manager.create_application(owner_id=test_user.id, name="App 1")
         app_manager.create_application(owner_id=test_user.id, name="App 2")
         apps = app_manager.get_user_applications(test_user.id)
-        assert len(apps) >= 2
+        assert len(apps) == 2
         names = {a.name for a in apps}
-        assert "App 1" in names
-        assert "App 2" in names
+        assert names == {"App 1", "App 2"}
 
     def test_invalid_name_empty(self, app_manager, test_user):
         """Test that empty application name is rejected."""

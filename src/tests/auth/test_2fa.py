@@ -32,7 +32,9 @@ class TestTwoFactorAuth:
         setup = auth_manager.setup_2fa(user.id)
 
         assert setup.secret is not None
-        assert len(setup.secret) > 0
+        # pyotp.random_base32() always returns a 32-char base32 secret
+        assert len(setup.secret) == 32
+        assert all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" for c in setup.secret)
 
     def test_setup_2fa_returns_qr_uri(self, db, auth_manager):
         """Test 2FA setup returns QR URI."""
@@ -281,6 +283,35 @@ class TestTwoFactorAuth:
         with pytest.raises(InvalidCredentialsError):
             auth_manager.disable_2fa(user.id, "WrongPassword!", totp.now())
 
+    def test_schedule_account_deletion_with_2fa(self, db, auth_manager):
+        """Scheduling deletion must accept a valid step-up TOTP code.
+
+        The stored TOTP secret is encrypted without an AAD context, so
+        decrypting it with ``context=str(user_id)`` failed the GCM integrity
+        check and raised before the code was ever verified, making account
+        deletion impossible for 2FA users.
+        """
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "del2fa_test",
+                "del2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
+        totp = pyotp.TOTP(setup.secret)
+        auth_manager.confirm_2fa(user.id, totp.now())
+
+        assert (
+            auth_manager.schedule_account_deletion(user.id, "TestPass123!", totp.now())
+            is True
+        )
+        row = db.fetch_one(
+            "SELECT deletion_status FROM auth_users WHERE id = ?", (user.id,)
+        )
+        assert row["deletion_status"] == "frozen"
+
     def test_regenerate_backup_codes(self, db, auth_manager):
         """Test regenerating backup codes."""
         from src.utils import encryption
@@ -325,3 +356,75 @@ class TestTwoFactorAuth:
         assert status.enabled is True
         expected_count = get_totp_config().get("backup_code_count", 10)
         assert status.backup_codes_remaining == expected_count
+
+    def test_disable_2fa_revocation_failure_warns_and_succeeds(self, db, auth_manager):
+        """Revocation failure on 2FA disable must warn, not hide at DEBUG."""
+
+        import utils.logger as app_logger
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "revokewarn2fa_test",
+                "revokewarn2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
+        totp = pyotp.TOTP(setup.secret)
+        auth_manager.confirm_2fa(user.id, totp.now())
+
+        manager = auth_manager._manager.get_instance()
+        real_execute = manager._db.execute
+
+        def _fail_revocation(sql, params=()):
+            if "UPDATE auth_sessions SET revoked" in sql:
+                raise RuntimeError("revocation boom")
+            return real_execute(sql, params)
+
+        with (
+            patch.object(encryption, "verify_password", return_value=True),
+            patch.object(manager._db, "execute", side_effect=_fail_revocation),
+            patch.object(app_logger, "warning") as mock_warning,
+        ):
+            result = auth_manager.disable_2fa(user.id, "TestPass123!", totp.now())
+
+        assert result is True
+        assert mock_warning.called
+        assert any(
+            "Failed to revoke sessions on 2FA disable" in str(call.args[0])
+            for call in mock_warning.call_args_list
+        )
+
+    def test_disable_2fa_security_alert_failure_warns_and_succeeds(
+        self, db, auth_manager
+    ):
+        """Security-alert failure on 2FA disable must warn, not pass silently."""
+        import utils.logger as app_logger
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                "alertwarn2fa_test",
+                "alertwarn2fa_test@example.com",
+                "TestPass123!",
+            )
+        setup = auth_manager.setup_2fa(user.id)
+        totp = pyotp.TOTP(setup.secret)
+        auth_manager.confirm_2fa(user.id, totp.now())
+
+        with (
+            patch.object(encryption, "verify_password", return_value=True),
+            patch(
+                "src.core.events.gateway_emit.emit_security_alert",
+                side_effect=RuntimeError("alert boom"),
+            ),
+            patch.object(app_logger, "warning") as mock_warning,
+        ):
+            result = auth_manager.disable_2fa(user.id, "TestPass123!", totp.now())
+
+        assert result is True
+        assert mock_warning.called
+        assert any(
+            "Failed to emit 2FA-disabled security alert" in str(call.args[0])
+            for call in mock_warning.call_args_list
+        )

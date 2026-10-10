@@ -4,14 +4,39 @@ Admin licensing routes for managing instance license state.
 
 from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
+import math
 from typing import Optional
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
+from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 import utils.licensing as licensing_module
 from src.core.admin.logging import AdminLogEntry, get_admin_logger
 
 router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
+
+
+def _expiry_date_iso(expiry_ts: float) -> str:
+    """Format an expiry timestamp as UTC ISO-8601."""
+    return datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat()
+
+
+def _days_remaining(expiry_ts: float, now_ts: Optional[float] = None) -> int:
+    """Whole days remaining, rounding partial days up.
+
+    Any positive remainder counts as a full day so 23h59m left reports
+    1 rather than 0. Expired timestamps report 0.
+    """
+    if now_ts is None:
+        now_ts = datetime.now(timezone.utc).timestamp()
+    remaining = expiry_ts - now_ts
+    if remaining <= 0:
+        return 0
+    return math.ceil(remaining / 86400)
 
 
 class LicenseKey(BaseModel):
@@ -60,7 +85,14 @@ def _audit_license_action(
         logger.debug(f"Failed to audit license action: {exc}")
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_license_status(request: Request):
     """
     Retrieve current license status and validation state.
@@ -80,19 +112,23 @@ async def get_license_status(request: Request):
         expiry_date = None
         days_remaining = None
         if expiry_ts:
-            expiry_date = datetime.fromtimestamp(expiry_ts).isoformat()
-            days_remaining = max(
-                0, int((expiry_ts - datetime.now().timestamp()) / 86400)
-            )
+            expiry_date = _expiry_date_iso(expiry_ts)
+            days_remaining = _days_remaining(expiry_ts)
 
         validation_result = licensing_module.get_validation_result()
+
+        provisional = licensing_module.is_provisional()
+        tier = "provisional" if provisional else ("free" if free_tier else "enterprise")
 
         # Merge status_data with extra details
         return {
             **status_data,
             "valid": valid,
             "free_tier": free_tier,
-            "tier": "free" if free_tier else "enterprise",
+            "provisional": provisional,
+            "license_type": licensing_module.get_license_type(),
+            "allowed_hosts": licensing_module.get_allowed_hosts(),
+            "tier": tier,
             "instance_id": instance_id,
             "expiry_timestamp": expiry_ts,
             "expiry_date": expiry_date,
@@ -101,10 +137,16 @@ async def get_license_status(request: Request):
         }
     except Exception as e:
         logger.error(f"License status error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/features")
+@router.get(
+    "/features",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_license_features(request: Request):
     """
     Retrieve feature matrix showing all licensed features and their state.
@@ -122,6 +164,14 @@ async def get_license_features(request: Request):
             {"key": "plexijoin", "label": "PlexiJoin Federation"},
             {"key": "audit_export", "label": "Audit Log Export"},
             {"key": "custom_roles", "label": "Custom Roles"},
+            {"key": "artifacts", "label": "PlexiSuite Artifacts"},
+            {"key": "plexiscribe", "label": "PlexiScribe"},
+            {"key": "plexiscript", "label": "PlexiScript"},
+            {"key": "artifacts_whiteboard", "label": "PlexiBoard (Whiteboard)"},
+            {"key": "voice_transcription", "label": "Voice Transcription"},
+            {"key": "plexistash", "label": "PlexiStash"},
+            {"key": "plexisum", "label": "PlexiSum"},
+            {"key": "all", "label": "All Features (meta)"},
         ]
 
         feature_matrix = []
@@ -143,10 +193,18 @@ async def get_license_features(request: Request):
         return {"features": feature_matrix}
     except Exception as e:
         logger.error(f"License features error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/validate")
+@router.post(
+    "/validate",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def validate_license_key(request: Request, body: LicenseKey):
     """
     Validate a proposed license payload without applying it.
@@ -174,10 +232,18 @@ async def validate_license_key(request: Request, body: LicenseKey):
         raise
     except Exception as e:
         logger.error(f"License validation error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/apply")
+@router.post(
+    "/apply",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid license key"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     """
     Apply a new license key.
@@ -193,7 +259,7 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     stays idempotent for the self-test pipeline.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    _admin_id = require_admin_permission(request, "admin.license.manage")
 
     # Capture current state before applying
     before_instance = licensing_module.get_instance_id()
@@ -277,6 +343,11 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     after_expiry = licensing_module.get_expiry_timestamp()
     after_features = after_state.get("features", {})
     after_limits = after_state.get("limits", {})
+    # Feature/capability availability is derived from the license, so drop any
+    # memoized capability verdicts before the audit trail records the swap.
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
     _audit_license_action(
         request,
         _admin_id,
@@ -305,7 +376,15 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
     }
 
 
-@router.post("/check")
+@router.post(
+    "/check",
+    responses={
+        400: {"model": ErrorResponse, "description": "License validation failed"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def force_validate_license(request: Request):
     """
     Force a license validation check of the current license.
@@ -314,7 +393,7 @@ async def force_validate_license(request: Request):
     current state; only a real, broken license triggers a 400.
     """
     check_host_restriction(request)
-    _admin_id = get_admin_from_token(request)
+    _admin_id = require_admin_permission(request, "admin.license.manage")
 
     if licensing_module.is_free_tier():
         _audit_license_action(
@@ -345,6 +424,9 @@ async def force_validate_license(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="License validation failed",
         )
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
     after_instance = licensing_module.get_instance_id()
     _audit_license_action(
         request,

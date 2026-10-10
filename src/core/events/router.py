@@ -4,6 +4,8 @@ Event routing - Logic for determining which users receive which events.
 
 from typing import Optional, List, Set
 
+import utils.logger as logger
+
 from .types import EventType, GatewayIntent
 from .models import Event
 
@@ -38,11 +40,15 @@ EVENT_INTENT_MAP = {
     EventType.MESSAGE_REACTION_ADD: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_ALL: GatewayIntent.GUILD_MESSAGE_REACTIONS,
+    EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.TYPING_START: GatewayIntent.GUILD_MESSAGE_TYPING,
     EventType.ARTIFACT_CREATE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_UPDATE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_DELETE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_OP: GatewayIntent.ARTIFACTS,
+    EventType.WORKBOOK_UPDATE: GatewayIntent.SUMS,
+    EventType.SUM_OPERATION: GatewayIntent.SUMS,
+    EventType.SUM_PRESENCE: GatewayIntent.SUMS,
 }
 
 DM_EVENT_INTENT_MAP = {
@@ -51,6 +57,7 @@ DM_EVENT_INTENT_MAP = {
     EventType.MESSAGE_DELETE: GatewayIntent.DIRECT_MESSAGES,
     EventType.MESSAGE_REACTION_ADD: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
+    EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.TYPING_START: GatewayIntent.DIRECT_MESSAGE_TYPING,
 }
 
@@ -174,7 +181,11 @@ class EventRouter:
         if effective_server_id and self._servers:
             recipients.update(self._get_server_member_ids(effective_server_id))
         elif effective_channel_id and self._messaging:
-            recipients.update(self._get_dm_participant_ids(effective_channel_id))
+            recipients.update(
+                self._get_dm_participant_ids(
+                    effective_channel_id, acting_user_id=event.user_id
+                )
+            )
 
         if event.event_type == EventType.PRESENCE_UPDATE:
             if event.user_id and self._relationships:
@@ -186,53 +197,79 @@ class EventRouter:
         """Get all member user IDs for a server."""
         if not self._servers:
             return []
-        try:
-            # ServerManager has get_member_user_ids
-            members = self._servers.get_member_user_ids(server_id)
-            return members if members else []
-        except Exception:
-            return []
+        # ServerManager has get_member_user_ids
+        members = self._servers.get_member_user_ids(server_id)
+        return members if members else []
 
-    def _get_dm_participant_ids(self, channel_id: int) -> List[int]:
-        """Get participant user IDs for a DM/group conversation."""
+    def _get_dm_participant_ids(
+        self, channel_id: int, acting_user_id: Optional[int] = None
+    ) -> List[int]:
+        """Get participant user IDs for a DM/group conversation.
+
+        Participants involved in a block (in either direction) with another
+        participant never receive the conversation's events, mirroring the
+        ``get_all_blocked_ids`` exclusion applied to presence updates. When
+        ``acting_user_id`` is known (e.g. the message author), that user is
+        always kept so their own actions still echo back to them.
+        """
         if not self._messaging:
             return []
-        try:
-            participants = self._messaging.get_participant_ids(channel_id)
-            return participants if participants else []
-        except Exception:
+        participants = self._messaging.get_participant_ids(channel_id)
+        if not participants:
             return []
+
+        if not self._relationships:
+            return participants
+
+        participant_set = set(participants)
+        excluded: Set[int] = set()
+        for pid in participants:
+            try:
+                blocked_ids = self._relationships.get_all_blocked_ids(pid)
+            except Exception as e:
+                logger.debug(
+                    f"Failed to resolve blocked IDs for {pid} on channel "
+                    f"{channel_id}: {e}"
+                )
+                continue
+            for bid in blocked_ids:
+                if bid not in participant_set or bid == pid:
+                    continue
+                # pid and bid must not see each other's events in this DM.
+                if acting_user_id is not None:
+                    if pid == acting_user_id:
+                        excluded.add(bid)
+                    elif bid == acting_user_id:
+                        excluded.add(pid)
+                else:
+                    excluded.add(bid)
+                    excluded.add(pid)
+
+        if not excluded:
+            return participants
+        return [pid for pid in participants if pid not in excluded]
 
     def _get_presence_recipients(self, user_id: int) -> List[int]:
         """Get users who should receive presence updates for a user."""
         recipients: Set[int] = set()
 
         if self._relationships:
-            try:
-                friend_ids = self._relationships.get_friend_ids(user_id)
-                if friend_ids:
-                    recipients.update(friend_ids)
-            except Exception:
-                pass
+            friend_ids = self._relationships.get_friend_ids(user_id)
+            if friend_ids:
+                recipients.update(friend_ids)
 
         if self._servers:
-            try:
-                server_ids = self._servers.get_user_server_ids(user_id)
-                for sid in server_ids or []:
-                    member_ids = self._get_server_member_ids(sid)
-                    recipients.update(member_ids)
-            except Exception:
-                pass
+            server_ids = self._servers.get_user_server_ids(user_id)
+            for sid in server_ids or []:
+                member_ids = self._get_server_member_ids(sid)
+                recipients.update(member_ids)
 
         recipients.discard(user_id)
 
         # Filter out blocked users
         if self._relationships and recipients:
-            try:
-                blocked_ids = self._relationships.get_all_blocked_ids(user_id)
-                for bid in blocked_ids:
-                    recipients.discard(bid)
-            except Exception:
-                pass
+            blocked_ids = self._relationships.get_all_blocked_ids(user_id)
+            for bid in blocked_ids:
+                recipients.discard(bid)
 
         return list(recipients)

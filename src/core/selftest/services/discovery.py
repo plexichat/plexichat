@@ -7,7 +7,7 @@ Extracts routes from the FastAPI OpenAPI spec and manages exclusions.
 from typing import List, Dict, Any, Set
 
 import utils.logger as logger
-from utils import licensing as license_module  # type: ignore
+from utils import licensing as license_module
 
 from ..context import SelfTestContext
 
@@ -24,8 +24,9 @@ class RouteDiscovery:
             if resp.status_code != 200:
                 logger.error(f"Failed to fetch OpenAPI spec: {resp.status_code}")
                 return []
+            spec = resp.json()
 
-            self.ctx.openapi_spec = resp.json()
+            self.ctx.openapi_spec = spec
             routes = []
 
             for path, methods in self.ctx.openapi_spec.get("paths", {}).items():

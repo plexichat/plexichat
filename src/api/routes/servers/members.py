@@ -1,11 +1,14 @@
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.servers import (
     MemberResponse,
+    MemberListResponse,
     PresenceResponse,
+    MemberUpdateRequest,
+    KickMemberRequest,
 )
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
 from src.core.database import cached
@@ -17,7 +20,7 @@ router = APIRouter()
 
 @router.get(
     "/{server_id}/members",
-    response_model=List[MemberResponse],
+    response_model=MemberListResponse,
     summary="List server members",
     responses={
         400: {"model": ErrorResponse, "description": "Invalid server ID"},
@@ -30,10 +33,10 @@ router = APIRouter()
 @cached(ttl=30, prefix="server_members_api")
 def get_server_members(
     server_id: str,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=200),
     after: Optional[str] = None,
     current_user: TokenInfo = Depends(get_current_user),
-) -> List[MemberResponse]:
+) -> MemberListResponse:
     servers_mod = api.get_servers()
     auth = api.get_auth()
     presence = api.get_presence()
@@ -53,20 +56,34 @@ def get_server_members(
                 detail={"error": {"code": 400, "message": "Invalid server ID"}},
             )
 
+        after_id: Optional[int] = None
+        if after is not None:
+            try:
+                after_id = int(after)
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid after cursor"}},
+                )
+
         curr_user_id = (
             current_user.user_id
             if hasattr(current_user, "user_id")
             else getattr(current_user, "get", lambda k: None)("user_id")
         )
 
-        members = servers_mod.get_members(curr_user_id, sid)
+        # Fetch one extra row to compute has_more without a second query.
+        members = servers_mod.get_members(curr_user_id, sid, limit + 1, after_id)
         if members is None:
             raise HTTPException(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Failed to fetch members"}},
             )
+        has_more = len(members) > limit
+        if has_more:
+            members = members[:limit]
         if len(members) == 0:
-            return []
+            return MemberListResponse(items=[], has_more=False)
 
         user_ids = []
         for m in members:
@@ -136,7 +153,7 @@ def get_server_members(
                     timeout_reason=timeout_reason,
                 )
             )
-        return result
+        return MemberListResponse(items=result, has_more=has_more)
     except HTTPException:
         raise
     except Exception as e:
@@ -156,7 +173,116 @@ def get_server_members(
             f"Failed to fetch members for server {server_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.patch(
+    "/{server_id}/members/{member_id}",
+    response_model=MemberResponse,
+    summary="Update a server member",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid ID"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Member not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def update_server_member(
+    server_id: str,
+    member_id: str,
+    payload: MemberUpdateRequest,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> MemberResponse:
+    servers_mod = api.get_servers()
+    if not servers_mod:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Servers module not available"}},
+        )
+
+    try:
+        try:
+            sid = int(server_id)
+            mid = int(member_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid ID"}},
+            )
+
+        db = api.get_db()
+        if not db:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Database not available"}},
+            )
+        row = db.fetch_one(
+            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
+            (mid, sid),
+        )
+        if not row:
+            row = db.fetch_one(
+                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
+                (sid, mid),
+            )
+        if not row:
+            raise HTTPException(status_code=404, detail="Member not found")
+
+        target_user_id = row["user_id"]
+
+        member = servers_mod.update_member(
+            current_user.user_id,
+            sid,
+            target_user_id,
+            nickname=payload.nickname,
+            muted=payload.muted,
+            deafened=payload.deafened,
+            timeout_until=payload.timeout_until,
+            timeout_reason=payload.timeout_reason,
+        )
+
+        user = None
+        auth = api.get_auth()
+        if auth:
+            users_map = auth.get_users_bulk([target_user_id])
+            user = users_map.get(target_user_id) or users_map.get(str(target_user_id))
+
+        return MemberResponse(
+            member_id=SnowflakeID(int(member.id)),
+            user_id=SnowflakeID(int(member.user_id)),
+            username=str(getattr(user, "username", None) or f"User {member.user_id}"),
+            nickname=member.nickname,
+            avatar_url=getattr(user, "avatar_url", None),
+            joined_at=member.joined_at,
+            roles=[SnowflakeID(r) for r in (member.roles or [])],
+            timeout_until=member.timeout_until,
+            timeout_reason=member.timeout_reason,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        exc_name = type(e).__name__
+        if "NotFound" in exc_name or "Exists" in exc_name:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Member not found"}},
+            )
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+
+        logger.error(
+            f"Failed to update member {member_id} in server {server_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -173,7 +299,10 @@ def get_server_members(
     },
 )
 async def kick_member(
-    server_id: str, member_id: str, current_user: TokenInfo = Depends(get_current_user)
+    server_id: str,
+    member_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+    payload: Optional[KickMemberRequest] = None,
 ) -> SuccessResponse:
     servers_mod = api.get_servers()
     if not servers_mod:
@@ -197,7 +326,10 @@ async def kick_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        row = db.fetch_one(
+            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
+            (mid, sid),
+        )
         if not row:
             row = db.fetch_one(
                 "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -207,7 +339,8 @@ async def kick_member(
             raise HTTPException(status_code=404, detail="Member not found")
 
         target_user_id = row["user_id"]
-        servers_mod.kick_member(current_user.user_id, sid, target_user_id)
+        reason = getattr(payload, "reason", None) if payload else None
+        servers_mod.kick_member(current_user.user_id, sid, target_user_id, reason)
         return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
@@ -220,7 +353,8 @@ async def kick_member(
             )
         elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
@@ -228,7 +362,8 @@ async def kick_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -274,7 +409,10 @@ async def assign_role_to_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        row = db.fetch_one(
+            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
+            (mid, sid),
+        )
         if not row:
             row = db.fetch_one(
                 "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -296,9 +434,18 @@ async def assign_role_to_member(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Member or role not found"}},
             )
+        # Must precede the generic "Permission" match: "InvalidPermissionKeyError"
+        # contains "Permission", so the 400 branch was otherwise unreachable and
+        # an unknown permission key surfaced as a misleading 403.
+        elif "InvalidPermissionKey" in exc_name:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid request"}},
+            )
         elif "Permission" in exc_name or "Hierarchy" in exc_name:
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
         elif "Exists" in exc_name:
             return SuccessResponse(success=True, message=None)
@@ -308,7 +455,8 @@ async def assign_role_to_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -354,7 +502,10 @@ async def remove_role_from_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one("SELECT user_id FROM srv_members WHERE id = ?", (mid,))
+        row = db.fetch_one(
+            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
+            (mid, sid),
+        )
         if not row:
             row = db.fetch_one(
                 "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
@@ -380,7 +531,8 @@ async def remove_role_from_member(
             "Permission" in exc_name or "Hierarchy" in exc_name or "Default" in exc_name
         ):
             raise HTTPException(
-                status_code=403, detail={"error": {"code": 403, "message": str(e)}}
+                status_code=403,
+                detail={"error": {"code": 403, "message": "Access denied"}},
             )
 
         logger.error(
@@ -388,5 +540,6 @@ async def remove_role_from_member(
             exc_info=True,
         )
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
