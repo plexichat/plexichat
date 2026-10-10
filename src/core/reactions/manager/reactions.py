@@ -92,12 +92,17 @@ class ReactionOpsMixin(ReactionProtocol):
                 raise ReactionExistsError("You have already reacted with this emoji")
 
             unique_count = self._get_unique_emoji_count(message_id)
-            user_has_this_emoji = self._db.fetch_one(
+            # NOTE: this is a MESSAGE-wide lookup, not a per-user one -- it
+            # answers "is this emoji already present on the message at all?".
+            # It is the right gate for the message-level cap below (only a
+            # genuinely new distinct emoji consumes a message slot), but it
+            # must never gate the per-user cap.
+            emoji_on_message = self._db.fetch_one(
                 "SELECT 1 FROM react_reactions WHERE message_id = ? AND emoji = ?",
                 (message_id, normalized_emoji),
             )
 
-            if not user_has_this_emoji and unique_count >= max_reactions:
+            if not emoji_on_message and unique_count >= max_reactions:
                 self._db.rollback()
                 raise ReactionLimitError(
                     f"Message has reached maximum of {max_reactions} unique reactions",
@@ -110,7 +115,15 @@ class ReactionOpsMixin(ReactionProtocol):
                 (message_id, user_id),
             )["count"]
 
-            if not user_has_this_emoji and user_unique_count >= max_user_reactions:
+            # The per-user cap counts THIS user's distinct emoji, so it must be
+            # evaluated unconditionally. It previously reused the
+            # message-wide ``emoji_on_message`` flag as a short-circuit, which
+            # silently disabled the cap for every emoji some other user had
+            # already reacted with -- a user at their limit could keep adding
+            # distinct emoji as long as each one already existed on the
+            # message. The duplicate check above has already rejected the only
+            # case where this insert would not grow the user's distinct count.
+            if user_unique_count >= max_user_reactions:
                 self._db.rollback()
                 raise ReactionLimitError(
                     f"User has reached maximum of {max_user_reactions} unique reactions per message",

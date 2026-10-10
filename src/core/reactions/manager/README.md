@@ -76,7 +76,7 @@ count = manager.remove_all_reactions(user_id=1, message_id=42)
 count = manager.remove_all_reactions_for_emoji(user_id=1, message_id=42, emoji="🎉")
 ```
 
-`reactions.py:161` and `reactions.py:204` fail closed when the conversation is deleted or permissions cannot be verified.
+`reactions.py:174` and `reactions.py:217` fail closed when the conversation is deleted or permissions cannot be verified.
 
 ### Query reactions
 
@@ -99,7 +99,7 @@ total = manager.get_reaction_count(message_id=42, viewer_id=1)
 by_emoji = manager.get_reaction_count_by_emoji(message_id=42, emoji="🎉", viewer_id=1)
 ```
 
-`get_reactions` (`reactions.py:327`) and `get_reaction_users` (`reactions.py:382`) exclude reactions from users you have blocked. `get_reaction_users` returns an empty list for invalid emoji instead of raising, to preserve read compatibility with legacy data (`reactions.py:399`).
+`get_reactions` (`reactions.py:340`) and `get_reaction_users` (`reactions.py:395`) exclude reactions from users you have blocked. `get_reaction_users` returns an empty list for invalid emoji instead of raising, to preserve read compatibility with legacy data (`reactions.py:414`).
 
 ## Manage custom emoji
 
@@ -182,7 +182,7 @@ Configure reactions through `utils.config` under the `reactions` and `emojis` ke
 |-----|---------|-------------|
 | `max_reactions_per_message` | `20` | Maximum distinct emoji per message. Overridden per server by `srv_servers.max_reactions_per_message` (`reactions.py:73`). |
 | `max_unique_reactions_per_user` | `50` | Maximum distinct emoji a single user can add to a message (`reactions.py:81`). |
-| `max_users_per_reaction_page` | `100` | Maximum users returned by `get_reaction_users` (`reactions.py:404`). |
+| `max_users_per_reaction_page` | `100` | Maximum users returned by `get_reaction_users` (`reactions.py:417`). |
 | `max_emoji_size` | `262144` (256 KiB) | Maximum image bytes for custom emoji (`emojis.py:94`). |
 | `emoji_allowed_formats` | `["image/png", "image/gif", "image/webp"]` | Allowed MIME types (`emojis.py:102`). |
 | `emoji_min_name_length` | `2` | Minimum emoji name length. |
