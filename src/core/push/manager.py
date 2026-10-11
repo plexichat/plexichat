@@ -129,6 +129,33 @@ class PushManager:
         return blind_index(plain_token, PUSH_TOKEN_BLIND_INDEX_SCOPE)
 
     @staticmethod
+    def _plaintext_for_hint(stored_token: Any) -> Optional[str]:
+        """Return the plaintext a ``token_hint`` may be derived from.
+
+        ``_sanitize_token_record`` runs on two record shapes:
+        ``register_token`` hands it the raw ``push_tokens`` row, where the
+        credentials are still wrapped in their ``ENC:v1:`` envelope, while
+        ``get_user_tokens`` hands it a record whose credentials were already
+        decrypted for delivery. Taking the last characters of the stored
+        value therefore published the tail of the *ciphertext* on the
+        register path: AES-256-GCM draws a fresh nonce per call, so that
+        value rotated on every encrypt and identified nothing about the
+        device. Unwrap the envelope first (a no-op for already-decrypted
+        records); an unwrappable envelope yields no hint rather than a
+        misleading one.
+        """
+        if not stored_token:
+            return None
+        value = str(stored_token)
+        try:
+            if value.startswith(("ENC:", "enc:", "PLAIN:")):
+                value = decrypt_push_token(value)
+        except Exception as e:
+            logger.warning(f"Could not derive a push token hint: {e}")
+            return None
+        return value or None
+
+    @staticmethod
     def _sanitize_token_record(record: Dict[str, Any]) -> Dict[str, Any]:
         """Strip raw credentials from a token record for API responses.
 
@@ -142,9 +169,9 @@ class PushManager:
             for k, v in dict(record or {}).items()
             if k not in ("token", "p256dh", "auth", "token_index")
         }
-        raw_token = record.get("token") if record else None
-        if raw_token:
-            sanitized["token_hint"] = f"…{str(raw_token)[-4:]}"
+        plain_token = PushManager._plaintext_for_hint((record or {}).get("token"))
+        if plain_token:
+            sanitized["token_hint"] = f"…{plain_token[-4:]}"
         return sanitized
 
     def _get_timestamp(self) -> int:

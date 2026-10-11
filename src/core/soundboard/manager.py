@@ -625,8 +625,8 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
         Only the metadata that is safe to change after upload is exposed:
         ``name``, ``emoji``, ``volume`` and ``cooldown``.  ``url`` is also
         accepted so audio can be re-pointed to a refreshed CDN copy.
-        Cooldown is stored as a per-sound column lazily added on first
-        write (older schemas don't have it; SQLite supports ALTER TABLE).
+        ``cooldown_seconds`` ships in the schema, so a write here needs no
+        runtime ALTER on either backend.
         """
         sound = self.get_sound(sound_id, user_id)
         if not sound:
@@ -652,12 +652,15 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             updates["url"] = self._validate_sound_url(url)
             params.append(updates["url"])
         if cooldown is not None:
-            # ``cooldown_seconds`` is provisioned by
-            # ``soundboard/schema.py`` as a NOT NULL DEFAULT 0
-            # column, so no runtime ALTER is required.  The original
-            # lazy-ALTER approach acquired an ACCESS EXCLUSIVE lock
-            # on Postgres for every metadata write — replaced once the
-            # column was moved into the schema.
+            # ``cooldown_seconds`` is provisioned by ``soundboard/schema.py``
+            # as a plain nullable INTEGER (no DEFAULT), and
+            # ``upload_sound`` deliberately leaves it NULL so the column can
+            # distinguish "unset" (NULL — fall back to
+            # ``default_cooldown_seconds`` in config) from "explicitly
+            # disabled" (0 — no cooldown). Writing an explicit value here is
+            # what ends that ambiguity, so the previously documented NOT NULL
+            # DEFAULT 0 shape would have made every sound read as
+            # "cooldown disabled" and silently dropped the configured default.
             clamped = int(cooldown)
             max_cooldown = int(self._config.get("max_cooldown_seconds", 0) or 0)
             if max_cooldown > 0:
