@@ -1090,11 +1090,15 @@ class TestPostgresErrorRecoveryReal:
             "database": {
                 "type": "postgres",
                 "postgres": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "user": "postgres",
-                    "password": "password",
-                    "dbname": "postgres",
+                    # Service-aware connection settings, env-driven the same
+                    # way as src/tests/fixtures/postgres_docker.py so these
+                    # tests run against the CI services (test:database_backends)
+                    # instead of silently skipping on localhost defaults.
+                    "host": os.getenv("POSTGRES_HOST", "localhost"),
+                    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+                    "user": os.getenv("POSTGRES_USER", "postgres"),
+                    "password": os.getenv("POSTGRES_PASSWORD", "password"),
+                    "dbname": os.getenv("POSTGRES_DB", "postgres"),
                 },
                 "connection_pool": {
                     "min_connections": 2,
@@ -1426,11 +1430,13 @@ class TestPostgresMultipleConstraintViolations:
             "database": {
                 "type": "postgres",
                 "postgres": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "user": "postgres",
-                    "password": "password",
-                    "dbname": "postgres",
+                    # Env-driven like the postgres fixtures so these run
+                    # against the CI services instead of skipping.
+                    "host": os.getenv("POSTGRES_HOST", "localhost"),
+                    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+                    "user": os.getenv("POSTGRES_USER", "postgres"),
+                    "password": os.getenv("POSTGRES_PASSWORD", "password"),
+                    "dbname": os.getenv("POSTGRES_DB", "postgres"),
                 },
             }
         }

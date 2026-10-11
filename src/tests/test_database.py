@@ -478,11 +478,14 @@ def test_postgres_connection_real(db_config):
     pg_config = {
         "type": "postgres",
         "postgres": {
-            "host": "localhost",
-            "port": 5432,
-            "user": "postgres",
-            "password": "password",
-            "dbname": "postgres",
+            # Env-driven like the postgres fixtures so this runs against the
+            # CI services (test:database_backends) instead of silently
+            # skipping on a hardcoded localhost address.
+            "host": os.getenv("POSTGRES_HOST", "localhost"),
+            "port": int(os.getenv("POSTGRES_PORT", "5432")),
+            "user": os.getenv("POSTGRES_USER", "postgres"),
+            "password": os.getenv("POSTGRES_PASSWORD", "password"),
+            "dbname": os.getenv("POSTGRES_DB", "postgres"),
         },
     }
     config.set("database", pg_config)

@@ -24,7 +24,18 @@ import argparse
 import json
 import os
 import sys
-from defusedxml import ElementTree as ET
+
+try:
+    from defusedxml import ElementTree as ET
+except ImportError:
+    # ``performance:no_slow_tests`` runs on a bare interpreter with no
+    # dependency install (see .gitlab-ci.yml), so fall back to the stdlib
+    # parser there. The report is produced by our own ``test:pytest`` job and
+    # :func:`_parse_report` refuses DTD/entity declarations outright, so the
+    # unhardened parser never sees the entity-expansion payloads defusedxml
+    # guards against.
+    from xml.etree import ElementTree as ET
+
 from datetime import datetime, timezone
 from xml.etree.ElementTree import Element
 from typing import Dict, List, Optional, Tuple
@@ -35,12 +46,24 @@ DEFAULT_THRESHOLD_SECONDS = 5.0
 def _parse_report(xml_path: str) -> Element:
     """Parse a JUnit report, raising ``ValueError`` if it cannot be read."""
     try:
-        root = ET.parse(xml_path).getroot()
-        if root is None:
-            raise ValueError("report has no root element")
-        return root
-    except (OSError, ET.ParseError) as exc:
+        with open(xml_path, "rb") as handle:
+            raw = handle.read()
+    except OSError as exc:
         raise ValueError(f"cannot read report {xml_path}: {exc}") from exc
+    # Fail closed on DTD/entity declarations: a pytest JUnit report never
+    # contains them, and the stdlib parser fallback above is not hardened
+    # against entity-expansion attacks.
+    if b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
+        raise ValueError(
+            f"cannot read report {xml_path}: DTD/entity declarations are not allowed"
+        )
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise ValueError(f"cannot read report {xml_path}: {exc}") from exc
+    if root is None:
+        raise ValueError("report has no root element")
+    return root
 
 
 def _scan_tests(root: Element) -> List[Tuple[float, str]]:

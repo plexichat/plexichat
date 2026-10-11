@@ -266,10 +266,23 @@ class CoreMixin(EndpointTesterBase):
 
         start = time.time()
         try:
-            # The media proxy fetches remote content server-side; its
-            # latency is bounded by the origin, not the app. Give that one
-            # path room (it still fails loudly past the deadline).
-            req_timeout = 30 if url_path.startswith("/api/v1/media/proxy") else 5
+            # A few endpoints perform server-side outbound I/O whose
+            # latency is bounded by DNS/remote origins, not the app: the
+            # media proxy fetches remote content, voice-message creation
+            # SSRF-screens the storage URL over DNS, and the PlexiJoin
+            # connection test probes a remote peer. On offline runners those
+            # lookups stall for seconds before failing, which raced the old
+            # 5s read deadline and flaked as ReadTimeout on endpoints that
+            # had answered just over it. Give these room (they still fail
+            # loudly past the deadline).
+            outbound_bound = (
+                url_path.startswith("/api/v1/media/proxy")
+                or url_path.startswith("/api/v1/features/voice-messages")
+                or (
+                    "/plexijoin/connections/" in url_path and url_path.endswith("/test")
+                )
+            )
+            req_timeout = 30 if outbound_bound else 5
             # M9: POST /auth/refresh rotates the bearer and the rotated
             # credential leaves the JSON body ONLY for explicit non-browser
             # opt-in. This probe adopts the rotated token from the body
