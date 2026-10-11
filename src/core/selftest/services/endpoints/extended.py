@@ -446,8 +446,24 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             provision_active_connection,
         )
 
+        import utils.licensing as _licensing
+
         _db = _api.get_db()
-        if _db is not None:
+        # The inbound route is gated by the PlexiJoin feature (`_get_plexijoin_manager`
+        # in src/api/routes/federation.py), so on a free-tier deployment it answers
+        # 403 by design. Mirror the sibling tests in endpoints/federation.py: skip
+        # the probe honestly rather than recording a failure. Passkeys and OAuth
+        # below are unrelated to licensing and keep running. The probe used to
+        # append exactly one result row, so appending none (not a pass, not a
+        # failure) is the honest outcome when the endpoint is not exercised.
+        _federation_licensed = (not self.ctx.unlicensed) and _licensing.has_feature(
+            "plexijoin", default=False
+        )
+        if not _federation_licensed:
+            logger.info(
+                "Skipping federation artifact-op (signed): plexijoin not licensed"
+            )
+        elif _db is not None:
             remote_id, shared_key = provision_active_connection(_db)
             try:
                 import json as _json

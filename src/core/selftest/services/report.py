@@ -52,6 +52,11 @@ class ReportGenerator:
         # Skipped entries are recorded honestly as skipped: they are neither
         # passes (inflating confidence) nor server faults.
         skipped = sum(1 for r in self.ctx.results if r.get("skipped"))
+        # Expected denials are honest passes (a licence-gated route answering
+        # 403 on a free-tier install is the gate working), but they are
+        # counted separately so a headline "100%" cannot hide how many checks
+        # actually asserted a 2xx.
+        expected_denials = sum(1 for r in self.ctx.results if r.get("expected_denial"))
         passed = sum(
             1 for r in self.ctx.results if r["success"] and not r.get("skipped")
         )
@@ -67,6 +72,7 @@ class ReportGenerator:
                     "passed": 0,
                     "failed": 0,
                     "skipped": 0,
+                    "expected": 0,
                     "duration_ms": 0,
                 }
             by_source[src]["total"] += 1
@@ -76,6 +82,8 @@ class ReportGenerator:
                 by_source[src]["skipped"] += 1
             else:
                 by_source[src]["failed"] += 1
+            if r.get("expected_denial"):
+                by_source[src]["expected"] += 1
             by_source[src]["duration_ms"] += r.get("duration_ms", 0)
 
         with_duration = [
@@ -93,6 +101,8 @@ class ReportGenerator:
         logger.info(f"Failed:          {failed}")
         if skipped:
             logger.info(f"Skipped:         {skipped}")
+        if expected_denials:
+            logger.info(f"Expected denials: {expected_denials}")
         logger.info(
             f"Success Rate:    {(passed / total * 100 if total > 0 else 0):.1f}%"
         )
@@ -127,9 +137,13 @@ class ReportGenerator:
                 s = by_source[src]
                 judged = s["passed"] + s["failed"]
                 rate = (s["passed"] / judged * 100) if judged > 0 else 0
+                expected_part = (
+                    f" | {s['expected']:>4} expected" if s["expected"] else ""
+                )
                 logger.info(
                     f"  {src:<15} {s['total']:>4} total | {s['passed']:>4} ok | "
-                    f"{s['failed']:>4} fail | {s['skipped']:>4} skip | {rate:>5.1f}% | "
+                    f"{s['failed']:>4} fail | {s['skipped']:>4} skip"
+                    f"{expected_part} | {rate:>5.1f}% | "
                     f"{s['duration_ms']:>8.1f}ms"
                 )
         logger.info("-" * 60)

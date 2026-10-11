@@ -235,13 +235,14 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     st_parser.add_argument(
         "--unlicensed",
         action="store_true",
-        help="Run in unlicensed mode: skip license-gated endpoints "
+        help="Run in unlicensed mode: exclude license-gated endpoints "
         "(e.g. /api/v1/admin/plexijoin/*) that return 403 without a "
-        "valid license, so the suite passes on an unlicensed "
-        "installation. Unlicensed mode is opt-in ONLY -- the flag is "
-        "the sole switch; it is never inferred from the machine's "
-        "license state. Without it, a missing/invalid license surfaces "
-        "as self-test failures for those endpoints.",
+        "valid license, so the suite simply does not run them. This "
+        "flag is opt-in and is never inferred from the machine's license "
+        "state. Without it those routes stay in the run: on a free-tier "
+        "install a 403 from a license-gated route is recorded as an "
+        "EXPECTED DENIAL (the feature gate working), not a failure; a "
+        "licensed install must still answer 2xx.",
     )
     st_parser.add_argument(
         "--status",

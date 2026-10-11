@@ -42,6 +42,49 @@ from typing import Dict, List, Optional, Tuple
 
 DEFAULT_THRESHOLD_SECONDS = 5.0
 
+# Per-test budgets for tests whose runtime is dominated by a cold, full-tree
+# import that a throwaway interpreter must recompile every run (bytecode
+# writing is disabled in CI: ``PYTHONDONTWRITEBYTECODE: "1"`` in
+# ``.gitlab-ci.yml``). Those sweeps prove a real contract, so rather than
+# deleting them or raising the global threshold for every test we give the
+# known-heavy tests an explicit, documented ceiling. A genuinely slower
+# regression still trips the gate.
+#
+# The registry is enforced against the report: an entry whose test id does not
+# appear in any report fails the run (see ``main``), so an exemption can never
+# silently rot after a rename. This mirrors the enforced-registry convention
+# used by ``ci-tooling/license_audit.py`` and
+# ``src/tests/unit/test_intentional_sleep_sites.py``.
+SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
+    "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeLoggerSetup::test_every_production_module_imports": (
+        10.0,
+        "cold full-tree import sweep: every module imports before logger.setup()",
+    ),
+    "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeConfigSetup::test_missing_config_fails_only_the_documented_way": (
+        10.0,
+        "cold full-tree import sweep: a missing config fails only as documented",
+    ),
+}
+
+
+def _budget_seconds(
+    test_id: str,
+    threshold: float,
+    budgets: Dict[str, Tuple[float, str]],
+) -> float:
+    """Return the effective ceiling for *test_id* (its budget, else threshold)."""
+    entry = budgets.get(test_id)
+    return entry[0] if entry else threshold
+
+
+def stale_budgets(
+    seen_ids: set,
+    budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+) -> List[str]:
+    """Return registered test ids that appear in no report (stale exemptions)."""
+    effective = SLOW_TEST_BUDGETS if budgets is None else budgets
+    return sorted(tid for tid in effective if tid not in seen_ids)
+
 
 def _parse_report(xml_path: str) -> Element:
     """Parse a JUnit report, raising ``ValueError`` if it cannot be read."""
@@ -86,23 +129,48 @@ def _scan_tests(root: Element) -> List[Tuple[float, str]]:
     return tests
 
 
-def slow_tests_from_root(root: Element, threshold: float) -> List[Tuple[float, str]]:
-    """Return ``(duration_seconds, test_id)`` for every testcase over threshold."""
-    return [(d, tid) for d, tid in _scan_tests(root) if d > threshold]
+def slow_tests_from_root(
+    root: Element,
+    threshold: float,
+    budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+) -> List[Tuple[float, str]]:
+    """Return ``(duration_seconds, test_id)`` for every testcase over its budget.
+
+    A testcase is slow when it exceeds its own registered budget, falling back
+    to the global *threshold* when it has none.
+    """
+    effective = SLOW_TEST_BUDGETS if budgets is None else budgets
+    return [
+        (d, tid)
+        for d, tid in _scan_tests(root)
+        if d > _budget_seconds(tid, threshold, effective)
+    ]
 
 
-def find_slow_tests(xml_path: str, threshold: float) -> List[Tuple[float, str]]:
+def find_slow_tests(
+    xml_path: str,
+    threshold: float,
+    budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+) -> List[Tuple[float, str]]:
     """Parse a JUnit XML report file and return the slow tests in it."""
-    return slow_tests_from_root(_parse_report(xml_path), threshold)
+    return slow_tests_from_root(_parse_report(xml_path), threshold, budgets)
 
 
-def metrics_from_root(root: Element, job: str, threshold: float) -> Dict[str, object]:
+def metrics_from_root(
+    root: Element,
+    job: str,
+    threshold: float,
+    budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+) -> Dict[str, object]:
     """Aggregate duration metrics from a parsed report root (feeds the CI trend)."""
+    effective = SLOW_TEST_BUDGETS if budgets is None else budgets
     tests = _scan_tests(root)
     count = len(tests)
     total = sum(d for d, _ in tests)
     worst_duration, worst_test = max(tests, default=(0.0, ""))
-    slow_count = sum(1 for d, _ in tests if d > threshold)
+    slow_count = sum(
+        1 for d, tid in tests if d > _budget_seconds(tid, threshold, effective)
+    )
     return {
         "job": job,
         "pipeline_id": os.environ.get("CI_PIPELINE_ID"),
@@ -119,9 +187,14 @@ def metrics_from_root(root: Element, job: str, threshold: float) -> Dict[str, ob
     }
 
 
-def report_metrics(xml_path: str, job: str, threshold: float) -> Dict[str, object]:
+def report_metrics(
+    xml_path: str,
+    job: str,
+    threshold: float,
+    budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+) -> Dict[str, object]:
     """Parse a JUnit report file and aggregate its duration metrics."""
-    return metrics_from_root(_parse_report(xml_path), job, threshold)
+    return metrics_from_root(_parse_report(xml_path), job, threshold, budgets)
 
 
 def _job_label(idx: int, jobs: List[str], xml_path: str) -> str:
@@ -168,6 +241,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     slow: List[Tuple[float, str]] = []
     metrics: List[Dict[str, object]] = []
+    seen_ids: set = set()
     for idx, xml_path in enumerate(args.xml_paths):
         # Parse each report exactly once and share the root between the slow
         # scan and the metrics pass (each was previously parsed separately).
@@ -176,6 +250,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
+        seen_ids.update(tid for _, tid in _scan_tests(root))
         slow.extend(slow_tests_from_root(root, args.threshold))
         if args.metrics_out:
             metrics.append(
@@ -184,8 +259,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             )
 
+    # Fail closed on a budget that matches no testcase in any report: the test
+    # was renamed or removed, so the exemption no longer applies to anything
+    # and must be cleaned up rather than silently carried forever.
+    stale = stale_budgets(seen_ids)
+    if stale:
+        for test_id in stale:
+            print(
+                f"ERROR: stale slow-test budget (no such testcase in the "
+                f"report): {test_id}",
+                file=sys.stderr,
+            )
+        return 2
+
     for duration, test_id in sorted(slow, reverse=True):
-        print(f"SLOW TEST ({duration:.2f}s > {args.threshold:g}s): {test_id}")
+        budget = _budget_seconds(test_id, args.threshold, SLOW_TEST_BUDGETS)
+        reason = SLOW_TEST_BUDGETS.get(test_id, (0.0, ""))[1]
+        suffix = f"  [{reason}]" if reason else ""
+        print(f"SLOW TEST ({duration:.2f}s > {budget:g}s): {test_id}{suffix}")
 
     # Metrics are written even when the gate trips: a red run's durations are
     # still worth recording (the artifact is uploaded with ``when: always``).
@@ -196,13 +287,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if slow:
         print(
-            f"FAIL: {len(slow)} test(s) slower than {args.threshold:g}s "
-            f"(worst: {slow[0][0]:.2f}s)",
+            f"FAIL: {len(slow)} test(s) slower than their budget "
+            f"(default {args.threshold:g}s; worst: {slow[0][0]:.2f}s)",
             file=sys.stderr,
         )
         return 1
 
-    print(f"OK: no test exceeded {args.threshold:g}s")
+    print(f"OK: no test exceeded its budget (default {args.threshold:g}s)")
     return 0
 
 

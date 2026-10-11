@@ -664,6 +664,13 @@ def apply_license_from_dict(license_dict: Dict[str, Any]) -> Dict[str, Any]:
             "Licensing not initialized. Call license.setup() before apply_license_from_dict."
         )
 
+    # A failed apply must NOT revoke a working licence. The candidate is
+    # loaded into the manager before it is validated, so without this
+    # snapshot/restore an invalid candidate would leave the manager holding
+    # a bad license and the module demoted to free tier. Capture the
+    # pre-apply state and roll back on every failure path.
+    previous = _license_manager.snapshot()
+    previous_free = _free_tier_mode
     try:
         _license_manager.load_from_dict(license_dict)
         validation = _license_manager.validate()
@@ -675,11 +682,13 @@ def apply_license_from_dict(license_dict: Dict[str, Any]) -> Dict[str, Any]:
             )
             return {"success": True}
         else:
-            _free_tier_mode = True
+            _license_manager.restore(previous)
+            _free_tier_mode = previous_free
             logger.warning(f"License validation failed: {validation.error_message}")
             return {"success": False, "error": validation.error_message}
     except Exception as e:
-        _free_tier_mode = True
+        _license_manager.restore(previous)
+        _free_tier_mode = previous_free
         logger.error(f"License apply failed: {e}")
         return {"success": False, "error": str(e)}
 
@@ -767,6 +776,11 @@ def apply_license_from_base64(license_payload: str) -> Dict[str, Any]:
             "Licensing not initialized. Call license.setup() before apply_license_from_base64."
         )
 
+    # A failed apply must NOT revoke a working licence: roll back to the
+    # pre-apply license and free-tier flag on every failure path (see
+    # ``apply_license_from_dict`` for the full rationale).
+    previous = _license_manager.snapshot()
+    previous_free = _free_tier_mode
     try:
         _license_manager.load_from_base64(license_payload)
         validation = _license_manager.validate()
@@ -778,11 +792,13 @@ def apply_license_from_base64(license_payload: str) -> Dict[str, Any]:
             )
             return {"success": True}
         else:
-            _free_tier_mode = True
+            _license_manager.restore(previous)
+            _free_tier_mode = previous_free
             logger.warning(f"License validation failed: {validation.error_message}")
             return {"success": False, "error": validation.error_message}
     except Exception as e:
-        _free_tier_mode = True
+        _license_manager.restore(previous)
+        _free_tier_mode = previous_free
         logger.error(f"License apply failed: {e}")
         return {"success": False, "error": str(e)}
 

@@ -238,7 +238,6 @@ async def validate_license_key(request: Request, body: LicenseKey):
 @router.post(
     "/apply",
     responses={
-        400: {"model": ErrorResponse, "description": "Invalid license key"},
         401: {"model": ErrorResponse, "description": "Invalid or expired token"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -309,33 +308,26 @@ async def apply_license(request: Request, body: Optional[LicenseKey] = None):
 
     result = licensing_module.apply_license_from_base64(raw_key)
     if not result.get("success"):
-        if licensing_module.is_free_tier():
-            _audit_license_action(
-                request,
-                _admin_id,
-                "license.apply",
-                "failed",
-                details="License validation failed; staying in free tier",
-                current_state=before_instance,
-            )
-            return {
-                "message": "License payload could not be validated; staying in free tier",
-                "applied": False,
-                "free_tier": True,
-                "error": result.get("error"),
-            }
+        # A failed apply is a no-op: the transactional apply leaves the
+        # current license (free-tier or licensed) untouched, so report that
+        # state rather than demoting to free tier or erroring. This matches
+        # the documented contract that an invalid license_key returns the
+        # current state without error and is audited as a failed no-op.
         _audit_license_action(
             request,
             _admin_id,
             "license.apply",
             "failed",
-            details=result.get("error") or "License apply failed",
+            details=result.get("error")
+            or "License validation failed; current license unchanged",
             current_state=before_instance,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.get("error") or "Failed to apply license",
-        )
+        return {
+            "message": "License payload could not be validated; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+            "error": result.get("error"),
+        }
     after_state = licensing_module.to_dict()
     after_valid = licensing_module.is_valid()
     after_free = licensing_module.is_free_tier()

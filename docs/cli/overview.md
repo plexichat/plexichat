@@ -112,7 +112,7 @@ The suite starts uvicorn in a background thread, runs every test in the self-tes
 
 | Flag | Description |
 |---|---|
-| `--unlicensed` | Run in unlicensed mode: skip license-gated endpoints (for example, `/api/v1/admin/plexijoin/*`) that return `403` without a valid license. The flag is the sole switch; the server never infers it from local license state (`src/cli/main.py:233`). |
+| `--unlicensed` | Run in unlicensed mode: exclude license-gated endpoints (for example, `/api/v1/admin/plexijoin/*`) that return `403` without a valid license. The flag is opt-in and the server never infers it from local license state (`src/cli/main.py:236`). Without it those routes stay in the run; on a free-tier install a `403` from a license-gated route is recorded as an **expected denial** (the feature gate working, not a failure), while a licensed install must still answer `2xx`. |
 
 ### `create-config`
 
@@ -127,7 +127,7 @@ The command writes to the first writable location in the search order:
 1. `~/.plexichat/config/config.yaml` (preferred)
 2. `<project_root>/config/config.yaml` (fallback)
 
-If a file already exists at the chosen location, the command does nothing and reports the existing path (`src/cli/main.py:514`).
+If a file already exists at the chosen location, the command does nothing and reports the existing path (`src/cli/main.py:532`).
 
 ### `version`
 
@@ -147,7 +147,7 @@ python main.py rotate-secrets
 python main.py rotate-secrets --config config/production.yaml
 ```
 
-The command updates the file in place. Back up the file before you run this in production. The new value is `secrets.token_hex(32)` (`src/cli/main.py:544`).
+The command updates the file in place. Back up the file before you run this in production. The new value is `secrets.token_hex(32)` (`src/cli/main.py:562`).
 
 ### `migrate-db`
 
@@ -160,7 +160,7 @@ python main.py migrate-db --dry-run
 
 | Flag | Description |
 |---|---|
-| `--dry-run` | Simulate migration without writing changes. Default `false` (`src/cli/main.py:279`). |
+| `--dry-run` | Simulate migration without writing changes. Default `false` (`src/cli/main.py:300`). |
 
 Exits with `0` on success or `1` if any migration fails.
 

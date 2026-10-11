@@ -306,6 +306,22 @@ class CoreMixin(EndpointTesterBase):
 
             success = 200 <= resp.status_code < 300
 
+            # License-gated endpoints (PlexiJoin federation) correctly reply
+            # 403 on a free-tier deployment: that is the feature gate doing
+            # its job, not a regression. Record it as an expected denial
+            # (mirroring the suite capability-denial pattern) instead of a
+            # failure -- but only when the response body proves the licence
+            # gate refused it, so a genuine authorization failure on the same
+            # route is never masked. The license state is read from the
+            # running server, never assumed: on a licensed install the status
+            # set is empty and a non-2xx stays a failure.
+            expected_license_denial = None
+            if not success and self.ctx.discovery.expected_plexijoin_denial(
+                url_path, resp.status_code, resp.text
+            ):
+                expected_license_denial = "plexijoin:unlicensed"
+                success = True
+
             # Honest 503 for optional deps (e.g. /qr without qrcode lib):
             # record as SKIPPED with reason, never as pass or as
             # accepted-500. Any 500 here still fails loudly below.
@@ -367,6 +383,8 @@ class CoreMixin(EndpointTesterBase):
                 "success": success,
                 "traceback": traceback_data,
             }
+            if expected_license_denial:
+                result["expected_denial"] = expected_license_denial
             if is_optional_unavailable:
                 result["success"] = False
                 result["skipped"] = True
@@ -661,7 +679,12 @@ class CoreMixin(EndpointTesterBase):
                 except Exception:
                     pass
 
-            if not success and not is_optional_unavailable:
+            if expected_license_denial:
+                logger.info(
+                    f"EXPECTED DENIAL: {method:<6} {path:<40} -> Status "
+                    f"{resp.status_code} ({expected_license_denial})"
+                )
+            elif not success and not is_optional_unavailable:
                 logger.error(
                     f"FAILED: {method:<6} {path:<40} -> Status {resp.status_code} ({duration:.1f}ms)"
                 )

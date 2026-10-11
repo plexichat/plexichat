@@ -96,13 +96,14 @@ class SelfTestRunner:
         self.ctx.report = self.report
         self.ctx.ram_monitor = self.ram_monitor
 
-        # Unlicensed/status-only modes are EXPLICIT-ONLY and already passed
-        # through SelfTestContext above: the runner treats PlexiJoin
-        # endpoints as license-gated only when the operator passes
-        # ``--unlicensed``. There is deliberately no auto-detection from
-        # the license state of the machine -- a missing license file must
-        # surface as self-test failure unless the operator opts in, so
-        # CI and operators can rely on the flag being the sole switch.
+        # ``--unlicensed`` is an explicit operator switch: it excludes the
+        # license-gated PlexiJoin/federation endpoints from the run entirely.
+        # Independently, the auto-loop detects free-tier from the running
+        # server's real license state (``discovery.plexijoin_expected_statuses``)
+        # and records a 403 on a license-gated path as an EXPECTED DENIAL
+        # rather than a failure -- the feature gate working, not a
+        # regression. Neither path weakens a check: a licensed install still
+        # requires 2xx from those routes.
 
     def _resolve_test_path(self, path: str) -> Optional[str]:
         """Substitute path placeholders with concrete test values.
@@ -317,10 +318,15 @@ class SelfTestRunner:
         # every /api/v1/admin/plexijoin/* route with 403 and the inbound
         # artifact federation routes (/api/v1/federation/artifact-*) reject
         # with 403 as well because they are gated by the same feature check
-        # (via the shared PlexiJoin manager). When the operator explicitly
-        # passes ``--unlicensed`` those routes are excluded so the suite can
-        # still complete against an unlicensed deployment; otherwise missing
-        # license is treated as a test failure (it surfaced as 403 here).
+        # (via the shared PlexiJoin manager).
+        #
+        # Passing ``--unlicensed`` excludes those routes from the run
+        # entirely. Without the flag they stay in the auto-loop, where
+        # ``EndpointTester.test_endpoint`` records a 403 on a license-gated
+        # path as an EXPECTED DENIAL (a pass) when the running server is
+        # genuinely free-tier, so an unlicensed install reports honest
+        # results instead of flagging the gate as a failure. A licensed
+        # install still requires 2xx.
         #
         # The generic auto-loop cannot sign the HMAC payloads these routes
         # require, so the artifact federation endpoints are excluded from the

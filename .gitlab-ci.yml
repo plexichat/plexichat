@@ -582,18 +582,17 @@ test:self_test:
   timeout: 1h
   script:
     - mkdir -p .plexichat
-    # Protected branches (master, etc.) set $PLEXICHAT_LICENSE in the CI
-    # secret store, so the licensed-only PlexiJoin endpoints can be exercised.
-    # On non-protected branches (feature branches like plexisuite-expansion)
-    # the variable is absent, so we pass --unlicensed to skip those
-    # license-gated routes. The self-test never auto-detects licensing state
-    # from the machine, so the operator must opt in explicitly via the flag.
+    # Every run is licensed. Protected branches (master, etc.) set a real
+    # $PLEXICHAT_LICENSE in the CI secret store; on all other branches we
+    # provision the canonical provisional test license at the default
+    # location so the licensed-only PlexiJoin/federation endpoints are
+    # exercised for real instead of being skipped. The self-test is never
+    # run with --unlicensed here: a license file is always present.
     - |
-      if [ -n "${PLEXICHAT_LICENSE:-}" ]; then
-        python main.py self-test
-      else
-        python main.py self-test --unlicensed
+      if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+        python ci-tooling/write_test_license.py
       fi
+    - python main.py self-test
 
 docker:build_and_push:
   stage: docker

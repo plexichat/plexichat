@@ -210,6 +210,20 @@ class LicenseManager:
         self._license_source: Optional[str] = None
         self._validation_result: Optional[LicenseValidationResult] = None
 
+    def snapshot(self) -> tuple:
+        """Capture the loaded-license state so a failed swap can be undone.
+
+        ``apply_license_from_*`` loads a candidate license *before* it is
+        validated. Without a snapshot, a candidate that fails validation
+        would leave the manager holding a bad license (and the module
+        demoted to free tier), silently revoking a working licence.
+        """
+        return (self._license, self._license_source, self._validation_result)
+
+    def restore(self, snapshot: tuple) -> None:
+        """Restore a snapshot captured by :meth:`snapshot`."""
+        self._license, self._license_source, self._validation_result = snapshot
+
     @classmethod
     def set_public_key(cls, public_key_base64: str) -> None:
         """

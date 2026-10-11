@@ -125,7 +125,7 @@ media:
 
 *   When `encrypt_messages` is `true` (the default), message content and attachments are encrypted before storage with the dedicated `message_keyring.json`.
 *   When `encrypt_at_rest` is `true` (the default), media files on disk are encrypted.
-*   `signing_key` generates time-limited, tamper-proof media URLs. Change it from the default in production. The server auto-generates it with `secrets.token_hex(32)` and persists it to `config/config.yaml` on first startup if it is still `CHANGE_THIS_SIGNING_KEY`. See `src/cli/main.py:74`.
+*   `signing_key` generates time-limited, tamper-proof media URLs. Change it from the default in production. The server auto-generates it with `secrets.token_hex(32)` and persists it to `config/config.yaml` on first startup if it is still `CHANGE_THIS_SIGNING_KEY`. See `src/cli/main.py:90`.
 *   `signing_expiry: 3600` means media URLs expire after 1 hour. Reduce for higher security or increase for caching convenience.
 
 ### Key rotation

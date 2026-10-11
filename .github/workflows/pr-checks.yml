@@ -218,6 +218,12 @@ jobs:
         run: |
           source .venv/bin/activate
           mkdir -p .plexichat
+          # Provision the canonical provisional test license so the
+          # licensed-only endpoints are exercised (a real PLEXICHAT_LICENSE
+          # secret takes precedence when one is configured).
+          if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+            python ci-tooling/write_test_license.py
+          fi
           python main.py self-test
 
   server-formula-parity:
