@@ -829,8 +829,16 @@ class TestMessageEncryption:
         reloaded = MessageEncryptor(Keyring(temp_keyring_path, kek_env_var=env_name))
         assert reloaded.is_key_auto_generated() is False
 
-    def test_generated_message_key_is_flagged_auto_generated(self, temp_keyring_path):
+    def test_generated_message_key_is_flagged_auto_generated(
+        self, temp_keyring_path, monkeypatch
+    ):
         """Generated message keys should still trigger the startup warning."""
+        # Scenario precondition: no operator-provisioned KEK. Make it
+        # explicit so the test does not inherit one from the environment
+        # (CI defines PLEXICHAT_SYSTEM_KEY for deploy jobs, which correctly
+        # reports the KEK as env-provisioned and suppresses the warning).
+        monkeypatch.delenv("PLEXICHAT_SYSTEM_KEY", raising=False)
+
         encryptor = MessageEncryptor(keyring=Keyring(temp_keyring_path))
         encryptor.encrypt_message("hello")
 

@@ -294,7 +294,9 @@ class TestTLSModule:
 
     def test_bare_relative_filename_no_crash(self):
         """F7: bare relative filename without directory component works."""
-        workdir = tempfile.mkdtemp(dir="/tmp/opencode")
+        # Scratch cwd only; no fixed base dir (e.g. /tmp/opencode) that
+        # would have to pre-exist on the runner.
+        workdir = tempfile.mkdtemp()
         try:
             old_cwd = os.getcwd()
             os.chdir(workdir)
