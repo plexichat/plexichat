@@ -146,3 +146,55 @@ class TestImageDimensionGuard:
         out = ImageProcessor(max_dimension=300).strip_metadata(data)
         assert isinstance(out, bytes)
         assert len(out) > 0
+
+
+@pytest.mark.media
+class TestStripMetadataPalettePixels:
+    """`strip_metadata` must not re-decode a palette image through a blank palette.
+
+    ``Image.new(mode, size)`` starts a ``P``-mode image with a fresh, all-black
+    palette and ``paste`` copies raw palette *indices* rather than decoded
+    colours, so every index of the source was resolved against that blank
+    palette and the re-encoded image came out solid black. Metadata stripping
+    is applied to stored uploads, so this silently destroyed palette PNGs
+    (the format Pillow picks for 8-bit-colour screenshots and GIF stills).
+    """
+
+    @staticmethod
+    def _palette_png() -> bytes:
+        Image = pytest.importorskip("PIL.Image")
+        img = Image.new("P", (8, 8))
+        img.putpalette([value for i in range(256) for value in (i, 0, 255 - i)])
+        for x in range(8):
+            for y in range(8):
+                img.putpixel((x, y), (x * 8 + y) % 256)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_strip_metadata_preserves_palette_colours(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        Image = pytest.importorskip("PIL.Image")
+
+        source = Image.open(io.BytesIO(self._palette_png()))
+        out = ImageProcessor(max_dimension=300).strip_metadata(self._palette_png())
+
+        stripped = Image.open(io.BytesIO(out))
+        assert stripped.convert("RGB").tobytes() == source.convert("RGB").tobytes()
+
+    def test_strip_metadata_keeps_the_palette_transparency_index(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        Image = pytest.importorskip("PIL.Image")
+
+        img = Image.new("P", (8, 8))
+        img.putpalette([value for i in range(256) for value in (i, i, i)])
+        img.info["transparency"] = 7
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+
+        out = ImageProcessor(max_dimension=300).strip_metadata(buf.getvalue())
+
+        stripped = Image.open(io.BytesIO(out))
+        assert stripped.info.get("transparency") == 7

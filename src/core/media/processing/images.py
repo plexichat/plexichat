@@ -439,7 +439,19 @@ class ImageProcessor:
             img = self._open_validated(image_data)
             original_format = img.format
 
+            # ``Image.new`` starts a palette image with a fresh, all-black
+            # palette, and ``paste`` copies raw palette *indices* rather than
+            # decoded colours -- so a ``P``-mode source was rebuilt with every
+            # index decoded through that blank palette and came out solid
+            # black. Carry the palette (and its transparency index) across so
+            # the pixels keep the colours the source image actually draws.
             img_no_exif = self._Image.new(img.mode, img.size)
+            if img.mode in ("P", "PA"):
+                palette = img.getpalette()
+                if palette:
+                    img_no_exif.putpalette(palette)
+                if "transparency" in img.info:
+                    img_no_exif.info["transparency"] = img.info["transparency"]
             img_no_exif.paste(img)
 
             out_format = output_format or original_format or "PNG"
