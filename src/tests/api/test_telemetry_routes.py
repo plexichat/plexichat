@@ -13,9 +13,11 @@ single client 429 the whole deployment.
 """
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
 
 import utils.config as config
 from src.api.routes import telemetry as telemetry_mod
@@ -147,3 +149,56 @@ def test_telemetry_ratelimit_ignores_xff_from_untrusted_peer():
         _captured_rate_limit_ip(_make_request("203.0.113.9", "198.51.100.7"))
         == "203.0.113.9"
     )
+
+
+# ---------------------------------------------------------------------------
+# Disabled-module degradation (telemetry is opt-in via telemetry.enabled)
+# ---------------------------------------------------------------------------
+
+
+def _admin_telemetry_client(is_setup: bool):
+    """Route-level client for the admin telemetry endpoints (auth stubbed)."""
+    from src.api.routes.admin import telemetry as admin_telemetry_routes
+    from src.core import telemetry as telemetry_core
+
+    app = FastAPI()
+    app.include_router(admin_telemetry_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    patchers = (
+        patch.object(admin_telemetry_routes, "check_host_restriction"),
+        patch.object(admin_telemetry_routes, "get_admin_from_token", return_value=1),
+        patch.object(telemetry_core, "is_setup", return_value=is_setup),
+    )
+    for patcher in patchers:
+        patcher.start()
+    return client, patchers
+
+
+def test_telemetry_export_when_module_disabled_returns_empty_export():
+    """A disabled telemetry module must export an empty report, not a 500.
+
+    Telemetry is opt-in (``telemetry.enabled``), so a default deployment has
+    it inert. The export endpoint used to raise 500 "Telemetry not setup"
+    there while /stats and /reset degraded gracefully, which broke the admin
+    dashboard's export button and failed the API self-test.
+    """
+    client, patchers = _admin_telemetry_client(is_setup=False)
+    try:
+        json_resp = client.get("/api/v1/admin/telemetry/export?format=json&hours=1")
+        assert json_resp.status_code == 200, json_resp.text
+        assert json_resp.json()["stats"] == []
+
+        csv_resp = client.get("/api/v1/admin/telemetry/export?format=csv&hours=1")
+        assert csv_resp.status_code == 200, csv_resp.text
+        assert "Endpoint" in csv_resp.text
+
+        txt_resp = client.get("/api/v1/admin/telemetry/export?format=txt&hours=1")
+        assert txt_resp.status_code == 200, txt_resp.text
+        assert "Plexichat Telemetry Export" in txt_resp.text
+
+        # An unsupported format stays a client error, not an empty export.
+        bad = client.get("/api/v1/admin/telemetry/export?format=bogus&hours=1")
+        assert bad.status_code == 400
+    finally:
+        for patcher in reversed(patchers):
+            patcher.stop()

@@ -196,9 +196,12 @@ async def export_telemetry_stats(
     try:
         from src.core import telemetry
 
-        if not telemetry.is_setup():
-            raise HTTPException(status_code=500, detail="Telemetry not setup")
-        stats = telemetry.get_endpoint_stats(hours=hours)
+        # Telemetry is opt-in (``telemetry.enabled``), so the module can be
+        # inert in a default deployment. Degrade to an empty export exactly
+        # like /stats and /reset do instead of failing the download.
+        stats = (
+            telemetry.get_endpoint_stats(hours=hours) if telemetry.is_setup() else []
+        )
         # Render the export stamp in UTC, not server-local, so the exported
         # figure is the same instant on every host.
         ts = datetime.now(timezone.utc).isoformat()
