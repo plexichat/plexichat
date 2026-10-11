@@ -155,6 +155,110 @@ def test_validate_without_license():
 
 
 # ---------------------------------------------------------------------------
+# Signature coverage
+#
+# The Ed25519 signature must cover every field the parser accepts and that
+# changes what the license grants -- ``type`` and ``allowed_hosts`` included.
+# They used to sit outside the signed payload while ``sign_license`` signed
+# the whole mapping (so vendor-signed licenses in the documented format were
+# rejected outright), and the unsigned-test-license exemption was keyed on
+# ``type`` alone, so rewriting ``"type": "test"`` on a signed license turned
+# signature verification off and unlocked every premium feature.
+# ---------------------------------------------------------------------------
+
+
+def _documented_license(**overrides):
+    """A license in the format documented in the core module docstring."""
+    now = int(time.time())
+    base = {
+        "version": "1.0",
+        "type": "standard",
+        "instance_id": "inst",
+        "issued_at": now - 100,
+        "expires_at": now + 100000,
+        "features": {"bond": True},
+        "limits": {"max_users": 50},
+        "allowed_hosts": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def _signed_documented(**overrides):
+    priv, pub = generate_keypair()
+    data = _documented_license(**overrides)
+    return {**data, "signature": sign_license(priv, data)}, priv, pub
+
+
+def test_documented_format_signature_round_trips():
+    signed, _, pub = _signed_documented()
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict(signed)
+    result = mgr.validate()
+    assert result.is_valid is True
+    assert result.is_signature_valid is True
+    assert result.instance_id == "inst"
+
+
+def test_unsigned_provisional_license_still_validates():
+    """The genuine CI self-test license stays accepted (it is unsigned)."""
+    _, pub = generate_keypair()
+    test_license = _documented_license(type="test", signature=None)
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict(test_license)
+    assert mgr.validate().is_valid is True
+
+
+def test_type_rewrite_cannot_bypass_signature():
+    signed, _, pub = _signed_documented()
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict({**signed, "type": "test"})
+    result = mgr.validate()
+    assert result.is_valid is False
+    assert result.is_signature_valid is False
+
+
+def test_type_rewrite_cannot_unlock_premium_features():
+    signed, _, pub = _signed_documented()
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict({**signed, "type": "test"})
+    # has_feature gates on validation first, so an invalid license must not
+    # report premium features as enabled even though type == "test".
+    assert mgr.has_feature("sso") is False
+
+
+def test_allowed_hosts_rewrite_invalidates_signature():
+    signed, _, pub = _signed_documented()
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict({**signed, "allowed_hosts": ["203.0.113.9"]})
+    assert mgr.validate().is_signature_valid is False
+
+
+def test_signed_test_type_license_is_verified_not_exempted():
+    """A license that *presents* a signature is always verified."""
+    signed, _, pub = _signed_documented(type="test")
+    mgr = LicenseManager(public_key_bytes=pub)
+    mgr.load_from_dict(signed)
+    # signed with the canonical payload that includes type == "test"
+    assert mgr.validate().is_signature_valid is True
+
+    # ... and tampering with any covered field still breaks it, because the
+    # exemption is not what made it pass.
+    mgr2 = LicenseManager(public_key_bytes=pub)
+    mgr2.load_from_dict({**signed, "features": {"bond": False}})
+    assert mgr2.validate().is_valid is False
+
+
+def test_signature_key_is_outside_the_signed_payload():
+    """Re-signing a mapping that already carries a signature must round-trip."""
+    priv, pub = generate_keypair()
+    data = _documented_license()
+    first = sign_license(priv, data)
+    twice = sign_license(priv, {**data, "signature": first})
+    assert first == twice
+
+
+# ---------------------------------------------------------------------------
 # Expiry boundaries
 # ---------------------------------------------------------------------------
 

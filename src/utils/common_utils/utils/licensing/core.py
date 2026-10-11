@@ -36,7 +36,7 @@ import json
 import base64
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 # Features that are always available regardless of license (base platform
 # functionality that must never be gated behind a commercial license).
@@ -119,6 +119,55 @@ class License:
                 f"Unknown license type: {self.type!r} "
                 f"(expected one of {sorted(LICENSE_TYPES)})"
             )
+
+
+def canonical_license_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the canonical, signature-covered view of a license mapping.
+
+    Signing and verification must agree *byte for byte* on what the Ed25519
+    signature covers, or the two sides of the same check disagree:
+
+    * :func:`sign_license` signs whatever mapping it is handed -- i.e. the
+      license JSON as documented above, which carries ``type`` and
+      ``allowed_hosts``.
+    * ``_verify_signature`` used to rebuild the payload from six fields only.
+
+    Every field the parser accepts and that influences what the license
+    grants is therefore listed here, and ``signature`` never is. Each entry
+    mirrors exactly how ``LicenseManager._parse_license_data`` reads the same
+    key out of the raw mapping, including the defaults, so both sides
+    canonicalize to identical JSON.
+
+    The two fields that used to be missing mattered most:
+
+    * A vendor-signed license that followed the documented format failed
+      verification outright and silently demoted the instance to free tier.
+    * ``type`` was unprotected, so rewriting ``"type": "standard"`` to
+      ``"type": "test"`` in an otherwise valid license kept the signature
+      valid while turning every premium feature on -- ``has_feature``
+      short-circuits on ``type == "test"``. ``allowed_hosts`` was equally
+      rewritable on a provisional license.
+    """
+    return {
+        "version": data.get("version", "1.0"),
+        "type": data.get("type", "standard"),
+        "instance_id": data.get("instance_id", ""),
+        "issued_at": data.get("issued_at", 0),
+        "expires_at": data.get("expires_at"),
+        "features": data.get("features", {}),
+        "limits": data.get("limits", {}),
+        "allowed_hosts": list(data.get("allowed_hosts", []) or []),
+    }
+
+
+def _canonical_message(data: Mapping[str, Any]) -> bytes:
+    """Serialize :func:`canonical_license_payload` deterministically."""
+    return json.dumps(
+        canonical_license_payload(data),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
 
 
 @dataclass
@@ -298,10 +347,23 @@ class LicenseManager:
         # key is never embedded in a build) so signature verification is
         # skipped for them. Their safety comes from the localhost host
         # restriction and the prominent client banner, not from crypto.
+        #
+        # The exemption is keyed on the license carrying NO signature, never
+        # on ``type`` alone. ``type`` is plain data inside the license file
+        # and is only trustworthy once the signature over it has checked
+        # out; keying the exemption off it let anyone rewrite
+        # ``"type": "standard"`` to ``"type": "test"`` on an otherwise valid
+        # signed license and switch signature verification off entirely --
+        # and ``has_feature`` answers True for every feature on a test
+        # license, so that rewrite was a full entitlement bypass. A license
+        # that presents a signature is always verified, whatever it calls
+        # itself.
+        unsigned_provisional = is_test and not self._license.signature
+
         is_signature_valid = False
         signature_error = None
 
-        if is_test:
+        if unsigned_provisional:
             is_signature_valid = True
         else:
             try:
@@ -350,20 +412,24 @@ class LicenseManager:
             public_key_bytes = self._get_public_key()
             public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
 
-            # Create canonical data for verification (excluding signature)
-            verify_data = {
-                "version": self._license.version,
-                "instance_id": self._license.instance_id,
-                "issued_at": self._license.issued_at,
-                "expires_at": self._license.expires_at,
-                "features": self._license.features,
-                "limits": self._license.limits,
-            }
-
-            # Canonical JSON representation for signing
-            message = json.dumps(
-                verify_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-            ).encode("utf-8")
+            # Canonical payload shared with ``sign_license`` -- see
+            # ``canonical_license_payload``. Rebuilding it from the parsed
+            # License object (rather than the raw mapping) is what keeps
+            # ``type`` and ``allowed_hosts`` inside the covered set, so a
+            # license whose entitlements were rewritten after signing no
+            # longer verifies.
+            message = _canonical_message(
+                {
+                    "version": self._license.version,
+                    "type": self._license.type,
+                    "instance_id": self._license.instance_id,
+                    "issued_at": self._license.issued_at,
+                    "expires_at": self._license.expires_at,
+                    "features": self._license.features,
+                    "limits": self._license.limits,
+                    "allowed_hosts": self._license.allowed_hosts,
+                }
+            )
 
             signature_bytes = base64.b64decode(self._license.signature)
 
@@ -627,10 +693,11 @@ def sign_license(private_key_bytes: bytes, license_data: Dict[str, Any]) -> str:
 
         private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
 
-        # Create canonical message
-        message = json.dumps(
-            license_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
+        # Sign the canonical payload rather than the raw mapping: the mapping
+        # may carry a ``signature`` key (re-signing) or fields the parser
+        # ignores, and either would yield a signature that never verifies.
+        # See ``canonical_license_payload``.
+        message = _canonical_message(license_data)
 
         signature = private_key.sign(message)
         return base64.b64encode(signature).decode("ascii")
