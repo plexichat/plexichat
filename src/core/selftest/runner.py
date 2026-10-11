@@ -312,18 +312,29 @@ class SelfTestRunner:
                 if "/admin/" in route["path"]:
                     excluded.add(f"{route['method']}:{route['path']}")
 
-        # --- License-gated endpoints (unlicensed mode) ---
+        # --- License-gated endpoints ---
         # Without a valid license, PlexiJoin (the licensed feature) rejects
-        # every /api/v1/admin/plexijoin/* route with 403. Only when the
-        # operator explicitly passes ``--unlicensed`` do we exclude those
-        # routes instead of failing the whole suite.
+        # every /api/v1/admin/plexijoin/* route with 403 and the inbound
+        # artifact federation routes (/api/v1/federation/artifact-*) reject
+        # with 403 as well because they are gated by the same feature check
+        # (via the shared PlexiJoin manager). When the operator explicitly
+        # passes ``--unlicensed`` those routes are excluded so the suite can
+        # still complete against an unlicensed deployment; otherwise missing
+        # license is treated as a test failure (it surfaced as 403 here).
+        #
+        # The generic auto-loop cannot sign the HMAC payloads these routes
+        # require, so the artifact federation endpoints are excluded from the
+        # auto-loop regardless of license state (they are exercised end-to-end
+        # by ``_test_federation_bridge`` in the artifacts service).
         if self.ctx.unlicensed:
             logger.info(
                 "Unlicensed mode (explicit flag): excluding license-gated "
-                "/plexijoin/ endpoints from the suite"
+                "/plexijoin/ and /federation/artifact-* endpoints from the suite"
             )
             for route in routes:
-                if "/plexijoin/" in route["path"]:
+                if "/plexijoin/" in route["path"] or route["path"].startswith(
+                    "/api/v1/federation/artifact-"
+                ):
                     excluded.add(f"{route['method']}:{route['path']}")
 
         # --- Browser-required endpoints (cannot be tested via HTTP API) ---

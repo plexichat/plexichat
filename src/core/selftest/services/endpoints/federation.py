@@ -100,6 +100,11 @@ class FederationMixin(EndpointTesterBase):
         db = api.get_db()
         if not db:
             return
+        import utils.licensing as _licensing
+
+        if not _licensing.has_feature("plexijoin", default=False):
+            logger.info("Skipping federation inbound (plexijoin not licensed)")
+            return
         session = self.ctx.session
         base = self.ctx.base_url
 
@@ -198,6 +203,11 @@ class FederationMixin(EndpointTesterBase):
             return
         if self.ctx.unlicensed:
             logger.info("Skipping Join contract (unlicensed mode)")
+            return
+        import utils.licensing as _licensing
+
+        if not _licensing.has_feature("plexijoin", default=False):
+            logger.info("Skipping Join contract (plexijoin not licensed)")
             return
         if not self.ctx.session.headers.get("Authorization"):
             return

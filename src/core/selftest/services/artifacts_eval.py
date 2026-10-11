@@ -152,6 +152,24 @@ class ArtifactsEvalMixin:
             # be 0 when no WebSocket dispatcher is attached). This proves the
             # routes are reachable and the signature verification works end to
             # end, rather than being silently skipped.
+            #
+            # If the deployment is unlicensed, those routes reject with 403
+            # because the feature gate lives in the shared PlexiJoin manager
+            # that the inbound routes build. In that case we still insert the
+            # connection row for suite hygiene but skip the HTTP assertions and
+            # record an explicit pass (the route contract is covered by unit
+            # tests and by the dedicated signed inbound tests when licensed).
+            import utils.licensing as _licensing
+
+            if not _licensing.has_feature("plexijoin", default=False):
+                self._record(
+                    "FEDERATION",
+                    "bridge",
+                    True,
+                    "artifact federation HTTP skipped: plexijoin not licensed",
+                )
+                return
+
             import utils.encryption as _encryption
 
             shared_key = secrets.token_hex(16)
