@@ -211,7 +211,10 @@ class TestJpegTransparencyFlattening:
     alpha channel was dropped entirely -- a fully transparent black region was
     written to the JPEG as solid black instead of the white a viewer shows.
     Every entry point that re-encodes to JPEG is guarded here so the fix
-    cannot regress at one of them.
+    cannot regress at one of them; ``strip_metadata`` takes an explicit
+    ``output_format`` and is guarded too, since a JPEG target there used to
+    reach the encoder with the alpha channel still attached and fail with
+    "cannot write mode RGBA as JPEG".
     """
 
     @staticmethod
@@ -306,3 +309,66 @@ class TestJpegTransparencyFlattening:
         Image = pytest.importorskip("PIL.Image")
         out = ImageProcessor(max_dimension=300).convert_format(self._la_png(), "JPEG")
         assert Image.open(io.BytesIO(out)).mode in ("RGB", "L")
+
+    def test_strip_metadata_flattens_la_onto_white(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        out = ImageProcessor(max_dimension=300).strip_metadata(
+            self._la_png(), output_format="JPEG"
+        )
+        img = self._decode(out)
+        assert img.getpixel((0, 0))[0] < 60, img.getpixel((0, 0))
+        assert img.getpixel((img.width - 1, 0))[0] > 200, img.getpixel(
+            (img.width - 1, 0)
+        )
+
+    def test_strip_metadata_rgba_still_flattens_onto_white(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        out = ImageProcessor(max_dimension=300).strip_metadata(
+            self._rgba_png(), output_format="JPEG"
+        )
+        img = self._decode(out)
+        left = img.getpixel((0, 0))
+        right = img.getpixel((img.width - 1, 0))
+        # Opaque side stays green; transparent side becomes white.
+        assert left[1] > 150 and left[1] > left[0], left
+        assert right[0] > 200 and right[1] > 200, right
+
+    def test_strip_metadata_jpeg_output_is_rgb(self):
+        from src.core.media.processing.images import ImageProcessor
+
+        Image = pytest.importorskip("PIL.Image")
+        out = ImageProcessor(max_dimension=300).strip_metadata(
+            self._la_png(), output_format="JPEG"
+        )
+        assert Image.open(io.BytesIO(out)).mode in ("RGB", "L")
+
+    def test_strip_metadata_palette_png_to_jpeg(self):
+        """A palette PNG carrying a transparency index must strip to JPEG.
+
+        ``strip_metadata`` rebuilt the image in the source mode and handed it
+        straight to the encoder, so a ``P``-mode source asked for a ``JPEG``
+        target failed with "cannot write mode P as JPEG" -- and a fully
+        transparent index would have been flattened to black rather than the
+        white background every other re-encode path composites.
+        """
+        from src.core.media.processing.images import ImageProcessor
+
+        Image = pytest.importorskip("PIL.Image")
+
+        img = Image.new("P", (8, 8))
+        img.putpalette([value for i in range(256) for value in (i, i, i)])
+        img.info["transparency"] = 0
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+
+        out = ImageProcessor(max_dimension=300).strip_metadata(
+            buf.getvalue(), output_format="JPEG"
+        )
+
+        stripped = Image.open(io.BytesIO(out))
+        assert stripped.mode == "RGB"
+        # Index 0 is fully transparent, so every pixel lands on the white
+        # background rather than on the palette's black entry.
+        assert stripped.getpixel((0, 0)) == (255, 255, 255)

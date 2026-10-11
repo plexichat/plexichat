@@ -429,6 +429,10 @@ class ImageProcessor:
         """
         Strip EXIF and other metadata from image.
 
+        When the re-encoded output is JPEG the image is first flattened onto
+        opaque white exactly like :meth:`convert_format` and :meth:`resize`
+        do, because JPEG can store neither a palette nor an alpha channel.
+
         Args:
             image_data: Raw image bytes
             output_format: Output format (None to keep original)
@@ -456,6 +460,15 @@ class ImageProcessor:
             img_no_exif.paste(img)
 
             out_format = output_format or original_format or "PNG"
+
+            if out_format == "JPEG":
+                # Same JPEG transparency flattening every other re-encode
+                # entry point applies: JPEG cannot store a palette or an
+                # alpha channel, so a source in ``P``/``PA``/``RGBA``/``LA``
+                # has to be composited onto opaque white or the save either
+                # fails outright ("cannot write mode RGBA as JPEG") or drops
+                # the alpha channel and writes transparency as black.
+                img_no_exif = self._prepare_for_jpeg(img_no_exif)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": out_format}
