@@ -126,6 +126,32 @@ class ImageProcessor:
         self._validate_image_dimensions(img)
         return img
 
+    def _prepare_for_jpeg(self, img):
+        """Flatten an image bound for JPEG onto an opaque white background.
+
+        JPEG has neither a palette mode nor an alpha channel, so a source
+        carrying transparency must be composited or the alpha channel is
+        silently dropped on re-encode. The old inline composites only built
+        the mask for ``RGBA`` (and upgraded ``P`` images to ``RGBA``), so an
+        ``LA`` image fell through with no mask and its alpha channel was
+        discarded -- a fully transparent black region embedded as solid black
+        instead of the white background a viewer shows.
+
+        Palette images (``P``) are converted first because JPEG cannot encode
+        palette mode at all; a transparency index is preserved by routing
+        through ``RGBA``. Remaining transparency (``RGBA``/``LA``/``PA``) is
+        then composited onto white. Non-palette, opaque modes (``L``, ``RGB``,
+        ``CMYK``) are returned unchanged.
+        """
+        if img.mode == "P":
+            img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+        if img.mode in ("RGBA", "LA", "PA"):
+            rgba = img.convert("RGBA")
+            background = self._Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(rgba, mask=rgba.split()[-1])
+            return background
+        return img
+
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
         """
         Extract metadata from image.
@@ -212,14 +238,8 @@ class ImageProcessor:
             else:
                 img = img.resize((size, size), self._Image.Resampling.LANCZOS)
 
-            if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
-                )
-                img = background
+            if output_format == "JPEG":
+                img = self._prepare_for_jpeg(img)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": output_format}
@@ -262,15 +282,8 @@ class ImageProcessor:
             self._validate_image_dimensions(source_img)
 
             # Prepare image for JPEG if needed (transparency handle)
-            if output_format == "JPEG" and source_img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", source_img.size, (255, 255, 255))
-                if source_img.mode == "P" and "transparency" in source_img.info:
-                    source_img = source_img.convert("RGBA")
-                background.paste(
-                    source_img,
-                    mask=source_img.split()[-1] if source_img.mode == "RGBA" else None,
-                )
-                source_img = background
+            if output_format == "JPEG":
+                source_img = self._prepare_for_jpeg(source_img)
             elif source_img.mode == "P" and "transparency" in source_img.info:
                 source_img = source_img.convert("RGBA")
 
@@ -354,14 +367,8 @@ class ImageProcessor:
 
             out_format = output_format or original_format or "PNG"
 
-            if out_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
-                )
-                img = background
+            if out_format == "JPEG":
+                img = self._prepare_for_jpeg(img)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": out_format}
@@ -398,14 +405,8 @@ class ImageProcessor:
         try:
             img = self._open_validated(image_data)
 
-            if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
-                )
-                img = background
+            if output_format == "JPEG":
+                img = self._prepare_for_jpeg(img)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": output_format}
