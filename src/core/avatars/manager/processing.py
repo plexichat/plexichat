@@ -272,8 +272,16 @@ class AvatarProcessingMixin(AvatarProtocol):
             else:
                 img.save(output, format="WEBP", quality=90)
         else:
-            # Convert to RGB for JPEG
-            if img.mode in ("RGBA", "P"):
+            # JPEG has no palette mode and cannot hold an alpha channel, so
+            # transparency must be composited before the re-encode. The old
+            # ``convert("RGB")`` silently dropped the alpha channel instead --
+            # a fully transparent black region embedded as solid black rather
+            # than the white background a viewer shows. ``LA`` sources were
+            # not converted at all and failed to save.
+            from src.core.media.processing.images import flatten_alpha_onto_white
+
+            img = flatten_alpha_onto_white(img)
+            if img.mode != "RGB":
                 img = img.convert("RGB")
             img.save(output, format="JPEG", quality=90, optimize=True)
             content_type = "image/jpeg"

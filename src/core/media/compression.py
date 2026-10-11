@@ -19,6 +19,7 @@ from typing import Optional, Dict, Any
 
 import utils.logger as logger
 import utils.config as config
+from .processing import flatten_alpha_onto_white
 from .processing.video import resolve_ffprobe_path
 
 
@@ -182,18 +183,21 @@ class ImageCompressor:
             if img.width > max_dim or img.height > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
-            # Convert to RGB if necessary (for JPEG/WebP)
-            if fmt in ("jpeg", "webp") and img.mode in ("RGBA", "P"):
-                # Create white background for transparency
-                background = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[3] if len(img.split()) == 4 else None
-                )
-                img = background
-            elif fmt == "jpeg" and img.mode != "RGB":
-                img = img.convert("RGB")
+            # JPEG has no palette mode and cannot hold an alpha channel, so a
+            # source carrying transparency must be composited onto white or
+            # the alpha channel is silently dropped on re-encode. WebP is
+            # left alone: it stores alpha natively, and flattening it would
+            # throw away transparency the format was chosen to keep.
+            #
+            # The old inline composite handled this with a mask built for
+            # ``RGBA``/``P`` sources only, so an ``LA`` (grayscale + alpha) or
+            # ``PA`` source fell through with no mask at all and its alpha
+            # channel was dropped -- a fully transparent region embedded as
+            # its underlying colour (or black) instead of white.
+            if fmt == "jpeg" and img.mode != "RGB":
+                img = flatten_alpha_onto_white(img)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
 
             # Compress
             output = io.BytesIO()

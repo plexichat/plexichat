@@ -102,6 +102,166 @@ class TestImages:
 
 
 @pytest.mark.media
+class TestFlattenAlphaOntoWhite:
+    """``flatten_alpha_onto_white`` composites transparency onto white.
+
+    ``ImageCompressor.compress`` had its own copy of the inline composite
+    that only built a mask for ``RGBA``/``P`` sources, so an ``LA``
+    (grayscale + alpha) image fell through with no mask and its alpha
+    channel was dropped on re-encode -- a fully transparent region embedded
+    as its underlying colour instead of white. The comparable avatar JPEG
+    branch dropped the channel outright and could not save ``LA`` at all.
+    The shared helper is guarded directly so a new caller cannot reintroduce
+    the split.
+    """
+
+    @staticmethod
+    def _la_image(size=8):
+        Image = pytest.importorskip("PIL.Image")
+        img = Image.new("LA", (size, size), (0, 255))
+        for y in range(size):
+            for x in range(size // 2, size):
+                img.putpixel((x, y), (0, 0))
+        return img
+
+    @staticmethod
+    def _la_png(size=8):
+        img = TestFlattenAlphaOntoWhite._la_image(size)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @staticmethod
+    def _rgba_image(size=8):
+        Image = pytest.importorskip("PIL.Image")
+        img = Image.new("RGBA", (size, size), (10, 200, 30, 255))
+        for y in range(size):
+            for x in range(size // 2, size):
+                img.putpixel((x, y), (0, 0, 0, 0))
+        return img
+
+    @classmethod
+    def _enabled_compressor(cls):
+        """A compressor that actually re-encodes.
+
+        The shared test config disables compression, and the
+        smaller-of-the-two branch falls back to the original bytes whenever
+        the re-encode is not smaller -- neither default exercises the code
+        under test.
+        """
+        from src.core.media.compression import ImageCompressor
+
+        Image = pytest.importorskip("PIL.Image")
+        compressor = ImageCompressor()
+        compressor._config["enabled"] = True
+        compressor._config["preserve_original"] = True
+        assert compressor.is_available()
+        assert Image
+        return compressor
+
+    def test_opaque_source_is_returned_unchanged(self):
+        Image = pytest.importorskip("PIL.Image")
+        from src.core.media.processing.images import flatten_alpha_onto_white
+
+        # No copy: opaque uploads must not pay for an extra full allocation.
+        img = Image.new("RGB", (64, 64), (120, 40, 200))
+        assert flatten_alpha_onto_white(img) is img
+
+    def test_la_flattens_onto_white(self):
+        Image = pytest.importorskip("PIL.Image")
+        from src.core.media.processing.images import flatten_alpha_onto_white
+
+        out = flatten_alpha_onto_white(self._la_image())
+        assert out.mode == "RGB"
+        assert out.getpixel((0, 0)) == (0, 0, 0), out.getpixel((0, 0))
+        assert out.getpixel((out.width - 1, 0)) == (255, 255, 255), out.getpixel(
+            (out.width - 1, 0)
+        )
+
+    def test_rgba_flattens_onto_white(self):
+        Image = pytest.importorskip("PIL.Image")
+        from src.core.media.processing.images import flatten_alpha_onto_white
+
+        out = flatten_alpha_onto_white(self._rgba_image())
+        assert out.mode == "RGB"
+        assert out.getpixel((0, 0)) == (10, 200, 30), out.getpixel((0, 0))
+        assert out.getpixel((out.width - 1, 0)) == (255, 255, 255), out.getpixel(
+            (out.width - 1, 0)
+        )
+
+    def test_palette_without_transparency_stays_rgb(self):
+        Image = pytest.importorskip("PIL.Image")
+        from src.core.media.processing.images import flatten_alpha_onto_white
+
+        img = Image.new("P", (8, 8), 3)
+        img.putpalette([v for i in range(256) for v in (i, i, i)])
+        out = flatten_alpha_onto_white(img)
+        assert out.mode == "RGB"
+        assert out.getpixel((0, 0)) == (3, 3, 3), out.getpixel((0, 0))
+
+    def test_palette_with_transparency_flattens_onto_white(self):
+        Image = pytest.importorskip("PIL.Image")
+        from src.core.media.processing.images import flatten_alpha_onto_white
+
+        img = Image.new("P", (8, 8), 0)
+        img.putpalette([v for i in range(256) for v in (i, i, i)])
+        img.info["transparency"] = 0
+        out = flatten_alpha_onto_white(img)
+        assert out.mode == "RGB"
+        assert out.getpixel((0, 0)) == (255, 255, 255), out.getpixel((0, 0))
+
+    def test_image_compressor_flattens_la_onto_white_for_jpeg(self):
+        from src.core.media.compression import CompressionQuality, ImageFormat
+
+        Image = pytest.importorskip("PIL.Image")
+        result = self._enabled_compressor().compress(
+            self._la_png(size=64), CompressionQuality.MEDIUM, ImageFormat.JPEG
+        )
+        assert result.success, result.error
+        decoded = Image.open(io.BytesIO(result.data))
+        assert decoded.mode == "RGB", decoded.mode
+        # Left half is opaque black; the formerly transparent half is white.
+        assert decoded.getpixel((2, 2))[0] < 60, decoded.getpixel((2, 2))
+        right = decoded.getpixel((decoded.width - 3, 2))
+        assert right[0] > 200 and right[1] > 200 and right[2] > 200, right
+
+    def test_image_compressor_webp_keeps_transparency(self):
+        from src.core.media.compression import CompressionQuality, ImageFormat
+
+        Image = pytest.importorskip("PIL.Image")
+        result = self._enabled_compressor().compress(
+            self._la_png(size=64), CompressionQuality.MEDIUM, ImageFormat.WEBP
+        )
+        assert result.success, result.error
+        decoded = Image.open(io.BytesIO(result.data))
+        # WebP stores alpha natively, so flattening it here would throw away
+        # transparency the format was chosen to keep.
+        assert decoded.mode == "RGBA", decoded.mode
+        assert decoded.getpixel((2, 2))[3] == 255, decoded.getpixel((2, 2))
+        assert decoded.getpixel((decoded.width - 3, 2))[3] == 0, decoded.getpixel(
+            (decoded.width - 3, 2)
+        )
+
+    def test_image_compressor_still_flattens_rgba_onto_white(self):
+        from src.core.media.compression import CompressionQuality, ImageFormat
+
+        Image = pytest.importorskip("PIL.Image")
+        buf = io.BytesIO()
+        self._rgba_image(size=64).save(buf, format="PNG")
+
+        result = self._enabled_compressor().compress(
+            buf.getvalue(), CompressionQuality.MEDIUM, ImageFormat.JPEG
+        )
+        assert result.success, result.error
+        decoded = Image.open(io.BytesIO(result.data)).convert("RGB")
+        # Opaque side stays green; transparent side becomes white.
+        left = decoded.getpixel((2, 2))
+        assert left[1] > 150 and left[1] > left[0], left
+        right = decoded.getpixel((decoded.width - 3, 2))
+        assert right[0] > 200 and right[1] > 200 and right[2] > 200, right
+
+
+@pytest.mark.media
 class TestImageDimensionGuard:
     """`convert_format`/`strip_metadata` must enforce the dimension limit.
 

@@ -149,6 +149,40 @@ class TestImageProcessing:
         # PNG output still starts with PNG magic
         assert processed[:8] == b"\x89PNG\r\n\x1a\n"
 
+    def test_transparency_flattens_onto_white_for_jpeg(self, avatar_manager):
+        """A JPEG target must composite alpha, never drop it.
+
+        The JPEG branch re-encoded with ``convert("RGB")``, which discards
+        the alpha channel: a fully transparent black region embedded as
+        solid black instead of the white background a viewer shows, and an
+        ``LA`` (grayscale + alpha) source could not be written as JPEG at
+        all. Only an alpha-capable container that the magic-byte sniffers do
+        not recognise (here a TIFF) reaches the JPEG branch with alpha still
+        attached, which is exactly how an operator-allowed type slips past.
+        """
+        from PIL import Image
+
+        img = Image.new("LA", (16, 16), (0, 255))
+        for y in range(16):
+            for x in range(8, 16):
+                img.putpixel((x, y), (0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="TIFF")
+        data = buf.getvalue()
+
+        processed, width, height, animated = avatar_manager._process_image(
+            data, "image/tiff"
+        )
+        assert width == 16 and height == 16
+        assert animated is False
+
+        decoded = Image.open(io.BytesIO(processed))
+        assert decoded.format == "JPEG", decoded.format
+        # Left half opaque black; formerly transparent half is white.
+        assert decoded.getpixel((2, 2))[0] < 60, decoded.getpixel((2, 2))
+        right = decoded.getpixel((decoded.width - 3, 2))
+        assert right[0] > 200 and right[1] > 200 and right[2] > 200, right
+
     def test_invalid_image_rejected(self, avatar_manager):
         """Non-image bytes must raise ValueError."""
         with pytest.raises(ValueError):

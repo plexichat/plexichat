@@ -32,6 +32,38 @@ def _get_image_config() -> dict:
         return {}
 
 
+def flatten_alpha_onto_white(img):
+    """Flatten an image bound for JPEG onto an opaque white background.
+
+    Shared by every re-encode entry point that targets a format without an
+    alpha channel, so the mode rules live in exactly one place. The old
+    inline composites only built the mask for ``RGBA`` (and upgraded ``P``
+    images to ``RGBA``), so an ``LA`` (grayscale + alpha) or ``PA`` source
+    fell through with no mask and its alpha channel was discarded -- a fully
+    transparent black region embedded as solid black instead of the white
+    background a viewer shows.
+
+    Palette images (``P``) are converted first because JPEG cannot encode
+    palette mode at all; a transparency index is preserved by routing
+    through ``RGBA``. Remaining transparency (``RGBA``/``LA``/``PA``) is
+    then composited onto white. Non-palette, opaque modes (``L``, ``RGB``,
+    ``CMYK``) are returned unchanged.
+
+    Returns:
+        The image, composited onto white when it carried transparency.
+    """
+    from PIL import Image
+
+    if img.mode == "P":
+        img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+    if img.mode in ("RGBA", "LA", "PA"):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.split()[-1])
+        return background
+    return img
+
+
 class ImageProcessor:
     """Image processing using Pillow with security limits."""
 
@@ -129,28 +161,19 @@ class ImageProcessor:
     def _prepare_for_jpeg(self, img):
         """Flatten an image bound for JPEG onto an opaque white background.
 
+        Delegates to :func:`flatten_alpha_onto_white` so this entry point and
+        the compressor share one implementation of the mode rules.
+
         JPEG has neither a palette mode nor an alpha channel, so a source
         carrying transparency must be composited or the alpha channel is
-        silently dropped on re-encode. The old inline composites only built
-        the mask for ``RGBA`` (and upgraded ``P`` images to ``RGBA``), so an
-        ``LA`` image fell through with no mask and its alpha channel was
-        discarded -- a fully transparent black region embedded as solid black
-        instead of the white background a viewer shows.
-
-        Palette images (``P``) are converted first because JPEG cannot encode
-        palette mode at all; a transparency index is preserved by routing
-        through ``RGBA``. Remaining transparency (``RGBA``/``LA``/``PA``) is
-        then composited onto white. Non-palette, opaque modes (``L``, ``RGB``,
-        ``CMYK``) are returned unchanged.
+        silently dropped on re-encode. Palette images (``P``) are converted
+        first because JPEG cannot encode palette mode at all; a transparency
+        index is preserved by routing through ``RGBA``. Remaining
+        transparency (``RGBA``/``LA``/``PA``) is then composited onto white.
+        Non-palette, opaque modes (``L``, ``RGB``, ``CMYK``) are returned
+        unchanged.
         """
-        if img.mode == "P":
-            img = img.convert("RGBA" if "transparency" in img.info else "RGB")
-        if img.mode in ("RGBA", "LA", "PA"):
-            rgba = img.convert("RGBA")
-            background = self._Image.new("RGB", img.size, (255, 255, 255))
-            background.paste(rgba, mask=rgba.split()[-1])
-            return background
-        return img
+        return flatten_alpha_onto_white(img)
 
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
         """
