@@ -69,8 +69,9 @@ these families:
     rotations.
 *   **Real-time fabric** — Artifact opcodes `ARTIFACT_SUBSCRIBE` (`60`),
     `ARTIFACT_UNSUBSCRIBE` (`61`), `ARTIFACT_OP` (`62`), `ARTIFACT_SYNC`
-    (`63`) and PlexiSum workbook opcodes `SUM_SUBSCRIBE` (`64`),
-    `SUM_UNSUBSCRIBE` (`65`), `SUM_OP` (`66`), `SUM_SYNC` (`67`).
+    (`63`), `ARTIFACT_OP_REJECTED` (`68`) and PlexiSum workbook opcodes
+    `SUM_SUBSCRIBE` (`64`), `SUM_UNSUBSCRIBE` (`65`), `SUM_OP` (`66`),
+    `SUM_SYNC` (`67`).
 
 All values, directions, and purposes are listed in
 [Gateway opcodes](opcodes.md).

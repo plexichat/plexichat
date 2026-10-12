@@ -282,7 +282,7 @@ If the artifacts layer is unavailable, the voice pipeline continues and simply o
 
 Collaborative artifacts (live whiteboards, shared code editors, and similar canvases) sync through the WebSocket gateway. REST routes remain the source of truth for persisted state; the fabric only relays in-memory deltas and snapshots.
 
-### Gateway opcodes (60–63)
+### Gateway opcodes (60–63, 68)
 
 Defined in `src/api/websocket/opcodes.GatewayOpcode:1`:
 
@@ -292,6 +292,7 @@ Defined in `src/api/websocket/opcodes.GatewayOpcode:1`:
 | 61 | `ARTIFACT_UNSUBSCRIBE` | Client to server | Unsubscribe from an artifact. |
 | 62 | `ARTIFACT_OP` | Client to server to clients | Relay a real-time delta operation to subscribers. |
 | 63 | `ARTIFACT_SYNC` | Server to client | Full snapshot for late joiners. |
+| 68 | `ARTIFACT_OP_REJECTED` | Server to client | A stale `edit` op (a numeric `rev` older than the committed revision) was dropped; the client re-syncs and re-bases. See [Gateway opcodes](../websocket/opcodes.md). |
 
 ### Event types and intents
 

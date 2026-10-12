@@ -56,6 +56,12 @@ Implements the artifact fabric for opcodes `60`–`63`:
 
 `ARTIFACT_SYNC` (`63`) is server-push only. Clients that echo it receive a soft-reject (ignored, no close).
 
+An `edit` op carrying a numeric `rev` older than the artifact's committed
+revision is stale: it is neither persisted nor relayed, and the actor is sent
+`ARTIFACT_OP_REJECTED` (`68`) carrying `reason`, `current_rev`, and the echoed
+op so the client can re-fetch, re-base, and re-apply. `68` is server-push
+only: a client that echoes it back gets the same soft-reject as `63`.
+
 ### `sum.py`
 
 Implements the PlexiSum fabric for opcodes `64`–`67`:
@@ -69,9 +75,9 @@ Implements the PlexiSum fabric for opcodes `64`–`67`:
 ## Opcodes and intents
 
 - Channel ratchet updates use opcode `50` (`RATCHET_UPDATE`). This opcode is server-push only; inbound frames are soft-rejected.
-- Artifacts use `60`–`63`. PlexiSum uses `64`–`67`. See `src/api/websocket/opcodes.py` for the authoritative list.
+- Artifacts use `60`–`63`, plus server-push-only `68` (`ARTIFACT_OP_REJECTED`). PlexiSum uses `64`–`67`. See `src/api/websocket/opcodes.py` for the authoritative list.
 - Artifacts require intent `ARTIFACTS` (`1 << 20`). PlexiSum requires intent `SUMS` (`1 << 21`). Both intents are included in `GatewayIntent.default_intents()` and `GatewayIntent.all_intents()` (see `src/core/events/types.py` and `src/api/websocket/intents.py`).
-- Server-push-only opcodes (`DISPATCH`, `RECONNECT`, `INVALID_SESSION`, `HELLO`, `HEARTBEAT_ACK`, `ARTIFACT_SYNC`, `SUM_SYNC`) and unimplemented extensions (`SERVER_STATUS`, `VERSION_CHECK`, `INTERACTION_CREATE`, `INTERACTION_RESPONSE`, `RATCHET_UPDATE`) are soft-rejected when sent by a client: the frame is ignored and logged, the connection stays open.
+- Server-push-only opcodes (`DISPATCH`, `RECONNECT`, `INVALID_SESSION`, `HELLO`, `HEARTBEAT_ACK`, `ARTIFACT_SYNC`, `SUM_SYNC`, `ARTIFACT_OP_REJECTED`) and unimplemented extensions (`SERVER_STATUS`, `VERSION_CHECK`, `INTERACTION_CREATE`, `INTERACTION_RESPONSE`, `RATCHET_UPDATE`) are soft-rejected when sent by a client: the frame is ignored and logged, the connection stays open.
 
 ## Event dispatch
 

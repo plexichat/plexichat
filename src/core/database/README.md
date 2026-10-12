@@ -764,5 +764,5 @@ If Valkey is unavailable, all operations fall back to direct database queries. T
 
 For real-time cache invalidation events sent over the gateway — see `plexichat/src/api/websocket/opcodes.py:40` and `plexichat/src/core/events/types.py:120`:
 
-*   Opcodes: `50 RATCHET_UPDATE`, `60 ARTIFACT_SUBSCRIBE`, `61 ARTIFACT_UNSUBSCRIBE`, `62 ARTIFACT_OP`, `63 ARTIFACT_SYNC`, `64 SUM_SUBSCRIBE`, `65 SUM_UNSUBSCRIBE`, `66 SUM_OP`, `67 SUM_SYNC`.
+*   Opcodes: `50 RATCHET_UPDATE`, `60 ARTIFACT_SUBSCRIBE`, `61 ARTIFACT_UNSUBSCRIBE`, `62 ARTIFACT_OP`, `63 ARTIFACT_SYNC`, `64 SUM_SUBSCRIBE`, `65 SUM_UNSUBSCRIBE`, `66 SUM_OP`, `67 SUM_SYNC`, `68 ARTIFACT_OP_REJECTED`.
 *   Intents: `1<<20 ARTIFACTS` and `1<<21 SUMS`.

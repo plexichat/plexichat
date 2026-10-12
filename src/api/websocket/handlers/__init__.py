@@ -62,6 +62,14 @@ IGNORED_OPCODES = frozenset(
         GatewayOpcode.HEARTBEAT_ACK,
         GatewayOpcode.ARTIFACT_SYNC,
         GatewayOpcode.SUM_SYNC,
+        # ``ARTIFACT_OP_REJECTED`` (68) is a rejection frame the server emits
+        # for a stale ``ARTIFACT_OP``; a client that echoes it back (or that
+        # forwards a peer's frame) must not be hard-closed with 4001
+        # UNKNOWN_OPCODE -- every other server-push-only opcode above is
+        # soft-rejected for exactly this reason, and dropping this one out
+        # forces healthy clients into a reconnect loop they cannot recover
+        # from in-session.
+        GatewayOpcode.ARTIFACT_OP_REJECTED,
     }
 )
 

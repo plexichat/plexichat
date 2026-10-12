@@ -73,6 +73,32 @@ Artifacts are collaborative canvases such as whiteboards and live code editors. 
 | `65` | `SUM_UNSUBSCRIBE` | Unsubscribe from a workbook. |
 | `66` | `SUM_OP` | Apply an operation to a workbook. |
 | `67` | `SUM_SYNC` | Request or receive full workbook state sync. |
+| `68` | `ARTIFACT_OP_REJECTED` | Server → client: a stale `ARTIFACT_OP` was refused. Re-fetch and re-base. |
+
+`ARTIFACT_OP_REJECTED` (`68`) is the only server-only fabric rejection
+opcode. An `edit` operation (`op: 62`) whose `rev` is older than the
+artifact's committed revision is not persisted and not relayed: a concurrent
+write already landed, so relaying it would let peers re-apply superseded
+full-content edits. The server sends this frame instead, echoing the rejected
+operation so the client can match it against its own `client_id`.
+
+```json
+{
+  "op": 68,
+  "d": {
+    "artifact_id": "123456789012345678",
+    "reason": "stale revision",
+    "current_rev": 5,
+    "op": {"op_type": "edit", "rev": 3, "content": "hello", "client_id": "tab-1"}
+  }
+}
+```
+
+Treat it as "discard my optimistic edit and reload": request an
+`ARTIFACT_SYNC` (`63`) for the artifact, apply the returned snapshot and
+`rev`, then re-apply the edit locally. Operations that carry no numeric `rev`
+(strokes, cursors, transcription deltas) and the equal-rev echo of your own
+just-committed write are never rejected.
 
 ## How to use opcodes
 

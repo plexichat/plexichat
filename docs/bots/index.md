@@ -259,6 +259,7 @@ The gateway uses the opcodes in `src/api/websocket/opcodes.py:40`.
 | `65` | `SUM_UNSUBSCRIBE` | PlexiSum fabric |
 | `66` | `SUM_OP` | PlexiSum fabric |
 | `67` | `SUM_SYNC` | PlexiSum fabric |
+| `68` | `ARTIFACT_OP_REJECTED` | Artifact fabric rejection |
 
 ## Work with slash commands
 

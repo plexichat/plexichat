@@ -220,6 +220,7 @@ def test_unknown_intent_description():
         ("SUM_UNSUBSCRIBE", 65),
         ("SUM_OP", 66),
         ("SUM_SYNC", 67),
+        ("ARTIFACT_OP_REJECTED", 68),
     ],
 )
 def test_opcode_values(name, value):
@@ -247,6 +248,61 @@ async def test_invalid_session_payload_uses_gateway_wire_shape():
     assert await dispatcher.send_invalid_session(connection, resumable=True)
     sent = connection.send_json.await_args.args[0]
     assert sent == {"op": int(GatewayOpcode.INVALID_SESSION), "d": True}
+
+
+# ---------------------------------------------------------------------------
+# Server-push-only opcodes must not hard-close a client that echoes them
+# ---------------------------------------------------------------------------
+
+# Opcodes the server never consumes from a client. An echo (or a peer frame
+# forwarded by a buggy client) used to fall through to the UNKNOWN_OPCODE
+# 4001 branch, which tears down a healthy session for something recoverable
+# in-band. These are soft-rejected instead.
+SERVER_PUSH_ONLY_OPCODES = [
+    GatewayOpcode.DISPATCH,
+    GatewayOpcode.RECONNECT,
+    GatewayOpcode.INVALID_SESSION,
+    GatewayOpcode.HELLO,
+    GatewayOpcode.HEARTBEAT_ACK,
+    GatewayOpcode.ARTIFACT_SYNC,
+    GatewayOpcode.SUM_SYNC,
+    GatewayOpcode.ARTIFACT_OP_REJECTED,
+]
+
+
+@pytest.mark.parametrize("opcode", SERVER_PUSH_ONLY_OPCODES)
+def test_server_push_only_opcodes_soft_rejected(opcode):
+    """An echoed server-only frame is dropped, never a 4001 close.
+
+    ``ARTIFACT_OP_REJECTED`` was added to the enum later than the rest; it
+    stayed out of ``IGNORED_OPCODES`` so a client echoing it back was closed
+    with resumable ``4001 UNKNOWN_OPCODE`` -- a reconnect loop the client
+    cannot escape, exactly what the soft-reject mechanism exists to avoid.
+    """
+    from src.api.websocket.handlers import IGNORED_OPCODES
+
+    assert opcode in IGNORED_OPCODES, (
+        f"{opcode.name} ({int(opcode)}) is server-push-only but not in "
+        "IGNORED_OPCODES; an echo will close the connection with 4001"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "opcode",
+    [int(GatewayOpcode.ARTIFACT_SYNC), int(GatewayOpcode.ARTIFACT_OP_REJECTED)],
+)
+async def test_echoed_fabric_server_frame_keeps_connection_open(
+    opcode_handler, connection, opcode
+):
+    """End-to-end: an echoed ``63``/``68`` frame returns no close code."""
+    response_op, response_data, close_code = await opcode_handler.handle(
+        connection, opcode, {"artifact_id": "1", "op": {"op_type": "edit"}}
+    )
+
+    assert close_code is None, f"echoed opcode {opcode} must not close the connection"
+    assert response_op is None
+    assert response_data is None
 
 
 # ---------------------------------------------------------------------------

@@ -183,8 +183,9 @@ Standard opcodes live in `src/api/websocket/opcodes.py` as `GatewayOpcode`.
 | `65` | `SUM_UNSUBSCRIBE` | C→S | Unsubscribe from a workbook |
 | `66` | `SUM_OP` | C→S→C | Relay a workbook operation |
 | `67` | `SUM_SYNC` | S→C | Workbook snapshot with revision and replay |
+| `68` | `ARTIFACT_OP_REJECTED` | S→C | A stale `ARTIFACT_OP` was refused; re-sync and re-base |
 
-Artifact helpers live in `src/api/websocket/artifacts.py` (`relay_artifact_op`, `send_artifact_ack`, `send_artifact_sync`). PlexiSum helpers live in `src/api/websocket/sum.py` (`relay_sum_op`, `send_sum_sync`). Persisted `ARTIFACT_OP` frames carry a per-artifact `seq` in `d.seq` and are echoed to the actor for optimistic-concurrency acknowledgement.
+Artifact helpers live in `src/api/websocket/artifacts.py` (`relay_artifact_op`, `send_artifact_ack`, `send_artifact_sync`, `send_artifact_op_rejected`). PlexiSum helpers live in `src/api/websocket/sum.py` (`relay_sum_op`, `send_sum_sync`). Persisted `ARTIFACT_OP` frames carry a per-artifact `seq` in `d.seq` and are echoed to the actor for optimistic-concurrency acknowledgement.
 
 ## Rate limiting
 

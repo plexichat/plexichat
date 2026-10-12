@@ -170,7 +170,7 @@ const ws = new WebSocket("ws://127.0.0.1:8000/gateway");
 ```
 
 * Heartbeat interval: `45000` ms (`src/config_defaults.py:162`)
-* Gateway opcodes: `50` (`RATCHET_UPDATE`), `60`–`67` (artifacts and PlexiSum: `ARTIFACT_SUBSCRIBE`, `ARTIFACT_UNSUBSCRIBE`, `ARTIFACT_OP`, `ARTIFACT_SYNC`, `SUM_SUBSCRIBE`, `SUM_UNSUBSCRIBE`, `SUM_OP`, `SUM_SYNC`) — see `src/api/websocket/opcodes.py:50`
+* Gateway opcodes: `50` (`RATCHET_UPDATE`), `60`–`67` (artifacts and PlexiSum: `ARTIFACT_SUBSCRIBE`, `ARTIFACT_UNSUBSCRIBE`, `ARTIFACT_OP`, `ARTIFACT_SYNC`, `SUM_SUBSCRIBE`, `SUM_UNSUBSCRIBE`, `SUM_OP`, `SUM_SYNC`), and `68` (`ARTIFACT_OP_REJECTED`) — see `src/api/websocket/opcodes.py:40`
 * Intents: `20` (`ARTIFACTS`) and `21` (`SUMS`) — see `src/core/events/types.py:120`
 
 Authenticate with `op 2 IDENTIFY` and send `op 1 HEARTBEAT`.

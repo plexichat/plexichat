@@ -433,6 +433,7 @@ Key opcodes from `src/api/websocket/opcodes.py:40`:
 | `65` | `SUM_UNSUBSCRIBE` | Unsubscribe from a workbook |
 | `66` | `SUM_OP` | Workbook operation |
 | `67` | `SUM_SYNC` | Workbook sync |
+| `68` | `ARTIFACT_OP_REJECTED` | A stale artifact operation was refused; re-sync and re-base |
 
 Voice opcodes `20`–`26` carry WebRTC signaling.
 

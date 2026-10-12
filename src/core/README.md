@@ -145,7 +145,7 @@ Syncs user settings:
 
 The WebSocket gateway at `/gateway` (not under `/api/v1`) exposes the intents and opcodes defined in this package:
 
-- Opcodes: `RATCHET_UPDATE` (`50`), `ARTIFACT_SUBSCRIBE` (`60`), `ARTIFACT_UNSUBSCRIBE` (`61`), `ARTIFACT_OP` (`62`), `ARTIFACT_SYNC` (`63`), `SUM_SUBSCRIBE` (`64`), `SUM_UNSUBSCRIBE` (`65`), `SUM_OP` (`66`), `SUM_SYNC` (`67`). See `src/api/websocket/opcodes.py`.
+- Opcodes: `RATCHET_UPDATE` (`50`), `ARTIFACT_SUBSCRIBE` (`60`), `ARTIFACT_UNSUBSCRIBE` (`61`), `ARTIFACT_OP` (`62`), `ARTIFACT_SYNC` (`63`), `SUM_SUBSCRIBE` (`64`), `SUM_UNSUBSCRIBE` (`65`), `SUM_OP` (`66`), `SUM_SYNC` (`67`), `ARTIFACT_OP_REJECTED` (`68`). See `src/api/websocket/opcodes.py`.
 - Intents: `ARTIFACTS` (`1 << 20`) gates artifact events; `SUMS` (`1 << 21`) gates PlexiSum events.
 - REST probes: `GET /api/v1/health` and `GET /api/v1/ready` (`GET /health` proxies to the former). See `src/api/routes/health.py`.
 

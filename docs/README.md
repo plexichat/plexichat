@@ -21,7 +21,7 @@ This directory contains the narrative docs that the backend serves at `/docs/api
 The `api/` and `websocket/` subdirectories provide per-group docs:
 
 * API groups: `auth`, `users`, `servers`, `channels`, `messages`, `relationships`, `presence`, `reactions`, `webhooks`, `media`, `search`, `polls`, `voice`, `reports`, `feedback`, `telemetry`, `system`, `artifacts`, `federation`, `suite`
-* Gateway: opcodes `50` and `60`–`67`, intents `20` and `21` (see `src/api/websocket/opcodes.py:50` and `src/core/events/types.py:120`)
+* Gateway: opcodes `50` and `60`–`68`, intents `20` and `21` (see `src/api/websocket/opcodes.py:40` and `src/core/events/types.py:120`)
 * Health: `GET /api/v1/ready` (readiness) and `GET /api/v1/health` (detailed) — see `src/api/routes/health.py:18`
 
 If you need the live route list, inspect `src/api/app.py:515`, which mounts every router under the configured API prefix.

@@ -143,6 +143,7 @@ Values are defined in `plexichat/src/api/websocket/opcodes.py`.
 | 65 | Sum Unsubscribe | Unsubscribe from a workbook | Client |
 | 66 | Sum Op | Apply an operation to a workbook | Client or server |
 | 67 | Sum Sync | Request or receive full workbook state | Client or server |
+| 68 | Artifact Op Rejected | A stale artifact operation was refused; re-sync and re-base | Server |
 
 Artifacts are collaborative canvases such as whiteboards and live code editors. Sums are collaborative PlexiSum workbooks. Each family uses the subscribe, op, and sync shape.
 

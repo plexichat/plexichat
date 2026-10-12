@@ -251,13 +251,14 @@ When `default_retention_days` is `None`, artifacts never expire unless a per-art
 
 The WebSocket gateway provides live collaboration for whiteboards and editors. It reuses the dispatcher send path and per-connection rate limits.
 
-*   Gateway opcodes (`src/api/websocket/opcodes.GatewayOpcode`) — `ARTIFACT_SUBSCRIBE = 60`, `ARTIFACT_UNSUBSCRIBE = 61`, `ARTIFACT_OP = 62`, `ARTIFACT_SYNC = 63`.
+*   Gateway opcodes (`src/api/websocket/opcodes.GatewayOpcode`) — `ARTIFACT_SUBSCRIBE = 60`, `ARTIFACT_UNSUBSCRIBE = 61`, `ARTIFACT_OP = 62`, `ARTIFACT_SYNC = 63`, `ARTIFACT_OP_REJECTED = 68`.
 *   Event types (`src/core/events/types.EventType`) — `ARTIFACT_CREATE`, `ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`.
 *   Gateway intent — `GatewayIntent.ARTIFACTS = 1 << 20`, included in `default_intents()` and `all_intents()`.
 *   Helpers in `src/api/websocket/artifacts.py`:
     *   `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id, seq)` — Fans an `ARTIFACT_OP` to other subscribers. Persists are handled by the opcode handler. `seq` is carried in `d.seq` for ordering.
     *   `send_artifact_ack(connection, artifact_id, op, seq)` — Echoes a persisted op to its actor as an acknowledgement.
     *   `send_artifact_sync(connection, artifact_id, snapshot)` — Sends a full snapshot to a late joiner.
+    *   `send_artifact_op_rejected(connection, artifact_id, op, current_rev)` — Tells an actor its stale `edit` op (numeric `rev` below the committed revision) was dropped, so it re-fetches and re-bases.
 
 ## Federation
 
