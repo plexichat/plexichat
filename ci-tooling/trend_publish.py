@@ -210,6 +210,18 @@ def _render_table(
     job_entries: List[Dict[str, Any]], gate: float, project: str, base_url: str
 ) -> str:
     rows = list(reversed(job_entries[-DISPLAY_RUNS_PER_JOB:]))
+
+    def _ceiling_of(entry: Dict[str, Any]) -> float:
+        """The ceiling that run was judged by, falling back to ``--gate``.
+
+        Each job records its own ceiling now (the database suite's 15s is not
+        test:pytest's 5s), so colouring an entry against one global gate would
+        call a passing run slow. History recorded before the ceiling was written
+        down has no such key and keeps the old behaviour.
+        """
+        ceiling = _as_float(entry.get("ceiling_seconds"), default=gate)
+        return ceiling if ceiling > 0 else gate
+
     max_total = max((_as_float(e.get("total_seconds")) for e in rows), default=1.0)
     if max_total <= 0:
         max_total = 1.0
@@ -217,7 +229,7 @@ def _render_table(
     parts = [
         "<table><thead><tr>",
         "<th>Run</th><th>Pipeline</th><th>Total time</th><th>vs prev</th>",
-        "<th>Worst test</th><th>Tests</th><th>Slow (&gt; gate)</th>",
+        "<th>Worst test</th><th>Tests</th><th>Slow (&gt; ceiling)</th>",
         "</tr></thead><tbody>",
     ]
     for index, entry in enumerate(rows):
@@ -225,10 +237,11 @@ def _render_table(
         worst_seconds = _as_float(entry.get("worst_test_seconds"))
         worst_test = str(entry.get("worst_test") or "")
         width = min(100.0, (total / max_total) * 100.0)
+        ceiling = _ceiling_of(entry)
         worst_cls = (
             "bad"
-            if worst_seconds >= gate
-            else ("warn" if worst_seconds >= gate * 0.8 else "")
+            if worst_seconds >= ceiling
+            else ("warn" if worst_seconds >= ceiling * 0.8 else "")
         )
         worst_cell = "—"
         if worst_test:
@@ -291,9 +304,27 @@ def render(
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     total_runs = len(entries)
+    # The runs carry the ceiling they were judged by (one per job, so a single
+    # --gate is not the rule anymore); name them, and fall back to --gate for
+    # history recorded before the ceiling was written down.
+    ceilings = sorted(
+        {
+            value
+            for value in (
+                _as_float(entry.get("ceiling_seconds"), default=0.0)
+                for entry in entries
+            )
+            if value > 0
+        }
+    )
+    gate_note = (
+        f"ceilings recorded per run: {', '.join(f'{value:g}s' for value in ceilings)}"
+        if ceilings
+        else f"gate threshold {gate:g}s"
+    )
     generated = (
         f"Generated {html.escape(now)} · {total_runs} job-run(s) recorded · "
-        f"gate threshold {gate:g}s"
+        f"{html.escape(gate_note)}"
     )
 
     page = (

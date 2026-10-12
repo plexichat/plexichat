@@ -490,11 +490,19 @@ test:database_backends:
 # =========================================================
 
 # Hard gate: the whole test stage is green, but any single test slower than
-# 5 seconds still fails the pipeline. Prevents performance regressions from
-# slipping in as the suite grows. Uses only the Python stdlib, so it does not
-# extend .python_base (no dependency install for a trivial parser). Note that
-# pytest.ini deselects ``slow``/``performance``-marked tests from the run, so
-# this gate deliberately enforces only the fast suite that CI actually runs.
+# its job's ceiling still fails the pipeline. Prevents performance regressions
+# from slipping in as the suite grows. Uses only the Python stdlib, so it does
+# not extend .python_base (no dependency install for a trivial parser). Note
+# that pytest.ini deselects ``slow``/``performance``-marked tests from the run,
+# so this gate deliberately enforces only the fast suite that CI actually runs.
+#
+# Both jobs that emit a JUnit report are judged. ``test:database_backends``
+# used to be left out, which left the suites that drive real Postgres and
+# Valkey -- and the multi-worker simulations among them -- unwatched. Its tests
+# are wall-clock rather than CPU (worker restarts, lock TTLs), so it carries a
+# ceiling of its own: 15s against a heaviest measured test of 4.01s on an idle
+# box, which is thin headroom under a 5s default because the same tests cross
+# 5s on a busy runner with nothing wrong. ``test:pytest`` keeps the 5s.
 performance:no_slow_tests:
   stage: performance
   image:
@@ -502,10 +510,12 @@ performance:no_slow_tests:
     pull_policy: if-not-present
   needs:
     - test:pytest
+    - test:database_backends
   script:
-    # The metrics JSON is uploaded alongside the gate verdict and feeds the
-    # metrics:trend job in the next stage.
-    - python ci-tooling/check_slow_tests.py test-results.xml --threshold 5.0 --job test:pytest --metrics-out test-durations.json
+    # The metrics JSON (one entry per job, paired with the report order) is
+    # uploaded alongside the gate verdict and feeds the metrics:trend job in
+    # the next stage.
+    - python ci-tooling/check_slow_tests.py test-results.xml test-results-db.xml --threshold 5.0 --job test:pytest --job test:database_backends=15 --metrics-out test-durations.json
   artifacts:
     when: always
     paths:

@@ -11,10 +11,18 @@ to the gate verdict. ``scripts/trend_publish.py`` merges those snapshots into
 a ``ci-metrics`` branch history and renders an HTML trend report, so per-job
 test durations are tracked across pipelines and regressions show over time.
 
+A ``--job`` may carry a ceiling of its own, ``--job NAME=SECONDS``, the way the
+client repository's gate does. The database-backed suite is why: it drives real
+Postgres and Valkey with multi-worker simulations whose cost is wall-clock
+(worker restarts, TTL waits) rather than CPU, so its heaviest test measured
+4.01s with the box idle against a 5s default a loaded runner would cross. A
+per-test budget still takes precedence over the job's ceiling.
+
 Usage::
 
-    python scripts/check_slow_tests.py test-results.xml --threshold 5.0 \\
-        --job test:pytest --metrics-out test-durations.json
+    python scripts/check_slow_tests.py test-results.xml test-results-db.xml \\
+        --threshold 5.0 --job test:pytest --job test:database_backends=15 \\
+        --metrics-out test-durations.json
 
 The core logic operates on an ``ElementTree`` root so it can be unit-tested
 in memory without touching the filesystem.
@@ -22,6 +30,7 @@ in memory without touching the filesystem.
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -196,6 +205,9 @@ def metrics_from_root(
         "worst_test_seconds": round(worst_duration, 3),
         "worst_test": worst_test[:300],
         "slow_count": slow_count,
+        # The ceiling this job was actually judged by, so a run reads back as the
+        # rule it was held to: the database suite's 15s is not test:pytest's 5s.
+        "ceiling_seconds": threshold,
     }
 
 
@@ -209,14 +221,51 @@ def report_metrics(
     return metrics_from_root(_parse_report(xml_path), job, threshold, budgets)
 
 
-def _job_label(idx: int, jobs: List[str], xml_path: str) -> str:
+def _job_label(idx: int, jobs: List[Tuple[str, Optional[float]]], xml_path: str) -> str:
     """Pick the job label for report ``idx``: explicit --job, else CI/env."""
-    if idx < len(jobs) and jobs[idx]:
-        return jobs[idx]
+    if idx < len(jobs) and jobs[idx][0]:
+        return jobs[idx][0]
     env_job = os.environ.get("CI_JOB_NAME")
     if env_job:
         return env_job
     return os.path.splitext(os.path.basename(xml_path))[0]
+
+
+def _job_ceiling(
+    idx: int,
+    jobs: List[Tuple[str, Optional[float]]],
+    threshold: float,
+) -> float:
+    """The ceiling report ``idx`` is held to: its own, else ``--threshold``."""
+    if idx < len(jobs) and jobs[idx][1] is not None:
+        return float(jobs[idx][1])
+    return threshold
+
+
+def parse_job_spec(spec: str) -> Tuple[str, Optional[float]]:
+    """Split a ``--job`` argument into ``(name, ceiling)``.
+
+    ``NAME`` alone means the job is held to ``--threshold``; ``NAME=SECONDS``
+    gives it a ceiling of its own. A malformed argument is a usage error rather
+    than a silently ignored flag: a mistyped ceiling would leave the job judged
+    by a threshold nobody meant to apply.
+    """
+    name, separator, seconds = spec.partition("=")
+    if not name:
+        raise ValueError(f"--job {spec!r}: expected NAME or NAME=SECONDS")
+    if not separator:
+        return name, None
+    try:
+        ceiling = float(seconds)
+    except ValueError as exc:
+        raise ValueError(
+            f"--job {spec!r}: {seconds!r} is not a number of seconds"
+        ) from exc
+    if not math.isfinite(ceiling) or ceiling < 0:
+        raise ValueError(
+            f"--job {spec!r}: the ceiling must be a finite, non-negative number"
+        )
+    return name, ceiling
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -242,7 +291,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--job",
         action="append",
         default=[],
-        help="Job label for each report, in order (repeatable; defaults to CI_JOB_NAME)",
+        help=(
+            "Job label for each report, in order, optionally with a ceiling of its own "
+            "(NAME or NAME=SECONDS; repeatable; defaults to CI_JOB_NAME)"
+        ),
     )
     parser.add_argument(
         "--metrics-out",
@@ -250,10 +302,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Write a per-job metrics JSON array to this path (for the CI trend)",
     )
     args = parser.parse_args(argv)
+    try:
+        job_specs = [parse_job_spec(spec) for spec in args.job]
+    except ValueError as exc:
+        # Exit 2, the same as an unreadable report: the request is wrong, and
+        # judging anything under a ceiling that was not understood is worse.
+        parser.error(str(exc))
 
-    slow: List[Tuple[float, str]] = []
+    # Each offender carries the ceiling of the report it came from, so the
+    # printed budget is the one it was actually judged by.
+    slow: List[Tuple[float, str, float]] = []
     metrics: List[Dict[str, object]] = []
     seen_ids: set = set()
+    judged: List[Tuple[str, float]] = []
     for idx, xml_path in enumerate(args.xml_paths):
         # Parse each report exactly once and share the root between the slow
         # scan and the metrics pass (each was previously parsed separately).
@@ -262,14 +323,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
+        job = _job_label(idx, job_specs, xml_path)
+        ceiling = _job_ceiling(idx, job_specs, args.threshold)
+        judged.append((job, ceiling))
         seen_ids.update(tid for _, tid in _scan_tests(root))
-        slow.extend(slow_tests_from_root(root, args.threshold))
+        slow.extend(
+            (duration, test_id, ceiling)
+            for duration, test_id in slow_tests_from_root(root, ceiling)
+        )
         if args.metrics_out:
-            metrics.append(
-                metrics_from_root(
-                    root, _job_label(idx, args.job, xml_path), args.threshold
-                )
-            )
+            metrics.append(metrics_from_root(root, job, ceiling))
 
     # Fail closed on a budget that matches no testcase in any report: the test
     # was renamed or removed, so the exemption no longer applies to anything
@@ -284,8 +347,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         return 2
 
-    for duration, test_id in sorted(slow, reverse=True):
-        budget = _budget_seconds(test_id, args.threshold, SLOW_TEST_BUDGETS)
+    # How the ceiling is named in the verdict: one number when every report is
+    # held to the same one (the wording this gate has always used), and per job
+    # when they are not, so a reader can tell which ceiling binds which report.
+    if len({ceiling for _, ceiling in judged}) <= 1:
+        only = judged[0][1] if judged else args.threshold
+        where = (
+            f"default {only:g}s"
+            if only == args.threshold
+            else f"{only:g}s for every job"
+        )
+    else:
+        where = ", ".join(f"{job} {ceiling:g}s" for job, ceiling in judged)
+
+    for duration, test_id, ceiling in sorted(slow, reverse=True):
+        budget = _budget_seconds(test_id, ceiling, SLOW_TEST_BUDGETS)
         reason = SLOW_TEST_BUDGETS.get(test_id, (0.0, ""))[1]
         suffix = f"  [{reason}]" if reason else ""
         print(f"SLOW TEST ({duration:.2f}s > {budget:g}s): {test_id}{suffix}")
@@ -300,12 +376,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if slow:
         print(
             f"FAIL: {len(slow)} test(s) slower than their budget "
-            f"(default {args.threshold:g}s; worst: {slow[0][0]:.2f}s)",
+            f"({where}; worst: {slow[0][0]:.2f}s)",
             file=sys.stderr,
         )
         return 1
 
-    print(f"OK: no test exceeded its budget (default {args.threshold:g}s)")
+    print(f"OK: no test exceeded its budget ({where})")
     return 0
 
 
