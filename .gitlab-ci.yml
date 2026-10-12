@@ -293,10 +293,28 @@ security:dependency_scanning:
     # cannot be resolved. Reviewed exceptions live in ALLOWED_COPYLEFT in
     # ci-tooling/license_audit.py and are documented in THIRD_PARTY_NOTICES.md.
     - python ci-tooling/license_audit.py
-    - mkdir -p ./bin && curl -sfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64.tar.gz | tar -xz -C ./bin osv-scanner || true
-    - ./bin/osv-scanner --format json --output osv-report.json . || true
-    - ./bin/osv-scanner . || true
+    # osv-scanner looks every pinned requirement up in the OSV database. The
+    # three lines this replaces read
+    # ``curl -sfL .../releases/latest/download/osv-scanner_linux_amd64.tar.gz
+    # | tar -xz -C ./bin osv-scanner || true`` followed by two scans, each with
+    # its own ``|| true``. All three failed and reported success: this image is
+    # python:3.14.8-slim-trixie, which has neither curl nor wget, so there was
+    # no downloader to begin with; the v1 ``.tar.gz`` asset has not existed
+    # since osv-scanner v2 (the assets are raw binaries now); and the scans
+    # then ran a binary that was never installed. The job was green and
+    # published no osv-report.json. The installer pins the release and checks
+    # its digest, and the scans below are not allowed to fail quietly.
+    # A vulnerable tree fails this job: verified against a fixture pinned to
+    # requests==2.19.0, where the scan exits 1, and against this tree, where it
+    # exits 0.
+    - python ci-tooling/install_scanners.py --bin-dir ./bin osv-scanner
+    - ./bin/osv-scanner --version
+    - ./bin/osv-scanner scan source -r . --format json --output-file osv-report.json
+    - ./bin/osv-scanner scan source -r .
   artifacts:
+    # when: always -- a scan that found something is exactly when the report
+    # matters, and the default (on_success) would withhold it.
+    when: always
     paths:
       - pip-audit-report.json
       - osv-report.json

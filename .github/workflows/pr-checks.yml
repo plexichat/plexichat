@@ -134,12 +134,30 @@ jobs:
       - name: Dependency audit (osv-scanner + trivy)
         run: |
           source .venv/bin/activate
-          mkdir -p ./bin && curl -sfL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64.tar.gz | tar -xz -C ./bin osv-scanner || true
-          ./bin/osv-scanner --format json --output osv-report.json . || true
-          ./bin/osv-scanner . || true
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh || true
-          ./bin/trivy fs --format json --output trivy-report.json . || true
-          ./bin/trivy fs . || true
+          # Every line of this step used to end in `|| true`, and that is how it
+          # became a no-op that still reported success:
+          #
+          #   * the osv-scanner download pointed at
+          #     releases/latest/download/osv-scanner_linux_amd64.tar.gz, which
+          #     has not existed since osv-scanner v2 -- its assets are raw
+          #     binaries now -- so the fetch was a 404, and the scans that
+          #     followed ran a binary that was never installed;
+          #   * trivy's own exit code is 0 by default, so `trivy fs . || true`
+          #     could not fail the job even with a binary present and a
+          #     finding on screen.
+          #
+          # install_scanners.py fetches both tools from pinned releases and
+          # checks each against its published digest, so a broken download is a
+          # failure to install rather than a silent skip. The scans below are
+          # not allowed to fail quietly: `--exit-code 1` is what makes trivy's
+          # verdict count, and nothing here is wrapped in `|| true`.
+          python ci-tooling/install_scanners.py --bin-dir ./bin osv-scanner trivy
+          ./bin/osv-scanner --version
+          ./bin/trivy --version
+          ./bin/osv-scanner scan source -r . --format json --output-file osv-report.json
+          ./bin/osv-scanner scan source -r .
+          ./bin/trivy fs --exit-code 1 --format json --output trivy-report.json .
+          ./bin/trivy fs --exit-code 1 .
 
       - name: Upload security reports
         if: always()
@@ -152,6 +170,9 @@ jobs:
             trivy-report.json
           retention-days: 30
           overwrite: true
+          # A scan that produced no report did not scan; warning about it (the
+          # default) is how the missing osv-report.json went unnoticed.
+          if-no-files-found: error
 
   pip-licenses:
     name: "pip-licenses (permissive-only license gate)"

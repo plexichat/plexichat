@@ -68,6 +68,8 @@ ruff-report.json
 bandit-*.json
 pip-audit-*.json
 safety-*.json
+# ci-tooling/install_scanners.py installs the scanners here (CI and local runs).
+/bin/
 
 # Database files
 *.db
