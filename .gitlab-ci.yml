@@ -38,8 +38,24 @@ ots:push_proofs:
   needs:
     - ots:timestamp_commit
   script:
-    - pip install opentimestamps
-    - python ci-tooling/ots_stamp.py
+    # The commit is stamped once, by ots:timestamp_commit, and the proof arrives
+    # here as that job's artifact (``needs`` downloads it before the script
+    # runs). This job used to run ci-tooling/ots_stamp.py a second time -- a
+    # second calendar submission and a second proof for the same commit, so
+    # what it pushed was not the artifact the other job produced -- and then
+    # copied ``ots-proofs/*.ots`` onto itself, an error the ``|| true``
+    # swallowed. Publish what the timestamp job made, and fail with what is
+    # missing when there is nothing to publish.
+    - |
+      PROJECT="$(printf '%s' "$CI_PROJECT_PATH" | tr '/' '_')"
+      SHORT_SHA="$(printf '%s' "$CI_COMMIT_SHA" | cut -c1-12)"
+      PROOF="ots-proofs/${PROJECT}_${SHORT_SHA}.ots"
+      if [ ! -s "$PROOF" ]; then
+        echo "FAIL: ots:timestamp_commit left no proof at $PROOF." >&2
+        echo "This job publishes what that one produced; fix it there." >&2
+        exit 1
+      fi
+      echo "Publishing $(stat -c%s "$PROOF") bytes from $PROOF"
     - git config user.email "ci@plexichat.com"
     - git config user.name "Plexichat CI"
     - git fetch origin ots-proofs || true
@@ -49,17 +65,30 @@ ots:push_proofs:
       else
         git checkout --orphan ots-proofs
         git rm -rf . 2>/dev/null || true
-        rm -rf .git/ots-proofs 2>/dev/null || true
       fi
-    - mkdir -p ots-proofs
-    - cp ots-proofs/*.ots ots-proofs/ 2>/dev/null || true
     - git add ots-proofs/
     - |
       if git diff --cached --quiet; then
         echo "No new proofs to commit"
       else
         git commit -m "OTS proof: $CI_COMMIT_SHA"
-        git push origin ots-proofs
+        # A lost race against a concurrent pipeline used to leave the branch
+        # behind until someone noticed; retry onto the remote branch.
+        PUSHED=0
+        for attempt in 1 2 3; do
+          if git push origin ots-proofs 2>/dev/null; then
+            PUSHED=1
+            break
+          fi
+          echo "push attempt $attempt failed; rebasing onto remote"
+          git pull --rebase origin ots-proofs 2>/dev/null || true
+        done
+        if [ "$PUSHED" != "1" ]; then
+          echo "FAIL: could not push the proof to the ots-proofs branch." >&2
+          echo "Pushing over HTTP with the job token needs 'Allow Git push requests" >&2
+          echo "to the repository' enabled for this project." >&2
+          exit 1
+        fi
       fi
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
