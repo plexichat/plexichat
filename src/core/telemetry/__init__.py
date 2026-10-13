@@ -4,6 +4,7 @@ Telemetry module - Collects anonymized response time data from clients.
 
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass
+import math
 import time
 import logging
 import re
@@ -514,11 +515,10 @@ def _percentile(sorted_samples: List[float], pct: float) -> float:
     ``pct`` is the percentile in [0, 100].  Returns 0.0 when the
     input list is empty.
 
-    Method: ``rank = ceil(p / 100 * n)`` — the smallest sample whose
-    rank is at or above the percentile cutoff.  This matches numpy's
-    default ``method='lower'`` / Excel's ``PERCENTILE.INC`` and is
-    the cheapest deterministic percentile that does not invent
-    values between samples (which we MUST NOT do for SLO math).
+    Method: ``rank = ceil(p / 100 * n)`` — the smallest 1-based rank
+    at or above the percentile cutoff (the nearest-rank definition).
+    It deliberately does not interpolate between samples; inventing
+    values that were never observed would falsify SLO math.
     """
     if not sorted_samples:
         return 0.0
@@ -528,7 +528,11 @@ def _percentile(sorted_samples: List[float], pct: float) -> float:
         return float(sorted_samples[-1])
     n = len(sorted_samples)
     # Smallest index k (0-based) such that (k + 1) >= p/100 * n.
-    rank = max(1, int(round(pct / 100.0 * n)))
+    # ``ceil`` (not ``round``) is required: for n whose cutoff lands on a
+    # ``.5`` fraction, banker's rounding would pick the sample *below* the
+    # rank the nearest-rank definition asks for (e.g. p50 of 5 samples
+    # must be the 3rd, not the 2nd).
+    rank = max(1, math.ceil(pct / 100.0 * n))
     return float(sorted_samples[rank - 1])
 
 

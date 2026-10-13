@@ -248,3 +248,51 @@ class TestEndpointStats:
 
         assert stats.count == 100
         assert stats.error_rate == 0.05
+
+
+class TestPercentile:
+    """Tests for the nearest-rank ``_percentile`` helper.
+
+    The helper used ``round`` instead of ``ceil`` for the rank, so for
+    sample counts whose cutoff lands on a ``.5`` fraction (e.g. p50 of 5
+    samples) banker's rounding picked the sample *below* the nearest
+    rank. These pin the nearest-rank definition.
+    """
+
+    def test_p50_odd_sample_count_uses_upper_middle(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0]
+        # ceil(0.50 * 5) = 3 -> the 3rd sample, NOT round(2.5) -> 2nd.
+        assert _percentile(samples, 50.0) == 30.0
+
+    def test_p50_nine_samples_uses_fifth(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]
+        # ceil(0.50 * 9) = 5 -> 50.0, not round(4.5) -> 40.0.
+        assert _percentile(samples, 50.0) == 50.0
+
+    def test_p95_and_p99_are_nearest_rank(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+        # ceil(0.95 * 10) = 10 -> 100.0; ceil(0.99 * 10) = 10 -> 100.0.
+        assert _percentile(samples, 95.0) == 100.0
+        assert _percentile(samples, 99.0) == 100.0
+
+    def test_never_interpolates_between_samples(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0]
+        # Every result must be an observed value, never a value between them.
+        assert _percentile(samples, 50.0) in samples
+        assert _percentile(samples, 95.0) in samples
+
+    def test_empty_and_boundaries(self):
+        from src.core.telemetry import _percentile
+
+        assert _percentile([], 50.0) == 0.0
+        assert _percentile([7.0], 50.0) == 7.0
+        assert _percentile([1.0, 2.0, 3.0], 0.0) == 1.0
+        assert _percentile([1.0, 2.0, 3.0], 100.0) == 3.0
