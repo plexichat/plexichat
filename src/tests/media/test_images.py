@@ -168,7 +168,7 @@ class TestFlattenAlphaOntoWhite:
         assert flatten_alpha_onto_white(img) is img
 
     def test_la_flattens_onto_white(self):
-        Image = pytest.importorskip("PIL.Image")
+        pytest.importorskip("PIL.Image")
         from src.core.media.processing.images import flatten_alpha_onto_white
 
         out = flatten_alpha_onto_white(self._la_image())
@@ -179,7 +179,7 @@ class TestFlattenAlphaOntoWhite:
         )
 
     def test_rgba_flattens_onto_white(self):
-        Image = pytest.importorskip("PIL.Image")
+        pytest.importorskip("PIL.Image")
         from src.core.media.processing.images import flatten_alpha_onto_white
 
         out = flatten_alpha_onto_white(self._rgba_image())
