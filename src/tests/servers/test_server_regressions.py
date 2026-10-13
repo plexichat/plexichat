@@ -6,6 +6,7 @@ Covers:
 - max_roles_per_server enforced on role creation
 - Channel deletion cleans up overrides and the linked conversation
 - icon_url passed through on server creation
+- ban/unban refusals answer 403/409 instead of a generic 500
 """
 
 import pytest
@@ -157,3 +158,90 @@ class TestCreateServerIcon:
         assert call_kwargs["owner_id"] == 7
         assert call_kwargs["name"] == "Team"
         assert call_kwargs["icon_url"] == "/api/v1/avatars/servers/1"
+
+
+class TestBanRouteErrorMapping:
+    """Ban/unban refusals must reach their documented status, not 500.
+
+    The servers-routes error table documents 403 for ``RoleHierarchyError``
+    and ``CannotModifyOwnerError`` and 409 for ``BanExistsError``. The route's
+    ``type(e).__name__`` chain only tested "NotFound"/"Permission"/
+    "NotSupported", so a hierarchy refusal (target ranked equal to or above
+    the actor), an attempt to ban the owner, and an already-banned target all
+    fell through to the generic 500 branch - while kick and update-member in
+    the same router already answered 403 for the first two.
+    """
+
+    @staticmethod
+    def _route_refusal(manager_method: str, exc: Exception):
+        """Run the route whose manager call raises ``exc`` and return the HTTP error."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from fastapi import HTTPException
+
+        from src.api.routes.servers import bans as bans_route
+
+        servers_mod = MagicMock()
+        getattr(servers_mod, manager_method).side_effect = exc
+        current_user = SimpleNamespace(user_id=1)
+
+        with patch("src.api.get_servers", return_value=servers_mod):
+            try:
+                if manager_method == "ban_member":
+                    asyncio.run(bans_route.ban_member("7", "42", None, current_user))
+                else:
+                    asyncio.run(bans_route.unban_member("7", "42", current_user))
+            except HTTPException as http_exc:
+                return http_exc
+        raise AssertionError(
+            f"{manager_method} with {type(exc).__name__} must raise HTTPException"
+        )
+
+    def test_ban_hierarchy_refusal_is_403(self):
+        from src.core.servers.exceptions import RoleHierarchyError
+
+        exc = self._route_refusal(
+            "ban_member",
+            RoleHierarchyError("Cannot ban a member with equal or higher role"),
+        )
+        assert exc.status_code == 403
+        assert exc.detail == {"error": {"code": 403, "message": "Access denied"}}
+
+    def test_ban_owner_refusal_is_403(self):
+        from src.core.servers.exceptions import CannotModifyOwnerError
+
+        exc = self._route_refusal(
+            "ban_member", CannotModifyOwnerError("Cannot ban the server owner")
+        )
+        assert exc.status_code == 403
+        assert exc.detail == {"error": {"code": 403, "message": "Access denied"}}
+
+    def test_ban_already_banned_is_409(self):
+        from src.core.servers.exceptions import BanExistsError
+
+        exc = self._route_refusal(
+            "ban_member", BanExistsError("User is already banned")
+        )
+        assert exc.status_code == 409
+        assert exc.detail == {
+            "error": {"code": 409, "message": "User is already banned"}
+        }
+
+    def test_unban_hierarchy_refusal_is_403(self):
+        from src.core.servers.exceptions import RoleHierarchyError
+
+        exc = self._route_refusal(
+            "unban_member",
+            RoleHierarchyError("Cannot unban a member with equal or higher role"),
+        )
+        assert exc.status_code == 403
+        assert exc.detail == {"error": {"code": 403, "message": "Access denied"}}
+
+    def test_unexpected_failure_still_500s(self):
+        exc = self._route_refusal("ban_member", RuntimeError("database exploded"))
+        assert exc.status_code == 500
+        assert exc.detail == {
+            "error": {"code": 500, "message": "Internal server error"}
+        }

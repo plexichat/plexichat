@@ -110,6 +110,7 @@ async def get_server_bans(
         401: {"model": ErrorResponse, "description": "Not authenticated"},
         403: {"model": ErrorResponse, "description": "Access denied"},
         404: {"model": ErrorResponse, "description": "Server or user not found"},
+        409: {"model": ErrorResponse, "description": "User is already banned"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -157,10 +158,23 @@ async def ban_member(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Server or user not found"}},
             )
-        elif "Permission" in exc_name:
+        # Authorization refusals are denials, not faults: a moderator
+        # outranked by the target (RoleHierarchyError) and an attempt to ban
+        # the owner (CannotModifyOwnerError) both match neither "NotFound" nor
+        # "Permission", so they used to fall through to the generic 500
+        # branch. kick/update-member in this router already answer 403 for
+        # them, and the servers-routes error table documents 403.
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
                 status_code=403,
                 detail={"error": {"code": 403, "message": "Access denied"}},
+            )
+        # Already banned (BanExistsError) is a conflict, not a fault; the
+        # servers-routes error table documents 409 for it.
+        elif "Exists" in exc_name:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {"code": 409, "message": "User is already banned"}},
             )
         elif "NotSupported" in exc_name:
             # H6: message purge on ban is not implemented server-side.
@@ -229,7 +243,11 @@ async def unban_member(
                 status_code=404,
                 detail={"error": {"code": 404, "message": "Ban not found"}},
             )
-        elif "Permission" in exc_name:
+        # Same denial-vs-fault mapping as the ban handler: unbanning a user
+        # ranked equal to or above the actor raises RoleHierarchyError and
+        # targeting the owner raises CannotModifyOwnerError. Both match none
+        # of the names this chain used to test, so both surfaced as 500.
+        elif "Permission" in exc_name or "Hierarchy" in exc_name or "Owner" in exc_name:
             raise HTTPException(
                 status_code=403,
                 detail={"error": {"code": 403, "message": "Access denied"}},
