@@ -217,6 +217,42 @@ class TestDevices:
         with pytest.raises(TokenInvalidError):
             auth_manager.verify_token(token)
 
+    def test_revoke_device_invalidates_a_warm_verify_cache(self, db, auth_manager):
+        """Revoking a device must beat the 10s token_verify cache.
+
+        ``verify_token`` caches its TokenInfo, so a client that has made any
+        authenticated request is already cached. Revoking the device has to
+        drop that entry, otherwise the forgotten device's session keeps
+        authenticating for up to the cache TTL.
+        """
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="revdev_cache_test",
+                email="revdev_cache_test@example.com",
+                password="TestPass123!",
+            )
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            result = auth_manager.login(
+                "revdev_cache_test",
+                "TestPass123!",
+                device_info={"fingerprint": "warm_cache_device"},
+            )
+            token = result.token
+
+        # Warm the verify cache, as any authenticated request would.
+        assert auth_manager.verify_token(token).valid is True
+
+        devices = auth_manager.get_devices(user.id)
+        device = next(d for d in devices if d.fingerprint == "warm_cache_device")
+
+        assert auth_manager.revoke_device(user.id, device.id) is True
+
+        with pytest.raises(TokenInvalidError):
+            auth_manager.verify_token(token)
+
     def test_device_type_recorded(self, db, auth_manager):
         """Test device type is recorded."""
         from src.utils import encryption

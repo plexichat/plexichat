@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 import utils.logger as logger
+from src.core.database import invalidate_pattern
 
 from ..models import AuditEventType, Device
 
@@ -75,6 +76,11 @@ class DeviceMixin(AuthManagerProtocol):
         self._db.execute(
             "UPDATE auth_sessions SET revoked = 1 WHERE device_id = ?", (device_id,)
         )
+        # Invalidate AFTER the write, exactly as logout/revoke_session/
+        # disable_2fa do: ``verify_token`` is cached for 10s, so a session
+        # this call just revoked would otherwise keep authenticating from a
+        # warm cache entry (and be re-cached) for the length of the TTL.
+        invalidate_pattern("token_verify:*")
         self._log_audit(AuditEventType.DEVICE_REVOKED, user_id, True)
         return True
 
