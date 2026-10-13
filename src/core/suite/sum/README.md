@@ -742,6 +742,18 @@ a single-row range to its first element, and ``INDEX`` keeps a multi-cell
 block's shape instead of flattening it. The differential now reads 0
 divergences across 15,118 array-argument forms.
 
+``VLOOKUP`` is the same shape question from the other side, and the client was
+the one out: it wrapped each cell of a flat table -- a function-returned row such
+as ``INDEX(A1:C3,2,0)`` or ``OFFSET(A1,1,0,1,3)`` -- into its own row, so a
+vertical lookup scanned the whole row as keys and measured its width as one,
+answering ``two`` and ``#REF!`` where the identical range (``A2:C2``) and this
+engine answer ``#N/A`` and the value. A flat table now reads as a single row,
+the rule ``HLOOKUP`` already used, so ``VLOOKUP("two", INDEX(A1:C3,2,0), 1)``
+is ``#N/A`` and ``VLOOKUP(2, INDEX(A1:C3,2,0), 2)`` is ``two`` on both engines.
+The shared table pins each answer: the multi-producer sweep that found it
+(13,950 producer-in-slot shapes, including a pair of distinct producers in two
+slots) now reads 0 divergences.
+
 **A bare range expression.** A top-level formula that is just a range
 (``A1:A5``) was evaluated with the scalar-slot rule, so it read as its error
 cell, while the client returns the matrix. ``evaluate_cell`` now returns the
