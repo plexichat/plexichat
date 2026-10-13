@@ -15,9 +15,11 @@ undo by accident.
 
 from __future__ import annotations
 
+import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -72,6 +74,57 @@ def test_scan_targets_and_exclusions():
     assert {"src/tests", "tests"} <= exclude_dirs
     # main.py is the documented entry point and is clean under this config.
     assert {"src", "main.py"} <= set(BANDIT_CONFIG["targets"])
+
+
+def _tracked_source_files() -> list[str]:
+    """Tracked Python under ``src/`` plus ``main.py``, minus the test trees."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--", "src", "main.py"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover
+        pytest.skip("git is unavailable, cannot enumerate tracked sources")
+
+    sources = []
+    for line in result.stdout.splitlines():
+        if not line.endswith(".py"):
+            continue
+        parts = line.split("/")
+        if any(
+            part in ("test", "tests") or part.startswith("test_") for part in parts[:-1]
+        ):
+            continue
+        sources.append(line)
+    return sources
+
+
+def test_exclude_dirs_do_not_mask_tracked_source():
+    """Bare exclusion tokens are substring-matched, so they hide real modules.
+
+    Bandit drops a file when any exclusion string is a *substring* of its path,
+    not only when the file sits under that directory. Bare ``media``/``cache``/
+    ``temp``/``logs`` therefore stopped the hook from scanning source packages
+    and modules (``src/core/media``, ``src/core/database/cache``,
+    ``src/core/servers/templates.py``, ``src/api/routes/admin/logs.py``).
+    """
+    exclude_dirs = BANDIT_CONFIG["exclude_dirs"]
+    offenders = {
+        token: [path for path in _tracked_source_files() if token in path]
+        for token in exclude_dirs
+        # Globs and root-relative/segment paths cannot substring-match a nested
+        # source path; only plain names are dangerous.
+        if not token.startswith(("**", "/")) and not token.endswith("/")
+    }
+    offenders = {token: paths for token, paths in offenders.items() if paths}
+
+    assert offenders == {}, (
+        "bandit exclude_dirs entries are substring-matched and hide tracked "
+        f"source files from the scan: {offenders}"
+    )
 
 
 def test_reviewed_skips_and_floors_are_stable():

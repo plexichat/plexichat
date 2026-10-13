@@ -14,7 +14,16 @@ severity = "MEDIUM"
 # honoured by the ``--exclude`` CLI flag / a ``.bandit`` INI key), so the
 # previous spelling left src/tests in scope and surfaced test-only findings
 # (e.g. the SHA1 helpers in test_valkey.py).
-exclude_dirs = [".venv", "venv", ".pytest_cache", "test_artifacts", "cache", "temp", "uploads", "media", "logs", "src/tests", "tests", "**/__pycache__"]
+#
+# Bandit matches each entry as a glob *and* as a plain substring of the path
+# (``any(x in path ...)``), so a bare token shadows every path that contains
+# it. Bare ``media`` hid src/core/media (44 files) and src/api/routes/media.py,
+# ``cache`` hid src/core/database/cache (10 files), ``temp`` hid
+# src/core/servers/templates.py, and ``logs`` hid src/api/routes/admin/logs.py
+# — 91 tracked source files the hook never scanned. An entry that is (or later
+# becomes) a substring of tracked source hides it, so test_bandit_config.py
+# fails if that happens.
+exclude_dirs = [".venv", "venv", ".pytest_cache", "test_artifacts", "uploads", "src/tests", "tests", "**/__pycache__"]
 # The entry point is scanned alongside src/; test dirs are excluded above.
 # B101 (assert) is intentionally NOT globally skipped — assert in production
 # code is a security concern. Use `# nosec B101` for legitimate uses.

@@ -9,7 +9,7 @@ repos:
         pass_filenames: false
         args: [
           "--extend-exclude",
-          ".venv,venv,.pytest_cache,cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,/media,/config,logs"
+          ".venv,venv,.pytest_cache,/cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,/media,/config,logs"
         ]
       - id: ruff-format
         name: ruff-format
