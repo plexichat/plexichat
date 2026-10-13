@@ -54,7 +54,12 @@ class MassEmojiRule(BaseRule):
 
         if self._count_unicode:
             unicode_matches = self.UNICODE_EMOJI_PATTERN.findall(content)
-            unicode_count = len(unicode_matches)
+            # The pattern is a character class with a ``+`` quantifier, so one
+            # match is a *run* of adjacent emoji, not a single emoji. Counting
+            # the matches (``len(unicode_matches)``) therefore counted "😀" * 20
+            # as one emoji and let mass-emoji spam through; sum the code points
+            # each match spans so every emoji is counted.
+            unicode_count = sum(len(m) for m in unicode_matches)
 
         total_emoji = custom_count + unicode_count
 
