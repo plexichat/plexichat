@@ -184,7 +184,22 @@ async def acknowledge_messages(
             except Exception:
                 pass  # If we can't check, continue with normal flow
 
-        up_to_id = int(message_id) if message_id else None
+        # ``message_id`` is a client-supplied optional cursor, so it needs the
+        # same guard as ``channel_id`` above: a non-numeric value used to
+        # escape as a ValueError and fall through to the outer handler as a
+        # 500, even though this route declares 400 "Invalid message ID" and
+        # every sibling reader of an ID parameter (``messages_list`` before/after,
+        # bulk-delete ids, pins, retrieve/delete message ids) is wrapped.
+        if message_id:
+            try:
+                up_to_id: Optional[int] = int(message_id)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid message ID"}},
+                )
+        else:
+            up_to_id = None
 
         try:
             from starlette.concurrency import run_in_threadpool

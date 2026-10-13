@@ -79,3 +79,31 @@ def test_embeds_only_message_accepted(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body.get("embeds"), "embeds must round-trip on the created message"
+
+
+def test_ack_with_malformed_message_id_returns_400(
+    test_client, modules, test_server, test_user_with_token
+):
+    """A malformed ``message_id`` cursor is a 400, not a 500.
+
+    The ack route declares ``400: Invalid channel ID or message ID`` and every
+    sibling reader of a client-supplied ID parses it under a ValueError guard.
+    The optional ``message_id`` query parameter used to be converted with a
+    bare ``int()``, so ``?message_id=not-a-snowflake`` raised out of the
+    handler and surfaced as "Internal server error".
+
+    The channel is real so the request reaches the cursor parse instead of
+    failing on channel resolution.
+    """
+    server, _user = test_server
+    channel = _first_channel(modules, server)
+    token = test_user_with_token["token"]
+
+    response = test_client.post(
+        f"/api/v1/channels/{channel.id}/messages/ack",
+        params={"message_id": "not-a-snowflake"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == "Invalid message ID"
