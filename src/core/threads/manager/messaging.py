@@ -183,6 +183,11 @@ class ThreadMessagingMixin(ThreadProtocol):
         if not self.can_view_thread(user_id, thread_id):
             raise ThreadAccessDeniedError("Cannot access this thread")
 
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would dump the whole thread history. (No upper cap
+        # here on purpose — pagination callers already bound page sizes.)
+        limit = max(0, limit)
+
         thread = _get_thread_internal(self._db, thread_id, self._encrypt_thread_names)
         conversation_id = thread.conversation_id if thread else None
 

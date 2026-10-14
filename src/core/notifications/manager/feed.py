@@ -27,7 +27,9 @@ class FeedMixin(NotificationProtocol):
         unread_only: bool = False,
     ) -> List[Notification]:
         max_per_page = self._config.get("max_notifications_per_page", 100)
-        limit = min(limit, max_per_page)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        limit = max(0, min(limit, max_per_page))
 
         cols = "id, user_id, sender_id, message_id, conversation_id, server_id, channel_id, thread_id, mention_type, content_preview, content_preview_encrypted, read, created_at"
         query = f"SELECT {cols} FROM notif_notifications WHERE user_id = ?"
@@ -53,7 +55,8 @@ class FeedMixin(NotificationProtocol):
         before_id: Optional[SnowflakeID] = None,
     ) -> NotificationFeed:
         max_items = self._config.get("max_feed_items", 100)
-        limit = min(limit, max_items)
+        # Same lower clamp as get_notifications above: LIMIT -1 is unlimited.
+        limit = max(0, min(limit, max_items))
 
         # Page items only — pagination-scoped ON PURPOSE so deeper pages
         # never shrink their item list.
