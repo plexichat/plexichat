@@ -389,9 +389,21 @@ class ChunkedUploadManager:
             if not current:
                 return None
 
+            # ``fetch_one`` may return either a mapping (sqlite dict cursor /
+            # valkey) or a bare tuple (raw adapter), so read the columns by
+            # position when we do not get a mapping.
+            if isinstance(current, dict):
+                _received_chunks = current["received_chunks"]
+                _uploaded_bytes = current["uploaded_bytes"]
+                _updated_at = current["updated_at"]
+            else:
+                _received_chunks = current[2]
+                _uploaded_bytes = current[1]
+                _updated_at = current[3]
+
             try:
                 received: Set[int] = set(
-                    int(x) for x in json.loads(current["received_chunks"] or "[]")
+                    int(x) for x in json.loads(_received_chunks or "[]")
                 )
             except Exception:
                 received = set()
@@ -401,19 +413,21 @@ class ChunkedUploadManager:
 
             uploaded_chunks = len(received)
             if is_new_chunk:
-                uploaded_bytes = current["uploaded_bytes"] + chunk_len
+                uploaded_bytes = _uploaded_bytes + chunk_len
             else:
-                uploaded_bytes = current["uploaded_bytes"]
+                uploaded_bytes = _uploaded_bytes
 
             total_chunks_row = self._db.fetch_one(
                 "SELECT total_chunks FROM media_upload_sessions WHERE id = ?",
                 (session_id,),
             )
-            total_chunks = (
-                total_chunks_row["total_chunks"]
-                if total_chunks_row
-                else uploaded_chunks
-            )
+            if total_chunks_row:
+                if isinstance(total_chunks_row, dict):
+                    total_chunks = total_chunks_row["total_chunks"]
+                else:
+                    total_chunks = total_chunks_row[0]
+            else:
+                total_chunks = uploaded_chunks
             is_complete = uploaded_chunks >= total_chunks
             status = "completed" if is_complete else "in_progress"
 
@@ -429,7 +443,7 @@ class ChunkedUploadManager:
                     json.dumps(sorted(received)),
                     now,
                     session_id,
-                    current["updated_at"],
+                    _updated_at,
                 ),
             )
             if getattr(cursor, "rowcount", 1) > 0:
@@ -917,6 +931,31 @@ class ChunkedUploadManager:
                         expires_at=row["expires_at"],
                         temp_path=row["temp_path"],
                         checksum=row["checksum"],
+                    )
+                )
+            else:
+                # Positional rows (raw cursors / tuple-returning adapters).
+                # Without this branch every row was dropped and the method
+                # silently reported "no active sessions" for a user that has
+                # them -- ``get_session`` above already handles both shapes
+                # against these same columns, in this same order.
+                sessions.append(
+                    UploadSession(
+                        id=row[0],
+                        user_id=row[1],
+                        filename=row[2],
+                        content_type=row[3],
+                        total_size=row[4],
+                        chunk_size=row[5],
+                        total_chunks=row[6],
+                        uploaded_chunks=row[7],
+                        uploaded_bytes=row[8],
+                        status=UploadSessionStatus(row[9]),
+                        created_at=row[10],
+                        updated_at=row[11],
+                        expires_at=row[12],
+                        temp_path=row[13],
+                        checksum=row[14],
                     )
                 )
 
