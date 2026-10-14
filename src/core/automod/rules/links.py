@@ -179,7 +179,9 @@ class ExternalLinkRule(BaseRule):
     bare domains (``example.com/path``) are all extracted, so a filter
     bypass via an unusual or missing scheme is not possible. A bare host with
     a port (``example.com:8080/path``) is read as that host too -- the port is
-    dropped, not mistaken for a scheme separator. Note that any
+    dropped, not mistaken for a scheme separator. A trailing DNS-root dot
+    (``example.com./path``) is stripped as well, since it resolves to the
+    same host. Note that any
     domain-shaped token (two-plus dot-separated labels with an alphabetic
     TLD) is treated as a link; whitelist mode will therefore also match
     bare filenames such as ``file.txt``.
@@ -313,6 +315,10 @@ class ExternalLinkRule(BaseRule):
             # Drop userinfo and port.
             host = host.rsplit("@", 1)[-1].split(":", 1)[0]
             host = host.lower()
+            # A trailing dot is the DNS root marker ("evil.com." resolves
+            # exactly as "evil.com"); strip it so the FQDN form cannot
+            # bypass the filter while the bare form is blocked.
+            host = host.removesuffix(".")
             if not host:
                 return None
 
