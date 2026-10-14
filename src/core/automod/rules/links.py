@@ -171,6 +171,19 @@ class InviteLinkRule(BaseRule):
         return len(issues) == 0, issues
 
 
+def _normalize_listed_domain(entry: str) -> str:
+    """Normalize a whitelist/blacklist entry to the observed-host shape.
+
+    Observed hosts are lowercased with the trailing DNS-root dot stripped
+    (see ``ExternalLinkRule._extract_host``), so entries must be stored the
+    same way: an admin-supplied ``"Evil.COM. "`` -- the FQDN form DNS tooling
+    commonly emits -- would otherwise never match ``"evil.com"``, silently
+    disabling a blacklist entry (a bypass) or wrongly blocking a whitelisted
+    domain (a false positive).
+    """
+    return entry.strip().lower().removesuffix(".")
+
+
 class ExternalLinkRule(BaseRule):
     """Rule that filters external links with whitelist/blacklist.
 
@@ -188,7 +201,10 @@ class ExternalLinkRule(BaseRule):
 
     Whitelist/blacklist entries match the exact domain AND every subdomain
     of it: whitelisting ``example.com`` also allows ``api.example.com``
-    (and likewise for the blacklist).
+    (and likewise for the blacklist). Entries are normalized to the same
+    shape as observed hosts (lowercased, surrounding whitespace and a
+    trailing DNS-root dot stripped), so an FQDN-form entry such as
+    ``"Example.COM. "`` matches exactly what ``"example.com"`` matches.
     """
 
     rule_type = RuleType.EXTERNAL_LINKS
@@ -206,10 +222,10 @@ class ExternalLinkRule(BaseRule):
         super().__init__(rule)
         self._mode: str = self.config.get("mode", "blacklist")
         self._whitelist: Set[str] = set(
-            d.lower() for d in self.config.get("whitelist", [])
+            _normalize_listed_domain(d) for d in self.config.get("whitelist", [])
         )
         self._blacklist: Set[str] = set(
-            d.lower() for d in self.config.get("blacklist", [])
+            _normalize_listed_domain(d) for d in self.config.get("blacklist", [])
         )
         self._block_all: bool = self.config.get("block_all", False)
 
