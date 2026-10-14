@@ -177,7 +177,9 @@ class ExternalLinkRule(BaseRule):
     Link detection is SCHEME-INDEPENDENT: any scheme (``https://``,
     ``ftp://``, ``steam://`` ...), protocol-relative URLs (``//host``) and
     bare domains (``example.com/path``) are all extracted, so a filter
-    bypass via an unusual or missing scheme is not possible. Note that any
+    bypass via an unusual or missing scheme is not possible. A bare host with
+    a port (``example.com:8080/path``) is read as that host too -- the port is
+    dropped, not mistaken for a scheme separator. Note that any
     domain-shaped token (two-plus dot-separated labels with an alphabetic
     TLD) is treated as a link; whitelist mode will therefore also match
     bare filenames such as ``file.txt``.
@@ -279,9 +281,28 @@ class ExternalLinkRule(BaseRule):
             scheme_match = self._SCHEME_PREFIX.match(candidate)
             has_scheme = scheme_match is not None
             if has_scheme and scheme_match is not None:
-                # Any explicit scheme counts as a link attempt (ftp:, https:,
-                # custom app schemes ...); strip it before host parsing.
-                candidate = candidate[scheme_match.end() :]
+                remainder = candidate[scheme_match.end() :]
+                # A dotted prefix followed by a numeric remainder is a bare
+                # host:port ("evil.com:8080/x"), not a scheme. Stripping it
+                # would discard the host and report the token as "not a link
+                # at all", making a port a one-token bypass of both modes.
+                # Scheme names may contain dots (RFC 3986) but never start
+                # their remainder with a port digit, so the shapes stay
+                # distinguishable.
+                scheme_text = candidate[: scheme_match.end()]
+                is_authority = scheme_text.endswith("//")
+                prefix = candidate[: scheme_match.end() - 1]
+                # Only a *bare* "host:port" (no ``//`` authority marker)
+                # gets reclassified; an explicit ``scheme://host`` is always
+                # a scheme even when the host's first label starts with a
+                # digit.
+                if (not is_authority) and "." in prefix and remainder[:1].isdigit():
+                    has_scheme = False
+                else:
+                    # Any explicit scheme counts as a link attempt (ftp:,
+                    # https:, custom app schemes ...); strip it before host
+                    # parsing.
+                    candidate = remainder
             elif candidate.startswith("//"):
                 # Protocol-relative URL.
                 candidate = candidate[2:]
