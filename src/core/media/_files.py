@@ -62,7 +62,11 @@ class _FilesMixin:
         )
         result = {}
         for row in rows:
-            result[row["filename"]] = self._row_to_media_file(row)
+            # ``fetch_all`` may return mapping or tuple rows (see
+            # docs/admin-hardening.md); ``SELECT *`` follows the
+            # ``media_files`` schema order, where ``filename`` is second.
+            key = row["filename"] if isinstance(row, dict) else row[1]
+            result[key] = self._row_to_media_file(row)
         return result
 
     # ── file data access ───────────────────────────────────────────────────────
@@ -154,7 +158,17 @@ class _FilesMixin:
                 f'%"file_id":"{file_token}"%',
             ),
         )
-        if attachment_count and int(attachment_count["count"]) > 0:
+        # ``SELECT COUNT(*) AS count`` yields a single-column row; read it by
+        # position when the adapter returns tuples instead of mappings.
+        if (
+            attachment_count
+            and int(
+                attachment_count["count"]
+                if isinstance(attachment_count, dict)
+                else attachment_count[0]
+            )
+            > 0
+        ):
             return False
         # Legacy encrypted attachment rows may predate canonical file_id
         # metadata. Resolve them at the application boundary so deletion is
@@ -165,7 +179,11 @@ class _FilesMixin:
         )
         for attachment in encrypted_attachments:
             try:
-                encrypted_url = decrypt_data(attachment["url_encrypted"])
+                encrypted_url = decrypt_data(
+                    attachment["url_encrypted"]
+                    if isinstance(attachment, dict)
+                    else attachment[0]
+                )
             except Exception:
                 # Corrupted encrypted reference — skip rather than blocking all
                 # deletions.  The original ``return False`` meant a single bad
@@ -177,20 +195,42 @@ class _FilesMixin:
             "SELECT COUNT(*) AS count FROM auth_users WHERE avatar_url LIKE ?",
             (f"%{file.filename}",),
         )
-        if avatar_count and int(avatar_count["count"]) > 0:
+        if (
+            avatar_count
+            and int(
+                avatar_count["count"]
+                if isinstance(avatar_count, dict)
+                else avatar_count[0]
+            )
+            > 0
+        ):
             return False
         icon_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM srv_servers WHERE icon_url LIKE ? AND deleted = 0",
             (f"%{file.filename}",),
         )
-        if icon_count and int(icon_count["count"]) > 0:
+        if (
+            icon_count
+            and int(
+                icon_count["count"] if isinstance(icon_count, dict) else icon_count[0]
+            )
+            > 0
+        ):
             return False
         stash_item_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM stash_items "
             "WHERE deleted = 0 AND media_object_id IN (?, ?)",
             (file_token, file.filename),
         )
-        if stash_item_count and int(stash_item_count["count"]) > 0:
+        if (
+            stash_item_count
+            and int(
+                stash_item_count["count"]
+                if isinstance(stash_item_count, dict)
+                else stash_item_count[0]
+            )
+            > 0
+        ):
             return False
         stash_version_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM stash_versions v "
@@ -198,14 +238,30 @@ class _FilesMixin:
             "WHERE i.deleted = 0 AND v.media_object_id IN (?, ?)",
             (file_token, file.filename),
         )
-        if stash_version_count and int(stash_version_count["count"]) > 0:
+        if (
+            stash_version_count
+            and int(
+                stash_version_count["count"]
+                if isinstance(stash_version_count, dict)
+                else stash_version_count[0]
+            )
+            > 0
+        ):
             return False
         artifact_count = self._db.fetch_one(
             "SELECT COUNT(*) AS count FROM artifacts "
             "WHERE COALESCE(payload, '') LIKE ? OR COALESCE(payload, '') LIKE ?",
             (f"%{file_token}%", f"%{file.filename}%"),
         )
-        if artifact_count and int(artifact_count["count"]) > 0:
+        if (
+            artifact_count
+            and int(
+                artifact_count["count"]
+                if isinstance(artifact_count, dict)
+                else artifact_count[0]
+            )
+            > 0
+        ):
             return False
         dedup_count = None
         if checksum and self._db.table_exists("media_file_hashes"):
@@ -213,7 +269,15 @@ class _FilesMixin:
                 "SELECT reference_count FROM media_file_hashes WHERE hash_value = ?",
                 (checksum,),
             )
-        if dedup_count and int(dedup_count["reference_count"]) > 1:
+        if (
+            dedup_count
+            and int(
+                dedup_count["reference_count"]
+                if isinstance(dedup_count, dict)
+                else dedup_count[0]
+            )
+            > 1
+        ):
             return False
         return True
 
@@ -402,7 +466,12 @@ class _FilesMixin:
                         (int(parent_file_id),),
                     )
                     if parent_row:
-                        return self.check_file_access(parent_row["filename"], user_id)
+                        parent_filename = (
+                            parent_row["filename"]
+                            if isinstance(parent_row, dict)
+                            else parent_row[0]
+                        )
+                        return self.check_file_access(parent_filename, user_id)
             except Exception as e:
                 logger.warning(f"Error checking thumbnail access for {filename}: {e}")
 
@@ -415,13 +484,15 @@ class _FilesMixin:
         if not row:
             return False
 
-        uploader_id = int(row["uploaded_by"])
+        # ``SELECT id, uploaded_by, checksum`` -- read by position for
+        # tuple-row adapters (see docs/admin-hardening.md).
+        uploader_id = int(row["uploaded_by"] if isinstance(row, dict) else row[1])
         if uploader_id == int(user_id):
             return True
 
         # 2. Message attachment in a conversation the user participates in
-        checksum = row.get("checksum")
-        file_id_token = str(row["id"])
+        checksum = row.get("checksum") if isinstance(row, dict) else row[2]
+        file_id_token = str(row["id"] if isinstance(row, dict) else row[0])
 
         rows = None
         if checksum:
@@ -478,7 +549,9 @@ class _FilesMixin:
 
         if rows and self._messaging:
             for r in rows:
-                conv_id = r["conversation_id"]
+                # ``SELECT m.conversation_id`` -- single column, position 0
+                # for tuple-row adapters.
+                conv_id = r["conversation_id"] if isinstance(r, dict) else r[0]
                 try:
                     manager = (
                         self._messaging

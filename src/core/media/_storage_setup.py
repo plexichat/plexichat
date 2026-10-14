@@ -26,6 +26,30 @@ from ._config import DEFAULT_SIZE_LIMITS, DEFAULT_ALLOWED_TYPES, DEFAULT_THUMBNA
 
 logger = logging.getLogger(__name__)
 
+# Column order of the ``media_files`` table, used to map tuple rows (drivers
+# that do not expose column keys) back into a dict. Must match the table
+# definition in ``src/core/media/schema.py`` exactly. Admin database adapters
+# may return mapping or tuple rows (see docs/admin-hardening.md) -- handle
+# both shapes.
+_MEDIA_FILE_COLUMNS = (
+    "id",
+    "filename",
+    "original_filename",
+    "content_type",
+    "size",
+    "media_type",
+    "storage_backend",
+    "storage_path",
+    "checksum",
+    "uploaded_by",
+    "uploaded_at",
+    "metadata",
+    "scan_status",
+    "scan_result",
+    "deleted",
+    "deleted_at",
+)
+
 
 class _StorageSetupMixin:
     """Storage initialisation and helpers mixed into MediaManager."""
@@ -191,6 +215,8 @@ class _StorageSetupMixin:
     # -- row conversion ----------------------------------------------------------
 
     def _row_to_media_file(self, row) -> MediaFile:
+        if not isinstance(row, dict):
+            row = dict(zip(_MEDIA_FILE_COLUMNS, row))
         metadata = None
         if row["metadata"]:
             try:

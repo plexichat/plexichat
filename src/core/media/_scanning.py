@@ -154,7 +154,13 @@ class _ScanningMixin:
             )
             if not stored_name_row:
                 return
-            stored_name = stored_name_row["filename"]
+            # ``SELECT filename`` -- single column, position 0 for
+            # tuple-row adapters (see docs/admin-hardening.md).
+            stored_name = (
+                stored_name_row["filename"]
+                if isinstance(stored_name_row, dict)
+                else stored_name_row[0]
+            )
 
             # Search msg_attachments for references to this file via metadata or URL
             attachments = self._db.fetch_all(
@@ -165,8 +171,9 @@ class _ScanningMixin:
 
             affected_message_ids = set()
             for att in attachments:
-                att_id = att["id"]
-                msg_id = att["message_id"]
+                # ``SELECT id, message_id, metadata`` column order.
+                att_id = att["id"] if isinstance(att, dict) else att[0]
+                msg_id = att["message_id"] if isinstance(att, dict) else att[1]
                 # Soft-delete the attachment
                 self._db.execute(
                     "UPDATE msg_attachments SET deleted = 1 WHERE id = ?",
