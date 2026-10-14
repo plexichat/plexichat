@@ -236,7 +236,13 @@ class ChunkedUploadManager:
             (user_id, int(time.time() * 1000)),
         )
         max_active_sessions = int(self._config.get("max_active_sessions_per_user", 5))
-        if active and active["cnt"] >= max_active_sessions:
+        # ``fetch_one`` may return either a mapping (sqlite dict cursor /
+        # valkey) or a bare tuple (raw adapter), so read the count by
+        # position when we do not get a mapping.
+        active_count = (
+            active["cnt"] if isinstance(active, dict) else (active[0] if active else 0)
+        )
+        if active_count >= max_active_sessions:
             logger.warning(
                 f"User {user_id} has too many active chunked upload sessions"
             )
