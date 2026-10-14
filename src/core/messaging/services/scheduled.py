@@ -13,6 +13,30 @@ import utils.logger as logger
 from src.core.base import SnowflakeID
 from src.utils.encryption import generate_snowflake_id
 
+# ``msg_scheduled`` columns in schema order (see ``src/core/messaging/schema.py``).
+# ``fetch_one``/``fetch_all`` may return a mapping or a bare tuple depending on
+# the database adapter (see docs/admin-hardening.md); tuple rows from
+# ``SELECT *`` follow this order.
+_SCHEDULED_COLUMNS = (
+    "id",
+    "conversation_id",
+    "author_id",
+    "content",
+    "scheduled_at",
+    "status",
+    "message_id",
+    "created_at",
+    "updated_at",
+    "attachments",
+)
+
+
+def _scheduled_row_to_dict(row) -> Dict[str, Any]:
+    """Normalise a mapping or tuple ``SELECT *`` row to a dict."""
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(zip(_SCHEDULED_COLUMNS, row))
+
 
 class ScheduledMessageService:
     """Service for managing scheduled messages."""
@@ -65,7 +89,15 @@ class ScheduledMessageService:
             "SELECT COUNT(*) as count FROM msg_scheduled WHERE author_id = ? AND status = 'pending'",
             (user_id,),
         )
-        count = count_row["count"] if count_row else 0
+        # ``SELECT COUNT(*) ...`` yields a single-column row; read it by
+        # position when the adapter returns tuples instead of mappings
+        # (see docs/admin-hardening.md).
+        if count_row is None:
+            count = 0
+        elif isinstance(count_row, dict):
+            count = count_row["count"]
+        else:
+            count = count_row[0]
         if count >= self.MAX_SCHEDULED_PER_USER:
             raise ValueError(
                 f"Maximum {self.MAX_SCHEDULED_PER_USER} scheduled messages per user"
@@ -109,7 +141,7 @@ class ScheduledMessageService:
         )
         if not row:
             return None
-        data = dict(row)
+        data = _scheduled_row_to_dict(row)
         # Verify ownership
         if data["author_id"] != user_id:
             return None
@@ -144,7 +176,7 @@ class ScheduledMessageService:
         rows = self._db.fetch_all(query, tuple(params))
         results = []
         for row in rows:
-            data = dict(row)
+            data = _scheduled_row_to_dict(row)
             if data.get("attachments") and isinstance(data["attachments"], str):
                 try:
                     data["attachments"] = json.loads(data["attachments"])
@@ -163,9 +195,13 @@ class ScheduledMessageService:
         )
         if not row:
             raise ValueError("Scheduled message not found")
-        if row["author_id"] != user_id:
+        # ``SELECT author_id, status`` -- read by position for tuple-row
+        # adapters (see docs/admin-hardening.md).
+        author_id = row["author_id"] if isinstance(row, dict) else row[0]
+        status = row["status"] if isinstance(row, dict) else row[1]
+        if author_id != user_id:
             raise PermissionError("Not the author of this scheduled message")
-        if row["status"] != "pending":
+        if status != "pending":
             raise ValueError("Can only cancel pending scheduled messages")
 
         now = self._get_timestamp()
@@ -183,7 +219,7 @@ class ScheduledMessageService:
             "SELECT * FROM msg_scheduled WHERE status = 'pending' AND scheduled_at <= ?",
             (now,),
         )
-        return [dict(row) for row in rows]
+        return [_scheduled_row_to_dict(row) for row in rows]
 
     def mark_dispatched(
         self, scheduled_id: SnowflakeID, message_id: SnowflakeID
