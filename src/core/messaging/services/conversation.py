@@ -363,7 +363,9 @@ class ConversationService(BaseService):
         conversation_type: Optional[ConversationType] = None,
     ) -> List[Conversation]:
         """Get user's conversations with pagination."""
-        limit = min(limit, 100)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole list.
+        limit = max(0, min(limit, 100))
 
         rows = self._repo.get_user_conversations(
             user_id, limit, before_id, conversation_type

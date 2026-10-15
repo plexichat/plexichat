@@ -77,7 +77,9 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                 "Not a participant in this conversation"
             )
 
-        limit = min(limit, 100)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the conversation.
+        limit = max(0, min(limit, 100))
 
         if not before_id and not after_id:
             try:
@@ -186,7 +188,9 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                 "Not a participant in this conversation"
             )
 
-        limit = min(limit, 100)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would return every match instead of an empty page.
+        limit = max(0, min(limit, 100))
         rows = self._repo.search(conversation_id, query, limit, before_id, after_id)
 
         if not rows:
