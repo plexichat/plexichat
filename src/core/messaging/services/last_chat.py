@@ -13,6 +13,42 @@ import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 from src.core.database import cache_get, cache_set, cache_delete
 
+# ``user_last_chat`` columns in schema order (see
+# ``src/core/chat_tracking/schema.py``). ``fetch_one``/``fetch_all`` may
+# return a mapping or a bare tuple depending on the database adapter (see
+# docs/admin-hardening.md); tuple rows from ``SELECT *`` follow this order.
+_LAST_CHAT_COLUMNS = (
+    "id",
+    "user_id",
+    "conversation_id",
+    "last_message_id",
+    "scroll_position",
+    "updated_at",
+)
+
+# ``get_recent_chats`` selects these columns in this exact order.
+_RECENT_CHAT_COLUMNS = (
+    "conversation_id",
+    "accessed_at",
+    "unread_count",
+    "last_message_at",
+    "last_message_id",
+)
+
+
+def _last_chat_row_to_dict(row) -> Dict[str, Any]:
+    """Normalise a mapping or tuple ``user_last_chat`` row to a dict."""
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(zip(_LAST_CHAT_COLUMNS, row))
+
+
+def _recent_chat_row_to_dict(row) -> Dict[str, Any]:
+    """Normalise a mapping or tuple recent-chat join row to a dict."""
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(zip(_RECENT_CHAT_COLUMNS, row))
+
 
 class LastChatService:
     """Service for managing user's last active chat state."""
@@ -154,7 +190,7 @@ class LastChatService:
         if not row:
             return None
 
-        data = dict(row)
+        data = _last_chat_row_to_dict(row)
 
         # Verify user is still a participant
         conv_id = data.get("conversation_id")
@@ -191,7 +227,9 @@ class LastChatService:
         Returns conversations ordered by most recently accessed,
         with the last message preview if available.
         """
-        limit = min(limit, self.MAX_HISTORY)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        limit = max(0, min(limit, self.MAX_HISTORY))
 
         rows = self._db.fetch_all(
             """SELECT h.conversation_id, h.accessed_at, h.unread_count,
@@ -206,7 +244,7 @@ class LastChatService:
 
         results = []
         for row in rows:
-            data = dict(row)
+            data = _recent_chat_row_to_dict(row)
             # Verify user is still a participant
             conv_id = data.get("conversation_id")
             if conv_id and self._participant_svc:
@@ -259,7 +297,16 @@ class LastChatService:
                 "SELECT COUNT(*) as count FROM user_recent_chats WHERE user_id = ?",
                 (user_id,),
             )
-            if count_row and count_row["count"] >= self.MAX_HISTORY:
+            # ``SELECT COUNT(*) ...`` yields a single-column row; read it by
+            # position when the adapter returns tuples instead of mappings
+            # (see docs/admin-hardening.md).
+            if not count_row:
+                count = 0
+            elif isinstance(count_row, dict):
+                count = count_row["count"]
+            else:
+                count = count_row[0]
+            if count >= self.MAX_HISTORY:
                 # Remove the oldest entry
                 self._db.execute(
                     """DELETE FROM user_recent_chats
