@@ -261,7 +261,10 @@ class TemplateManager:
         """Get templates created by a user."""
         rows = self._db.fetch_all(
             "SELECT * FROM srv_templates WHERE creator_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user_id, min(limit, 100)),
+            # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*,
+            # so a negative limit would bypass the page cap and dump the
+            # whole table.
+            (user_id, max(0, min(limit, 100))),
         )
         return [self._row_to_template(row) for row in rows]
 
@@ -269,7 +272,10 @@ class TemplateManager:
         """Get public templates."""
         rows = self._db.fetch_all(
             "SELECT * FROM srv_templates WHERE is_public = 1 ORDER BY usage_count DESC LIMIT ?",
-            (min(limit, 100),),
+            # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*,
+            # so a negative limit would bypass the page cap and dump the
+            # whole table.
+            (max(0, min(limit, 100)),),
         )
         return [self._row_to_template(row) for row in rows]
 

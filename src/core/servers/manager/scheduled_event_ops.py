@@ -206,7 +206,9 @@ class ScheduledEventManager:
             params.append(status.value)
 
         query += " ORDER BY start_time ASC LIMIT ?"
-        params.append(min(limit, 100))
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        params.append(max(0, min(limit, 100)))
 
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_event(row) for row in rows]
@@ -448,7 +450,9 @@ class ScheduledEventManager:
             params.append(status.value)
 
         query += " ORDER BY created_at ASC LIMIT ?"
-        params.append(min(limit, 1000))
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        params.append(max(0, min(limit, 1000)))
 
         rows = self._db.fetch_all(query, tuple(params))
         return [self._row_to_rsvp(row) for row in rows]

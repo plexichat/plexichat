@@ -28,7 +28,9 @@ class AuditMixin(AutoModProtocol):
             params.append(before_id)
 
         query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(min(limit, 100))
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        params.append(max(0, min(limit, 100)))
 
         rows = self._db.fetch_all(query, tuple(params))
         return [row_to_audit_entry(row) for row in rows]
