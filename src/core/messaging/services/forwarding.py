@@ -17,11 +17,60 @@ from src.utils.encryption import (
 )
 
 
+# ``msg_forwarded`` columns in schema order (see
+# ``src/core/messaging/schema.py``). ``fetch_one``/``fetch_all`` may return a
+# mapping or a bare tuple depending on the database adapter (see
+# docs/admin-hardening.md); tuple rows from ``SELECT *`` follow this order.
+_FORWARDED_COLUMNS = (
+    "id",
+    "message_id",
+    "original_message_id",
+    "original_conversation_id",
+    "original_author_id",
+    "forwarded_by",
+    "original_content",
+    "original_created_at",
+    "created_at",
+)
+
+# Column order of the explicit ``msg_messages`` SELECT in ``forward_message``.
+_MESSAGE_COLUMNS = (
+    "id",
+    "conversation_id",
+    "author_id",
+    "content",
+    "content_encrypted",
+    "created_at",
+)
+
+
+def _row_to_dict(row, columns) -> Dict[str, Any]:
+    """Normalise a mapping or tuple DB row to a dict."""
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(zip(columns, row))
+
+
+def _forwarded_row_to_dict(row) -> Dict[str, Any]:
+    """Normalise a mapping or tuple ``SELECT *`` row to a dict."""
+    return _row_to_dict(row, _FORWARDED_COLUMNS)
+
+
+def _count_value(row) -> int:
+    """Read a single-column ``SELECT COUNT(*)`` row by name or position."""
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        return row["count"]
+    return row[0]
+
+
 class ForwardingService:
     """Service for forwarding messages between conversations."""
 
     MAX_FORWARDS_PER_MESSAGE = 10
     MAX_FORWARDS_PER_USER_PER_HOUR = 50
+    MAX_HISTORY = 50
 
     def __init__(self, db, messaging_module=None, participant_svc=None):
         self._db = db
@@ -94,13 +143,14 @@ class ForwardingService:
             Forward record and new message info
         """
         # Get original message
-        original = self._db.fetch_one(
+        original_row = self._db.fetch_one(
             "SELECT id, conversation_id, author_id, content, content_encrypted, created_at "
             "FROM msg_messages WHERE id = ? AND deleted = 0",
             (message_id,),
         )
-        if not original:
+        if not original_row:
             raise ValueError("Original message not found")
+        original = _row_to_dict(original_row, _MESSAGE_COLUMNS)
 
         # Check user can read the original message
         if self._participant_svc and not self._participant_svc.is_participant(
@@ -120,7 +170,7 @@ class ForwardingService:
             "SELECT COUNT(*) as count FROM msg_forwarded WHERE forwarded_by = ? AND created_at > ?",
             (user_id, hour_ago),
         )
-        if count_row and count_row["count"] >= self.MAX_FORWARDS_PER_USER_PER_HOUR:
+        if count_row and _count_value(count_row) >= self.MAX_FORWARDS_PER_USER_PER_HOUR:
             raise ValueError("Forward rate limit exceeded")
 
         # Check max forwards for original message
@@ -128,7 +178,7 @@ class ForwardingService:
             "SELECT COUNT(*) as count FROM msg_forwarded WHERE original_message_id = ?",
             (message_id,),
         )
-        if fwd_count and fwd_count["count"] >= self.MAX_FORWARDS_PER_MESSAGE:
+        if fwd_count and _count_value(fwd_count) >= self.MAX_FORWARDS_PER_MESSAGE:
             raise ValueError("Message has been forwarded too many times")
 
         # Create the forwarded message via the messaging module, if available.
@@ -256,8 +306,11 @@ class ForwardingService:
         if not original:
             raise ValueError("Original message not found")
 
+        conversation_id = (
+            original["conversation_id"] if isinstance(original, dict) else original[0]
+        )
         if not self._participant_svc or not self._participant_svc.is_participant(
-            original["conversation_id"], requester_id
+            conversation_id, requester_id
         ):
             raise PermissionError("Cannot view forwarding history for this message")
 
@@ -265,14 +318,17 @@ class ForwardingService:
             "SELECT * FROM msg_forwarded WHERE original_message_id = ? ORDER BY created_at DESC",
             (message_id,),
         )
-        return [dict(row) for row in rows]
+        return [_forwarded_row_to_dict(row) for row in rows]
 
     def get_forwards_by_user(
         self, user_id: int, limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Get forwarding history for a user."""
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        limit = max(0, min(limit, self.MAX_HISTORY))
         rows = self._db.fetch_all(
             "SELECT * FROM msg_forwarded WHERE forwarded_by = ? ORDER BY created_at DESC LIMIT ?",
             (user_id, limit),
         )
-        return [dict(row) for row in rows]
+        return [_forwarded_row_to_dict(row) for row in rows]
