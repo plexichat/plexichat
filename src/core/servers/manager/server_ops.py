@@ -263,7 +263,9 @@ class ServerOpsMixin(ServerProtocol):
     @cached(ttl=15, prefix="user_servers")
     def get_servers(self, user_id: SnowflakeID, limit: int = 100) -> List[Server]:
         """Get all servers a user is a member of with optimized count fetching (cached)."""
-        limit = min(limit, 200)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole list.
+        limit = max(0, min(limit, 200))
 
         query = """
             SELECT s.*,

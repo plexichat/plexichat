@@ -68,7 +68,9 @@ class AuditHandler:
         before_id: Optional[SnowflakeID] = None,
     ) -> List[AuditLogEntry]:
         """Get audit log entries for a server."""
-        limit = min(limit, 100)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole log.
+        limit = max(0, min(limit, 100))
 
         query = "SELECT * FROM srv_audit_log WHERE server_id = ?"
         params: List[SnowflakeID | str | int] = [server_id]

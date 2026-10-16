@@ -26,7 +26,9 @@ class AuditOpsMixin(ServerProtocol):
 
         self.require_permission(user_id, server_id, "server.view_audit_log")
 
-        limit = min(limit, 100)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole log.
+        limit = max(0, min(limit, 100))
 
         query = "SELECT * FROM srv_audit_log WHERE server_id = ?"
         params: List[SnowflakeID | str | int] = [server_id]

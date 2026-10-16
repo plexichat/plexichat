@@ -415,7 +415,9 @@ class ReactionOpsMixin(ReactionProtocol):
             return []
 
         max_per_page = self._config.get("max_users_per_reaction_page", 100)
-        limit = min(limit, max_per_page)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every reactor.
+        limit = max(0, min(limit, max_per_page))
 
         blocked_users = self._get_blocked_user_ids(user_id)
 

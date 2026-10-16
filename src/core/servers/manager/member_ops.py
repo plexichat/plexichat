@@ -35,7 +35,9 @@ class MemberOpsMixin(ServerProtocol):
 
             raise ServerAccessDeniedError("Not a member of this server")
 
-        limit = min(limit, 999)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole list.
+        limit = max(0, min(limit, 999))
 
         query = "SELECT * FROM srv_members WHERE server_id = ?"
         params: List[SnowflakeID | int] = [server_id]
