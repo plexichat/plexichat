@@ -6,5 +6,5 @@ window.PLEXICHAT_CONFIG = {
   serverUrl: "http://localhost:8000",
   hideServerField: false,
   defaultTheme: "ocean",
-  version: "a.1.0-117"
+  version: "a.1.0-118"
 };
