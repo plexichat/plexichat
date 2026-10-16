@@ -22,6 +22,9 @@ class FriendsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
 
     def get_friends(self, user_id: SnowflakeID, limit: int = 100) -> List[Friend]:
         """Get list of friends for a user."""
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every friend.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """SELECT * FROM rel_friends
                WHERE user_id = ?

@@ -86,6 +86,9 @@ class MutualInfoMixin(RelationshipHelpersMixin):
         self, user_id: SnowflakeID, limit: int = 10
     ) -> List[SnowflakeID]:
         """Get friend suggestions based on mutual friends."""
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every candidate.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """
             SELECT f2.friend_id, COUNT(*) as mutual_count

@@ -314,6 +314,9 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         self, user_id: SnowflakeIDType, limit: int = 100
     ) -> List[FriendRequest]:
         """Get incoming pending friend requests."""
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every request.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """SELECT * FROM rel_friend_requests
                WHERE recipient_id = ? AND status = 'pending'
@@ -326,6 +329,9 @@ class FriendRequestsMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         self, user_id: SnowflakeIDType, limit: int = 100
     ) -> List[FriendRequest]:
         """Get outgoing pending friend requests."""
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every request.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """SELECT * FROM rel_friend_requests
                WHERE sender_id = ? AND status = 'pending'

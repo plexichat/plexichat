@@ -124,6 +124,9 @@ class BlockingMixin(RelationshipHelpersMixin, RelationshipMixinProtocol):
         self, user_id: SnowflakeID, limit: int = 100
     ) -> List[BlockedUser]:
         """Get list of users blocked by user."""
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every block.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """SELECT * FROM rel_blocked
                WHERE blocker_id = ?
