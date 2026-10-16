@@ -785,6 +785,14 @@ docker:cleanup_old_images:
 create_merge_request:
   stage: request-merge
   image: alpine:latest
+  variables:
+    # The runner reaches this GitLab over the LAN on http -- that is what its
+    # clone_url is set to, and why every job can clone -- while https:// is
+    # terminated at the public edge and nothing in a job container can dial it.
+    # The bare CI_API_V4_URL is https, so the curl/mr-create calls below failed
+    # on exit 7 (connect) in pipeline #2023 with every other job green. The
+    # release job carries the same override for the same reason.
+    CI_API_V4_URL: "http://gitlab.plexichat.com/api/v4"
   before_script:
     # This install is the only step in the job that needs the runner's uplink,
     # and that uplink drops. Pipeline #2018 redded the whole server pipeline
