@@ -256,6 +256,9 @@ class BookmarkService:
         # Gate the conversation filter first so probing conversation IDs
         # cannot distinguish "empty" from "no access" (route maps to 404).
         self._ensure_list_access(user_id, conversation_id)
+        # Clamp from below: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump every bookmark.
+        limit = max(0, limit)
         query = "SELECT * FROM user_bookmarks WHERE user_id = ?"
         params: list = [user_id]
 

@@ -160,6 +160,9 @@ class ScheduledMessageService:
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """List scheduled messages for a user."""
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole list.
+        limit = max(0, limit)
         query = "SELECT * FROM msg_scheduled WHERE author_id = ?"
         params: list = [user_id]
 
