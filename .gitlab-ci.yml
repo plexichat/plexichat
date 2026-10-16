@@ -601,6 +601,12 @@ metrics:trend:
       if git rev-parse --verify origin/ci-metrics >/dev/null 2>&1; then
         git checkout -B ci-metrics origin/ci-metrics
       else
+        # The runner reuses the build directory between pipelines, so a previous
+        # run can leave a local ci-metrics branch behind -- and --orphan refuses
+        # to switch to a branch that already exists, which failed this job with
+        # "fatal: a branch named 'ci-metrics' already exists" while the remote
+        # had none. Drop the stale branch first.
+        git branch -D ci-metrics 2>/dev/null || true
         git checkout --orphan ci-metrics
         git rm -rf . 2>/dev/null || true
       fi
