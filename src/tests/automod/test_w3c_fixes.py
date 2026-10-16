@@ -2,8 +2,9 @@
 
 Covers: regex fallback ReDoS vetting (B1), invite-link allowlist/warn-only
 semantics (A2), mention total counting @everyone/@here (A4), repeated-chars
-occurrence semantics (A5), scheme-independent external link matching (A6),
-fail-closed policy helpers (C1) and alert channel resolution (E1).
+occurrence semantics (A5), scheme-independent external link matching (A6,
+including a bare ``host:port``), fail-closed policy helpers (C1) and alert
+channel resolution (E1).
 """
 
 import re
@@ -269,6 +270,40 @@ class TestExternalLinkSchemeIndependence:
             "https://sub.evil.com",
         ):
             assert rule.check(text, 1, 1).matched, text
+
+    def test_bare_host_with_port_is_still_a_link(self):
+        """A bare ``host:port`` is a bare domain, not a scheme to strip.
+
+        The scheme prefix used to swallow ``evil.com:`` whole, leaving ``8080/x``
+        as the host, so the token was reported as "not a link at all" and a port
+        became a one-token bypass of both modes.
+        """
+        rule = self._rule(mode="blacklist", whitelist=[], blacklist=["evil.com"])
+        for text, expected in (
+            ("evil.com:8080/x", ["evil.com"]),
+            ("go to evil.com:8443", ["evil.com"]),
+            ("sub.evil.com:80/a", ["sub.evil.com"]),
+        ):
+            match = rule.check(text, 1, 1)
+            assert match.matched, text
+            assert match.match_details["blocked_domains"] == expected, text
+
+    def test_host_with_port_is_blocked_in_whitelist_mode(self):
+        rule = self._rule()  # whitelist ["example.com"]
+        match = rule.check("see evil.com:8080/x", 1, 1)
+        assert match.matched
+        assert match.match_details["blocked_domains"] == ["evil.com"]
+
+    def test_whitelisted_host_with_port_stays_allowed(self):
+        rule = self._rule()
+        assert not rule.check("see example.com:8080/x", 1, 1).matched
+
+    def test_dotted_scheme_still_strips_as_a_scheme(self):
+        """A dotted *app* scheme is not host:port; the host after it is judged."""
+        rule = self._rule(mode="blacklist", whitelist=[], blacklist=["x.com"])
+        match = rule.check("open my.app://x.com/thing", 1, 1)
+        assert match.matched
+        assert match.match_details["blocked_domains"] == ["x.com"]
 
 
 class TestFailClosedPolicy:

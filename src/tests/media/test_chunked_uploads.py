@@ -142,3 +142,57 @@ class TestChunkedSessions:
             )
         assert last.uploaded_chunks == n
         assert last.is_complete is True
+
+
+class _TupleSessionDB:
+    """A ``fetch_all`` that returns bare tuples, as a raw cursor does.
+
+    The documented row shapes are "mapping or tuple" (see
+    docs/admin-hardening.md), and ``get_session`` in chunked.py handles both.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.calls = []
+
+    def fetch_all(self, query, params=()):
+        self.calls.append((query, params))
+        return list(self._rows)
+
+
+class TestChunkedSessionRowShapes:
+    """get_user_sessions must read positional rows, not just mapping rows."""
+
+    # The columns get_user_sessions selects, in the order it selects them.
+    _ROW = (
+        "sess-tuple-1",  # id
+        7,  # user_id
+        "list.bin",  # filename
+        "application/octet-stream",  # content_type
+        1024,  # total_size
+        5 * 1024 * 1024,  # chunk_size
+        1,  # total_chunks
+        0,  # uploaded_chunks
+        0,  # uploaded_bytes
+        "pending",  # status
+        1,  # created_at
+        2,  # updated_at
+        9_999_999_999_999,  # expires_at (future)
+        "/tmp/list.bin.tmp",  # temp_path
+        None,  # checksum
+    )
+
+    def test_get_user_sessions_maps_tuple_rows(self, db):
+        # ``db`` is requested (and unused) to initialise config exactly as the
+        # neighbouring tests do; the manager is built on the tuple-row stub so
+        # the assertion is independent of the configured driver.
+        from src.core.media.chunked import ChunkedUploadManager
+
+        manager = ChunkedUploadManager(_TupleSessionDB([self._ROW]))
+
+        sessions = manager.get_user_sessions(7)
+
+        assert [s.id for s in sessions] == ["sess-tuple-1"]
+        assert sessions[0].filename == "list.bin"
+        assert sessions[0].total_size == 1024
+        assert sessions[0].status.value == "pending"
