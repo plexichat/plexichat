@@ -84,6 +84,9 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
 
     def get_popular_stickers(self, limit: int = 10) -> List[Sticker]:
         """Return the top-N most-used stickers across all public/personal packs."""
+        # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
+        # negative limit would bypass the page cap and dump the whole table.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count
                FROM sticker_stickers s
@@ -97,6 +100,9 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
 
     def get_recent_stickers(self, user_id: int, limit: int = 10) -> List[Sticker]:
         """Return the distinct stickers `user_id` used most recently."""
+        # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
+        # negative limit would bypass the page cap and dump the whole history.
+        limit = max(0, limit)
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count, MAX(u.used_at) as last_used
                FROM sticker_stickers s
@@ -115,6 +121,9 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         """Free-text search across name + tag columns."""
         if not query or not query.strip():
             return []
+        # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
+        # negative limit would bypass the page cap and dump every match.
+        limit = max(0, limit)
         needle = f"%{query.strip().lower()}%"
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count
@@ -233,6 +242,9 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
             if not self._is_server_member(user_id, server_id):
                 server_id = None
         max_suggestions = limit or self._config.get("max_suggestions", 10)
+        # Clamp from below: a negative limit would otherwise flow into
+        # ``suggestions[:limit]`` and return every match but the last.
+        max_suggestions = max(0, max_suggestions)
         content_lower = content.lower()
         words = set(re.findall(r"\w+", content_lower))
         suggestions = []
