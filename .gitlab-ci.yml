@@ -780,7 +780,25 @@ create_merge_request:
   stage: request-merge
   image: alpine:latest
   before_script:
-    - apk add --no-cache curl jq
+    # This install is the only step in the job that needs the runner's uplink,
+    # and that uplink drops. Pipeline #2018 redded the whole server pipeline
+    # here with "unable to select packages: curl (no such package), jq (no such
+    # package)", which is apk's index fetch not arriving rather than two
+    # packages not existing -- the same command succeeds on a healthy link. So
+    # retry the fetch a few times, and if it still has not arrived say that,
+    # instead of dressing a dropped packet up as a missing package.
+    - |
+      for attempt in 1 2 3 4 5; do
+        if apk add --no-cache curl jq; then
+          break
+        fi
+        echo "apk add attempt ${attempt} failed; retrying in 5s" >&2
+        sleep 5
+      done
+      if ! command -v curl >/dev/null || ! command -v jq >/dev/null; then
+        echo "curl/jq still unavailable: the package index could not be fetched" >&2
+        exit 1
+      fi
   script:
     - |
       API="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}"
