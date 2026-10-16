@@ -1,6 +1,7 @@
 """Tests for event routing logic."""
 
 from src.core import events
+from src.core.events.models import Event
 from src.core.events.types import EventType, GatewayIntent
 from src.core.events.router import (
     get_required_intent,
@@ -69,6 +70,21 @@ class TestIntentMapping:
         assert (
             get_required_intent(EventType.TYPING_START)
             == GatewayIntent.GUILD_MESSAGE_TYPING
+        )
+
+    def test_typing_stop_requires_typing_intent(self):
+        """Test TYPING_STOP is gated exactly like TYPING_START.
+
+        The gateway dispatches both halves of the typing pair, but only
+        TYPING_START was mapped, so a typing stop bypassed intent filtering and
+        reached clients that never asked for the typing intent.
+        """
+        assert (
+            get_required_intent(EventType.TYPING_STOP)
+            == GatewayIntent.GUILD_MESSAGE_TYPING
+        )
+        assert (
+            get_dm_intent(EventType.TYPING_STOP) == GatewayIntent.DIRECT_MESSAGE_TYPING
         )
 
     def test_dm_message_events_require_dm_intent(self):
@@ -166,6 +182,31 @@ class TestIntentFiltering:
         event = events.create_typing_start(user_id=123, channel_id=456, server_id=789)
         intents = GatewayIntent.GUILD_MESSAGE_TYPING
         assert filter_by_intents(event, intents) is True
+
+    def test_guild_typing_stop_fails_without_typing_intent(self):
+        """A guild typing stop must not reach clients without the typing intent."""
+        event = Event(
+            event_type=EventType.TYPING_STOP,
+            data={"channel_id": "456", "user_id": "123"},
+            server_id=789,
+            channel_id=456,
+            user_id=123,
+        )
+        assert filter_by_intents(event, GatewayIntent.GUILDS) is False
+        assert filter_by_intents(event, GatewayIntent(0)) is False
+        assert filter_by_intents(event, GatewayIntent.GUILD_MESSAGE_TYPING) is True
+
+    def test_dm_typing_stop_fails_without_dm_typing_intent(self):
+        """A DM typing stop must not reach clients without the DM typing intent."""
+        event = Event(
+            event_type=EventType.TYPING_STOP,
+            data={"channel_id": "456", "user_id": "123"},
+            channel_id=456,
+            user_id=123,
+        )
+        assert filter_by_intents(event, GatewayIntent.DIRECT_MESSAGES) is False
+        assert filter_by_intents(event, GatewayIntent.GUILD_MESSAGE_TYPING) is False
+        assert filter_by_intents(event, GatewayIntent.DIRECT_MESSAGE_TYPING) is True
 
 
 class TestDefaultIntents:

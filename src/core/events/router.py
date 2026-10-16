@@ -42,6 +42,13 @@ EVENT_INTENT_MAP = {
     EventType.MESSAGE_REACTION_REMOVE_ALL: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.GUILD_MESSAGE_REACTIONS,
     EventType.TYPING_START: GatewayIntent.GUILD_MESSAGE_TYPING,
+    # TYPING_STOP is the other half of the same gateway pair (the gateway
+    # dispatches it from ``clear_all_typing`` and the presence handler), so
+    # it owes the same intent as TYPING_START. Without an entry here
+    # ``filter_by_intents`` falls through to "no intent required" and every
+    # client received typing-stop frames whether or not it asked for the
+    # typing intent, while the matching TYPING_START was correctly filtered.
+    EventType.TYPING_STOP: GatewayIntent.GUILD_MESSAGE_TYPING,
     EventType.ARTIFACT_CREATE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_UPDATE: GatewayIntent.ARTIFACTS,
     EventType.ARTIFACT_DELETE: GatewayIntent.ARTIFACTS,
@@ -59,6 +66,9 @@ DM_EVENT_INTENT_MAP = {
     EventType.MESSAGE_REACTION_REMOVE: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.MESSAGE_REACTION_REMOVE_EMOJI: GatewayIntent.DIRECT_MESSAGE_REACTIONS,
     EventType.TYPING_START: GatewayIntent.DIRECT_MESSAGE_TYPING,
+    # DM twin of the guild mapping above: a DM typing stop must be gated by
+    # the DM typing intent, exactly as the DM typing start is.
+    EventType.TYPING_STOP: GatewayIntent.DIRECT_MESSAGE_TYPING,
 }
 
 GUILD_MESSAGE_EVENTS = {
