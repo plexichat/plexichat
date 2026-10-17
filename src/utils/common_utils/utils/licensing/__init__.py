@@ -1,0 +1,904 @@
+"""
+Licensing utility module - Asymmetric cryptography-based license validation for Plexichat.
+
+This module provides:
+- License loading from file, environment variable (base64), or default (free tier)
+- Ed25519 signature verification
+- Feature gating with boolean and tiered features
+- Instance identification embedded in license
+- Soft-fail mode with non-commercial warnings
+
+License File Location (in priority order):
+1. PLEXICHAT_LICENSE env var as file path (if file exists)
+2. PLEXICHAT_LICENSE env var as base64-encoded license
+3. ~/.plexichat/config/license (default location)
+4. Free tier mode (no license file needed)
+
+Environment Variable Usage:
+    # As file path
+    export PLEXICHAT_LICENSE=/path/to/license.json
+
+    # As base64-encoded license (for containerized deployments)
+    export PLEXICHAT_LICENSE=eyJ2ZXJzaW9uIjoiMS4wIiwiaW5zdGFuY2VfaWQiOiJwcm9kLTAxIiwuLi59
+
+Basic Usage:
+    # In main.py (setup once)
+    import utils.licensing as license
+    license.setup()
+
+    # Check if license is valid
+    if license.is_valid():
+        print(f"Licensed instance: {license.get_instance_id()}")
+    else:
+        print("Running in free tier mode (non-commercial use only)")
+
+    # Check features
+    if license.has_feature("bond"):
+        enable_bond_feature()
+
+    # Get tiered feature configuration
+    automod_config = license.get_feature_config("advanced_automod")
+    max_rules = automod_config.get("max_rules", 10)
+
+    # Base platform features (e.g. "messaging") are always available and
+    # never gated behind a license.
+    if license.has_feature("messaging"):
+        handle_message()
+
+    # A license with "all": true (or type "test") enables every feature:
+    if license.has_feature("any_feature_at_all"):
+        ...
+
+    # Get resource limits
+    max_users = license.get_feature_limit("max_users", default=100)
+
+Free Tier Behavior:
+    When no valid license is found, the system operates in "free tier" mode:
+    - All premium features are disabled (has_feature returns False)
+    - Non-commercial use only (warning logged on startup)
+    - All existing base features remain functional
+    - License validation shows as invalid but system continues running
+
+Instance Identification:
+    Each license contains an instance_id that uniquely identifies the deployment.
+    This ID is cryptographically signed and verified, preventing spoofing.
+
+    Example instance_id formats:
+    - "plexichat-prod-001" (production)
+    - "acme-corp-primary" (organization-specific)
+    - "dev-localhost" (development)
+
+Commercial vs Non-Commercial:
+    Plexichat is source-available software. Without a valid commercial license:
+    - Large warning logged on startup: "NON-COMMERCIAL USE ONLY"
+    - Premium features (has_feature checks) return False
+    - All base functionality works normally
+
+    With a valid commercial license:
+    - Features listed in license are enabled
+    - Instance is properly identified
+    - Commercial use permitted per license terms
+
+Feature Types:
+    Boolean features: Simple on/off flags
+        "bond": true
+        "sso": false
+
+    Tiered features: Configuration objects with limits
+        "advanced_automod": {
+            "max_rules": 50,
+            "ai_enabled": true
+        }
+
+Cryptography:
+    Uses Ed25519 elliptic curve signatures for license verification.
+    - Public key is hardcoded in the application
+    - Private key is held by Plexichat licensing authority only
+    - Signatures are 64 bytes, base64-encoded in license files
+    - All license data is signed except the signature field itself
+"""
+
+import os
+from pathlib import Path
+from typing import Any, Optional, Dict, List
+
+import utils.logger as logger
+
+from .core import (
+    License,
+    LicenseManager,
+    LicenseValidationResult,
+    LicenseError,
+    InvalidLicenseError,
+    SignatureVerificationError,
+    ExpiredLicenseError,
+    FeatureNotFoundError,
+    BASE_FEATURES,
+    DEFAULT_TEST_ALLOWED_HOSTS,
+    generate_keypair,
+    sign_license,
+)
+
+# Global license manager instance
+_license_manager: Optional[LicenseManager] = None
+_setup_called = False
+_free_tier_mode = False
+_public_key_configured = False
+
+# Default license file location. Computed at import time for backward
+# compatibility, but lookups always resolve ``Path.home()`` dynamically so
+# changes to the home directory (and test monkeypatching of ``Path.home``)
+# are honored.
+DEFAULT_LICENSE_PATH = Path.home() / ".plexichat" / "config" / "license"
+
+
+def _default_license_candidates():
+    """Resolve the default on-disk license candidates against the current home dir."""
+    base = Path.home() / ".plexichat" / "config" / "license"
+    return (base, base.with_suffix(".json"))
+
+
+# Environment variable name
+LICENSE_ENV_VAR = "PLEXICHAT_LICENSE"
+
+# Hardcoded Ed25519 public key for Plexichat (base64 encoded, 32 bytes)
+# This is the official Plexichat licensing public key - DO NOT MODIFY
+_PLEXICHAT_PUBLIC_KEY_BASE64 = (
+    "gBS50oixMLyikqv4Q/W3ME0cK0p5p1p2XS8KV8OKfTk="  # pragma: allowlist secret
+)
+
+
+def setup(
+    public_key_base64: Optional[str] = None, license_path: Optional[str] = None
+) -> bool:
+    """
+    Setup the licensing module. Should be called once in your main application file.
+
+    This function attempts to load a license from various sources (in order):
+    1. Explicit license_path argument
+    2. PLEXICHAT_LICENSE env var as file path
+    3. PLEXICHAT_LICENSE env var as base64-encoded license
+    4. Default location (~/.plexichat/config/license)
+    5. Free tier mode (no license)
+
+    Args:
+        public_key_base64: Base64-encoded Ed25519 public key for verification.
+                          If None, uses hardcoded Plexichat public key.
+        license_path: Explicit path to license file (overrides env var and default)
+
+    Returns:
+        True if a valid license was loaded, False if running in free tier mode
+
+    Usage:
+        import utils.licensing as license
+
+        # Standard setup - auto-detects license
+        is_licensed = license.setup()
+
+        # With explicit public key (for testing)
+        is_licensed = license.setup(public_key_base64="your_key_here")
+
+        # With explicit license path
+        is_licensed = license.setup(license_path="/etc/plexichat/license.json")
+    """
+    global _license_manager, _setup_called, _free_tier_mode, _public_key_configured
+    global _PLEXICHAT_PUBLIC_KEY_BASE64
+
+    _setup_called = True
+    _free_tier_mode = False
+
+    # Set public key
+    if public_key_base64:
+        _PLEXICHAT_PUBLIC_KEY_BASE64 = public_key_base64
+
+    LicenseManager.set_public_key(_PLEXICHAT_PUBLIC_KEY_BASE64)
+    _public_key_configured = bool(_PLEXICHAT_PUBLIC_KEY_BASE64)
+
+    # Initialize license manager
+    _license_manager = LicenseManager()
+
+    # Try to load license from various sources
+    loaded = _try_load_license(license_path)
+
+    if not loaded:
+        # Enter free tier mode
+        _free_tier_mode = True
+        logger.warning("=" * 60)
+        logger.warning("NO VALID LICENSE FOUND - NON-COMMERCIAL USE ONLY")
+        logger.warning("=" * 60)
+        logger.warning("Plexichat is operating in free tier mode.")
+        logger.warning("All premium features are disabled.")
+        logger.warning("")
+        logger.warning(
+            "To obtain a license, contact sales@plexichat.com or visit https://plexichat.com"
+        )
+        logger.warning("")
+        logger.warning("License search locations (in priority order):")
+        logger.warning(f"  - Env var {LICENSE_ENV_VAR} (file path or base64)")
+        logger.warning(f"  - {DEFAULT_LICENSE_PATH}")
+        logger.warning(f"  - {DEFAULT_LICENSE_PATH}.json")
+        logger.warning("=" * 60)
+        return False
+
+    # Validate the loaded license
+    validation = _license_manager.validate()
+
+    if validation.is_valid:
+        logger.info(f"License validated for instance: {validation.instance_id}")
+        logger.info(f"License source: {_license_manager.get_license_source()}")
+        if _license_manager.get_expiry_timestamp():
+            from datetime import datetime, timezone
+
+            ts = _license_manager.get_expiry_timestamp()
+            if ts is not None:
+                expiry = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+                logger.info(f"License expires: {expiry.isoformat()}")
+        return True
+    else:
+        # License exists but is invalid - soft fail to free tier
+        _free_tier_mode = True
+        logger.warning("=" * 60)
+        logger.warning("INVALID LICENSE - NON-COMMERCIAL USE ONLY")
+        logger.warning("=" * 60)
+        logger.warning(f"License validation failed: {validation.error_message}")
+        logger.warning("Falling back to free tier mode.")
+        logger.warning("All premium features are disabled.")
+        logger.warning("")
+        logger.warning(
+            "To obtain a license, contact sales@plexichat.com or visit https://plexichat.com"
+        )
+        logger.warning("=" * 60)
+        return False
+
+
+def _try_load_license(explicit_path: Optional[str] = None) -> bool:
+    """
+    Try to load license from various sources.
+
+    Each source is tried in priority order; the first one that successfully
+    loads wins, and subsequent sources are not consulted. This avoids
+    unnecessary file I/O on the common case (license present at the first
+    applicable source).
+
+    Returns:
+        True if license was loaded (not necessarily valid)
+    """
+    env_value = os.environ.get(LICENSE_ENV_VAR, "").strip()
+
+    lm = _license_manager
+    if lm is None:
+        return False
+
+    if _load_license_from_explicit_path(lm, explicit_path):
+        return True
+    if _load_license_from_env_path(lm, env_value):
+        return True
+    if _load_license_from_env_base64(lm, env_value):
+        return True
+    if _load_license_from_default_location(lm):
+        return True
+
+    if env_value:
+        logger.warning(
+            f"PLEXICHAT_LICENSE is set but is neither a valid file path nor a valid "
+            f"base64 license (starts with: '{env_value[:20]}…'). Check the variable value."
+        )
+    logger.debug("No license file found, entering free tier mode")
+    return False
+
+
+def _load_license_from_explicit_path(lm: "LicenseManager", path: Optional[str]) -> bool:
+    """Attempt to load a license from an explicit ``license_path`` argument."""
+    if not path:
+        return False
+    try:
+        lm.load_from_file(path)
+        logger.debug(f"Loaded license from explicit path: {path}")
+        return True
+    except InvalidLicenseError:
+        return False
+
+
+def _load_license_from_env_path(lm: "LicenseManager", env_value: str) -> bool:
+    """Attempt to load a license from ``PLEXICHAT_LICENSE`` treated as a path."""
+    if not env_value:
+        return False
+    if not ("/" in env_value or "\\" in env_value or "." in env_value):
+        logger.debug(f"PLEXICHAT_LICENSE does not look like a file path: '{env_value}'")
+        return False
+    try:
+        if not Path(env_value).exists():
+            logger.debug(f"PLEXICHAT_LICENSE path does not exist: {env_value}")
+            return False
+        lm.load_from_file(env_value)
+        logger.debug(f"Loaded license from env var path: {env_value}")
+        return True
+    except (InvalidLicenseError, OSError) as exc:
+        logger.debug(f"PLEXICHAT_LICENSE path failed: {env_value} ({exc})")
+        return False
+
+
+def _load_license_from_env_base64(lm: "LicenseManager", env_value: str) -> bool:
+    """Attempt to load a license from ``PLEXICHAT_LICENSE`` treated as base64."""
+    if not env_value:
+        return False
+    try:
+        lm.load_from_base64(env_value)
+        logger.debug("Loaded license from env var (base64)")
+        return True
+    except Exception as exc:
+        logger.debug(
+            f"PLEXICHAT_LICENSE is not valid base64 (starts with: '{env_value[:20]}…'): {exc}"
+        )
+        return False
+
+
+def _load_license_from_default_location(lm: "LicenseManager") -> bool:
+    """Attempt to load a license from the default on-disk locations."""
+    for _candidate in _default_license_candidates():
+        try:
+            if not _candidate.exists():
+                continue
+            lm.load_from_file(str(_candidate))
+            logger.debug(f"Loaded license from default location: {_candidate}")
+            return True
+        except InvalidLicenseError:
+            continue
+    return False
+
+
+def _ensure_setup() -> None:
+    """Internal: Ensures setup was called before using license functions."""
+    if not _setup_called:
+        raise RuntimeError(
+            "Licensing not configured. Please call license.setup() in your main.py file first."
+        )
+
+
+def _get_manager() -> LicenseManager:
+    """Internal: Get the license manager instance."""
+    _ensure_setup()
+    if _license_manager is None:
+        raise RuntimeError("License manager not initialized")
+    return _license_manager
+
+
+def is_valid() -> bool:
+    """
+    Check if a valid license is loaded.
+
+    Returns:
+        True if license is valid and not expired, False otherwise
+
+    Raises:
+        RuntimeError: If setup() has not been called yet.
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return False
+    return _get_manager().is_valid()
+
+
+def is_free_tier() -> bool:
+    """
+    Check if running in free tier mode (no valid license).
+
+    Returns:
+        True if no valid license found, False if licensed
+    """
+    return _free_tier_mode if _setup_called else True
+
+
+def has_feature(feature_name: str, default: bool = False) -> bool:
+    """
+    Check if the current license includes a specific feature.
+
+    Base platform features (see ``BASE_FEATURES``, e.g. ``messaging``) are
+    always available and never gated behind a license. In free tier mode,
+    every other feature returns ``default`` (premium features off).
+
+    A license carrying ``"all": true`` in its ``features`` map, or of
+    ``type: "test"``, enables every feature.
+
+    Args:
+        feature_name: Name of the feature to check (e.g., "bond", "sso")
+        default: Default value if feature not found or in free tier
+
+    Returns:
+        True if feature is enabled, False otherwise
+    """
+    _ensure_setup()
+    if feature_name in BASE_FEATURES:
+        return True
+    if _free_tier_mode:
+        return default
+    return _get_manager().has_feature(feature_name, default)
+
+
+def get_feature_config(feature_name: str, default: Any = None) -> Any:
+    """
+    Get the full configuration for a tiered feature.
+
+    Tiered features are complex objects with multiple settings.
+    Boolean features return their True/False value.
+
+    Args:
+        feature_name: Name of the feature
+        default: Default value if feature not found or in free tier
+
+    Returns:
+        Feature configuration dict, boolean, or default
+
+    Examples:
+        # Tiered feature with configuration
+        config = license.get_feature_config("advanced_automod")
+        max_rules = config.get("max_rules", 10)
+        ai_enabled = config.get("ai_enabled", False)
+
+        # Boolean feature
+        is_enabled = license.get_feature_config("bond", default=False)
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return default
+    return _get_manager().get_feature_config(feature_name, default)
+
+
+def get_feature_limit(limit_name: str, default: Any = None) -> Any:
+    """
+    Get a specific resource limit from the license.
+
+    Args:
+        limit_name: Name of the limit (e.g., "max_users", "max_servers")
+        default: Default value if limit not found or in free tier
+
+    Returns:
+        Limit value or default
+
+    Examples:
+        max_users = license.get_feature_limit("max_users", default=100)
+        max_servers = license.get_feature_limit("max_servers", default=10)
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return default
+    return _get_manager().get_feature_limit(limit_name, default)
+
+
+def get_instance_id() -> Optional[str]:
+    """
+    Get the instance ID from the license.
+
+    Returns:
+        Instance ID if license is valid, None otherwise
+
+    Examples:
+        instance_id = license.get_instance_id()
+        if instance_id:
+            logger.info(f"Running as instance: {instance_id}")
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return None
+    return _get_manager().get_instance_id()
+
+
+def get_license_source() -> Optional[str]:
+    """
+    Get the source of the loaded license.
+
+    Returns:
+        Source identifier:
+        - "file:/path/to/license" - loaded from file
+        - "env:b64" - loaded from base64 env var
+        - "dict" - loaded from dictionary
+        - None - free tier mode
+
+    Examples:
+        source = license.get_license_source()
+        if source and source.startswith("file:"):
+            print(f"License from: {source[5:]}")
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return None
+    return _get_manager().get_license_source()
+
+
+def get_license_type() -> str:
+    """
+    Return the loaded license's ``type`` ("standard", "test", ...).
+
+    In free tier mode this returns "standard".
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return "standard"
+    return _license_manager.get_license_type()
+
+
+def is_provisional() -> bool:
+    """
+    Return True when running on a provisional/test license.
+
+    Provisional licenses are used by the CI self-test pipeline: they enable
+    every feature, require no signature, are restricted to localhost, and
+    trigger a prominent client banner. They must never be used in production.
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return False
+    return _license_manager.is_provisional()
+
+
+def get_allowed_hosts() -> List[str]:
+    """
+    Return the hosts the current license is permitted to serve from.
+
+    Empty list means unrestricted (standard licenses). Provisional/test
+    licenses default to localhost only.
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return []
+    return _license_manager.get_allowed_hosts()
+
+
+def is_license_valid_for_host(client_ip: str) -> bool:
+    """
+    Return True if the current license permits serving the given client host.
+
+    Standard licenses are unrestricted; provisional/test licenses only allow
+    ``allowed_hosts`` (localhost by default). In free tier mode this returns
+    True (no license = no restriction, but also no premium features).
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return True
+    return _license_manager.is_valid_for_host(client_ip)
+
+
+# Resource limits enforced at runtime. A value of -1 (or None/"unlimited")
+# means the limit is not enforced. These keys mirror the LIMITS section of
+# the admin-tools features catalog so the two stay in sync.
+LICENSE_LIMIT_KEYS = ("max_users", "max_servers", "max_file_size_mb")
+
+
+def get_license_limit(name: str, default: int = -1) -> int:
+    """
+    Return a license resource limit, or ``default`` if unset / free tier.
+
+    Returns ``-1`` to signal "unlimited" (not enforced). Only call this once
+    licensing.setup() has run.
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return default
+    try:
+        return int(_get_manager().get_feature_limit(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def is_limit_enforced(value: Any) -> bool:
+    """Return True if ``value`` is a finite, enforceable cap (not -1/None)."""
+    try:
+        return value is not None and int(value) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
+def generate_test_license_dict(
+    instance_id: str = "plexichat-selftest",
+    days_valid: int = 1,
+    features: Optional[Dict[str, Any]] = None,
+    limits: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Build an in-memory provisional/test license dictionary for CI self-tests.
+
+    The license is of ``type: "test"`` (enables every feature, no signature
+    required) and is restricted to localhost. It is intentionally invalid for
+    production use and triggers the client's provisional-license banner.
+
+    Args:
+        instance_id: Identifier embedded in the license (informational).
+        days_valid: How many days the license is valid for.
+        features: Optional explicit feature map (merged over ``{"all": True}``).
+        limits: Optional resource limits map.
+
+    Returns:
+        A license dictionary ready for :func:`apply_license_from_dict`.
+    """
+    import time
+
+    merged_features: Dict[str, Any] = {"all": True}
+    if features:
+        merged_features.update(features)
+
+    return {
+        "version": LicenseManager.CURRENT_VERSION,
+        "type": "test",
+        "instance_id": instance_id,
+        "issued_at": int(time.time()),
+        "expires_at": int(time.time()) + max(1, days_valid) * 86400,
+        "features": merged_features,
+        "limits": dict(limits or {}),
+        "allowed_hosts": list(DEFAULT_TEST_ALLOWED_HOSTS),
+        "signature": None,
+    }
+
+
+def apply_test_license(
+    instance_id: str = "plexichat-selftest",
+    days_valid: int = 1,
+    features: Optional[Dict[str, Any]] = None,
+    limits: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Apply a provisional/test license in-memory (used by the self-test pipeline).
+
+    This does NOT write to disk. On restart the original license source is
+    re-read. Convenience wrapper around :func:`generate_test_license_dict`
+    and :func:`apply_license_from_dict`.
+    """
+    license_dict = generate_test_license_dict(
+        instance_id=instance_id,
+        days_valid=days_valid,
+        features=features,
+        limits=limits,
+    )
+    return apply_license_from_dict(license_dict)
+
+
+def apply_license_from_dict(license_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply a license from a dictionary, in-memory only (no disk write).
+
+    Returns the same shape as :func:`apply_license_from_base64`.
+    """
+    global _free_tier_mode, _license_manager, _setup_called, _public_key_configured
+
+    if _license_manager is None:
+        raise RuntimeError(
+            "Licensing not initialized. Call license.setup() before apply_license_from_dict."
+        )
+
+    # A failed apply must NOT revoke a working licence. The candidate is
+    # loaded into the manager before it is validated, so without this
+    # snapshot/restore an invalid candidate would leave the manager holding
+    # a bad license and the module demoted to free tier. Capture the
+    # pre-apply state and roll back on every failure path.
+    previous = _license_manager.snapshot()
+    previous_free = _free_tier_mode
+    try:
+        _license_manager.load_from_dict(license_dict)
+        validation = _license_manager.validate()
+
+        if validation.is_valid:
+            _free_tier_mode = False
+            logger.info(
+                f"License applied and validated for instance: {validation.instance_id}"
+            )
+            return {"success": True}
+        else:
+            _license_manager.restore(previous)
+            _free_tier_mode = previous_free
+            logger.warning(f"License validation failed: {validation.error_message}")
+            return {"success": False, "error": validation.error_message}
+    except Exception as e:
+        _license_manager.restore(previous)
+        _free_tier_mode = previous_free
+        logger.error(f"License apply failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_validation_result() -> Optional[LicenseValidationResult]:
+    """
+    Get detailed validation results for the current license.
+
+    Returns:
+        LicenseValidationResult with is_valid, is_expired, is_signature_valid,
+        instance_id, and error_message fields.
+
+    Returns None if no license was loaded (free tier mode).
+
+    Examples:
+        result = license.get_validation_result()
+        if result:
+            print(f"Valid: {result.is_valid}")
+            print(f"Expired: {result.is_expired}")
+            print(f"Error: {result.error_message}")
+    """
+    _ensure_setup()
+    if _free_tier_mode or _license_manager is None:
+        return None
+    return _license_manager._validation_result
+
+
+def get_expiry_timestamp() -> Optional[int]:
+    """
+    Get the license expiry timestamp.
+
+    Returns:
+        Unix timestamp when license expires, or None if no expiry/perpetual
+
+    Examples:
+        expiry = license.get_expiry_timestamp()
+        if expiry:
+            days_left = (expiry - time.time()) / 86400
+            print(f"License expires in {days_left:.0f} days")
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return None
+    return _get_manager().get_expiry_timestamp()
+
+
+def to_dict() -> Dict[str, Any]:
+    """
+    Convert the current license to a dictionary.
+
+    Returns:
+        Dictionary with all license fields, or empty dict in free tier
+
+    Examples:
+        license_data = license.to_dict()
+        print(json.dumps(license_data, indent=2))
+    """
+    _ensure_setup()
+    if _free_tier_mode:
+        return {}
+    return _get_manager().to_dict()
+
+
+def apply_license_from_base64(license_payload: str) -> Dict[str, Any]:
+    """
+    Apply a new license from a base64-encoded payload string.
+
+    This is used by the admin licensing routes to hot-swap the license.
+
+    IMPORTANT: This function applies the license in-memory only — it does
+    NOT write to the license file on disk. The change is transient and will
+    be lost on restart. To make a permanent change, update the license file
+    directly and call reload_license().
+
+    Args:
+        license_payload: Base64-encoded license JSON
+
+    Returns:
+        Dict with "success" (bool) and optional "error" (str)
+    """
+    global _free_tier_mode, _license_manager, _setup_called, _public_key_configured
+
+    if _license_manager is None:
+        raise RuntimeError(
+            "Licensing not initialized. Call license.setup() before apply_license_from_base64."
+        )
+
+    # A failed apply must NOT revoke a working licence: roll back to the
+    # pre-apply license and free-tier flag on every failure path (see
+    # ``apply_license_from_dict`` for the full rationale).
+    previous = _license_manager.snapshot()
+    previous_free = _free_tier_mode
+    try:
+        _license_manager.load_from_base64(license_payload)
+        validation = _license_manager.validate()
+
+        if validation.is_valid:
+            _free_tier_mode = False
+            logger.info(
+                f"License applied and validated for instance: {validation.instance_id}"
+            )
+            return {"success": True}
+        else:
+            _license_manager.restore(previous)
+            _free_tier_mode = previous_free
+            logger.warning(f"License validation failed: {validation.error_message}")
+            return {"success": False, "error": validation.error_message}
+    except Exception as e:
+        _license_manager.restore(previous)
+        _free_tier_mode = previous_free
+        logger.error(f"License apply failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def reload_license() -> bool:
+    """
+    Reload the license from the original source (env var or file).
+
+    Returns:
+        True if a valid license was reloaded
+    """
+    global _free_tier_mode
+    loaded = _try_load_license()
+
+    if loaded and _license_manager:
+        validation = _license_manager.validate()
+        _free_tier_mode = not validation.is_valid
+        logger.info(f"License reloaded: valid={validation.is_valid}")
+        return validation.is_valid
+    else:
+        _free_tier_mode = True
+        return False
+
+
+def validate_license_payload(decoded_bytes: bytes) -> Dict[str, Any]:
+    """
+    Validate a decoded license payload without applying it.
+
+    Args:
+        decoded_bytes: Decoded license JSON bytes
+
+    Returns:
+        Dict with "valid" (bool) and optional "error" (str), "instance_id" (str)
+    """
+    try:
+        import json
+
+        data = json.loads(decoded_bytes.decode("utf-8"))
+
+        temp_mgr = LicenseManager()
+        temp_mgr.set_public_key(_PLEXICHAT_PUBLIC_KEY_BASE64)
+        temp_mgr.load_from_dict(data)
+        result = temp_mgr.validate()
+
+        return {
+            "valid": result.is_valid,
+            "error": result.error_message,
+            "instance_id": result.instance_id,
+            "is_expired": result.is_expired,
+            "is_signature_valid": result.is_signature_valid,
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
+# Expose core classes and functions
+__all__ = [
+    # Setup
+    "setup",
+    "is_valid",
+    "is_free_tier",
+    # Feature checking
+    "has_feature",
+    "get_feature_config",
+    "get_feature_limit",
+    "get_license_limit",
+    "is_limit_enforced",
+    "LICENSE_LIMIT_KEYS",
+    # License info
+    "get_instance_id",
+    "get_license_source",
+    "get_validation_result",
+    "get_expiry_timestamp",
+    "to_dict",
+    # Core classes (for advanced use)
+    "License",
+    "LicenseManager",
+    "LicenseValidationResult",
+    "generate_keypair",
+    "sign_license",
+    # Exceptions
+    "LicenseError",
+    "InvalidLicenseError",
+    "SignatureVerificationError",
+    "ExpiredLicenseError",
+    "FeatureNotFoundError",
+    # License management
+    "apply_license_from_base64",
+    "apply_license_from_dict",
+    "apply_test_license",
+    "generate_test_license_dict",
+    "reload_license",
+    "validate_license_payload",
+    # Provisional / test license helpers
+    "get_license_type",
+    "is_provisional",
+    "get_allowed_hosts",
+    "is_license_valid_for_host",
+    # Constants
+    "DEFAULT_LICENSE_PATH",
+    "LICENSE_ENV_VAR",
+    "BASE_FEATURES",
+]

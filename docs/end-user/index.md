@@ -1,12 +1,22 @@
-# End-User Documentation
+# End-user documentation
 
-This section provides guidance for end-users of the Plexichat platform. It covers getting started, feature usage, settings, and troubleshooting common issues.
+This section contains guides for people who use Plexichat.
 
-## Table of Contents
-- [Getting Started](./getting-started.md)
-- [Features Overview](./features.md)
-- [Settings & Preferences](./settings.md)
-- [Privacy & Security](./privacy.md)
-- [Accessibility](./accessibility.md)
-- [Troubleshooting](./troubleshooting.md)
-- [FAQ](./faq.md)
+## Security guides
+
+- [Password guidance](./password-guidance.md) — Create strong passwords and use a password manager.
+- [Two-factor authentication](./two-factor-authentication.md) — Set up 2FA and manage your sessions.
+- [Acoustic eavesdropping defense](./acoustic-defense.md) — Learn how Plexichat reduces the risk of AI keystroke eavesdropping in voice calls.
+
+## User guides
+
+- [Get started](./getting-started.md) — Create an account, set up your profile, and use core features.
+
+## Help pages
+
+- [Access blocked](./access-blocked.md) — What to do when your access is restricted.
+- [Security logout](./security-logout.md) — Why you were logged out and how to recover.
+
+## Reference
+
+- [Permissions](./permissions.md) — Permission categories and what they allow.

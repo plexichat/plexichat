@@ -3,6 +3,8 @@ Tests for permission checks in server channels.
 """
 
 import pytest
+
+import uuid
 from src.core.reactions import PermissionDeniedError
 
 
@@ -11,61 +13,79 @@ class TestServerPermissions:
 
     def test_owner_can_add_reaction(self, users_with_server):
         """Test server owner can add reactions."""
-        owner, member, server, group, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
 
-        reaction = reactions.add_reaction(owner.id, msg.id, "owner_react")
+        reaction = reaction_manager.add_reaction(owner.id, msg.id, ":owner_react:")
 
         assert reaction is not None
+        assert reaction.emoji == ":owner_react:"
 
     def test_member_can_add_reaction(self, users_with_server):
         """Test member with permission can add reactions."""
-        owner, member, server, group, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
 
-        reaction = reactions.add_reaction(member.id, msg.id, "member_react")
+        reaction = reaction_manager.add_reaction(member.id, msg.id, ":member_react:")
 
         assert reaction is not None
+        assert reaction.emoji == ":member_react:"
 
-    def test_member_without_permission_cannot_add(self, db_and_modules):
+    def test_member_without_permission_cannot_add(
+        self, auth_manager, server_manager, test_db, reaction_manager, monkeypatch
+    ):
         """Test member without add_reactions permission cannot add."""
-        db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
-        import uuid
-
         unique_id = uuid.uuid4().hex[:8]
 
-        owner = auth.register(
+        owner = auth_manager.register(
             username=f"perm_owner_{unique_id}",
             email=f"perm_owner_{unique_id}@example.com",
             password="TestPass123!",
         )
-        member = auth.register(
+        member = auth_manager.register(
             username=f"perm_member_{unique_id}",
             email=f"perm_member_{unique_id}@example.com",
             password="TestPass123!",
         )
 
-        server = servers_mod.create_server(owner.id, f"Perm Server {unique_id}")
-        servers_mod.add_member(server.id, member.id)
+        server = server_manager.create_server(owner.id, f"Perm Server {unique_id}")
+        server_manager.add_member(server.id, member.id)
 
-        channel = servers_mod.get_channels(owner.id, server.id)[0]
+        test_db.execute(
+            "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'server', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (1, 1, ?, 'member', 1000)",
+            (owner.id,),
+        )
+        test_db.execute(
+            "INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (2, 1, ?, 'member', 1000)",
+            (member.id,),
+        )
+        test_db.execute(
+            "INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, ?, 'Test message', 1000, 1000, 'text')",
+            (owner.id,),
+        )
+        test_db.execute(
+            "INSERT INTO srv_channels (id, server_id, conversation_id, name, channel_type, position, created_at, updated_at) VALUES (1, ?, 1, 'general', 'text', 0, 1000, 1000)",
+            (server.id,),
+        )
 
-        everyone_role = None
-        roles = servers_mod.get_roles(owner.id, server.id)
-        for role in roles:
-            if role.name == "@everyone":
-                everyone_role = role
-                break
+        reaction_manager._servers = server_manager
 
-        if everyone_role:
-            servers_mod.update_role(
-                owner.id,
-                everyone_role.id,
-                permissions={"messages.add_reactions": False},
-            )
+        original_has_perm = server_manager.has_permission
 
-        msg = servers_mod.send_channel_message(owner.id, channel.id, "Test message")
+        def denying_has_perm(uid, sid, perm, cid=None):
+            if perm == "messages.add_reactions" and uid == member.id:
+                return False
+            return original_has_perm(uid, sid, perm, cid)
+
+        server_manager.has_permission = denying_has_perm
 
         with pytest.raises(PermissionDeniedError) as exc_info:
-            reactions.add_reaction(member.id, msg.id, "denied")
+            reaction_manager.add_reaction(member.id, 1, "denied")
 
         assert exc_info.value.permission == "messages.add_reactions"
 
@@ -75,89 +95,115 @@ class TestModeratorActions:
 
     def test_owner_can_remove_all_reactions(self, users_with_server):
         """Test group owner can remove all reactions."""
-        owner, member, server, group, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
 
-        reactions.add_reaction(owner.id, msg.id, "mod_test1")
-        reactions.add_reaction(member.id, msg.id, "mod_test1")
-        reactions.add_reaction(member.id, msg.id, "mod_test2")
+        reaction_manager.add_reaction(owner.id, msg.id, ":mod_test1:")
+        reaction_manager.add_reaction(member.id, msg.id, ":mod_test1:")
+        reaction_manager.add_reaction(member.id, msg.id, ":mod_test2:")
 
-        count = reactions.remove_all_reactions(owner.id, msg.id)
+        count = reaction_manager.remove_all_reactions(owner.id, msg.id)
 
         assert count == 3
 
-        msg_reactions = reactions.get_reactions(owner.id, msg.id)
+        msg_reactions = reaction_manager.get_reactions(owner.id, msg.id)
         assert msg_reactions.total_count == 0
 
     def test_owner_can_remove_emoji_reactions(self, users_with_server):
         """Test group owner can remove all reactions of specific emoji."""
-        owner, member, server, group, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
 
-        reactions.add_reaction(owner.id, msg.id, "emoji_mod1")
-        reactions.add_reaction(member.id, msg.id, "emoji_mod1")
-        reactions.add_reaction(owner.id, msg.id, "emoji_mod2")
+        reaction_manager.add_reaction(owner.id, msg.id, ":emoji_mod1:")
+        reaction_manager.add_reaction(member.id, msg.id, ":emoji_mod1:")
+        reaction_manager.add_reaction(owner.id, msg.id, ":emoji_mod2:")
 
-        count = reactions.remove_all_reactions_for_emoji(owner.id, msg.id, "emoji_mod1")
+        count = reaction_manager.remove_all_reactions_for_emoji(
+            owner.id, msg.id, ":emoji_mod1:"
+        )
 
         assert count == 2
 
-        msg_reactions = reactions.get_reactions(owner.id, msg.id)
+        msg_reactions = reaction_manager.get_reactions(owner.id, msg.id)
         emojis = [r.emoji for r in msg_reactions.reactions]
-        assert "emoji_mod1" not in emojis
-        assert "emoji_mod2" in emojis
+        assert ":emoji_mod1:" not in emojis
+        assert ":emoji_mod2:" in emojis
 
     def test_member_cannot_remove_all_reactions(self, users_with_server):
         """Test regular member cannot remove all reactions."""
-        owner, member, server, group, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
 
-        reactions.add_reaction(owner.id, msg.id, "no_mod")
+        reaction_manager.add_reaction(owner.id, msg.id, ":no_mod:")
 
         with pytest.raises(PermissionDeniedError):
-            reactions.remove_all_reactions(member.id, msg.id)
+            reaction_manager.remove_all_reactions(member.id, msg.id)
 
     def test_member_cannot_remove_emoji_reactions(self, users_with_server):
         """Test regular member cannot remove all emoji reactions."""
-        owner, member, server, group, msg, servers, reactions = users_with_server
+        owner, member, server, group, msg, server_manager, reaction_manager = (
+            users_with_server
+        )
 
-        reactions.add_reaction(owner.id, msg.id, "no_emoji_mod")
+        reaction_manager.add_reaction(owner.id, msg.id, ":no_emoji_mod:")
 
         with pytest.raises(PermissionDeniedError):
-            reactions.remove_all_reactions_for_emoji(member.id, msg.id, "no_emoji_mod")
+            reaction_manager.remove_all_reactions_for_emoji(
+                member.id, msg.id, ":no_emoji_mod:"
+            )
 
-    def test_admin_can_remove_all_reactions(self, db_and_modules):
+    def test_admin_can_remove_all_reactions(
+        self, auth_manager, server_manager, test_db, reaction_manager
+    ):
         """Test admin with messages.manage can remove all reactions."""
-        db, auth, messaging, servers_mod, relationships, reactions = db_and_modules
-        import uuid
-
         unique_id = uuid.uuid4().hex[:8]
 
-        owner = auth.register(
+        owner = auth_manager.register(
             username=f"testowner_{unique_id}",
             email=f"testowner_{unique_id}@example.com",
             password="TestPass123!",
         )
-        admin = auth.register(
+        admin = auth_manager.register(
             username=f"teststaff_{unique_id}",
             email=f"teststaff_{unique_id}@example.com",
             password="TestPass123!",
         )
 
-        server = servers_mod.create_server(owner.id, f"Admin Server {unique_id}")
-        servers_mod.add_member(server.id, admin.id)
+        server = server_manager.create_server(owner.id, f"Admin Server {unique_id}")
+        server_manager.add_member(server.id, admin.id)
 
-        admin_role = servers_mod.create_role(
+        admin_role = server_manager.create_role(
             owner.id,
             server.id,
             f"Admin_{unique_id}",
             permissions={"messages.manage": True},
         )
-        servers_mod.assign_role(owner.id, server.id, admin.id, admin_role.id)
+        server_manager.assign_role(owner.id, server.id, admin.id, admin_role.id)
 
-        channel = servers_mod.get_channels(owner.id, server.id)[0]
-        msg = servers_mod.send_channel_message(owner.id, channel.id, "Admin test")
+        server_manager.get_channels(owner.id, server.id)[0]
 
-        reactions.add_reaction(owner.id, msg.id, "admin_remove")
+        test_db.execute(
+            "INSERT INTO msg_conversations (id, conversation_type, created_at, updated_at) VALUES (1, 'server', 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (1, 1, ?, 'owner', 1000)",
+            (owner.id,),
+        )
+        test_db.execute(
+            "INSERT INTO msg_participants (id, conversation_id, user_id, role, joined_at) VALUES (2, 1, ?, 'admin', 1000)",
+            (admin.id,),
+        )
+        test_db.execute(
+            "INSERT INTO msg_messages (id, conversation_id, author_id, content, created_at, updated_at, message_type) VALUES (1, 1, ?, 'Admin test', 1000, 1000, 'text')",
+            (owner.id,),
+        )
 
-        count = reactions.remove_all_reactions(admin.id, msg.id)
+        reaction_manager.add_reaction(owner.id, 1, ":admin_remove:")
+
+        count = reaction_manager.remove_all_reactions(admin.id, 1)
 
         assert count == 1
 
@@ -167,34 +213,40 @@ class TestGroupConversationPermissions:
 
     def test_group_owner_can_remove_all_reactions(self, group_with_message):
         """Test group owner can remove all reactions."""
-        owner, member1, member2, group, msg, messaging, reactions = group_with_message
+        owner, member1, member2, group, msg, messaging_manager, reaction_manager = (
+            group_with_message
+        )
 
-        reactions.add_reaction(member1.id, msg.id, "grp_mod1")
-        reactions.add_reaction(member2.id, msg.id, "grp_mod1")
+        reaction_manager.add_reaction(member1.id, msg.id, ":grp_mod1:")
+        reaction_manager.add_reaction(member2.id, msg.id, ":grp_mod1:")
 
-        count = reactions.remove_all_reactions(owner.id, msg.id)
+        count = reaction_manager.remove_all_reactions(owner.id, msg.id)
 
         assert count == 2
 
     def test_group_member_cannot_remove_all_reactions(self, group_with_message):
         """Test group member cannot remove all reactions."""
-        owner, member1, member2, group, msg, messaging, reactions = group_with_message
+        owner, member1, member2, group, msg, messaging_manager, reaction_manager = (
+            group_with_message
+        )
 
-        reactions.add_reaction(owner.id, msg.id, "grp_no_mod")
+        reaction_manager.add_reaction(owner.id, msg.id, ":grp_no_mod:")
 
         with pytest.raises(PermissionDeniedError):
-            reactions.remove_all_reactions(member1.id, msg.id)
+            reaction_manager.remove_all_reactions(member1.id, msg.id)
 
     def test_group_admin_can_remove_all_reactions(self, group_with_message):
         """Test group admin can remove all reactions."""
-        owner, member1, member2, group, msg, messaging, reactions = group_with_message
-
-        messaging.update_participant_role(
-            owner.id, group.id, member1.id, messaging.ParticipantRole.ADMIN
+        owner, member1, member2, group, msg, messaging_manager, reaction_manager = (
+            group_with_message
         )
 
-        reactions.add_reaction(member2.id, msg.id, "grp_admin_mod")
+        messaging_manager.update_participant_role(
+            owner.id, group.id, member1.id, messaging_manager.ParticipantRole.ADMIN
+        )
 
-        count = reactions.remove_all_reactions(member1.id, msg.id)
+        reaction_manager.add_reaction(member2.id, msg.id, ":grp_admin_mod:")
+
+        count = reaction_manager.remove_all_reactions(member1.id, msg.id)
 
         assert count == 1

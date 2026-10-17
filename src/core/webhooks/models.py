@@ -34,6 +34,9 @@ class Webhook:
     signing_key_private_encrypted: Optional[str] = (
         None  # Encrypted private key (base64)
     )
+    # When True, executions WITHOUT a valid Ed25519 signature are
+    # rejected even if the webhook token itself is valid.
+    require_signed_deliveries: bool = False
     created_at: int = 0
     updated_at: int = 0
 

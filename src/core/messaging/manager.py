@@ -41,8 +41,6 @@ from .services import (
     UserSettingsService,
     ContentFilterService,
 )
-from .events import MessagingEventBus, get_event_bus
-
 from . import exceptions as _exc
 from . import models as _models
 
@@ -129,22 +127,12 @@ class MessagingManager(BaseManager):
 
         self._pin_svc = PinService(db, self._participant_svc)
 
-        # Event bus for reliable event delivery
-        self._event_bus = get_event_bus()
-
-        logger.info("Messaging module initialized (refactored)")
+        logger.info("Messaging module initialized")
 
     def _is_participant(
         self, conversation_id: SnowflakeID, user_id: SnowflakeID
     ) -> bool:
         return self.is_participant(conversation_id, user_id)
-
-    # === Event Bus Access ===
-
-    @property
-    def event_bus(self) -> MessagingEventBus:
-        """Get the event bus for subscribing to messaging events."""
-        return self._event_bus
 
     # === Conversations ===
 
@@ -205,6 +193,10 @@ class MessagingManager(BaseManager):
         """Get a conversation by ID if user has access."""
         return self._conversation_svc.get_conversation(conversation_id, user_id)
 
+    def conversation_exists(self, conversation_id: SnowflakeID) -> bool:
+        """Membership-agnostic existence probe."""
+        return self._conversation_svc.conversation_exists(conversation_id)
+
     def get_conversations(
         self,
         user_id: SnowflakeID,
@@ -241,7 +233,12 @@ class MessagingManager(BaseManager):
         """Leave a conversation."""
         result = self._conversation_svc.leave_conversation(user_id, conversation_id)
 
-        if result:
+        # M14: leaving a DM (or being the last group member to leave)
+        # deletes the conversation; a system message cannot be posted into
+        # a deleted conversation, so only broadcast when it still exists.
+        # Previously this raised ConversationNotFoundError (HTTP 500) on
+        # every DM leave.
+        if result and self._conversation_svc.conversation_exists(conversation_id):
             # Send system message
             self.send_system_message(
                 conversation_id,
@@ -483,35 +480,81 @@ class MessagingManager(BaseManager):
     ) -> Message:
         """Send a message to a conversation."""
         return self._message_svc.send_message(
-            user_id,
-            conversation_id,
-            content,
-            message_type,
-            reply_to_id,
-            attachments,
-            embeds,
-            webhook_id,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            content=content,
+            message_type=message_type,
+            reply_to_id=reply_to_id,
+            attachments=attachments,
+            embeds=embeds,
+            webhook_id=webhook_id,
         )
 
     def edit_message(
-        self, user_id: SnowflakeID, message_id: SnowflakeID, content: str
+        self,
+        user_id: SnowflakeID,
+        message_id: SnowflakeID,
+        content: str,
+        expected_edited_at: Optional[int] = None,
     ) -> Message:
         """Edit a message (own messages only)."""
-        return self._message_svc.edit_message(user_id, message_id, content)
+        return self._message_svc.edit_message(
+            user_id, message_id, content, expected_edited_at=expected_edited_at
+        )
 
     def update_message_metadata(
         self,
+        user_id: SnowflakeID,
         message_id: SnowflakeID,
         metadata: Optional[Dict[str, Any]],
         merge: bool = True,
     ) -> Message:
-        return self._message_svc.update_message_metadata(message_id, metadata, merge)
+        return self._message_svc.update_message_metadata(
+            user_id, message_id, metadata, merge
+        )
+
+    def automod_remove_message(
+        self,
+        message_id: SnowflakeID,
+        violation_id: Optional[SnowflakeID] = None,
+        rule_name: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Message]:
+        """Replace a message with an AutoMod removal placeholder (system op)."""
+        return self._message_svc.automod_remove_message(
+            message_id, violation_id, rule_name, reason
+        )
 
     def delete_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID, hard_delete: bool = False
     ) -> bool:
         """Delete a message."""
         return self._message_svc.delete_message(user_id, message_id, hard_delete)
+
+    def delete_messages_bulk(
+        self,
+        user_id: SnowflakeID,
+        channel_id: SnowflakeID,
+        message_ids: List[SnowflakeID],
+    ) -> List[int]:
+        """Bulk-delete messages from a channel.
+
+        Only messages the caller is permitted to delete (author, conversation
+        OWNER/ADMIN, or server ``messages.manage`` moderator) AND that belong
+        to the requested channel (its linked conversation) are removed.
+        Returns the list of message IDs that were actually deleted so the
+        caller can broadcast a precise event.
+
+        Delegates to the message service's bulk-delete (which scopes every
+        candidate to the requested channel and skips messages the caller may
+        not delete or missing messages) rather than looping the single-delete
+        path that raises on the first failure.
+        """
+        requested = [int(m) for m in message_ids]
+        result = self._message_svc.delete_messages_bulk(
+            user_id, requested, conversation_id=int(channel_id)
+        )
+        return result.get("deleted_ids", [])
 
     def get_message(
         self, user_id: SnowflakeID, message_id: SnowflakeID
@@ -621,6 +664,31 @@ class MessagingManager(BaseManager):
         return self._message_status_svc.mark_read(
             user_id, conversation_id, up_to_message_id
         )
+
+    def get_last_read(
+        self, user_id: SnowflakeID, conversation_id: SnowflakeID
+    ) -> Dict[str, Any]:
+        """Get the last read position for a user in a conversation."""
+        return self._message_status_svc.get_last_read(user_id, conversation_id)
+
+    def mark_unread(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        up_to_message_id: Optional[SnowflakeID] = None,
+    ) -> int:
+        """Mark messages as unread."""
+        return self._message_status_svc.mark_unread(
+            user_id, conversation_id, up_to_message_id
+        )
+
+    def mark_all_server_read(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+    ) -> int:
+        """Mark all channels in a server as read."""
+        return self._message_status_svc.mark_all_server_read(user_id, server_id)
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None

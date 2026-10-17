@@ -17,7 +17,7 @@ from ..exceptions import (
 
 
 class S3Storage(StorageBackendBase):
-    """S3-compatible storage backend (AWS S3, MinIO, etc.)."""
+    """S3-compatible storage backend (AWS S3, RustFS, SeaweedFS, etc.)."""
 
     def __init__(
         self,
@@ -38,7 +38,7 @@ class S3Storage(StorageBackendBase):
             access_key: AWS access key ID
             secret_key: AWS secret access key
             region: AWS region
-            endpoint_url: Custom endpoint URL (for MinIO, etc.)
+            endpoint_url: Custom endpoint URL (for RustFS, SeaweedFS, etc.)
             use_ssl: Use HTTPS
             public_url: Public URL prefix for serving files
             path_prefix: Prefix for all stored paths
@@ -51,9 +51,9 @@ class S3Storage(StorageBackendBase):
         self._path_prefix = path_prefix.strip("/")
 
         try:
-            import boto3  # type: ignore[reportMissingImports]
-            from botocore.config import Config  # type: ignore[reportMissingImports]
-            from botocore.exceptions import ClientError  # type: ignore[reportMissingImports]
+            import boto3
+            from botocore.config import Config
+            from botocore.exceptions import ClientError
 
             self._ClientError = ClientError
         except ImportError:
@@ -183,8 +183,8 @@ class S3Storage(StorageBackendBase):
             logger.debug(f"Deleted file at s3://{self._bucket}/{key}")
             return True
         except self._ClientError as e:
-            logger.error(f"Failed to delete file at s3://{self._bucket}/{key}: {e}")  # nosec: B608
-            raise StorageDeleteError(f"Failed to delete from S3: {e}", "s3")  # nosec: B608
+            logger.error(f"Failed to delete file at s3://{self._bucket}/{key}: {e}")
+            raise StorageDeleteError(f"Failed to delete from S3: {e}", "s3")
 
     def exists(self, path: str) -> bool:
         """Check if file exists in storage."""

@@ -3,7 +3,7 @@ Filter processor - Apply parsed filters to search results.
 """
 
 from typing import List, Optional, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 import utils.config as config
 from src.core.database.collections import CappedDict
@@ -19,7 +19,7 @@ class FilterProcessor:
         self._servers = servers_module
 
         # Cache size limit from config
-        max_cache = config.get("redis.cache_max_items", 1000)
+        max_cache = config.get("search.cache_max_items", 1000)
 
         self._user_cache = CappedDict(max_size=max_cache)
         self._channel_cache = CappedDict(max_size=max_cache)
@@ -79,7 +79,7 @@ class FilterProcessor:
         value = query_filter.value
 
         if filter_type == FilterType.FROM_USER:
-            target_user_id = self._resolve_user(value)
+            target_user_id = self._resolve_user(value, user_id)
             if target_user_id is None:
                 return lambda r: False
             return lambda r, uid=target_user_id: r.author_id == uid
@@ -106,7 +106,7 @@ class FilterProcessor:
             return self._get_has_filter(value)
 
         if filter_type == FilterType.MENTIONS_USER:
-            target_user_id = self._resolve_user(value)
+            target_user_id = self._resolve_user(value, user_id)
             if target_user_id is None:
                 return lambda r: False
             return lambda r, uid=target_user_id: self._check_mentions(r, uid)
@@ -114,6 +114,10 @@ class FilterProcessor:
         if filter_type == FilterType.PINNED:
             is_pinned = value.lower() == "true"
             return lambda r, p=is_pinned: r.is_pinned == p
+
+        if filter_type == FilterType.HAS_REACTION:
+            emoji = value.strip()
+            return lambda r, e=emoji: e in (r.reactions or [])
 
         return None
 
@@ -128,21 +132,37 @@ class FilterProcessor:
             return lambda r: self._has_link(r.content)
 
         if value_lower == "image":
-            return lambda r: False
+            return lambda r: "image" in (r.attachment_types or [])
 
         if value_lower == "video":
-            return lambda r: False
+            return lambda r: "video" in (r.attachment_types or [])
 
         if value_lower == "audio":
-            return lambda r: False
+            return lambda r: "audio" in (r.attachment_types or [])
 
         if value_lower == "embed":
-            return lambda r: False
+            return lambda r: r.has_embeds
 
         return lambda r: r.has_attachments
 
-    def _resolve_user(self, identifier: str) -> Optional[int]:
-        """Resolve username or user ID to user ID."""
+    def _resolve_user(
+        self, identifier: str, caller_id: Optional[int] = None
+    ) -> Optional[int]:
+        """Resolve username or user ID to user ID.
+
+        The ``me`` alias (also ``@me``, case-insensitive) resolves to the
+        calling user's own ID so advertised filters such as ``from:me`` and
+        ``mentions:me`` work.  Alias resolution happens BEFORE the shared
+        cache lookup because this processor instance is shared across all
+        callers and the alias is caller-dependent.
+        """
+        if identifier is None:
+            return None
+
+        alias = identifier.strip().lstrip("@").lower()
+        if alias == "me":
+            return caller_id
+
         if identifier in self._user_cache:
             return self._user_cache[identifier]
 
@@ -165,7 +185,21 @@ class FilterProcessor:
         return None
 
     def _resolve_channel(self, identifier: str) -> Optional[int]:
-        """Resolve channel name or ID to channel ID."""
+        """Resolve channel name or ID to channel ID.
+
+        A leading ``#`` (as advertised by the client hint ``in:#channel``)
+        is stripped before lookup because channels are stored without it.
+        """
+        if identifier is None:
+            return None
+
+        identifier = identifier.strip()
+        if identifier.startswith("#"):
+            identifier = identifier[1:]
+
+        if not identifier:
+            return None
+
         if identifier in self._channel_cache:
             return self._channel_cache[identifier]
 
@@ -188,9 +222,16 @@ class FilterProcessor:
         return None
 
     def _date_to_timestamp(self, date_str: str) -> Optional[int]:
-        """Convert date string to timestamp in milliseconds."""
+        """Convert a ``YYYY-MM-DD`` date to UTC epoch milliseconds.
+
+        ``created_at`` is stored as UTC milliseconds, so the date boundary
+        must be UTC midnight. Parsing the naive value and calling
+        ``.timestamp()`` resolved it in the SERVER's local zone, making a
+        ``before:``/``after:`` filter include or drop messages depending on
+        the host's TZ.
+        """
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             return int(dt.timestamp() * 1000)
         except ValueError:
             return None
@@ -203,19 +244,19 @@ class FilterProcessor:
 
     def _has_image(self, result: MessageSearchResult) -> bool:
         """Check if message has image attachment."""
-        return False
+        return "image" in (result.attachment_types or [])
 
     def _has_video(self, result: MessageSearchResult) -> bool:
         """Check if message has video attachment."""
-        return False
+        return "video" in (result.attachment_types or [])
 
     def _has_audio(self, result: MessageSearchResult) -> bool:
         """Check if message has audio attachment."""
-        return False
+        return "audio" in (result.attachment_types or [])
 
     def _has_embed(self, result: MessageSearchResult) -> bool:
         """Check if message has embed."""
-        return False
+        return bool(result.has_embeds)
 
     def _check_mentions(self, result: MessageSearchResult, user_id: int) -> bool:
         """Check if message mentions a user."""

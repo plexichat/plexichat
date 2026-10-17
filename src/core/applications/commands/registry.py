@@ -112,50 +112,67 @@ class CommandRegistry:
                 current,
             )
 
-        existing = self._db.fetch_one(
-            """SELECT id FROM app_commands
-               WHERE application_id = ? AND name = ? AND server_id IS ?""",
-            (application_id, name.lower(), server_id),
-        )
-        if existing:
-            raise CommandValidationError(
-                "Command with this name already exists", ["Duplicate command name"]
-            )
+        # SECURITY: context-menu commands (USER/MESSAGE) should preserve
+        # their original casing for display; CHAT_INPUT names are
+        # lowercased per Discord convention.
+        if command_type in (CommandType.USER, CommandType.MESSAGE):
+            stored_name = name
+        else:
+            stored_name = name.lower()
 
+        # SECURITY: duplicate check + insert wrapped in a single
+        # transactional attempt.  We rely on the UNIQUE constraint
+        # (application_id, name, server_id) as the primary guard and
+        # catch the DB-level integrity error to close the TOCTOU race
+        # between the pre-check SELECT and the INSERT.
         command_id = generate_snowflake_id()
         now = self._current_time()
 
         options_json = json.dumps(options or [])
 
-        self._db.execute(
-            """INSERT INTO app_commands
-               (id, application_id, name, description, command_type, server_id,
-                options, default_member_permissions, dm_permission, nsfw,
-                version, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                command_id,
-                application_id,
-                name.lower(),
-                description,
-                command_type.value
-                if isinstance(command_type, CommandType)
-                else command_type,
-                server_id,
-                options_json,
-                default_member_permissions,
-                1 if dm_permission else 0,
-                1 if nsfw else 0,
-                1,
-                now,
-                now,
-            ),
-        )
+        try:
+            self._db.execute(
+                """INSERT INTO app_commands
+                   (id, application_id, name, description, command_type, server_id,
+                    options, default_member_permissions, dm_permission, nsfw,
+                    version, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    command_id,
+                    application_id,
+                    stored_name,
+                    description,
+                    command_type.value
+                    if isinstance(command_type, CommandType)
+                    else command_type,
+                    server_id,
+                    options_json,
+                    default_member_permissions,
+                    1 if dm_permission else 0,
+                    1 if nsfw else 0,
+                    1,
+                    now,
+                    now,
+                ),
+            )
+        except Exception as exc:
+            # SQLite/Postgres UNIQUE violation surfaces as an integrity
+            # error.  Any other exception re-raises normally.
+            msg = str(exc).lower()
+            if "unique" in msg or "duplicate" in msg:
+                raise CommandValidationError(
+                    "Command with this name already exists",
+                    ["Duplicate command name"],
+                ) from exc
+            raise
 
-        logger.info(f"Command registered: {name} for app {application_id}")
+        logger.info(f"Command registered: {stored_name} for app {application_id}")
 
         result = self.get_command(command_id)
-        assert result is not None  # Should exist since we just created it
+        if result is None:
+            raise CommandNotFoundError(
+                f"Command {command_id} not found after registration"
+            )
         return result
 
     def get_command(self, command_id: int) -> Optional[Command]:
@@ -281,11 +298,28 @@ class CommandRegistry:
                 raise CommandValidationError("Command validation failed", issues)
 
         if name is not None and name.lower() != command.name:
-            existing = self._db.fetch_one(
-                """SELECT id FROM app_commands
-                   WHERE application_id = ? AND name = ? AND server_id IS ? AND id != ?""",
-                (command.application_id, name.lower(), command.server_id, command_id),
+            # Check for duplicate name (case-insensitive for CHAT_INPUT,
+            # case-sensitive for USER/MESSAGE)
+            lookup_name = (
+                name.lower() if command.command_type == CommandType.CHAT_INPUT else name
             )
+            if command.server_id is not None:
+                existing = self._db.fetch_one(
+                    """SELECT id FROM app_commands
+                       WHERE application_id = ? AND name = ? AND server_id = ? AND id != ?""",
+                    (
+                        command.application_id,
+                        lookup_name,
+                        command.server_id,
+                        command_id,
+                    ),
+                )
+            else:
+                existing = self._db.fetch_one(
+                    """SELECT id FROM app_commands
+                       WHERE application_id = ? AND name = ? AND server_id IS NULL AND id != ?""",
+                    (command.application_id, lookup_name, command_id),
+                )
             if existing:
                 raise CommandValidationError(
                     "Command with this name already exists", ["Duplicate command name"]
@@ -296,7 +330,9 @@ class CommandRegistry:
 
         if name is not None:
             updates.append("name = ?")
-            params.append(name.lower())
+            params.append(
+                name.lower() if command.command_type == CommandType.CHAT_INPUT else name
+            )
 
         if description is not None:
             updates.append("description = ?")
@@ -325,14 +361,15 @@ class CommandRegistry:
             params.append(command_id)
 
             self._db.execute(
-                f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
+                f"UPDATE app_commands SET {', '.join(updates)} WHERE id = ?",
                 tuple(params),
             )
 
             logger.debug(f"Command updated: {command_id}")
 
         result = self.get_command(command_id)
-        assert result is not None  # Should exist since we just updated it
+        if result is None:
+            raise CommandNotFoundError(f"Command {command_id} not found after update")
         return result
 
     def delete_command(self, command_id: int) -> bool:
@@ -366,6 +403,10 @@ class CommandRegistry:
         """
         Bulk overwrite commands for an application.
 
+        SECURITY: all commands are validated before ANY mutation occurs.
+        If any command fails validation, no commands are deleted or
+        inserted, preventing a partial-data state on mid-loop failure.
+
         Args:
             application_id: Application ID
             commands: List of command data
@@ -374,6 +415,7 @@ class CommandRegistry:
         Returns:
             List of registered Commands
         """
+        # Phase 1: validate every command up front.
         for cmd_data in commands:
             valid, issues = validate_command(cmd_data)
             if not valid:
@@ -382,31 +424,46 @@ class CommandRegistry:
                     issues,
                 )
 
-        if server_id:
-            self._db.execute(
-                "DELETE FROM app_commands WHERE application_id = ? AND server_id = ?",
-                (application_id, server_id),
-            )
-        else:
-            self._db.execute(
-                "DELETE FROM app_commands WHERE application_id = ? AND server_id IS NULL",
-                (application_id,),
-            )
+        # Phase 2: delete existing + insert new in a single transaction.
+        # Use begin_transaction / commit / rollback for atomicity.
+        try:
+            self._db.begin_transaction()
 
-        result = []
-        for cmd_data in commands:
-            command = self.register_command(
-                application_id=application_id,
-                name=cmd_data["name"],
-                description=cmd_data.get("description", ""),
-                command_type=cmd_data.get("command_type", CommandType.CHAT_INPUT),
-                server_id=server_id,
-                options=cmd_data.get("options"),
-                default_member_permissions=cmd_data.get("default_member_permissions"),
-                dm_permission=cmd_data.get("dm_permission", True),
-                nsfw=cmd_data.get("nsfw", False),
-            )
-            result.append(command)
+            if server_id:
+                self._db.execute(
+                    "DELETE FROM app_commands WHERE application_id = ? AND server_id = ?",
+                    (application_id, server_id),
+                )
+            else:
+                self._db.execute(
+                    "DELETE FROM app_commands WHERE application_id = ? AND server_id IS NULL",
+                    (application_id,),
+                )
+
+            result = []
+            for cmd_data in commands:
+                command = self.register_command(
+                    application_id=application_id,
+                    name=cmd_data["name"],
+                    description=cmd_data.get("description", ""),
+                    command_type=cmd_data.get("command_type", CommandType.CHAT_INPUT),
+                    server_id=server_id,
+                    options=cmd_data.get("options"),
+                    default_member_permissions=cmd_data.get(
+                        "default_member_permissions"
+                    ),
+                    dm_permission=cmd_data.get("dm_permission", True),
+                    nsfw=cmd_data.get("nsfw", False),
+                )
+                result.append(command)
+
+            self._db.commit()
+        except Exception:
+            try:
+                self._db.rollback()
+            except Exception:
+                pass
+            raise
 
         logger.info(f"Bulk overwrote {len(result)} commands for app {application_id}")
         return result

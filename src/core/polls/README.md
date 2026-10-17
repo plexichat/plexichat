@@ -1,107 +1,129 @@
-# Polls Module
+# Polls
 
-Message poll system for Plexichat API supporting poll creation, voting, results visibility control, and automatic expiry handling.
+Create and manage message polls with configurable options, duration, and results visibility.
+
+## Overview
+
+The polls module attaches polls to messages and provides voting, results, and lifecycle operations. Each poll supports 2 to 10 options, single or multiple choice voting, and automatic expiry.
 
 ## Features
 
-- Create polls attached to messages
-- Poll options (2-10 choices)
-- Poll duration (1 hour to 7 days or no expiry)
-- Single or multiple choice voting
-- Poll results visibility control (always, after vote, after end)
-- Vote tracking per user
-- Poll end handling with final results
-- Early poll closure by creator
-- Automatic expiry checking
+- 2 to 10 options per poll.
+- Duration from 1 hour to 7 days, or no expiry.
+- Single or multiple choice voting.
+- Results visibility control: always, after vote, or after end.
+- Per-user vote tracking with database-enforced uniqueness.
+- Early closure by the creator and automatic expiry handling.
 
-## Setup
+## Before you begin
+
+Initialize the module once at startup. The messaging module is required for ownership and channel access checks.
 
 ```python
 from src.core.database import Database
-from src.core import auth
-from src.core import messaging
-from src.core import polls
+from src.core import auth, messaging, polls
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize dependencies
 auth.setup(db)
 messaging.setup(db, auth)
-
-# Initialize polls
-polls.setup(db, messaging)
+polls.setup(db, messaging_module=messaging, auth_module=auth)
 ```
 
-## Usage
+If you omit `messaging_module`, calls that need message authorization raise `PollConfigurationError`.
 
-### Create Poll
+## Create a poll
 
 ```python
 from src.core import polls
 
-# Create a simple poll
 poll = polls.create_poll(
     user_id=user_id,
     message_id=message_id,
     question="What's your favorite programming language?",
     options=["Python", "JavaScript", "Rust", "Go"],
-    duration_hours=24
+    duration_hours=24,
 )
+```
 
-# Create a multiple choice poll
+### Multiple choice
+
+```python
 poll = polls.create_poll(
     user_id=user_id,
     message_id=message_id,
     question="Which features do you want?",
     options=["Dark mode", "Mobile app", "API access", "Plugins"],
     duration_hours=168,
-    allow_multiple_choice=True
+    allow_multiple_choice=True,
 )
+```
 
-# Create a poll with hidden results until end
+### Results visibility
+
+```python
 poll = polls.create_poll(
     user_id=user_id,
     message_id=message_id,
     question="Who will win?",
     options=["Team A", "Team B", "Draw"],
     duration_hours=48,
-    results_visibility=polls.PollResultsVisibility.AFTER_END
+    results_visibility=polls.PollResultsVisibility.AFTER_END,
 )
+```
 
-# Create a poll with no expiry
+| Visibility | Behavior |
+|------------|----------|
+| `ALWAYS` | Results are visible to everyone immediately. |
+| `AFTER_VOTE` | Results are visible only after you vote. |
+| `AFTER_END` | Results are visible only after the poll ends. |
+
+### No expiry
+
+```python
 poll = polls.create_poll(
     user_id=user_id,
     message_id=message_id,
-    question="Permanent poll question?",
+    question="Permanent poll?",
     options=["Yes", "No"],
-    duration_hours=None
+    duration_hours=None,
 )
 ```
 
-### Vote on Poll
+Only the message author can create a poll on that message.
+
+## Vote on a poll
 
 ```python
-# Single choice vote
-results = polls.vote(
-    user_id=user_id,
-    poll_id=poll.id,
-    option_ids=[option1_id]
-)
+# Single choice
+results = polls.vote(user_id=user_id, poll_id=poll.id, option_ids=[option1_id])
 
-# Multiple choice vote (if allowed)
+# Multiple choice (if the poll allows it)
 results = polls.vote(
     user_id=user_id,
     poll_id=poll.id,
-    option_ids=[option1_id, option3_id]
+    option_ids=[option1_id, option3_id],
 )
 ```
 
-### Get Results
+To revise a vote, call `change_vote` instead of voting again:
 
 ```python
-# Get poll results
+results = polls.change_vote(user_id=user_id, poll_id=poll.id, option_ids=[option2_id])
+```
+
+To remove a vote entirely:
+
+```python
+removed = polls.remove_vote(user_id=user_id, poll_id=poll.id)
+```
+
+## Get results
+
+Results respect the poll's visibility setting. If you are not entitled to see results, vote counts and the voter total return as `None`.
+
+```python
 results = polls.get_results(poll_id, user_id)
 
 print(f"Question: {results.poll.question}")
@@ -109,35 +131,61 @@ print(f"Total votes: {results.total_votes}")
 print(f"You voted: {results.user_voted}")
 
 for option in results.options:
-    percentage = (option.vote_count / results.total_votes * 100) if results.total_votes > 0 else 0
-    print(f"{option.text}: {option.vote_count} votes ({percentage:.1f}%)")
+    if option.vote_count is None:
+        print(f"{option.text}: results hidden")
+    else:
+        pct = (option.vote_count / results.total_votes * 100) if results.total_votes else 0
+        print(f"{option.text}: {option.vote_count} votes ({pct:.1f}%)")
 ```
 
-### Close Poll Early
+To get the voter roster (creator or users with `admin.polls.view_voters` only):
 
 ```python
-# Creator can close poll before expiry
+voters = polls.get_voters(poll_id=poll.id, user_id=creator_id)
+```
+
+## Close or delete a poll
+
+Only the creator can close or delete a poll.
+
+```python
+# Close before expiry
 poll = polls.close_poll(user_id, poll_id)
-```
 
-### Delete Poll
-
-```python
-# Creator can delete poll
+# Delete entirely
 polls.delete_poll(user_id, poll_id)
 ```
 
-### Check Expired Polls
+## Check for expired polls
+
+Call `check_expired_polls` periodically from a background task. It marks expired polls as ended and emits `POLL_UPDATE` gateway events.
 
 ```python
-# Background task to end expired polls
 ended_count = polls.check_expired_polls()
 print(f"Ended {ended_count} expired polls")
 ```
 
+Example scheduler:
+
+```python
+import schedule
+import time
+
+def poll_expiry_task():
+    ended = polls.check_expired_polls()
+    if ended > 0:
+        print(f"Ended {ended} expired polls")
+
+schedule.every(1).minutes.do(poll_expiry_task)
+
+while True:
+    schedule.run_pending()
+    time.sleep(1)
+```
+
 ## Configuration
 
-Settings in `config/config.yaml` under `polls`:
+Configure `config/config.yaml` under `polls`:
 
 ```yaml
 polls:
@@ -149,21 +197,17 @@ polls:
   max_option_length: 100
 ```
 
-## Results Visibility
+Set `encryption.encrypt_polls: true` to store questions and options encrypted at rest. The plaintext columns are cleared when encryption is enabled.
 
-| Mode | Description |
-|------|-------------|
-| ALWAYS | Results visible to everyone immediately |
-| AFTER_VOTE | Results visible only after user votes |
-| AFTER_END | Results visible only after poll ends |
+## Poll states
 
-## Poll States
+| State | Description |
+|-------|-------------|
+| Active | Open for voting. |
+| Ended | Expiry time reached or closed early (`ended_at` is set). |
+| No expiry | Remains open until manually closed (`ends_at` is `None`). |
 
-- **Active**: Poll is open for voting
-- **Ended**: Poll has reached expiry time or was closed early
-- **No Expiry**: Poll remains open indefinitely until manually closed
-
-## Error Handling
+## Error handling
 
 All poll errors inherit from `PollError`:
 
@@ -184,58 +228,26 @@ from src.core.polls import (
 try:
     polls.vote(user_id, poll_id, [option_id])
 except PollEndedError:
-    print("This poll has ended")
+    print("This poll has ended.")
 except AlreadyVotedError:
-    print("You have already voted")
+    print("You already voted. Call change_vote() to revise.")
 except MultipleVoteNotAllowedError:
-    print("This poll only allows single choice")
+    print("This poll allows only one choice.")
 except PollOptionLimitError as e:
-    print(f"Poll must have {e.min_options}-{e.max_options} options")
+    print(f"Poll must have {e.min_options}-{e.max_options} options.")
 ```
 
-## Database Schema
+## Database schema
 
-Tables (prefixed with `poll_`):
-- `poll_polls` - Poll metadata
-- `poll_options` - Poll options
-- `poll_votes` - User votes
+| Table | Description |
+|-------|-------------|
+| `poll_polls` | Poll metadata (question, creator, expiry, visibility). |
+| `poll_options` | Options for each poll. |
+| `poll_votes` | Per-option votes (`UNIQUE(poll_id, option_id, user_id)`). |
+| `poll_voters` | Voter registry (`PRIMARY KEY(poll_id, user_id)`) that enforces one vote per user per poll. |
 
 ## Testing
 
 ```bash
 pytest src/tests/polls/ -v
 ```
-
-## Integration with Messaging
-
-Polls are attached to messages via `message_id`. The messaging module should handle poll rendering and display. When a message with a poll is deleted, the poll should also be deleted.
-
-## Background Tasks
-
-The `check_expired_polls()` function should be called periodically (e.g., every minute) by a background task to automatically end polls that have reached their expiry time.
-
-Example with a scheduler:
-
-```python
-import schedule
-import time
-
-def poll_expiry_task():
-    ended = polls.check_expired_polls()
-    if ended > 0:
-        logger.info(f"Ended {ended} expired polls")
-
-schedule.every(1).minutes.do(poll_expiry_task)
-
-while True:
-    schedule.run_pending()
-    time.sleep(1)
-```
-
-## Best Practices
-
-1. **Question Length**: Keep questions concise and clear
-2. **Option Count**: 2-5 options work best for most polls
-3. **Duration**: Use 24-168 hours for time-sensitive polls
-4. **Multiple Choice**: Only enable when truly needed
-5. **Results Visibility**: Use AFTER_END for competitive polls to prevent bias

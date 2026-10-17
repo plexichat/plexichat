@@ -4,13 +4,17 @@ Notifications API routes.
 Handles user notifications.
 """
 
+import asyncio
+
 import utils.logger as logger
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.notifications import NotificationsResponse, NotificationInfo
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.core.notifications.exceptions import NotificationNotFoundError
 
 router = APIRouter(tags=["Notifications"])
 
@@ -32,7 +36,7 @@ def _notif_to_response(notif) -> NotificationInfo:
 
     # Construct link
     link = None
-    if notif.server_id:
+    if notif.server_id and notif.channel_id:
         link = f"/channels/{notif.server_id}/{notif.channel_id}/{notif.message_id}"
     elif notif.conversation_id:
         link = f"/channels/@me/{notif.conversation_id}/{notif.message_id}"
@@ -72,15 +76,25 @@ async def get_notifications(
         raise HTTPException(status_code=500, detail="Notification module not available")
 
     try:
-        notifications = notif_mod.get_notifications(
-            current_user.user_id, limit=limit, unread_only=unread_only
+        # total_unread is the EXACT count of unread notification rows for the
+        # user (page-independent), so clients can render an accurate badge no
+        # matter how many entries fit in `limit`. unread_count keeps its
+        # historical mention-counter semantics for existing consumers.
+        notifications, unread_count, unread_totals = await asyncio.gather(
+            run_in_threadpool(
+                notif_mod.get_notifications,
+                current_user.user_id,
+                limit=limit,
+                unread_only=unread_only,
+            ),
+            run_in_threadpool(notif_mod.get_mention_count, current_user.user_id),
+            run_in_threadpool(notif_mod.get_unread_count, current_user.user_id),
         )
-
-        unread_count = notif_mod.get_mention_count(current_user.user_id)
 
         return NotificationsResponse(
             notifications=[_notif_to_response(n) for n in notifications],
             unread_count=unread_count,
+            total_unread=int(getattr(unread_totals, "unread_count", 0) or 0),
         )
     except Exception as e:
         logger.error(
@@ -89,7 +103,7 @@ async def get_notifications(
         )
         raise HTTPException(
             status_code=500,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -107,11 +121,14 @@ async def mark_all_read(
         raise HTTPException(status_code=500, detail="Notification module not available")
 
     try:
-        notif_mod.mark_all_read(current_user.user_id)
-        return SuccessResponse(success=True)
+        await run_in_threadpool(notif_mod.mark_all_read, current_user.user_id)
+        return SuccessResponse(success=True, message=None)
     except Exception as e:
         logger.error(f"Failed to mark all notifications read: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
 
 
 @router.put(
@@ -135,9 +152,62 @@ async def mark_read(
             raise HTTPException(status_code=400, detail="Invalid notification ID")
 
         notif_mod.mark_notification_read(current_user.user_id, nid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
+    except NotificationNotFoundError:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    except HTTPException:
+        # A 400 raised above for a malformed id must not be re-wrapped as 500.
+        raise
     except Exception as e:
-        if "not found" in str(e).lower():
-            raise HTTPException(status_code=404, detail="Notification not found")
         logger.error(f"Failed to mark notification {notification_id} read: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.delete(
+    "/users/@me/notifications/{notification_id}",
+    response_model=SuccessResponse,
+    summary="Delete a notification",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid notification ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Notification not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def delete_notification(
+    notification_id: str,
+    current_user: TokenInfo = Depends(get_current_user),
+) -> SuccessResponse:
+    """Delete a specific notification (removes the row and unread counts).
+
+    The core notification manager already implements the ownership check and
+    unread-count bookkeeping (``NotificationManager.delete_notification``),
+    but no HTTP endpoint exposed it, so clients could only dismiss
+    notifications by marking them read (F13).
+    """
+    notif_mod = api.get_notifications()
+    if not notif_mod:
+        raise HTTPException(status_code=500, detail="Notification module not available")
+
+    try:
+        try:
+            nid = int(notification_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid notification ID")
+
+        notif_mod.delete_notification(current_user.user_id, nid)
+        return SuccessResponse(success=True, message=None)
+    except NotificationNotFoundError:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    except HTTPException:
+        # A 400 raised above for a malformed id must not be re-wrapped as 500.
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete notification {notification_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )

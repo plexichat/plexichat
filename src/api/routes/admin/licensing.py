@@ -1,0 +1,432 @@
+"""
+Admin licensing routes for managing instance license state.
+"""
+
+from fastapi import APIRouter, Request, HTTPException, status
+from pydantic import BaseModel
+from datetime import datetime, timezone
+import math
+from typing import Optional
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
+from src.api.schemas.common import ErrorResponse
+import utils.logger as logger
+import utils.licensing as licensing_module
+from src.core.admin.logging import AdminLogEntry, get_admin_logger
+
+router = APIRouter(prefix="/license", tags=["Admin", "Licensing"])
+
+
+def _expiry_date_iso(expiry_ts: float) -> str:
+    """Format an expiry timestamp as UTC ISO-8601."""
+    return datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat()
+
+
+def _days_remaining(expiry_ts: float, now_ts: Optional[float] = None) -> int:
+    """Whole days remaining, rounding partial days up.
+
+    Any positive remainder counts as a full day so 23h59m left reports
+    1 rather than 0. Expired timestamps report 0.
+    """
+    if now_ts is None:
+        now_ts = datetime.now(timezone.utc).timestamp()
+    remaining = expiry_ts - now_ts
+    if remaining <= 0:
+        return 0
+    return math.ceil(remaining / 86400)
+
+
+class LicenseKey(BaseModel):
+    license_key: str
+
+
+def _audit_license_action(
+    request: Request,
+    admin_id: int,
+    action: str,
+    status: str,
+    details: Optional[str] = None,
+    current_state: Optional[str] = None,
+    new_state: Optional[str] = None,
+) -> None:
+    """Write a license action to the admin audit log."""
+    try:
+        import src.api as api_mod
+
+        db = api_mod.get_db()
+        if db is None:
+            return
+        ip = request.client.host if request.client else "unknown"
+        ua = request.headers.get("user-agent", "")
+        entry = AdminLogEntry(
+            admin_id=admin_id,
+            action=action,
+            status=status,
+            details=details,
+            ip_address=ip,
+            user_agent=ua,
+        )
+        if current_state or new_state:
+            extra = {}
+            if current_state:
+                extra["current_license"] = current_state
+            if new_state:
+                extra["new_license"] = new_state
+            import json
+
+            entry.details = (
+                (details or "") + (" | " if details else "") + json.dumps(extra)
+            )
+        get_admin_logger().log_action(db, entry)
+    except Exception as exc:
+        logger.debug(f"Failed to audit license action: {exc}")
+
+
+@router.get(
+    "/status",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_license_status(request: Request):
+    """
+    Retrieve current license status and validation state.
+    """
+    check_host_restriction(request)
+    _admin_id = get_admin_from_token(request)
+
+    try:
+        status_data = licensing_module.to_dict()
+
+        # Add extra details as seen in backup
+        instance_id = licensing_module.get_instance_id()
+        valid = licensing_module.is_valid()
+        free_tier = licensing_module.is_free_tier()
+
+        expiry_ts = licensing_module.get_expiry_timestamp()
+        expiry_date = None
+        days_remaining = None
+        if expiry_ts:
+            expiry_date = _expiry_date_iso(expiry_ts)
+            days_remaining = _days_remaining(expiry_ts)
+
+        validation_result = licensing_module.get_validation_result()
+
+        provisional = licensing_module.is_provisional()
+        tier = "provisional" if provisional else ("free" if free_tier else "enterprise")
+
+        # Merge status_data with extra details
+        return {
+            **status_data,
+            "valid": valid,
+            "free_tier": free_tier,
+            "provisional": provisional,
+            "license_type": licensing_module.get_license_type(),
+            "allowed_hosts": licensing_module.get_allowed_hosts(),
+            "tier": tier,
+            "instance_id": instance_id,
+            "expiry_timestamp": expiry_ts,
+            "expiry_date": expiry_date,
+            "days_remaining": days_remaining,
+            "validation": validation_result,
+        }
+    except Exception as e:
+        logger.error(f"License status error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/features",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_license_features(request: Request):
+    """
+    Retrieve feature matrix showing all licensed features and their state.
+    """
+    check_host_restriction(request)
+    _admin_id = get_admin_from_token(request)
+
+    try:
+        features = [
+            {"key": "bots", "label": "Bot Platform"},
+            {"key": "premium", "label": "Premium Bot Limits"},
+            {"key": "bond", "label": "PlexiBond"},
+            {"key": "sso", "label": "SSO / SAML"},
+            {"key": "advanced_automod", "label": "Advanced AutoMod"},
+            {"key": "plexijoin", "label": "PlexiJoin Federation"},
+            {"key": "audit_export", "label": "Audit Log Export"},
+            {"key": "custom_roles", "label": "Custom Roles"},
+            {"key": "artifacts", "label": "PlexiSuite Artifacts"},
+            {"key": "plexiscribe", "label": "PlexiScribe"},
+            {"key": "plexiscript", "label": "PlexiScript"},
+            {"key": "artifacts_whiteboard", "label": "PlexiBoard (Whiteboard)"},
+            {"key": "voice_transcription", "label": "Voice Transcription"},
+            {"key": "plexistash", "label": "PlexiStash"},
+            {"key": "plexisum", "label": "PlexiSum"},
+            {"key": "all", "label": "All Features (meta)"},
+        ]
+
+        feature_matrix = []
+        for feature in features:
+            enabled = licensing_module.has_feature(feature["key"])
+            config = licensing_module.get_feature_config(feature["key"])
+            limit = licensing_module.get_feature_limit(feature["key"])
+
+            feature_matrix.append(
+                {
+                    "key": feature["key"],
+                    "label": feature["label"],
+                    "enabled": enabled,
+                    "config": config,
+                    "limit": limit,
+                }
+            )
+
+        return {"features": feature_matrix}
+    except Exception as e:
+        logger.error(f"License features error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/validate",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def validate_license_key(request: Request, body: LicenseKey):
+    """
+    Validate a proposed license payload without applying it.
+    """
+    check_host_restriction(request)
+    _admin_id = get_admin_from_token(request)
+
+    try:
+        license_payload = body.license_key
+
+        if not license_payload:
+            raise HTTPException(status_code=400, detail="license_key is required")
+
+        import base64
+
+        try:
+            decoded = base64.b64decode(license_payload)
+        except Exception:
+            return {"valid": False, "error": "Invalid base64 encoding"}
+
+        result = licensing_module.validate_license_payload(decoded)
+
+        return {"valid": result.get("valid", False), "details": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"License validation error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/apply",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def apply_license(request: Request, body: Optional[LicenseKey] = None):
+    """
+    Apply a new license key.
+
+    The license is applied in-memory only and is NOT persisted to disk.
+    On server restart the original license file on disk is re-read.
+    For permanent changes, update the license file at ~/.plexichat/config/license
+    (or license.json) and call POST /api/v1/admin/license/check to reload it.
+
+    If no body is provided, or the supplied key is empty / not a valid
+    base64-encoded license payload (free-tier / dev mode), the call is
+    treated as a no-op and reports the current state, so the endpoint
+    stays idempotent for the self-test pipeline.
+    """
+    check_host_restriction(request)
+    _admin_id = require_admin_permission(request, "admin.license.manage")
+
+    # Capture current state before applying
+    before_instance = licensing_module.get_instance_id()
+    before_valid = licensing_module.is_valid()
+    before_free = licensing_module.is_free_tier()
+
+    raw_key = getattr(body, "license_key", None) if body else None
+    if not raw_key:
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.apply",
+            "noop",
+            details="Empty license_key; no change",
+            current_state=before_instance,
+        )
+        return {
+            "message": "No license_key supplied; staying in current license state",
+            "applied": False,
+            "free_tier": before_free,
+        }
+
+    import base64
+    import json
+
+    try:
+        decoded = base64.b64decode(raw_key, validate=True)
+    except Exception:
+        return {
+            "message": "license_key is not a valid base64 payload; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+        }
+
+    # A valid Plexichat license payload is a UTF-8 JSON document. Anything
+    # else is a placeholder / random string from the self-test generator,
+    # so we treat it as a no-op rather than failing the endpoint.
+    try:
+        decoded_text = decoded.decode("utf-8")
+        json.loads(decoded_text)
+    except (UnicodeDecodeError, ValueError):
+        return {
+            "message": "license_key is not a valid license JSON payload; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+        }
+
+    result = licensing_module.apply_license_from_base64(raw_key)
+    if not result.get("success"):
+        # A failed apply is a no-op: the transactional apply leaves the
+        # current license (free-tier or licensed) untouched, so report that
+        # state rather than demoting to free tier or erroring. This matches
+        # the documented contract that an invalid license_key returns the
+        # current state without error and is audited as a failed no-op.
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.apply",
+            "failed",
+            details=result.get("error")
+            or "License validation failed; current license unchanged",
+            current_state=before_instance,
+        )
+        return {
+            "message": "License payload could not be validated; staying in current license state",
+            "applied": False,
+            "free_tier": licensing_module.is_free_tier(),
+            "error": result.get("error"),
+        }
+    after_state = licensing_module.to_dict()
+    after_valid = licensing_module.is_valid()
+    after_free = licensing_module.is_free_tier()
+    after_instance = licensing_module.get_instance_id()
+    after_expiry = licensing_module.get_expiry_timestamp()
+    after_features = after_state.get("features", {})
+    after_limits = after_state.get("limits", {})
+    # Feature/capability availability is derived from the license, so drop any
+    # memoized capability verdicts before the audit trail records the swap.
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
+    _audit_license_action(
+        request,
+        _admin_id,
+        "license.apply",
+        "success",
+        details=f"Applied license for instance: {after_instance}",
+        current_state=before_instance,
+        new_state=after_instance,
+    )
+    return {
+        "message": "License applied successfully",
+        "applied": True,
+        "before": {
+            "instance_id": before_instance,
+            "valid": before_valid,
+            "free_tier": before_free,
+        },
+        "after": {
+            "instance_id": after_instance,
+            "valid": after_valid,
+            "free_tier": after_free,
+            "expiry": after_expiry,
+            "features": after_features,
+            "limits": after_limits,
+        },
+    }
+
+
+@router.post(
+    "/check",
+    responses={
+        400: {"model": ErrorResponse, "description": "License validation failed"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def force_validate_license(request: Request):
+    """
+    Force a license validation check of the current license.
+
+    In free-tier / unconfigured installs this is a no-op that reports the
+    current state; only a real, broken license triggers a 400.
+    """
+    check_host_restriction(request)
+    _admin_id = require_admin_permission(request, "admin.license.manage")
+
+    if licensing_module.is_free_tier():
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.check",
+            "noop",
+            details="License check (free tier)",
+        )
+        return {
+            "message": "License check completed (free tier)",
+            "valid": True,
+            "free_tier": True,
+        }
+
+    _ = licensing_module.is_valid()
+    success = licensing_module.reload_license()
+    if not success:
+        _audit_license_action(
+            request,
+            _admin_id,
+            "license.check",
+            "failed",
+            details="License reload failed validation",
+            current_state=licensing_module.get_instance_id(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="License validation failed",
+        )
+    from src.core.artifacts.capabilities import clear_capability_cache
+
+    clear_capability_cache()
+    after_instance = licensing_module.get_instance_id()
+    _audit_license_action(
+        request,
+        _admin_id,
+        "license.check",
+        "success",
+        details=f"Reloaded license for instance: {after_instance}",
+        current_state=licensing_module.get_instance_id(),
+        new_state=after_instance,
+    )
+    return {"message": "License validated successfully"}

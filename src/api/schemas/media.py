@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 
+from src.api.schemas.common import SnowflakeID
+
 
 class HashReportRequest(BaseModel):
     """Report a file hash for content moderation."""
@@ -22,8 +24,10 @@ class HashReportRequest(BaseModel):
     phash_value: Optional[str] = Field(
         None, max_length=64, description="Perceptual hash (for images)"
     )
-    uploader_id: Optional[int] = Field(None, description="User ID of the uploader")
-    message_id: Optional[int] = Field(
+    uploader_id: Optional[SnowflakeID] = Field(
+        None, description="User ID of the uploader"
+    )
+    message_id: Optional[SnowflakeID] = Field(
         None, description="Message ID containing the attachment"
     )
     attachment_url: Optional[str] = Field(
@@ -99,6 +103,15 @@ class CompressionStatusResponse(BaseModel):
     )
     video_compression: bool = Field(
         ..., description="Whether video compression is enabled"
+    )
+    pillow_available: bool = Field(
+        False, description="Whether the optional Pillow dependency is installed"
+    )
+    ffmpeg_available: bool = Field(
+        False, description="Whether the optional ffmpeg dependency is installed"
+    )
+    ffprobe_available: bool = Field(
+        False, description="Whether the optional ffprobe dependency is installed"
     )
 
 

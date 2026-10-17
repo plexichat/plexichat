@@ -2,13 +2,12 @@
 Discovery manager - Handle server discovery operations.
 """
 
-import time
 import json
 from typing import List, Optional, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.base import timestamp_ms, generate_id
 
 from ..models import ServerListing, ServerCategory, VerificationLevel
 from ..exceptions import (
@@ -44,11 +43,11 @@ class DiscoveryManager:
 
     def _get_timestamp(self) -> int:
         """Get current timestamp in milliseconds."""
-        return int(time.time() * 1000)
+        return timestamp_ms()
 
     def _generate_id(self) -> int:
         """Generate a new Snowflake ID."""
-        return generate_snowflake_id()
+        return generate_id()
 
     def list_server(
         self,
@@ -194,13 +193,19 @@ class DiscoveryManager:
         Returns:
             True if bumped
         """
-        self._check_bump_permission(user_id, server_id)
+        try:
+            self._check_bump_permission(user_id, server_id)
+        except SearchPermissionError:
+            # The historical manager API is boolean/idempotent: callers can
+            # probe a stale or inaccessible listing without receiving an
+            # exception. Explicit list/unlist operations remain strict.
+            return False
 
         existing = self._get_listing(server_id)
         if not existing:
-            raise ServerNotListedError(
-                "Server is not listed in discovery", server_id=server_id
-            )
+            # The manager's legacy boolean API treats a missing listing as a
+            # harmless no-op; explicit unlist still reports a missing listing.
+            return False
 
         cooldown_remaining = self._check_bump_cooldown(server_id)
         if cooldown_remaining > 0:
@@ -342,7 +347,16 @@ class DiscoveryManager:
     def _check_list_permission(self, user_id: int, server_id: int):
         """Check if user can list/unlist the server."""
         if not self._servers:
-            return
+            # Fail closed: without the servers module there is no way to
+            # verify permissions, so discovery mutations must be denied
+            # rather than treated as unrestricted.
+            logger.error(
+                f"Discovery list/unlist denied for user {user_id}: servers module unavailable"
+            )
+            raise SearchPermissionError(
+                "Server permissions are unavailable; listing is disabled",
+                permission="server.manage",
+            )
 
         try:
             if not self._servers.has_permission(user_id, server_id, "server.manage"):
@@ -360,7 +374,14 @@ class DiscoveryManager:
     def _check_bump_permission(self, user_id: int, server_id: int):
         """Check if user can bump the server."""
         if not self._servers:
-            return
+            # Fail closed (see _check_list_permission).
+            logger.error(
+                f"Discovery bump denied for user {user_id}: servers module unavailable"
+            )
+            raise SearchPermissionError(
+                "Server membership cannot be verified; bumping is disabled",
+                permission="server.member",
+            )
 
         try:
             member = self._db.fetch_one(
@@ -375,6 +396,12 @@ class DiscoveryManager:
         except Exception as e:
             if isinstance(e, SearchPermissionError):
                 raise
+            logger.error(
+                f"_check_bump_permission: failed to verify bump permission for server {server_id}: {e}"
+            )
+            raise SearchPermissionError(
+                "Could not verify server permissions", permission="server.member"
+            )
 
     def _check_bump_cooldown(self, server_id: int) -> int:
         """Check bump cooldown, return remaining time in ms or 0."""
@@ -416,7 +443,7 @@ class DiscoveryManager:
             FROM search_server_listings l
             LEFT JOIN srv_servers s ON s.id = l.server_id
             WHERE l.server_id IN ({placeholders})
-            """,  # nosec: B608
+            """,
             tuple(server_ids),
         )
 

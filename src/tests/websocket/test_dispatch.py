@@ -1,12 +1,15 @@
 """Tests for gateway event dispatching."""
 
+import json
+
 import pytest
 from unittest.mock import AsyncMock
 
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection, ConnectionState
 from src.core import events
-from src.core.events.types import GatewayIntent
+from src.core.events.models import Event
+from src.core.events.types import EventType, GatewayIntent
 
 
 class TestGatewayDispatcher:
@@ -15,6 +18,8 @@ class TestGatewayDispatcher:
     def test_dispatcher_initialization(self, dispatcher):
         """Test dispatcher initializes correctly."""
         assert dispatcher is not None
+        assert hasattr(dispatcher, "on_event")
+        assert hasattr(dispatcher, "set_event_loop")
 
     @pytest.mark.asyncio
     async def test_send_hello(self, dispatcher, connection):
@@ -219,7 +224,153 @@ class TestDispatchRaw:
         events_list = session_manager.get_replay_events(
             authenticated_connection.session_id, 0
         )
-        assert len(events_list) >= 1
+        # Exactly one event was dispatched
+        assert len(events_list) == 1
+        assert events_list[0]["t"] == "TEST_EVENT"
+        assert events_list[0]["d"] == {"test": "data"}
+
+
+class TestSnowflakeSerialization:
+    """Snowflake ids must be strings on the wire even for hand-built events.
+
+    The dispatcher applies the shared serializer at the wire boundary as a
+    backstop, so an ``Event`` constructed directly (bypassing the emitters)
+    cannot leak a numeric id that a JS client would round.
+    """
+
+    def test_build_dispatch_payload_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        event = Event(
+            event_type=EventType.READY,
+            data={
+                "id": 1234567890123456789,
+                "user_id": 1234567890123456789,
+                "channel_id": 2,
+                "message_ids": [3, 4],
+                "count": 5,
+            },
+        )
+
+        payload = dispatcher._build_dispatch_payload(authenticated_connection, event)
+
+        # The payload must survive a real JSON round-trip with string ids.
+        wire = json.loads(json.dumps(payload))
+        data = wire["d"]
+        assert data["id"] == "1234567890123456789"
+        assert data["user_id"] == "1234567890123456789"
+        assert data["channel_id"] == "2"
+        assert data["message_ids"] == ["3", "4"]
+        # Non-id numbers are untouched.
+        assert data["count"] == 5
+
+    def test_dispatch_records_stringified_payload(
+        self, dispatcher, session_manager, authenticated_connection
+    ):
+        """The replay buffer must hold the same string ids the client saw."""
+        event = Event(
+            event_type=EventType.READY,
+            data={"user_id": 1234567890123456789},
+        )
+        dispatcher._build_dispatch_payload(authenticated_connection, event)
+
+        recorded = session_manager.get_replay_events(
+            authenticated_connection.session_id, 0
+        )
+        assert recorded[-1]["d"]["user_id"] == "1234567890123456789"
+
+    def test_tuple_containers_are_stringified(self):
+        """Tuples serialize as JSON arrays, so ids inside them must convert."""
+        from src.core.events.snowflakes import stringify_snowflake_ids
+
+        out = stringify_snowflake_ids({"members": ({"user_id": 1234567890123456789},)})
+        assert out == {"members": [{"user_id": "1234567890123456789"}]}
+
+    @pytest.mark.asyncio
+    async def test_dispatch_raw_dispatch_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        """A hand-built dispatch_raw frame must not leak numeric snowflakes."""
+        import json
+
+        result = await dispatcher.dispatch_raw(
+            authenticated_connection,
+            GatewayOpcode.DISPATCH,
+            {"user_id": 1234567890123456789, "count": 5},
+            event_type="TEST_EVENT",
+        )
+
+        assert result is True
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        wire = json.loads(json.dumps(call_args))
+        assert wire["d"]["user_id"] == "1234567890123456789"
+        assert wire["d"]["count"] == 5
+
+    @pytest.mark.asyncio
+    async def test_dispatch_raw_non_dispatch_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        """Non-DISPATCH frames (voice opcodes) get the same backstop."""
+        result = await dispatcher.dispatch_raw(
+            authenticated_connection,
+            GatewayOpcode.VOICE_SPEAKING,
+            {"user_id": 1234567890123456789, "speaking": True},
+        )
+
+        assert result is True
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        assert call_args["d"]["user_id"] == "1234567890123456789"
+        assert call_args["d"]["speaking"] is True
+
+    @pytest.mark.asyncio
+    async def test_dispatch_raw_preserves_scalar_data(
+        self, dispatcher, authenticated_connection
+    ):
+        """Scalar payloads (e.g. INVALID_SESSION bool) pass through."""
+        result = await dispatcher.dispatch_raw(
+            authenticated_connection,
+            GatewayOpcode.INVALID_SESSION,
+            True,
+        )
+
+        assert result is True
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        assert call_args["d"] is True
+
+
+class TestBroadcastServerStatus:
+    """SERVER_STATUS frames get the same snowflake backstop as every other path.
+
+    Regression guard: ``broadcast_server_status`` built its payload from the
+    caller-supplied dict verbatim while ``_build_dispatch_payload``,
+    ``dispatch_raw`` and ``broadcast_ratchet_update`` all stringify id-shaped
+    keys. Any future id key (e.g. ``server_id``) would have crossed the wire
+    as a JSON number that JS clients round.
+    """
+
+    @pytest.mark.asyncio
+    async def test_broadcast_server_status_stringifies_ids(
+        self, dispatcher, authenticated_connection
+    ):
+        """Id-shaped keys are strings; non-id numerics pass through."""
+        import json
+
+        count = await dispatcher.broadcast_server_status(
+            {
+                "state": "maintenance",
+                "message": "restarting",
+                "server_id": 1234567890123456789,
+                "estimated_downtime_seconds": 10,
+            },
+            connections=[authenticated_connection],
+        )
+
+        assert count == 1
+        call_args = authenticated_connection.websocket.send_json.call_args[0][0]
+        wire = json.loads(json.dumps(call_args))
+        assert wire["d"]["server_id"] == "1234567890123456789"
+        assert wire["d"]["state"] == "maintenance"
+        assert wire["d"]["estimated_downtime_seconds"] == 10
 
 
 class TestEventCallback:
@@ -270,3 +421,105 @@ class TestReplayEvents:
         """Test replay events with no session."""
         count = await dispatcher.replay_events(connection, 0)
         assert count == 0
+
+
+class TestBroadcastToServerScoping:
+    """`broadcast_to_server` must reach server members only, and fail closed.
+
+    Regression guard: the method used to iterate EVERY connected
+    authenticated connection, so a server-scoped event leaked to non-members.
+    """
+
+    @staticmethod
+    def _connect(session_manager, user_id):
+        websocket = AsyncMock()
+        conn = Connection(
+            websocket=websocket,
+            connection_id=session_manager.generate_connection_id(),
+            heartbeat_interval_ms=45000,
+        )
+        session_manager.add_connection(conn)
+        session_manager.create_session(
+            conn, user_id=user_id, intents=GatewayIntent.all_intents()
+        )
+        return conn, websocket
+
+    @pytest.mark.asyncio
+    async def test_only_members_receive_the_event(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """A non-member connection must not receive a server-scoped event."""
+        import src.api.websocket as ws_pkg
+
+        member_conn, member_ws = self._connect(session_manager, 111)
+        non_member_conn, non_member_ws = self._connect(session_manager, 222)
+
+        servers = AsyncMock()
+        servers.get_member_user_ids = lambda server_id: [111]
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: servers)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event)
+
+        assert count == 1
+        member_ws.send_json.assert_called()
+        non_member_ws.send_json.assert_not_called()
+        assert non_member_conn.user_id == 222
+
+    @pytest.mark.asyncio
+    async def test_unwired_servers_module_fails_closed(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """An unwired servers module must broadcast to nobody, not everybody."""
+        import src.api.websocket as ws_pkg
+
+        _, ws = self._connect(session_manager, 111)
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: None)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event)
+
+        assert count == 0
+        ws.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_membership_lookup_failure_fails_closed(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """A failing membership lookup must not over-broadcast."""
+        import src.api.websocket as ws_pkg
+
+        _, ws = self._connect(session_manager, 111)
+
+        def _boom(server_id):
+            raise RuntimeError("db down")
+
+        servers = AsyncMock()
+        servers.get_member_user_ids = _boom
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: servers)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event)
+
+        assert count == 0
+        ws.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_excluded_members_are_skipped(
+        self, dispatcher, session_manager, monkeypatch
+    ):
+        """`exclude_user_ids` still applies within the member set."""
+        import src.api.websocket as ws_pkg
+
+        _, ws = self._connect(session_manager, 111)
+
+        servers = AsyncMock()
+        servers.get_member_user_ids = lambda server_id: [111, 333]
+        monkeypatch.setattr(ws_pkg, "get_servers_module", lambda: servers)
+
+        event = events.create_guild_member_add(server_id=7, user_id=999)
+        count = await dispatcher.broadcast_to_server(7, event, exclude_user_ids=[111])
+
+        # 333 is a member but has no live connection; 111 is excluded.
+        assert count == 0
+        ws.send_json.assert_not_called()

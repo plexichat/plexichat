@@ -3,15 +3,16 @@ Tests for webhook permission checks.
 """
 
 import pytest
+
 import uuid
 
 
 class TestWebhookPermissions:
     """Tests for webhook permission enforcement."""
 
-    def test_owner_can_create_webhook(self, base_server_setup):
+    def test_owner_can_create_webhook(self, fresh_server):
         """Test that server owner can create webhooks."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -21,10 +22,11 @@ class TestWebhookPermissions:
         )
 
         assert webhook is not None
+        assert webhook.name.startswith("Owner Webhook")
 
-    def test_non_member_cannot_create_webhook(self, base_server_setup):
+    def test_non_member_cannot_create_webhook(self, fresh_server):
         """Test that non-member cannot create webhooks."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import PermissionDeniedError
 
         with pytest.raises(PermissionDeniedError) as exc_info:
@@ -100,6 +102,7 @@ class TestWebhookPermissions:
         )
 
         assert result is not None
+        assert result.content == "Executed by anyone with token"
 
     def test_execute_does_not_require_server_membership(self, webhook_with_token):
         """Test that webhook execution doesn't check server membership."""
@@ -113,6 +116,7 @@ class TestWebhookPermissions:
         )
 
         assert result is not None
+        assert result.content == "External execution"
 
     def test_invalid_token_cannot_execute(self, webhook_with_token):
         """Test that invalid token cannot execute webhook."""
@@ -149,14 +153,15 @@ class TestWebhookAccessDenied:
         )
 
         assert webhook is not None
+        assert webhook.id == setup["webhook"].id
 
 
 class TestPermissionErrorDetails:
     """Tests for permission error details."""
 
-    def test_permission_error_has_permission_name(self, base_server_setup):
+    def test_permission_error_has_permission_name(self, fresh_server):
         """Test that permission error includes permission name."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import PermissionDeniedError
 
         with pytest.raises(PermissionDeniedError) as exc_info:
@@ -168,9 +173,9 @@ class TestPermissionErrorDetails:
 
         assert exc_info.value.permission == "webhooks.manage"
 
-    def test_permission_error_message(self, base_server_setup):
+    def test_permission_error_message(self, fresh_server):
         """Test that permission error has descriptive message."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import PermissionDeniedError
 
         with pytest.raises(PermissionDeniedError) as exc_info:

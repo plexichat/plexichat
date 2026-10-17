@@ -29,6 +29,13 @@ from .models import (
     VoiceStateEvent,
     ReactionEvent,
 )
+from .message_events import (
+    apply_server_scope,
+    build_message_create,
+    build_message_update,
+    build_message_delete,
+    build_flat_message_create,
+)
 from .payloads import (
     create_ready_event,
     create_message_create,
@@ -46,6 +53,7 @@ from .payloads import (
     create_guild_member_remove,
     create_guild_member_update,
     create_guild_members_chunk,
+    create_gateway_error,
     create_voice_state_update,
     create_reaction_add,
     create_reaction_remove,
@@ -59,6 +67,7 @@ __all__ = [
     "get_required_intent",
     "filter_by_intents",
     "is_setup",
+    "set_worker_id",
     "EventType",
     "GatewayIntent",
     "Event",
@@ -71,6 +80,11 @@ __all__ = [
     "GuildMemberEvent",
     "VoiceStateEvent",
     "ReactionEvent",
+    "apply_server_scope",
+    "build_message_create",
+    "build_message_update",
+    "build_message_delete",
+    "build_flat_message_create",
     "create_ready_event",
     "create_message_create",
     "create_message_update",
@@ -87,6 +101,7 @@ __all__ = [
     "create_guild_member_remove",
     "create_guild_member_update",
     "create_guild_members_chunk",
+    "create_gateway_error",
     "create_voice_state_update",
     "create_reaction_add",
     "create_reaction_remove",
@@ -94,6 +109,20 @@ __all__ = [
 
 _manager = None
 _setup_complete = False
+
+
+def __getattr__(name: str):
+    """PEP 562 module attribute fallback.
+
+    ``event_manager`` is a public alias consumed by observability routes
+    (e.g. ``src/api/routes/health.py`` reads
+    ``events_module.event_manager.get_loss_metrics()``). Before ``setup()``
+    the manager is ``None`` so callers can distinguish "not initialized" from
+    a live-but-empty manager.
+    """
+    if name == "event_manager":
+        return _manager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def setup(
@@ -157,14 +186,30 @@ def dispatch(
     )
 
 
-def subscribe(callback: Callable[[Event, List[int]], None]) -> None:
+def subscribe(
+    callback: Callable[[Event, List[int]], None],
+    *,
+    critical: bool = False,
+) -> None:
     """
     Subscribe to event dispatches.
 
     Args:
-        callback: Function called with (event, user_ids) when events dispatch
+        callback: Function called with (event, user_ids) when events dispatch.
+        critical: When True, register on the NON-LOSSY delivery lane:
+            critical callbacks are invoked SYNCHRONOUSLY by the
+            dispatcher, BEFORE the regular asynchronous queue, so a
+            saturated QueueFull path cannot drop their events. Use
+            this for any subscriber whose intent is real-time,
+            user-facing delivery (e.g. the WebSocket gateway). The
+            contract is documented on :meth:`EventManager.subscribe`
+            -- critical callbacks MUST be fast and non-blocking
+            because their invocation is in-line on the dispatching
+            thread; re-entering ``events.dispatch()`` synchronously
+            from inside a critical callback will deadlock the
+            threading lock.
     """
-    _get_manager().subscribe(callback)
+    _get_manager().subscribe(callback, critical=critical)
 
 
 def unsubscribe(callback: Callable[[Event, List[int]], None]) -> None:
@@ -211,3 +256,32 @@ def filter_by_intents(event: Event, intents: int) -> bool:
 def is_setup() -> bool:
     """Check if the events module is initialized."""
     return _setup_complete
+
+
+def set_worker_id(worker_id: str) -> None:
+    """Tag cross-worker events with this worker's identity.
+
+    Must be called after :func:`setup`.  Events published via
+    :func:`dispatch` will include this identity so sibling workers
+    can skip their own echoes.
+    """
+    _get_manager().set_worker_id(worker_id)
+
+
+async def start_consumer() -> None:
+    """Start the dispatch-queue consumer on the current event loop.
+
+    Call from the application lifespan so events queued by
+    :func:`dispatch` are actually fanned out to regular subscribers.
+    Idempotent; raises if the module is not set up.
+    """
+    await _get_manager().start_consumer()
+
+
+async def stop_consumer() -> None:
+    """Stop the dispatch-queue consumer and drain the queue.
+
+    Call during lifespan shutdown so queued events are delivered
+    before the event loop closes. Safe when no consumer is running.
+    """
+    await _get_manager().stop_consumer()

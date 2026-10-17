@@ -22,6 +22,7 @@ from .models import (
     SDPType,
     SDPMessage,
     ICECandidate,
+    ICEServer,
     TURNCredentials,
     VoiceServerInfo,
     ConnectionQuality,
@@ -78,10 +79,12 @@ __all__ = [
     "setup",
     # Core functions
     "get_voice_server_info",
+    "get_ice_servers",
     "create_voice_connection",
     "handle_sdp_offer",
     "handle_sdp_offer_async",
     "handle_ice_candidate",
+    "handle_ice_candidate_async",
     "disconnect_voice",
     "disconnect_voice_async",
     "get_turn_credentials",
@@ -90,10 +93,34 @@ __all__ = [
     "get_connection_quality",
     "update_quality_hint",
     "get_active_connections",
+    "validate_media_token",
+    "revoke_media_token",
+    "record_activity",
+    "sweep_stale_connections",
+    "set_offer_sender",
 ]
 
 _manager = None
 _setup_complete = False
+
+# Delivery hook for a server-initiated SDP offer. Core must not import the API
+# layer, so the websocket layer registers the callable that pushes the offer to
+# the user; see ``SignalingManager.on_renegotiation_needed``.
+_offer_sender: Optional[Any] = None
+
+
+def set_offer_sender(sender: Optional[Any]) -> None:
+    """Register the callable that delivers an SFU-initiated SDP offer.
+
+    ``sender`` is called ``(user_id, channel_id, offer_sdp)`` and may be async.
+    """
+    global _offer_sender
+    _offer_sender = sender
+
+
+def _get_offer_sender() -> Optional[Any]:
+    """The registered offer deliverer, or ``None`` when unconfigured."""
+    return _offer_sender
 
 
 def setup(
@@ -109,6 +136,7 @@ def setup(
     turn_ttl: int = 86400,
     turn_username: str = "",
     turn_credential: str = "",
+    acoustic_defense_config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Initialize the signaling module.
@@ -130,6 +158,7 @@ def setup(
         turn_ttl: TURN credential TTL in seconds
         turn_username: Static TURN username (for services like metered.ca)
         turn_credential: Static TURN credential/password
+        acoustic_defense_config: Optional acoustic eavesdropping defense configuration
     """
     global _manager, _setup_complete
 
@@ -148,6 +177,7 @@ def setup(
         turn_ttl=turn_ttl,
         turn_username=turn_username,
         turn_credential=turn_credential,
+        acoustic_defense_config=acoustic_defense_config,
     )
     _setup_complete = True
 
@@ -164,6 +194,11 @@ def _get_manager():
 def get_voice_server_info(user_id: int, channel_id: int) -> VoiceServerInfo:
     """Get voice server connection info including TURN credentials."""
     return _get_manager().get_voice_server_info(user_id, channel_id)
+
+
+def get_ice_servers(user_id: int) -> List[ICEServer]:
+    """Get the configured ICE server list for a user (no session minted)."""
+    return _get_manager().get_ice_servers(user_id)
 
 
 def create_voice_connection(user_id: int, channel_id: int) -> VoiceServerInfo:
@@ -200,8 +235,21 @@ def handle_ice_candidate(
     sdp_mid: Optional[str] = None,
     sdp_mline_index: Optional[int] = None,
 ) -> bool:
-    """Handle an ICE candidate from a client."""
+    """Handle an ICE candidate from a client (sync version)."""
     return _get_manager().handle_ice_candidate(
+        user_id, channel_id, candidate, sdp_mid, sdp_mline_index
+    )
+
+
+async def handle_ice_candidate_async(
+    user_id: int,
+    channel_id: int,
+    candidate: str,
+    sdp_mid: Optional[str] = None,
+    sdp_mline_index: Optional[int] = None,
+) -> bool:
+    """Handle an ICE candidate and deliver it to the media plane."""
+    return await _get_manager().handle_ice_candidate_async(
         user_id, channel_id, candidate, sdp_mid, sdp_mline_index
     )
 
@@ -218,7 +266,7 @@ async def disconnect_voice_async(
     return await _get_manager().disconnect_voice_async(user_id, channel_id)
 
 
-def get_turn_credentials(user_id: int) -> TURNCredentials:
+def get_turn_credentials(user_id: int) -> Optional[TURNCredentials]:
     """Get TURN server credentials for a user."""
     return _get_manager().get_turn_credentials(user_id)
 
@@ -243,13 +291,87 @@ def update_quality_hint(
     channel_id: int,
     target_bitrate: Optional[int] = None,
     quality_level: Optional[str] = None,
+    **metrics: Any,
 ) -> bool:
-    """Update quality hints for a connection."""
-    return _get_manager().update_quality_hint(
-        user_id, channel_id, target_bitrate, quality_level
-    )
+    """Update quality hints / metrics for a connection.
+
+    Args:
+        user_id: User ID (mapped to peer_id internally)
+        channel_id: Voice channel ID
+        target_bitrate: Target bitrate in bps (legacy)
+        quality_level: Quality level name (legacy)
+        **metrics: Additional metrics (bitrate, packet_loss, jitter,
+                   round_trip_time, score)
+    """
+    m = _get_manager()
+    kwargs: Dict[str, Any] = {}
+    if target_bitrate is not None:
+        kwargs["target_bitrate"] = target_bitrate
+    if quality_level is not None:
+        kwargs["quality_level"] = quality_level
+    kwargs.update(metrics)
+    return m.update_quality_hint(channel_id, user_id, **kwargs)
+
+
+def get_quality_stats(channel_id: int) -> list:
+    """Get per-peer quality stats for a channel."""
+    return _get_manager().get_quality_stats(channel_id)
 
 
 def get_active_connections(channel_id: int) -> List[Dict[str, Any]]:
     """Get all active connections in a channel."""
     return _get_manager().get_active_connections(channel_id)
+
+
+def validate_media_token(
+    token: Optional[str],
+    user_id: Optional[int] = None,
+    channel_id: Optional[int] = None,
+) -> bool:
+    """Verify a media-plane bearer token (Agent 34 C4).
+
+    Media-plane entry points that are NOT already gateway-authenticated
+    (e.g. the mediasoup_ws endpoint URL handed to clients) must verify the
+    token issued with VoiceServerInfo before admitting the caller.
+    """
+    return _get_manager().validate_media_token(token, user_id, channel_id)
+
+
+def revoke_media_token(token: Optional[str]) -> bool:
+    """Revoke a previously issued media-plane bearer token."""
+    return _get_manager().revoke_media_token(token)
+
+
+def record_activity(user_id: int) -> bool:
+    """Refresh last_activity for a user's signaling connection.
+
+    Called on SFU stats/keepalive traffic so quiet-but-active calls are
+    not falsely swept as stale.
+    """
+    return _get_manager().record_activity(user_id)
+
+
+async def sweep_stale_connections(max_idle_ms: int = 30 * 60 * 1000) -> List[int]:
+    """Disconnect signaling connections idle beyond ``max_idle_ms``.
+
+    Agent 34 H2: performs full teardown (SFU leave + local cleanup + token
+    revoke) for orphaned voice sessions; call periodically from a
+    maintenance task or heartbeat loop.
+    """
+    return await _get_manager().sweep_stale_connections(max_idle_ms)
+
+
+async def close() -> None:
+    """Release resources held by the signaling module.
+
+    Closes the SignalingManager (and any SFU adapter HTTP sessions) so
+    that garbage collection does not trigger ResourceWarning.
+    """
+    global _manager, _setup_complete
+    if _manager is not None:
+        try:
+            await _manager.close()
+        except Exception:
+            pass
+        _manager = None
+    _setup_complete = False

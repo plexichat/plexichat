@@ -4,6 +4,8 @@ Embed database schema - Table definitions for embeds module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Embeds table
@@ -94,7 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_embed_preview_rate_user ON embed_preview_rate_lim
 
 def create_tables(db):
     """Create all embed tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

@@ -1,66 +1,56 @@
-# Webhooks Module
+# Webhooks module
 
-Webhook system for Plexichat API supporting automated message posting to channels.
+The webhooks module provides an API for creating, managing, and executing webhooks that post automated messages to channels.
 
 ## Features
 
-- Webhook creation with secure token generation
-- Webhook management (get, update, delete, regenerate token)
-- Webhook execution to send messages
-- Username and avatar override per message
-- Rich embed support (up to 10 embeds per message)
-- Thread posting support
-- Permission-based access control
-- Token stored as hash for security
+- Create webhooks with secure token generation
+- Manage webhooks (get, update, delete, regenerate token)
+- Execute webhooks to send messages with username and avatar overrides
+- Support rich embeds (up to 10 per message) and thread posting
+- Enforce permission-based access control
+- Store tokens as SHA-256 hashes
 
 ## Setup
 
+Initialize the webhooks module after its dependencies are ready:
+
 ```python
 from src.core.database import Database
-from src.core import auth
-from src.core import messaging
-from src.core import servers
-from src.core import embeds
-from src.core import webhooks
+from src.core import auth, messaging, servers, embeds, webhooks
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize dependencies
 auth.setup(db)
 messaging.setup(db, auth)
 servers.setup(db, auth, messaging)
 embeds.setup(db, messaging, servers)
 
-# Initialize webhooks
 webhooks.setup(db, auth, messaging, servers, embeds)
 ```
 
-## Usage
-
-### Create Webhook
+## Create a webhook
 
 ```python
 from src.core import webhooks
 
-# Create a webhook for a channel
 webhook = webhooks.create_webhook(
     user_id=1,
     channel_id=123,
     name="My Webhook",
-    avatar_url="https://example.com/avatar.png"  # Optional
+    avatar_url="https://example.com/avatar.png",  # optional
 )
 
-# Save the token - only shown on create!
+# The token is only shown at creation time.
 print(f"Token: {webhook.token}")
 print(f"URL: {webhook.url}")
 ```
 
-### Get Webhooks
+## Retrieve webhooks
 
 ```python
-# Get single webhook
+# Get a single webhook
 webhook = webhooks.get_webhook(webhook_id=456, user_id=1)
 
 # Get all webhooks for a channel
@@ -70,63 +60,64 @@ channel_webhooks = webhooks.get_channel_webhooks(user_id=1, channel_id=123)
 server_webhooks = webhooks.get_server_webhooks(user_id=1, server_id=789)
 ```
 
-### Update Webhook
+## Update a webhook
 
 ```python
-# Update webhook name and avatar
+# Update name and avatar
 webhook = webhooks.update_webhook(
     user_id=1,
     webhook_id=456,
     name="New Name",
-    avatar_url="https://example.com/new-avatar.png"
+    avatar_url="https://example.com/new-avatar.png",
 )
 
-# Move webhook to different channel
+# Move to a different channel
 webhook = webhooks.update_webhook(
     user_id=1,
     webhook_id=456,
-    channel_id=new_channel_id
+    channel_id=new_channel_id,
 )
 
-# Clear avatar
+# Clear the avatar
 webhook = webhooks.update_webhook(
     user_id=1,
     webhook_id=456,
-    avatar_url=""
+    avatar_url="",
 )
 ```
 
-### Delete Webhook
+## Delete a webhook
 
 ```python
 webhooks.delete_webhook(user_id=1, webhook_id=456)
 ```
 
-### Regenerate Token
+## Regenerate a token
+
+Regenerating a token invalidates the previous one:
 
 ```python
-# Get new token (invalidates old one)
 webhook = webhooks.regenerate_token(user_id=1, webhook_id=456)
 print(f"New token: {webhook.token}")
 ```
 
-### Execute Webhook
+## Execute a webhook
 
 ```python
-# Send simple message
+# Send a simple message
 webhooks.execute_webhook(
     webhook_id=456,
     token="webhook.456.abc123...",
-    content="Hello from webhook!"
+    content="Hello from webhook!",
 )
 
-# Send with username/avatar override
+# Override the username and avatar
 webhooks.execute_webhook(
     webhook_id=456,
-    token="abc123...",  # Can use just the secret part
+    token="abc123...",  # the secret part of the token also works
     content="Custom message",
     username="Custom Bot",
-    avatar_url="https://example.com/custom.png"
+    avatar_url="https://example.com/custom.png",
 )
 
 # Send with embeds
@@ -136,24 +127,24 @@ webhooks.execute_webhook(
     embeds=[{
         "title": "Embed Title",
         "description": "Embed description",
-        "color": "#FF0000"
-    }]
+        "color": "#FF0000",
+    }],
 )
 
-# Send to thread
+# Post to a thread
 webhooks.execute_webhook(
     webhook_id=456,
     token="abc123...",
     content="Thread message",
-    thread_id=thread_id
+    thread_id=thread_id,
 )
 
-# Get message object back
+# Wait for the message to be created and return it
 message = webhooks.execute_webhook(
     webhook_id=456,
     token="abc123...",
     content="Hello!",
-    wait=True
+    wait=True,
 )
 print(f"Message ID: {message.id}")
 ```
@@ -161,31 +152,20 @@ print(f"Message ID: {message.id}")
 ### Execute by URL
 
 ```python
-# Use webhook URL directly
 message = webhooks.execute_webhook_by_url(
     webhook_url="/webhooks/456/abc123...",
     content="Hello via URL!",
-    wait=True
+    wait=True,
 )
 ```
 
-## Token Format
+## Token format
 
-Webhook tokens follow the format:
-```
-webhook.{webhook_id}.{random_secret}
-```
+Tokens follow the format `webhook.{webhook_id}.{random_secret}`.
 
-Example:
-```
-webhook.7891234567890123456.a8Kj2mNpQrStUvWxYz...
-```
+The token is returned only when you create a new webhook or regenerate an existing one.
 
-The token is only returned when:
-- Creating a new webhook
-- Regenerating the token
-
-## Webhook URL Format
+## Webhook URL format
 
 ```
 /webhooks/{webhook_id}/{token}
@@ -202,25 +182,23 @@ The token is only returned when:
 | Message content length | 2000 characters |
 | Embeds per message | 10 |
 
-## Permission Integration
+## Permissions
 
-The module requires `webhooks.manage` permission for:
-- Creating webhooks
-- Viewing webhooks
-- Updating webhooks
-- Deleting webhooks
+The module requires the `webhooks.manage` permission for:
+
+- Creating, viewing, updating, and deleting webhooks
 - Regenerating tokens
 
-Anyone with the webhook token can execute it (token is the secret).
+Anyone with the webhook token can execute the webhook; the token acts as the credential.
 
-## Security Features
+## Security
 
-1. Token Hashing: Only SHA-256 hash stored, not the token itself
-2. URL Validation: Avatar URLs must use http/https
-3. Content Sanitization: HTML tags stripped from names
-4. Permission Checks: Server permissions enforced for management
+- **Token hashing**: only the SHA-256 hash is stored, not the raw token
+- **URL validation**: avatar URLs must use `http` or `https`; private/loopback addresses are blocked (SSRF protection)
+- **Content sanitization**: HTML tags are stripped from names
+- **Permission checks**: server permissions are enforced for all management operations
 
-## Error Handling
+## Error handling
 
 All webhook errors inherit from `WebhookError`:
 
@@ -249,11 +227,12 @@ except WebhookNameError as e:
     print(f"Invalid name (max {e.max_length} chars)")
 ```
 
-## Database Schema
+## Database schema
 
 Tables (prefixed with `webhook_`):
-- `webhook_webhooks` - Webhook metadata and token hash
-- `webhook_messages` - Webhook message tracking
+
+- `webhook_webhooks` -- webhook metadata and token hash
+- `webhook_messages` -- webhook message tracking
 
 ## Testing
 

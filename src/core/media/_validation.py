@@ -1,0 +1,247 @@
+# pyright: reportAttributeAccessIssue=false
+"""
+Media validation utilities (content-type detection, magic bytes, filename sanitization).
+
+These are methods of MediaManager – kept in a mixin class for clean separation.
+"""
+
+import os
+import logging
+
+from .models import MediaType
+from .exceptions import FileTypeError, FileSizeError
+from .security.validation import BLOCKED_MIME_TYPES
+
+logger = logging.getLogger(__name__)
+
+# SECURITY: browser-executable / renderable content types are rejected
+# unconditionally, independent of any configured allow-list. Serving these
+# under the application origin enables stored XSS / script injection, so no
+# configuration may opt in to them. (SVG is deliberately NOT listed here:
+# it must pass the defusedxml allow-list sanitizer wired into the upload
+# pipeline and stays excluded from the default allow-lists.)
+_ALWAYS_BLOCKED_CONTENT_TYPES = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "text/javascript",
+        "application/javascript",
+        "application/x-javascript",
+        "application/ecmascript",
+        "text/ecmascript",
+    }
+)
+
+# Neutral opaque binary used by clients as the universal fallback when the
+# real MIME type is unknown. It cannot be rendered by browsers (it is always
+# served with ``Content-Disposition: attachment``), so it remains permitted
+# as a fallback even when the "other" category is unconfigured.
+_FALLBACK_CONTENT_TYPE = "application/octet-stream"
+
+# Content types classified as documents for size-limit bucketing. Shared by
+# the direct upload path and the chunked-upload session path so both apply
+# the same "document" size limit (e.g. .docx/.xlsx/.pptx/.zip land in the
+# document bucket, not the narrower 10MB "other" bucket).
+_DOCUMENT_CONTENT_TYPES = frozenset(
+    {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/rtf",
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/zip",
+        "application/x-7z-compressed",
+        "application/gzip",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+)
+
+
+def detect_media_type(content_type: str) -> MediaType:
+    """Map a content-type string to its :class:`MediaType` bucket."""
+    ct = (content_type or "").lower()
+    if ct.startswith("image/"):
+        return MediaType.IMAGE
+    elif ct.startswith("video/"):
+        return MediaType.VIDEO
+    elif ct.startswith("audio/"):
+        return MediaType.AUDIO
+    elif ct in _DOCUMENT_CONTENT_TYPES:
+        return MediaType.DOCUMENT
+    return MediaType.OTHER
+
+
+class _ValidationMixin:
+    """Validation helpers mixed into MediaManager."""
+
+    # -- filename ----------------------------------------------------------------
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename: remove traversal, null bytes, control chars, cap length."""
+        filename = filename.replace("\\", "/")
+        filename = os.path.basename(filename)
+        filename = filename.replace("..", "")
+        filename = "".join(c for c in filename if ord(c) >= 32 and ord(c) != 127)
+        if len(filename) > 250:
+            name, ext = os.path.splitext(filename)
+            max_name_len = 250 - len(ext)
+            filename = name[:max_name_len] + ext
+        if not filename or filename.strip() == ".":
+            filename = f"unnamed_file_{self._get_timestamp() // 1000}"
+        return filename
+
+    # -- content-type detection --------------------------------------------------
+
+    def _detect_content_type(self, file_data: bytes, fallback: str) -> str:
+        """Detect actual content type from magic bytes."""
+        signatures = {
+            b"\xff\xd8\xff": "image/jpeg",
+            b"\x89PNG\r\n\x1a\n": "image/png",
+            b"GIF87a": "image/gif",
+            b"GIF89a": "image/gif",
+            b"RIFF": "image/webp",
+            b"%PDF": "application/pdf",
+        }
+        for sig, mime in signatures.items():
+            if file_data.startswith(sig):
+                return mime
+        return fallback
+
+    def _detect_media_type(self, content_type: str) -> MediaType:
+        """Map content-type string to MediaType enum."""
+        return detect_media_type(content_type)
+
+    # -- magic-byte validation ---------------------------------------------------
+
+    def _validate_magic_bytes(self, file_data: bytes, content_type: str) -> bool:
+        """Validate file content matches declared content type using magic bytes."""
+        magic_signatures = {
+            "image/jpeg": [b"\xff\xd8\xff"],
+            "image/png": [b"\x89PNG\r\n\x1a\n"],
+            "image/gif": [b"GIF87a", b"GIF89a"],
+            "image/webp": [b"RIFF"],
+            "image/bmp": [b"BM"],
+            "image/tiff": [b"II*\x00", b"MM\x00*"],
+            "video/mp4": [
+                b"\x00\x00\x00\x18ftypmp4",
+                b"\x00\x00\x00\x1cftypmp4",
+                b"\x00\x00\x00 ftypisom",
+                b"ftyp",
+            ],
+            "video/webm": [b"\x1a\x45\xdf\xa3"],
+            "video/quicktime": [b"\x00\x00\x00\x14ftypqt", b"ftypqt"],
+            "audio/mpeg": [b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2", b"ID3"],
+            "audio/ogg": [b"OggS"],
+            "audio/wav": [b"RIFF"],
+            "audio/webm": [b"\x1a\x45\xdf\xa3"],
+            "application/pdf": [b"%PDF"],
+            "application/zip": [b"PK\x03\x04", b"PK\x05\x06"],
+            "text/plain": [],
+            "text/markdown": [],
+            "text/csv": [],
+            "application/json": [],
+        }
+        ct_lower = content_type.lower()
+        if ct_lower not in magic_signatures:
+            return True
+        signatures = magic_signatures[ct_lower]
+        if not signatures:
+            return True
+        shortest_sig_len = min(len(s) for s in signatures)
+        if len(file_data) < shortest_sig_len:
+            return False
+        for sig in signatures:
+            if file_data.startswith(sig):
+                return True
+            if (
+                ct_lower in ("video/mp4", "video/quicktime")
+                and len(file_data) >= 12
+                and b"ftyp" in file_data[:12]
+            ):
+                return True
+        return False
+
+    # -- content-type whitelist --------------------------------------------------
+
+    def _validate_content_type(self, content_type: str, media_type: MediaType):
+        """Validate content type is allowed."""
+        from ._config import DEFAULT_ALLOWED_TYPES
+
+        allowed = self._config.get("allowed_types", DEFAULT_ALLOWED_TYPES)
+        type_key = media_type.value
+        ct_lower = content_type.lower()
+
+        if ct_lower in BLOCKED_MIME_TYPES:
+            raise FileTypeError(
+                f"File type '{content_type}' is blocked for security reasons.",
+                content_type,
+                ["Contact an administrator for more information"],
+            )
+        if ct_lower in _ALWAYS_BLOCKED_CONTENT_TYPES:
+            raise FileTypeError(
+                f"Content type '{content_type}' is not allowed for security reasons.",
+                content_type,
+                ["Executable or renderable content types are blocked"],
+            )
+        # SECURITY: fail closed. Only content types explicitly listed in the
+        # configured allow-list for their category (or the "other" list) may
+        # pass. Previously, any unlisted type (e.g. text/html) silently passed
+        # when no "other" key was configured and was then served inline.
+        type_allowed = allowed.get(type_key)
+        if type_allowed is None:
+            type_allowed = allowed.get("other", [])
+            # The neutral opaque-binary fallback stays available for the
+            # unconfigured "other" category; it is inert (always served as a
+            # download) and is what clients send when the MIME type is unknown.
+            if type_key == MediaType.OTHER.value and ct_lower == _FALLBACK_CONTENT_TYPE:
+                return
+        if not type_allowed or (
+            ct_lower not in type_allowed and "*" not in type_allowed
+        ):
+            raise FileTypeError(
+                f"Content type '{content_type}' is not allowed for {type_key} uploads.",
+                content_type,
+                list(type_allowed),
+            )
+
+    # -- file-size validation ----------------------------------------------------
+
+    def _validate_file_size(self, size: int, media_type: MediaType):
+        """Validate file size is within limits."""
+        from ._config import DEFAULT_SIZE_LIMITS
+
+        limits = self._config.get("size_limits", DEFAULT_SIZE_LIMITS)
+        type_key = media_type.value
+        max_size = limits.get(type_key, limits.get("other", 10 * 1024 * 1024))
+
+        # A license "max_file_size_mb" limit acts as an absolute upper bound on
+        # top of the per-type configuration limits. Only applied when a license
+        # is present (free tier keeps its configured limits unchanged).
+        try:
+            from utils.licensing import (
+                get_license_limit,
+                is_free_tier,
+                is_limit_enforced,
+            )
+
+            if not is_free_tier():
+                _mb = get_license_limit("max_file_size_mb", default=-1)
+                if is_limit_enforced(_mb):
+                    _lic_bytes = _mb * 1024 * 1024
+                    if _lic_bytes < max_size:
+                        max_size = _lic_bytes
+        except (RuntimeError, ImportError):
+            pass
+
+        if size > max_size:
+            raise FileSizeError(
+                f"File size {size} exceeds limit {max_size}",
+                max_size,
+                size,
+            )

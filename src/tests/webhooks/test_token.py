@@ -19,9 +19,9 @@ class TestTokenFormat:
         assert parts[1] == str(setup["webhook"].id)
         assert len(parts[2]) > 20
 
-    def test_token_secret_is_random(self, base_server_setup):
+    def test_token_secret_is_random(self, fresh_server):
         """Test that token secrets are random."""
-        setup = base_server_setup
+        setup = fresh_server
         secrets = set()
 
         for i in range(10):
@@ -184,9 +184,9 @@ class TestTokenRegeneration:
 
         assert updated.updated_at > setup["webhook"].created_at
 
-    def test_regenerate_not_found(self, base_server_setup):
+    def test_regenerate_not_found(self, fresh_server):
         """Test regenerating token for non-existent webhook."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookNotFoundError
 
         with pytest.raises(WebhookNotFoundError):

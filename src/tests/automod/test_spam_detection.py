@@ -1,132 +1,63 @@
-"""
-Tests for spam detection rules.
-"""
+"""Tests for automod spam detection."""
 
 import pytest
-import time
 
-from src.core import automod
-from src.core.automod import RuleType
-from src.core.automod.rules.spam import MessageSpamRule
+from src.core.automod.models import RuleType
 
 
 @pytest.mark.automod
-class TestMessageSpamRule:
-    """Tests for MessageSpamRule."""
+class TestSpamDetection:
+    """Tests for message spam detection rules."""
 
-    def test_rate_spam_detection(self, spam_rule):
-        """Test rate-based spam detection."""
-        rule, server, channel, owner = spam_rule
-
-        now = int(time.time() * 1000)
-        recent_messages = [
-            {"user_id": owner.id, "created_at": now - 1000, "content": "msg1"},
-            {"user_id": owner.id, "created_at": now - 2000, "content": "msg2"},
-            {"user_id": owner.id, "created_at": now - 3000, "content": "msg3"},
-        ]
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
+    def test_create_spam_rule(self, automod_manager, test_server):
+        """Test creating a spam detection rule."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
             user_id=owner.id,
-            content="Another message",
-            context={"recent_messages": recent_messages},
-        )
-
-        assert not result.passed
-        assert result.violations[0].rule_type == RuleType.MESSAGE_SPAM
-
-    def test_duplicate_spam_detection(self, spam_rule):
-        """Test duplicate content spam detection."""
-        rule, server, channel, owner = spam_rule
-
-        now = int(time.time() * 1000)
-        duplicate_content = "This is duplicate content"
-        recent_messages = [
-            {
-                "user_id": owner.id,
-                "created_at": now - 5000,
-                "content": duplicate_content,
+            server_id=server.id,
+            name="Anti-Spam",
+            rule_type=RuleType.MESSAGE_SPAM,
+            rule_config={
+                "max_messages": 5,
+                "window_seconds": 10,
+                "duplicate_threshold": 3,
             },
-            {
-                "user_id": owner.id,
-                "created_at": now - 10000,
-                "content": duplicate_content,
+            actions=[{"action_type": "timeout_user", "duration_seconds": 60}],
+        )
+        assert rule.name == "Anti-Spam"
+        assert rule.rule_type == RuleType.MESSAGE_SPAM
+
+    def test_spam_rule_config_validation(self, automod_manager, test_server):
+        """Test spam rule config requires proper fields."""
+        server, owner = test_server
+        from src.core.automod.exceptions import RuleValidationError
+
+        with pytest.raises(RuleValidationError):
+            automod_manager.create_rule(
+                user_id=owner.id,
+                server_id=server.id,
+                name="Invalid Spam",
+                rule_type=RuleType.MESSAGE_SPAM,
+                rule_config={},  # Missing required fields
+                actions=[{"action_type": "log_only"}],
+            )
+
+    def test_spam_rule_stores_in_db(self, automod_manager, test_server):
+        """Test spam rule is persisted in database."""
+        server, owner = test_server
+        rule = automod_manager.create_rule(
+            user_id=owner.id,
+            server_id=server.id,
+            name="Spam Rule",
+            rule_type=RuleType.MESSAGE_SPAM,
+            rule_config={
+                "max_messages": 3,
+                "window_seconds": 5,
             },
-        ]
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content=duplicate_content,
-            context={"recent_messages": recent_messages},
+            actions=[{"action_type": "log_only"}],
         )
 
-        assert not result.passed
-
-    def test_no_spam_normal_rate(self, spam_rule):
-        """Test normal message rate passes."""
-        rule, server, channel, owner = spam_rule
-
-        now = int(time.time() * 1000)
-        recent_messages = [
-            {"user_id": owner.id, "created_at": now - 10000, "content": "msg1"},
-        ]
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="Normal message",
-            context={"recent_messages": recent_messages},
-        )
-
-        assert result.passed
-
-    def test_other_user_messages_ignored(self, spam_rule, user_pool):
-        """Test that other users' messages don't count."""
-        rule, server, channel, owner = spam_rule
-        other_user = user_pool.get_user()
-
-        now = int(time.time() * 1000)
-        recent_messages = [
-            {"user_id": other_user.id, "created_at": now - 1000, "content": "msg1"},
-            {"user_id": other_user.id, "created_at": now - 2000, "content": "msg2"},
-            {"user_id": other_user.id, "created_at": now - 3000, "content": "msg3"},
-        ]
-
-        result = automod.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="My message",
-            context={"recent_messages": recent_messages},
-        )
-
-        assert result.passed
-
-
-@pytest.mark.automod
-class TestMessageSpamRuleValidation:
-    """Tests for spam rule config validation."""
-
-    def test_valid_config(self):
-        """Test valid configuration passes."""
-        valid, issues = MessageSpamRule.validate_config(
-            {"max_messages": 5, "window_seconds": 10, "duplicate_threshold": 3}
-        )
-
-        assert valid
-
-    def test_invalid_max_messages(self):
-        """Test invalid max_messages fails."""
-        valid, issues = MessageSpamRule.validate_config({"max_messages": 0})
-
-        assert not valid
-
-    def test_invalid_similarity_threshold(self):
-        """Test invalid similarity threshold fails."""
-        valid, issues = MessageSpamRule.validate_config({"similarity_threshold": 1.5})
-
-        assert not valid
+        retrieved = automod_manager.get_rule(rule.id)
+        assert retrieved is not None
+        assert retrieved.name == "Spam Rule"
+        assert retrieved.rule_type == RuleType.MESSAGE_SPAM

@@ -1,0 +1,35 @@
+# Local Janus gateway for the opt-in media tests
+# (``src/tests/voice/test_sfu_janus_gateway.py``) and for running the server
+# against a real ``janus`` backend (``voice.sfu_backend: janus``).
+#
+# Bring it up with ``./run-janus-gateway.sh``, which also waits for the
+# VideoRoom plugin and prints the environment to run the tests with.
+#
+# Supply chain: pin a released tag rather than ``latest``, exactly as
+# ``docker-compose.yml`` does. Verify the digest out of band before trusting
+# the image:
+#
+#   docker pull canyan/janus-gateway:0.10.7
+#   docker inspect --format '{{index .RepoDigests 0}}' canyan/janus-gateway:0.10.7
+#
+# This is a DEVELOPMENT gateway, not a deployment. The Janus API is
+# unauthenticated (no ``api_secret``), the HTTP endpoint is published on the
+# host, and nothing here is hardened. Do not run it on a shared or production
+# host, and do not point a production voice deployment at it.
+#
+# Networking: only the API is published. WebRTC media candidates are gathered
+# inside the container, so real RTP between peers needs host networking, or
+# ``nat_1_1_mapping`` in a mounted ``janus.jcfg`` set to the host address (see
+# README.md). The signaling tests this file exists for -- room creation, the
+# publish/jsep handshake, trickle relay, layer configure, teardown -- do not
+# need media to flow.
+name: plexichat-janus
+
+services:
+  janus:
+    image: canyan/janus-gateway:0.10.7
+    command: ["/usr/local/bin/janus", "-F", "/usr/local/etc/janus"]
+    ports:
+      - "8088:8088" # HTTP API: http://localhost:8088/janus (the adapter default)
+      - "8188:8188" # WebSocket API; the REST adapter does not use it
+    restart: unless-stopped

@@ -1,0 +1,302 @@
+"""
+Admin artifact routes - oversight and maintenance endpoints for artifacts.
+
+All endpoints are admin-guarded (host restriction + admin token). They operate
+across every server and are intended for instance-level administration.
+"""
+
+from typing import Any, Dict
+
+import utils.logger as logger
+import utils.config as config
+from fastapi import APIRouter, Request, HTTPException, status
+
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+    require_approved_request,
+)
+from src.api.schemas.artifacts import (
+    ArtifactResponse,
+    RetentionPurgeResponse,
+    ServerRetentionRequest,
+    ServerRetentionResponse,
+)
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
+
+
+ALLOWED_FEATURES = {"plexiscribe", "plexiscript", "plexiboard", "whiteboard", "voice"}
+
+router = APIRouter(prefix="/artifacts", tags=["Admin", "Artifacts"])
+
+
+def _get_manager():
+    import src.api as api_mod
+
+    db = api_mod.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Database unavailable"}},
+        )
+    from src.core.artifacts.manager import ArtifactManager
+
+    artifacts_cfg = config.get("artifacts", {}) or {}
+    return ArtifactManager(db, artifacts_cfg)
+
+
+@router.get("")
+async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
+    """List all artifacts across every server (admin oversight)."""
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
+
+    try:
+        limit = int(request.query_params.get("limit", 100))
+        offset = int(request.query_params.get("offset", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid pagination"}},
+        )
+    if not 1 <= limit <= 200 or offset < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid pagination"}},
+        )
+
+    try:
+        manager = _get_manager()
+        filters = {"limit": limit, "offset": offset}
+        artifacts = manager.list_with_filters(filters=filters)
+        total = manager.count(filters)
+        return {
+            "total": total,
+            "items": [
+                ArtifactResponse.model_validate(a).model_dump(mode="json")
+                for a in artifacts
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin list artifacts failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.delete("/{artifact_id}")
+async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str, Any]:
+    """Admin force-delete of any artifact.
+
+    Requires ``admin.artifacts.manage`` plus an approved approval request:
+    this destroys user data across every server.
+    """
+    check_host_restriction(request)
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
+    require_approved_request("artifacts.force_delete")
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
+
+    try:
+        try:
+            aid = int(artifact_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
+            )
+
+        manager = _get_manager()
+        if manager.get(aid) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": {"code": 404, "message": "Artifact not found"}},
+            )
+        if not manager.delete(aid):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Failed to delete"}},
+            )
+        return {"success": True, "id": str(aid)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin delete artifact failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post("/retention/purge")
+async def admin_purge_expired(request: Request) -> RetentionPurgeResponse:
+    """Trigger a retention purge of expired artifacts."""
+    check_host_restriction(request)
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
+
+    try:
+        import src.api as api_mod
+
+        db = api_mod.get_db()
+        if db is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={"error": {"code": 500, "message": "Database unavailable"}},
+            )
+        from src.core.artifacts.retention import purge_expired
+
+        purged = purge_expired(db, config.get("artifacts", {}) or {})
+        return RetentionPurgeResponse(purged=purged)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin retention purge failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.post(
+    "/retention/server",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def admin_set_server_retention(
+    request: Request, body: ServerRetentionRequest
+) -> ServerRetentionResponse:
+    """Set or clear a per-server retention override.
+
+    Persists the override in the ``server_artifact_settings`` table (migration
+    048). Passing ``retention_days=null`` clears the override so the server
+    reverts to the global ``default_retention_days``.
+    """
+    check_host_restriction(request)
+    admin_id = get_admin_from_token(request)
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": 403, "message": "Admin token required"}},
+        )
+
+    try:
+        try:
+            server_id = int(body.server_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid server_id"}},
+            )
+        manager = _get_manager()
+        try:
+            manager.set_server_retention_days(server_id, body.retention_days)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
+        effective = manager.get_server_retention_days(server_id)
+        return ServerRetentionResponse(
+            server_id=body.server_id, retention_days=effective, success=True
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin set server retention failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
+@router.get(
+    "/features/{feature}",
+    summary="Get feature settings for a server",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+    },
+)
+async def admin_get_feature_settings(
+    feature: str,
+    server_id: SnowflakeIDParam,
+    request: Request,
+) -> Dict[str, Any]:
+    """Get per-server override settings for a feature."""
+    check_host_restriction(request)
+    get_admin_from_token(request)
+    if feature not in ALLOWED_FEATURES:
+        raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
+    manager = _get_manager()
+    settings = manager.get_feature_settings(server_id, feature)
+    # Snowflake as a decimal string (project convention), even though it echoed
+    # an int-typed path parameter.
+    return {"server_id": str(server_id), "feature": feature, "settings": settings}
+
+
+@router.post(
+    "/features/{feature}",
+    summary="Set feature settings for a server",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not authorized"},
+    },
+)
+async def admin_set_feature_settings(
+    feature: str,
+    body: Dict[str, Any],
+    request: Request,
+) -> Dict[str, Any]:
+    """Set per-server override settings for a feature.
+
+    Body should be: { "server_id": int, "settings": { "key": "value"|null } }
+    Pass null to clear a setting back to default.
+    """
+    check_host_restriction(request)
+    require_admin_permission(request, "admin.artifacts.manage")
+    if feature not in ALLOWED_FEATURES:
+        raise HTTPException(status_code=400, detail=f"Unknown feature: {feature}")
+
+    server_id = body.get("server_id")
+    settings = body.get("settings", {})
+    if server_id is None or not isinstance(settings, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {"code": 400, "message": "server_id and settings are required"}
+            },
+        )
+    # Accept a decimal-string snowflake (the admin UI sends ids as strings to
+    # avoid Number() rounding) as well as an int, then bind a real int so the
+    # query works on both SQLite and Postgres.
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server_id"}},
+        )
+
+    manager = _get_manager()
+    result = manager.set_feature_settings_bulk(server_id, feature, settings)
+    return {"server_id": str(server_id), "feature": feature, "settings": result}

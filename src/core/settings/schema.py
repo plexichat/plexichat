@@ -2,6 +2,8 @@
 Database schema for user settings module.
 """
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 SCHEMA_SQLITE = """
 -- User settings table
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -15,12 +17,24 @@ CREATE TABLE IF NOT EXISTS user_settings (
     UNIQUE(user_id, key)
 );
 
+-- Application settings table
+CREATE TABLE IF NOT EXISTS application_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key VARCHAR(255) NOT NULL UNIQUE,
+    value TEXT,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_settings_key ON application_settings(key);
+
 -- Indexes for performance
 -- Note: idx_user_settings_key removed - redundant with UNIQUE(user_id, key) constraint
 CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(user_id);
 """
 
-SCHEMA_STATEMENTS = [stmt.strip() for stmt in SCHEMA_SQLITE.split(";") if stmt.strip()]
+SCHEMA_STATEMENTS = split_sql_statements(SCHEMA_SQLITE)
 
 
 def create_tables(db) -> None:

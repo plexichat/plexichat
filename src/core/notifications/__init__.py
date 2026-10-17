@@ -76,6 +76,7 @@ __all__ = [
     "mark_all_read",
     "mark_channel_read",
     "mark_server_read",
+    "mark_thread_read",
     "delete_notification",
     # Unread counts
     "get_unread_count",
@@ -213,6 +214,11 @@ def mark_channel_read(user_id: int, channel_id: int) -> int:
 def mark_server_read(user_id: int, server_id: int) -> int:
     """Mark all notifications in a server as read."""
     return _get_manager().mark_server_read(user_id, server_id)
+
+
+def mark_thread_read(user_id: int, thread_id: int) -> int:
+    """Mark all notifications in a thread as read."""
+    return _get_manager().mark_thread_read(user_id, thread_id)
 
 
 def delete_notification(user_id: int, notification_id: int) -> bool:

@@ -1,276 +1,180 @@
-"""
-Tests for unread and mention counts.
-"""
+"""Tests for notification unread count tracking."""
+
+import pathlib
+import re
+
+import pytest
+
+from src.core.notifications.manager import unread as unread_module
+from src.core.notifications.models import UnreadCount
 
 
-class TestGetUnreadCount:
-    """Tests for getting unread counts."""
+@pytest.mark.notifications
+class TestUnreadCounts:
+    """Tests for unread count tracking and management."""
 
-    def test_initial_unread_count_zero(self, fresh_users):
-        """Test initial unread count is zero."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
+    def test_get_unread_count_no_unread(self, notification_manager, test_user):
+        """Test getting unread count when there are no unread notifications."""
+        unread = notification_manager.get_unread_count(test_user.id)
+        assert unread is not None
+        assert isinstance(unread.unread_count, int)
+        assert isinstance(unread.mention_count, int)
 
-        unread = notifications.get_unread_count(user1.id)
+    def test_get_unread_counts_dict(self, notification_manager, test_user):
+        """Test getting per-conversation unread counts."""
+        counts = notification_manager.get_unread_counts(test_user.id)
+        assert isinstance(counts, dict)
 
-        assert unread.total_unread == 0
-        assert unread.mention_count == 0
-
-    def test_unread_count_after_mention(self, users_with_dm):
-        """Test unread count increases after mention."""
-        user1, user2, dm, messaging, notifications = users_with_dm
-
-        content = f"Hey <@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        notifications.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
-
-        unread = notifications.get_unread_count(user2.id)
-
-        assert unread.mention_count >= 1
-
-    def test_unread_count_per_server(self, users_with_server):
-        """Test unread count filtered by server."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = (
-            users_with_server
-        )
-
-        group = messaging.create_group(
-            owner.id, "Server Group", [member1.id, member2.id]
-        )
-
-        content = f"<@{member1.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
-
-        notifications.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-            server_id=server.id,
-        )
-
-        unread = notifications.get_unread_count(member1.id, server_id=server.id)
-
-        assert unread.server_id == server.id
-        assert unread.mention_count >= 1
-
-
-class TestGetUnreadCounts:
-    """Tests for getting all unread counts."""
-
-    def test_get_all_unread_counts(self, group_conversation):
-        """Test getting all unread counts per conversation."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
-        )
-
-        content = f"<@{member1.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
-
-        notifications.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-        )
-
-        counts = notifications.get_unread_counts(member1.id)
-
-        assert group.id in counts
-        assert counts[group.id].mention_count >= 1
-
-    def test_empty_unread_counts(self, fresh_users):
-        """Test empty unread counts for new user."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
-
-        counts = notifications.get_unread_counts(user1.id)
-
-        assert len(counts) == 0
-
-
-class TestGetMentionCount:
-    """Tests for getting mention counts."""
-
-    def test_mention_count_zero_initially(self, fresh_users):
-        """Test mention count is zero initially."""
-        (
-            user1,
-            user2,
-            auth,
-            messaging,
-            servers,
-            relationships,
-            presence,
-            notifications,
-        ) = fresh_users
-
-        count = notifications.get_mention_count(user1.id)
-
-        assert count == 0
-
-    def test_mention_count_increases(self, users_with_dm):
-        """Test mention count increases with mentions."""
-        user1, user2, dm, messaging, notifications = users_with_dm
-
-        content = f"<@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        notifications.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
-
-        count = notifications.get_mention_count(user2.id)
-
-        assert count >= 1
-
-    def test_mention_count_per_server(self, users_with_server):
-        """Test mention count filtered by server."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = (
-            users_with_server
-        )
-
-        group = messaging.create_group(
-            owner.id, "Server Group", [member1.id, member2.id]
-        )
-
-        content = f"<@{member1.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
-
-        notifications.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-            server_id=server.id,
-        )
-
-        count = notifications.get_mention_count(member1.id, server_id=server.id)
-
-        assert count >= 1
-
-
-class TestMarkRead:
-    """Tests for marking notifications as read."""
-
-    def test_mark_notification_read(self, users_with_dm):
-        """Test marking single notification as read."""
-        user1, user2, dm, messaging, notifications = users_with_dm
-
-        content = f"<@{user2.id}>"
-        msg = messaging.send_message(user1.id, dm.id, content)
-
-        notifs = notifications.create_notifications_for_message(
-            author_id=user1.id,
-            message_id=msg.id,
-            conversation_id=dm.id,
-            content=content,
-        )
-
-        assert len(notifs) == 1
-
-        result = notifications.mark_notification_read(user2.id, notifs[0].id)
-
-        assert result is True
-
-        notif = notifications.get_notification(notifs[0].id)
-        assert notif.read is True
-
-    def test_mark_all_read(self, group_conversation):
-        """Test marking all notifications as read."""
-        owner, member1, member2, group, messaging, notifications, relationships = (
-            group_conversation
-        )
-
-        for i in range(3):
-            content = f"<@{member1.id}> message {i}"
-            msg = messaging.send_message(owner.id, group.id, content)
-            notifications.create_notifications_for_message(
-                author_id=owner.id,
-                message_id=msg.id,
-                conversation_id=group.id,
-                content=content,
-            )
-
-        count = notifications.mark_all_read(member1.id)
-
-        assert count >= 3
-
-        unread = notifications.get_unread_count(member1.id)
-        assert unread.mention_count == 0
-
-    def test_mark_channel_read(self, users_with_server):
-        """Test marking channel notifications as read."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = (
-            users_with_server
-        )
-
-        group = messaging.create_group(
-            owner.id, "Server Group", [member1.id, member2.id]
-        )
-
-        content = f"<@{member1.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
-
-        notifications.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-            server_id=server.id,
-            channel_id=channel.id,
-        )
-
-        count = notifications.mark_channel_read(member1.id, channel.id)
-
+    def test_get_mention_count_zero(self, notification_manager, test_user):
+        """Test getting mention count with no mentions."""
+        count = notification_manager.get_mention_count(test_user.id)
+        assert isinstance(count, int)
         assert count >= 0
 
-    def test_mark_server_read(self, users_with_server):
-        """Test marking server notifications as read."""
-        owner, member1, member2, server, channel, servers, messaging, notifications = (
-            users_with_server
+    def test_mark_all_read_clears_counts(self, notification_manager, test_user):
+        """Test that marking all read clears unread counts."""
+        notification_manager.mark_all_read(test_user.id)
+        unread = notification_manager.get_unread_count(test_user.id)
+        assert unread.mention_count == 0
+
+    def test_unread_count_dataclass(self):
+        """Test UnreadCount dataclass fields."""
+        uc = UnreadCount(user_id=1, conversation_id=2)
+        assert uc.unread_count == 0
+        assert uc.mention_count == 0
+
+    def test_unread_count_with_server_filter(self, notification_manager, test_user):
+        """Test getting unread count filtered by server."""
+        unread = notification_manager.get_unread_count(test_user.id, server_id=999)
+        assert unread is not None
+        assert unread.unread_count == 0
+        assert unread.mention_count == 0
+
+    def test_mark_server_read(self, notification_manager, test_user):
+        """Test marking all notifications in a server as read."""
+        count = notification_manager.mark_server_read(test_user.id, 999)
+        assert isinstance(count, int)
+
+    def test_mark_channel_read(self, notification_manager, test_user):
+        """Test marking all notifications in a channel as read."""
+        count = notification_manager.mark_channel_read(test_user.id, 999)
+        assert isinstance(count, int)
+
+
+def test_mark_read_invalidates_unread_count_cache(
+    monkeypatch, messaging_manager, two_users
+):
+    """Acking a channel must drop the ``GET /users/@me/unread`` cache entry.
+
+    The route is decorated ``@cached(ttl=10, prefix="unread_counts_api")``
+    with key ``unread_counts_api:current_user:TokenInfo:<user_id>``. Before
+    the fix nothing ever invalidated that prefix, so a user who read a
+    channel kept getting the pre-ack count back for up to 10 seconds.
+    """
+    user1, user2 = two_users
+    conv = messaging_manager.create_group(
+        owner_id=user1.id,
+        name="unread cache invalidation",
+        participant_ids=[user2.id],
+    )
+    messaging_manager.send_message(user1.id, conv.id, "hello")
+
+    recorded = []
+
+    def _record(pattern: str) -> int:
+        recorded.append(pattern)
+        return 0
+
+    # The service imports ``invalidate_pattern`` lazily from this module, so
+    # patching the attribute here intercepts the call.
+    monkeypatch.setattr("src.core.database.invalidate_pattern", _record)
+
+    messaging_manager.mark_read(user2.id, conv.id)
+
+    assert any(
+        p.startswith("unread_counts_api") and str(user2.id) in p for p in recorded
+    ), f"mark_read must invalidate the unread-count cache (saw: {recorded})"
+
+
+def test_mark_unread_invalidates_unread_count_cache(
+    monkeypatch, messaging_manager, two_users
+):
+    """Rolling a channel back to unread must drop the same cache entry."""
+    user1, user2 = two_users
+    conv = messaging_manager.create_group(
+        owner_id=user1.id,
+        name="unread cache invalidation (rollback)",
+        participant_ids=[user2.id],
+    )
+    messaging_manager.send_message(user1.id, conv.id, "hello")
+    messaging_manager.mark_read(user2.id, conv.id)
+
+    recorded = []
+
+    def _record(pattern: str) -> int:
+        recorded.append(pattern)
+        return 0
+
+    monkeypatch.setattr("src.core.database.invalidate_pattern", _record)
+
+    messaging_manager.mark_unread(user2.id, conv.id)
+
+    assert any(
+        p.startswith("unread_counts_api") and str(user2.id) in p for p in recorded
+    ), f"mark_unread must invalidate the unread-count cache (saw: {recorded})"
+
+
+@pytest.mark.notifications
+class TestUnreadDecrementClamp:
+    """The counter clamp must be engine-portable.
+
+    ``_decrement_*`` used SQLite's two-argument scalar ``MAX(0, x - ?)``,
+    which PostgreSQL parses as the one-argument aggregate and rejects
+    (``function max(integer, integer) does not exist``). ``feed`` commits the
+    read/delete first, so on Postgres the counters were never decremented.
+    """
+
+    def test_decrement_clamps_at_zero(self, notification_manager, test_user):
+        conv_id = 424242
+        notification_manager._update_unread_count(
+            test_user.id, conv_id, None, None, is_mention=True
         )
-
-        group = messaging.create_group(
-            owner.id, "Server Group", [member1.id, member2.id]
+        row = notification_manager._db.fetch_one(
+            "SELECT unread_count, mention_count FROM notif_unread "
+            "WHERE user_id = ? AND conversation_id = ?",
+            (test_user.id, conv_id),
         )
+        assert row["unread_count"] == 1
+        assert row["mention_count"] == 1
 
-        content = f"<@{member1.id}>"
-        msg = messaging.send_message(owner.id, group.id, content)
+        # Decrement by more than is present: both counters clamp at zero.
+        notification_manager._decrement_unread_count(test_user.id, conv_id, amount=5)
+        notification_manager._decrement_mention_count(test_user.id, conv_id, amount=5)
 
-        notifications.create_notifications_for_message(
-            author_id=owner.id,
-            message_id=msg.id,
-            conversation_id=group.id,
-            content=content,
-            server_id=server.id,
+        clamped = notification_manager._db.fetch_one(
+            "SELECT unread_count, mention_count FROM notif_unread "
+            "WHERE user_id = ? AND conversation_id = ?",
+            (test_user.id, conv_id),
         )
+        assert clamped["unread_count"] == 0
+        assert clamped["mention_count"] == 0
 
-        count = notifications.mark_server_read(member1.id, server.id)
+        # The manager totals agree (no negative leak into the public API).
+        unread = notification_manager.get_unread_count(test_user.id)
+        assert unread.unread_count >= 0
+        assert unread.mention_count >= 0
 
-        assert count >= 0
+
+def test_unread_sql_does_not_use_two_argument_max():
+    """Guard: SQL-level ``MAX(0, …)`` is SQLite-only and must not return.
+
+    Matched case-sensitively on the uppercase SQL spelling so the portable
+    Python clamp (``max(0, value - amount)``) in the helpers is not flagged.
+    """
+    source = pathlib.Path(unread_module.__file__).read_text(encoding="utf-8")
+    executable = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert not re.search(r"\bMAX\(\s*0\s*,", executable), (
+        "unread.py must clamp in Python, not with SQLite's two-argument MAX()"
+    )

@@ -7,7 +7,8 @@ import json
 from typing import Optional, Dict, Any
 
 import utils.logger as logger
-from src.utils.encryption import generate_snowflake_id
+from src.core.events.snowflakes import stringify_snowflake_ids
+from src.utils.encryption import generate_snowflake_id, encrypt_data, decrypt_data
 
 from ..models import (
     Interaction,
@@ -89,7 +90,24 @@ class InteractionHandler:
 
         full_token, token_hash = generate_interaction_token(interaction_id)
 
-        data_json = json.dumps(data) if data else None
+        if data:
+            plaintext = json.dumps(data)
+            try:
+                data_json = encrypt_data(
+                    plaintext, context=f"interaction:{interaction_id}"
+                )
+            except Exception as e:
+                # SECURITY: fail closed.  Storing plaintext when encryption
+                # breaks would silently downgrade the confidentiality of every
+                # interaction payload until the operator notices.  Surface the
+                # failure so the caller can retry with a working crypto backend.
+                logger.error(f"Encryption of interaction data failed: {e}")
+                raise InteractionValidationError(
+                    "Failed to encrypt interaction data",
+                    ["Encryption subsystem unavailable"],
+                ) from e
+        else:
+            data_json = None
 
         self._db.execute(
             """INSERT INTO app_interactions
@@ -149,7 +167,8 @@ class InteractionHandler:
         row = self._db.fetch_one(
             """SELECT id, application_id, interaction_type, data, server_id,
                       channel_id, user_id, token_hash, version, message_id,
-                      locale, server_locale, created_at, responded
+                      locale, server_locale, created_at, responded,
+                      response_payload_encrypted
                FROM app_interactions WHERE id = ?""",
             (interaction_id,),
         )
@@ -187,7 +206,7 @@ class InteractionHandler:
             raise InteractionNotFoundError("Invalid interaction token")
 
         expiry = self._config.get("interaction_timeout", INTERACTION_TOKEN_EXPIRY)
-        if self._current_time() > interaction.created_at + expiry:
+        if self._current_time() > interaction.created_at + expiry * 1000:
             raise InteractionExpiredError("Interaction token has expired")
 
         return interaction
@@ -196,6 +215,7 @@ class InteractionHandler:
         self,
         interaction_token: str,
         response: InteractionResponse,
+        application_id: Optional[int] = None,
     ) -> bool:
         """
         Respond to an interaction.
@@ -215,6 +235,11 @@ class InteractionHandler:
         """
         interaction = self.verify_interaction_token(interaction_token)
 
+        if application_id is not None and interaction.application_id != application_id:
+            raise InteractionNotFoundError(
+                "Interaction does not belong to this application"
+            )
+
         if interaction.responded:
             raise InteractionAlreadyRespondedError(
                 "Interaction has already been responded to"
@@ -224,9 +249,37 @@ class InteractionHandler:
         if issues:
             raise InteractionValidationError("Invalid response", issues)
 
-        self._db.execute(
-            "UPDATE app_interactions SET responded = 1 WHERE id = ?", (interaction.id,)
+        response_payload = json.dumps(
+            {
+                "response_type": int(response.response_type),
+                "content": response.content,
+                "embeds": response.embeds or [],
+                "components": response.components or [],
+                "flags": response.flags,
+                "tts": response.tts,
+                "allowed_mentions": response.allowed_mentions,
+                "attachments": response.attachments or [],
+                "choices": response.choices or [],
+                "custom_id": response.custom_id,
+                "title": response.title,
+            },
+            separators=(",", ":"),
         )
+        response_encrypted = encrypt_data(
+            response_payload, context=f"interaction-response:{interaction.id}"
+        )
+        # Atomic responded guard prevents two concurrent callbacks from both
+        # becoming the stored original response.
+        result = self._db.execute(
+            """UPDATE app_interactions
+               SET responded = 1, response_payload_encrypted = ?
+               WHERE id = ? AND responded = 0""",
+            (response_encrypted, interaction.id),
+        )
+        if hasattr(result, "rowcount") and result.rowcount == 0:
+            raise InteractionAlreadyRespondedError(
+                "Interaction has already been responded to"
+            )
 
         logger.debug(
             f"Interaction {interaction.id} responded with type {response.response_type}"
@@ -289,12 +342,24 @@ class InteractionHandler:
         """
         interaction = self.verify_interaction_token(interaction_token)
 
-        return {
-            "interaction_id": str(interaction.id),
-            "content": content,
-            "embeds": embeds or [],
-            "components": components or [],
-        }
+        if not interaction.response:
+            raise InteractionNotFoundError("Interaction response not found")
+        updated = dict(interaction.response)
+        if content is not None:
+            updated["content"] = content
+        if embeds is not None:
+            updated["embeds"] = embeds
+        if components is not None:
+            updated["components"] = components
+        encrypted = encrypt_data(
+            json.dumps(updated, separators=(",", ":")),
+            context=f"interaction-response:{interaction.id}",
+        )
+        self._db.execute(
+            "UPDATE app_interactions SET response_payload_encrypted = ? WHERE id = ? AND responded = 1",
+            (encrypted, interaction.id),
+        )
+        return {"interaction_id": str(interaction.id), **updated}
 
     def delete_original(self, interaction_token: str) -> bool:
         """
@@ -306,7 +371,13 @@ class InteractionHandler:
         Returns:
             True if deleted
         """
-        self.verify_interaction_token(interaction_token)
+        interaction = self.verify_interaction_token(interaction_token)
+        if not interaction.response:
+            raise InteractionNotFoundError("Interaction response not found")
+        self._db.execute(
+            "UPDATE app_interactions SET response_payload_encrypted = NULL, responded = 0 WHERE id = ?",
+            (interaction.id,),
+        )
         return True
 
     def dispatch_interaction(self, interaction: Interaction) -> None:
@@ -318,6 +389,9 @@ class InteractionHandler:
         """
         if not self._events:
             return
+
+        from src.core.events.models import Event
+        from src.core.events.types import EventType
 
         event_data = {
             "id": str(interaction.id),
@@ -348,6 +422,32 @@ class InteractionHandler:
             event_data["guild_locale"] = interaction.server_locale
 
         logger.debug(f"Dispatching INTERACTION_CREATE for {interaction.id}")
+
+        bot_id = None
+        row = self._db.fetch_one(
+            "SELECT bot_id FROM app_applications WHERE id = ?",
+            (interaction.application_id,),
+        )
+        if row and row["bot_id"]:
+            bot_id = row["bot_id"]
+
+        event = Event(
+            event_type=EventType.INTERACTION_CREATE,
+            # The interaction body nests ids a bot reads directly (``data.id``,
+            # ``data.target_id``, ``resolved`` users/members/channels/roles,
+            # option values). Stringify the whole payload at the emitter so the
+            # bot never receives a rounded 64-bit id even on a delivery path
+            # that bypasses the websocket dispatcher backstop.
+            data=stringify_snowflake_ids(event_data),
+            server_id=interaction.server_id,
+            channel_id=interaction.channel_id,
+            user_id=interaction.user_id,
+        )
+
+        if bot_id:
+            self._events.dispatch(event, user_ids=[bot_id])
+        else:
+            self._events.dispatch(event)
 
     def _validate_response(
         self,
@@ -380,6 +480,16 @@ class InteractionHandler:
         elif interaction.interaction_type == InteractionType.MODAL_SUBMIT:
             if response.response_type == InteractionResponseType.MODAL:
                 issues.append("Cannot respond to modal submit with another modal")
+
+        elif interaction.interaction_type == InteractionType.MESSAGE_COMPONENT:
+            if response.response_type in (
+                InteractionResponseType.PONG,
+                InteractionResponseType.MODAL,
+                InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+            ):
+                issues.append(
+                    f"Cannot respond to message component with {response.response_type.name}"
+                )
 
         if response.components:
             if response.response_type == InteractionResponseType.MODAL:
@@ -459,8 +569,35 @@ class InteractionHandler:
     def _row_to_interaction(self, row) -> Interaction:
         """Convert database row to Interaction."""
         data = None
-        if row["data"]:
-            data = self._parse_interaction_data(json.loads(row["data"]))
+        raw_data = row["data"]
+        if raw_data:
+            decoded: Any = None
+            try:
+                # decrypt_data returns the decrypted plaintext (a JSON
+                # string), so parse it into a dict before passing it to
+                # _parse_interaction_data which expects a mapping.
+                plaintext = decrypt_data(raw_data, context=f"interaction:{row['id']}")
+                decoded = json.loads(plaintext)
+            except Exception:
+                try:
+                    decoded = json.loads(raw_data)
+                except (json.JSONDecodeError, TypeError):
+                    decoded = None
+            if decoded is not None and isinstance(decoded, dict):
+                data = self._parse_interaction_data(decoded)
+
+        response = None
+        encrypted_response = row.get("response_payload_encrypted")
+        if encrypted_response:
+            try:
+                response = json.loads(
+                    decrypt_data(
+                        encrypted_response,
+                        context=f"interaction-response:{row['id']}",
+                    )
+                )
+            except Exception:
+                response = None
 
         return Interaction(
             id=row["id"],
@@ -477,5 +614,6 @@ class InteractionHandler:
             server_locale=row["server_locale"],
             created_at=row["created_at"],
             responded=bool(row["responded"]),
+            response=response,
             token_hash=row["token_hash"],
         )

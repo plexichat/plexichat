@@ -24,6 +24,151 @@ except Exception:
         "google-re2 not installed, falling back to standard 're' module. BEWARE OF REDOS."
     )
 
+# Hard cap on admin-supplied pattern length, enforced on EVERY engine path
+# (RE2 and fallback alike).
+MAX_PATTERN_LENGTH = 500
+
+# Constructs google-re2 cannot compile; using such a pattern means falling
+# back to the backtracking engine.
+_FALLBACK_ONLY_MARKERS = ("(?=", "(?!", "(?<", "(?'", "(?P>", "(?(")
+_BACKREFERENCE_RE = re.compile(r"\\[1-9]")
+
+
+def _pattern_requires_fallback(pattern_str: str) -> bool:
+    """True when the pattern needs the stdlib backtracking engine.
+
+    RE2 rejects lookaheads/lookbehinds, backreferences and conditionals;
+    any of those force a ``re.compile`` fallback.
+    """
+    if any(marker in pattern_str for marker in _FALLBACK_ONLY_MARKERS):
+        return True
+    return bool(_BACKREFERENCE_RE.search(pattern_str))
+
+
+def _match_quantifier(pattern_str: str, i: int) -> Optional[int]:
+    """Return length of the quantifier at ``i`` ('*', '+', '?', '{n,m}')."""
+    if i >= len(pattern_str):
+        return None
+    ch = pattern_str[i]
+    if ch in "*+?":
+        return 1
+    if ch == "{":
+        match = re.match(r"\{\d+(,\d*)?\}", pattern_str[i:])
+        if match:
+            return match.end()
+    return None
+
+
+def _is_unbounded_quantifier(pattern_str: str, i: int) -> bool:
+    """True when the quantifier at ``i`` is unbounded (*, +, {n,}, {,}).
+
+    Bounded forms ``{n}``, ``{n,m}`` and ``{,m}`` are NOT unbounded.
+    """
+    if i >= len(pattern_str):
+        return False
+    ch = pattern_str[i]
+    if ch in "*+":
+        return True
+    if ch == "?":
+        return False
+    if ch == "{":
+        match = re.match(r"\{(\d*)(,)?(\d*)\}", pattern_str[i:])
+        if match:
+            # Unbounded only when the upper bound is omitted ("{n,}").
+            return bool(match.group(2)) and match.group(3) == ""
+        return False
+    return False
+
+
+def _has_redos_risk(pattern_str: str) -> bool:
+    """Static analysis for ReDoS-prone constructs in fallback patterns.
+
+    Flags:
+      - nested quantifiers: a quantified group whose inner atom is itself
+        quantified with an UNBOUNDED repetition, or where the outer group
+        quantifier is unbounded, e.g. ``(a+)+``, ``(a*)*``, ``(\\d{1,3})*`` —
+        classic catastrophic backtracking shapes;
+      - unbounded repetition over alternation groups, e.g. ``(a|aa)*`` where
+        branches can consume overlapping input.
+
+    BOUNDED repetition of a bounded atom is safe and accepted: ``(a|b){2}``
+    and the IPv4 shape ``(\\d{1,3}\\.){3}\\d{1,3}`` do not blow up because the
+    number of ambiguous splits stays constant-bounded.
+    """
+    # Stack frames: [atom_quantified, atom_unbounded, saw_alternation]
+    stack: List[List[bool]] = [[False, False, False]]
+    i = 0
+    n = len(pattern_str)
+
+    while i < n:
+        ch = pattern_str[i]
+
+        if ch == "\\":
+            i += 2
+            continue
+
+        if ch == "[":
+            # Skip character class content; quantifiers inside are literals.
+            j = i + 1
+            if j < n and pattern_str[j] == "^":
+                j += 1
+            if j < n and pattern_str[j] == "]":
+                j += 1
+            while j < n and pattern_str[j] != "]":
+                if pattern_str[j] == "\\":
+                    j += 1
+                j += 1
+            i = j + 1
+            continue
+
+        if ch == "(":
+            stack.append([False, False, False])
+            i += 1
+            continue
+
+        if ch == ")":
+            if len(stack) > 1:
+                inner_quantified, inner_unbounded, inner_alternation = stack.pop()
+                q_len = _match_quantifier(pattern_str, i + 1) or 0
+                if q_len:
+                    unbounded = _is_unbounded_quantifier(pattern_str, i + 1)
+                    if inner_quantified and (inner_unbounded or unbounded):
+                        # Quantified atom inside a quantified group where at
+                        # least one of the two repetitions is unbounded.
+                        return True
+                    if unbounded and inner_alternation:
+                        return True
+                    # The group itself becomes a bounded-safe atom upstream;
+                    # propagate its own boundedness for nesting detection.
+                    stack[-1][0] = True
+                    stack[-1][1] = unbounded
+            i += 1 + (_match_quantifier(pattern_str, i + 1) or 0)
+            continue
+
+        if ch == "|":
+            stack[-1][2] = True
+            i += 1
+            continue
+
+        q_len = _match_quantifier(pattern_str, i)
+        if q_len:
+            stack[-1][0] = True
+            stack[-1][1] = _is_unbounded_quantifier(pattern_str, i)
+            i += q_len
+            continue
+
+        i += 1
+
+    return False
+
+
+_REJECTION_MESSAGE = (
+    "rejected: not supported by RE2 (requires the backtracking fallback "
+    "engine) and static analysis flagged nested/unbounded repetition "
+    "(ReDoS risk). Simplify the pattern - e.g. avoid quantifying a group "
+    "that already contains a quantifier or an alternation."
+)
+
 
 class RegexRule(BaseRule):
     """Rule that checks content against regex patterns."""
@@ -41,10 +186,17 @@ class RegexRule(BaseRule):
                 continue
 
             try:
+                # Length cap applies on every engine path.
+                if len(pattern_str) > MAX_PATTERN_LENGTH:
+                    raise ValueError(
+                        f"pattern exceeds maximum length of {MAX_PATTERN_LENGTH}"
+                    )
+
                 # Get settings with defaults
                 case_sensitive = pattern_config.get("case_sensitive", False)
                 multiline = pattern_config.get("multiline", False)
 
+                compiled = None
                 if HAS_RE2 and re2_module:
                     # re2 uses an Options object for flags
                     options = re2_module.Options()
@@ -54,13 +206,18 @@ class RegexRule(BaseRule):
                     try:
                         compiled = re2_module.compile(pattern_str, options=options)
                     except Exception:
-                        flags = 0
-                        if not case_sensitive:
-                            flags |= re.IGNORECASE
-                        if multiline:
-                            flags |= re.MULTILINE
-                        compiled = re.compile(pattern_str, flags)
-                else:
+                        # RE2 rejected the construct; static vetting below
+                        # decides whether the fallback engine may be used.
+                        pass
+
+                if compiled is None:
+                    if _has_redos_risk(pattern_str):
+                        # Fallback engine + nested/unbounded repetition is a
+                        # ReDoS surface: reject instead of silently compiling.
+                        logger.error(
+                            f"Rejected automod regex '{pattern_str}': {_REJECTION_MESSAGE}"
+                        )
+                        continue
                     flags = 0
                     if not case_sensitive:
                         flags |= re.IGNORECASE
@@ -169,25 +326,35 @@ class RegexRule(BaseRule):
                     issues.append(f"pattern {i} missing 'pattern' field")
                     continue
 
+                # Length cap applies on every engine path.
+                if len(pattern_str) > MAX_PATTERN_LENGTH:
+                    issues.append(
+                        f"pattern {i} exceeds maximum length of {MAX_PATTERN_LENGTH}"
+                    )
+                    continue
+
                 try:
                     if HAS_RE2 and re2_module:
-                        # re2 is naturally safe from ReDoS
                         try:
+                            # re2 is naturally safe from ReDoS
                             re2_module.compile(pattern_str)
                         except Exception:
-                            # Some valid Python regex constructs (e.g. lookahead) are not supported by RE2.
-                            # Accept them by validating with stdlib re instead.
-                            re.compile(pattern_str)
+                            # RE2 cannot compile this construct (lookahead,
+                            # backreference, ...). It would run on the
+                            # backtracking fallback engine, so statically vet
+                            # it for nested quantifiers / unbounded repetition
+                            # groups and reject dangerous shapes explicitly.
+                            if _has_redos_risk(pattern_str):
+                                issues.append(f"pattern {i} {_REJECTION_MESSAGE}")
+                            else:
+                                re.compile(pattern_str)
                     else:
-                        # Fallback validation if re2 is missing (legacy protection)
-                        re.compile(pattern_str)
-                        if len(pattern_str) > 500:
-                            issues.append(f"pattern {i} exceeds maximum length")
-                        # Basic check for nested quantifiers which are dangerous in 're'
-                        if re.search(r"\(.*\)[*+?]", pattern_str):
-                            issues.append(
-                                f"pattern {i} contains potential ReDoS risk (nested group quantifier). Install google-re2 for better protection."
-                            )
+                        # No re2: every pattern runs on the backtracking
+                        # engine, so the same static analysis applies.
+                        if _has_redos_risk(pattern_str):
+                            issues.append(f"pattern {i} {_REJECTION_MESSAGE}")
+                        else:
+                            re.compile(pattern_str)
 
                 except Exception as e:
                     issues.append(f"pattern {i} invalid regex: {e}")

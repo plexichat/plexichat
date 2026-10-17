@@ -2,6 +2,7 @@
 Conversation repository - Data access for conversations.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 
 from ..models import Conversation, ConversationType
@@ -77,7 +78,11 @@ class ConversationRepository(BaseRepository[Conversation]):
 
         if conversation_type:
             query += " AND c.conversation_type = ?"
-            params.append(conversation_type.value)
+            params.append(
+                conversation_type.value
+                if hasattr(conversation_type, "value")
+                else conversation_type
+            )
 
         if before_id:
             query += " AND c.id < ?"
@@ -99,6 +104,8 @@ class ConversationRepository(BaseRepository[Conversation]):
         auto_commit: bool = True,
     ) -> None:
         """Update conversation fields."""
+        if updated_at is None:
+            updated_at = last_message_at or int(time.time() * 1000)
         updates = ["updated_at = ?"]
         params: List[Any] = [updated_at]
 
@@ -117,7 +124,7 @@ class ConversationRepository(BaseRepository[Conversation]):
 
         params.append(conv_id)
         self._execute(
-            f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",  # nosec: B608
+            f"UPDATE msg_conversations SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
             auto_commit=auto_commit,
         )

@@ -1,117 +1,113 @@
+"""Tests for presence routes.
+
+Covers the real endpoints:
+- PUT /api/v1/users/@me/presence (update own status/custom status)
+- GET /api/v1/users/{user_id}/presence (gated read)
 """
-Tests for presence routes.
-"""
+
+import uuid
+from unittest.mock import patch
+
+from src.utils import encryption
 
 
-class TestUpdatePresence:
-    """Tests for PUT /users/@me/presence endpoint."""
-
-    def test_update_presence_online(self, test_client, auth_headers):
-        """Test setting presence to online."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence",
-            headers=auth_headers,
-            json={"status": "online"},
+def _register_user(auth_manager):
+    unique = uuid.uuid4().hex[:8]
+    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+        user = auth_manager.register(
+            username=f"presroute_{unique}",
+            email=f"presroute_{unique}@test.local",
+            password="TestPass123!",
         )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "online"
-
-    def test_update_presence_idle(self, test_client, auth_headers):
-        """Test setting presence to idle."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence", headers=auth_headers, json={"status": "idle"}
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "idle"
-
-    def test_update_presence_dnd(self, test_client, auth_headers):
-        """Test setting presence to do not disturb."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence", headers=auth_headers, json={"status": "dnd"}
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "dnd"
-
-    def test_update_presence_invisible(self, test_client, auth_headers):
-        """Test setting presence to invisible."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence",
-            headers=auth_headers,
-            json={"status": "invisible"},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "invisible"
-
-    def test_update_presence_with_custom_status(self, test_client, auth_headers):
-        """Test setting presence with custom status."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence",
-            headers=auth_headers,
-            json={"status": "online", "custom_status": "Working on something cool"},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "online"
-        assert data["custom_status"] == "Working on something cool"
-
-    def test_update_presence_invalid_status(self, test_client, auth_headers):
-        """Test setting invalid presence status."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence",
-            headers=auth_headers,
-            json={"status": "invalid_status"},
-        )
-
-        assert response.status_code == 400
-
-    def test_update_presence_without_auth(self, test_client):
-        """Test updating presence without authentication."""
-        response = test_client.put(
-            "/api/v1/users/@me/presence", json={"status": "online"}
-        )
-
-        assert response.status_code == 401
+    with patch.object(encryption, "verify_password", return_value=True):
+        result = auth_manager.login(f"presroute_{unique}", "TestPass123!")
+    return user, {"Authorization": f"Bearer {result.token}"}
 
 
-class TestGetUserPresence:
-    """Tests for GET /users/{user_id}/presence endpoint."""
+def test_set_presence_updates_status(test_client, auth_manager):
+    """PUT /users/@me/presence sets the persisted status and echoes it back."""
+    user, headers = _register_user(auth_manager)
 
-    def test_get_user_presence(self, test_client, auth_headers, test_user):
-        """Test getting user presence."""
-        user_id = str(test_user["user"].id)
+    response = test_client.put(
+        "/api/v1/users/@me/presence",
+        json={"status": "dnd"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "dnd"
+    assert body["user_id"] is not None
 
-        response = test_client.get(
-            f"/api/v1/users/{user_id}/presence", headers=auth_headers
-        )
+    follow_up = test_client.get(f"/api/v1/users/{user.id}/presence", headers=headers)
+    assert follow_up.status_code == 200, follow_up.text
+    assert follow_up.json()["status"] == "dnd"
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["user_id"] == user_id
-        assert "status" in data
 
-    def test_get_nonexistent_user_presence(self, test_client, auth_headers):
-        """Test getting presence for nonexistent user."""
-        response = test_client.get(
-            "/api/v1/users/999999999999999999/presence", headers=auth_headers
-        )
+def test_set_presence_with_custom_status(test_client, auth_manager):
+    """A text custom status is persisted and returned."""
+    user, headers = _register_user(auth_manager)
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "offline"
+    response = test_client.put(
+        "/api/v1/users/@me/presence",
+        json={"status": "online", "custom_status": "brb", "custom_emoji": "☕"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["custom_status"] == "brb"
+    assert body["custom_emoji"] == "☕"
 
-    def test_get_presence_without_auth(self, test_client, test_user):
-        """Test getting presence without authentication."""
-        user_id = str(test_user["user"].id)
+    follow_up = test_client.get(f"/api/v1/users/{user.id}/presence", headers=headers)
+    assert follow_up.status_code == 200
+    assert follow_up.json()["custom_status"] == "brb"
+    assert follow_up.json()["custom_emoji"] == "☕"
 
-        response = test_client.get(f"/api/v1/users/{user_id}/presence")
 
-        assert response.status_code == 401
+def test_set_presence_emoji_only(test_client, auth_manager):
+    """An emoji-only custom status (empty text) must survive the API path."""
+    user, headers = _register_user(auth_manager)
+
+    response = test_client.put(
+        "/api/v1/users/@me/presence",
+        json={"status": "online", "custom_status": "", "custom_emoji": "🔥"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["custom_emoji"] == "🔥"
+
+    follow_up = test_client.get(f"/api/v1/users/{user.id}/presence", headers=headers)
+    assert follow_up.status_code == 200
+    assert follow_up.json()["custom_emoji"] == "🔥"
+
+
+def test_set_presence_invalid_status_rejected(test_client, auth_manager):
+    """An unknown status value is a 400, not a silent accept or 500."""
+    _, headers = _register_user(auth_manager)
+
+    response = test_client.put(
+        "/api/v1/users/@me/presence",
+        json={"status": "party"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_set_presence_without_auth(test_client):
+    """Setting presence without authentication fails with 401."""
+    response = test_client.put(
+        "/api/v1/users/@me/presence",
+        json={"status": "online"},
+    )
+    assert response.status_code == 401
+
+
+def test_get_presence_of_stranger_is_forbidden(
+    test_client, auth_manager, second_test_user
+):
+    """Users without friendship/shared server cannot read others' presence."""
+    _, headers = _register_user(auth_manager)
+    stranger_id = second_test_user["user"].id
+
+    response = test_client.get(f"/api/v1/users/{stranger_id}/presence", headers=headers)
+    assert response.status_code == 404

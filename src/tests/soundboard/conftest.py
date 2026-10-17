@@ -36,3 +36,24 @@ def server_with_sound(server_with_owner):
     )
 
     return owner, server, sound, soundboard, servers
+
+
+@pytest.fixture
+def db_and_modules(
+    db, auth_manager, messaging_manager, server_manager, soundboard_manager
+):
+    """Local override: the root conftest's ``db_and_modules`` carries the
+    embeds manager in the ``module`` slot.  Soundboard tests need the
+    soundboard manager instead, so we re-bind here.  The bundle is a
+    named tuple — unpack ``bundle.module`` (never positionally) so this
+    override can't silently hand back another suite's manager.
+    """
+    from src.tests._conftest.module_registry import ModuleBundle
+
+    return ModuleBundle(
+        db=db,
+        auth=auth_manager,
+        messaging=messaging_manager,
+        servers=server_manager,
+        module=soundboard_manager,
+    )

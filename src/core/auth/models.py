@@ -9,6 +9,8 @@ from typing import Optional, Dict, List, Any
 from enum import Enum
 from src.core.base import SnowflakeID
 
+from src.core.database.cache.serialization import register_reconstructable_type
+
 
 class AccountType(Enum):
     """Type of account."""
@@ -22,7 +24,7 @@ class AuthStatus(Enum):
     """Authentication result status."""
 
     SUCCESS = "success"
-    TWO_FACTOR_REQUIRED = "2fa_required"
+    TWO_FACTOR_REQUIRED = "two_factor_required"
     VERIFICATION_REQUIRED = "verification_required"
     FAILED = "failed"
 
@@ -45,6 +47,8 @@ class AuditEventType(Enum):
     TWO_FACTOR_BACKUP_REGENERATED = "2fa_backup_regenerated"
     SESSION_REVOKED = "session_revoked"
     DEVICE_REVOKED = "device_revoked"
+    DEVICE_TRUSTED = "device_trusted"
+    DEVICE_UNTRUSTED = "device_untrusted"
     BOT_CREATED = "bot_created"
     BOT_DELETED = "bot_deleted"
     BOT_TOKEN_REGENERATED = "bot_token_regenerated"
@@ -54,6 +58,10 @@ class AuditEventType(Enum):
     SECURITY_SETTINGS_UPDATED = "security_settings_updated"
     OAUTH_LOGIN = "oauth_login"
     OAUTH_LINK = "oauth_link"
+    PASSKEY_REGISTERED = "passkey_registered"
+    PASSKEY_AUTHENTICATED = "passkey_authenticated"
+    PASSKEY_REVOKED = "passkey_revoked"
+    PASSKEY_RENAMED = "passkey_renamed"
 
 
 @dataclass
@@ -63,10 +71,10 @@ class User:
     id: SnowflakeID
     account_type: AccountType
     username: str
-    email: Optional[str]
     permissions: Dict[str, bool]
     created_at: int
     updated_at: int
+    email: Optional[str] = field(default=None, repr=False)
     email_verified: bool = False
     account_locked: bool = False
     force_username_change: bool = False
@@ -74,9 +82,11 @@ class User:
     failed_login_attempts: int = 0
     last_login_at: Optional[int] = None
     totp_enabled: bool = False
-    public_key: Optional[bytes] = None
+    public_key: Optional[bytes] = field(default=None, repr=False)
     age_verified: bool = False
-    date_of_birth: Optional[str] = None  # ISO format YYYY-MM-DD
+    date_of_birth: Optional[str] = field(
+        default=None, repr=False
+    )  # ISO format YYYY-MM-DD
     badges: List[str] = field(default_factory=list)
     deletion_status: str = "active"
     deletion_at: Optional[int] = None
@@ -92,18 +102,23 @@ class User:
     backup_codes_hash: Optional[str] = field(default=None, repr=False)
 
 
+# User objects flow through cached lookups (profile tiers); they must
+# reconstruct as real User instances (with an AccountType enum), not dicts.
+register_reconstructable_type(User)
+
+
 @dataclass
 class Session:
     """User session model."""
 
     id: SnowflakeID
     user_id: SnowflakeID
-    device_id: Optional[SnowflakeID]
-    ip_address: Optional[str]
-    user_agent: Optional[str]
     created_at: int
     expires_at: int
     last_activity: int
+    device_id: Optional[SnowflakeID] = None
+    ip_address: Optional[str] = field(default=None, repr=False)
+    user_agent: Optional[str] = field(default=None, repr=False)
     revoked: bool = False
 
     # Not stored, only set on creation
@@ -137,8 +152,8 @@ class AccessToken:
     created_by: Optional[SnowflakeID] = None
     first_used_at: Optional[int] = None
     last_used_at: Optional[int] = None
-    last_used_ip_address: Optional[str] = None
-    last_used_user_agent: Optional[str] = None
+    last_used_ip_address: Optional[str] = field(default=None, repr=False)
+    last_used_user_agent: Optional[str] = field(default=None, repr=False)
     last_used_path: Optional[str] = None
     expires_at: Optional[int] = None
     scope_mode: str = "none"
@@ -160,8 +175,10 @@ class Device:
     fingerprint: str
     name: Optional[str]
     device_type: Optional[str]
-    first_seen_at: int
-    last_seen_at: int
+    trusted: bool = False
+    trusted_at: Optional[int] = None
+    first_seen_at: int = 0
+    last_seen_at: int = 0
 
 
 @dataclass
@@ -170,7 +187,7 @@ class KnownIP:
 
     id: SnowflakeID
     user_id: SnowflakeID
-    ip_address: str
+    ip_address: str = field(repr=False)
     first_seen_at: int
     last_seen_at: int
 
@@ -180,13 +197,13 @@ class AuditEntry:
     """Audit log entry model."""
 
     id: SnowflakeID
-    user_id: Optional[SnowflakeID]
     event_type: AuditEventType
-    ip_address: Optional[str]
-    device_id: Optional[SnowflakeID]
     timestamp: int
-    details: Optional[Dict[str, Any]]
     success: bool
+    user_id: Optional[SnowflakeID] = None
+    ip_address: Optional[str] = field(default=None, repr=False)
+    device_id: Optional[SnowflakeID] = None
+    details: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -276,11 +293,37 @@ class TwoFactorChallenge:
     user_id: SnowflakeID
     created_at: int
     expires_at: int
-    device_id: Optional[SnowflakeID]
-    ip_address: Optional[str]
-    user_agent: Optional[str]
+    device_id: Optional[SnowflakeID] = None
+    ip_address: Optional[str] = field(default=None, repr=False)
+    user_agent: Optional[str] = field(default=None, repr=False)
     used: bool = False
 
     # Not stored
     token: Optional[str] = field(default=None, repr=False)
     token_hash: Optional[str] = field(default=None, repr=False)
+
+
+@dataclass
+class Passkey:
+    """WebAuthn/FIDO2 Passkey credential model."""
+
+    id: SnowflakeID
+    user_id: SnowflakeID
+    credential_id: str
+    sign_count: int
+    device_type: Optional[str]
+    device_name: Optional[str]
+    aaguid: Optional[str]
+    transports: List[str]
+    backed_up: bool
+    created_at: int
+    last_used_at: Optional[int]
+    revoked: bool = False
+
+
+@dataclass
+class PasskeySetup:
+    """Passkey registration challenge."""
+
+    challenge_id: str
+    options: Dict[str, Any]  # JSON-serializable WebAuthn options

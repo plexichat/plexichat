@@ -131,7 +131,9 @@ class TestServerSearchIndexing:
 
         results = search.search_servers(owner.id, unique_id)
 
-        assert len(results) >= 1
+        # Exactly one server contains the unique token in its name
+        assert len(results) == 1
+        assert results[0].server_id == server.id
 
     def test_search_by_description(self, db_and_modules):
         """Test searching by description."""
@@ -158,7 +160,9 @@ class TestServerSearchIndexing:
 
         results = search.search_servers(owner.id, description)
 
-        assert len(results) >= 1
+        # Exactly one server has this unique description
+        assert len(results) == 1
+        assert results[0].server_id == server.id
 
     def test_search_by_tags(self, db_and_modules):
         """Test searching by tags."""
@@ -185,7 +189,9 @@ class TestServerSearchIndexing:
 
         results = search.search_servers(owner.id, tag)
 
-        assert len(results) >= 1
+        # Exactly one server carries this unique tag
+        assert len(results) == 1
+        assert results[0].server_id == server.id
 
 
 @pytest.mark.search

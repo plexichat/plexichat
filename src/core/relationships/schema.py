@@ -4,6 +4,8 @@ Relationship database schema - Table definitions for relationships module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Friends table (bidirectional friendship)
@@ -12,7 +14,9 @@ CREATE TABLE IF NOT EXISTS rel_friends (
     user_id INTEGER NOT NULL,
     friend_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
-    UNIQUE(user_id, friend_id)
+    UNIQUE(user_id, friend_id),
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (friend_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
 -- Friends indexes
@@ -28,7 +32,9 @@ CREATE TABLE IF NOT EXISTS rel_friend_requests (
     message TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    UNIQUE(sender_id, recipient_id)
+    UNIQUE(sender_id, recipient_id),
+    FOREIGN KEY (sender_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipient_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
 -- Friend requests indexes
@@ -43,7 +49,9 @@ CREATE TABLE IF NOT EXISTS rel_blocked (
     blocked_id INTEGER NOT NULL,
     reason TEXT,
     created_at INTEGER NOT NULL,
-    UNIQUE(blocker_id, blocked_id)
+    UNIQUE(blocker_id, blocked_id),
+    FOREIGN KEY (blocker_id) REFERENCES auth_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocked_id) REFERENCES auth_users(id) ON DELETE CASCADE
 );
 
 -- Blocked indexes
@@ -54,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_rel_blocked_blocked ON rel_blocked(blocked_id);
 
 def create_tables(db):
     """Create all relationship tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

@@ -3,16 +3,37 @@
     "src",
     "main.py"
   ],
+  // Single source of truth for pyright scope: the pre-commit hook has no
+  // pass_filenames: false, so pre-commit passes every matched file
+  // explicitly and this list is what keeps out-of-scope files out. Each
+  // entry below is load-bearing (verified by removing it and counting):
+  // - src/tests: ~1650 errors from intentional test doubles (stubs,
+  //   SimpleNamespace dispatchers, handler overrides).
+  // - src/api/routes/docs: ~150 errors from the optional-mistune import
+  //   fallback and the _serve_page mixin pattern.
+  // - src/core/migrations/cloner.py: ~14 errors of the same mixin kind.
+  // - ci-tooling: 13 errors in the audit scripts (ast.AST narrowing,
+  //   optional opentimestamps imports, _SimplePath widening).
+  // Removed as verified-clean (0 errors): the old
+  // src/utils/encryption/kek_migration.py path (split into a package in
+  // 106b4305) and src/core/media/deduplication (previously excluded only
+  // at the pre-commit hook level, which is now redundant with this list).
   "exclude": [
-    "src/tests"
+    "src/tests",
+    "src/core/migrations/cloner.py",
+    "src/api/routes/docs",
+    "ci-tooling"
   ],
   "extraPaths": [
     "src",
-    "src/utils/common-utils",
+    "src/utils/common_utils",
     "src/utils"
   ],
-  "pythonVersion": "3.13",
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.14",
   "typeCheckingMode": "standard",
+  "useLibraryCodeForTypes": true,
   "reportMissingImports": "error",
   "reportOptionalMemberAccess": "error",
   "reportOptionalSubscript": "error",

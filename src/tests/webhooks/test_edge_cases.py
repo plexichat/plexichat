@@ -42,6 +42,7 @@ class TestWebhookLimits:
         )
 
         assert webhook is not None
+        assert webhook.id is not None
 
 
 class TestDeletedChannel:
@@ -66,14 +67,15 @@ class TestDeletedChannel:
         )
 
         assert webhook is not None
+        assert webhook.id is not None
 
 
 class TestSpecialCharacters:
     """Tests for special characters in webhook data."""
 
-    def test_webhook_name_special_chars(self, base_server_setup):
+    def test_webhook_name_special_chars(self, fresh_server):
         """Test webhook name with special characters."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -84,9 +86,9 @@ class TestSpecialCharacters:
 
         assert "!@#$%^&*()" in webhook.name
 
-    def test_webhook_name_unicode(self, base_server_setup):
+    def test_webhook_name_unicode(self, fresh_server):
         """Test webhook name with unicode characters."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -96,6 +98,7 @@ class TestSpecialCharacters:
         )
 
         assert webhook is not None
+        assert webhook.name == f"Test Bot {unique_id}"
 
     def test_message_content_special_chars(self, webhook_with_token):
         """Test message content with special characters."""
@@ -148,9 +151,9 @@ class TestConcurrentOperations:
 class TestErrorMessages:
     """Tests for error message quality."""
 
-    def test_webhook_not_found_message(self, base_server_setup):
+    def test_webhook_not_found_message(self, fresh_server):
         """Test WebhookNotFoundError message."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookNotFoundError
 
         with pytest.raises(WebhookNotFoundError) as exc_info:
@@ -160,9 +163,9 @@ class TestErrorMessages:
 
         assert "not found" in str(exc_info.value).lower()
 
-    def test_channel_not_found_message(self, base_server_setup):
+    def test_channel_not_found_message(self, fresh_server):
         """Test ChannelNotFoundError message."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import ChannelNotFoundError
 
         with pytest.raises(ChannelNotFoundError) as exc_info:
@@ -217,9 +220,9 @@ class TestWebhookUrl:
 class TestEmptyAndNull:
     """Tests for empty and null values."""
 
-    def test_null_avatar_url(self, base_server_setup):
+    def test_null_avatar_url(self, fresh_server):
         """Test creating webhook with null avatar."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -231,9 +234,9 @@ class TestEmptyAndNull:
 
         assert webhook.avatar_url is None
 
-    def test_empty_string_avatar_url(self, base_server_setup):
+    def test_empty_string_avatar_url(self, fresh_server):
         """Test creating webhook with empty string avatar."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -245,9 +248,9 @@ class TestEmptyAndNull:
 
         assert webhook.avatar_url is None
 
-    def test_whitespace_avatar_url(self, base_server_setup):
+    def test_whitespace_avatar_url(self, fresh_server):
         """Test creating webhook with whitespace avatar."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(

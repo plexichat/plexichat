@@ -1,163 +1,96 @@
 """
-Shared fixtures for voice tests.
-
-Uses the session-scoped fixtures from root conftest for efficiency.
+Voice test fixtures.
 """
 
+import shutil
+
 import pytest
-import uuid
+
+# common_utils is now a native package.
+
+
+import utils.config as config
+import utils.version as version
+from src.tests._conftest.logger_isolation import isolated_logger
+
+# Setup config before importing voice modules
+DEFAULT_TEST_CONFIG = {
+    "voice": {
+        "enabled": True,
+        "janus_url": "http://localhost:8088/janus",
+    },
+}
+
+# Merge into the root test config instead of re-initializing it:
+# config.setup() replaces the entire config, clobbering the
+# authentication/search/media sections other suites depend on
+# (lockout thresholds, discovery limits, compression defaults).
+for _key, _value in DEFAULT_TEST_CONFIG.items():
+    _existing = config.get(_key)
+    if isinstance(_existing, dict) and isinstance(_value, dict):
+        _merged = dict(_existing)
+        _merged.update(_value)
+        _value = _merged
+    config.set(_key, _value)
+version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _configure_voice_logger(tmp_path_factory):
+    """Point the shared test logger at a pytest-managed temp dir.
+
+    The SFU adapter tests previously called ``logger.setup()`` with the
+    hardcoded, repo-relative ``temp_test_session/logs`` path at import time,
+    leaving accumulating ``app_*.log`` files in the source tree. This fixture
+    configures the same global logger into a session temp dir (outside the
+    repo) and removes it when the session ends.
+    """
+    log_dir = str(tmp_path_factory.mktemp("voice_logs"))
+    with isolated_logger(
+        log_dir=log_dir,
+        level="WARNING",
+        zip_logs=False,
+        suppress_setup_errors=True,
+    ):
+        yield
+    shutil.rmtree(log_dir, ignore_errors=True)
 
 
 @pytest.fixture
-def db_and_modules(modules):
-    """Legacy fixture for backward compatibility."""
-    return (
-        modules._db,
-        modules.auth,
-        modules.servers,
-        modules.relationships,
-        modules.presence,
-        modules.voice,
-    )
+def mock_voice_config():
+    """Mock voice configuration for tests."""
+    return {
+        "enabled": True,
+        "janus_url": "http://localhost:8088/janus",
+        "turn_servers": [],
+    }
 
 
 @pytest.fixture
-def users(modules, user_pool):
-    """Get test users."""
-    user1 = user_pool.get_user()
-    user2 = user_pool.get_user()
-    user3 = user_pool.get_user()
-    user4 = user_pool.get_user()
-    return user1, user2, user3, user4, modules.voice
+def voice_manager(db, auth_manager, server_manager, rel_manager):
+    """Build a VoiceManager on the shared test managers.
 
+    Required by the root ``server_with_voice`` / ``server_with_moderator``
+    fixtures; the signaling ``setup(voice_module=...)`` calls in the voice
+    tests invoke manager methods (get_voice_channel, set_streaming, ...).
+    """
+    from src.core.voice.manager import VoiceManager
 
-@pytest.fixture
-def fresh_users(modules):
-    """Create fresh users for tests needing isolation."""
-    unique_id = uuid.uuid4().hex[:8]
-
-    user1 = modules.auth.register(
-        username=f"fresh1_{unique_id}",
-        email=f"fresh1_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    user2 = modules.auth.register(
-        username=f"fresh2_{unique_id}",
-        email=f"fresh2_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    return user1, user2, modules.voice
-
-
-@pytest.fixture
-def server_with_voice(modules):
-    """Create a server with voice channels."""
-    unique_id = uuid.uuid4().hex[:8]
-
-    owner = modules.auth.register(
-        username=f"owner_{unique_id}",
-        email=f"owner_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    member1 = modules.auth.register(
-        username=f"member1_{unique_id}",
-        email=f"member1_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    member2 = modules.auth.register(
-        username=f"member2_{unique_id}",
-        email=f"member2_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    server = modules.servers.create_server(owner.id, f"Voice Test Server {unique_id}")
-    modules.servers.add_member(server.id, member1.id)
-    modules.servers.add_member(server.id, member2.id)
-
-    voice_channel = modules.servers.create_channel(
-        owner.id,
-        server.id,
-        "voice-chat",
-        channel_type=modules.servers.ChannelType.VOICE,
-    )
-
-    stage_channel = modules.servers.create_channel(
-        owner.id,
-        server.id,
-        "stage-talk",
-        channel_type=modules.servers.ChannelType.STAGE,
-    )
-
-    return (
-        owner,
-        member1,
-        member2,
-        server,
-        voice_channel,
-        stage_channel,
-        modules.servers,
-        modules.voice,
+    return VoiceManager(
+        db,
+        auth_module=auth_manager,
+        servers_module=server_manager,
+        relationships_module=rel_manager,
+        presence_module=None,
     )
 
 
 @pytest.fixture
-def server_with_moderator(modules):
-    """Create a server with a moderator role."""
-    unique_id = uuid.uuid4().hex[:8]
+def db_and_modules(db, auth_manager, server_manager, voice_manager):
+    """Voice-tests override of the root ``db_and_modules``.
 
-    owner = modules.auth.register(
-        username=f"modowner_{unique_id}",
-        email=f"modowner_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    moderator = modules.auth.register(
-        username=f"mod_{unique_id}",
-        email=f"mod_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    member = modules.auth.register(
-        username=f"modmember_{unique_id}",
-        email=f"modmember_{unique_id}@example.com",
-        password="TestPass123!",
-    )
-
-    server = modules.servers.create_server(owner.id, f"Mod Test Server {unique_id}")
-    modules.servers.add_member(server.id, moderator.id)
-    modules.servers.add_member(server.id, member.id)
-
-    mod_role = modules.servers.create_role(
-        owner.id,
-        server.id,
-        "Moderator",
-        permissions={
-            "voice.mute_members": True,
-            "voice.deafen_members": True,
-            "voice.move_members": True,
-        },
-    )
-    modules.servers.assign_role(owner.id, server.id, moderator.id, mod_role.id)
-
-    voice_channel = modules.servers.create_channel(
-        owner.id, server.id, "mod-voice", channel_type=modules.servers.ChannelType.VOICE
-    )
-
-    stage_channel = modules.servers.create_channel(
-        owner.id, server.id, "mod-stage", channel_type=modules.servers.ChannelType.STAGE
-    )
-
-    return (
-        owner,
-        moderator,
-        member,
-        server,
-        voice_channel,
-        stage_channel,
-        modules.servers,
-        modules.voice,
-    )
+    The voice tests unpack ``(db, auth, servers, relationships, presence,
+    voice)`` from this tuple and hand ``voice`` to the signaling setup; the
+    root fixture returns a different, messaging-oriented shape.
+    """
+    return db, auth_manager, server_manager, None, None, voice_manager

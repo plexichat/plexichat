@@ -1,0 +1,151 @@
+"""Regression: import-time optional-dependency warnings must not crash.
+
+``src/core/auth/passkeys.py`` and
+``src/core/voice/signaling/sfu/aiortc_adapter.py`` emit ``logger.warning``
+at module import time when their optional dependency is missing. The app
+logger is only configured in ``setup_logging()``, so on a fresh interpreter
+— or any import before setup — that warning raised
+``RuntimeError("Logger not configured...")`` and the import itself failed.
+The warnings are best-effort (guarded), so the modules import cleanly and
+report ``*_AVAILABLE = False`` instead.
+
+This file also covers the modules that build state at import time and log
+while doing it:
+
+* ``src/utils/encryption/vault.py`` constructs the module-level ``vault``
+  instance on import, and its TPM probe notices a missing ``tpm2_pytss``
+  (the documented default — TPM support is installed only on hosts with the
+  hardware). ``_init_hsm`` already guarded every one of its notices against
+  an unconfigured logger; ``_init_tpm`` did not, so the import failed on any
+  host without a TPM.
+* ``src/core/voice/signaling/sfu/mediasoup_ws.py`` resolves the
+  deployment-scoped stable-peer secret at import time and warns with
+  ``logger.critical`` when none is configured, which is the case for a
+  default deployment -- and the warning itself took down the whole signaling
+  package.
+
+The modules are exercised as isolated copies loaded under a throwaway name,
+never via ``importlib.reload()`` on the shared module: reloading re-executes
+the module in place and rebinds every class it defines, while other test
+modules still hold the previous objects. That silently broke ``isinstance``
+checks downstream (the SFU voice tests asserting
+``isinstance(sender.track, BoundedVideoTrack)`` failed with a
+same-name repr whenever this file ran first in the session).
+"""
+
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+
+def _disable_logger(real_logger):
+    """Simulate an import before ``setup_logging()``; prove it took effect."""
+    real_logger._setup_called = False
+    with pytest.raises(RuntimeError):
+        real_logger.warning("precondition: unconfigured logger raises")
+
+
+def _unconfigure_config(monkeypatch) -> None:
+    """Make ``utils.config.get`` behave like an unconfigured loader.
+
+    The stable-peer secret is read from config *before* the warning is
+    emitted, so a configured ``rate_limiting.bypass_secret`` would answer the
+    lookup and the probe would never reach the log call this test is about.
+    Failing the lookup is what an import before ``config.setup()`` sees.
+    """
+    import utils.config as config
+
+    def _raise(key, default=None):
+        raise RuntimeError("Config not configured")
+
+    monkeypatch.setattr(config, "get", _raise)
+
+
+def _load_isolated(live_module: types.ModuleType) -> types.ModuleType:
+    """Import a fresh copy of a module without touching the shared one.
+
+    The file backing ``live_module`` is executed under a throwaway dotted
+    name inside the same package, so relative imports resolve exactly as
+    they do for the real module, while the shared module object — and every
+    reference other tests already hold to its classes — stays untouched.
+    """
+    package = live_module.__name__.rpartition(".")[0]
+    probe_name = f"{package}._isolated_import_probe"
+    path = Path(live_module.__file__).resolve()
+    sys.modules.pop(probe_name, None)
+    spec = importlib.util.spec_from_file_location(probe_name, path)
+    assert spec is not None and spec.loader is not None
+    probe = importlib.util.module_from_spec(spec)
+    sys.modules[probe_name] = probe
+    try:
+        spec.loader.exec_module(probe)
+    finally:
+        sys.modules.pop(probe_name, None)
+    return probe
+
+
+@pytest.mark.unit
+class TestOptionalDependencyImportWarnings:
+    def test_passkeys_import_without_webauthn_and_logger(self, monkeypatch):
+        from src.utils.common_utils.utils import logger as real_logger
+        import src.core.auth.passkeys as passkeys
+
+        saved_flag = real_logger._setup_called
+        monkeypatch.setitem(sys.modules, "webauthn", None)
+        try:
+            _disable_logger(real_logger)
+            reloaded = _load_isolated(passkeys)
+            assert reloaded.WEBAUTHN_AVAILABLE is False
+        finally:
+            real_logger._setup_called = saved_flag
+
+    def test_aiortc_adapter_import_without_aiortc_and_logger(self, monkeypatch):
+        from src.utils.common_utils.utils import logger as real_logger
+        import src.core.voice.signaling.sfu.aiortc_adapter as adapter
+
+        saved_flag = real_logger._setup_called
+        monkeypatch.setitem(sys.modules, "aiortc", None)
+        monkeypatch.setitem(sys.modules, "aiortc.contrib", None)
+        monkeypatch.setitem(sys.modules, "aiortc.contrib.media", None)
+        try:
+            _disable_logger(real_logger)
+            reloaded = _load_isolated(adapter)
+            assert reloaded.AIORTC_AVAILABLE is False
+            assert reloaded.AIORTC_RECORDING_AVAILABLE is False
+        finally:
+            real_logger._setup_called = saved_flag
+
+    def test_mediasoup_adapter_import_without_a_secret_and_logger(self, monkeypatch):
+        """The stable-peer secret is resolved at import time, and warns."""
+        from src.utils.common_utils.utils import logger as real_logger
+        import src.core.voice.signaling.sfu.mediasoup_ws as mediasoup
+
+        saved_flag = real_logger._setup_called
+        monkeypatch.delenv("PLEXICHAT_VOICE_STABLE_PEER_SECRET", raising=False)
+        monkeypatch.delenv("PLEXICHAT_SYSTEM_KEY", raising=False)
+        _unconfigure_config(monkeypatch)
+        try:
+            _disable_logger(real_logger)
+            reloaded = _load_isolated(mediasoup)
+            # The empty secret is what made the probe warn; a configured secret
+            # would mean the import was never at risk and this proves nothing.
+            assert reloaded._STABLE_PEER_SECRET == b""
+        finally:
+            real_logger._setup_called = saved_flag
+
+    def test_vault_import_without_tpm_and_logger(self, monkeypatch):
+        """The module-level ``vault`` instance is built at import time."""
+        from src.utils.common_utils.utils import logger as real_logger
+        import src.utils.encryption.vault as vault_module
+
+        saved_flag = real_logger._setup_called
+        monkeypatch.setitem(sys.modules, "tpm2_pytss", None)
+        try:
+            _disable_logger(real_logger)
+            reloaded = _load_isolated(vault_module)
+            assert reloaded.vault._tpm_available is False
+        finally:
+            real_logger._setup_called = saved_flag

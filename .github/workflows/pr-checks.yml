@@ -1,0 +1,352 @@
+# ============================================================================
+# Plexichat PR Checks — GitHub Actions
+# ============================================================================
+# Mirrors the GitLab CI pipeline from plexichat/.gitlab-ci.yml (server only).
+# Client CI is managed separately in the plexichat-client GitLab repo.
+#
+# Triggered by:
+#   - pull_request_target (PRs against dev — runs in base repo context)
+#   - workflow_call   (reusable by relay-pr.yml after metadata capture)
+#
+# ⚠️  SECURITY NOTE — pull_request_target + untrusted code execution:
+# This workflow uses pull_request_target AND checks out the fork's code to
+# run linters, security scanners, and tests. This means the fork's
+# .pre-commit-config.yaml, requirements.txt, package.json, etc. ARE
+# executed in the base repo's CI context.
+#
+# Mitigations in place:
+#   1. NO custom secrets are exposed to these jobs — only the built-in
+#      GITHUB_TOKEN with minimal permissions (contents: read, prs: read,
+#      checks: write).
+#   2. pip install uses --require-hashes (prevents arbitrary dependency
+#      injection).
+#   3. The relay workflow (relay-pr.yml) is COMPLETELY SEPARATE and runs
+#      after CI passes — secrets are only in that workflow, gated by
+#      the gitlab-relay environment.
+#   4. The GITHUB_TOKEN cannot write to the repo or access secrets.
+#
+# ACCEPTED RISK: A malicious fork could still exfiltrate the read-only
+#   GITHUB_TOKEN, consume CI minutes, or use the runner for cryptomining.
+#   This is the inherent tradeoff of running CI on untrusted PR code.
+#   If this is unacceptable, switch to a two-workflow approach where CI
+#   runs in a restricted pull_request context and only the relay uses
+#   pull_request_target.
+# ============================================================================
+
+name: PR Checks
+
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+  # workflow_call is reserved for future programmatic reuse from other workflows.
+  # Currently the relay-pr.yml uses workflow_run (event-driven), not workflow_call.
+  # workflow_call:
+  #   inputs:
+  #     pr_number: { type: string, required: false }
+  #     head_sha: { type: string, required: false }
+
+# Explicit permissions: read-only everywhere, write only where needed
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  # ==========================================================================
+  # SERVER CI — mirrors plexichat/.gitlab-ci.yml
+  # ==========================================================================
+
+  server-lint:
+    name: "Server: Lint (pre-commit)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit
+
+      - name: Cache pre-commit
+        uses: actions/cache@v4
+        with:
+          path: .cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        env:
+          PRE_COMMIT_HOME: ${{ github.workspace }}/.cache/pre-commit
+        run: |
+          source .venv/bin/activate
+          pre-commit run --all-files --show-diff-on-failure
+
+  server-security:
+    name: "Server: Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install pip-audit
+
+      - name: Dependency audit (pip-audit)
+        run: |
+          source .venv/bin/activate
+          pip-audit -r requirements.txt --format json > pip-audit-report.json
+          pip-audit -r requirements.txt
+
+      - name: License audit
+        run: |
+          source .venv/bin/activate
+          python ci-tooling/license_audit.py
+
+      - name: Dependency audit (osv-scanner + trivy)
+        run: |
+          source .venv/bin/activate
+          # Every line of this step used to end in `|| true`, and that is how it
+          # became a no-op that still reported success:
+          #
+          #   * the osv-scanner download pointed at
+          #     releases/latest/download/osv-scanner_linux_amd64.tar.gz, which
+          #     has not existed since osv-scanner v2 -- its assets are raw
+          #     binaries now -- so the fetch was a 404, and the scans that
+          #     followed ran a binary that was never installed;
+          #   * trivy's own exit code is 0 by default, so `trivy fs . || true`
+          #     could not fail the job even with a binary present and a
+          #     finding on screen.
+          #
+          # install_scanners.py fetches both tools from pinned releases and
+          # checks each against its published digest, so a broken download is a
+          # failure to install rather than a silent skip. The scans below are
+          # not allowed to fail quietly: `--exit-code 1` is what makes trivy's
+          # verdict count, and nothing here is wrapped in `|| true`.
+          python ci-tooling/install_scanners.py --bin-dir ./bin osv-scanner trivy
+          ./bin/osv-scanner --version
+          ./bin/trivy --version
+          ./bin/osv-scanner scan source -r . --format json --output-file osv-report.json
+          ./bin/osv-scanner scan source -r .
+          ./bin/trivy fs --exit-code 1 --format json --output trivy-report.json .
+          ./bin/trivy fs --exit-code 1 .
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-security-reports-${{ github.run_id }}
+          path: |
+            pip-audit-report.json
+            osv-report.json
+            trivy-report.json
+          retention-days: 30
+          overwrite: true
+          # A scan that produced no report did not scan; warning about it (the
+          # default) is how the missing osv-report.json went unnoticed.
+          if-no-files-found: error
+
+  pip-licenses:
+    name: "pip-licenses (permissive-only license gate)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install "pip-licenses>=4.3"
+
+      - name: License gate (pip-licenses)
+        run: |
+          source .venv/bin/activate
+          pip-licenses --format=json --output-file=pip-licenses.json
+          pip-licenses --format=plain-vertical
+          python ci-tooling/check_pip_licenses.py pip-licenses.json
+
+      - name: Upload license report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-licenses-report-${{ github.run_id }}
+          path: pip-licenses.json
+          retention-days: 30
+          overwrite: true
+
+  server-test:
+    name: "Server: Self-Test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+
+      - name: Run self-test
+        run: |
+          source .venv/bin/activate
+          mkdir -p .plexichat
+          # Provision the canonical provisional test license so the
+          # licensed-only endpoints are exercised (a real PLEXICHAT_LICENSE
+          # secret takes precedence when one is configured).
+          if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+            python ci-tooling/write_test_license.py
+          fi
+          python main.py self-test
+
+  server-formula-parity:
+    name: "Server: PlexiSum formula parity"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install --require-hashes -r requirements-dev.txt
+
+      - name: Run the shared formula case table
+        run: |
+          source .venv/bin/activate
+          # The table is the contract both PlexiSum engines are held to, and
+          # the parity test pins its digest so an edit to either repository's
+          # copy that is not mirrored in the other fails the PR. This is a
+          # blocking check on its own rather than one line of a larger suite.
+          python -m pytest -q src/tests/suite/test_sum_formula_parity.py src/tests/suite/test_sum_formulas.py
+
+  server-timing-under-load:
+    name: "Server: Timing under CPU load"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install --require-hashes -r requirements-dev.txt
+
+      # These suites wait on background effects (worker threads, executors,
+      # pool reclaim, rate-limit windows, ICE/media handshakes). Running them
+      # while busy-loop burners oversubscribe the box turns an under-budgeted
+      # wait into a failure on the PR instead of an intermittent flake later.
+      # Deterministic replacements live in src/tests/_conftest/waiting.py.
+      - name: Run the timing-sensitive suites under CPU contention
+        run: |
+          source .venv/bin/activate
+          set -eu
+          cpus=$(nproc)
+          burners=$((cpus * 2))
+          echo "Oversubscribing ${cpus} CPU(s) with ${burners} busy-loop burners"
+          burner_pids=""
+          for _ in $(seq 1 "$burners"); do
+            dd if=/dev/zero of=/dev/null bs=1M status=none &
+            burner_pids="$burner_pids $!"
+          done
+          stop_burners() {
+            # shellcheck disable=SC2086
+            kill $burner_pids 2>/dev/null || true
+          }
+          trap stop_burners EXIT
+          python -m pytest -q --maxfail=20 --durations=25 \
+            -m "not performance and not production_simulation and not multiprocess" \
+            src/tests/ratelimit \
+            src/tests/webhooks \
+            src/tests/presence \
+            src/tests/websocket \
+            src/tests/events/test_queued_delivery_integration.py \
+            src/tests/media/test_scan_bugfixes.py \
+            src/tests/test_pool_monitoring.py \
+            src/tests/test_sqlite_pool_reclaim.py \
+            src/tests/test_database_pool.py \
+            src/tests/auth/test_sessions.py \
+            src/tests/auth/test_audit.py \
+            src/tests/voice/test_voice_media_handshake_e2e.py \
+            src/tests/voice/test_sfu_aiortc_media.py \
+            src/tests/voice/test_sfu_aiortc_fanout_media.py \
+            src/tests/voice/test_sfu_aiortc_degraded_media.py
+          stop_burners
+          trap - EXIT
+
+  # Client CI is managed separately in the plexichat-client GitLab repo.

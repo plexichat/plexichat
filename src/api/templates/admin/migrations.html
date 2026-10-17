@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plexichat Admin - Migrations</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230066ff'/><text x='50' y='70' font-family='sans-serif' font-weight='900' font-size='60' text-anchor='middle' fill='white'>P</text></svg>">
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --card: #141414;
+            --header-bg: #1a1a1c;
+            --accent: #0066ff;
+            --accent-hover: #3388ff;
+            --text: #ffffff;
+            --text-dim: #999999;
+            --border: #2a2a2a;
+            --good: #00ff88;
+            --warn: #ffaa00;
+            --bad: #ff4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.4;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .header {
+            background: var(--header-bg);
+            padding: 0.6rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 3px;
+            border: 1px solid transparent;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.1s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-secondary { background: #2a2a2a; color: var(--text); border-color: #3a3a3a; }
+        .btn-outline { background: transparent; border-color: #333; color: var(--text-dim); }
+        .btn-danger { background: var(--bad); color: white; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .card {
+            background: var(--card);
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: #1a1a1c;
+            font-weight: 600;
+            color: var(--text-dim);
+        }
+
+        tr:hover { background: #1a1a1c; }
+
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-completed { background: rgba(0, 255, 136, 0.2); color: var(--good); }
+        .status-pending { background: rgba(255, 170, 0, 0.2); color: var(--warn); }
+        .status-failed { background: rgba(255, 68, 68, 0.2); color: var(--bad); }
+        .status-running { background: rgba(0, 102, 255, 0.2); color: var(--accent); }
+
+        .irreversible-badge {
+            background: rgba(255, 68, 68, 0.2);
+            color: var(--bad);
+            padding: 0.25rem 0.5rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: var(--card);
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 1.25rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 1.25rem;
+        }
+
+        .modal-footer {
+            padding: 1.25rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+
+        .warning-banner {
+            background: rgba(255, 68, 68, 0.1);
+            border: 1px solid var(--bad);
+            border-radius: 4px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .warning-banner h3 {
+            color: var(--bad);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            background: #1a1a1c;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .logs-container {
+            background: #0a0a0a;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1rem;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+        }
+
+        .log-entry {
+            padding: 0.25rem 0;
+            border-bottom: 1px solid #1a1a1c;
+        }
+
+        .log-level-INFO { color: var(--text-dim); }
+        .log-level-WARNING { color: var(--warn); }
+        .log-level-ERROR { color: var(--bad); }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .stat-card {
+            background: #1a1a1c;
+            padding: 1rem;
+            border-radius: 3px;
+            border: 1px solid var(--border);
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 0.25rem;
+        }
+
+        .emergency-link {
+            color: var(--warn);
+            text-decoration: none;
+            font-size: 0.8rem;
+        }
+
+        .emergency-link:hover { text-decoration: underline; }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <svg width="32" height="32" viewBox="0 0 100 100">
+                <rect width="100" height="100" rx="20" fill="#0066ff"/>
+                <text x="50" y="70" font-family="sans-serif" font-weight="900" font-size="60" text-anchor="middle" fill="white">P</text>
+            </svg>
+            <span style="font-weight: 600;">Plexichat Admin</span>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <a href="/api/v1/admin/ui" class="btn btn-outline">Dashboard</a>
+            <a href="/api/v1/admin/logout" class="btn btn-secondary">Logout</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h1 class="card-title">Database Migrations</h1>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="btn btn-outline" onclick="refreshMigrations()">Refresh</button>
+                    <a href="#" class="emergency-link" onclick="showEmergencyModal()">Emergency Override</a>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="applied-count">-</div>
+                    <div class="stat-label">Applied</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="pending-count">-</div>
+                    <div class="stat-label">Pending</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="failed-count">-</div>
+                    <div class="stat-label">Failed</div>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Irreversible</th>
+                        <th>Applied At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="migrations-table">
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-dim);">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Run Migration Modal -->
+    <div class="modal-overlay" id="run-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Run Migration</h3>
+                <button class="btn btn-outline" onclick="closeModal('run-modal')">Close</button>
+            </div>
+            <div class="modal-body">
+                <div id="run-modal-content"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('run-modal')">Cancel</button>
+                <button class="btn btn-primary" id="run-confirm-btn" onclick="confirmRunMigration()">Run Migration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Migration Details Modal -->
+    <div class="modal-overlay" id="details-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Migration Details</h3>
+                <button class="btn btn-outline" onclick="closeModal('details-modal')">Close</button>
+            </div>
+            <div class="modal-body" id="details-modal-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Emergency Override Modal -->
+    <div class="modal-overlay" id="emergency-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Emergency Override</h3>
+                <button class="btn btn-outline" onclick="closeModal('emergency-modal')">Close</button>
+            </div>
+            <div class="modal-body">
+                <div class="warning-banner">
+                    <h3>Warning</h3>
+                    <p>Emergency override tokens bypass the uptime delay for irreversible migrations. Use only in emergencies.</p>
+                </div>
+                <div class="form-group">
+                    <label>Reason</label>
+                    <input type="text" id="emergency-reason" placeholder="Explain why you need emergency access">
+                </div>
+                <div class="form-group">
+                    <label>Expires In (minutes)</label>
+                    <input type="number" id="emergency-expires" value="30" min="5" max="120">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('emergency-modal')">Cancel</button>
+                <button class="btn btn-danger" onclick="generateEmergencyToken()">Generate Token</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMigration = null;
+        let migrations = [];
+
+        // HTML escape function to prevent XSS
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        async function refreshMigrations() {
+            try {
+                const response = await fetch('/api/v1/admin/migrations');
+                const data = await response.json();
+
+                document.getElementById('applied-count').textContent = data.applied_count;
+                document.getElementById('pending-count').textContent = data.pending_count;
+                document.getElementById('failed-count').textContent = data.failed_count;
+
+                migrations = data.migrations;
+                renderMigrationsTable(migrations);
+            } catch (error) {
+                console.error('Failed to load migrations:', error);
+            }
+        }
+
+        function renderMigrationsTable(migrations) {
+            const tbody = document.getElementById('migrations-table');
+            tbody.innerHTML = '';
+
+            if (migrations.length === 0) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 6;
+                td.style.textAlign = 'center';
+                td.style.color = 'var(--text-dim)';
+                td.textContent = 'No migrations found';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+
+            for (const m of migrations) {
+                const tr = document.createElement('tr');
+
+                // Version
+                const tdVersion = document.createElement('td');
+                const code = document.createElement('code');
+                code.textContent = m.version;
+                tdVersion.appendChild(code);
+                tr.appendChild(tdVersion);
+
+                // Name
+                const tdName = document.createElement('td');
+                tdName.textContent = m.name;
+                tr.appendChild(tdName);
+
+                // Status
+                const tdStatus = document.createElement('td');
+                const statusBadge = document.createElement('span');
+                statusBadge.className = 'status-badge status-' + m.status;
+                statusBadge.textContent = m.status;
+                tdStatus.appendChild(statusBadge);
+                tr.appendChild(tdStatus);
+
+                // Irreversible
+                const tdIrreversible = document.createElement('td');
+                if (m.is_irreversible) {
+                    const badge = document.createElement('span');
+                    badge.className = 'irreversible-badge';
+                    badge.textContent = 'IRREVERSIBLE';
+                    tdIrreversible.appendChild(badge);
+                } else {
+                    tdIrreversible.textContent = '-';
+                }
+                tr.appendChild(tdIrreversible);
+
+                // Applied At
+                const tdApplied = document.createElement('td');
+                tdApplied.textContent = m.applied_at || '-';
+                tr.appendChild(tdApplied);
+
+                // Actions
+                const tdActions = document.createElement('td');
+                const actionsDiv = document.createElement('div');
+                actionsDiv.style.display = 'flex';
+                actionsDiv.style.gap = '0.25rem';
+
+                if (m.status === 'pending') {
+                    const runBtn = document.createElement('button');
+                    runBtn.className = 'btn btn-primary';
+                    runBtn.style.fontSize = '0.75rem';
+                    runBtn.textContent = 'Run';
+                    runBtn.disabled = !m.can_run;
+                    runBtn.onclick = (function(v) {
+                        return function() { showRunModal(v); };
+                    })(m.version);
+                    actionsDiv.appendChild(runBtn);
+
+                    const dryRunBtn = document.createElement('button');
+                    dryRunBtn.className = 'btn btn-outline';
+                    dryRunBtn.style.fontSize = '0.75rem';
+                    dryRunBtn.textContent = 'Dry Run';
+                    dryRunBtn.onclick = (function(v) {
+                        return function() { showRunModal(v, true); };
+                    })(m.version);
+                    actionsDiv.appendChild(dryRunBtn);
+                }
+
+                const detailsBtn = document.createElement('button');
+                detailsBtn.className = 'btn btn-outline';
+                detailsBtn.style.fontSize = '0.75rem';
+                detailsBtn.textContent = 'Details';
+                detailsBtn.onclick = (function(v) {
+                    return function() { showDetails(v); };
+                })(m.version);
+                actionsDiv.appendChild(detailsBtn);
+
+                tdActions.appendChild(actionsDiv);
+                tr.appendChild(tdActions);
+
+                tbody.appendChild(tr);
+            }
+        }
+
+        function showRunModal(version, dryRun = false) {
+            const migration = migrations.find(m => m.version === version);
+            if (!migration) return;
+
+            currentMigration = { ...migration, dry_run: dryRun };
+
+            const content = document.getElementById('run-modal-content');
+            content.innerHTML = '';
+
+            if (migration.is_irreversible && !dryRun) {
+                // Warning banner
+                const warningDiv = document.createElement('div');
+                warningDiv.className = 'warning-banner';
+
+                const warningTitle = document.createElement('h3');
+                warningTitle.textContent = 'IRREVERSIBLE MIGRATION';
+                warningDiv.appendChild(warningTitle);
+
+                const warningP = document.createElement('p');
+                warningP.textContent = 'This migration cannot be rolled back after it is applied.';
+                warningDiv.appendChild(warningP);
+
+                if (!migration.can_run) {
+                    const blockedP = document.createElement('p');
+                    blockedP.style.color = 'var(--warn)';
+                    blockedP.style.marginTop = '0.5rem';
+                    blockedP.innerHTML = '<strong>Blocked:</strong> ' + escapeHtml(migration.can_run_reason);
+                    warningDiv.appendChild(blockedP);
+                }
+
+                content.appendChild(warningDiv);
+
+                // Form group
+                const formGroup = document.createElement('div');
+                formGroup.className = 'form-group';
+
+                const label = document.createElement('label');
+                label.textContent = 'Type "THE DATABASE IS BACKED UP" to confirm';
+                formGroup.appendChild(label);
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.id = 'confirmation-text';
+                input.placeholder = 'THE DATABASE IS BACKED UP';
+                formGroup.appendChild(input);
+
+                content.appendChild(formGroup);
+
+                document.getElementById('run-confirm-btn').disabled = true;
+                input.addEventListener('input', checkConfirmation);
+            } else {
+                const p1 = document.createElement('p');
+                p1.innerHTML = '<strong>Version:</strong> ' + escapeHtml(migration.version);
+                content.appendChild(p1);
+
+                const p2 = document.createElement('p');
+                p2.innerHTML = '<strong>Name:</strong> ' + escapeHtml(migration.name);
+                content.appendChild(p2);
+
+                const p3 = document.createElement('p');
+                p3.innerHTML = '<strong>Dry Run:</strong> ' + (dryRun ? 'Yes' : 'No');
+                content.appendChild(p3);
+
+                if (!migration.can_run) {
+                    const blockedP = document.createElement('p');
+                    blockedP.style.color = 'var(--warn)';
+                    blockedP.innerHTML = '<strong>Blocked:</strong> ' + escapeHtml(migration.can_run_reason);
+                    content.appendChild(blockedP);
+                }
+
+                document.getElementById('run-confirm-btn').disabled = !migration.can_run;
+            }
+
+            document.getElementById('run-modal').classList.add('active');
+        }
+
+        function checkConfirmation() {
+            const input = document.getElementById('confirmation-text').value;
+            const btn = document.getElementById('run-confirm-btn');
+            btn.disabled = input !== 'THE DATABASE IS BACKED UP';
+        }
+
+        async function confirmRunMigration() {
+            if (!currentMigration) return;
+
+            const btn = document.getElementById('run-confirm-btn');
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+
+            try {
+                const response = await fetch(`/api/v1/admin/migrations/${currentMigration.version}/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        dry_run: currentMigration.dry_run,
+                        confirmation_text: currentMigration.is_irreversible && !currentMigration.dry_run 
+                            ? document.getElementById('confirmation-text').value 
+                            : null
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert(currentMigration.dry_run ? 'Dry run completed successfully' : 'Migration completed successfully');
+                    closeModal('run-modal');
+                    refreshMigrations();
+                } else {
+                    alert('Failed: ' + (data.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Run Migration';
+        }
+
+        async function showDetails(version) {
+            try {
+                const response = await fetch(`/api/v1/admin/migrations/${version}`);
+                const data = await response.json();
+
+                const content = document.getElementById('details-modal-content');
+                content.innerHTML = '';
+
+                // Info section
+                const infoDiv = document.createElement('div');
+                infoDiv.style.marginBottom = '1rem';
+
+                function addInfoRow(label, value) {
+                    const p = document.createElement('p');
+                    p.innerHTML = '<strong>' + label + ':</strong> ' + value;
+                    infoDiv.appendChild(p);
+                }
+
+                addInfoRow('Version', escapeHtml(data.version));
+                addInfoRow('Name', escapeHtml(data.name));
+
+                const statusP = document.createElement('p');
+                statusP.innerHTML = '<strong>Status:</strong> ';
+                const statusBadge = document.createElement('span');
+                statusBadge.className = 'status-badge status-' + data.status;
+                statusBadge.textContent = data.status;
+                statusP.appendChild(statusBadge);
+                infoDiv.appendChild(statusP);
+
+                addInfoRow('Irreversible', data.is_irreversible ? 'Yes' : 'No');
+                addInfoRow('Can Run', data.can_run ? 'Yes' : 'No');
+
+                if (data.can_run_reason) {
+                    addInfoRow('Reason', escapeHtml(data.can_run_reason));
+                }
+
+                addInfoRow('Applied At', data.applied_at ? escapeHtml(data.applied_at) : 'N/A');
+                addInfoRow('Execution Time', data.execution_time_ms ? escapeHtml(data.execution_time_ms) + 'ms' : 'N/A');
+
+                if (data.depends_on && data.depends_on.length > 0) {
+                    addInfoRow('Depends On', escapeHtml(data.depends_on.join(', ')));
+                }
+
+                content.appendChild(infoDiv);
+
+                // Logs section
+                const logsHeader = document.createElement('h4');
+                logsHeader.textContent = 'Logs';
+                content.appendChild(logsHeader);
+
+                const logsContainer = document.createElement('div');
+                logsContainer.className = 'logs-container';
+
+                if (data.logs.length === 0) {
+                    const noLogs = document.createElement('p');
+                    noLogs.style.color = 'var(--text-dim)';
+                    noLogs.textContent = 'No logs available';
+                    logsContainer.appendChild(noLogs);
+                } else {
+                    for (const log of data.logs) {
+                        const logEntry = document.createElement('div');
+                        logEntry.className = 'log-entry log-level-' + log.level;
+                        logEntry.textContent = '[' + log.timestamp + '] ' + log.level + ': ' + log.message;
+                        logsContainer.appendChild(logEntry);
+                    }
+                }
+
+                content.appendChild(logsContainer);
+
+                document.getElementById('details-modal').classList.add('active');
+            } catch (error) {
+                alert('Failed to load migration details: ' + error.message);
+            }
+        }
+
+        function showEmergencyModal() {
+            document.getElementById('emergency-modal').classList.add('active');
+        }
+
+        async function generateEmergencyToken() {
+            const reason = document.getElementById('emergency-reason').value;
+            const expires = document.getElementById('emergency-expires').value;
+
+            if (!reason) {
+                alert('Please provide a reason');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/v1/admin/migrations/emergency-override', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason, expires_minutes: parseInt(expires) })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert('Emergency token generated:\n\n' + data.token + '\n\n' + data.message + '\n\nExpires: ' + data.expires_at);
+                    closeModal('emergency-modal');
+                } else {
+                    alert('Failed: ' + (data.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+            currentMigration = null;
+        }
+
+        // Load migrations on page load
+        refreshMigrations();
+    </script>
+</body>
+
+</html>

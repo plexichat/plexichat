@@ -2,12 +2,15 @@
 Tests for connection quality monitoring.
 """
 
+import asyncio
 import pytest
 
 from src.core.voice.signaling import (
+    close as signaling_close,
     setup,
     create_voice_connection,
     get_connection_quality,
+    get_quality_stats,
     update_quality_hint,
     disconnect_voice,
     NotConnectedError,
@@ -19,7 +22,7 @@ from src.core.voice.signaling.models import (
 )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def signaling_setup(db_and_modules):
     """Setup signaling module for tests."""
     db, auth, servers, relationships, presence, voice = db_and_modules
@@ -34,7 +37,10 @@ def signaling_setup(db_and_modules):
         turn_ttl=3600,
     )
 
-    return voice
+    yield voice
+
+    # Clean up SFU adapter sessions to prevent ResourceWarning.
+    asyncio.run(signaling_close())
 
 
 class TestConnectionQuality:
@@ -137,6 +143,42 @@ class TestConnectionQuality:
 
         quality = get_connection_quality(member1.id, voice_channel.id)
         assert quality.quality_level == QualityLevel.EXCELLENT
+
+        # Cleanup
+        disconnect_voice(member1.id)
+
+    def test_update_quality_hint_rejects_channel_mismatch(
+        self, server_with_voice, signaling_setup
+    ):
+        """A peer may only report metrics for the channel it is bound to.
+
+        Regression: ``update_quality_hint`` keyed entries by the *claimed*
+        channel, so a member of one voice channel could inject metrics into
+        another channel's ``get_quality_stats`` / ``get_connection_quality``
+        result. The hint must be refused when it names a channel the caller's
+        signaling connection is not bound to.
+        """
+        (
+            owner,
+            member1,
+            member2,
+            server,
+            voice_channel,
+            stage_channel,
+            servers,
+            voice,
+        ) = server_with_voice
+
+        create_voice_connection(member1.id, voice_channel.id)
+
+        result = update_quality_hint(member1.id, stage_channel.id, target_bitrate=64000)
+
+        assert result is False
+        assert get_quality_stats(stage_channel.id) == []
+        # The foreign channel reports the neutral default, not the injection.
+        forged = get_connection_quality(member1.id, stage_channel.id)
+        assert forged.bitrate == 64000
+        assert forged.quality_level == QualityLevel.GOOD
 
         # Cleanup
         disconnect_voice(member1.id)

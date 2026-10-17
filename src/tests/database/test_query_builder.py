@@ -730,6 +730,7 @@ class TestQueryBuilderInitialization:
         """Test QueryBuilder initialization with schema validation."""
         builder = QueryBuilder(temp_db, db_type="sqlite", enable_schema_validation=True)
         assert builder.schema_registry is not None
+        assert builder.db_type == "sqlite"
 
     def test_register_schema_without_validation(self, temp_db):
         """Test registering schema without validation enabled raises error."""

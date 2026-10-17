@@ -27,6 +27,8 @@ class FeedbackEntry:
     resolved_at: Optional[int] = None
     resolved_by: Optional[int] = None
     internal_notes: Optional[str] = None
+    internal_notes_encrypted: Optional[str] = None
+    internal_notes_format: Optional[str] = "plain"
 
 
 def setup(db: Any) -> None:
@@ -65,6 +67,8 @@ def create_tables(db: Any) -> None:
         resolved_at INTEGER,
         resolved_by INTEGER,
         internal_notes TEXT,
+        internal_notes_encrypted TEXT,
+        internal_notes_format TEXT DEFAULT 'plain',
         FOREIGN KEY (user_id) REFERENCES auth_users(id)
     )
     """

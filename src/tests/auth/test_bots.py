@@ -8,20 +8,25 @@ Each test creates its own user to avoid hitting the 5 bot limit.
 import pytest
 import uuid
 from src.core.auth.permissions import permissions_to_json
-
-
-def unique_name(prefix):
-    """Generate a unique username."""
-    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+from src.core.auth.exceptions import (
+    AuthError,
+    UserExistsError,
+    PermissionDeniedError,
+    BotLimitExceededError,
+    TokenInvalidError,
+)
+from unittest.mock import patch
 
 
 @pytest.fixture
-def fresh_user(db_and_auth):
+def fresh_user(db, auth_manager):
     """Create a fresh user for bot tests."""
-    db, auth = db_and_auth
-    name = unique_name("testuser")
-    user = auth.register(name, f"{name}@example.com", "TestPass123!")
-    return user, auth
+    from src.utils import encryption
+
+    name = f"testuser_{uuid.uuid4().hex[:8]}"
+    with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+        user = auth_manager.register(name, f"{name}@example.com", "TestPass123!")
+    return user, auth_manager
 
 
 class TestBots:
@@ -32,7 +37,7 @@ class TestBots:
         user, auth = fresh_user
 
         bot = auth.create_bot(
-            owner_id=user.id, username=unique_name("bot"), display_name="Test Bot"
+            owner_id=user.id, username="bot_test1", display_name="Test Bot"
         )
 
         assert bot is not None
@@ -45,7 +50,7 @@ class TestBots:
 
         bot = auth.create_bot(
             owner_id=user.id,
-            username=unique_name("permbot"),
+            username="permbot_test1",
             display_name="Permission Bot",
             permissions={"messages.send": True, "messages.read": True},
         )
@@ -56,19 +61,21 @@ class TestBots:
         """Test creating bot with restricted permission fails."""
         user, auth = fresh_user
 
-        with pytest.raises(auth.AuthError, match="Bots cannot have permission"):
+        with pytest.raises(AuthError, match="Bots cannot have permission"):
             auth.create_bot(
                 owner_id=user.id,
-                username=unique_name("badbot"),
+                username="badbot_test1",
                 display_name="Bad Bot",
                 permissions={"bots.create": True},
             )
 
-    def test_create_bot_cannot_escalate_owner_permissions(self, db_and_auth):
+    def test_create_bot_cannot_escalate_owner_permissions(self, db, auth_manager):
         """Test bot creation cannot grant permissions the owner does not hold."""
-        db, auth = db_and_auth
-        name = unique_name("limiteduser")
-        user = auth.register(name, f"{name}@example.com", "TestPass123!")
+        from src.utils import encryption
+
+        name = "limiteduser_test1"
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(name, f"{name}@example.com", "TestPass123!")
 
         db.execute(
             "UPDATE auth_users SET permissions = ? WHERE id = ?",
@@ -83,12 +90,10 @@ class TestBots:
             ),
         )
 
-        with pytest.raises(
-            auth.PermissionDeniedError, match="Cannot grant bot permission"
-        ):
-            auth.create_bot(
+        with pytest.raises(PermissionDeniedError, match="Cannot grant bot permission"):
+            auth_manager.create_bot(
                 owner_id=user.id,
-                username=unique_name("escalatebot"),
+                username="escalatebot_test1",
                 display_name="Escalate Bot",
                 permissions={"messages.read": True, "messages.delete_others": True},
             )
@@ -97,10 +102,10 @@ class TestBots:
         """Test creating bot with duplicate username fails."""
         user, auth = fresh_user
 
-        bot_name = unique_name("uniquebot")
+        bot_name = "uniquebot_test1"
         auth.create_bot(user.id, bot_name, "Unique Bot")
 
-        with pytest.raises(auth.UserExistsError):
+        with pytest.raises(UserExistsError):
             auth.create_bot(user.id, bot_name, "Another Bot")
 
     def test_create_bot_respects_limit(self, fresh_user):
@@ -108,16 +113,16 @@ class TestBots:
         user, auth = fresh_user
 
         for i in range(5):
-            auth.create_bot(user.id, unique_name(f"limitbot{i}"), f"Bot {i}")
+            auth.create_bot(user.id, f"limitbot{i}_test1", f"Bot {i}")
 
-        with pytest.raises(auth.BotLimitExceededError):
-            auth.create_bot(user.id, unique_name("limitbot6"), "Bot 6")
+        with pytest.raises(BotLimitExceededError):
+            auth.create_bot(user.id, "limitbot6_test1", "Bot 6")
 
     def test_bot_token_format(self, fresh_user):
         """Test bot token has correct format."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("formatbot"), "Format Bot")
+        bot = auth.create_bot(user.id, "formatbot_test1", "Format Bot")
 
         assert bot.token.startswith("bot.")
         parts = bot.token.split(".")
@@ -127,7 +132,7 @@ class TestBots:
         """Test verifying bot token."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("verifybot"), "Verify Bot")
+        bot = auth.create_bot(user.id, "verifybot_test1", "Verify Bot")
 
         token_info = auth.verify_token(bot.token)
 
@@ -140,7 +145,7 @@ class TestBots:
         """Test regenerating bot token."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("regenbot"), "Regen Bot")
+        bot = auth.create_bot(user.id, "regenbot_test1", "Regen Bot")
         old_token = bot.token
 
         new_token = auth.regenerate_bot_token(user.id, bot.id)
@@ -152,33 +157,36 @@ class TestBots:
         """Test regenerating bot token invalidates old one."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("invalidbot"), "Invalid Bot")
+        bot = auth.create_bot(user.id, "invalidbot_test1", "Invalid Bot")
         old_token = bot.token
 
         auth.regenerate_bot_token(user.id, bot.id)
 
-        with pytest.raises(auth.TokenInvalidError):
+        with pytest.raises(TokenInvalidError):
             auth.verify_token(old_token)
 
-    def test_regenerate_bot_token_wrong_owner(self, db_and_auth):
+    def test_regenerate_bot_token_wrong_owner(self, db, auth_manager):
         """Test regenerating bot token by non-owner fails."""
-        db, auth = db_and_auth
+        from src.utils import encryption
 
-        name1 = unique_name("usera")
-        name2 = unique_name("userb")
-        user1 = auth.register(name1, f"{name1}@example.com", "TestPass123!")
-        user2 = auth.register(name2, f"{name2}@example.com", "TestPass123!")
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                "usera_test1", "usera_test1@example.com", "TestPass123!"
+            )
+            user2 = auth_manager.register(
+                "userb_test1", "userb_test1@example.com", "TestPass123!"
+            )
 
-        bot = auth.create_bot(user1.id, unique_name("ownedbot"), "Owned Bot")
+        bot = auth_manager.create_bot(user1.id, "ownedbot_test1", "Owned Bot")
 
-        with pytest.raises(auth.PermissionDeniedError):
-            auth.regenerate_bot_token(user2.id, bot.id)
+        with pytest.raises(PermissionDeniedError):
+            auth_manager.regenerate_bot_token(user2.id, bot.id)
 
     def test_get_bot(self, fresh_user):
         """Test getting bot by ID."""
         user, auth = fresh_user
 
-        created = auth.create_bot(user.id, unique_name("getbot"), "Get Bot")
+        created = auth.create_bot(user.id, "getbot_test1", "Get Bot")
 
         bot = auth.get_bot(created.id)
 
@@ -189,8 +197,8 @@ class TestBots:
         """Test getting all bots for a user."""
         user, auth = fresh_user
 
-        auth.create_bot(user.id, unique_name("listbot1"), "List Bot 1")
-        auth.create_bot(user.id, unique_name("listbot2"), "List Bot 2")
+        auth.create_bot(user.id, "listbot1_test1", "List Bot 1")
+        auth.create_bot(user.id, "listbot2_test1", "List Bot 2")
 
         bots = auth.get_user_bots(user.id)
 
@@ -200,19 +208,19 @@ class TestBots:
         """Test disabling a bot."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("disablebot"), "Disable Bot")
+        bot = auth.create_bot(user.id, "disablebot_test1", "Disable Bot")
 
         result = auth.disable_bot(user.id, bot.id)
         assert result is True
 
-        with pytest.raises(auth.TokenInvalidError):
+        with pytest.raises(TokenInvalidError):
             auth.verify_token(bot.token)
 
     def test_enable_bot(self, fresh_user):
         """Test re-enabling a bot."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("enablebot"), "Enable Bot")
+        bot = auth.create_bot(user.id, "enablebot_test1", "Enable Bot")
         token = bot.token
 
         auth.disable_bot(user.id, bot.id)
@@ -225,7 +233,7 @@ class TestBots:
         """Test deleting a bot."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("deletebot"), "Delete Bot")
+        bot = auth.create_bot(user.id, "deletebot_test1", "Delete Bot")
 
         result = auth.delete_bot(user.id, bot.id)
         assert result is True
@@ -236,7 +244,7 @@ class TestBots:
         """Test that bots cannot create other bots."""
         user, auth = fresh_user
 
-        bot = auth.create_bot(user.id, unique_name("parentbot"), "Parent Bot")
+        bot = auth.create_bot(user.id, "parentbot_test1", "Parent Bot")
 
         token_info = auth.verify_token(bot.token)
 

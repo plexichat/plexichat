@@ -4,8 +4,12 @@ SFU base adapter - Abstract base class for SFU integrations.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
+
+import utils.logger as logger
+
+from .quality import canonical_channel_id, canonical_user_id
 
 
 class TransportDirection(Enum):
@@ -21,6 +25,26 @@ class MediaKind(Enum):
 
     AUDIO = "audio"
     VIDEO = "video"
+
+
+@dataclass
+class AcousticDefenseConfig:
+    """Configuration for acoustic eavesdropping defenses."""
+
+    enabled: bool = False
+    jitter_ms_min: float = 5.0
+    jitter_ms_max: float = 20.0
+    spectral_masking: bool = True
+    spectral_mask_noise_db: float = -40.0
+    spectral_mask_low_hz: float = 1000.0
+    spectral_mask_high_hz: float = 8000.0
+    vad_gating: bool = True
+    vad_speech_threshold: float = 0.02
+    vad_silence_frames: int = 3
+    transient_shaving: bool = True
+    transient_attack_ms: float = 0.5
+    transient_release_ms: float = 5.0
+    transient_ratio: float = 0.3
 
 
 @dataclass
@@ -150,6 +174,60 @@ class SFUAdapter(ABC):
         """
         Optional: Complete the join process.
         Used by some SFUs like mediasoup-demo.
+        """
+        return True
+
+    async def apply_remote_offer(
+        self,
+        room_id: str,
+        peer_id: str,
+        offer_sdp: str,
+    ) -> Dict[str, Any]:
+        """
+        Apply the client's WebRTC offer to the peer's connection.
+
+        For aiortc this MUST call ``setRemoteDescription`` so the peer's
+        DTLS/ICE state machine knows the remote side; without it the
+        negotiated description never completes and no media can flow.
+        Adapters that negotiate out-of-band (mediasoup) may ignore the SDP.
+
+        Returns a dict with the peer's local description ("sdp", "type")
+        where applicable.
+        """
+        return {}
+
+    async def apply_remote_answer(
+        self,
+        room_id: str,
+        peer_id: str,
+        answer_sdp: str,
+    ) -> bool:
+        """
+        Apply the client's SDP answer to the peer's connection.
+
+        For aiortc this completes DTLS handshake setup. No-op for
+        out-of-band SFUs.
+        """
+        return True
+
+    async def add_ice_candidate(
+        self,
+        room_id: str,
+        peer_id: str,
+        candidate: str,
+        sdp_mid: Optional[str] = None,
+        sdp_mline_index: Optional[int] = None,
+    ) -> bool:
+        """Deliver a remote (client) ICE candidate to the media plane.
+
+        Trickle ICE sends candidates out of band from the offer/answer, so an
+        adapter that terminates the media session itself MUST feed them to its
+        peer connection or it never learns the client's address and can only
+        connect when peer-reflexive discovery happens to succeed. Adapters that
+        negotiate their transport out of band (mediasoup, Janus) have nothing
+        to do here and return ``True`` as a no-op.
+
+        Returns whether the candidate was accepted.
         """
         return True
 
@@ -306,10 +384,122 @@ class SFUAdapter(ABC):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
+        """Set preferred simulcast layers for a consumer.
+
+        ``consumer_id`` may be empty, which is how ``BandwidthEstimator``
+        calls this: it keys peers by channel/user and has no consumer mapping,
+        so an empty id means "every consumer this peer receives" (the degraded
+        peer's own downlink is what the estimator is reacting to).
+
+        Returns True only when at least one layer request was actually issued.
+        A backend that has no simulcast API should still apply the nearest
+        lever it does have (aiortc, for example, bounds the peer's outbound
+        video to a low frame rate and re-attaches full rate when the hint is
+        lifted; it exposes no bitrate API) and must return False -- rather
+        than report success it did not achieve -- when there was nothing to
+        change, such as a peer with no video or no consumers.
+        """
+        pass
+
+    @abstractmethod
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording audio in a room.
+
+        Args:
+            room_id: Room identifier
+            output_dir: Directory to store recording files
+
+        Returns:
+            Dict with recording metadata (e.g. recording_id, file_count)
+        """
+        pass
+
+    @abstractmethod
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording and return recorded file paths.
+
+        Args:
+            room_id: Room identifier
+
+        Returns:
+            List of recorded file paths, or None if not recording
+        """
         pass
 
     @abstractmethod
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""
+        pass
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Retain the quality sink for SFU-side metric reporting.
+
+        Push-based adapters call :meth:`report_quality` from their receive
+        loop; request/response adapters override this to additionally start a
+        :class:`~.quality.QualityReporter` feeding from ``collect_quality``.
+        """
+        self._quality_mixin = quality_mixin
+
+    def set_renegotiation_sink(self, sink: Any) -> None:
+        """Retain a sink to deliver an SFU-initiated SDP offer.
+
+        Some backends can only answer: aiortc never emits
+        ``negotiationneeded``, so nothing makes it produce an offer on its own.
+        When the SFU adds a track to a peer that has *already* negotiated --
+        forwarding a producer to a peer that has joined -- the offer it builds
+        has to reach that peer's client or the track never arrives. The sink is
+        called ``(room_id, peer_id, offer_sdp)`` and may be async; adapters
+        that cannot initiate an offer leave this unused.
+        """
+        self._renegotiation_sink = sink
+
+    def report_quality(
+        self, room_id: Any, peer_id: Any, metrics: Dict[str, Any]
+    ) -> None:
+        """Forward one SFU-side metric sample to the canonical quality store.
+
+        ``room_id`` / ``peer_id`` are SFU-scoped identifiers and are mapped
+        back to the numeric channel/user ids the store is keyed by. Samples
+        whose identifiers cannot be mapped are dropped, and a failing sink
+        never raises into a media-path coroutine.
+        """
+        mixin = getattr(self, "_quality_mixin", None)
+        if mixin is None:
+            return
+        channel_id = canonical_channel_id(room_id)
+        user_id = canonical_user_id(peer_id)
+        if channel_id is None or user_id is None:
+            logger.debug(
+                f"Ignoring SFU quality sample with unmappable ids: "
+                f"room={room_id!r} peer={peer_id!r}"
+            )
+            return
+        payload = {key: value for key, value in metrics.items() if value is not None}
+        if not payload:
+            return
+        try:
+            mixin.update_quality_hint(channel_id, user_id, **payload)
+        except Exception as exc:  # never let a metric update kill the media session
+            logger.debug(
+                f"Failed to record SFU quality for channel {channel_id} "
+                f"user {user_id}: {exc}"
+            )
+
+    async def collect_quality(
+        self,
+    ) -> List[Tuple[Any, Any, Dict[str, Any]]]:
+        """Return ``(room_id, peer_id, metrics)`` samples for pull backends.
+
+        Default is empty: adapters with no pollable stat source report nothing
+        rather than fabricating samples.
+        """
+        return []
+
+    async def close(self) -> None:
+        """Release resources held by the adapter.
+
+        Subclasses that own network sessions (e.g. an httpx.AsyncClient)
+        should override this to close them explicitly, preventing
+        ResourceWarning on GC.
+        """
         pass

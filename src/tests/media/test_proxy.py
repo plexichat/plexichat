@@ -1,245 +1,239 @@
-"""
-Tests for external URL proxy functionality.
-"""
+"""Tests for media external URL proxy security and behavior."""
 
+import hashlib
 import pytest
+from unittest.mock import Mock, patch
+
+from src.core.media.exceptions import MediaError, ProxyFetchError
+from src.core.media.security.proxy import ExternalProxy
 
 
-@pytest.mark.media
-class TestExternalProxy:
-    """Tests for ExternalProxy class."""
-
-    def test_validate_url_rejects_invalid_scheme(self, temp_upload_dir, modules):
-        """Test that invalid URL schemes are rejected."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-        from src.core.media.exceptions import ProxyFetchError
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        with pytest.raises(ProxyFetchError):
-            proxy._validate_url("ftp://example.com/file.jpg")
-
-    def test_validate_url_rejects_no_host(self, temp_upload_dir, modules):
-        """Test that URLs without host are rejected."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-        from src.core.media.exceptions import ProxyFetchError
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        with pytest.raises(ProxyFetchError):
-            proxy._validate_url("http:///path/file.jpg")
-
-    def test_validate_url_accepts_http(self, temp_upload_dir, modules):
-        """Test that HTTP URLs are accepted."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        proxy._validate_url("http://example.com/file.jpg")
-
-    def test_validate_url_accepts_https(self, temp_upload_dir, modules):
-        """Test that HTTPS URLs are accepted."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        proxy._validate_url("https://example.com/file.jpg")
-
-    def test_get_extension_for_content_type(self, temp_upload_dir, modules):
-        """Test getting file extension for content type."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        assert proxy._get_extension("image/jpeg") == ".jpg"
-        assert proxy._get_extension("image/png") == ".png"
-        assert proxy._get_extension("image/gif") == ".gif"
-        assert proxy._get_extension("image/webp") == ".webp"
-        assert proxy._get_extension("application/octet-stream") == ".bin"
-
-    def test_is_cached_returns_false_for_uncached(self, temp_upload_dir, modules):
-        """Test that is_cached returns False for uncached URLs."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        assert proxy.is_cached("https://example.com/uncached.jpg") is False
-
-    def test_invalidate_uncached_returns_false(self, temp_upload_dir, modules):
-        """Test that invalidating uncached URL returns False."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        result = proxy.invalidate("https://example.com/not_cached.jpg")
-        assert result is False
+def _png_bytes(size=64):
+    """A valid PNG payload (signature + padding)."""
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 8)
 
 
-@pytest.mark.media
-class TestProxyWithMockedRequests:
-    """Tests for proxy with mocked HTTP requests."""
+class TestProxyFetchUrl:
+    """Unit tests for the SSRF-safe fetch path."""
 
-    def test_fetch_caches_content(self, temp_upload_dir, modules, mocker):
-        """Test that fetch caches content."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {"Content-Type": "image/jpeg"}
-        mock_response.iter_content.return_value = [b"fake image data"]
-        mock_response.raise_for_status.return_value = None
-
-        mocker.patch("requests.get", return_value=mock_response)
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        result = proxy.fetch("https://example.com/image.jpg")
-
-        assert result.source_url == "https://example.com/image.jpg"
-        assert result.content_type == "image/jpeg"
-        assert proxy.is_cached("https://example.com/image.jpg") is True
-
-    def test_fetch_returns_cached_on_second_call(
-        self, temp_upload_dir, modules, mocker
-    ):
-        """Test that second fetch returns cached content."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {"Content-Type": "image/png"}
-        mock_response.iter_content.return_value = [b"png data"]
-        mock_response.raise_for_status.return_value = None
-
-        mock_get = mocker.patch("requests.get", return_value=mock_response)
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        proxy.fetch("https://example.com/cached.png")
-        proxy.fetch("https://example.com/cached.png")
-
-        assert mock_get.call_count == 1
-
-    def test_fetch_force_refresh_bypasses_cache(self, temp_upload_dir, modules, mocker):
-        """Test that force_refresh bypasses cache."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {"Content-Type": "image/gif"}
-        mock_response.iter_content.return_value = [b"gif data"]
-        mock_response.raise_for_status.return_value = None
-
-        mock_get = mocker.patch("requests.get", return_value=mock_response)
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        proxy.fetch("https://example.com/refresh.gif")
-        proxy.fetch("https://example.com/refresh.gif", force_refresh=True)
-
-        assert mock_get.call_count == 2
-
-    def test_fetch_rejects_disallowed_content_type(
-        self, temp_upload_dir, modules, mocker
-    ):
-        """Test that disallowed content types are rejected."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-        from src.core.media.exceptions import ProxyFetchError
-
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {"Content-Type": "application/javascript"}
-        mock_response.raise_for_status.return_value = None
-
-        mocker.patch("requests.get", return_value=mock_response)
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
-
-        with pytest.raises(ProxyFetchError):
-            proxy.fetch("https://example.com/script.js")
-
-    def test_fetch_rejects_oversized_content(self, temp_upload_dir, modules, mocker):
-        """Test that oversized content is rejected."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
-        from src.core.media.exceptions import ProxyFetchError
-
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {
-            "Content-Type": "image/jpeg",
-            "Content-Length": "999999999",
-        }
-        mock_response.raise_for_status.return_value = None
-
-        mocker.patch("requests.get", return_value=mock_response)
-
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(
-            storage_backend=storage,
-            db=modules._db,
-            max_size=1024,
+    def _proxy(self, db=None):
+        storage = Mock()
+        return ExternalProxy(
+            storage_backend=storage, db=db if db is not None else Mock()
         )
 
-        with pytest.raises(ProxyFetchError):
-            proxy.fetch("https://example.com/huge.jpg")
+    def _mock_response(self, payload=None, content_type="image/png", status=200):
+        resp = Mock()
+        resp.status = status
+        resp.headers = {"Content-Type": content_type}
+        resp.stream.return_value = iter(
+            [payload if payload is not None else _png_bytes()]
+        )
+        return resp
 
-    def test_get_content_returns_data_and_type(self, temp_upload_dir, modules, mocker):
-        """Test that get_content returns data and content type."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
+    def test_https_connects_to_ip_but_snis_hostname(self):
+        proxy = self._proxy()
+        resp = self._mock_response()
+        pool = Mock()
+        pool.urlopen.return_value = resp
 
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {"Content-Type": "image/webp"}
-        mock_response.iter_content.return_value = [b"webp content"]
-        mock_response.raise_for_status.return_value = None
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ) as pool_cls:
+            ct, wrapper = proxy._fetch_url(
+                "https://example.com:8443/img.png", "example.com", "93.184.216.34"
+            )
 
-        mocker.patch("requests.get", return_value=mock_response)
+        assert ct == "image/png"
+        args, kwargs = pool_cls.call_args
+        # Connect host is the validated IP (DNS-rebinding protection)...
+        assert args[0] == "93.184.216.34"
+        assert args[1] == 8443
+        # ...but TLS verification/SNI target the real hostname.
+        assert kwargs["server_hostname"] == "example.com"
+        assert kwargs["assert_hostname"] == "example.com"
+        assert kwargs["cert_reqs"] == "CERT_REQUIRED"
 
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
+        urlopen_kwargs = pool.urlopen.call_args[1]
+        assert urlopen_kwargs["headers"]["Host"] == "example.com:8443"
+        assert urlopen_kwargs["preload_content"] is False
+        assert urlopen_kwargs["redirect"] is False
+        assert urlopen_kwargs["assert_same_host"] is False
 
-        data, content_type = proxy.get_content("https://example.com/image.webp")
+    def test_https_default_port_omits_port_in_host_header(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response()
 
-        assert data == b"webp content"
-        assert content_type == "image/webp"
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            proxy._fetch_url(
+                "https://example.com/img.png", "example.com", "93.184.216.34"
+            )
 
-    def test_invalidate_removes_cached_content(self, temp_upload_dir, modules, mocker):
-        """Test that invalidate removes cached content."""
-        from src.core.media.security.proxy import ExternalProxy
-        from src.core.media.storage.local import LocalStorage
+        headers = pool.urlopen.call_args[1]["headers"]
+        assert headers["Host"] == "example.com"
 
-        mock_response = mocker.MagicMock()
-        mock_response.headers = {"Content-Type": "image/jpeg"}
-        mock_response.iter_content.return_value = [b"data"]
-        mock_response.raise_for_status.return_value = None
+    def test_http_uses_ip_and_host_header_with_port(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response()
 
-        mocker.patch("requests.get", return_value=mock_response)
+        with patch(
+            "src.core.media.security.proxy.HTTPConnectionPool", return_value=pool
+        ) as pool_cls:
+            proxy._fetch_url(
+                "http://example.com:8080/a.png", "example.com", "93.184.216.34"
+            )
 
-        storage = LocalStorage(base_path=temp_upload_dir, base_url="/media")
-        proxy = ExternalProxy(storage_backend=storage, db=modules._db)
+        args, _kwargs = pool_cls.call_args
+        assert args[0] == "93.184.216.34"
+        assert args[1] == 8080
+        assert pool.urlopen.call_args[1]["headers"]["Host"] == "example.com:8080"
 
-        proxy.fetch("https://example.com/invalidate.jpg")
-        assert proxy.is_cached("https://example.com/invalidate.jpg") is True
+    def test_redirect_status_rejected(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(status=302)
 
-        result = proxy.invalidate("https://example.com/invalidate.jpg")
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            with pytest.raises(ProxyFetchError, match="Redirects are not allowed"):
+                proxy._fetch_url(
+                    "https://example.com/a.png", "example.com", "93.184.216.34"
+                )
 
-        assert result is True
-        assert proxy.is_cached("https://example.com/invalidate.jpg") is False
+    def test_invalid_port_rejected(self):
+        proxy = self._proxy()
+        with pytest.raises(ProxyFetchError, match="Invalid port"):
+            proxy._fetch_url(
+                "https://example.com:99999/a.png", "example.com", "93.184.216.34"
+            )
+
+    def test_svg_content_type_rejected(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(
+            payload=b'<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+            content_type="image/svg+xml",
+        )
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            with pytest.raises(ProxyFetchError, match="Content type not allowed"):
+                proxy._fetch_url(
+                    "https://example.com/a.svg", "example.com", "93.184.216.34"
+                )
+
+    def test_svg_bytes_sniffed_under_raster_content_type(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(
+            payload=b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+            content_type="image/png",
+        )
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            with pytest.raises(ProxyFetchError, match="SVG content is blocked"):
+                proxy._fetch_url(
+                    "https://example.com/a.png", "example.com", "93.184.216.34"
+                )
+
+    def test_svg_with_leading_bom_and_whitespace_sniffed(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(
+            payload=b"\xef\xbb\xbf\n  <svg></svg>", content_type="image/png"
+        )
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            with pytest.raises(ProxyFetchError, match="SVG content is blocked"):
+                proxy._fetch_url(
+                    "https://example.com/a.png", "example.com", "93.184.216.34"
+                )
+
+    def test_magic_byte_mismatch_rejected(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(
+            payload=_png_bytes(), content_type="image/jpeg"
+        )
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            with pytest.raises(ProxyFetchError, match="does not match declared type"):
+                proxy._fetch_url(
+                    "https://example.com/a.jpg", "example.com", "93.184.216.34"
+                )
+
+    def test_webp_magic_validation(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(
+            payload=b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 20,
+            content_type="image/webp",
+        )
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            ct, wrapper = proxy._fetch_url(
+                "https://example.com/a.webp", "example.com", "93.184.216.34"
+            )
+        assert ct == "image/webp"
+
+    def test_webp_magic_mismatch_rejected(self):
+        proxy = self._proxy()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(
+            payload=b"RIFF\x00\x00\x00\x00PNG " + b"\x00" * 20,
+            content_type="image/webp",
+        )
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            with pytest.raises(ProxyFetchError, match="does not match declared type"):
+                proxy._fetch_url(
+                    "https://example.com/a.webp", "example.com", "93.184.216.34"
+                )
+
+    def test_stream_includes_sniffed_bytes_and_hash(self):
+        proxy = self._proxy()
+        payload = _png_bytes()
+        pool = Mock()
+        pool.urlopen.return_value = self._mock_response(payload=payload)
+
+        with patch(
+            "src.core.media.security.proxy.HTTPSConnectionPool", return_value=pool
+        ):
+            _ct, wrapper = proxy._fetch_url(
+                "https://example.com/a.png", "example.com", "93.184.216.34"
+            )
+
+        data = wrapper.read()
+        assert data == payload
+        assert wrapper.bytes_read == len(payload)
+        assert wrapper.hex_digest == hashlib.sha256(payload).hexdigest()
+
+
+class TestProxyUnavailable:
+    """MediaManager proxy accessors raise when the proxy is disabled."""
+
+    def test_proxy_url_raises_when_unavailable(self, media_manager):
+        media_manager._proxy = None
+        with pytest.raises(MediaError, match="Proxy not available"):
+            media_manager.proxy_url("https://example.com/image.png")
+
+    def test_get_proxied_content_raises_when_unavailable(self, media_manager):
+        media_manager._proxy = None
+        with pytest.raises(MediaError, match="Proxy not available"):
+            media_manager.get_proxied_content("https://example.com/image.png")

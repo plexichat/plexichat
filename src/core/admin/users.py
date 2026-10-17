@@ -6,6 +6,7 @@ from typing import List, Optional, Any
 from dataclasses import dataclass
 import time
 import json
+import utils.config as config
 import utils.logger as logger
 from src.core.database import invalidate_pattern
 
@@ -54,12 +55,16 @@ def search_users(
             (user_id, limit, offset),
         )
     except ValueError:
+        # Escape LIKE metacharacters so an admin search for `%` or `_` is a
+        # literal search rather than a wildcard probe.
+        escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped_q}%"
         rows = db.fetch_all(
             """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
-               WHERE u.username LIKE ? OR u.email_index LIKE ? LIMIT ? OFFSET ?""",
-            (f"%{q}%", f"%{q}%", limit, offset),
+               WHERE u.username LIKE ? ESCAPE '\\' OR u.email_index LIKE ? ESCAPE '\\' LIMIT ? OFFSET ?""",
+            (pattern, pattern, limit, offset),
         )
 
     users = []
@@ -402,6 +407,14 @@ def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
             "UPDATE auth_users SET permissions = ? WHERE id = ?",
             (permissions_to_json(perms), user_id),
         )
+        try:
+            from src.core.database import cache_delete
+
+            invalidate_pattern("token_verify:*")
+            invalidate_pattern("user_data:*")
+            cache_delete(f"user_profile:{user_id}")
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error(f"Failed to set admin status: {e}")
@@ -440,16 +453,54 @@ def unlock_user(db: Any, user_id: int) -> bool:
 
 def get_user_notes(db: Any, user_id: int) -> str:
     """Get internal admin notes for a user."""
-    row = db.fetch_one("SELECT internal_notes FROM auth_users WHERE id = ?", (user_id,))
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
+    row = db.fetch_one(
+        "SELECT internal_notes, internal_notes_encrypted FROM auth_users WHERE id = ?",
+        (user_id,),
+    )
     if row:
-        return (row["internal_notes"] if isinstance(row, dict) else row[0]) or ""
+        if isinstance(row, dict):
+            plaintext = row.get("internal_notes")
+            encrypted = row.get("internal_notes_encrypted")
+        else:
+            plaintext = row[0] if len(row) > 0 else None
+            encrypted = row[1] if len(row) > 1 else None
+
+        if not encrypt_internal_notes:
+            return plaintext or ""
+        if not encrypted:
+            return ""
+
+        from src.utils.encryption import decrypt_data
+
+        try:
+            return decrypt_data(encrypted)
+        except Exception as e:
+            logger.warning(f"Failed to decrypt user notes {user_id}: {e}")
+            return ""
     return ""
 
 
 def save_user_notes(db: Any, user_id: int, notes: str, admin_id: int) -> bool:
     """Save internal admin notes for a user."""
-    db.execute(
-        "UPDATE auth_users SET internal_notes = ? WHERE id = ?", (notes, user_id)
-    )
+    encrypt_internal_notes = config.get("encryption.encrypt_internal_notes", False)
+
+    # Encrypt notes if enabled
+    notes_encrypted = None
+    if notes and encrypt_internal_notes:
+        from src.utils.encryption import encrypt_data
+
+        notes_encrypted = encrypt_data(notes)
+
+    if encrypt_internal_notes:
+        db.execute(
+            "UPDATE auth_users SET internal_notes = NULL, internal_notes_encrypted = ? WHERE id = ?",
+            (notes_encrypted, user_id),
+        )
+    else:
+        db.execute(
+            "UPDATE auth_users SET internal_notes = ? WHERE id = ?", (notes, user_id)
+        )
     logger.info(f"Admin {admin_id} updated notes for user {user_id}")
     return True

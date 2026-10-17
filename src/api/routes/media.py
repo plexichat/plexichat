@@ -10,8 +10,10 @@ Provides endpoints for:
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from typing import Optional
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import Response
 
 import utils.logger as logger
+import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.media import (
     HashReportRequest,
@@ -26,6 +28,11 @@ from src.api.schemas.media import (
     UploadSessionInfo,
 )
 from src.api.schemas.common import ErrorResponse, SuccessResponse
+from src.core.media.exceptions import (
+    MediaError,
+    ProxyError,
+    ProxyFetchError,
+)
 
 router = APIRouter(prefix="/media", tags=["Media"])
 
@@ -63,8 +70,8 @@ async def report_content_hash(
             reason=report.reason,
             details=report.details,
             phash_value=report.phash_value,
-            uploader_id=report.uploader_id,
-            message_id=report.message_id,
+            uploader_id=int(report.uploader_id) if report.uploader_id else None,
+            message_id=int(report.message_id) if report.message_id else None,
             attachment_url=report.attachment_url,
             block_uploader=report.block_uploader,
         )
@@ -220,7 +227,7 @@ async def upload_chunk(
     Args:
         session_id: The upload session ID
         chunk_index: Zero-based index of this chunk
-        chunk_checksum: Optional MD5 checksum for verification
+        chunk_checksum: Optional SHA-256 checksum (lowercase hex) for verification
         file: The chunk data
     """
     from src.core import media
@@ -264,7 +271,7 @@ async def upload_chunk(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": str(e)}},
+            detail={"error": {"code": 400, "message": "Invalid request"}},
         )
     except Exception as e:
         logger.error(
@@ -388,7 +395,7 @@ async def cancel_upload_session(
             )
 
         logger.info(f"User {user.user_id} cancelled upload session {session_id}")
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except HTTPException:
         raise
     except Exception as e:
@@ -452,6 +459,130 @@ async def get_user_upload_sessions(
         )
 
 
+# ==================== External URL Proxy ====================
+
+
+@router.get(
+    "/proxy",
+    summary="Proxy external content",
+    responses={
+        200: {
+            "description": "The proxied content (images only)",
+            "content": {
+                "image/jpeg": {},
+                "image/png": {},
+                "image/gif": {},
+                "image/webp": {},
+            },
+        },
+        400: {"model": ErrorResponse, "description": "Invalid or blocked URL"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Proxy not available"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_proxied_content(
+    url: str,
+    user: TokenInfo = Depends(get_current_user),
+) -> Response:
+    """
+    Fetch and serve external image content through Plexichat.
+
+    The external URL is fetched server-side (with SSRF validation, DNS
+    rebinding protection, content-type allow-listing and SVG/magic-byte
+    rejection) and served to the client so the origin never learns the
+    client's address. Results are cached by the media proxy.
+    """
+    if not url or len(url) > 2048:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid URL"}},
+        )
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {"code": 400, "message": "Only http/https URLs are allowed"}
+            },
+        )
+
+    # SECURITY (fetch-amplification defence): every request for an
+    # uncached URL makes the server perform an authenticated outbound
+    # fetch of up to the configured body-size cap against an arbitrary
+    # host. Without a per-user cap any account can turn the server into
+    # a bandwidth-draining fetch amplifier by cycling distinct URLs
+    # (the cache only helps repeats). Enforce a per-user fixed-window
+    # limit on proxy requests, sized generously so normal rendering
+    # traffic is unaffected.
+    from src.core.database.cache import check_rate_limit
+
+    import utils.config as _config
+
+    _proxy_cfg = _config.get("media", {}).get("proxy_rate_limit", {})
+    _limit = int(_proxy_cfg.get("requests_per_window", 120))
+    _window = int(_proxy_cfg.get("window_seconds", 60))
+
+    allowed, _remaining = check_rate_limit(
+        f"media:proxy:user:{user.user_id}", _limit, _window
+    )
+    if not allowed:
+        logger.warning(f"Media proxy rate limit exceeded for user {user.user_id}")
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": "Too many proxied media requests; retry later",
+                }
+            },
+        )
+
+    try:
+        media_mod = api.get_media()
+        if not media_mod:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": "Proxy not available"}},
+            )
+
+        data, content_type = await run_in_threadpool(media_mod.get_proxied_content, url)
+        # SECURITY: proxied bytes originate from an external host. Serve
+        # with nosniff so a crafted payload can never be MIME-sniffed into
+        # an executable document type by the browser.
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+    except HTTPException:
+        raise
+    except (ProxyFetchError,) as e:
+        logger.warning(f"Proxy fetch failed for {url}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except (ProxyError, MediaError) as e:
+        logger.warning(f"Proxy error for {url}: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
+    except Exception as e:
+        logger.error(
+            f"Unexpected error proxying {url} for user {user.user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
+        )
+
+
 # ==================== Compression ====================
 
 
@@ -478,6 +609,9 @@ async def get_compression_status(
             enabled=status_data["enabled"],
             image_compression=status_data["image_compression"],
             video_compression=status_data["video_compression"],
+            pillow_available=status_data["pillow_available"],
+            ffmpeg_available=status_data["ffmpeg_available"],
+            ffprobe_available=status_data["ffprobe_available"],
         )
     except Exception as e:
         logger.error(

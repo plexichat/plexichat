@@ -420,7 +420,7 @@ def set_user_features(
         params.append(user_id)
 
         db.execute(
-            f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",  # nosec: B608
+            f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",
             tuple(params),
         )
 
@@ -496,9 +496,9 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
         # Invalidate profile cache
         try:
-            from src.core.database import cache_delete, redis_available
+            from src.core.database import cache_delete, valkey_available
 
-            if redis_available():
+            if valkey_available():
                 cache_delete(f"user_profile:{user_id}")
         except Exception:
             pass
@@ -537,9 +537,9 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
         # Invalidate profile cache
         try:
-            from src.core.database import cache_delete, redis_available
+            from src.core.database import cache_delete, valkey_available
 
-            if redis_available():
+            if valkey_available():
                 cache_delete(f"user_profile:{user_id}")
         except Exception:
             pass

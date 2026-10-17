@@ -40,12 +40,38 @@ class KickUserAction(BaseAction):
                     reason=reason,
                 )
             else:
-                self._db.execute(
-                    "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
+                # SECURITY: see the matching comment in ban.py. The
+                # previous code path bypassed the server permission
+                # layer via raw SQL whenever ``bot_user_id`` was
+                # None. We now refuse that fallback unless explicit,
+                # audit-traceable system context is supplied.
+                system_context = bool((context or {}).get("__system_context__"))
+                if not (self._servers and system_context):
+                    logger.error(
+                        "AutoMod kick REFUSED: bot_user_id missing "
+                        "and no permission-checked system context "
+                        "was supplied."
+                    )
+                    return False
+
+                member_row = self._db.fetch_one(
+                    "SELECT id FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),
                 )
+                # srv_member_roles is keyed by member_id (not server_id/user_id).
+                # Delete roles before the member row to respect the FK.
+                if member_row:
+                    member_id = (
+                        member_row["id"]
+                        if isinstance(member_row, dict)
+                        else member_row[0]
+                    )
+                    self._db.execute(
+                        "DELETE FROM srv_member_roles WHERE member_id = ?",
+                        (member_id,),
+                    )
                 self._db.execute(
-                    "DELETE FROM srv_member_roles WHERE server_id = ? AND user_id = ?",
+                    "DELETE FROM srv_members WHERE server_id = ? AND user_id = ?",
                     (violation.server_id, violation.user_id),
                 )
 

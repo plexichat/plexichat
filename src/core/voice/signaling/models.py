@@ -37,6 +37,9 @@ class QualityLevel(Enum):
     CRITICAL = "critical"
 
 
+MAX_SDP_SIZE = 100_000
+
+
 @dataclass
 class SDPMessage:
     """SDP (Session Description Protocol) message."""
@@ -44,6 +47,32 @@ class SDPMessage:
     sdp_type: SDPType
     sdp: str
     session_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Validate the message at construction time.
+
+        Rejects invalid types, oversized payloads, and malformed or
+        malicious SDP before the message can propagate into signaling.
+        """
+        if not isinstance(self.sdp_type, SDPType):
+            raise ValueError(f"Invalid SDP type: {self.sdp_type!r}")
+
+        if not isinstance(self.sdp, str):
+            raise ValueError("SDP payload must be a string")
+
+        if len(self.sdp) > MAX_SDP_SIZE:
+            from .exceptions import SDPValidationError
+
+            raise SDPValidationError(
+                f"SDP message too large: {len(self.sdp)} characters",
+                field="sdp",
+                reason=f"Maximum allowed size is {MAX_SDP_SIZE} characters",
+            )
+
+        # Lazy import avoids a circular import (sdp.py imports this module).
+        from .sdp import validate_sdp
+
+        validate_sdp(self.sdp, self.sdp_type)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -218,6 +247,10 @@ class VoiceConnection:
     sfu_peer_id: Optional[str] = None
     sfu_producer_ids: List[str] = field(default_factory=list)
     sfu_consumer_ids: List[str] = field(default_factory=list)
+    # Media-plane bearer token issued with VoiceServerInfo. Persisted so
+    # media-plane operations that are NOT already gateway-authenticated can
+    # verify the caller was actually issued credentials for this session.
+    media_token: Optional[str] = None
 
 
 # Quality thresholds for bitrate adjustment

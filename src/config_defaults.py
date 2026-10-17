@@ -1,26 +1,64 @@
-"""
-Default configuration for the Plexichat Server.
-This file provides the baseline settings used when no configuration file is found.
+"""Default configuration for the Plexichat server.
+
+Provides the baseline settings used when no configuration file is found.
 """
 
 import secrets
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
-# Version should be updated in main.py, this is a fallback
-DEFAULT_VERSION = "a.1.0-51"
+try:
+    from .config_defaults_artifacts import get_artifacts_defaults
+    from .config_defaults_authentication import get_authentication_defaults
+except ImportError:  # pragma: no cover - direct/script import fallback
+    from config_defaults_artifacts import get_artifacts_defaults
+    from config_defaults_authentication import get_authentication_defaults
+
+_artifacts_defaults = get_artifacts_defaults
+_authentication_defaults = get_authentication_defaults
 
 
-def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
+ARTIFACTS_LICENSE_FEATURES = {
+    "artifacts": "Master artifacts feature (any artifact type).",
+    "artifacts_whiteboard": "Licensed multi-user live whiteboard artifacts.",
+    "voice_transcription": "Licensed automatic voice-call transcription.",
+    "plexiscribe": "Licensed collaborative document editor (Plexiscribe).",
+    "plexiscript": "Licensed collaborative code editor (Plexiscript).",
+    "plexistash": "Licensed PlexiStash metadata vault.",
+    "plexisum": "Licensed PlexiSum collaborative workbooks.",
+}
+
+
+def default_version() -> str:
+    """Return the application version to stamp into a fresh configuration.
+
+    ``src.server.lifecycle`` owns the ``VERSION`` constant that releases bump,
+    so it is the single source of truth here. The import is deliberately lazy:
+    this module is loaded during early bootstrap, and pulling the server package
+    in at module scope would initialize it too early.
+
+    Returns:
+        The current application version string (e.g. "a.1.0-134").
     """
-    Returns the default configuration dictionary for Plexichat.
+    from src.server.lifecycle import VERSION
+
+    return VERSION
+
+
+def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
+    """Return the default configuration dictionary for Plexichat.
 
     Args:
-        version: The current application version string.
+        version: The current application version string. Defaults to the
+            version the server itself runs, so generated configs never
+            advertise a different build than the running process.
 
     Returns:
         A dictionary containing all default configuration keys and values.
     """
+    if version is None:
+        version = default_version()
+
     home_dir = Path.home() / ".plexichat"
 
     return {
@@ -29,117 +67,62 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "version": version,
             "environment": "development",
         },
-        "server": {"host": "127.0.0.1", "port": 8000, "workers": 1, "reload": False},
+        "server": {"host": "127.0.0.1", "port": 8000, "reload": False},
         "logging": {
             "level": "DEBUG",
-            "max_bytes": 10485760,  # 10MB
+            "max_bytes": 10485760,
             "backup_count": 5,
             "zip_logs": True,
             "rotate": True,
-            # SECURITY WARNING: Set to False in production to avoid leaking sensitive info
             "include_exception_details": False,
         },
         "database": {
             "type": "sqlite",
             "path": str(home_dir / "data" / "plexichat.db"),
             "postgres": {
-                "host": "localhost",
+                "host": "${POSTGRES_HOST:-localhost}",
                 "port": 5432,
-                "user": "postgres",
-                "password": "",
-                "dbname": "plexichat",
-                "sslmode": "prefer",
+                "user": "${POSTGRES_USER:-postgres}",
+                "password": "${POSTGRES_PASSWORD:-}",
+                "dbname": "${POSTGRES_DBNAME:-plexichat}",
+                "sslmode": "${POSTGRES_SSLMODE:-prefer}",
             },
             "connection_pool": {
-                "min_connections": 20,
+                "min_connections": 5,
                 "max_connections": 100,
                 "connect_timeout": 10,
-                "max_idle_time": 3600,
-                "validation_interval": 60,
-                "enable_validation": True,
-                "validation_query": "SELECT 1",
+                "cache_size_kb": -32000,
+                "mmap_size": 268435456,
+                "journal_size_limit": 67108864,
+                "temp_store": "MEMORY",
+                "idle_reclaim_seconds": 5.0,
+            },
+            "monitoring": {
+                "slow_query_threshold_ms": 1000,
+                "alert_on_slow_queries": True,
+            },
+            "migrations": {
+                "auto_migrate": True,
+                "migration_dir": str(home_dir / "migrations"),
+                "irreversible_migration_delay_days": 7,
             },
         },
-        "redis": {
+        "valkey": {
             "enabled": False,
-            "host": "localhost",
+            "host": "${VALKEY_HOST:-localhost}",
             "port": 6379,
-            "password": "",
+            "password": "${VALKEY_PASSWORD:-}",
             "db": 0,
             "ssl": False,
             "key_prefix": "plexichat:",
-            "connection_pool": {"max_connections": 50, "timeout": 5},
+            "connection_pool": {
+                "timeout": 5,
+                "max_connections": 50,
+            },
             "ttl": {"session": 1800, "presence": 300, "cache": 60},
             "cache_max_items": 1000,
         },
-        "authentication": {
-            "encryption": {
-                # SECURITY: Enforce TPM or Environment Variable key source for production
-                "require_secure_source": True,
-            },
-            "account_deletion": {
-                "enabled": True,
-                "grace_period_days": 30,
-                "reminder_days_before_purge": [7, 1],
-                "hard_freeze": True,
-                "anonymize_content": True,
-                "audit_log": {
-                    "file_path": str(home_dir / "audit" / "deletion_log.jsonl"),
-                    "hash_chain_enabled": True,
-                    "backup_to_s3": True,
-                    "s3_backup_path": "audit/deletions/log_backup.jsonl",
-                },
-                "reaper": {
-                    "interval_hours": 24,
-                    "boot_check_enabled": True,
-                    "batch_size": 50,
-                },
-            },
-            "accounts": {
-                "allow_registration": True,
-                "require_email_verification": False,
-                "max_bots_per_user": 5,
-                "username_min_length": 3,
-                "username_max_length": 32,
-                "age_gate_enabled": False,
-                "minimum_age": 13,
-                "age_verification_type": "boolean",  # "boolean" or "dob"
-            },
-            "email_validation": {
-                "strict": True,
-                "allow_custom_tlds": False,
-                "valid_tlds": [],
-            },
-            "sessions": {
-                "token_bytes": 32,
-                "expire_hours": 168,
-                "max_per_user": 10,
-                "extend_on_activity": True,
-                "extend_threshold_hours": 24,
-            },
-            "security": {
-                "max_failed_attempts": 5,
-                "lockout_duration_minutes": 15,
-                "token_cache_ttl": 30,
-                "token_verify_rate_limit": 100,
-                "token_binding": False,
-            },
-            "totp": {
-                "issuer": "Plexichat",
-                "digits": 6,
-                "interval": 30,
-                "backup_code_count": 10,
-            },
-            "password": {
-                "min_length": 12,
-                "max_length": 128,
-                "require_uppercase": True,
-                "require_lowercase": True,
-                "require_digit": True,
-                "require_special": True,
-            },
-            "bots": {"token_bytes": 48, "require_owner_2fa": False},
-        },
+        "authentication": _authentication_defaults(home_dir),
         "api": {
             "title": "Plexichat API",
             "description": "REST API for the Plexichat messaging platform",
@@ -164,20 +147,24 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "X-Requested-With",
                 "Accept",
                 "Origin",
+                "X-API-Access-Token",
+                "X-Plexichat-Request",
+                "X-RateLimit-Bypass",
             ],
             "trusted_proxies": [],
             "trust_x_forwarded_for": False,
             "docs_url": "/docs",
             "redoc_url": "/redoc",
             "openapi_url": "/openapi.json",
+            "max_worker_threads": 16,
         },
         "websocket": {
             "heartbeat_interval_ms": 45000,
             "session_timeout_ms": 60000,
             "max_connections_per_user": 5,
             "rate_limit_per_minute": 120,
-            "max_message_size": 65536,  # 64KB
-            "max_decompressed_size": 262144,  # 256KB
+            "max_message_size": 65536,
+            "max_decompressed_size": 262144,
             "compression_enabled": True,
             "allowed_origins": [],
         },
@@ -186,7 +173,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "encrypt_attachments": True,
             "max_message_length": 4000,
             "max_group_participants": 100,
-            "max_attachment_size": 10485760,  # 10MB
+            "max_attachment_size": 10485760,
             "max_attachments_per_message": 10,
             "dm_auto_create": True,
             "message_preview_length": 100,
@@ -196,18 +183,18 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "logs_dir": str(home_dir / "logs"),
             "media_dir": str(home_dir / "media"),
             "temp_dir": str(home_dir / "temp"),
-            "storage_backend": "local",  # "local", "s3", or "database"
+            "storage_backend": "local",
             "encrypt_at_rest": True,
             "local_path": str(home_dir / "media"),
             "local_url": "/media",
-            "s3_bucket": "",
-            "s3_access_key": "",
-            "s3_secret_key": "",
-            "s3_region": "us-east-1",
-            "s3_endpoint": "",
-            "s3_public_url": "",
+            "s3_bucket": "${S3_BUCKET:-}",
+            "s3_access_key": "${S3_ACCESS_KEY:-}",
+            "s3_secret_key": "${S3_SECRET_KEY:-}",
+            "s3_region": "${S3_REGION:-us-east-1}",
+            "s3_endpoint": "${S3_ENDPOINT:-}",
+            "s3_public_url": "${S3_PUBLIC_URL:-}",
             "database_url": "/api/v1/media/blob",
-            "database_max_size": 524288,  # 512KB
+            "database_max_size": 524288,
             "auto_route_to_database": {
                 "enabled": True,
                 "max_size": 524288,
@@ -264,7 +251,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "enabled": True,
                 "uploads_per_minute": 10,
                 "uploads_per_hour": 100,
-                "max_total_size_per_day": 536870912,  # 512MB
+                "max_total_size_per_day": 536870912,
             },
             "phash": {
                 "enabled": True,
@@ -282,26 +269,39 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "rate_limiting": {
             "enabled": True,
-            "global": {"requests": 100, "window_seconds": 60.0, "burst": 50},
+            "global": {"requests": 25000, "window_seconds": 60.0, "burst": 5000},
             "user": {
-                "requests": 120,
+                "requests": 10000,
                 "window_seconds": 60.0,
-                "burst": 20,
-                "hourly_limit": 3600,
-                "daily_limit": 50000,
+                "burst": 2500,
+                "hourly_limit": 300000,
+                "daily_limit": 5000000,
             },
             "ip": {
-                "requests": 60,
+                "requests": 5000,
                 "window_seconds": 60.0,
-                "burst": 10,
-                "hourly_limit": 1800,
-                "daily_limit": 10000,
+                "burst": 1500,
+                "hourly_limit": 150000,
+                "daily_limit": 1000000,
+            },
+            "routes": {
+                "static_client_html": {
+                    "requests": 300,
+                    "window_seconds": 60.0,
+                    "burst": 100,
+                    "hourly_limit": 6000,
+                },
+                "static_client_assets": {
+                    "requests": 5000,
+                    "window_seconds": 60.0,
+                    "burst": 1000,
+                    "hourly_limit": 180000,
+                },
             },
             "bot_multiplier": 1.5,
             "webhook_multiplier": 1.0,
             "admin_bypass": True,
             "internal_bypass": True,
-            "bypass_secret": secrets.token_hex(32),
         },
         "servers": {
             "server_name_min_length": 2,
@@ -393,7 +393,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "voice": {
             "enabled": True,
-            "sfu_backend": "mediasoup",
+            "sfu_backend": "aiortc",
             "mediasoup_url": "https://localhost:4443",
             "janus_url": "http://localhost:8088/janus",
             "stun_urls": [
@@ -408,6 +408,22 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "turn_secret": "",
             "turn_ttl": 86400,
             "log_connections": False,
+            "acoustic_defense": {
+                "enabled": False,
+                "jitter_ms_min": 5.0,
+                "jitter_ms_max": 20.0,
+                "spectral_masking": True,
+                "spectral_mask_noise_db": -40.0,
+                "spectral_mask_low_hz": 1000.0,
+                "spectral_mask_high_hz": 8000.0,
+                "vad_gating": True,
+                "vad_speech_threshold": 0.02,
+                "vad_silence_frames": 3,
+                "transient_shaving": True,
+                "transient_attack_ms": 0.5,
+                "transient_release_ms": 5.0,
+                "transient_ratio": 0.3,
+            },
         },
         "search": {
             "enabled": True,
@@ -415,6 +431,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "result_limit": 100,
             "batch_size": 100,
             "write_time_indexing": True,
+            "reindex_page_size": 200,
             "discovery": {
                 "enabled": True,
                 "min_members_for_listing": 10,
@@ -428,6 +445,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "nonce_token_bytes": 32,
             "cleanup_on_verify": True,
             "max_states_per_ip": 10,
+            "state_cookie_required": True,
             "pkce_enabled": True,
             "pkce": {
                 "verifier_length": 64,
@@ -440,7 +458,7 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "encryption": {
             "argon2": {
-                "time_cost": 2,
+                "time_cost": 3,
                 "memory_cost": 65536,
                 "parallelism": 2,
                 "hash_length": 32,
@@ -452,7 +470,59 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "worker_id": None,
                 "datacenter_id": None,
             },
-            "key_rotation_days": 180,  # 6 months, configurable via encryption.key_rotation_days
+            "key_rotation_days": 180,
+            "password_pepper": {
+                # Server-side pepper: HMAC-SHA256(pepper, password) before
+                # Argon2id. The pepper secret lives in the system keyring
+                # (KEK-encrypted at rest), so there is nothing for the
+                # operator to provision: it is generated once via CSRNG on
+                # first use. Keep old ids listed for verification after a
+                # rotation; `current_id` is used for new hashes. Logins with
+                # a stale-pepper hash rehash transparently on success.
+                # Each entry: {"source": "keyring"|"hsm"|"env"|"file"|
+                #   "kek-derived", ...}. `env`/`file` exist only for
+                #   migration from externally-managed secrets.
+                "enabled": True,
+                "current_id": "v1",
+                "peppers": {"v1": {"source": "keyring"}},
+            },
+            "hsm": {
+                "enabled": False,
+                "library_path": "/usr/lib/softhsm/libsofthsm2.so",
+                "slot_id": 0,
+                "token_label": "",
+                # PIN hygiene: prefer `pin_env` (env var name) or `pin_file`
+                # (path to a file containing the PIN). A literal `pin`
+                # supports ${VAR} expansion but warns — never commit it.
+                "pin": "",
+                "pin_env": "PLEXICHAT_HSM_PIN",
+                "pin_file": "",
+                "key_label": "plexichat_kek",
+                # KEK extraction policy. The legacy vault path returns the
+                # raw KEK bytes (software AES-GCM), which requires an
+                # extractable key. Set to False once callers migrate to
+                # hsm_encrypt()/hsm_decrypt() below — the vault then refuses
+                # to export CKA_VALUE and only does crypto inside the token.
+                "key_extractable": True,
+                "allow_generate": True,
+            },
+            "tpm": {
+                "enabled": True,
+                "hierarchy": "owner",
+                "key_template": "aes256",
+                # KDF label/salt version the TPM-bound KEK. Bump `label`
+                # to rotate TPM-derived KEKs (old keyrings then need the
+                # previous label via kek_migration).
+                "label": "PLEXICHAT_KEK_V2",
+                "salt": "plexichat:tpm-kek:v2",
+                # Optional persistent handle (e.g. 0x81000001). When set,
+                # the primary is persisted with EvictControl so later boots
+                # skip create_primary. Empty means transient (default).
+                "persistent_handle": "",
+                # Optional PCR selection for sealing (e.g. [0, 1, 7]).
+                # Empty means no PCR policy (portable across updates).
+                "pcr_selection": [],
+            },
         },
         "monitoring": {
             "enabled": True,
@@ -475,17 +545,23 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "exit_on_failure": False,
             "capture_stack_traces": True,
             "retry_on_failure": True,
+            "enable_admin_tests": True,
+            "journal_path": str(home_dir / "data" / "selftest_artifact_journal.json"),
+            "retry_non_idempotent": False,
             "excluded_endpoints": ["/api/v1/auth/logout", "/api/v1/admin/logout"],
             "test_user": {
                 "username": "selftest_admin",
-                "email": "selftest@internal.local",
-                "password": "SelfTest_Password_123!",  # pragma: allowlist secret
+                "email": "selftest@plexichat.com",
+                "password": None,
             },
         },
         "admin_ui": {
             "enabled": True,
             "path": "/admin",
             "require_otp": True,
+            "force_password_change_first_login": True,
+            "session_timeout_minutes": 480,
+            "max_concurrent_sessions": 3,
             "host_restriction": {
                 "enabled": True,
                 "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
@@ -497,12 +573,54 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "window_seconds": 300,
                 "lockout_seconds": 900,
             },
+            "rbac": {
+                "enabled": True,
+                "default_role": "super_admin",
+            },
+            "approval_workflows": {
+                "enabled": True,
+                "single_admin_bypass": True,
+                "require_approval_for": [
+                    "users.force_purge",
+                    "users.delete",
+                    "servers.delete",
+                ],
+                "approval_required_admins": 2,
+                "approval_timeout_hours": 48,
+                "auto_approve_after_hours": 72,
+            },
+            "audit": {
+                "log_to_file": True,
+                "log_to_database": True,
+                "sensitive_actions_always_db": True,
+                "retention_days": 365,
+            },
+            "notifications": {
+                "email_on_critical_actions": False,
+                "email_on_approval_required": False,
+                "webhook_url": "",
+            },
+            "security": {
+                "password_policy": {
+                    "min_length": 12,
+                    "require_uppercase": True,
+                    "require_lowercase": True,
+                    "require_numbers": True,
+                    "require_special_chars": True,
+                    "prevent_common_passwords": True,
+                },
+                "session": {
+                    "max_concurrent_sessions": 3,
+                    "timeout_idle_minutes": 30,
+                },
+            },
         },
         "tls": {
             "enabled": False,
             "auto_generate_self_signed": False,
             "cert_path": str(home_dir / "certs" / "server.crt"),
             "key_path": str(home_dir / "certs" / "server.key"),
+            "hostname": "localhost",
             "cert_days": 365,
         },
         "email": {
@@ -535,12 +653,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         },
         "stickers": {
             "max_packs_per_server": 50,
+            "max_packs_per_user": 100,
             "max_stickers_per_pack": 100,
             "max_sticker_size": 524288,
             "max_sticker_name_length": 32,
             "max_pack_name_length": 64,
             "max_pack_description_length": 256,
-            "allowed_formats": ["image/png", "image/webp", "image/gif"],
+            "allowed_formats": ["png", "apng", "json"],
             "max_suggestions": 10,
         },
         "soundboard": {
@@ -553,21 +672,40 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "max_cooldown_seconds": 30.0,
         },
         "webhooks": {
-            "max_webhooks_per_channel": 100,
+            "max_webhooks_per_channel": 10,
             "max_webhooks_per_server": 50,
             "max_message_length": 2000,
             "max_embeds_per_message": 10,
+            "rate_limit_per_minute": 30,
+            "delivery_interval_seconds": 30,
         },
         "automod": {
             "enabled": True,
             "exempt_owners": True,
             "exempt_admins": True,
+            "fail_closed": True,
+            "default_alert_channel_id": None,
             "rules": {
                 "caps": {
                     "enabled": True,
                     "max_percentage": 70.0,
                     "min_length": 10,
                     "ignore_commands": True,
+                }
+            },
+            "ai": {
+                "shieldstral": {
+                    "endpoint_url": "",
+                    "api_key": "",
+                    "model": "shieldstral",
+                    "threshold": 0.5,
+                    "policy_query": (
+                        "Evaluate the following content for harmful, toxic, "
+                        "hateful, sexually explicit, or unsafe material. Answer "
+                        "with a single word only: 'yes' if it is harmful, 'no' "
+                        "if it is not."
+                    ),
+                    "timeout_seconds": 60,
                 }
             },
         },
@@ -584,6 +722,35 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
             "rate_limits": {
                 "requests_per_minute": 60,
             },
+        },
+        "artifacts": _artifacts_defaults(home_dir),
+        "bots": {
+            "enabled": True,
+            "max_per_server": 10,
+            "max_per_server_premium": 50,
+            "allow_custom_bots": False,
+            "allow_custom_bots_premium": True,
+            "manage_bots_role": "admin",
+            "request_bot_enabled": True,
+            "curated_bots_only": False,
+            "webhook_retention_days": 30,
+            "interaction_timeout": 900,
+            "slash_commands_enabled": True,
+            "oauth_consent_required": True,
+            "bot_avatar_max_size": 512,
+            "bot_avatar_max_file_size": 5242880,
+            "bot_avatar_allowed_types": [
+                "image/jpeg",
+                "image/png",
+                "image/gif",
+                "image/webp",
+            ],
+            "rate_limits": {
+                "requests_per_minute": 30,
+                "burst_limit": 10,
+            },
+            "approved_bots_page_size": 50,
+            "max_requests_pending_per_user": 10,
         },
         "versioning": {"min_supported_version": version, "update_url": None},
         "docs": {
@@ -623,6 +790,13 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
         "avatars": {
             "max_size": 512,
             "max_file_size": 5242880,
+            # M3: decompression-bomb guards consumed by the avatars image
+            # pipeline (manager/processing.py). These keys were previously
+            # absent here, so operator overrides were silently ignored and
+            # the hardcoded fallbacks always won. Values mirror
+            # media.image_processing.
+            "max_dimension": 16384,
+            "max_pixels": 178956970,
             "allowed_types": ["image/jpeg", "image/png", "image/gif", "image/webp"],
             "default_colors": [
                 "#e94560",
@@ -650,9 +824,78 @@ def get_default_config(version: str = DEFAULT_VERSION) -> Dict[str, Any]:
                 "allowed_schemes": ["http", "https"],
             },
         },
-        "telemetry": {
+        "transcript_export": {
             "enabled": True,
+            "max_messages_per_export": 10000,
+            "max_date_range_days": 365,
+            "allowed_formats": ["json", "csv", "txt", "html"],
+            "rate_limit": {
+                "requests_per_hour": 5,
+                "requests_per_day": 20,
+            },
+            "max_file_size_mb": 50,
+            "temporary_storage_hours": 24,
+        },
+        "telemetry": {
+            "enabled": False,
             "rate_limit": {"max_per_minute": 10},
             "retention_days": 30,
+            "max_distinct_endpoints": 500,
+            "max_total_rows": 100000,
+            "percentile_sample_rows": 25000,
+            "client_hash_salt": secrets.token_hex(16),
+        },
+        "static_client": {
+            "enabled": False,
+            "serve": True,
+            "install_dir": str(home_dir / "client"),
+            "source": "gitlab_release",
+            "version_pin": "match_server",
+            "auto_update": False,
+            "auto_update_min_age_seconds": 3600,
+            "auto_update_check_interval_seconds": 3600,
+            "git_lab": {
+                "project_id": 2,
+                "api_url": "https://gitlab.plexichat.com/api/v4",
+                "private_token_env": "PLEXICHAT_GITLAB_TOKEN",
+                "verify_tls": True,
+                "request_timeout_seconds": 30,
+            },
+            "cache_control": {
+                "hashed_assets": "public, max-age=31536000, immutable",
+                "html": "no-store, max-age=0",
+                "other": "public, max-age=300",
+            },
+            "security_headers": {
+                "x_content_type_options": "nosniff",
+                "x_frame_options": "SAMEORIGIN",
+                "referrer_policy": "strict-origin-when-cross-origin",
+                "permissions_policy": "geolocation=(), microphone=(self), camera=()",
+                "content_security_policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
+            },
+            "rate_limit": {
+                "enabled": True,
+                "html": {"requests": 300, "window_seconds": 60, "burst": 60},
+                "assets": {"requests": 1200, "window_seconds": 60, "burst": 120},
+            },
+            "max_zip_size_bytes": 104857600,
+            "spa_routes": {
+                "/app": "app.html",
+                "/settings": "settings.html",
+                "/register": "register.html",
+                "/forgot-password": "forgot-password.html",  # pragma: allowlist secret
+                "/reset-password": "reset-password.html",  # pragma: allowlist secret
+                "/oauth-callback": "oauth-callback.html",
+                "/error": "error.html",
+                "/invite": "app.html",
+            },
+            "log_downloads": False,
+            "config_injection": {
+                "enabled": True,
+                "filename": "config.js",
+                "public_server_url": "",
+                "content": 'window.PLEXICHAT_CONFIG = { serverUrl: "{origin}", hideServerField: true, defaultTheme: "ocean", version: "{version}" };',
+            },
+            "invite_redirect": True,
         },
     }

@@ -9,9 +9,9 @@ import uuid
 class TestCreateWebhook:
     """Tests for creating webhooks."""
 
-    def test_create_webhook_basic(self, base_server_setup):
+    def test_create_webhook_basic(self, fresh_server):
         """Test creating a basic webhook."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -29,9 +29,9 @@ class TestCreateWebhook:
         assert webhook.token is not None
         assert webhook.avatar_url is None
 
-    def test_create_webhook_with_avatar(self, base_server_setup):
+    def test_create_webhook_with_avatar(self, fresh_server):
         """Test creating a webhook with avatar URL."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
         avatar = "https://example.com/avatar.png"
 
@@ -44,9 +44,9 @@ class TestCreateWebhook:
 
         assert webhook.avatar_url == avatar
 
-    def test_create_webhook_token_format(self, base_server_setup):
+    def test_create_webhook_token_format(self, fresh_server):
         """Test that webhook token has correct format."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -62,9 +62,9 @@ class TestCreateWebhook:
         assert parts[1] == str(webhook.id)
         assert len(parts[2]) > 20
 
-    def test_create_webhook_url_property(self, base_server_setup):
+    def test_create_webhook_url_property(self, fresh_server):
         """Test webhook URL property."""
-        setup = base_server_setup
+        setup = fresh_server
         unique_id = uuid.uuid4().hex[:8]
 
         webhook = setup["webhooks"].create_webhook(
@@ -76,9 +76,9 @@ class TestCreateWebhook:
         assert f"/webhooks/{webhook.id}/" in webhook.url
         assert webhook.token.split(".")[-1] in webhook.url
 
-    def test_create_webhook_unique_tokens(self, base_server_setup):
+    def test_create_webhook_unique_tokens(self, fresh_server):
         """Test that each webhook gets a unique token."""
-        setup = base_server_setup
+        setup = fresh_server
         tokens = set()
 
         for i in range(5):
@@ -91,9 +91,9 @@ class TestCreateWebhook:
 
         assert len(tokens) == 5
 
-    def test_create_webhook_invalid_channel(self, base_server_setup):
+    def test_create_webhook_invalid_channel(self, fresh_server):
         """Test creating webhook for non-existent channel."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import ChannelNotFoundError
 
         with pytest.raises(ChannelNotFoundError):
@@ -101,9 +101,9 @@ class TestCreateWebhook:
                 user_id=setup["owner"].id, channel_id=999999999, name="Invalid Channel"
             )
 
-    def test_create_webhook_no_permission(self, base_server_setup):
+    def test_create_webhook_no_permission(self, fresh_server):
         """Test creating webhook without permission."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import PermissionDeniedError
 
         with pytest.raises(PermissionDeniedError) as exc_info:
@@ -115,9 +115,9 @@ class TestCreateWebhook:
 
         assert exc_info.value.permission == "webhooks.manage"
 
-    def test_create_webhook_empty_name(self, base_server_setup):
+    def test_create_webhook_empty_name(self, fresh_server):
         """Test creating webhook with empty name."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookNameError
 
         with pytest.raises(WebhookNameError):
@@ -125,9 +125,9 @@ class TestCreateWebhook:
                 user_id=setup["owner"].id, channel_id=setup["channel"].id, name=""
             )
 
-    def test_create_webhook_whitespace_name(self, base_server_setup):
+    def test_create_webhook_whitespace_name(self, fresh_server):
         """Test creating webhook with whitespace-only name."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookNameError
 
         with pytest.raises(WebhookNameError):
@@ -135,9 +135,9 @@ class TestCreateWebhook:
                 user_id=setup["owner"].id, channel_id=setup["channel"].id, name="   "
             )
 
-    def test_create_webhook_name_too_long(self, base_server_setup):
+    def test_create_webhook_name_too_long(self, fresh_server):
         """Test creating webhook with name exceeding max length."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookNameError
 
         with pytest.raises(WebhookNameError) as exc_info:
@@ -147,9 +147,9 @@ class TestCreateWebhook:
 
         assert exc_info.value.max_length == 80
 
-    def test_create_webhook_name_max_length(self, base_server_setup):
+    def test_create_webhook_name_max_length(self, fresh_server):
         """Test creating webhook with name at max length."""
-        setup = base_server_setup
+        setup = fresh_server
 
         webhook = setup["webhooks"].create_webhook(
             user_id=setup["owner"].id, channel_id=setup["channel"].id, name="x" * 80
@@ -170,9 +170,9 @@ class TestCreateWebhook:
         assert "<script>" not in webhook.name
         assert "</script>" not in webhook.name
 
-    def test_create_webhook_invalid_avatar_scheme(self, base_server_setup):
+    def test_create_webhook_invalid_avatar_scheme(self, fresh_server):
         """Test creating webhook with invalid avatar URL scheme."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookAvatarError
 
         with pytest.raises(WebhookAvatarError):
@@ -183,9 +183,9 @@ class TestCreateWebhook:
                 avatar_url="javascript:alert(1)",
             )
 
-    def test_create_webhook_invalid_avatar_data_uri(self, base_server_setup):
+    def test_create_webhook_invalid_avatar_data_uri(self, fresh_server):
         """Test creating webhook with data URI avatar."""
-        setup = base_server_setup
+        setup = fresh_server
         from src.core.webhooks import WebhookAvatarError
 
         with pytest.raises(WebhookAvatarError):

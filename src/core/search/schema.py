@@ -6,6 +6,8 @@ Includes FTS5 virtual tables for full-text search and discovery tables.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Message search FTS5 virtual table
@@ -23,6 +25,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_messages_fts USING fts5(
     has_links UNINDEXED,
     mentions UNINDEXED,
     is_pinned UNINDEXED,
+    attachment_types UNINDEXED,
     tokenize='porter unicode61'
 );
 
@@ -55,7 +58,8 @@ CREATE TABLE IF NOT EXISTS search_message_index (
     channel_id INTEGER,
     author_id INTEGER NOT NULL,
     indexed_at INTEGER NOT NULL,
-    updated_at INTEGER
+    updated_at INTEGER,
+    source_updated_at INTEGER
 );
 
 -- User index metadata
@@ -117,16 +121,28 @@ CREATE TABLE IF NOT EXISTS search_history (
     searched_at INTEGER NOT NULL
 );
 
+-- Saved searches table
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES auth_users(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_search_msg_conv ON search_message_index(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_search_msg_server ON search_message_index(server_id);
 CREATE INDEX IF NOT EXISTS idx_search_msg_author ON search_message_index(author_id);
+CREATE INDEX IF NOT EXISTS idx_search_msg_source_updated ON search_message_index(source_updated_at);
 CREATE INDEX IF NOT EXISTS idx_search_listings_category ON search_server_listings(category);
 CREATE INDEX IF NOT EXISTS idx_search_listings_bumped ON search_server_listings(bumped_at DESC);
 CREATE INDEX IF NOT EXISTS idx_search_listings_members ON search_server_listings(member_count DESC);
 CREATE INDEX IF NOT EXISTS idx_search_bump_server ON search_bump_history(server_id);
 CREATE INDEX IF NOT EXISTS idx_search_bump_user ON search_bump_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_search_history_user ON search_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id);
 """
 
 
@@ -158,8 +174,9 @@ DEFAULT_CATEGORIES = [
 
 def create_tables(db):
     """Create all search tables including FTS5 virtual tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
     db_type = getattr(db, "type", "sqlite")
+
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

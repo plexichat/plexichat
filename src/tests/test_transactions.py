@@ -11,42 +11,26 @@ Tests cover:
 
 import pytest
 import os
-import sys
-import shutil
 
-# Setup paths before any imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-src_path = project_root
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+# common_utils is now a native package.
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import utils.config as config
+from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
 
 # Fixture for setup/teardown
 @pytest.fixture(scope="module")
-def setup_module():
+def setup_module(tmp_path_factory):
     """Setup test environment once per module."""
-    if not os.path.exists("temp_test"):
-        os.makedirs("temp_test")
+    temp_dir = tmp_path_factory.mktemp("test_transactions")
 
-    # Setup Logger for tests (once)
-    log_dir = "temp_test/logs"
-    logger.setup(log_dir=log_dir, level="DEBUG")
-
-    yield
-
-    # Teardown
-    if os.path.exists("temp_test"):
-        try:
-            shutil.rmtree("temp_test")
-        except OSError:
-            pass
+    # Setup Logger for tests (once). ``isolated_logger`` restores the level
+    # after the module so it cannot leak into later tests in this worker.
+    log_dir = str(temp_dir / "logs")
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield temp_dir
 
 
 @pytest.fixture
@@ -55,8 +39,9 @@ def db_config(setup_module):
     import gc
     import time
 
-    config_path = "temp_test/config.yaml"
-    db_path = "temp_test/test_transactions.db"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config.yaml")
+    db_path = str(temp_dir / "test_transactions.db")
 
     # Force garbage collection to close any lingering connections
     gc.collect()
@@ -74,8 +59,27 @@ def db_config(setup_module):
         except OSError:
             pass
 
-    default_config = {"database": {"type": "sqlite", "path": db_path}}
+    # Small per-connection caches: the production defaults (~32MB page
+    # cache + 256MB mmap per connection) blow up RAM across many tests.
+    default_config = {
+        "database": {
+            "type": "sqlite",
+            "path": db_path,
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 16,
+                "cache_size_kb": -1024,
+                "mmap_size": 1048576,
+                "journal_size_limit": 1048576,
+            },
+        }
+    }
     config.setup(config_path=config_path, default_config=default_config)
+
+    # The singleton may still be bound to an earlier test's engine/config
+    # (and an earlier file's db file that has since been deleted). Rebuild
+    # it so ``Database()`` binds to this test's fresh path.
+    Database.reset()
 
     yield config_path
 
@@ -114,10 +118,7 @@ def db_with_table(db_config):
     # Cleanup
     db = Database()
     db.connect()
-    try:
-        db.execute("DROP TABLE test_transactions")
-    except Exception:
-        pass
+    db.execute("DROP TABLE IF EXISTS test_transactions")
     db.close()
 
 
@@ -411,10 +412,8 @@ class TestErrorHandling:
         )
 
         # Invalid operation
-        try:
+        with pytest.raises(Exception):
             db.execute("INVALID SQL SYNTAX HERE")
-        except Exception:
-            pass
 
         # Transaction should still work
         db.execute(
@@ -526,10 +525,8 @@ class TestTransactionStateValidation:
         db.begin_transaction()
 
         # Cause an error
-        try:
+        with pytest.raises(Exception):
             db.execute("INVALID SYNTAX")
-        except Exception:
-            pass
 
         # State should be resettable
         assert db._local.transaction_depth == 1
@@ -716,17 +713,15 @@ class TestContextManager:
 
     def test_context_manager_rollback_on_exception(self, db_with_table):
         """Test context manager rollback on exception."""
-        try:
+        # Raise exception (should trigger rollback)
+        with pytest.raises(ValueError):
             with Database() as db:
                 db.begin_transaction()
                 db.execute(
                     "INSERT INTO test_transactions (name, value) VALUES (?, ?)",
                     ("context2", 100),
                 )
-                # Raise exception (should trigger rollback)
                 raise ValueError("Test exception")
-        except ValueError:
-            pass
 
         # Verify data was NOT committed due to exception
         db = Database()
@@ -744,84 +739,36 @@ class TestPostgresFailedTransactionRecovery:
     """
 
     @pytest.fixture
-    def postgres_config(self):
-        """Setup PostgreSQL configuration if available."""
-        # Check if PostgreSQL configuration is available
-        pg_config = config.get("postgres")
-        if not pg_config:
-            pytest.skip("PostgreSQL configuration not available")
+    def postgres_db_with_table(self, postgres_db):
+        """A live PostgreSQL database with this class's table.
 
-        # Check if we can import psycopg2
-        pytest.importorskip("psycopg2")
-
-        return pg_config
-
-    @pytest.fixture
-    def postgres_db_with_table(self, postgres_config):
-        """Create a PostgreSQL test database with a sample table."""
-        pytest.importorskip("psycopg2")
-
-        # Use test database configuration
-        config_path = "temp_test/postgres_config.yaml"
-
-        # Setup config with PostgreSQL
-        default_config = {
-            "database": {
-                "type": "postgres",
-                "postgres": postgres_config,
-                "connection_pool": {
-                    "min_connections": 2,
-                    "max_connections": 10,
-                    "connect_timeout": 10,
-                },
-            }
-        }
-        config.setup(config_path=config_path, default_config=default_config)
-
-        db = Database()
-        try:
-            db.connect()
-        except Exception as e:
-            pytest.skip(f"Could not connect to PostgreSQL: {e}")
-
-        # Drop test table if exists (cleanup from previous runs)
-        try:
-            db.execute("DROP TABLE test_transactions_postgres")
-        except Exception:
-            pass
-
-        # Create test table
-        create_table_query = """
+        This class used to define its own ``postgres_config`` fixture, which
+        read a top-level ``config["postgres"]`` key. The shared fixture sets
+        the whole block under ``config["database"]["postgres"]`` instead, so
+        that read always came back empty and **all seven tests below skipped
+        forever** -- even against a live backend. Delegate to the shared
+        ``postgres_db`` (which connects and rebinds the ``Database``
+        singleton) and create only the table this class needs.
+        """
+        postgres_db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
+        postgres_db.execute("""
             CREATE TABLE test_transactions_postgres (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 value INTEGER DEFAULT 0
             )
-        """
-        db.execute(create_table_query)
-        db.close()
+        """)
 
-        yield config_path
+        yield postgres_db
 
-        # Cleanup after test
-        db = Database()
         try:
-            db.connect()
-            db.execute("DROP TABLE test_transactions_postgres")
-            db.close()
+            postgres_db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
         except Exception:
             pass
 
-        # Clean up config file
-        if os.path.exists(config_path):
-            try:
-                os.remove(config_path)
-            except OSError:
-                pass
-
     def test_infailedsqltransaction_detection(self, postgres_db_with_table):
         """Test detection of InFailedSqlTransaction error by exception type."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -836,15 +783,12 @@ class TestPostgresFailedTransactionRecovery:
         )
 
         # Force a constraint violation or syntax error to abort transaction
-        try:
+        with pytest.raises(Exception):
             # Try to insert NULL into a NOT NULL column (or other constraint violation)
             db.execute(
                 "INSERT INTO test_transactions_postgres (id, name, value) VALUES (?, ?, ?)",
                 (1, None, 100),  # NULL in NOT NULL column
             )
-        except Exception:
-            # Expected to fail
-            pass
 
         # Transaction is now in failed state
         # _validate_transaction_state should detect this and trigger recovery
@@ -862,7 +806,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_recovery_resets_state(self, postgres_db_with_table):
         """Test that recovery properly resets transaction_depth and in_transaction."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -883,13 +827,11 @@ class TestPostgresFailedTransactionRecovery:
         )
 
         # Force an error to abort transaction
-        try:
+        with pytest.raises(Exception):
             db.execute(
                 "INSERT INTO test_transactions_postgres (id, name, value) VALUES (?, ?, ?)",
                 (1, None, 100),  # NULL constraint violation
             )
-        except Exception:
-            pass
 
         # Validate transaction state (should trigger recovery)
         db._validate_transaction_state()
@@ -903,8 +845,14 @@ class TestPostgresFailedTransactionRecovery:
     def test_infailedsqltransaction_recover_from_failed_transaction_rollback(
         self, postgres_db_with_table
     ):
-        """Test that _recover_from_failed_transaction properly rolls back."""
-        pytest.importorskip("psycopg2")
+        """A failed outermost statement aborts AND resets the transaction.
+
+        The previous body called ``db._recover_from_failed_transaction()``,
+        a method that does not exist on ``Database`` -- this test had never
+        run, so the ``AttributeError`` went unnoticed. ``_validate_transaction_state``
+        is the real recovery entry point.
+        """
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -919,18 +867,21 @@ class TestPostgresFailedTransactionRecovery:
         )
 
         # Force error to abort transaction
-        try:
+        with pytest.raises(Exception):
             db.execute(
                 "INSERT INTO test_transactions_postgres (id, name, value) VALUES (?, ?, ?)",
                 (1, None, 100),
             )
-        except Exception:
-            pass
 
-        # Call recovery directly
-        db._recover_from_failed_transaction()
+        # ``begin_transaction`` only issues a SAVEPOINT from depth 2, so the
+        # failure at depth 1 aborts the whole transaction. The depth must
+        # come back to 0: leaving it set would let the caller's next
+        # ``commit()`` silently no-op and lose the rows it wrote.
+        assert db._local.transaction_depth == 0
+        assert not db._local.in_transaction
 
-        # Verify state is reset
+        # Recovery is idempotent on an already-clean connection.
+        db._validate_transaction_state()
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
 
@@ -944,7 +895,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test detection of failed transaction by message fragments."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -992,7 +943,7 @@ class TestPostgresFailedTransactionRecovery:
         self, postgres_db_with_table
     ):
         """Test that after recovery, we can start a new transaction."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1005,13 +956,11 @@ class TestPostgresFailedTransactionRecovery:
         )
 
         # Force error
-        try:
+        with pytest.raises(Exception):
             db.execute(
                 "INSERT INTO test_transactions_postgres (id, name, value) VALUES (?, ?, ?)",
                 (1, None, 100),
             )
-        except Exception:
-            pass
 
         # Trigger recovery
         db._validate_transaction_state()
@@ -1039,7 +988,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_pgcode_detection(self, postgres_db_with_table):
         """Test detection of failed transaction by pgcode (PostgreSQL error code 25P02)."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1075,7 +1024,7 @@ class TestPostgresFailedTransactionRecovery:
 
     def test_infailedsqltransaction_nested_recovery(self, postgres_db_with_table):
         """Test recovery in nested transactions."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1095,25 +1044,32 @@ class TestPostgresFailedTransactionRecovery:
         )
 
         # Force error in inner transaction
-        try:
+        with pytest.raises(Exception):
             db.execute(
                 "INSERT INTO test_transactions_postgres (id, name, value) VALUES (?, ?, ?)",
                 (1, None, 100),
             )
-        except Exception:
-            pass
 
-        # Transaction is now failed
-        # Validate should trigger recovery
-        db._validate_transaction_state()
+        # The failure is contained: error cleanup rolls back to the savepoint
+        # the inner ``begin_transaction`` took, rather than aborting the whole
+        # chain, so the outer unit of work is still open. (The previous
+        # expectation here -- depth 0 -- described a full-chain rollback the
+        # implementation deliberately does not do; the assertion had never
+        # run.)
+        assert db._local.transaction_depth == 2
+        assert db._local.in_transaction
 
-        # After recovery, all nesting should be cleared
+        # Discarding the failed inner unit of work and committing then leaves
+        # exactly the outer row.
+        db.rollback()
+        assert db._local.transaction_depth == 1
+
+        db.commit()
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
 
-        # Data should be rolled back
         results = db.fetch_all("SELECT * FROM test_transactions_postgres")
-        assert len(results) == 0
+        assert [row["name"] for row in results] == ["outer"]
 
         db.close()
 
@@ -1127,17 +1083,22 @@ class TestPostgresErrorRecoveryReal:
     """Test PostgreSQL error recovery with real PostgreSQL errors and constraints."""
 
     @pytest.fixture
-    def postgres_recovery_config(self):
+    def postgres_recovery_config(self, setup_module):
         """Setup PostgreSQL configuration for recovery tests."""
+        temp_dir = setup_module
         pg_config = {
             "database": {
                 "type": "postgres",
                 "postgres": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "user": "postgres",
-                    "password": "password",
-                    "dbname": "postgres",
+                    # Service-aware connection settings, env-driven the same
+                    # way as src/tests/fixtures/postgres_docker.py so these
+                    # tests run against the CI services (test:database_backends)
+                    # instead of silently skipping on localhost defaults.
+                    "host": os.getenv("POSTGRES_HOST", "localhost"),
+                    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+                    "user": os.getenv("POSTGRES_USER", "postgres"),
+                    "password": os.getenv("POSTGRES_PASSWORD", "password"),
+                    "dbname": os.getenv("POSTGRES_DB", "postgres"),
                 },
                 "connection_pool": {
                     "min_connections": 2,
@@ -1146,14 +1107,20 @@ class TestPostgresErrorRecoveryReal:
                 },
             }
         }
-        config_path = "temp_test/postgres_recovery_config.yaml"
+        config_path = str(temp_dir / "postgres_recovery_config.yaml")
         config.setup(config_path=config_path, default_config=pg_config)
+        # ``Database`` is a process-wide singleton whose ``__init__`` runs
+        # only once — drop it so ``Database()`` re-initialises against the
+        # postgres config above (and the connect attempt below properly
+        # skips when no server is reachable) instead of a stale sqlite
+        # instance that would happily connect and then fail on postgres SQL.
+        Database.reset()
         return config_path
 
     @pytest.fixture
     def postgres_recovery_db_with_constraints(self, postgres_recovery_config):
         """Create PostgreSQL test database with various constraints."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         try:
@@ -1162,10 +1129,7 @@ class TestPostgresErrorRecoveryReal:
             pytest.skip(f"Could not connect to PostgreSQL: {e}")
 
         # Drop table if exists
-        try:
-            db.execute("DROP TABLE test_constraints")
-        except Exception:
-            pass
+        db.execute("DROP TABLE IF EXISTS test_constraints")
 
         # Create table with multiple constraints
         create_table_query = """
@@ -1186,12 +1150,9 @@ class TestPostgresErrorRecoveryReal:
 
         # Cleanup
         db = Database()
-        try:
-            db.connect()
-            db.execute("DROP TABLE test_constraints")
-            db.close()
-        except Exception:
-            pass
+        db.connect()
+        db.execute("DROP TABLE IF EXISTS test_constraints")
+        db.close()
 
         if os.path.exists(postgres_recovery_config):
             try:
@@ -1203,7 +1164,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test recovery from NOT NULL constraint violation."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1219,7 +1180,7 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Try to insert NULL in NOT NULL column
-        with pytest.raises(psycopg2.errors.NotNullViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "user2@example.com", 30),
@@ -1242,7 +1203,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test recovery from UNIQUE constraint violation."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1258,7 +1219,7 @@ class TestPostgresErrorRecoveryReal:
         assert db._local.transaction_depth == 1
 
         # Try to insert duplicate username (violates UNIQUE constraint)
-        with pytest.raises(psycopg2.errors.UniqueViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("unique_user", "user2@example.com", 30),
@@ -1282,7 +1243,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test recovery from CHECK constraint violation."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1297,7 +1258,7 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Try to insert invalid age (violates CHECK constraint)
-        with pytest.raises(psycopg2.errors.CheckViolation):
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("invalid_age_user", "user@example.com", 200),  # Age > 150
@@ -1317,7 +1278,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test that recovery allows retrying transaction after error."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1329,13 +1290,11 @@ class TestPostgresErrorRecoveryReal:
             ("first_attempt", "first@example.com", 25),
         )
 
-        try:
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "null@example.com", 30),
             )
-        except psycopg2.errors.NotNullViolation:
-            pass
 
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
@@ -1359,7 +1318,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test error recovery in nested transaction scenarios."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1379,23 +1338,43 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Trigger error in inner transaction
-        try:
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 ("outer", "duplicate@example.com", 50),  # Duplicate username
             )
-        except psycopg2.errors.UniqueViolation:
-            pass
 
-        # Recovery should reset all nesting
+        # Recovery unwinds the *inner* level only. The statement failed inside
+        # a savepoint, so the connection is usable again without losing the
+        # enclosing transaction -- and a healthy connection must not be torn
+        # down by the state probe.
         db._validate_transaction_state()
+        assert db._local.transaction_depth == 2, "outer transaction + savepoint"
+        assert db._local.in_transaction
 
+        usernames = {
+            row["username"]
+            for row in db.fetch_all("SELECT username FROM test_constraints")
+        }
+        # Everything written since the savepoint (the inner row) is undone...
+        assert "inner" not in usernames
+        # ...while the outer transaction's row is still uncommitted but alive.
+        assert "outer" in usernames
+
+        # Releasing the savepoint returns to the outer transaction; committing
+        # it closes the whole chain.
+        db.commit()
+        assert db._local.transaction_depth == 1
+        db.commit()
         assert db._local.transaction_depth == 0
         assert not db._local.in_transaction
 
-        # Verify no data was committed
-        results = db.fetch_all("SELECT * FROM test_constraints")
-        assert len(results) == 0
+        usernames = {
+            row["username"]
+            for row in db.fetch_all("SELECT username FROM test_constraints")
+        }
+        # The duplicate insert that triggered the error never took effect.
+        assert usernames == {"outer"}
 
         db.close()
 
@@ -1403,7 +1382,7 @@ class TestPostgresErrorRecoveryReal:
         self, postgres_recovery_db_with_constraints
     ):
         """Test that recovery properly resets connection state."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1419,13 +1398,11 @@ class TestPostgresErrorRecoveryReal:
         )
 
         # Trigger error
-        try:
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO test_constraints (username, email, age) VALUES (?, ?, ?)",
                 (None, "error@example.com", 55),
             )
-        except psycopg2.errors.NotNullViolation:
-            pass
 
         # Trigger recovery
         db._validate_transaction_state()
@@ -1446,28 +1423,35 @@ class TestPostgresMultipleConstraintViolations:
     """Test recovery from various constraint violations in sequence."""
 
     @pytest.fixture
-    def multi_constraint_config(self):
+    def multi_constraint_config(self, setup_module):
         """Setup PostgreSQL config for constraint tests."""
+        temp_dir = setup_module
         pg_config = {
             "database": {
                 "type": "postgres",
                 "postgres": {
-                    "host": "localhost",
-                    "port": 5432,
-                    "user": "postgres",
-                    "password": "password",
-                    "dbname": "postgres",
+                    # Env-driven like the postgres fixtures so these run
+                    # against the CI services instead of skipping.
+                    "host": os.getenv("POSTGRES_HOST", "localhost"),
+                    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+                    "user": os.getenv("POSTGRES_USER", "postgres"),
+                    "password": os.getenv("POSTGRES_PASSWORD", "password"),
+                    "dbname": os.getenv("POSTGRES_DB", "postgres"),
                 },
             }
         }
-        config_path = "temp_test/multi_constraint_config.yaml"
+        config_path = str(temp_dir / "multi_constraint_config.yaml")
         config.setup(config_path=config_path, default_config=pg_config)
+        # ``Database`` is a process-wide singleton whose ``__init__`` runs
+        # only once — drop it so ``Database()`` re-initialises against the
+        # postgres config above instead of a stale sqlite instance.
+        Database.reset()
         return config_path
 
     @pytest.fixture
     def constraint_test_table(self, multi_constraint_config):
         """Create test table with multiple constraints."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         db = Database()
         try:
@@ -1475,10 +1459,7 @@ class TestPostgresMultipleConstraintViolations:
         except Exception as e:
             pytest.skip(f"Could not connect to PostgreSQL: {e}")
 
-        try:
-            db.execute("DROP TABLE IF EXISTS constraint_tests")
-        except Exception:
-            pass
+        db.execute("DROP TABLE IF EXISTS constraint_tests")
 
         db.execute("""
             CREATE TABLE constraint_tests (
@@ -1495,16 +1476,13 @@ class TestPostgresMultipleConstraintViolations:
 
         # Cleanup
         db = Database()
-        try:
-            db.connect()
-            db.execute("DROP TABLE IF EXISTS constraint_tests")
-            db.close()
-        except Exception:
-            pass
+        db.connect()
+        db.execute("DROP TABLE IF EXISTS constraint_tests")
+        db.close()
 
     def test_recovery_sequence_not_null_then_unique(self, constraint_test_table):
-        psycopg2 = """Test recovery from sequence of constraint violations."""
-        pytest.importorskip("psycopg2")
+        """Test recovery from sequence of constraint violations."""
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
@@ -1517,25 +1495,21 @@ class TestPostgresMultipleConstraintViolations:
 
         # First error - NOT NULL violation
         db.begin_transaction()
-        try:
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
                 (None, "user2@example.com", 50),
             )
-        except psycopg2.errors.NotNullViolation:
-            pass
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
 
         # Second error - UNIQUE violation
         db.begin_transaction()
-        try:
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
                 ("User1", "user1@example.com", 75),  # Duplicate email
             )
-        except psycopg2.errors.UniqueViolation:
-            pass
         db._validate_transaction_state()
         assert db._local.transaction_depth == 0
 
@@ -1555,20 +1529,18 @@ class TestPostgresMultipleConstraintViolations:
 
     def test_recovery_with_check_constraint_and_retry(self, constraint_test_table):
         """Test recovery from CHECK constraint with successful retry."""
-        psycopg2 = pytest.importorskip("psycopg2")
+        pg8000 = pytest.importorskip("pg8000")
 
         db = Database()
         db.connect()
 
         # Try with invalid balance (negative)
         db.begin_transaction()
-        try:
+        with pytest.raises(pg8000.dbapi.IntegrityError):
             db.execute(
                 "INSERT INTO constraint_tests (name, email, balance) VALUES (?, ?, ?)",
                 ("NegativeBalance", "negative@example.com", -50),
             )
-        except psycopg2.errors.CheckViolation:
-            pass
         db._validate_transaction_state()
 
         # Retry with valid balance
@@ -1594,7 +1566,7 @@ class TestPostgresConnectionPoolFailureRecovery:
 
     def test_pool_connection_after_transaction_error(self):
         """Test that pool connection is properly managed after transaction error."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         pg_config = {
             "type": "postgres",
@@ -1611,6 +1583,10 @@ class TestPostgresConnectionPoolFailureRecovery:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton — drop it so this test's
+        # ``Database()`` re-initialises against the postgres config above
+        # instead of a stale earlier instance.
+        Database.reset()
 
         db = Database()
 
@@ -1620,7 +1596,7 @@ class TestPostgresConnectionPoolFailureRecovery:
 
     def test_pool_size_after_error_recovery(self):
         """Test that pool maintains correct size after errors."""
-        pytest.importorskip("psycopg2")
+        pytest.importorskip("pg8000")
 
         pg_config = {
             "type": "postgres",
@@ -1637,6 +1613,10 @@ class TestPostgresConnectionPoolFailureRecovery:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton — drop it so this test's
+        # ``Database()`` re-initialises against the postgres config above
+        # instead of a stale earlier instance.
+        Database.reset()
 
         db = Database()
         pool_config = db.config.get("connection_pool", {})

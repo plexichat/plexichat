@@ -4,13 +4,15 @@ Sticker database schema - Table definitions for stickers module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Sticker packs table
 CREATE TABLE IF NOT EXISTS sticker_packs (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    description TEXT,
+    description_encrypted TEXT,
     pack_type TEXT NOT NULL DEFAULT 'server',
     server_id INTEGER,
     created_by INTEGER NOT NULL,
@@ -30,6 +32,7 @@ CREATE TABLE IF NOT EXISTS sticker_stickers (
     pack_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     format TEXT NOT NULL DEFAULT 'png',
+    description TEXT,
     tags TEXT,
     related_emoji TEXT,
     url TEXT NOT NULL,
@@ -64,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_sticker_usage_message ON sticker_usage(message_id
 
 def create_tables(db):
     """Create all sticker tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

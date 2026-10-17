@@ -13,7 +13,7 @@ from src.api.schemas.voice import (
     ICEServersResponse,
     VoiceChannelInfoResponse,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, SnowflakeID
 
 router = APIRouter(prefix="/voice", tags=["Voice"])
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/voice", tags=["Voice"])
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-@cached(ttl=3600, prefix="ice_servers")
+@cached(ttl=300, prefix="ice_servers")
 async def get_ice_servers(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ICEServersResponse:
@@ -40,25 +40,34 @@ async def get_ice_servers(
     try:
         from src.core.voice import signaling
 
-        # Get ICE servers for this user
-        info = signaling.get_voice_server_info(current_user.user_id, 0)
+        # M5: the legacy path routed this bootstrap endpoint through
+        # get_voice_server_info(user_id, 0). The sentinel channel 0 made the
+        # channel lookup return None, raising NotConnectedError that the old
+        # blanket ``except (RuntimeError, Exception)`` swallowed — so this
+        # endpoint ALWAYS returned public STUN defaults and configured TURN
+        # credentials were never delivered. get_ice_servers() builds exactly
+        # the configured list without minting a session/token.
+        ice_servers = signaling.get_ice_servers(current_user.user_id)
 
         # Convert to client format
-        ice_servers: List[ICEServerConfig] = []
-        for server in info.ice_servers:
+        out: List[ICEServerConfig] = []
+        for server in ice_servers:
             urls = server.urls
             urls_list: List[str] = [urls] if isinstance(urls, str) else list(urls)
             server_config = ICEServerConfig(
                 urls=urls_list, username=server.username, credential=server.credential
             )
-            ice_servers.append(server_config)
+            out.append(server_config)
 
-        return ICEServersResponse(ice_servers=ice_servers)
-    except (RuntimeError, Exception) as e:
+        return ICEServersResponse(ice_servers=out)
+    except RuntimeError:
+        # Signaling module genuinely not set up: fall back to public STUN
+        # defaults so clients can still attempt P2P. Any OTHER exception is
+        # a real failure and must surface instead of being masked as
+        # "defaults" (that blanket catch hid genuine bugs for years).
         logger.warning(
-            f"Failed to get ICE servers for user {current_user.user_id}, returning defaults: {e}"
+            f"Voice signaling not initialized; returning default ICE servers for user {current_user.user_id}"
         )
-        # Return default STUN servers if signaling not available
         return ICEServersResponse(
             ice_servers=[
                 ICEServerConfig(
@@ -126,13 +135,12 @@ async def get_voice_channel_info(
                 f"User {current_user.user_id} requested voice info for channel {cid}"
             )
             return VoiceChannelInfoResponse(
-                channel_id=channel_id,
+                channel_id=SnowflakeID(cid),
                 session_id=info.session_id,
                 ice_servers=ice_servers,
                 bitrate=info.bitrate,
             )
         except (RuntimeError, Exception) as e:
-            exc_name = type(e).__name__
             if isinstance(e, RuntimeError) and "not initialized" in str(e):
                 logger.error(
                     f"Voice signaling service unavailable for user {current_user.user_id}: {e}"
@@ -146,22 +154,39 @@ async def get_voice_channel_info(
                         }
                     },
                 )
-            if "NotFound" in exc_name:
-                logger.warning(
-                    f"Voice channel {cid} not found for user {current_user.user_id}"
+            if isinstance(e, Exception):
+                from src.core.voice.exceptions import (
+                    ChannelNotFoundError,
+                    PermissionDeniedError,
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Channel not found"}},
-                )
-            if "NotConnected" in exc_name:
-                logger.warning(
-                    f"User {current_user.user_id} not connected to voice channel {cid}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}},
-                )
+
+                if isinstance(e, ChannelNotFoundError):
+                    logger.warning(
+                        f"Voice channel {cid} not found for user {current_user.user_id}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={"error": {"code": 404, "message": "Channel not found"}},
+                    )
+                if isinstance(e, PermissionDeniedError):
+                    # Agent 34 M6: credential issuance now requires
+                    # voice.connect; surface denial as 403 instead of 500.
+                    logger.warning(
+                        f"User {current_user.user_id} lacks voice.connect "
+                        f"for channel {cid}: {e}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"error": {"code": 403, "message": "Access denied"}},
+                    )
+                if "NotConnected" in type(e).__name__:
+                    logger.warning(
+                        f"User {current_user.user_id} not connected to voice channel {cid}: {e}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"error": {"code": 403, "message": "Access denied"}},
+                    )
 
             logger.error(
                 f"Unexpected error in get_voice_channel_info for channel {cid} (user: {current_user.user_id}): {e}",

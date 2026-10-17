@@ -1,12 +1,21 @@
-# Presence Tests
+# Presence tests
 
-Tests for user presence and status.
+Tests for user presence, including status, activity, typing indicators, and visibility
+rules.
 
-## Test Files
+## Test files
 
-- `test_activity.py` - User activities
-- `test_edge_cases.py` - Edge case handling
-- `test_integration.py` - Integration tests
-- `test_status.py` - Online/offline status
-- `test_typing.py` - Typing indicators
-- `test_visibility.py` - Presence visibility
+- `test_activity.py` — Verifies setting, getting, clearing, and updating activities
+  (PLAYING, STREAMING, LISTENING, WATCHING, COMPETING, CUSTOM) with timestamps and
+  assets.
+- `test_edge_cases.py` — Covers invalid-user errors, invalid-activity errors, default
+  presence values, rapid status/activity/typing changes, timestamp precision, and
+  empty-query handling.
+- `test_integration.py` — Tests presence set/get operations, multi-user presence
+  retrieval, status clearing, and `update_last_seen`.
+- `test_status.py` — Validates all status transitions (ONLINE, IDLE, DND, INVISIBLE,
+  OFFLINE), custom-status lifecycle, and `last_seen`/`updated_at` timestamp updates.
+- `test_typing.py` — Tests typing-indicator start/stop, multi-channel support,
+  expiration timing (6-second timeout), and multi-user scenarios.
+- `test_visibility.py` — Verifies invisible-mode visibility rules, block-based presence
+  hiding, own-presence visibility, and bulk visibility retrieval.

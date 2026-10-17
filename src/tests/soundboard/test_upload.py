@@ -146,9 +146,9 @@ class TestGetSound:
 
         sounds = soundboard.get_server_sounds(owner.id, server.id)
 
-        assert len(sounds) >= 1
-        sound_ids = [s.id for s in sounds]
-        assert sound.id in sound_ids
+        # Exactly one sound was uploaded
+        assert len(sounds) == 1
+        assert sounds[0].id == sound.id
 
 
 class TestDeleteSound:
@@ -156,7 +156,10 @@ class TestDeleteSound:
 
     def test_delete_sound_success(self, db_and_modules):
         """Test deleting a sound successfully."""
-        db, auth, messaging, servers, soundboard = db_and_modules
+        bundle = db_and_modules
+        auth = bundle.auth
+        servers = bundle.servers
+        soundboard = bundle.module
 
         unique_id = uuid.uuid4().hex[:8]
         owner = auth.register(

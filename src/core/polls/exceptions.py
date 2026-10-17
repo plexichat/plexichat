@@ -76,6 +76,18 @@ class AlreadyVotedError(PollError):
     pass
 
 
+class PollAlreadyExistsError(PollError):
+    """The target message already carries a poll.
+
+    ``poll_polls.message_id`` is UNIQUE (one poll per message), so a
+    second create for the same message is a client error, not a server
+    fault.  Raised explicitly by the pre-check and translated from the
+    constraint violation that closes the concurrent-INSERT race window.
+    """
+
+    pass
+
+
 class MultipleVoteNotAllowedError(PollError):
     """Poll does not allow multiple choice voting."""
 
@@ -90,5 +102,11 @@ class PermissionDeniedError(PollError):
 
 class MessageNotFoundError(PollError):
     """Message does not exist or is not accessible."""
+
+    pass
+
+
+class PollConfigurationError(PollError):
+    """Poll module is misconfigured (required dependency not wired)."""
 
     pass

@@ -3,50 +3,29 @@ Tests for Janus SFU adapter.
 """
 
 import pytest
-import os
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# Setup paths
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
-if common_utils_path not in sys.path:
-    sys.path.insert(0, common_utils_path)
-
-import utils.logger as logger  # noqa: E402
-
-# Setup logger for tests
-try:
-    logger.setup(log_dir="temp_test_session/logs", level="WARNING", zip_logs=False)
-except Exception:
-    pass
-
-from src.core.voice.signaling.sfu.janus import JanusAdapter  # noqa: E402
-from src.core.voice.signaling.sfu.base import (  # noqa: E402
+from src.core.voice.signaling.sfu.janus import JanusAdapter
+from src.core.voice.signaling.sfu.base import (
     TransportDirection,
     MediaKind,
-    SFUTransport,
     SFUProducer,
     SFUConsumer,
     RoomInfo,
 )
-from src.core.voice.signaling.exceptions import SFUConnectionError  # noqa: E402
+from src.core.voice.signaling.exceptions import SFUConnectionError
 
 
 @pytest.fixture
-def mock_aiohttp_session():
-    """Create a mock aiohttp session."""
-    mock_response = AsyncMock()
-    mock_response.status = 200
-    mock_response.json = AsyncMock(return_value={"janus": "success"})
-
-    mock_context = AsyncMock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_context.__aexit__ = AsyncMock(return_value=None)
+def mock_http_session():
+    """Create a mock httpx.AsyncClient."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json = MagicMock(return_value={"janus": "success"})
 
     mock_session = MagicMock()
-    mock_session.post = MagicMock(return_value=mock_context)
-    mock_session.close = AsyncMock()
+    mock_session.post = AsyncMock(return_value=mock_response)
+    mock_session.aclose = AsyncMock()
 
     return mock_session, mock_response
 
@@ -55,12 +34,12 @@ class TestJanusAdapter:
     """Tests for JanusAdapter."""
 
     @pytest.mark.asyncio
-    async def test_create_room(self, mock_aiohttp_session):
+    async def test_create_room(self, mock_http_session):
         """Test creating a room."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
         # Mock session creation
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},  # create session
                 {"janus": "success", "data": {"id": 67890}},  # attach plugin
@@ -71,7 +50,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -82,12 +61,89 @@ class TestJanusAdapter:
             assert room.id == "room_123"
 
     @pytest.mark.asyncio
-    async def test_close_room(self, mock_aiohttp_session):
+    async def test_create_room_uses_configured_recording_prefix(
+        self, mock_http_session, tmp_path
+    ):
+        """Native Janus recordings use the same configured root as the adapter."""
+        mock_session, mock_response = mock_http_session
+        mock_response.json = MagicMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {"janus": "success"},
+            ]
+        )
+        configured = {"voice": {"recording": {"output_dir": str(tmp_path)}}}
+        with (
+            patch("httpx.AsyncClient", return_value=mock_session),
+            patch(
+                "src.core.voice.signaling.sfu.janus.config.get",
+                return_value=configured,
+            ),
+            patch(
+                "src.core.voice.signaling.sfu.janus.resolve_recording_dir",
+                return_value=tmp_path,
+            ),
+        ):
+            adapter = JanusAdapter(api_url="http://localhost:8088/janus")
+            adapter._session = mock_session
+            await adapter.create_room("room_123")
+
+        create_payload = next(
+            call.kwargs["json"]
+            for call in mock_session.post.call_args_list
+            if call.kwargs.get("json", {}).get("body", {}).get("request") == "create"
+        )
+        filename = create_payload["body"]["filename"]
+        assert filename.startswith(str(tmp_path))
+        assert "/tmp/janus-recordings/" not in filename
+
+    @pytest.mark.asyncio
+    async def test_start_recording_rejects_mismatched_native_root(self, tmp_path):
+        adapter = JanusAdapter(api_url="http://localhost:8088/janus")
+        adapter._janus_sessions["room_123"] = 12345
+        native_root = tmp_path / "native"
+        requested_root = tmp_path / "other"
+        adapter._janus_recording_roots["room_123"] = str(native_root)
+
+        with patch(
+            "src.core.voice.signaling.sfu.janus.resolve_recording_dir",
+            return_value=requested_root,
+        ):
+            with pytest.raises(SFUConnectionError, match="must match"):
+                await adapter.start_recording("room_123", str(requested_root))
+
+    @pytest.mark.asyncio
+    async def test_attach_failure_cleans_up_created_session(self):
+        """A failed plugin attach must destroy the orphaned Janus session."""
+        adapter = JanusAdapter(api_url="http://localhost:8088/janus")
+        destroy = AsyncMock()
+        with (
+            patch.object(adapter, "_create_janus_session", return_value=12345),
+            patch.object(
+                adapter,
+                "_attach_plugin",
+                side_effect=SFUConnectionError(
+                    "attach failed", backend="janus", url=adapter._api_url
+                ),
+            ),
+            patch.object(adapter, "_request", destroy),
+        ):
+            with pytest.raises(SFUConnectionError, match="attach failed"):
+                await adapter.create_room("room_123")
+
+        assert "room_123" not in adapter._janus_sessions
+        assert "room_123" not in adapter._janus_handles
+        assert "room_123" not in adapter._janus_recording_roots
+        destroy.assert_awaited_once_with("/12345", {"janus": "destroy"})
+
+    @pytest.mark.asyncio
+    async def test_close_room(self, mock_http_session):
         """Test closing a room."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
         # Setup existing session
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -97,7 +153,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -110,11 +166,11 @@ class TestJanusAdapter:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_join_room(self, mock_aiohttp_session):
+    async def test_join_room(self, mock_http_session):
         """Test joining a room."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},  # create session
                 {"janus": "success", "data": {"id": 67890}},  # attach plugin (admin)
@@ -127,7 +183,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -138,11 +194,11 @@ class TestJanusAdapter:
             assert "peers" in result
 
     @pytest.mark.asyncio
-    async def test_leave_room(self, mock_aiohttp_session):
+    async def test_leave_room(self, mock_http_session):
         """Test leaving a room."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -154,7 +210,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -165,28 +221,25 @@ class TestJanusAdapter:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_create_transport(self, mock_aiohttp_session):
-        """Test creating a transport."""
-        mock_session, mock_response = mock_aiohttp_session
+    async def test_create_transport_fails_closed(self, mock_http_session):
+        """Janus has no out-of-band transport; it must not fake one."""
+        mock_session, mock_response = mock_http_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
-            transport = await adapter.create_transport(
-                "room_123", "peer_456", TransportDirection.SEND
-            )
-
-            assert transport is not None
-            assert isinstance(transport, SFUTransport)
-            assert transport.direction == TransportDirection.SEND
+            with pytest.raises(SFUConnectionError, match="in-band"):
+                await adapter.create_transport(
+                    "room_123", "peer_456", TransportDirection.SEND
+                )
 
     @pytest.mark.asyncio
-    async def test_produce(self, mock_aiohttp_session):
+    async def test_produce(self, mock_http_session):
         """Test creating a producer."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -197,7 +250,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -217,11 +270,11 @@ class TestJanusAdapter:
             assert producer.kind == MediaKind.AUDIO
 
     @pytest.mark.asyncio
-    async def test_consume(self, mock_aiohttp_session):
+    async def test_consume(self, mock_http_session):
         """Test creating a consumer."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -231,7 +284,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -249,11 +302,11 @@ class TestJanusAdapter:
             assert isinstance(consumer, SFUConsumer)
 
     @pytest.mark.asyncio
-    async def test_pause_producer(self, mock_aiohttp_session):
+    async def test_pause_producer(self, mock_http_session):
         """Test pausing a producer."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -264,7 +317,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -278,11 +331,11 @@ class TestJanusAdapter:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_resume_producer(self, mock_aiohttp_session):
+    async def test_resume_producer(self, mock_http_session):
         """Test resuming a producer."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -293,7 +346,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -307,11 +360,11 @@ class TestJanusAdapter:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_get_room_info(self, mock_aiohttp_session):
+    async def test_get_room_info(self, mock_http_session):
         """Test getting room info."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        mock_response.json = AsyncMock(
+        mock_response.json = MagicMock(
             side_effect=[
                 {"janus": "success", "data": {"id": 12345}},
                 {"janus": "success", "data": {"id": 67890}},
@@ -330,7 +383,7 @@ class TestJanusAdapter:
             ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -342,12 +395,12 @@ class TestJanusAdapter:
             assert len(info.peers) == 2
 
     @pytest.mark.asyncio
-    async def test_health_check_success(self, mock_aiohttp_session):
+    async def test_health_check_success(self, mock_http_session):
         """Test health check success."""
-        mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(return_value={"janus": "server_info"})
+        mock_session, mock_response = mock_http_session
+        mock_response.json = MagicMock(return_value={"janus": "server_info"})
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -356,12 +409,12 @@ class TestJanusAdapter:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_health_check_failure(self, mock_aiohttp_session):
+    async def test_health_check_failure(self, mock_http_session):
         """Test health check failure."""
-        mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(side_effect=Exception("Connection failed"))
+        mock_session, mock_response = mock_http_session
+        mock_response.json = MagicMock(side_effect=Exception("Connection failed"))
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -370,29 +423,43 @@ class TestJanusAdapter:
             assert result is False
 
     @pytest.mark.asyncio
-    async def test_janus_error_raises(self, mock_aiohttp_session):
+    async def test_janus_error_raises(self, mock_http_session):
         """Test that Janus errors raise SFUConnectionError."""
-        mock_session, mock_response = mock_aiohttp_session
-        mock_response.json = AsyncMock(
-            return_value={
-                "janus": "error",
-                "error": {"code": 123, "reason": "Test error"},
-            }
+        mock_session, mock_response = mock_http_session
+        mock_response.json = MagicMock(
+            side_effect=[
+                {"janus": "success", "data": {"id": 12345}},
+                {"janus": "success", "data": {"id": 67890}},
+                {
+                    "janus": "error",
+                    "error": {"code": 123, "reason": "Test error"},
+                },
+                {"janus": "success"},  # cleanup destroy
+            ]
         )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
             with pytest.raises(SFUConnectionError):
                 await adapter.create_room("room_123")
 
-    @pytest.mark.asyncio
-    async def test_get_router_capabilities(self, mock_aiohttp_session):
-        """Test getting router capabilities."""
-        mock_session, mock_response = mock_aiohttp_session
+            assert "room_123" not in adapter._janus_sessions
+            assert "room_123" not in adapter._janus_handles
+            assert "room_123" not in adapter._janus_recording_roots
+            assert any(
+                call.args[0].endswith("/12345")
+                and call.kwargs.get("json", {}).get("janus") == "destroy"
+                for call in mock_session.post.call_args_list
+            )
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+    @pytest.mark.asyncio
+    async def test_get_router_capabilities(self, mock_http_session):
+        """Test getting router capabilities."""
+        mock_session, mock_response = mock_http_session
+
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
@@ -402,15 +469,15 @@ class TestJanusAdapter:
             assert "codecs" in caps
 
     @pytest.mark.asyncio
-    async def test_close_adapter(self, mock_aiohttp_session):
+    async def test_close_adapter(self, mock_http_session):
         """Test closing the adapter."""
-        mock_session, mock_response = mock_aiohttp_session
+        mock_session, mock_response = mock_http_session
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch("httpx.AsyncClient", return_value=mock_session):
             adapter = JanusAdapter(api_url="http://localhost:8088/janus")
             adapter._session = mock_session
 
             await adapter.close()
 
-            mock_session.close.assert_called_once()
+            mock_session.aclose.assert_called_once()
             assert adapter._session is None

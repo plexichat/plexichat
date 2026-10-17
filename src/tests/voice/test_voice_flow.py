@@ -2,9 +2,11 @@
 Tests for complete voice connection flow.
 """
 
+import asyncio
 import pytest
 
 from src.core.voice.signaling import (
+    close as signaling_close,
     setup,
     get_voice_server_info,
     create_voice_connection,
@@ -16,6 +18,8 @@ from src.core.voice.signaling import (
     AlreadyConnectedError,
 )
 from src.core.voice.signaling.models import SDPType
+from src.core.voice.signaling.sfu.base import SFUTransport
+import src.core.voice.signaling as signaling_module
 
 
 # Sample SDP offer for testing
@@ -39,7 +43,71 @@ a=rtpmap:111 opus/48000/2
 SAMPLE_ICE_CANDIDATE = "candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host"
 
 
-@pytest.fixture(scope="function")
+class _StubSfu:
+    """An SFU that returns REAL transport parameters.
+
+    These flow tests used to lean on the manager's synthetic-SDP fallback to
+    make an unreachable mediasoup look like a working call. That fallback
+    invented ICE credentials, so it has been removed (the manager now fails
+    closed); the tests instead supply a stub whose transport carries genuine
+    ufrag/pwd/fingerprint, which is what the manager builds an answer from.
+    """
+
+    def __init__(self):
+        self.leaves = []
+
+    async def join_room(self, room_id, peer_id):
+        return {"routerRtpCapabilities": {}}
+
+    async def complete_join(self, *args, **kwargs):
+        return True
+
+    async def apply_remote_offer(self, room_id, peer_id, offer_sdp):
+        # Out-of-band backend: the answer is derived from the transport.
+        return {}
+
+    async def create_transport(self, room_id, peer_id, direction):
+        return SFUTransport(
+            id=f"{room_id}_{peer_id}_{direction.value}",
+            direction=direction,
+            ice_parameters={
+                "usernameFragment": "stub-ufrag",
+                "password": "stub-password-0123456789",
+            },
+            ice_candidates=[
+                {
+                    "foundation": "1",
+                    "component": 1,
+                    "protocol": "udp",
+                    "priority": 1,
+                    "ip": "10.0.0.1",
+                    "port": 5000,
+                    "type": "host",
+                }
+            ],
+            dtls_parameters={
+                "role": "auto",
+                "fingerprints": [
+                    {
+                        "algorithm": "sha-256",
+                        "value": (
+                            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:"
+                            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+                        ),
+                    }
+                ],
+            },
+        )
+
+    async def leave_room(self, room_id, peer_id):
+        self.leaves.append((room_id, peer_id))
+        return True
+
+    async def close(self):
+        return None
+
+
+@pytest.fixture
 def signaling_setup(db_and_modules):
     """Setup signaling module for tests."""
     db, auth, servers, relationships, presence, voice = db_and_modules
@@ -53,8 +121,15 @@ def signaling_setup(db_and_modules):
         turn_secret="test_secret_key_for_turn",
         turn_ttl=3600,
     )
+    # Replace the lazily-created adapter with one that yields real transport
+    # parameters, so the flow exercises the production code path (and proves
+    # the manager no longer needs to fabricate credentials to answer).
+    signaling_module._get_manager()._sfu = _StubSfu()
 
-    return voice
+    yield voice
+
+    # Clean up SFU adapter sessions to prevent ResourceWarning.
+    asyncio.run(signaling_close())
 
 
 class TestVoiceConnectionFlow:

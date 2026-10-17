@@ -4,8 +4,39 @@ Shared fixtures for webhook tests.
 Uses the session-scoped fixtures from root conftest for efficiency.
 """
 
+import ipaddress
+import socket
+
 import pytest
 import uuid
+
+
+@pytest.fixture(autouse=True)
+def _stub_dns_resolution(monkeypatch):
+    """Resolve hostnames without hitting the network's DNS.
+
+    The webhook suite exercises webhook CRUD, not the resolver, and CI
+    runners can have transient (or absent) DNS -- live name resolution
+    turns these tests into flakes. Hostnames resolve to a public TEST-NET
+    address so the SSRF allow-path stays exercised; IP literals pass
+    through untouched and ``localhost`` maps to 127.0.0.1 (as /etc/hosts
+    does), so loopback/private-IP rejections keep their behavior. The
+    validator's DNS semantics themselves are covered with explicit stubs
+    in src/tests/unit/test_url_validator_matrix.py.
+    """
+
+    def fake_getaddrinfo(host, port=None, *args, **kwargs):
+        try:
+            ipaddress.ip_address(host)
+            resolved = str(host)
+        except ValueError:
+            resolved = (
+                "127.0.0.1" if str(host).lower() == "localhost" else "93.184.216.34"
+            )
+        family = socket.AF_INET6 if ":" in resolved else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (resolved, port or 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
 
 @pytest.fixture
@@ -76,6 +107,12 @@ def fresh_server(modules):
         password="TestPass123!",
     )
 
+    non_member = modules.auth.register(
+        username=f"fresh_nonmember_{unique_id}",
+        email=f"fresh_nonmember_{unique_id}@example.com",
+        password="TestPass123!",
+    )
+
     server = modules.servers.create_server(owner.id, f"Fresh Server {unique_id}")
 
     channels = modules.servers.get_channels(owner.id, server.id)
@@ -83,6 +120,7 @@ def fresh_server(modules):
 
     return {
         "owner": owner,
+        "non_member": non_member,
         "server": server,
         "channel": channel,
         "servers": modules.servers,

@@ -32,6 +32,38 @@ def _get_image_config() -> dict:
         return {}
 
 
+def flatten_alpha_onto_white(img):
+    """Flatten an image bound for JPEG onto an opaque white background.
+
+    Shared by every re-encode entry point that targets a format without an
+    alpha channel, so the mode rules live in exactly one place. The old
+    inline composites only built the mask for ``RGBA`` (and upgraded ``P``
+    images to ``RGBA``), so an ``LA`` (grayscale + alpha) or ``PA`` source
+    fell through with no mask and its alpha channel was discarded -- a fully
+    transparent black region embedded as solid black instead of the white
+    background a viewer shows.
+
+    Palette images (``P``) are converted first because JPEG cannot encode
+    palette mode at all; a transparency index is preserved by routing
+    through ``RGBA``. Remaining transparency (``RGBA``/``LA``/``PA``) is
+    then composited onto white. Non-palette, opaque modes (``L``, ``RGB``,
+    ``CMYK``) are returned unchanged.
+
+    Returns:
+        The image, composited onto white when it carried transparency.
+    """
+    from PIL import Image
+
+    if img.mode == "P":
+        img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+    if img.mode in ("RGBA", "LA", "PA"):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.split()[-1])
+        return background
+    return img
+
+
 class ImageProcessor:
     """Image processing using Pillow with security limits."""
 
@@ -113,6 +145,35 @@ class ImageProcessor:
                 f"Image has too many pixels ({total_pixels:,}) - maximum is {self._max_pixels:,}",
                 "validation",
             )
+
+    def _open_validated(self, image_data: bytes):
+        """
+        Open an image and enforce the dimension security limit.
+
+        Security: every decode entry point must run this before touching
+        pixels, so the decompression-bomb guard cannot be skipped by one
+        method drifting from the others.
+        """
+        img = self._Image.open(io.BytesIO(image_data))
+        self._validate_image_dimensions(img)
+        return img
+
+    def _prepare_for_jpeg(self, img):
+        """Flatten an image bound for JPEG onto an opaque white background.
+
+        Delegates to :func:`flatten_alpha_onto_white` so this entry point and
+        the compressor share one implementation of the mode rules.
+
+        JPEG has neither a palette mode nor an alpha channel, so a source
+        carrying transparency must be composited or the alpha channel is
+        silently dropped on re-encode. Palette images (``P``) are converted
+        first because JPEG cannot encode palette mode at all; a transparency
+        index is preserved by routing through ``RGBA``. Remaining
+        transparency (``RGBA``/``LA``/``PA``) is then composited onto white.
+        Non-palette, opaque modes (``L``, ``RGB``, ``CMYK``) are returned
+        unchanged.
+        """
+        return flatten_alpha_onto_white(img)
 
     def get_metadata(self, image_data: bytes) -> ImageMetadata:
         """
@@ -200,14 +261,8 @@ class ImageProcessor:
             else:
                 img = img.resize((size, size), self._Image.Resampling.LANCZOS)
 
-            if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
-                )
-                img = background
+            if output_format == "JPEG":
+                img = self._prepare_for_jpeg(img)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": output_format}
@@ -250,15 +305,8 @@ class ImageProcessor:
             self._validate_image_dimensions(source_img)
 
             # Prepare image for JPEG if needed (transparency handle)
-            if output_format == "JPEG" and source_img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", source_img.size, (255, 255, 255))
-                if source_img.mode == "P" and "transparency" in source_img.info:
-                    source_img = source_img.convert("RGBA")
-                background.paste(
-                    source_img,
-                    mask=source_img.split()[-1] if source_img.mode == "RGBA" else None,
-                )
-                source_img = background
+            if output_format == "JPEG":
+                source_img = self._prepare_for_jpeg(source_img)
             elif source_img.mode == "P" and "transparency" in source_img.info:
                 source_img = source_img.convert("RGBA")
 
@@ -342,14 +390,8 @@ class ImageProcessor:
 
             out_format = output_format or original_format or "PNG"
 
-            if out_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
-                )
-                img = background
+            if out_format == "JPEG":
+                img = self._prepare_for_jpeg(img)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": out_format}
@@ -384,16 +426,10 @@ class ImageProcessor:
             Converted image bytes
         """
         try:
-            img = self._Image.open(io.BytesIO(image_data))
+            img = self._open_validated(image_data)
 
-            if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-                background = self._Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                background.paste(
-                    img, mask=img.split()[-1] if img.mode == "RGBA" else None
-                )
-                img = background
+            if output_format == "JPEG":
+                img = self._prepare_for_jpeg(img)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": output_format}
@@ -416,6 +452,10 @@ class ImageProcessor:
         """
         Strip EXIF and other metadata from image.
 
+        When the re-encoded output is JPEG the image is first flattened onto
+        opaque white exactly like :meth:`convert_format` and :meth:`resize`
+        do, because JPEG can store neither a palette nor an alpha channel.
+
         Args:
             image_data: Raw image bytes
             output_format: Output format (None to keep original)
@@ -424,13 +464,34 @@ class ImageProcessor:
             Image bytes without metadata
         """
         try:
-            img = self._Image.open(io.BytesIO(image_data))
+            img = self._open_validated(image_data)
             original_format = img.format
 
+            # ``Image.new`` starts a palette image with a fresh, all-black
+            # palette, and ``paste`` copies raw palette *indices* rather than
+            # decoded colours -- so a ``P``-mode source was rebuilt with every
+            # index decoded through that blank palette and came out solid
+            # black. Carry the palette (and its transparency index) across so
+            # the pixels keep the colours the source image actually draws.
             img_no_exif = self._Image.new(img.mode, img.size)
+            if img.mode in ("P", "PA"):
+                palette = img.getpalette()
+                if palette:
+                    img_no_exif.putpalette(palette)
+                if "transparency" in img.info:
+                    img_no_exif.info["transparency"] = img.info["transparency"]
             img_no_exif.paste(img)
 
             out_format = output_format or original_format or "PNG"
+
+            if out_format == "JPEG":
+                # Same JPEG transparency flattening every other re-encode
+                # entry point applies: JPEG cannot store a palette or an
+                # alpha channel, so a source in ``P``/``PA``/``RGBA``/``LA``
+                # has to be composited onto opaque white or the save either
+                # fails outright ("cannot write mode RGBA as JPEG") or drops
+                # the alpha channel and writes transparency as black.
+                img_no_exif = self._prepare_for_jpeg(img_no_exif)
 
             output = io.BytesIO()
             save_kwargs: Dict[str, Any] = {"format": out_format}

@@ -5,7 +5,10 @@ Audit log handler for server operations.
 import json
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
+from src.utils.encryption import encrypt_data
+import utils.logger as logger
 from ..models import AuditLogEntry, AuditLogAction
+from ..manager.converters import _row_to_audit_entry
 
 
 class AuditHandler:
@@ -27,10 +30,22 @@ class AuditHandler:
         entry_id = self.manager._generate_id()
         now = self.manager._get_timestamp()
 
+        changes_json = json.dumps(changes) if changes else None
+        changes_encrypted = None
+        if changes_json:
+            try:
+                changes_encrypted = encrypt_data(
+                    changes_json, context=f"audit:{entry_id}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to encrypt audit log changes for {entry_id}: {e}"
+                )
+
         self.db.execute(
-            """INSERT INTO srv_audit_log 
-               (id, server_id, user_id, action, target_type, target_id, changes, reason, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO srv_audit_log
+               (id, server_id, user_id, action, target_type, target_id, changes, changes_encrypted, reason, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry_id,
                 server_id,
@@ -38,7 +53,8 @@ class AuditHandler:
                 action.value,
                 target_type,
                 target_id,
-                json.dumps(changes) if changes else None,
+                changes_json,
+                changes_encrypted,
                 reason,
                 now,
             ),
@@ -52,7 +68,9 @@ class AuditHandler:
         before_id: Optional[SnowflakeID] = None,
     ) -> List[AuditLogEntry]:
         """Get audit log entries for a server."""
-        limit = min(limit, 100)
+        # Clamp from below too: SQLite treats LIMIT -1 as *unlimited*, so a
+        # negative limit would bypass the page cap and dump the whole log.
+        limit = max(0, min(limit, 100))
 
         query = "SELECT * FROM srv_audit_log WHERE server_id = ?"
         params: List[SnowflakeID | str | int] = [server_id]
@@ -70,4 +88,4 @@ class AuditHandler:
 
         rows = self.db.fetch_all(query, tuple(params))
 
-        return [self.manager._row_to_audit_entry(row) for row in rows]
+        return [_row_to_audit_entry(row) for row in rows]

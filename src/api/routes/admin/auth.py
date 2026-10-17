@@ -13,14 +13,28 @@ from src.api.schemas.admin import (
     AdminOTPDisableRequest,
     AdminBackupCodesResponse,
 )
-from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import SuccessResponse, ErrorResponse
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
+import src.api as api
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.post("/login", response_model=AdminLoginResponse)
+@router.post(
+    "/login",
+    response_model=AdminLoginResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid credentials"},
+        429: {"model": ErrorResponse, "description": "Too many login attempts"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_login(request: Request, login_data: AdminLoginRequest):
     """
     Authenticate an administrator.
@@ -32,15 +46,40 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
     from src.core import admin
 
     try:
-        client_ip = request.client.host if request.client else "unknown"
+        from src.utils.net import get_client_ip
+
+        client_ip = get_client_ip(request) or "unknown"
         result = admin.login(login_data.username, login_data.password, client_ip)
+
+        # SECURITY: audit every login attempt (success and failure)
+        # so that brute-force campaigns and credential-stuffing are
+        # visible in the admin audit trail.
+        try:
+            from src.core.admin.logging import get_admin_logger
+
+            _admin_db = api.get_db()
+            if _admin_db is not None and result.user_id:
+                get_admin_logger().log_login(
+                    _admin_db,
+                    admin_id=result.user_id,
+                    success=result.success and bool(result.token),
+                    ip_address=client_ip,
+                )
+        except Exception:
+            logger.warning("Failed to record admin login audit", exc_info=True)
+
         if not result.success:
+            status_code = 429 if result.rate_limited else 401
             raise HTTPException(
-                status_code=401,
-                detail={"error": {"code": 401, "message": result.error}},
+                status_code=status_code,
+                detail={"error": {"code": status_code, "message": result.error}},
             )
         if result.token:
-            return AdminLoginResponse(status="success", token=result.token)
+            response = AdminLoginResponse(status="success", token=result.token)
+            if result.requires_password_change:
+                response.requires_password_change = True
+                response.message = "Password change required"
+            return response
         if result.requires_otp_setup:
             return AdminLoginResponse(
                 status="otp_setup_required",
@@ -58,16 +97,28 @@ async def admin_login(request: Request, login_data: AdminLoginRequest):
                 challenge_token=result.challenge_token,
             )
         return AdminLoginResponse(status="success", token=result.token)
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/verify-otp", response_model=AdminLoginResponse)
+@router.post(
+    "/verify-otp",
+    response_model=AdminLoginResponse,
+    responses={
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid request data or admin ID",
+        },
+        401: {"model": ErrorResponse, "description": "Invalid OTP code"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
     """
     Verify a TOTP code for admin login or setup.
@@ -78,7 +129,13 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
     from src.core import admin
 
     try:
-        admin_id = int(otp_data.admin_id)
+        try:
+            admin_id = int(otp_data.admin_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid admin ID"}},
+            )
         result = (
             admin.verify_otp_setup(admin_id, otp_data.code, otp_data.challenge_token)
             if otp_data.is_setup
@@ -89,17 +146,31 @@ async def verify_otp(request: Request, otp_data: OTPVerifyRequest):
                 status_code=401,
                 detail={"error": {"code": 401, "message": result.error}},
             )
-        return AdminLoginResponse(status="success", token=result.token)
+
+        response = AdminLoginResponse(status="success", token=result.token)
+        if result.requires_password_change:
+            response.requires_password_change = True
+            response.message = "Password change required"
+
+        return response
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         logger.error(f"OTP error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail={"error": {"code": 500, "message": str(e)}}
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
-@router.post("/logout", response_model=SuccessResponse)
+@router.post(
+    "/logout",
+    response_model=SuccessResponse,
+    responses={
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_logout(request: Request):
     """
     Invalidate an administrator session.
@@ -112,10 +183,19 @@ async def admin_logout(request: Request):
         from src.core import admin
 
         admin.logout(auth_header[7:])
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message="Logged out successfully")
 
 
-@router.post("/auth/change-password", response_model=SuccessResponse)
+@router.post(
+    "/auth/change-password",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_change_password(request: Request, body: AdminChangePasswordRequest):
     """
     Change the password for the current administrator.
@@ -123,7 +203,7 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
     Requires verification of the current password before applying the new one.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.edit")
     from src.core import admin
 
     success, message = admin.change_password(
@@ -133,14 +213,83 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
         raise HTTPException(
             status_code=400, detail={"error": {"code": 400, "message": message}}
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message="Password changed successfully")
 
 
-@router.get("/auth/security-status", response_model=AdminSecurityStatusResponse)
+@router.post(
+    "/auth/force-password-change/{target_admin_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid admin ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Target admin not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def admin_force_password_change(request: Request, target_admin_id: str):
+    """
+    Force a specific admin to change their password on next login.
+
+    Requires admin.edit permission (already gated by
+    `require_admin_permission`).  The actual mutation + audit trail are
+    handled by the service-layer helper so route code never touches
+    raw SQL or the audit logger directly.
+    """
+    check_host_restriction(request)
+    current_admin_id = require_admin_permission(request, "admin.edit")
+
+    try:
+        from src.core import admin
+
+        try:
+            target_id_int = int(target_admin_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid admin ID"}},
+            )
+
+        from src.utils.net import get_client_ip
+
+        client_ip = get_client_ip(request) or "unknown"
+        success, message = admin.force_password_change(
+            acting_admin_id=current_admin_id,
+            target_admin_id=target_id_int,
+            client_ip=client_ip,
+        )
+        if not success:
+            status_code = (
+                404 if "does not exist" in message or "Invalid" in message else 400
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": {"code": status_code, "message": message}},
+            )
+        return SuccessResponse(success=True, message=message)
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid admin ID"}},
+        )
+
+
+@router.get(
+    "/auth/security-status",
+    response_model=AdminSecurityStatusResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        404: {"model": ErrorResponse, "description": "Admin user not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_security_status(request: Request):
     """Return the current admin account security settings and posture."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.read")
     from src.core import admin
 
     status = admin.get_security_status(admin_id)
@@ -162,7 +311,16 @@ async def admin_security_status(request: Request):
     )
 
 
-@router.post("/auth/2fa/begin-setup", response_model=AdminLoginResponse)
+@router.post(
+    "/auth/2fa/begin-setup",
+    response_model=AdminLoginResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_begin_otp_setup(request: Request, body: AdminOTPSetupBeginRequest):
     """Start a new OTP setup flow for the current admin account."""
     check_host_restriction(request)
@@ -190,7 +348,16 @@ async def admin_begin_otp_setup(request: Request, body: AdminOTPSetupBeginReques
     )
 
 
-@router.post("/auth/2fa/disable", response_model=SuccessResponse)
+@router.post(
+    "/auth/2fa/disable",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
     """Disable OTP for the current admin after password and OTP verification."""
     check_host_restriction(request)
@@ -203,11 +370,18 @@ async def admin_disable_otp(request: Request, body: AdminOTPDisableRequest):
             status_code=400,
             detail={"error": {"code": 400, "message": message}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message="OTP disabled successfully")
 
 
 @router.post(
-    "/auth/2fa/regenerate-backup-codes", response_model=AdminBackupCodesResponse
+    "/auth/2fa/regenerate-backup-codes",
+    response_model=AdminBackupCodesResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        403: {"model": ErrorResponse, "description": "Access denied"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def admin_regenerate_backup_codes(
     request: Request, body: AdminOTPSetupBeginRequest

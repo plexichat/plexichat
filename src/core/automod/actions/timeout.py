@@ -81,10 +81,7 @@ class TimeoutUserAction(BaseAction):
 
         # SECURITY: normally we don't allow moderating the owner,
         # but for AutoMod (system) we allow it if it's an automated action.
-        is_system = context and context.get("source") in [
-            "message_create",
-            "message_edit",
-        ]
+        is_system = context and context.get("__system_context__")
         if not is_system and server and server["owner_id"] == violation.user_id:
             return False, "Cannot timeout server owner"
 

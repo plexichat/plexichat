@@ -9,6 +9,7 @@ from src.core.embeds import (
     MessageNotFoundError,
     PermissionDeniedError,
 )
+from unittest.mock import patch
 
 
 class TestAttachEmbedToMessage:
@@ -78,23 +79,24 @@ class TestAttachEmbedToMessage:
         assert exc_info.value.max_allowed == 10
         assert exc_info.value.current == 10
 
-    def test_attach_embed_nonexistent_message(self, db_and_modules):
+    def test_attach_embed_nonexistent_message(self, db, auth_manager):
         """Test attaching embed to nonexistent message fails."""
-        db, auth, messaging, servers, embeds = db_and_modules
-        import uuid
+        from src.core import embeds
+        from src.utils import encryption
 
-        unique_id = uuid.uuid4().hex[:8]
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="att1_test",
+                email="att1_test@example.com",
+                password="TestPass123!",
+            )
 
-        user = auth.register(
-            username=f"att1_{unique_id}",
-            email=f"att1_{unique_id}@example.com",
-            password="TestPass123!",
-        )
+        embeds.setup(db, None, None)
 
-        embed = embeds.create_embed(user_id=user.id, title="Test")
+        embed = embeds._manager.create_embed(user_id=user.id, title="Test")
 
         with pytest.raises(MessageNotFoundError):
-            embeds.attach_embed_to_message(user.id, 999999999, embed.id)
+            embeds._manager.attach_embed_to_message(user.id, 999999999, embed.id)
 
     def test_attach_nonexistent_embed(self, fresh_users_with_dm):
         """Test attaching nonexistent embed fails."""
@@ -170,21 +172,22 @@ class TestRemoveEmbedFromMessage:
         with pytest.raises(PermissionDeniedError):
             embeds.remove_embed_from_message(user2.id, msg.id, embed.id)
 
-    def test_remove_embed_nonexistent_message(self, db_and_modules):
+    def test_remove_embed_nonexistent_message(self, db, auth_manager):
         """Test removing embed from nonexistent message fails."""
-        db, auth, messaging, servers, embeds = db_and_modules
-        import uuid
+        from src.core import embeds
+        from src.utils import encryption
 
-        unique_id = uuid.uuid4().hex[:8]
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="rem1_test",
+                email="rem1_test@example.com",
+                password="TestPass123!",
+            )
 
-        user = auth.register(
-            username=f"rem1_{unique_id}",
-            email=f"rem1_{unique_id}@example.com",
-            password="TestPass123!",
-        )
+        embeds.setup(db, None, None)
 
         with pytest.raises(MessageNotFoundError):
-            embeds.remove_embed_from_message(user.id, 999999999, 123)
+            embeds._manager.remove_embed_from_message(user.id, 999999999, 123)
 
 
 class TestUpdateEmbedOnMessage:
@@ -313,24 +316,25 @@ class TestEmbedOrdering:
 class TestDeleteEmbed:
     """Tests for deleting embeds."""
 
-    def test_delete_embed(self, db_and_modules):
+    def test_delete_embed(self, db, auth_manager, embeds_manager):
         """Test deleting an embed."""
-        db, auth, messaging, servers, embeds = db_and_modules
+        from src.utils import encryption
         import uuid
 
         unique_id = uuid.uuid4().hex[:8]
 
-        user = auth.register(
-            username=f"del1_{unique_id}",
-            email=f"del1_{unique_id}@example.com",
-            password="TestPass123!",
-        )
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username=f"del1_{unique_id}",
+                email=f"del1_{unique_id}@example.com",
+                password="TestPass123!",
+            )
 
-        embed = embeds.create_embed(user_id=user.id, title="Delete Me")
-        result = embeds.delete_embed(user.id, embed.id)
+        embed = embeds_manager.create_embed(user_id=user.id, title="Delete Me")
+        result = embeds_manager.delete_embed(user.id, embed.id)
 
         assert result is True
-        assert embeds.get_embed(embed.id) is None
+        assert embeds_manager.get_embed(embed.id) is None
 
     def test_delete_embed_removes_from_messages(self, fresh_users_with_dm):
         """Test deleting embed removes it from messages."""
@@ -344,41 +348,43 @@ class TestDeleteEmbed:
         message_embeds = embeds.get_message_embeds(user1.id, msg.id)
         assert len(message_embeds) == 0
 
-    def test_delete_embed_not_owner(self, db_and_modules):
+    def test_delete_embed_not_owner(self, db, auth_manager, embeds_manager):
         """Test non-owner cannot delete embed."""
-        db, auth, messaging, servers, embeds = db_and_modules
+        from src.utils import encryption
         import uuid
 
         unique_id = uuid.uuid4().hex[:8]
 
-        user1 = auth.register(
-            username=f"del2_{unique_id}",
-            email=f"del2_{unique_id}@example.com",
-            password="TestPass123!",
-        )
-        user2 = auth.register(
-            username=f"del3_{unique_id}",
-            email=f"del3_{unique_id}@example.com",
-            password="TestPass123!",
-        )
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user1 = auth_manager.register(
+                username=f"del2_{unique_id}",
+                email=f"del2_{unique_id}@example.com",
+                password="TestPass123!",
+            )
+            user2 = auth_manager.register(
+                username=f"del3_{unique_id}",
+                email=f"del3_{unique_id}@example.com",
+                password="TestPass123!",
+            )
 
-        embed = embeds.create_embed(user_id=user1.id, title="Not Yours")
+        embed = embeds_manager.create_embed(user_id=user1.id, title="Not Yours")
 
         with pytest.raises(PermissionDeniedError):
-            embeds.delete_embed(user2.id, embed.id)
+            embeds_manager.delete_embed(user2.id, embed.id)
 
-    def test_delete_nonexistent_embed(self, db_and_modules):
+    def test_delete_nonexistent_embed(self, db, auth_manager, embeds_manager):
         """Test deleting nonexistent embed fails."""
-        db, auth, messaging, servers, embeds = db_and_modules
+        from src.utils import encryption
         import uuid
 
         unique_id = uuid.uuid4().hex[:8]
 
-        user = auth.register(
-            username=f"del4_{unique_id}",
-            email=f"del4_{unique_id}@example.com",
-            password="TestPass123!",
-        )
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username=f"del4_{unique_id}",
+                email=f"del4_{unique_id}@example.com",
+                password="TestPass123!",
+            )
 
         with pytest.raises(EmbedNotFoundError):
-            embeds.delete_embed(user.id, 999999999)
+            embeds_manager.delete_embed(user.id, 999999999)

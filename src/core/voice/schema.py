@@ -4,6 +4,8 @@ Voice database schema - Table definitions for voice module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Voice states table (users currently in voice channels)
@@ -25,6 +27,7 @@ CREATE TABLE IF NOT EXISTS voice_states (
 -- Voice state indexes
 CREATE INDEX IF NOT EXISTS idx_voice_states_channel ON voice_states(channel_id);
 CREATE INDEX IF NOT EXISTS idx_voice_states_server ON voice_states(server_id);
+CREATE INDEX IF NOT EXISTS idx_voice_states_user ON voice_states(user_id);
 
 -- Voice channel settings table (extends srv_channels)
 CREATE TABLE IF NOT EXISTS voice_channel_settings (
@@ -71,7 +74,7 @@ CREATE TABLE IF NOT EXISTS voice_server_settings (
 
 def create_tables(db):
     """Create all voice tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

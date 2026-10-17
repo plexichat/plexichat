@@ -13,9 +13,6 @@ Usage:
 
     # Report a message
     report = reports.report_message(reporter_id, message_id, reason, details)
-
-    # Report a user
-    report = reports.report_user(reporter_id, user_id, reason, details)
 """
 
 import time
@@ -65,12 +62,17 @@ class MessageReport:
     category: str
     details: Optional[str]
     message_content: Optional[str]
+    evidence_urls: Optional[str]
+    priority: str
     status: ReportStatus
     reported_at: int
     reviewed_at: Optional[int]
     reviewed_by: Optional[int]
     admin_notes: Optional[str]
     action_taken: Optional[str]
+    assigned_to: Optional[int]
+    escalated_at: Optional[int]
+    resolution: Optional[str]
 
 
 @dataclass
@@ -84,65 +86,74 @@ class UserReport:
     category: str
     details: Optional[str]
     evidence_message_ids: Optional[List[int]]
+    evidence_urls: Optional[str]
+    priority: str
     status: ReportStatus
     reported_at: int
     reviewed_at: Optional[int]
     reviewed_by: Optional[int]
     admin_notes: Optional[str]
     action_taken: Optional[str]
+    assigned_to: Optional[int]
+    escalated_at: Optional[int]
+    resolution: Optional[str]
 
-
-SCHEMA = """
--- Message reports
-CREATE TABLE IF NOT EXISTS message_reports (
-    id BIGINT PRIMARY KEY,
-    message_id BIGINT NOT NULL,
-    channel_id BIGINT NOT NULL,
-    server_id BIGINT,
-    reporter_id BIGINT NOT NULL,
-    reported_user_id BIGINT NOT NULL,
-    reason TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'other',
-    details TEXT,
-    message_content TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    reported_at BIGINT NOT NULL,
-    reviewed_at BIGINT,
-    reviewed_by BIGINT,
-    admin_notes TEXT,
-    action_taken TEXT
-);
-
--- User reports
-CREATE TABLE IF NOT EXISTS user_reports (
-    id BIGINT PRIMARY KEY,
-    reported_user_id BIGINT NOT NULL,
-    reporter_id BIGINT NOT NULL,
-    reason TEXT NOT NULL,
-    category TEXT NOT NULL DEFAULT 'other',
-    details TEXT,
-    evidence_message_ids TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    reported_at BIGINT NOT NULL,
-    reviewed_at BIGINT,
-    reviewed_by BIGINT,
-    admin_notes TEXT,
-    action_taken TEXT
-);
-
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_message_reports_status ON message_reports(status);
-CREATE INDEX IF NOT EXISTS idx_message_reports_reporter ON message_reports(reporter_id);
-CREATE INDEX IF NOT EXISTS idx_message_reports_reported ON message_reports(reported_user_id);
-CREATE INDEX IF NOT EXISTS idx_message_reports_message ON message_reports(message_id);
-CREATE INDEX IF NOT EXISTS idx_user_reports_status ON user_reports(status);
-CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
-CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_user_id);
-"""
 
 _db: Any = None
 _messaging = None
 _setup_complete = False
+
+
+# Canonical ``SELECT *`` column order for the report tables, mirroring the
+# CREATE TABLE statements in ``schema.py``. Tuple rows are zipped against
+# these names and funneled through the dict branch of the mappers below, so
+# a schema reorder/add can only break in ONE place (pinned by
+# test_schema_column_order) instead of silently mis-mapping positional
+# indexes across two mappers.
+MESSAGE_REPORT_COLUMNS = (
+    "id",
+    "message_id",
+    "channel_id",
+    "server_id",
+    "reporter_id",
+    "reported_user_id",
+    "reason",
+    "category",
+    "details",
+    "message_content",
+    "evidence_urls",
+    "priority",
+    "status",
+    "reported_at",
+    "reviewed_at",
+    "reviewed_by",
+    "admin_notes",
+    "action_taken",
+    "assigned_to",
+    "escalated_at",
+    "resolution",
+)
+
+USER_REPORT_COLUMNS = (
+    "id",
+    "reported_user_id",
+    "reporter_id",
+    "reason",
+    "category",
+    "details",
+    "evidence_message_ids",
+    "evidence_urls",
+    "priority",
+    "status",
+    "reported_at",
+    "reviewed_at",
+    "reviewed_by",
+    "admin_notes",
+    "action_taken",
+    "assigned_to",
+    "escalated_at",
+    "resolution",
+)
 
 
 def setup(db, messaging_module=None) -> None:
@@ -170,19 +181,15 @@ def _get_db():
 
 
 def create_tables(db) -> None:
-    """Create report tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
-    for statement in statements:
-        if statement:
-            try:
-                converted = (
-                    db.convert_schema(statement)
-                    if hasattr(db, "convert_schema")
-                    else statement
-                )
-                db.execute(converted)
-            except Exception as e:
-                logger.error(f"Failed to create reports table: {e}")
+    """Create report tables.
+
+    Delegates to the canonical schema definition in
+    ``src.core.reports.schema`` so the unified ``reports`` table and the
+    legacy ``message_reports`` / ``user_reports`` tables stay in sync.
+    """
+    from src.core.reports.schema import create_tables as _schema_create_tables
+
+    _schema_create_tables(db)
 
 
 def _get_config(key: str, default: Any = None) -> Any:
@@ -267,7 +274,11 @@ def report_message(
                                 f"Automatically created media hash report for {att.checksum[:16]} from message {message_id}"
                             )
                         except Exception as e:
-                            logger.debug(f"Media report already exists or failed: {e}")
+                            logger.warning(
+                                f"Media hash report creation failed for "
+                                f"{att.checksum[:16] if att.checksum else 'unknown'} "
+                                f"(message {message_id}): {e}"
+                            )
         except Exception as e:
             logger.warning(f"Failed to extract attachments for media report: {e}")
 
@@ -284,12 +295,17 @@ def report_message(
         category=category,
         details=details,
         message_content=message_content,
+        evidence_urls=None,
+        priority="medium",
         status=ReportStatus.PENDING,
         reported_at=now,
         reviewed_at=None,
         reviewed_by=None,
         admin_notes=None,
         action_taken=None,
+        assigned_to=None,
+        escalated_at=None,
+        resolution=None,
     )
 
 
@@ -303,6 +319,38 @@ def get_message_report(report_id: int) -> Optional[MessageReport]:
         return None
 
     return _row_to_message_report(row)
+
+
+def find_open_message_report(
+    reporter_id: int, message_id: int
+) -> Optional[MessageReport]:
+    """Return the reporter's most recent still-pending message report, if any.
+
+    Used to make submissions idempotent: re-reporting the same message does not
+    flood the moderation queue with duplicates.
+    """
+    db = _get_db()
+    row = db.fetch_one(
+        """SELECT * FROM message_reports
+           WHERE reporter_id = ? AND message_id = ? AND status = 'pending'
+           ORDER BY reported_at DESC LIMIT 1""",
+        (reporter_id, message_id),
+    )
+    return _row_to_message_report(row) if row else None
+
+
+def find_open_user_report(
+    reporter_id: int, reported_user_id: int
+) -> Optional[UserReport]:
+    """Return the reporter's most recent still-pending user report, if any."""
+    db = _get_db()
+    row = db.fetch_one(
+        """SELECT * FROM user_reports
+           WHERE reporter_id = ? AND reported_user_id = ? AND status = 'pending'
+           ORDER BY reported_at DESC LIMIT 1""",
+        (reporter_id, reported_user_id),
+    )
+    return _row_to_user_report(row) if row else None
 
 
 def get_message_reports(
@@ -388,45 +436,40 @@ def review_message_report(
 
 
 def _row_to_message_report(row) -> MessageReport:
-    """Convert database row to MessageReport."""
-    if isinstance(row, dict):
-        return MessageReport(
-            id=row["id"],
-            message_id=row["message_id"],
-            channel_id=row["channel_id"],
-            server_id=row.get("server_id"),
-            reporter_id=row["reporter_id"],
-            reported_user_id=row["reported_user_id"],
-            reason=row["reason"],
-            category=row.get("category", "other"),
-            details=row.get("details"),
-            message_content=row.get("message_content"),
-            status=ReportStatus(row["status"]),
-            reported_at=row["reported_at"],
-            reviewed_at=row.get("reviewed_at"),
-            reviewed_by=row.get("reviewed_by"),
-            admin_notes=row.get("admin_notes"),
-            action_taken=row.get("action_taken"),
-        )
-    else:
-        return MessageReport(
-            id=row[0],
-            message_id=row[1],
-            channel_id=row[2],
-            server_id=row[3],
-            reporter_id=row[4],
-            reported_user_id=row[5],
-            reason=row[6],
-            category=row[7],
-            details=row[8],
-            message_content=row[9],
-            status=ReportStatus(row[10]),
-            reported_at=row[11],
-            reviewed_at=row[12],
-            reviewed_by=row[13],
-            admin_notes=row[14],
-            action_taken=row[15],
-        )
+    """Convert database row to MessageReport.
+
+    Accepts mapping rows (what the DB layer always returns) and positional
+    tuple rows (raw cursors, legacy callers). Tuples are zipped against
+    :data:`MESSAGE_REPORT_COLUMNS`; short rows simply lack trailing keys
+    and fall back to the defaults below instead of misreading columns
+    (F-BUG-1: a missing timestamp is ``0``/``"pending"``, never garbage
+    from a neighbouring column).
+    """
+    if not isinstance(row, dict):
+        row = dict(zip(MESSAGE_REPORT_COLUMNS, row))
+    return MessageReport(
+        id=row["id"],
+        message_id=row["message_id"],
+        channel_id=row["channel_id"],
+        server_id=row.get("server_id"),
+        reporter_id=row["reporter_id"],
+        reported_user_id=row["reported_user_id"],
+        reason=row["reason"],
+        category=row.get("category", "other"),
+        details=row.get("details"),
+        message_content=row.get("message_content"),
+        evidence_urls=row.get("evidence_urls"),
+        priority=row.get("priority", "medium"),
+        status=ReportStatus(row.get("status", "pending")),
+        reported_at=row.get("reported_at", 0),
+        reviewed_at=row.get("reviewed_at"),
+        reviewed_by=row.get("reviewed_by"),
+        admin_notes=row.get("admin_notes"),
+        action_taken=row.get("action_taken"),
+        assigned_to=row.get("assigned_to"),
+        escalated_at=row.get("escalated_at"),
+        resolution=row.get("resolution"),
+    )
 
 
 # === User Reports ===
@@ -490,12 +533,17 @@ def report_user(
         category=category,
         details=details,
         evidence_message_ids=evidence_message_ids,
+        evidence_urls=None,
+        priority="medium",
         status=ReportStatus.PENDING,
         reported_at=now,
         reviewed_at=None,
         reviewed_by=None,
         admin_notes=None,
         action_taken=None,
+        assigned_to=None,
+        escalated_at=None,
+        resolution=None,
     )
 
 
@@ -594,46 +642,37 @@ def review_user_report(
 
 
 def _row_to_user_report(row) -> UserReport:
-    """Convert database row to UserReport."""
+    """Convert database row to UserReport.
+
+    Accepts mapping rows and positional tuple rows (zipped against
+    :data:`USER_REPORT_COLUMNS`); short rows fall back to defaults instead
+    of misreading columns — see :func:`_row_to_message_report`.
+    """
+    if not isinstance(row, dict):
+        row = dict(zip(USER_REPORT_COLUMNS, row))
+
     evidence_ids = None
+    evidence_str = row.get("evidence_message_ids")
+    if evidence_str:
+        evidence_ids = [int(x) for x in evidence_str.split(",") if x]
 
-    if isinstance(row, dict):
-        evidence_str = row.get("evidence_message_ids")
-        if evidence_str:
-            evidence_ids = [int(x) for x in evidence_str.split(",") if x]
-
-        return UserReport(
-            id=row["id"],
-            reported_user_id=row["reported_user_id"],
-            reporter_id=row["reporter_id"],
-            reason=row["reason"],
-            category=row.get("category", "other"),
-            details=row.get("details"),
-            evidence_message_ids=evidence_ids,
-            status=ReportStatus(row["status"]),
-            reported_at=row["reported_at"],
-            reviewed_at=row.get("reviewed_at"),
-            reviewed_by=row.get("reviewed_by"),
-            admin_notes=row.get("admin_notes"),
-            action_taken=row.get("action_taken"),
-        )
-    else:
-        evidence_str = row[6]
-        if evidence_str:
-            evidence_ids = [int(x) for x in evidence_str.split(",") if x]
-
-        return UserReport(
-            id=row[0],
-            reported_user_id=row[1],
-            reporter_id=row[2],
-            reason=row[3],
-            category=row[4],
-            details=row[5],
-            evidence_message_ids=evidence_ids,
-            status=ReportStatus(row[7]),
-            reported_at=row[8],
-            reviewed_at=row[9],
-            reviewed_by=row[10],
-            admin_notes=row[11],
-            action_taken=row[12],
-        )
+    return UserReport(
+        id=row["id"],
+        reported_user_id=row["reported_user_id"],
+        reporter_id=row["reporter_id"],
+        reason=row["reason"],
+        category=row.get("category", "other"),
+        details=row.get("details"),
+        evidence_message_ids=evidence_ids,
+        evidence_urls=row.get("evidence_urls"),
+        priority=row.get("priority", "medium"),
+        status=ReportStatus(row.get("status", "pending")),
+        reported_at=row.get("reported_at", 0),
+        reviewed_at=row.get("reviewed_at"),
+        reviewed_by=row.get("reviewed_by"),
+        admin_notes=row.get("admin_notes"),
+        action_taken=row.get("action_taken"),
+        assigned_to=row.get("assigned_to"),
+        escalated_at=row.get("escalated_at"),
+        resolution=row.get("resolution"),
+    )

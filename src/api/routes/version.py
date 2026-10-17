@@ -33,23 +33,23 @@ _estimated_downtime: Optional[int] = None
 _restart_at: Optional[str] = None
 _update_url: Optional[str] = None
 
-# Cached version info for fast status responses
+# Cached *server* version info for fast status responses. Only
+# _server_version_info() writes here: _version_to_info() is a pure conversion
+# used for the client's and minimum-supported versions too, and letting it
+# write to this cache made /status report whichever version was converted last.
 _cached_version_info: Optional[VersionInfo] = None
 
 
 def _version_to_info(ver) -> VersionInfo:
     """Convert Version object to VersionInfo schema."""
-    global _cached_version_info
     try:
-        info = VersionInfo(
+        return VersionInfo(
             stage=ver.stage.value,
             major=ver.major,
             minor=ver.minor,
             build=ver.build,
             string=version_util.format_version(ver),
         )
-        _cached_version_info = info
-        return info
     except Exception as e:
         logger.error(f"Error converting version object: {e}")
         return VersionInfo(
@@ -59,6 +59,14 @@ def _version_to_info(ver) -> VersionInfo:
             build=0,
             string="0.0.0",
         )
+
+
+def _server_version_info() -> VersionInfo:
+    """Return the server's own VersionInfo, memoised for fast status responses."""
+    global _cached_version_info
+    if _cached_version_info is None:
+        _cached_version_info = _version_to_info(version_util.current())
+    return _cached_version_info
 
 
 @router.get(
@@ -73,11 +81,10 @@ def get_server_version() -> ServerVersionResponse:
     Clients should call this on startup to verify compatibility.
     """
     try:
-        current = version_util.current()
         min_supported = version_util.min_supported()
 
         return ServerVersionResponse(
-            version=_cached_version_info or _version_to_info(current),
+            version=_server_version_info(),
             min_supported_version=_version_to_info(min_supported)
             if min_supported
             else None,
@@ -87,7 +94,7 @@ def get_server_version() -> ServerVersionResponse:
         logger.error(f"Error in get_server_version: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -113,7 +120,7 @@ def negotiate_version(
     try:
         try:
             client_ver = version_util.parse(request.client_version)
-        except InvalidVersionError as e:
+        except InvalidVersionError:
             logger.warning(
                 f"Invalid version format negotiated: {request.client_version}"
             )
@@ -122,14 +129,13 @@ def negotiate_version(
                 detail={
                     "error": {
                         "code": "INVALID_VERSION_FORMAT",
-                        "message": str(e),
+                        "message": "Invalid version format",
                         "client_version": request.client_version,
                     }
                 },
             )
 
         try:
-            server_ver = version_util.current()
             min_supported = version_util.min_supported()
 
             # Check compatibility
@@ -157,7 +163,7 @@ def negotiate_version(
 
             response = VersionNegotiateResponse(
                 compatible=is_compatible,
-                server_version=_cached_version_info or _version_to_info(server_ver),
+                server_version=_server_version_info(),
                 client_version=_version_to_info(client_ver),
                 min_supported_version=_version_to_info(min_supported)
                 if min_supported
@@ -218,7 +224,12 @@ def negotiate_version(
         logger.error(f"Unexpected error in negotiate_version: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": "INTERNAL_SERVER_ERROR", "message": str(e)}},
+            detail={
+                "error": {
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": "Internal server error",
+                }
+            },
         )
 
 
@@ -235,12 +246,7 @@ def get_server_status() -> ServerStatusResponse:
     5 seconds when state is not 'running'.
     """
     try:
-        # Use cached version info if available
-        if _cached_version_info:
-            ver_info = _cached_version_info
-        else:
-            current = version_util.current()
-            ver_info = _version_to_info(current)
+        ver_info = _server_version_info()
 
         uptime = int(time.time() - _server_start_time)
 
@@ -256,7 +262,7 @@ def get_server_status() -> ServerStatusResponse:
         logger.error(f"Error in get_server_status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": {"code": 500, "message": str(e)}},
+            detail={"error": {"code": 500, "message": "Internal server error"}},
         )
 
 
@@ -293,7 +299,5 @@ def set_update_url(url: Optional[str]):
 
 
 def get_server_state() -> ServerState:
-    """Get current server state."""
-    return _server_state
     """Get current server state."""
     return _server_state

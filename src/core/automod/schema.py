@@ -23,6 +23,8 @@ def create_tables(db):
             exempt_channels TEXT DEFAULT '[]',
             priority INTEGER DEFAULT 0,
             check_all INTEGER DEFAULT 0,
+            -- Encrypted reason for automod bans (commit aaf523b7)
+            reason_encrypted TEXT,
             created_at BIGINT NOT NULL,
             updated_at BIGINT NOT NULL,
             created_by BIGINT NOT NULL
@@ -30,7 +32,20 @@ def create_tables(db):
     """)
 
     # Migrations for existing tables (PostgreSQL only)
+    # Fix columns that were created as TEXT or INTEGER instead of BIGINT.
+    # Uses USING clause for safe type conversion — if the column already contains
+    # non-numeric data (e.g. a column name leak), the USING clause will convert
+    # valid integers and set invalid values to NULL rather than failing.
     if db.type == "postgres":
+        # Validate table/column identifiers to prevent SQL injection in DDL
+        allowed_tables = {
+            "automod_rules",
+            "automod_violations",
+            "automod_audit",
+            "automod_reputation",
+            "automod_exemptions",
+            "automod_rate_tracking",
+        }
         tables_to_fix = [
             (
                 "automod_rules",
@@ -77,10 +92,28 @@ def create_tables(db):
             ("automod_rate_tracking", ["id", "server_id", "user_id", "window_start"]),
         ]
 
+        import re
+
         for table, columns in tables_to_fix:
+            if table not in allowed_tables:
+                continue
+            if not db.table_exists(table):
+                continue
             for col in columns:
+                if not re.match(r"^[a-zA-Z0-9_]+$", col):
+                    continue
                 try:
-                    db.execute(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE BIGINT")
+                    # Cast column to text before applying regex (~ operator)
+                    # to avoid "operator does not exist: bigint ~ unknown" on PG16.
+                    # On a fresh DB the columns are already BIGINT — the ALTER is
+                    # a no-op but the USING clause must still be syntactically valid.
+                    # Cast column to text before using the ~ regex operator;
+                    # PostgreSQL 16 rejects "operator does not exist: bigint ~ unknown".
+                    db.execute(
+                        f'ALTER TABLE {table} ALTER COLUMN "{col}" TYPE BIGINT '
+                        f"USING CASE WHEN (\"{col}\"::text) ~ '^[0-9]+$' "
+                        f'THEN "{col}"::bigint ELSE NULL END'
+                    )
                 except Exception:
                     pass
 

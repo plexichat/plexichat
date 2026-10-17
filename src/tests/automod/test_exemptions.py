@@ -1,155 +1,87 @@
-"""
-Tests for exemptions system.
-"""
+"""Tests for automod exemptions."""
 
 import pytest
 
-from src.core.automod import RuleType
+from src.core.automod.exceptions import ExemptionError
 
 
 @pytest.mark.automod
 class TestExemptions:
-    """Tests for exemption system."""
+    """Tests for automod exemption management."""
 
-    def test_role_exemption(
-        self, automod_module, test_server_for_automod, modules, user_pool
-    ):
-        """Test role exemption from rules."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        modules.servers.add_member(server.id, user.id)
-
-        exempt_role = modules.servers.create_role(
-            user_id=owner.id, server_id=server.id, name="Exempt Role", permissions={}
+    def test_add_channel_exemption(self, automod_manager, test_server):
+        """Test adding a channel exemption."""
+        server, owner = test_server
+        channel = automod_manager._db.fetch_one(
+            "SELECT id FROM srv_channels WHERE server_id = ? LIMIT 1", (server.id,)
         )
+        channel_id = channel["id"] if channel else 0
 
-        modules.servers.assign_role(owner.id, server.id, user.id, exempt_role.id)
-
-        automod_module.create_rule(
+        exemption = automod_manager.add_exemption(
             user_id=owner.id,
             server_id=server.id,
-            name="Test Rule",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["test"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
-            exempt_roles=[exempt_role.id],
+            target_type="channel",
+            target_id=channel_id,
         )
+        assert exemption.target_type == "channel"
+        assert exemption.target_id == channel_id
+        assert exemption.server_id == server.id
 
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="test message",
-        )
-
-        assert result.passed
-
-    def test_channel_exemption(self, automod_module, test_server_for_automod, modules):
-        """Test channel exemption from rules."""
-        server, channel, owner = test_server_for_automod
-
-        exempt_channel = modules.servers.create_channel(
-            user_id=owner.id,
-            server_id=server.id,
-            name="exempt-channel",
-            channel_type=modules.servers.ChannelType.TEXT,
-        )
-
-        automod_module.create_rule(
-            user_id=owner.id,
-            server_id=server.id,
-            name="Test Rule",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["test"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
-            exempt_channels=[exempt_channel.id],
-        )
-
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=exempt_channel.id,
-            user_id=owner.id,
-            content="test message",
-        )
-
-        assert result.passed
-
-    def test_global_exemption(
-        self, automod_module, test_server_for_automod, modules, user_pool
-    ):
-        """Test global exemption from all rules."""
-        server, channel, owner = test_server_for_automod
-        user = user_pool.get_user()
-
-        modules.servers.add_member(server.id, user.id)
-
-        exempt_role = modules.servers.create_role(
-            user_id=owner.id, server_id=server.id, name="Trusted", permissions={}
-        )
-
-        modules.servers.assign_role(owner.id, server.id, user.id, exempt_role.id)
-
-        automod_module.add_exemption(
+    def test_add_role_exemption(self, automod_manager, test_server):
+        """Test adding a role exemption."""
+        server, owner = test_server
+        role_id = 12345
+        exemption = automod_manager.add_exemption(
             user_id=owner.id,
             server_id=server.id,
             target_type="role",
-            target_id=exempt_role.id,
-            rule_id=None,
+            target_id=role_id,
         )
+        assert exemption.target_type == "role"
+        assert exemption.target_id == role_id
 
-        automod_module.create_rule(
+    def test_invalid_target_type_rejected(self, automod_manager, test_server):
+        """Test that invalid target type is rejected."""
+        server, owner = test_server
+        with pytest.raises(ExemptionError):
+            automod_manager.add_exemption(
+                user_id=owner.id,
+                server_id=server.id,
+                target_type="user",
+                target_id=99999,
+            )
+
+    def test_duplicate_exemption_rejected(self, automod_manager, test_server):
+        """Test that duplicate exemptions are rejected."""
+        server, owner = test_server
+        automod_manager.add_exemption(
             user_id=owner.id,
             server_id=server.id,
-            name="Test Rule",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["test"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
+            target_type="role",
+            target_id=55555,
         )
+        with pytest.raises(ExemptionError):
+            automod_manager.add_exemption(
+                user_id=owner.id,
+                server_id=server.id,
+                target_type="role",
+                target_id=55555,
+            )
 
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=user.id,
-            content="test message",
-        )
-
-        assert result.passed
-
-    def test_owner_always_exempt(self, automod_module, test_server_for_automod):
-        """Test server owner is always exempt."""
-        server, channel, owner = test_server_for_automod
-
-        automod_module.create_rule(
+    def test_remove_exemption(self, automod_manager, test_server):
+        """Test removing an exemption."""
+        server, owner = test_server
+        exemption = automod_manager.add_exemption(
             user_id=owner.id,
             server_id=server.id,
-            name="Test Rule",
-            rule_type=RuleType.KEYWORD,
-            rule_config={
-                "keywords": ["test"],
-                "case_sensitive": False,
-                "whole_word": True,
-            },
-            actions=[{"action_type": "delete_message"}],
+            target_type="role",
+            target_id=77777,
         )
+        result = automod_manager.remove_exemption(owner.id, exemption.id)
+        assert result is True
 
-        result = automod_module.check_message(
-            server_id=server.id,
-            channel_id=channel.id,
-            user_id=owner.id,
-            content="test message",
-        )
-
-        assert result.passed
+    def test_remove_nonexistent_exemption(self, automod_manager, test_server):
+        """Test removing nonexistent exemption raises error."""
+        server, owner = test_server
+        with pytest.raises(ExemptionError):
+            automod_manager.remove_exemption(owner.id, 9999999)

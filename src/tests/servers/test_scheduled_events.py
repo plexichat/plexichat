@@ -251,6 +251,7 @@ class TestScheduledEventRetrieval:
 
         retrieved = servers.get_scheduled_event(event.id, member_user.id)
         assert retrieved is not None
+        assert retrieved.id == event.id
 
 
 @pytest.mark.servers

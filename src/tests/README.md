@@ -63,11 +63,11 @@ Pre-created users with real Argon2 hashing are reused across tests:
 
 ```python
 @pytest.fixture(scope="session")
-def session_users(modules):
+def session_users(auth_manager):
     """Creates 20 users at session start (~5-10 seconds)"""
     users = []
     for i in range(20):
-        user = modules.auth.register(
+        user = auth_manager.register(
             username=f"pooluser_{i}_{uuid.uuid4().hex[:4]}",
             email=f"{username}@test.example.com",
             password=TEST_PASSWORD
@@ -215,6 +215,33 @@ pytest -m "not slow"
 pytest -m "auth and not slow"
 ```
 
+### Running the Database-Backed Suites
+
+Most of the suite runs against SQLite and an in-memory Valkey double, so
+backend-specific behaviour -- dialect SQL, Lua scripts, driver type coercion
+-- only ever shows up against the real thing. Two throwaway containers cover
+it:
+
+```bash
+docker run -d --name plexichat-test-pg -p 5432:5432 \
+    -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+    -e POSTGRES_DB=test_db postgres:15-alpine
+docker run -d --name plexichat-test-valkey -p 6379:6379 \
+    valkey/valkey:8-alpine
+
+USE_DOCKER=false POSTGRES_HOST=localhost VALKEY_HOST=localhost \
+    pytest -m "not slow and not performance" \
+    src/tests/test_postgres_docker.py src/tests/test_transactions.py \
+    src/tests/test_database.py src/tests/test_production_simulation.py \
+    src/tests/test_valkey_docker.py
+```
+
+`USE_DOCKER=false` tells the fixtures (`fixtures/postgres_docker.py`,
+`fixtures/valkey_docker.py`) to attach to those servers rather than start
+their own. With no reachable backend the tests **skip visibly** -- and the
+`test:database_backends` CI job fails the pipeline if any of them skipped,
+so a missing service can never masquerade as a green run.
+
 ### Parallel Execution
 
 ```bash
@@ -225,6 +252,106 @@ pytest -n 4                 # Use 4 workers
 # Parallel with specific markers
 pytest -m "not slow" -n auto
 ```
+
+### Order Independence
+
+The suite must pass in **any** file order. A fixed default order can hide
+order coupling -- a fixture that leaves process-global state behind for a
+later file -- until it fails on a different machine or worker split. Two
+pieces of tooling keep that honest:
+
+**Seeded shuffle.** `--shuffle-seed <n>` runs the files in a reproducible
+random order. Tests inside a file keep their order and stay together, so
+`--dist loadfile` still pins a file to a single xdist worker. Re-running with
+the same seed reproduces a failure exactly:
+
+```bash
+# Replay a CI order-dependence failure locally
+pytest -n auto --dist loadfile --shuffle-seed 424242
+```
+
+**Process-global leak guard.** The autouse `_app_logger_level_guard` in
+`src/tests/_conftest/logger_isolation.py` fails any test or fixture that
+leaves the process-global `"AppLogger"` level changed, naming the offending
+test instead of letting a later file's `caplog` assertion fail mysteriously.
+A fixture that intentionally reconfigures the logger wraps the call in
+`isolated_logger(...)`, which restores the level, propagation flag, handlers,
+filters and module singletons on exit.
+
+CI runs the suite once in the default order (`test:pytest`) and once with a
+fixed `--shuffle-seed` (`test:shuffled_order`), so order dependence is caught
+on every merge request rather than by luck.
+
+### Deterministic Timing
+
+Tests must not wait for a background effect with a fixed `time.sleep`. Under
+`pytest-xdist` the host is oversubscribed, so a sleep tuned on an idle machine
+is a flake on a loaded runner -- the effect is simply later than the guessed
+budget. Two patterns keep timing-sensitive tests exact:
+
+**Wait for the condition.** A test that observes a worker thread's first
+cycle, an executor-driven database update, or a background log line should
+poll the observable state using `wait_until` from
+`src/tests/_conftest/waiting.py`. It returns as soon as the condition holds
+and fails with the caller's message if a bounded timeout elapses, so the happy
+path is as fast as the effect and a genuinely missing effect is a clear
+failure rather than a stall:
+
+```python
+from src.tests._conftest.waiting import wait_until
+
+wait_until(
+    lambda: worker.cycles >= 2,
+    timeout=10.0,
+    message="worker thread did not complete two cycles",
+)
+```
+
+`wait_until_async` is the same contract on an event loop: the predicate may be
+sync or a coroutine, and the wait yields with `asyncio.sleep` between polls so
+timers, transports and background tasks keep running. Pass `timeout` to match
+the effect's budget:
+
+```python
+from src.tests._conftest.waiting import wait_until_async
+
+await wait_until_async(
+    lambda: peer.pc.connectionState == "connected",
+    timeout=CONNECT_TIMEOUT_S,
+    message=lambda: f"never connected: {peer.pc.iceConnectionState}",
+)
+```
+
+`message` accepts a plain string or a zero-argument callable. The callable form
+is only rendered when the timeout is actually reached, so it can read live
+state (an ICE state, a frame count) for the failure instead of snapshotting it
+at call time.
+
+**Drive the clock, don't sleep through it.** Tests of window/TTL/refill logic
+should advance a controlled clock instead of racing real time. The rate limiter
+exposes one via the `rate_limit_clock` fixture, which stands in for the
+manager's `time.time()` and the in-memory storage's `time.monotonic()`:
+
+```python
+def test_window_expires(rate_limit_manager, rate_limit_clock):
+    rate_limit_clock.advance(61)  # exact boundary, no sleep
+```
+
+Sleeps that merely keep two operations apart (so a timestamp increases) or let
+threads start before a concurrent action remain appropriate -- the rule is only
+that a test must not *guess* how long a background effect will take. Every
+such sleep is listed with its reason in
+`src/tests/unit/test_intentional_sleep_sites.py`, and that registry is enforced
+as a test: a new `time.sleep`/`asyncio.sleep` (or an extra one in a listed
+file) fails until it is given a justification or replaced with a bounded wait,
+so the next determinism sweep does not have to re-triage the tree.
+
+Finally, these timing-sensitive suites are also run under deliberate CPU
+contention on every merge request: `test:timing_under_load` (GitLab) and
+`server-timing-under-load` (GitHub Actions) start busy-loop burners that
+oversubscribe the box and then run the suites above. A wait whose budget is
+generous on an idle machine but too tight on a loaded one fails there, instead
+of flaking intermittently later.
 
 ### Coverage Reporting
 
@@ -281,9 +408,7 @@ pytest --collect-only
 
 ```python
 # Database and modules (created once per session)
-def test_example(modules, session_users):
-    auth = modules.auth
-    messaging = modules.messaging
+def test_example(auth_manager, messaging_manager, session_users):
     # Use pre-created session users
     user, username, password = session_users[0]
 ```
@@ -313,7 +438,7 @@ def test_with_users(two_users, three_users):
 
 ```python
 # User factory (for creating fresh users)
-def test_registration(modules, user_factory):
+def test_registration(auth_manager, user_factory):
     # Create fresh user (not from pool)
     user = user_factory.create(
         username="testuser",
@@ -322,9 +447,9 @@ def test_registration(modules, user_factory):
     )
 
 # Server factory
-def test_server_creation(server_factory, user_factory):
+def test_server_creation(server_manager, user_factory):
     owner = user_factory.create()
-    server = server_factory.create(owner=owner, name="Test Server")
+    server = server_manager.create(owner=owner, name="Test Server")
 
     # Server with members
     server, owner, members = server_factory.create_with_members(
@@ -373,12 +498,12 @@ def test_api_endpoint(test_client, auth_headers):
 ```python
 # Create a custom fixture for your test module
 @pytest.fixture
-def authenticated_users(user_pool, modules):
+def authenticated_users(user_pool, auth_manager):
     """Create multiple authenticated users"""
     users_with_tokens = []
     for _ in range(3):
         user, username, password = user_pool.get_user_with_credentials()
-        result = modules.auth.login(username, password)
+        result = auth_manager.login(username, password)
         users_with_tokens.append((user, result.token))
     return users_with_tokens
 
@@ -411,16 +536,16 @@ from src.tests.fixtures.security import (
 ### XSS Prevention Testing
 
 ```python
-def test_message_xss_prevention(modules, user_pool, xss_payloads, security_assert):
+def test_message_xss_prevention(messaging_manager, user_pool, xss_payloads, security_assert):
     """Test that messages are protected against XSS"""
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
-    dm = modules.messaging.create_dm(user1.id, user2.id)
+    dm = messaging_manager.create_dm(user1.id, user2.id)
 
     # Test all XSS payloads
     for payload in xss_payloads.all():
         try:
-            msg = modules.messaging.send_message(
+            msg = messaging_manager.send_message(
                 user_id=user1.id,
                 conversation_id=dm.id,
                 content=payload
@@ -435,11 +560,11 @@ def test_message_xss_prevention(modules, user_pool, xss_payloads, security_asser
 ### SQL Injection Testing
 
 ```python
-def test_login_sql_injection(modules, sql_payloads, security_assert):
+def test_login_sql_injection(auth_manager, sql_payloads, security_assert):
     """Test that login is protected against SQL injection"""
     for payload in sql_payloads.all():
         try:
-            modules.auth.login(payload, "password")
+            auth_manager.login(payload, "password")
         except Exception:
             # Should be rejected
             pass
@@ -448,11 +573,11 @@ def test_login_sql_injection(modules, sql_payloads, security_assert):
 ### Input Validation Testing
 
 ```python
-def test_username_validation(modules, malformed_inputs):
+def test_username_validation(auth_manager, malformed_inputs):
     """Test username validation handles malformed inputs"""
     for malformed in malformed_inputs.all():
         with pytest.raises(Exception):
-            modules.auth.register(
+            auth_manager.register(
                 username=malformed,
                 email="test@test.com",
                 password="Pass123!"
@@ -462,19 +587,19 @@ def test_username_validation(modules, malformed_inputs):
 ### Authorization Testing
 
 ```python
-def test_unauthorized_access(modules, user_pool):
+def test_unauthorized_access(server_manager, user_pool):
     """Test that users cannot access resources they don't own"""
     owner = user_pool.get_user()
     unauthorized = user_pool.get_user()
 
-    server = modules.servers.create_server(
+    server = server_manager.create_server(
         owner_id=owner.id,
         name="Private Server"
     )
 
     # Unauthorized user should not be able to delete
     with pytest.raises(Exception):
-        modules.servers.delete_server(
+        server_manager.delete_server(
             user_id=unauthorized.id,
             server_id=server.id
         )
@@ -483,13 +608,13 @@ def test_unauthorized_access(modules, user_pool):
 ### Security Test Helper
 
 ```python
-def test_field_security(modules, user_pool, security_helper, xss_payloads):
+def test_field_security(server_manager, user_pool, security_helper, xss_payloads):
     """Use security helper for common patterns"""
     owner = user_pool.get_user()
 
     # Test XSS in server name field
     security_helper.test_field_xss(
-        create_fn=lambda name: modules.servers.create_server(
+        create_fn=lambda name: server_manager.create_server(
             owner_id=owner.id,
             name=name
         ),
@@ -532,10 +657,10 @@ def test_field_security(modules, user_pool, security_helper, xss_payloads):
 ### Pattern 1: Testing Registration
 
 ```python
-def test_user_registration(modules):
+def test_user_registration(auth_manager):
     """Test user registration with fresh user"""
     # Always create fresh users for registration tests
-    user = modules.auth.register(
+    user = auth_manager.register(
         username=f"newuser_{uuid.uuid4().hex[:8]}",
         email=f"newuser_{uuid.uuid4().hex[:8]}@test.com",
         password="SecurePass123!"
@@ -548,13 +673,13 @@ def test_user_registration(modules):
 ### Pattern 2: Testing Message Sending
 
 ```python
-def test_message_sending(modules, user_pool):
+def test_message_sending(messaging_manager, user_pool):
     """Test message sending with pool users"""
     user1 = user_pool.get_user()
     user2 = user_pool.get_user()
 
-    dm = modules.messaging.create_dm(user1.id, user2.id)
-    msg = modules.messaging.send_message(
+    dm = messaging_manager.create_dm(user1.id, user2.id)
+    msg = messaging_manager.send_message(
         user_id=user1.id,
         conversation_id=dm.id,
         content="Hello!"
@@ -581,40 +706,40 @@ def test_server_creation(modules, user_factory, server_factory):
 ### Pattern 4: Testing Authentication
 
 ```python
-def test_login_logout_flow(modules, user_pool):
+def test_login_logout_flow(auth_manager, user_pool):
     """Test complete auth flow"""
     user, username, password = user_pool.get_user_with_credentials()
 
     # Login
-    result = modules.auth.login(username, password)
+    result = auth_manager.login(username, password)
     assert result.token is not None
 
     # Verify token
-    token_info = modules.auth.verify_token(result.token)
+    token_info = auth_manager.verify_token(result.token)
     assert token_info.user_id == user.id
 
     # Logout
-    modules.auth.logout(result.token)
+    auth_manager.logout(result.token)
 
     # Verify token is invalid
     with pytest.raises(Exception):
-        modules.auth.verify_token(result.token)
+        auth_manager.verify_token(result.token)
 ```
 
 ### Pattern 5: Testing Permissions
 
 ```python
-def test_channel_permissions(modules, server_factory, user_factory):
+def test_channel_permissions(server_manager, messaging_manager, server_factory, user_factory):
     """Test channel permission system"""
     server, owner, [member] = server_factory.create_with_members(
         member_count=1
     )
 
-    channels = modules.servers.get_channels(owner.id, server.id)
+    channels = server_manager.get_channels(owner.id, server.id)
     channel = channels[0]
 
     # Owner can send messages
-    msg = modules.messaging.send_message(
+    msg = messaging_manager.send_message(
         user_id=owner.id,
         conversation_id=channel.id,
         content="Owner message"
@@ -622,7 +747,7 @@ def test_channel_permissions(modules, server_factory, user_factory):
     assert msg is not None
 
     # Member can send messages (default permission)
-    msg = modules.messaging.send_message(
+    msg = messaging_manager.send_message(
         user_id=member.id,
         conversation_id=channel.id,
         content="Member message"
@@ -633,13 +758,13 @@ def test_channel_permissions(modules, server_factory, user_factory):
 ### Pattern 6: Testing Error Cases
 
 ```python
-def test_invalid_operations(modules, user_pool):
+def test_invalid_operations(messaging_manager, auth_manager, user_pool):
     """Test that invalid operations are properly rejected"""
     user = user_pool.get_user()
 
     # Test invalid conversation ID
     with pytest.raises(Exception):
-        modules.messaging.send_message(
+        messaging_manager.send_message(
             user_id=user.id,
             conversation_id=999999,
             content="Should fail"
@@ -647,7 +772,7 @@ def test_invalid_operations(modules, user_pool):
 
     # Test invalid user ID
     with pytest.raises(Exception):
-        modules.auth.get_user(999999)
+        auth_manager.get_user(999999)
 ```
 
 ### Pattern 7: Property-Based Testing
@@ -661,10 +786,10 @@ from hypothesis import given, strategies as st
         whitelist_characters='_-'
     ))
 )
-def test_username_validation_property(modules, username):
+def test_username_validation_property(auth_manager, username):
     """Property-based test for username validation"""
     try:
-        user = modules.auth.register(
+        user = auth_manager.register(
             username=username,
             email=f"{username}@test.com",
             password="Pass123!"
@@ -749,8 +874,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
+        pip install --require-hashes -r requirements-dev.txt
 
     - name: Run tests with coverage
       run: |
@@ -769,8 +893,7 @@ jobs:
 test:
   image: python:3.11
   before_script:
-    - pip install -r requirements.txt
-    - pip install -r requirements-test.txt
+    - pip install --require-hashes -r requirements-dev.txt
   script:
     - pytest --cov=src --cov-report=term --cov-report=html
   coverage: '/TOTAL.*\s+(\d+%)$/'
@@ -889,7 +1012,7 @@ class TestSecurity:
 class TestIntegration:
     """Test integration with other modules."""
 
-    def test_cross_module_interaction(self, modules, user_pool):
+    def test_cross_module_interaction(self, auth_manager, user_pool):
         """Test interaction with other modules."""
         pass
 ```
@@ -913,16 +1036,17 @@ Add module-specific fixtures in `conftest.py` files:
 import pytest
 
 @pytest.fixture
-def my_module_fixture(modules, user_pool):
+def my_module_fixture(auth_manager, user_pool):
     """Module-specific fixture."""
     # Setup
     user = user_pool.get_user()
-    resource = modules.mymodule.create_resource(user.id)
+    # Use appropriate manager instead of modules.mymodule
+    # resource = appropriate_manager.create_resource(user.id)
 
     yield resource
 
     # Cleanup (if needed)
-    # modules.mymodule.delete_resource(resource.id)
+    # appropriate_manager.delete_resource(resource.id)
 ```
 
 ### Running Tests During Development
@@ -942,10 +1066,11 @@ pytest src/tests/mymodule/test_feature.py::test_specific -vv -s --pdb
 
 ```python
 # Add breakpoint
-def test_something(modules, user_pool):
+def test_something(auth_manager, user_pool):
     user = user_pool.get_user()
     breakpoint()  # Execution will pause here
-    result = modules.something.do_thing(user.id)
+    # Use appropriate manager instead of modules.something
+    # result = appropriate_manager.do_thing(user.id)
     assert result is not None
 
 # Run with pdb on failure

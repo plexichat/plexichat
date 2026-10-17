@@ -3,7 +3,7 @@ Webhook routes - Webhook management and execution endpoints.
 """
 
 from typing import Optional, Union
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Header
 
 import utils.logger as logger
 import src.api as api
@@ -17,6 +17,9 @@ from src.api.schemas.webhooks import (
     WebhookMessageResponse,
 )
 from src.core.database.cache import invalidate_pattern
+from src.core.embeds.exceptions import EmbedError
+from src.core.webhooks.exceptions import InvalidWebhookTokenError
+from .exception_mapping import raise_mapped
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
@@ -37,6 +40,9 @@ def _webhook_to_response(webhook, include_token: bool = False) -> WebhookRespons
             avatar_url=webhook.avatar_url,
             token=webhook.token if include_token and webhook.token else None,
             url=webhook.url if include_token and webhook.token else None,
+            require_signed_deliveries=bool(
+                getattr(webhook, "require_signed_deliveries", False)
+            ),
             created_at=webhook.created_at,
         )
     except Exception as e:
@@ -99,24 +105,11 @@ async def regenerate_webhook_token(
             invalidate_pattern("webhooks:*")
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Webhook not found"}},
-                )
-            if "Permission" in exc_name:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}},
-                )
-            logger.error(
-                f"Unexpected error regenerating token for webhook {wid} by user {current_user.user_id}: {e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
+            raise_mapped(
+                e,
+                not_found_message="Webhook not found",
+                permission_message="Permission denied",
+                invalid_message="Invalid request",
             )
     except HTTPException:
         raise
@@ -180,55 +173,29 @@ async def create_webhook(
                 channel_id=cid,
                 name=body.name,
                 avatar_url=body.avatar_url,
+                require_signed_deliveries=bool(body.require_signed_deliveries),
             )
             logger.info(
                 f"User {current_user.user_id} created webhook {webhook.id} in channel {cid}"
             )
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
+            try:
+                from src.core.events.gateway_emit import emit_webhooks_update
+
+                emit_webhooks_update(
+                    getattr(webhook, "server_id", None) or 0,
+                    channel_id=getattr(webhook, "channel_id", None) or cid,
+                )
+            except Exception as ge:
+                logger.debug(f"emit_webhooks_update failed: {ge}")
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                logger.warning(
-                    f"Channel {cid} not found for webhook creation by user {current_user.user_id}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Channel not found"}},
-                )
-            elif "Permission" in exc_name:
-                logger.warning(
-                    f"Permission denied for user {current_user.user_id} creating webhook in channel {cid}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}},
-                )
-            elif "Limit" in exc_name:
-                logger.warning(
-                    f"Webhook limit reached for channel {cid} (user: {current_user.user_id})"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
-                )
-            elif "Name" in exc_name or "Avatar" in exc_name:
-                logger.warning(
-                    f"Invalid name/avatar for webhook creation in channel {cid} (user: {current_user.user_id}): {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
-                )
-
-            logger.error(
-                f"Unexpected error in create_webhook for channel {cid} by user {current_user.user_id}: {e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
+            raise_mapped(
+                e,
+                not_found_message="Channel not found",
+                permission_message="Permission denied",
+                invalid_message="Invalid webhook name, avatar or limit reached",
             )
     except HTTPException:
         raise
@@ -369,45 +336,27 @@ async def update_webhook(
                 name=body.name,
                 avatar_url=body.avatar_url,
                 channel_id=int(body.channel_id) if body.channel_id else None,
+                require_signed_deliveries=body.require_signed_deliveries,
             )
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
+            try:
+                from src.core.events.gateway_emit import emit_webhooks_update
+
+                emit_webhooks_update(
+                    getattr(webhook, "server_id", None) or 0,
+                    channel_id=getattr(webhook, "channel_id", None),
+                )
+            except Exception as ge:
+                logger.debug(f"emit_webhooks_update failed: {ge}")
             return _webhook_to_response(webhook)
         except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                logger.warning(
-                    f"Webhook or channel not found during update of {wid} by user {current_user.user_id}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": str(e)}},
-                )
-            elif "Permission" in exc_name:
-                logger.warning(
-                    f"Permission denied for user {current_user.user_id} updating webhook {wid}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}},
-                )
-            elif "Name" in exc_name or "Avatar" in exc_name:
-                logger.warning(
-                    f"Invalid name/avatar for webhook update {wid} by user {current_user.user_id}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
-                )
-
-            logger.error(
-                f"Unexpected error in update_webhook for {wid} by user {current_user.user_id}: {e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
+            raise_mapped(
+                e,
+                not_found_message="Webhook not found",
+                permission_message="Permission denied",
+                invalid_message="Invalid webhook name or avatar",
             )
     except HTTPException:
         raise
@@ -461,37 +410,34 @@ async def delete_webhook(
             )
 
         try:
+            # Capture scope BEFORE deletion so gateway clients can refresh
+            # their open webhook panels (emitting guild_id=0 makes them
+            # ignore the event).
+            try:
+                existing = webhooks.get_webhook(wid)
+                deleted_server_id = getattr(existing, "server_id", None) or 0
+                deleted_channel_id = getattr(existing, "channel_id", None)
+            except Exception:
+                deleted_server_id = 0
+                deleted_channel_id = None
+
             webhooks.delete_webhook(current_user.user_id, wid)
             logger.info(f"User {current_user.user_id} deleted webhook {wid}")
             # Invalidate webhook cache for this server
             invalidate_pattern("webhooks:*")
-            return SuccessResponse(success=True)
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                logger.warning(
-                    f"Webhook {wid} not found for deletion by user {current_user.user_id}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Webhook not found"}},
-                )
-            elif "Permission" in exc_name:
-                logger.warning(
-                    f"Permission denied for user {current_user.user_id} deleting webhook {wid}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={"error": {"code": 403, "message": str(e)}},
-                )
+            try:
+                from src.core.events.gateway_emit import emit_webhooks_update
 
-            logger.error(
-                f"Unexpected error in delete_webhook for {wid} by user {current_user.user_id}: {e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
+                emit_webhooks_update(deleted_server_id, channel_id=deleted_channel_id)
+            except Exception as ge:
+                logger.debug(f"emit_webhooks_update failed: {ge}")
+            return SuccessResponse(success=True, message=None)
+        except Exception as e:
+            raise_mapped(
+                e,
+                not_found_message="Webhook not found",
+                permission_message="Permission denied",
+                invalid_message="Invalid request",
             )
     except HTTPException:
         raise
@@ -526,11 +472,17 @@ async def execute_webhook(
     body: WebhookExecuteRequest,
     thread_id: Optional[str] = None,
     wait: bool = False,
+    x_signature: Optional[str] = Header(None, alias="X-Plexichat-Signature"),
+    x_timestamp: Optional[str] = Header(None, alias="X-Plexichat-Timestamp"),
 ) -> Union[WebhookMessageResponse, SuccessResponse]:
     """
     Execute a webhook.
 
-    Sends a message to the webhook's channel using its token.
+    Sends a message to the webhook's channel using its token. When the
+    caller also supplies an ``X-Plexichat-Signature`` /
+    ``X-Plexichat-Timestamp`` pair, the payload is verified against the
+    webhook's Ed25519 key before execution (rejecting tampered or
+    replayed deliveries).
     """
     webhooks = api.get_webhooks()
     if not webhooks:
@@ -543,17 +495,107 @@ async def execute_webhook(
     try:
         try:
             wid = int(webhook_id)
-            tid = int(thread_id) if thread_id else None
         except ValueError:
             logger.warning(
-                f"Invalid ID format in execute_webhook: webhook_id={webhook_id}, thread_id={thread_id}"
+                f"Invalid webhook ID format in execute_webhook: {webhook_id}"
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid ID format"}},
+                detail={"error": {"code": 400, "message": "Invalid webhook ID"}},
             )
 
+        tid = None
+        if thread_id and thread_id.strip().lower() != "null":
+            try:
+                tid = int(thread_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid thread ID format in execute_webhook: {thread_id}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+                )
+        if (
+            tid is None
+            and body.thread_id
+            and str(body.thread_id).strip().lower() != "null"
+        ):
+            try:
+                tid = int(body.thread_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid thread ID format in execute_webhook: {body.thread_id}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"error": {"code": 400, "message": "Invalid thread ID"}},
+                )
+
         try:
+            # F8: signature enforcement is only meaningful when the webhook
+            # REQUIRES signed deliveries. A token holder can otherwise just
+            # omit the headers; with the flag enabled, unsigned requests are
+            # rejected even though the token itself is valid.
+            requires_signature = False
+            if not (x_signature and x_timestamp):
+                try:
+                    webhook_record = webhooks.get_webhook(wid)
+                    requires_signature = bool(
+                        getattr(webhook_record, "require_signed_deliveries", False)
+                    )
+                except Exception:
+                    requires_signature = False
+
+            if x_signature and x_timestamp:
+                # Canonicalize the thread id to its decimal string so the
+                # signed bytes agree no matter which source won above: ``tid``
+                # is an int (query param or parsed body) while
+                # ``body.thread_id`` is a ``SnowflakeID`` str. Signing
+                # ``123`` vs ``"123"`` yields different JSON bytes, so a
+                # caller that signed the string form would fail verification
+                # when the int form won here (and vice versa).
+                if tid is not None:
+                    thread_str: Optional[str] = str(tid)
+                elif body.thread_id and str(body.thread_id).strip().lower() != "null":
+                    thread_str = str(int(str(body.thread_id).strip()))
+                else:
+                    thread_str = None
+                payload = {
+                    "content": body.content,
+                    "username": body.username,
+                    "avatar_url": body.avatar_url,
+                    "embeds": body.embeds,
+                    "thread_id": thread_str,
+                }
+                if not webhooks.verify_payload(wid, payload, x_signature, x_timestamp):
+                    logger.warning(
+                        f"Invalid Ed25519 signature on webhook {wid} execution"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "error": {
+                                "code": 401,
+                                "message": "Invalid webhook signature",
+                            }
+                        },
+                    )
+            elif requires_signature:
+                logger.warning(
+                    f"Unsigned execution refused for webhook {wid} "
+                    f"(require_signed_deliveries enabled)"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error": {
+                            "code": 401,
+                            "message": "This webhook requires signed deliveries",
+                        }
+                    },
+                )
+
             message = webhooks.execute_webhook(
                 webhook_id=wid,
                 token=token,
@@ -561,13 +603,13 @@ async def execute_webhook(
                 username=body.username,
                 avatar_url=body.avatar_url,
                 embeds=body.embeds,
-                thread_id=tid or (int(body.thread_id) if body.thread_id else None),
+                thread_id=tid,
                 wait=wait,
             )
 
             logger.debug(f"Executed webhook {wid}")
             if not wait:
-                return SuccessResponse(success=True)
+                return SuccessResponse(success=True, message=None)
 
             if message is None:
                 logger.error(
@@ -587,40 +629,26 @@ async def execute_webhook(
                 avatar_url=getattr(message, "avatar_url", None),
                 created_at=message.created_at,
             )
-        except Exception as e:
-            exc_name = type(e).__name__
-            if "NotFound" in exc_name:
-                logger.warning(f"Webhook {wid} not found for execution")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail={"error": {"code": 404, "message": "Webhook not found"}},
-                )
-            elif "InvalidWebhookToken" in exc_name or "InvalidToken" in exc_name:
-                logger.warning(f"Invalid token provided for webhook {wid} execution")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"error": {"code": 401, "message": "Invalid webhook token"}},
-                )
-            elif (
-                "Validation" in exc_name
-                or "Empty" in exc_name
-                or "Content" in exc_name
-                or "Embed" in exc_name
-            ):
-                logger.warning(
-                    f"Validation error during execution of webhook {wid}: {e}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"code": 400, "message": str(e)}},
-                )
-
-            logger.error(
-                f"Unexpected error in execute_webhook for {wid}: {e}", exc_info=True
+        except EmbedError as e:
+            logger.warning(
+                f"Embed validation error during execution of webhook {wid}: {e}"
             )
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid request"}},
+            )
+        except InvalidWebhookTokenError:
+            logger.warning(f"Invalid token provided for webhook {wid} execution")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": {"code": 401, "message": "Invalid webhook token"}},
+            )
+        except Exception as e:
+            raise_mapped(
+                e,
+                not_found_message="Webhook not found",
+                permission_message="Permission denied",
+                invalid_message="Invalid webhook execution request",
             )
     except HTTPException:
         raise

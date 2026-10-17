@@ -3,7 +3,6 @@ Attachment service - Business logic for message attachments.
 """
 
 from typing import Any, Dict, List, Optional
-import urllib.parse
 
 from ..models import Attachment
 from ..repositories.attachment import AttachmentRepository
@@ -51,6 +50,9 @@ class AttachmentService(BaseService):
         """Add an attachment to a message."""
         msg_row = self._message_repo.get_by_id(message_id)
         if not msg_row:
+            raise MessageNotFoundError("Message not found")
+
+        if msg_row.get("deleted"):
             raise MessageNotFoundError("Message not found")
 
         if msg_row["author_id"] != user_id:
@@ -110,14 +112,6 @@ class AttachmentService(BaseService):
         return self._repo.row_to_model(row)
 
     def _normalize_url(self, url: str) -> str:
-        if not url:
-            return url
-        if url.startswith("http://") or url.startswith("https://"):
-            parsed = urllib.parse.urlsplit(url)
-            path = parsed.path or ""
-            if parsed.query:
-                path = f"{path}?{parsed.query}"
-            return path or url
         return url
 
     def get_attachments(

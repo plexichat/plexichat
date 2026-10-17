@@ -37,7 +37,15 @@ class LocalStorage(StorageBackendBase):
         """Get full filesystem path."""
         clean_path = path.lstrip("/").lstrip("\\")
         full = os.path.normpath(os.path.join(self._base_path, clean_path))
-        if not full.startswith(self._base_path):
+        # SECURITY: compare against the base path plus a separator (and resolve
+        # symlinks) so sibling directories such as ``<base>-evil/`` or symlink
+        # escapes cannot pass a naive ``startswith`` check.
+        resolved = os.path.realpath(full)
+        base_resolved = os.path.realpath(self._base_path)
+        if (
+            not resolved.startswith(base_resolved + os.sep)
+            and resolved != base_resolved
+        ):
             raise StorageError("Invalid path: path traversal detected", "local")
         return full
 

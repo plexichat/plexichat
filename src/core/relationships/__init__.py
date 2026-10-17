@@ -80,6 +80,7 @@ __all__ = [
     "unblock_user",
     "get_blocked_users",
     "get_blocked_user_ids",
+    "get_all_blocked_ids",
     "is_blocked",
     "is_blocked_by_either",
     # Relationship status
@@ -110,7 +111,7 @@ def setup(
     """
     global _manager, _setup_complete
 
-    from .manager import RelationshipManager
+    from .manager.composer import RelationshipManager
 
     _manager = RelationshipManager(db, auth_module, servers_module)
     _setup_complete = True
@@ -210,6 +211,11 @@ def get_blocked_users(user_id: int, limit: int = 100) -> List[BlockedUser]:
 def get_blocked_user_ids(user_id: int) -> List[int]:
     """Get list of blocked user IDs."""
     return _get_manager().get_blocked_user_ids(user_id)
+
+
+def get_all_blocked_ids(user_id: int) -> List[int]:
+    """Get all user IDs blocked by, or blocking, this user."""
+    return _get_manager().get_all_blocked_ids(user_id)
 
 
 def is_blocked(blocker_id: int, blocked_id: int) -> bool:

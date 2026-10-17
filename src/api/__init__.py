@@ -15,8 +15,12 @@ Usage:
 
 from typing import Any, Optional
 
+import logging
+
 from .app import create_app
 from .config import APIConfig, get_api_config
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "create_app",
@@ -26,6 +30,7 @@ __all__ = [
     "APIConfig",
     "get_api_config",
     "get_telemetry",
+    "is_self_test_request",
 ]
 
 _db = None
@@ -50,7 +55,9 @@ _search = None
 _events = None
 _polls = None
 _stickers = None
+_soundboard = None
 _telemetry = None
+_applications = None
 _internal_secret = None
 _setup_complete = False
 
@@ -65,6 +72,7 @@ def setup(
     presence_module: Optional[Any] = None,
     reactions_module: Optional[Any] = None,
     stickers_module: Optional[Any] = None,
+    soundboard_module: Optional[Any] = None,
     embeds_module: Optional[Any] = None,
     notifications_module: Optional[Any] = None,
     webhooks_module: Optional[Any] = None,
@@ -92,6 +100,7 @@ def setup(
         presence_module: Presence module for user status
         reactions_module: Reactions module for message reactions
         stickers_module: Stickers module for stickers
+        soundboard_module: Soundboard module for server sounds
         embeds_module: Embeds module for rich embeds
         notifications_module: Notifications module for mentions
         webhooks_module: Webhooks module for webhook execution
@@ -110,6 +119,7 @@ def setup(
     global \
         _reactions, \
         _stickers, \
+        _soundboard, \
         _embeds, \
         _notifications, \
         _webhooks, \
@@ -124,6 +134,7 @@ def setup(
         _search, \
         _events, \
         _telemetry, \
+        _applications, \
         _setup_complete
 
     _db = db
@@ -135,6 +146,7 @@ def setup(
     _presence = presence_module
     _reactions = reactions_module
     _stickers = stickers_module
+    _soundboard = soundboard_module
     _embeds = embeds_module
     _notifications = notifications_module
     _webhooks = webhooks_module
@@ -149,6 +161,13 @@ def setup(
     _search = search_module
     _events = events_module
     _telemetry = telemetry_module
+    # Applications is set up separately via applications.setup() in main.py,
+    # and get_applications() has a fallback import so no explicit assignment
+    # is needed here. Suite schema creation and manager wiring belong to the
+    # server initializer: migration 000 is the authoritative production DDL
+    # path, and the initializer wires the media adapter after media.setup().
+    # API setup must not create schema or silently replace a production
+    # storage dependency with a fixture fallback.
     _setup_complete = True
 
 
@@ -161,6 +180,49 @@ def set_internal_secret(secret: str) -> None:
 def get_internal_secret() -> Optional[str]:
     """Get the one-time internal secret."""
     return _internal_secret
+
+
+def is_self_test_request(request: Any) -> bool:
+    """
+    Check if a request is a valid self-test/internal request.
+
+    Validates that:
+    1. The request originates from localhost (127.0.0.1 or ::1)
+    2. The X-Plexichat-Internal-Secret header matches the internal secret
+       via constant-time comparison (hmac.compare_digest)
+
+    Args:
+        request: A Request-like object with .client and .headers attributes.
+                 Works with FastAPI Request, Starlette WebSocket, etc.
+
+    Returns:
+        True if this is a valid self-test request, False otherwise.
+    """
+    # Must have a valid request object
+    client = getattr(request, "client", None)
+    if not client or not hasattr(client, "host"):
+        return False
+
+    # 1. Must originate from localhost
+    if client.host not in ("127.0.0.1", "::1"):
+        return False
+
+    # 2. Internal secret must exist
+    secret = get_internal_secret()
+    if not secret:
+        return False
+
+    # 3. X-Plexichat-Internal-Secret header must match via constant-time comparison
+    headers = getattr(request, "headers", {})
+    if not hasattr(headers, "get"):
+        return False
+    provided = headers.get("X-Plexichat-Internal-Secret")
+    if not provided:
+        return False
+
+    import hmac
+
+    return hmac.compare_digest(provided, secret)
 
 
 def get_database() -> Optional[Any]:
@@ -287,6 +349,18 @@ def get_stickers() -> Optional[Any]:
         from src.core import stickers
 
         return stickers
+    except ImportError:
+        return None
+
+
+def get_soundboard() -> Optional[Any]:
+    """Get soundboard module."""
+    if _soundboard:
+        return _soundboard
+    try:
+        from src.core import soundboard
+
+        return soundboard
     except ImportError:
         return None
 
@@ -431,6 +505,18 @@ def get_admin() -> Optional[Any]:
         from src.core import admin
 
         return admin
+    except ImportError:
+        return None
+
+
+def get_applications() -> Optional[Any]:
+    """Get applications module."""
+    if _applications:
+        return _applications
+    try:
+        from src.core import applications
+
+        return applications
     except ImportError:
         return None
 

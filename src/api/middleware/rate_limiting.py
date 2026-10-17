@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Callable, Type
 
 from fastapi import Request
 
+import src.api as api
 import utils.config as config
 from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
@@ -18,15 +19,15 @@ import hmac
 def extract_ip(request: Request) -> Optional[str]:
     """
     Extract client IP address from request.
-    Uses consolidated logic from utils.net for security.
+
+    Uses the consolidated, trusted-proxy-aware logic from utils.net so the
+    rate limiter keys on the real client IP (from X-Forwarded-For when the
+    direct peer is a trusted proxy) rather than the proxy/relay IP.
     """
     try:
-        headers = getattr(request, "headers", None) or {}
-        if isinstance(headers, dict):
-            xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
-            if xff:
-                ip = str(xff).split(",")[0].strip()
-                return ip or None
+        ip = get_client_ip(request)
+        if ip:
+            return ip
     except Exception:
         pass
 
@@ -38,10 +39,7 @@ def extract_ip(request: Request) -> Optional[str]:
     except Exception:
         pass
 
-    try:
-        return get_client_ip(request)
-    except Exception:
-        return None
+    return None
 
 
 def get_user_info_from_request(request: Request) -> Dict[str, Any]:
@@ -64,6 +62,16 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         "webhook_id": None,
     }
 
+    # Self-test traffic carries the internal secret header but may reach the
+    # limiter before AuthenticationMiddleware marks request.state.is_internal.
+    # Detect it directly so the self-test bypass remains effective.
+    try:
+        if api.is_self_test_request(request):
+            user_info["is_internal"] = True
+            return user_info
+    except Exception:
+        pass
+
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user
         user_info["user_id"] = getattr(user, "user_id", None) or getattr(
@@ -79,11 +87,27 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
                 or permissions.get("admin", False)
             )
 
+    # Also recognise admin dashboard sessions (admin_sessions table)
+    # which set request.state.admin_id but not request.state.user.
+    if not user_info["is_admin"]:
+        admin_id = getattr(request.state, "admin_id", None)
+        if admin_id is not None:
+            user_info["is_admin"] = True
+            if not user_info["user_id"]:
+                user_info["user_id"] = admin_id
+
     # Secure bypass check — requires non-empty bypass_secret.
-    bypass_secret = config.get("rate_limiting.bypass_secret")
+    rl_config = config.get("rate_limiting", {})
+    bypass_secret = rl_config.get("bypass_secret")
     if bypass_secret:
         bypass_header = request.headers.get("X-RateLimit-Bypass")
-        if bypass_header and hmac.compare_digest(bypass_header, bypass_secret):
+        # SECURITY: compare UTF-8 encodings — hmac.compare_digest raises
+        # TypeError on non-ASCII str inputs (headers decode as latin-1),
+        # which would turn a malformed client header into a 500 instead
+        # of a simple "no bypass".
+        if bypass_header and hmac.compare_digest(
+            bypass_header.encode("utf-8"), str(bypass_secret).encode("utf-8")
+        ):
             user_info["is_internal"] = True
 
     if getattr(request.state, "is_internal", False) is True:
@@ -109,17 +133,7 @@ def create_rate_limit_middleware(
     Returns:
         Configured RateLimitMiddleware (requires app to be passed separately).
     """
-    default_excludes = [
-        "/",
-        "/health",
-        "/status",
-        "/api/v1/status",
-        "/api/v1/health",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-    ]
-    all_excludes = list(set(default_excludes + (exclude_paths or [])))
+    all_excludes = list(exclude_paths or [])
     user_info_getter = custom_user_info_getter or get_user_info_from_request
 
     class ConfiguredRateLimitMiddleware(RateLimitMiddleware):

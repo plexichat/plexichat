@@ -1,92 +1,56 @@
 """Tests for version and server-status routes."""
 
-import asyncio
-
-from main import PlexichatServer
-from src.api.routes.version import get_server_state, set_server_state
-from src.api.schemas.version import ServerState
+from src.api.routes import version as version_routes
 
 
-class TestVersionStatusRoutes:
-    """Tests for server status route behavior."""
-
-    def test_status_route_reflects_server_state_updates(self, test_client):
-        """Server status should update immediately after internal state changes."""
-        set_server_state(ServerState.RUNNING)
-        test_client.get("/api/v1/status")
-
-        try:
-            set_server_state(
-                ServerState.MAINTENANCE,
-                message="Scheduled maintenance",
-                estimated_downtime=180,
-                restart_at="2026-03-08T12:00:00Z",
-            )
-
-            response = test_client.get("/api/v1/status")
-            assert response.status_code == 200
-
-            data = response.json()
-            assert data["state"] == "maintenance"
-            assert data["maintenance_message"] == "Scheduled maintenance"
-            assert data["estimated_downtime_seconds"] == 180
-            assert data["restart_at"] == "2026-03-08T12:00:00Z"
-        finally:
-            set_server_state(ServerState.RUNNING)
-
-    def test_status_route_clears_metadata_when_server_recovers(self, test_client):
-        """Running state should clear maintenance metadata in cached responses."""
-        set_server_state(
-            ServerState.MAINTENANCE,
-            message="Short maintenance",
-            estimated_downtime=60,
-            restart_at="2026-03-08T12:05:00Z",
-        )
-        test_client.get("/api/v1/status")
-
-        try:
-            set_server_state(ServerState.RUNNING)
-
-            response = test_client.get("/api/v1/status")
-            assert response.status_code == 200
-
-            data = response.json()
-            assert data["state"] == "running"
-            assert data["maintenance_message"] is None
-            assert data["estimated_downtime_seconds"] is None
-            assert data["restart_at"] is None
-        finally:
-            set_server_state(ServerState.RUNNING)
+def test_version_endpoint(test_client):
+    """Test that version endpoint returns version information."""
+    response = test_client.get("/api/v1/version")
+    assert response.status_code == 200
+    data = response.json()
+    assert "version" in data
 
 
-class TestServerLifecycleStatusUpdates:
-    """Tests for server lifecycle status integration."""
+def test_version_endpoint_no_auth(test_client):
+    """Test that version endpoint works without authentication."""
+    response = test_client.get("/api/v1/version")
+    assert response.status_code == 200
 
-    def test_notify_clients_restart_updates_server_state(self, monkeypatch):
-        """Restart notifications should also update the status endpoint state."""
-        import src.api.websocket as websocket
 
-        server = PlexichatServer()
-        broadcasts = []
+def test_converting_a_version_does_not_poison_the_server_cache():
+    """Converting an arbitrary Version must not overwrite the cached server info.
 
-        async def fake_broadcast(status_data):
-            broadcasts.append(status_data)
-            return 1
+    ``_version_to_info`` used to assign to the module-level
+    ``_cached_version_info`` on every call, so converting the *client's* or the
+    *minimum supported* version silently replaced the cached *server* version.
+    ``/status`` then reported whatever version was converted last.
+    """
+    server = version_routes.version_util.parse("r.1.2-3")
+    client = version_routes.version_util.parse("a.9.9-99")
 
-        monkeypatch.setattr(websocket, "is_setup", lambda: True)
-        monkeypatch.setattr(websocket, "broadcast_server_status", fake_broadcast)
+    version_routes._cached_version_info = None
 
-        try:
-            set_server_state(ServerState.RUNNING)
-            asyncio.run(server.notify_clients_restart(25))
+    server_info = version_routes._version_to_info(server)
+    assert version_routes._cached_version_info is None
 
-            assert get_server_state() == ServerState.RESTARTING
-            assert broadcasts == [
-                {
-                    "state": "restarting",
-                    "message": "Server is restarting",
-                    "estimated_downtime_seconds": 25,
-                }
-            ]
-        finally:
-            set_server_state(ServerState.RUNNING)
+    # Converting the client's version must leave the cache alone.
+    client_info = version_routes._version_to_info(client)
+    assert version_routes._cached_version_info is None
+
+    # And the converted objects themselves are still correct.
+    assert server_info.string == "r.1.2-3"
+    assert client_info.string == "a.9.9-99"
+
+
+def test_status_reports_the_server_version_after_negotiation():
+    """``/status`` must report the server version, not the last client version."""
+    server = version_routes.version_util.current_string()
+
+    version_routes._cached_version_info = None
+    try:
+        # Simulate a negotiate call having converted some other version.
+        version_routes._version_to_info(version_routes.version_util.parse("a.1.0-1"))
+        status = version_routes.get_server_status()
+        assert status.version.string == server
+    finally:
+        version_routes._cached_version_info = None

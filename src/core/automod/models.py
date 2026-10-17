@@ -42,6 +42,7 @@ class AIBackendType(Enum):
     OPENAI = "openai"
     PERSPECTIVE = "perspective"
     CUSTOM = "custom"
+    SHIELDSTRAL = "shieldstral"
 
 
 class ViolationSeverity(Enum):

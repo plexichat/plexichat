@@ -50,8 +50,14 @@ def _get_db():
 
 
 def login(username: str, password: str, ip: str = "unknown") -> AdminLoginResult:
-    """Authenticate an administrator."""
-    return auth.login(_get_db(), username, password, ip)
+    """Authenticate an administrator.
+
+    Uses admin.auth.authenticate_admin() which validates credentials against
+    admin_users and creates sessions in admin_sessions — the same table that
+    get_admin_from_token() validates against.  This ensures the token returned
+    at login can actually be used for subsequent admin API calls.
+    """
+    return auth.authenticate_admin(_get_db(), username, password, ip)
 
 
 def verify_otp_setup(
@@ -114,16 +120,30 @@ def check_host_restriction(client_ip: str, allowed_hosts: List[str]) -> bool:
     """Verify if the client IP is allowed based on host restrictions."""
     if not allowed_hosts:
         return True
-    localhost_variants = ["127.0.0.1", "localhost", "::1"]
-    for allowed in allowed_hosts:
-        if (
+    localhost_variants = {"127.0.0.1", "localhost", "::1"}
+    if client_ip in localhost_variants:
+        return any(
             allowed in localhost_variants and client_ip in localhost_variants
-        ) or client_ip == allowed:
-            return True
-        if "/" in allowed and client_ip.startswith(
-            allowed.split("/")[0].rsplit(".", 1)[0]
-        ):
-            return True
+            for allowed in allowed_hosts
+        )
+
+    try:
+        import ipaddress
+
+        client = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return client_ip in allowed_hosts
+
+    for allowed in allowed_hosts:
+        try:
+            if "/" in allowed:
+                if client in ipaddress.ip_network(allowed, strict=False):
+                    return True
+            elif client == ipaddress.ip_address(allowed):
+                return True
+        except ValueError:
+            if client_ip == allowed:
+                return True
     return False
 
 
@@ -270,6 +290,30 @@ def change_password(
 ) -> Tuple[bool, str]:
     """Change the password for an administrator."""
     return auth.change_password(_get_db(), admin_id, current_password, new_password)
+
+
+def force_password_change(
+    acting_admin_id: int,
+    target_admin_id: int,
+    client_ip: str = "unknown",
+) -> Tuple[bool, str]:
+    """Force another administrator to change their password on next login.
+
+    Routes pass an explicit ``int`` here; coercion is delegated to the
+    underlying service method so bad input produces a clean 400 instead
+    of a 500 from a swallowed :class:`ValueError`.  The audit log entry
+    and the SQL UPDATE are written back-to-back by the service layer, so
+    callers never need to drop into raw SQL or to ``log_admin_action``
+    themselves.
+    """
+    from .auth.password_mixin import force_password_change_target
+
+    return force_password_change_target(
+        db=_get_db(),
+        acting_admin_id=acting_admin_id,
+        target_admin_id=target_admin_id,
+        client_ip=client_ip,
+    )
 
 
 def get_security_status(admin_id: int):

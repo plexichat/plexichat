@@ -36,6 +36,22 @@ class GatewayOpcode(IntEnum):
     # Plexichat typing indicator opcodes
     TYPING_START = 40
     TYPING_STOP = 41
+    # Plexichat channel ratchet opcodes
+    RATCHET_UPDATE = 50
+    # Plexichat artifacts real-time fabric opcodes (collaborative whiteboards,
+    # live code editors, and other shared artifact canvases).
+    ARTIFACT_SUBSCRIBE = 60
+    ARTIFACT_UNSUBSCRIBE = 61
+    ARTIFACT_OP = 62
+    ARTIFACT_SYNC = 63
+    # Server-to-client: an op was rejected (e.g. stale revision) and the
+    # sender should re-fetch/re-base instead of retrying it.
+    ARTIFACT_OP_REJECTED = 68
+    # Plexichat PlexiSum real-time fabric opcodes (collaborative workbooks).
+    SUM_SUBSCRIBE = 64
+    SUM_UNSUBSCRIBE = 65
+    SUM_OP = 66
+    SUM_SYNC = 67
 
 
 class GatewayCloseCode(IntEnum):
@@ -82,6 +98,8 @@ CLOSE_CODE_MESSAGES = {
     GatewayCloseCode.VERSION_OUTDATED: "Client version outdated",
     GatewayCloseCode.SERVER_MAINTENANCE: "Server entering maintenance",
     GatewayCloseCode.SERVER_SHUTDOWN: "Server shutting down",
+    GatewayCloseCode.NORMAL_CLOSURE: "Normal closure",
+    GatewayCloseCode.GOING_AWAY: "Going away",
 }
 
 
@@ -104,4 +122,8 @@ def is_resumable(close_code: int) -> bool:
 
 def get_close_message(close_code: int) -> str:
     """Get human-readable message for close code."""
-    return CLOSE_CODE_MESSAGES.get(GatewayCloseCode(close_code), "Unknown close code")
+    try:
+        code = GatewayCloseCode(close_code)
+    except (TypeError, ValueError):
+        return "Unknown close code"
+    return CLOSE_CODE_MESSAGES.get(code, "Unknown close code")

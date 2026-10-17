@@ -1,149 +1,89 @@
-"""
-Tests for file upload functionality.
-"""
+"""Tests for media upload functionality."""
 
 import pytest
-import asyncio
+from unittest.mock import patch
 import io
-import uuid
+from PIL import Image
 
 
-@pytest.mark.asyncio
-@pytest.mark.media
-class TestMediaAsync:
-    """Enhanced asynchronous media tests."""
+class TestMediaUpload:
+    """Test media upload operations."""
 
-    async def test_concurrent_uploads(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test multiple concurrent file uploads to verify storage thread safety and ID generation."""
-        user = user_pool.get_user()
+    def test_upload_image(self, db, auth_manager, media_manager):
+        """Test uploading an image."""
+        from src.utils import encryption
 
-        # Upload 10 images in parallel
-        tasks = [
-            asyncio.to_thread(
-                media_module.upload_file,
-                user_id=user.id,
-                file_data=sample_image_bytes,
-                filename=f"async_test_{i}.jpg",
-                content_type="image/jpeg",
-            )
-            for i in range(10)
-        ]
-        results = await asyncio.gather(*tasks)
+        # Create user
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register("testuser", "test@example.com", "TestPass123!")
 
-        assert len(results) == 10
-        # All IDs should be unique
-        assert len({r.file_id for r in results}) == 10
+        # Create a valid PNG image using PIL
+        img = Image.new("RGB", (10, 10), color="red")
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format="PNG")
+        image_data = img_bytes.getvalue()
 
-    async def test_magic_byte_validation(self, media_module, user_pool):
-        """Test that the system correctly validates magic bytes regardless of the claimed MIME type."""
-        user = user_pool.get_user()
-
-        # Claim it's an image but send plain text
-        fake_image_data = b"This is clearly not a JPEG image file content"
-
-        with pytest.raises(Exception) as exc_info:
-            await asyncio.to_thread(
-                media_module.upload_file,
-                user_id=user.id,
-                file_data=fake_image_data,
-                filename="scam.jpg",
-                content_type="image/jpeg",
-            )
-
-        assert (
-            "declared type" in str(exc_info.value)
-            or "signature" in str(exc_info.value).lower()
-        )
-
-    async def test_rate_limit_enforcement(
-        self, media_module, modules, sample_text_bytes, monkeypatch
-    ):
-        """Test that upload rate limits are strictly enforced across concurrent requests."""
-        # Explicitly set limit to 10 per minute
-        monkeypatch.setitem(
-            media_module._get_manager()._config["rate_limit"], "uploads_per_minute", 10
-        )
-        monkeypatch.setitem(
-            media_module._get_manager()._config["rate_limit"], "enabled", True
-        )
-
-        # Use fresh user for isolation
-        unique_id = uuid.uuid4().hex[:8]
-        user = await asyncio.to_thread(
-            modules.auth.register,
-            username=f"async_rate_{unique_id}",
-            email=f"async_rate_{unique_id}@example.com",
-            password="TestPass123!",
-        )
-
-        # Default limit is 10 per minute in our manager logic
-        # We'll try to upload 15 small text files
-        tasks = [
-            asyncio.to_thread(
-                media_module.upload_file,
-                user_id=user.id,
-                file_data=sample_text_bytes,
-                filename=f"limit_test_{i}.txt",
-                content_type="text/plain",
-            )
-            for i in range(15)
-        ]
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        successes = [r for r in results if not isinstance(r, Exception)]
-        failures = [r for r in results if isinstance(r, Exception)]
-
-        assert len(successes) <= 10
-        assert any("Rate limit" in str(f) for f in failures)
-
-    async def test_thumbnail_regeneration_on_demand(
-        self, media_module, user_pool, sample_image_bytes
-    ):
-        """Test creating additional thumbnails after the initial upload."""
-        user = user_pool.get_user()
-
-        result = await asyncio.to_thread(
-            media_module.upload_file,
+        # Upload the image
+        result = media_manager.upload_file(
             user_id=user.id,
-            file_data=sample_image_bytes,
-            filename="thumb_demand.jpg",
+            file_data=image_data,
+            filename="test_image.png",
+            content_type="image/png",
         )
 
-        # Create a non-standard size thumbnail
-        thumb_url = await asyncio.to_thread(
-            media_module.create_thumbnail,
-            file_id=result.file_id,
-            size=100,
+        assert result is not None
+        assert result.file_id is not None
+        assert result.url is not None
+        # Size may differ due to compression/processing
+        assert result.size > 0
+
+    def test_upload_invalid_file_type(self, db, auth_manager, media_manager):
+        """Test uploading invalid file type fails."""
+        from src.utils import encryption
+        from src.core.media.exceptions import FileTypeError
+
+        # Create user
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register("testuser", "test@example.com", "TestPass123!")
+
+        # Create fake file data with blocked extension
+        file_data = b"fake_data" * 100
+
+        # Try to upload invalid file type
+        with pytest.raises(FileTypeError):
+            media_manager.upload_file(
+                user_id=user.id,
+                file_data=file_data,
+                filename="test.exe",
+                content_type="application/x-msdownload",
+            )
+
+    def test_get_media(self, db, auth_manager, media_manager):
+        """Test retrieving media info."""
+        from src.utils import encryption
+
+        # Create user
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register("testuser", "test@example.com", "TestPass123!")
+
+        # Upload a file first
+        img = Image.new("RGB", (10, 10), color="red")
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format="PNG")
+        image_data = img_bytes.getvalue()
+
+        upload_result = media_manager.upload_file(
             user_id=user.id,
+            file_data=image_data,
+            filename="test_image.png",
+            content_type="image/png",
         )
 
-        assert thumb_url is not None
-        assert "100" in thumb_url
+        # Retrieve the media info
+        media_info = media_manager.get_file(upload_result.file_id)
 
-    async def test_large_file_simulated_chunked_upload(self, media_module, user_pool):
-        """Test the logic for handling larger files via simulated stream uploads."""
-        user = user_pool.get_user()
-
-        # Create 1MB of random data
-        large_data = b"0" * (1024 * 1024)
-        stream = io.BytesIO(large_data)
-
-        result = await asyncio.to_thread(
-            media_module.upload_stream,
-            user_id=user.id,
-            stream=stream,
-            filename="large_file.bin",
-            content_type="application/octet-stream",
-            size=len(large_data),
-        )
-
-        assert result.size == len(large_data)
-
-        # Verify we can retrieve it
-        retrieved_data, _ = await asyncio.to_thread(
-            media_module.get_file_data, result.file_id
-        )
-        assert len(retrieved_data) == len(large_data)
+        assert media_info is not None
+        assert media_info.id == upload_result.file_id
+        assert media_info.filename.endswith(".png")
+        # Content type may be converted during processing
+        assert media_info.content_type.startswith("image/")

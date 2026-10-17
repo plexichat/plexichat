@@ -10,8 +10,6 @@ This module provides reusable fixtures for all tests:
 """
 
 from .config import get_test_config, TEST_PASSWORD
-from .database import DatabaseManager
-from .modules import ModuleRegistry
 from .security import (
     XSSPayloads,
     SQLInjectionPayloads,
@@ -27,8 +25,6 @@ from .security import (
 __all__ = [
     "get_test_config",
     "TEST_PASSWORD",
-    "DatabaseManager",
-    "ModuleRegistry",
     "XSSPayloads",
     "SQLInjectionPayloads",
     "MalformedInputs",

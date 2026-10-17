@@ -10,11 +10,21 @@ Supported backends:
 - janus: REST API adapter for Janus Gateway
 """
 
-from .base import SFUAdapter, SFUTransport, SFUProducer, SFUConsumer, RoomInfo
+from .base import (
+    SFUAdapter,
+    SFUTransport,
+    SFUProducer,
+    SFUConsumer,
+    RoomInfo,
+    AcousticDefenseConfig,
+)
 from .aiortc_adapter import AiortcAdapter
 from .mediasoup import MediasoupAdapter
 from .mediasoup_ws import MediasoupWSAdapter
 from .janus import JanusAdapter
+from .acoustic_defense import (
+    AudioProcessingTrack,
+)
 
 __all__ = [
     "SFUAdapter",
@@ -22,6 +32,8 @@ __all__ = [
     "SFUProducer",
     "SFUConsumer",
     "RoomInfo",
+    "AcousticDefenseConfig",
+    "AudioProcessingTrack",
     "AiortcAdapter",
     "MediasoupAdapter",
     "MediasoupWSAdapter",
@@ -46,29 +58,35 @@ def create_adapter(backend: str, **kwargs) -> SFUAdapter:
             - origin: Origin header for CORS (mediasoup-ws)
             - timeout: Request timeout in seconds
             - ice_servers: List of STUN/TURN server URLs (aiortc)
+            - acoustic_defense: AcousticDefenseConfig instance
 
     Returns:
         SFUAdapter instance
     """
+    acoustic_defense = kwargs.get("acoustic_defense")
     if backend == "aiortc":
         return AiortcAdapter(
             ice_servers=kwargs.get("ice_servers"),
+            acoustic_defense=acoustic_defense,
         )
     elif backend == "mediasoup-ws":
         return MediasoupWSAdapter(
             ws_url=kwargs.get("ws_url", kwargs.get("api_url", "wss://localhost:4443")),
             timeout=kwargs.get("timeout", 10),
             origin=kwargs.get("origin", "https://localhost"),
+            acoustic_defense=acoustic_defense,
         )
     elif backend == "mediasoup":
         return MediasoupAdapter(
             api_url=kwargs.get("api_url", "http://localhost:3000"),
             timeout=kwargs.get("timeout", 10),
+            acoustic_defense=acoustic_defense,
         )
     elif backend == "janus":
         return JanusAdapter(
             api_url=kwargs.get("api_url", "http://localhost:8088/janus"),
             timeout=kwargs.get("timeout", 10),
+            acoustic_defense=acoustic_defense,
         )
     else:
         raise ValueError(

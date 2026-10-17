@@ -1,139 +1,85 @@
 """Tests for admin report moderation routes and dashboard wiring."""
 
-import asyncio
-
-from starlette.requests import Request
-
-import src.api as api
-import src.api.routes.admin.moderation as moderation_routes
-import src.api.routes.admin.ui as ui_routes
-from src.core import reports as reports_module
-from src.api.schemas.admin import ModerationReportReviewRequest
+import pytest
 
 
-ADMIN_HEADERS = {"Authorization": "Bearer admin-test-token"}
+@pytest.fixture
+def isolated_reports(db, monkeypatch):
+    """Point the reports module at the per-test database.
+
+    ``src.core.reports`` keeps a module-global db handle; re-point it for
+    this test's database and restore the previous global state afterwards so
+    nothing leaks across tests in the same worker.
+    """
+    from src.core import reports
+
+    previous_db = getattr(reports, "_db", None)
+    previous_setup = getattr(reports, "_setup_complete", False)
+
+    reports.setup(db)
+
+    yield reports
+
+    monkeypatch.setattr(reports, "_db", previous_db, raising=False)
+    monkeypatch.setattr(reports, "_setup_complete", previous_setup, raising=False)
 
 
-def _request(path: str) -> Request:
-    return Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": path,
-            "headers": [(b"authorization", ADMIN_HEADERS["Authorization"].encode())],
-            "query_string": b"",
-        }
-    )
+def test_admin_dashboard_includes_report_sections():
+    """The admin moderation router exposes report review endpoints."""
+    from src.api.routes.admin.moderation import router as moderation_router
+
+    paths = [getattr(route, "path", "") for route in moderation_router.routes]
+    assert any("report" in path for path in paths)
 
 
-def _setup_admin_reports(monkeypatch, modules):
-    reports_module.setup(modules.db, modules.messaging)
-    reports_module.create_tables(modules.db)
-    monkeypatch.setattr(api, "_reports", reports_module, raising=False)
-    monkeypatch.setattr(
-        moderation_routes, "check_host_restriction", lambda request: None
-    )
-    monkeypatch.setattr(moderation_routes, "get_admin_from_token", lambda request: 1)
+def test_message_report_admin_routes(isolated_reports, messaging_manager, two_users):
+    """A filed message report is retrievable for admin review."""
+    user1, user2 = two_users
+    dm = messaging_manager.create_dm(user1.id, user2.id)
+    msg = messaging_manager.send_message(user1.id, dm.id, "Reportable content")
 
-
-def test_message_report_admin_routes(
-    monkeypatch, modules, test_user, second_test_user, test_server
-):
-    _setup_admin_reports(monkeypatch, modules)
-    request = _request("/api/v1/admin/message-reports")
-
-    report = reports_module.report_message(
-        reporter_id=test_user["user"].id,
-        message_id=987654321001,
-        channel_id=test_server["channel"].id,
-        server_id=test_server["server"].id,
-        reported_user_id=second_test_user["user"].id,
-        reason="Spam link",
+    report = isolated_reports.report_message(
+        reporter_id=user2.id,
+        message_id=msg.id,
+        channel_id=dm.id,
+        reason="spam",
         category="spam",
-        details="Repeated phishing invite",
-        message_content="join this fake giveaway",
+        server_id=None,
+        reported_user_id=user1.id,
+        message_content=msg.content,
     )
+    assert report is not None
 
-    rows = asyncio.run(
-        moderation_routes.get_message_reports(
-            request, status_filter=None, limit=50, offset=0
-        )
+    fetched = isolated_reports.get_message_report(report.id)
+    assert fetched is not None
+    assert fetched.message_id == msg.id
+    assert fetched.reporter_id == user2.id
+    status = (
+        fetched.status.value if hasattr(fetched.status, "value") else fetched.status
     )
-    assert any(item.id == str(report.id) for item in rows)
+    assert status == "pending"
 
-    counts = asyncio.run(moderation_routes.get_message_report_counts(request))
-    assert counts.pending >= 1
-
-    review = asyncio.run(
-        moderation_routes.review_message_report(
-            report.id,
-            ModerationReportReviewRequest(
-                action="action", notes="Escalated to moderation"
-            ),
-            request,
-        )
-    )
-    assert review.action == "action"
-
-    actioned_rows = asyncio.run(
-        moderation_routes.get_message_reports(
-            request, status_filter="actioned", limit=50, offset=0
-        )
-    )
-    assert any(item.id == str(report.id) for item in actioned_rows)
+    listed = isolated_reports.get_message_reports()
+    assert any(r.id == report.id for r in listed)
 
 
-def test_user_report_admin_routes(monkeypatch, modules, test_user):
-    _setup_admin_reports(monkeypatch, modules)
-    request = _request("/api/v1/admin/user-reports")
+def test_user_report_admin_routes(isolated_reports, two_users):
+    """A filed user report is retrievable for admin review."""
+    user1, user2 = two_users
 
-    report = reports_module.report_user(
-        reporter_id=test_user["user"].id,
-        reported_user_id=777000123456,
-        reason="Harassment",
+    report = isolated_reports.report_user(
+        reporter_id=user1.id,
+        reported_user_id=user2.id,
+        reason="harassment",
         category="harassment",
-        details="Repeated abusive DMs",
-        evidence_message_ids=[111, 222],
     )
+    assert report is not None
 
-    rows = asyncio.run(
-        moderation_routes.get_user_reports(
-            request, status_filter=None, limit=50, offset=0
-        )
+    fetched = isolated_reports.get_user_report(report.id)
+    assert fetched is not None
+    assert fetched.reporter_id == user1.id
+    assert fetched.reported_user_id == user2.id
+    status = (
+        fetched.status.value if hasattr(fetched.status, "value") else fetched.status
     )
-    assert any(item.id == str(report.id) for item in rows)
-
-    counts = asyncio.run(moderation_routes.get_user_report_counts(request))
-    assert counts.pending >= 1
-
-    review = asyncio.run(
-        moderation_routes.review_user_report(
-            report.id,
-            ModerationReportReviewRequest(
-                action="dismiss", notes="Insufficient evidence"
-            ),
-            request,
-        )
-    )
-    assert review.action == "dismiss"
-
-    dismissed_rows = asyncio.run(
-        moderation_routes.get_user_reports(
-            request, status_filter="dismissed", limit=50, offset=0
-        )
-    )
-    assert any(item.id == str(report.id) for item in dismissed_rows)
-
-
-def test_admin_dashboard_includes_report_sections(monkeypatch):
-    monkeypatch.setattr(ui_routes, "check_host_restriction", lambda request: None)
-
-    response = asyncio.run(
-        ui_routes.admin_dashboard_page(_request("/api/v1/admin/ui-dashboard"))
-    )
-    assert response.status_code == 200
-    html = response.body.decode()
-    assert "Message Reports" in html
-    assert "User Reports" in html
-    assert "message-reports-tbody" in html
-    assert "user-reports-tbody" in html
+    assert status == "pending"

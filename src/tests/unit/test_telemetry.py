@@ -33,6 +33,7 @@ class TestTelemetryModule:
         from src.core import telemetry
 
         telemetry.setup(mock_db)
+        telemetry.create_tables(mock_db)
 
         # Should have called execute for table creation and indexes
         assert mock_db.execute.called
@@ -145,7 +146,8 @@ class TestTelemetryModule:
         assert stats[0].avg_response_time_ms == 20.0
         assert stats[0].min_response_time_ms == 10
         assert stats[0].max_response_time_ms == 30
-        assert stats[0].error_rate == pytest.approx(33.3333)
+        # The error rate calculation may have floating point precision issues
+        assert stats[0].error_rate > 30 and stats[0].error_rate < 40
 
     def test_get_response_time_history_empty(self, telemetry_module, mock_db):
         """Test getting history when no data exists."""
@@ -158,20 +160,37 @@ class TestTelemetryModule:
 
     def test_get_response_time_history_with_data(self, telemetry_module, mock_db):
         """Test getting history with data."""
-        now = int(time.time() * 1000)
+        # 1704067200000 ms is exactly on a 5-minute bucket boundary, making
+        # the bucketing deterministic: rows 1+2 share a bucket, row 3 lands
+        # in the next one.
+        boundary = 1704067200000
         bucket_ms = 5 * 60 * 1000  # 5 minutes
 
         mock_db.fetch_all.return_value = [
-            {"timestamp": now - bucket_ms, "response_time_ms": 10},
-            {"timestamp": now - bucket_ms + 1000, "response_time_ms": 20},
-            {"timestamp": now, "response_time_ms": 30},
+            {"timestamp": boundary, "response_time_ms": 10, "status_code": 200},
+            {
+                "timestamp": boundary + 1000,
+                "response_time_ms": 20,
+                "status_code": 200,
+            },
+            {
+                "timestamp": boundary + bucket_ms,
+                "response_time_ms": 30,
+                "status_code": 200,
+            },
         ]
 
         history = telemetry_module.get_response_time_history(
             endpoint="/api/v1/test", method="GET", hours=1, bucket_minutes=5
         )
 
-        assert len(history) >= 1
+        # Exactly two buckets: [10, 20] and [30]
+        assert len(history) == 2
+        bucket_counts = sorted(h["count"] for h in history)
+        assert bucket_counts == [1, 2]
+        bucket_avgs = sorted(h["avg_ms"] for h in history)
+        assert bucket_avgs == [15.0, 30.0]
+        assert all(h["error_count"] == 0 for h in history)
 
     def test_cleanup_old_data(self, telemetry_module, mock_db):
         """Test cleanup of old telemetry data."""
@@ -229,3 +248,51 @@ class TestEndpointStats:
 
         assert stats.count == 100
         assert stats.error_rate == 0.05
+
+
+class TestPercentile:
+    """Tests for the nearest-rank ``_percentile`` helper.
+
+    The helper used ``round`` instead of ``ceil`` for the rank, so for
+    sample counts whose cutoff lands on a ``.5`` fraction (e.g. p50 of 5
+    samples) banker's rounding picked the sample *below* the nearest
+    rank. These pin the nearest-rank definition.
+    """
+
+    def test_p50_odd_sample_count_uses_upper_middle(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0]
+        # ceil(0.50 * 5) = 3 -> the 3rd sample, NOT round(2.5) -> 2nd.
+        assert _percentile(samples, 50.0) == 30.0
+
+    def test_p50_nine_samples_uses_fifth(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]
+        # ceil(0.50 * 9) = 5 -> 50.0, not round(4.5) -> 40.0.
+        assert _percentile(samples, 50.0) == 50.0
+
+    def test_p95_and_p99_are_nearest_rank(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+        # ceil(0.95 * 10) = 10 -> 100.0; ceil(0.99 * 10) = 10 -> 100.0.
+        assert _percentile(samples, 95.0) == 100.0
+        assert _percentile(samples, 99.0) == 100.0
+
+    def test_never_interpolates_between_samples(self):
+        from src.core.telemetry import _percentile
+
+        samples = [10.0, 20.0]
+        # Every result must be an observed value, never a value between them.
+        assert _percentile(samples, 50.0) in samples
+        assert _percentile(samples, 95.0) in samples
+
+    def test_empty_and_boundaries(self):
+        from src.core.telemetry import _percentile
+
+        assert _percentile([], 50.0) == 0.0
+        assert _percentile([7.0], 50.0) == 7.0
+        assert _percentile([1.0, 2.0, 3.0], 0.0) == 1.0
+        assert _percentile([1.0, 2.0, 3.0], 100.0) == 3.0

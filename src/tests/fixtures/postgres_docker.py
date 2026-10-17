@@ -103,18 +103,21 @@ class PostgresDockerManager:
             True if successful, False otherwise
         """
         if not self.use_docker:
-            logger.info("Docker disabled - assuming local PostgreSQL is available")
-            return self._check_local_postgres()
+            logger.info("Docker disabled - expecting an already-running PostgreSQL")
+            return self._check_local_postgres(wait=True)
 
         try:
             # Try testcontainers first
             return self._start_with_testcontainers()
-        except ImportError:
-            logger.debug("testcontainers not available, trying docker SDK")
+        except Exception as e:  # any startup failure degrades to the next backend
+            logger.debug(f"testcontainers unavailable ({e}), trying docker SDK")
             try:
                 return self._start_with_docker_sdk()
-            except ImportError:
-                logger.warning("Neither testcontainers nor docker SDK available")
+            except Exception as e2:
+                logger.warning(
+                    f"Neither testcontainers nor docker SDK usable "
+                    f"({e2}); falling back to local PostgreSQL"
+                )
                 return self._check_local_postgres()
         except Exception as e:
             logger.error(f"Failed to start Docker container: {e}")
@@ -209,32 +212,47 @@ class PostgresDockerManager:
             logger.error(f"docker SDK startup failed: {e}")
             raise
 
-    def _check_local_postgres(self) -> bool:
-        """Check if local PostgreSQL is available.
+    def _check_local_postgres(self, wait: bool = False) -> bool:
+        """Check whether an already-running PostgreSQL is reachable.
+
+        ``wait`` is set only when the caller explicitly asked to attach to a
+        server instead of spawning one (``USE_DOCKER=false``). That is the CI
+        case, where the *service* container is still running initdb when the
+        job starts: a one-shot probe intermittently reported "not available"
+        and the Postgres suites skipped -- going green without testing
+        anything. The default path does not wait, so a developer without
+        Docker does not pay 30s to learn there is no backend.
 
         Returns:
             True if PostgreSQL is reachable, False otherwise
         """
+        logger.info(f"Checking local PostgreSQL at {self.host}:{self.port}")
         try:
-            import psycopg2
-
-            logger.info(f"Checking local PostgreSQL at {self.host}:{self.port}")
-
-            conn = psycopg2.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                database="postgres",
-                connect_timeout=5,
-            )
-            conn.close()
-
+            if wait:
+                self._wait_for_postgres(
+                    timeout=int(os.getenv("POSTGRES_WAIT_TIMEOUT", "30"))
+                )
+            else:
+                self._probe_postgres()
             logger.info("Local PostgreSQL is available")
             return True
         except Exception as e:
             logger.error(f"Local PostgreSQL check failed: {e}")
             return False
+
+    def _probe_postgres(self) -> None:
+        """Connect once, or raise."""
+        import pg8000.dbapi
+
+        conn = pg8000.dbapi.connect(
+            host=self.host,
+            port=self.port,
+            user=self.user,
+            password=self.password,
+            database="postgres",
+            timeout=5,
+        )
+        conn.close()
 
     def _wait_for_postgres(self, timeout: int = 30) -> None:
         """Wait for PostgreSQL to be ready for connections.
@@ -245,22 +263,12 @@ class PostgresDockerManager:
         Raises:
             TimeoutError if PostgreSQL doesn't become available
         """
-        import psycopg2
-
         start_time = time.time()
         last_error = None
 
         while time.time() - start_time < timeout:
             try:
-                conn = psycopg2.connect(
-                    host=self.host,
-                    port=self.port,
-                    user=self.user,
-                    password=self.password,
-                    database="postgres",
-                    connect_timeout=5,
-                )
-                conn.close()
+                self._probe_postgres()
                 logger.info("PostgreSQL is ready for connections")
                 return
             except Exception as e:
@@ -380,8 +388,20 @@ def postgres_db(postgres_config):
     # Apply configuration
     config.set("database", postgres_config)
 
-    # Create and connect database
+    # ``Database`` is a process-wide singleton whose engine is bound to
+    # whatever configuration the first construction saw. A test that ran
+    # earlier and used the SQLite ``db`` fixture has already bound it to
+    # SQLite, and that stale instance then rejects the PostgreSQL-only DDL
+    # below ("near \"CASCADE\": syntax error", "no such table: pg_tables")
+    # because it is still talking to the wrong backend. Rebuild the singleton
+    # whenever it is not already PostgreSQL-bound -- the mirror image of what
+    # the ``db`` fixture does when it finds a postgres-bound instance.
     db = Database()
+    if getattr(db, "type", "sqlite") != "postgres":
+        Database.reset()
+        db = Database()
+
+    # Create and connect database
     try:
         db.connect()
     except Exception as e:

@@ -8,10 +8,12 @@ from .base import BaseAIAdapter
 from .openai import OpenAIAdapter
 from .perspective import PerspectiveAdapter
 from .custom import CustomAdapter
+from .shieldstral import ShieldstralAdapter
 
 __all__ = [
     "BaseAIAdapter",
     "OpenAIAdapter",
     "PerspectiveAdapter",
     "CustomAdapter",
+    "ShieldstralAdapter",
 ]

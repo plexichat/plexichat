@@ -1,6 +1,40 @@
 from fastapi import Request
 from typing import Optional, Union, Dict, Any, List
+import ipaddress
 import utils.config as config
+
+
+def _ip_matches_trusted(ip_str: str, trusted_proxies: List[str]) -> bool:
+    """
+    Check if an IP matches a trusted proxy entry (supports CIDR and exact match).
+
+    Args:
+        ip_str: IP address to check (e.g. "192.168.1.1")
+        trusted_proxies: List of trusted proxy entries (IPs or CIDR ranges)
+
+    Returns:
+        True if the IP matches any trusted proxy entry
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        for entry in trusted_proxies:
+            entry = entry.strip()
+            if "/" in entry:
+                try:
+                    network = ipaddress.ip_network(entry, strict=False)
+                    if ip in network:
+                        return True
+                except ValueError:
+                    continue
+            else:
+                try:
+                    if ip == ipaddress.ip_address(entry):
+                        return True
+                except ValueError:
+                    continue
+    except ValueError:
+        pass
+    return False
 
 
 def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
@@ -8,11 +42,12 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     Extract IP address from a FastAPI Request or ASGI scope.
     Considering trusted proxies configuration.
 
+    Supports CIDR notation for trusted proxies (e.g. "10.0.0.0/8", "192.168.0.0/16").
     Consolidated logic for consistent IP extraction across the application.
     Hardened to prevent X-Forwarded-For spoofing.
     """
     if isinstance(request, Request):
-        scope = request.scope  # type: ignore
+        scope = request.scope
     else:
         scope = request
 
@@ -38,12 +73,37 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
     except Exception:
         trusted_proxies = []
 
-    # Only trust X-Forwarded-For if the direct peer is a trusted proxy.
-    if direct_ip and direct_ip in trusted_proxies:
+    # Only consider X-Forwarded-For if the direct peer is a trusted proxy.
+    if direct_ip and _ip_matches_trusted(direct_ip, trusted_proxies):
         forwarded = get_header("X-Forwarded-For")
         if forwarded:
             parts = [p.strip() for p in forwarded.split(",") if p.strip()]
             if parts:
-                return parts[0]
+                # SECURITY: rightmost-untrusted-hop selection. The LEFTMOST
+                # XFF entry is fully attacker-controlled (any downstream
+                # client may inject "X-Forwarded-For: <fake>" and every hop
+                # appends to the RIGHT). Walking from the right and skipping
+                # entries that match configured trusted proxy CIDRs yields
+                # the first address we did NOT receive from a trusted proxy
+                # — i.e. the address our own infrastructure observed. If
+                # every entry is a trusted proxy (or parsing fails) we fail
+                # safe to the direct peer address.
+                for candidate in reversed(parts):
+                    host = candidate
+                    # Strip an optional port or bracketed IPv6 suffix form.
+                    if host.startswith("[") and "]" in host:
+                        host = host[1 : host.index("]")]
+                    elif host.count(":") == 1:
+                        host = host.rsplit(":", 1)[0]
+                    try:
+                        ipaddress.ip_address(host)
+                    except ValueError:
+                        # Malformed entry: attacker-controlled garbage —
+                        # ignore it and keep walking left.
+                        continue
+                    if not _ip_matches_trusted(host, trusted_proxies):
+                        return host
+                # All reported hops were trusted proxies: fall back to peer.
+                return direct_ip
 
     return direct_ip

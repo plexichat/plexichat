@@ -8,17 +8,88 @@ import hashlib
 import os
 import logging
 import importlib.util
+import inspect
 import re
 from typing import List, Tuple, Optional, Iterable
 
 logger = logging.getLogger(__name__)
+
+# These versions were consolidated into migration 000. Their history records
+# remain valid evidence of an older installation and must not make integrity
+# checks fail merely because the retired source files are intentionally gone.
+# Canonical home is validator.py; manager.py re-exports the name.
+RETIRED_MIGRATIONS = {"002", "003", "004"}
+
+_METADATA_RE = re.compile(r"MIGRATION_METADATA:\s*\n(\{.*?\})", re.DOTALL)
+
+
+def migration_metadata_from_docstring(docstring: Optional[str]) -> dict:
+    """Parse the MIGRATION_METADATA JSON block from a migration docstring."""
+    if not docstring:
+        return {}
+    match = _METADATA_RE.search(docstring)
+    if not match:
+        return {}
+    try:
+        import json
+
+        metadata = json.loads(match.group(1))
+        return metadata if isinstance(metadata, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def migration_is_irreversible(module) -> bool:
+    """True when a loaded migration module declares itself irreversible."""
+    return bool(
+        migration_metadata_from_docstring(getattr(module, "__doc__", None)).get(
+            "irreversible"
+        )
+    )
+
+
+def warn_stale_pycache(migrations_dir: str) -> None:
+    """Warn about compiled artifacts of retired migrations.
+
+    Deleted migration sources can leave stale ``__pycache__`` entries behind;
+    they are never loaded by this loader (only explicit ``.py`` paths are),
+    but on upgraded databases their history rows still exist. Operators
+    should remove them to avoid confusion:
+    ``rm -rf src/core/migrations/migrations/__pycache__``
+    """
+    try:
+        cache_dir = os.path.join(migrations_dir, "__pycache__")
+        if not os.path.isdir(cache_dir):
+            return
+        stale = [
+            name
+            for name in os.listdir(cache_dir)
+            if name.endswith(".pyc")
+            and name.split("_", 1)[0][:3] in RETIRED_MIGRATIONS
+            and any(name.startswith(v + "_") for v in RETIRED_MIGRATIONS)
+        ]
+        if stale:
+            logger.warning(
+                "Stale compiled artifacts for retired migrations found in %s (%s). "
+                "They are ignored by the migration loader but should be cleaned "
+                "up: delete the __pycache__ directory.",
+                cache_dir,
+                ", ".join(sorted(stale)),
+            )
+    except Exception as e:  # pragma: no cover - diagnostics only
+        logger.debug(f"pycache staleness check failed: {e}")
 
 
 def validate_migration_order(
     pending_versions: List[str], applied_versions: List[str]
 ) -> bool:
     """
-    Validate that migration versions have no gaps.
+    Validate that pending migration versions form a valid sequence.
+
+    Handles complex migration states where versions may have been applied
+    non-sequentially (e.g., 038 applied while 037 is still pending).
+    A gap in pending versions is only treated as an error if the missing
+    version is NEITHER pending NOR already applied.
 
     Args:
         pending_versions: List of pending migration versions to apply
@@ -28,29 +99,94 @@ def validate_migration_order(
         True if order is valid
 
     Raises:
-        ValueError: If there are gaps in version sequence
+        ValueError: If there is a genuine gap (a version is neither
+                    pending nor applied)
     """
     if not pending_versions:
         return True
 
-    all_versions = sorted(applied_versions + pending_versions)
+    # Extract numeric prefixes from version strings
+    def _extract_numeric(v: str) -> Optional[int]:
+        match = re.match(r"^(\d+)", v)
+        if match:
+            return int(match.group(1))
+        return None
 
-    # Check for gaps in numbering
-    for i in range(1, len(all_versions)):
-        prev_num = int(all_versions[i - 1].lstrip("0") or "0")
-        curr_num = int(all_versions[i].lstrip("0") or "0")
+    applied_nums = sorted(
+        n for n in (_extract_numeric(v) for v in applied_versions) if n is not None
+    )
+    applied_set = set(applied_nums)
+    pending_nums = sorted(
+        n for n in (_extract_numeric(v) for v in pending_versions) if n is not None
+    )
 
-        # If we already have gaps in applied versions, we shouldn't necessarily
-        # block applying NEW migrations unless the NEW migrations themselves create a gap
-        # relative to the highest applied migration.
+    if not pending_nums:
+        return True
 
-        if curr_num != prev_num + 1:
-            msg = (
-                "Gap in migration version sequence: missing version between "
-                f"{all_versions[i - 1]} and {all_versions[i]}"
-            )
-            logger.error(msg)
-            raise ValueError(msg)
+    # Log (but do not block) gaps in already-applied migrations
+    if len(applied_nums) > 1:
+        for i in range(1, len(applied_nums)):
+            if applied_nums[i] != applied_nums[i - 1] + 1:
+                logger.warning(
+                    "Gap in applied migration versions: missing version between "
+                    "%03d and %03d. This is informational only and will not "
+                    "block new migrations.",
+                    applied_nums[i - 1],
+                    applied_nums[i],
+                )
+
+    # Check pending versions for gaps. A gap is only an error if the missing
+    # version(s) are NEITHER pending NOR already applied.
+    #
+    # Examples of VALID states:
+    #   - pending=[037, 039], applied={038}  -> 038 fills the gap
+    #   - pending=[039],     applied={035}    -> nothing missing between
+    #   - pending=[037, 038, 039]             -> fully sequential, no gap
+    #
+    # Examples of INVALID states:
+    #   - pending=[037, 039], applied={}      -> 038 is truly missing
+    #   - pending=[035, 040], applied={}      -> 036-039 are truly missing
+    for i in range(1, len(pending_nums)):
+        if pending_nums[i] != pending_nums[i - 1] + 1:
+            missing = set(range(pending_nums[i - 1] + 1, pending_nums[i]))
+            truly_missing = missing - applied_set
+            if truly_missing:
+                msg = (
+                    "Gap in pending migration version sequence: missing version between "
+                    f"{pending_nums[i - 1]:03d} and {pending_nums[i]:03d}. "
+                    f"Neither pending nor applied: {sorted(truly_missing)}"
+                )
+                logger.error(msg)
+                raise ValueError(msg)
+            else:
+                logger.info(
+                    "Gap between pending migrations %03d and %03d is filled by "
+                    "already-applied version(s): %s. Continuing.",
+                    pending_nums[i - 1],
+                    pending_nums[i],
+                    sorted(missing),
+                )
+
+    # Log when first pending version is behind highest applied (common in
+    # skip-and-catch-up scenarios), but don't treat it as a warning.
+    if applied_nums:
+        highest_applied = max(applied_nums)
+        first_pending = pending_nums[0]
+        if first_pending != highest_applied + 1:
+            if first_pending < highest_applied:
+                logger.info(
+                    "First pending migration (%03d) is behind highest applied (%03d). "
+                    "This is expected when migrations were applied non-sequentially.",
+                    first_pending,
+                    highest_applied,
+                )
+            else:
+                logger.info(
+                    "First pending migration (%03d) does not immediately follow "
+                    "highest applied (%03d). Continuing.",
+                    first_pending,
+                    highest_applied,
+                )
 
     return True
 
@@ -71,6 +207,8 @@ def get_migration_files(migrations_dir: str) -> List[Tuple[str, str]]:
     if not os.path.isdir(migrations_dir):
         logger.error(f"Migrations directory not found: {migrations_dir}")
         raise NotADirectoryError(f"Migrations directory not found: {migrations_dir}")
+
+    warn_stale_pycache(migrations_dir)
 
     migrations = []
 
@@ -142,7 +280,43 @@ def validate_migration_file(file_path: str) -> bool:
         raise ValueError(f"Migration file {file_path} missing required up function")
 
     if not hasattr(module, "down"):
-        raise ValueError(f"Migration file {file_path} missing required down function")
+        # Irreversible migrations are documented as down-less: they must NOT
+        # ship a fake/destructive no-op rollback. Requiring down() here would
+        # contradict that contract, so the documented metadata is validated
+        # instead.
+        if migration_is_irreversible(module):
+            logger.info(
+                f"Migration file {file_path} has no down() - allowed because "
+                "metadata marks it irreversible"
+            )
+        else:
+            raise ValueError(
+                f"Migration file {file_path} missing required down function "
+                "(declare MIGRATION_METADATA with irreversible=true to opt out)"
+            )
+
+    # M5: screen the forward migration's SQL before it can ever execute.
+    # validate_sql_safety alone is dead code unless something on the apply
+    # path invokes it, so validation fails closed here when up() contains
+    # destructive statements (DROP TABLE, TRUNCATE, DELETE without WHERE,
+    # DROP DATABASE/SCHEMA). Only up() is screened strictly: down()
+    # legitimately reverses DDL (e.g. dropping a table created by up()).
+    try:
+        up_source = inspect.getsource(module.up)
+    except Exception as e:
+        raise ValueError(
+            f"Migration file {file_path} up() SQL safety screening failed: {e}"
+        )
+    try:
+        _, up_warnings = validate_migration_up_sql(up_source)
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(
+            f"Migration file {file_path} up() SQL safety screening failed: {e}"
+        )
+    for warning in up_warnings:
+        logger.warning(f"Migration file {file_path} up(): {warning}")
 
     return True
 
@@ -183,7 +357,7 @@ _DANGEROUS_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
     (re.compile(r"\bDROP\s+DATABASE\b", re.IGNORECASE), "DROP DATABASE"),
     (re.compile(r"\bDROP\s+SCHEMA\b", re.IGNORECASE), "DROP SCHEMA"),
     (
-        re.compile(r"\bTRUNCATE\s+migrations_history\b", re.IGNORECASE),
+        re.compile(r"\bTRUNCATE\s+(?:TABLE\s+)?migrations_history\b", re.IGNORECASE),
         "TRUNCATE migrations_history",
     ),
 )
@@ -218,5 +392,66 @@ def validate_sql_safety(sql: str) -> tuple[bool, list[str]]:
     for pattern, label in _WARNING_SQL_PATTERNS:
         if pattern.search(normalized_sql):
             warnings.append(f"Potentially destructive SQL detected: {label}")
+
+    return True, warnings
+
+
+# M5: forward migrations (up()) must never silently destroy data. These
+# patterns are hard blocks on the up() path only. down() is intentionally
+# excluded: rollbacks legitimately reverse DDL (e.g. dropping a table that
+# up() created), and the 000 rollback carries its own documented
+# MIGRATIONS_ALLOW_DESTRUCTIVE_ROLLBACK guard.
+_FORWARD_DANGEROUS_SQL_PATTERNS: Iterable[tuple[re.Pattern[str], str]] = (
+    (re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE), "DROP TABLE"),
+    (re.compile(r"\bTRUNCATE\b", re.IGNORECASE), "TRUNCATE"),
+)
+
+_DELETE_FROM_RE = re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE)
+_WHERE_RE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+_LINE_COMMENT_RE = re.compile(r"--.*?$", re.MULTILINE)
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _contains_bare_delete(sql: str) -> bool:
+    """True when any statement DELETEs without a WHERE clause."""
+    stripped = _BLOCK_COMMENT_RE.sub(" ", _LINE_COMMENT_RE.sub(" ", sql))
+    for statement in stripped.split(";"):
+        if _DELETE_FROM_RE.search(statement) and not _WHERE_RE.search(statement):
+            return True
+    return False
+
+
+def validate_migration_up_sql(sql: str) -> tuple[bool, list[str]]:
+    """
+    Strict SQL safety gate for a forward migration (up()).
+
+    Blocks destructive statements that must never run implicitly against
+    production data: DROP TABLE, TRUNCATE, DELETE without WHERE, plus
+    everything validate_sql_safety already rejects (DROP DATABASE/SCHEMA,
+    TRUNCATE of the migrations history table).
+
+    Args:
+        sql: Source text of the migration's up() function
+
+    Returns:
+        (is_safe, warnings) for non-blocking observations (e.g. ALTER TABLE)
+
+    Raises:
+        ValueError: If destructive SQL is detected
+    """
+    _, warnings = validate_sql_safety(sql)
+
+    for pattern, label in _FORWARD_DANGEROUS_SQL_PATTERNS:
+        if pattern.search(sql):
+            raise ValueError(
+                f"Dangerous SQL detected in migration up(): {label} - "
+                "forward migrations must not drop or truncate tables"
+            )
+
+    if _contains_bare_delete(sql):
+        raise ValueError(
+            "Dangerous SQL detected in migration up(): DELETE without WHERE - "
+            "forward migrations must not delete unscoped rows"
+        )
 
     return True, warnings

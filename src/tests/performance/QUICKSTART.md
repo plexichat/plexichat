@@ -2,10 +2,11 @@
 
 ## Installation
 
-First, ensure you have the test dependencies installed:
+First, ensure you have the test dependencies installed
+(`pytest-benchmark` is test-only, so it lives in the dev lock):
 
 ```bash
-pip install -r requirements-test.txt
+pip install --require-hashes -r requirements-dev.txt
 ```
 
 This includes:
@@ -201,8 +202,7 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
+          pip install --require-hashes -r requirements-dev.txt
       - name: Run performance tests
         run: pytest src/tests/performance/ --benchmark-json=output.json
       - name: Store benchmark result

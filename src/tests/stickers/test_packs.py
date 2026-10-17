@@ -3,6 +3,7 @@ Tests for sticker pack management.
 """
 
 import pytest
+
 import uuid
 from src.core.stickers import (
     PackNotFoundError,
@@ -85,9 +86,9 @@ class TestGetPack:
 
         packs = stickers.get_server_packs(owner.id, server.id)
 
-        assert len(packs) >= 1
-        pack_ids = [p.id for p in packs]
-        assert pack.id in pack_ids
+        # Exactly one pack was created
+        assert len(packs) == 1
+        assert packs[0].id == pack.id
 
 
 class TestDeletePack:

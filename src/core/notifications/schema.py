@@ -4,6 +4,8 @@ Notification database schema - Table definitions for notifications module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Notifications table
@@ -18,8 +20,14 @@ CREATE TABLE IF NOT EXISTS notif_notifications (
     thread_id INTEGER,
     mention_type TEXT NOT NULL DEFAULT 'user',
     content_preview TEXT NOT NULL DEFAULT '',
+    content_preview_encrypted TEXT,
     read INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, message_id),
+    FOREIGN KEY (user_id) REFERENCES auth_users(id),
+    FOREIGN KEY (sender_id) REFERENCES auth_users(id),
+    FOREIGN KEY (message_id) REFERENCES msg_messages(id),
+    FOREIGN KEY (conversation_id) REFERENCES msg_conversations(id)
 );
 
 -- Notifications indexes
@@ -88,7 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_notif_unread_conv ON notif_unread(conversation_id
 
 def create_tables(db):
     """Create all notification tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

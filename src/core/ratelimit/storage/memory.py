@@ -5,7 +5,7 @@ Thread-safe implementation for single-instance deployments.
 
 import threading
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from .base import RateLimitStorage
 
 
@@ -26,6 +26,11 @@ class MemoryStorage(RateLimitStorage):
         self._global_lock = threading.RLock()
         self._cleanup_interval = cleanup_interval
         self._max_buckets = max_buckets
+        # ``_lock_max`` bounds the orphan Lock pool so a long-running
+        # process with heavy churn cannot leak entries indefinitely.
+        # Set to 1.5x bucket limit so legitimate churn gets headroom
+        # before eviction kicks in.
+        self._lock_max = max(2, max_buckets + max_buckets // 2)
         self._last_cleanup = time.monotonic()
 
     def _maybe_cleanup(self) -> None:
@@ -36,7 +41,16 @@ class MemoryStorage(RateLimitStorage):
             self._last_cleanup = now
 
     def _cleanup_expired(self) -> None:
-        """Remove expired buckets."""
+        """Remove expired buckets.
+
+        SECURITY: the cleanup path used to also pop ``self._locks``,
+        which let two concurrently-arriving callers re-create the
+        per-key lock under the false impression they were serialising.
+        We now keep every lock for the lifetime of the backend, but
+        cap ``_locks`` separately using a generation counter so the
+        dict cannot grow without bound. Entries whose keys no longer
+        have a bucket are pruned (no callers we still need to bind).
+        """
         now = time.monotonic()
         expired_keys = []
         with self._global_lock:
@@ -46,7 +60,8 @@ class MemoryStorage(RateLimitStorage):
             for key in expired_keys:
                 self._buckets.pop(key, None)
                 self._ttls.pop(key, None)
-                self._locks.pop(key, None)
+                # Intentional: do NOT pop ``self._locks`` here. See
+                # the docstring for the race-condition rationale.
             if len(self._buckets) > self._max_buckets:
                 oldest_keys = sorted(
                     self._buckets.keys(),
@@ -55,7 +70,45 @@ class MemoryStorage(RateLimitStorage):
                 for key in oldest_keys:
                     self._buckets.pop(key, None)
                     self._ttls.pop(key, None)
-                    self._locks.pop(key, None)
+                    # Same rationale as above.            # Cap the orphan-lock pool. We can safely drop entries
+            # whose keys no longer have a bucket — those locks have
+            # no callers we still need to serialise against.
+            # Snapshot the keys view into a list first so the
+            # subsequent .pop() loop never mutates a live
+            # ``dict.keys()`` view (defensive, belt-and-braces).
+            # ``_global_lock`` already serialises concurrent writers,
+            # but the snapshot is cheap and removes any doubt.
+            # Drops amortise: only ``len(_locks) - _lock_max // 4``
+            # orphans are pruned per pass so a churn spike converges
+            # over several cleanup cycles instead of a single hot
+            # sweep.
+            if len(self._locks) > self._lock_max:
+                orphan_keys = [
+                    k for k in list(self._locks.keys()) if k not in self._buckets
+                ]
+                if orphan_keys:
+                    overflow = max(0, len(self._locks) - self._lock_max)
+                    drop_quota = max(1, overflow // 4 + 1)
+                    for k in orphan_keys[:drop_quota]:
+                        self._locks.pop(k, None)
+
+    def _enforce_cap_locked(self) -> None:
+        """Evict oldest buckets while over ``max_buckets``.
+
+        Caller must hold ``_global_lock``. F8: the cap applies on the WRITE
+        path (not only on periodic cleanup) so a flood of distinct keys can
+        never grow the dict without bound, even if ``cleanup_interval`` is
+        huge.
+        """
+        if len(self._buckets) <= self._max_buckets:
+            return
+        oldest_keys = sorted(
+            self._buckets.keys(),
+            key=lambda k: self._buckets[k].get("last_update", 0),
+        )[: len(self._buckets) - self._max_buckets]
+        for key in oldest_keys:
+            self._buckets.pop(key, None)
+            self._ttls.pop(key, None)
 
     def _get_lock(self, key: str) -> threading.Lock:
         """Get or create lock for a key."""
@@ -65,15 +118,43 @@ class MemoryStorage(RateLimitStorage):
             return self._locks[key]
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
-        """Get bucket state by key."""
+        """Get bucket state by key.
+
+        PER-KEY LOCK: previously held ``self._global_lock`` (a
+        reentrant lock) for the entire read, serialising every rate
+        limit lookup across the process. That made the read path
+        a contention hot-spot under burst traffic. We now hold the
+        per-key lock only long enough to check TTL and snapshot the
+        bucket reference, which is enough because:
+          - ``self._buckets`` / ``self._ttls`` mutation happens only
+            under ``_global_lock`` (cleanup, ``delete_bucket``,
+            etc.), so an atomic ``.get()`` snapshot is consistent;
+          - the per-key lock guarantees no concurrent
+            ``eval_token_bucket`` / ``increment`` is mid-mutation for
+            this same key during the snapshot.
+        Net effect: reads no longer contend with each other
+        process-wide.
+        """
         self._maybe_cleanup()
-        with self._global_lock:
-            if key in self._ttls:
-                if time.monotonic() >= self._ttls[key]:
-                    self._buckets.pop(key, None)
-                    self._ttls.pop(key, None)
-                    return None
-            return self._buckets.get(key)
+        lock = self._get_lock(key)
+        with lock:
+            ttl_time = self._ttls.get(key)
+            if ttl_time is not None and time.monotonic() >= ttl_time:
+                # Eviction happens under the global lock so a
+                # concurrent ``delete_bucket`` from cleanup can't
+                # race against us here.
+                with self._global_lock:
+                    if key in self._ttls and time.monotonic() >= self._ttls[key]:
+                        self._buckets.pop(key, None)
+                        self._ttls.pop(key, None)
+                return None
+            # SECURITY: return a COPY of the bucket state, never the live
+            # internal dict. Callers (e.g. RateLimitManager legacy
+            # read-modify-write paths) treat the result as a private
+            # snapshot; handing out the live reference let them mutate
+            # shared state entirely outside the per-key lock.
+            bucket = self._buckets.get(key)
+            return dict(bucket) if bucket is not None else None
 
     def set_bucket(
         self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
@@ -85,14 +166,25 @@ class MemoryStorage(RateLimitStorage):
                 self._ttls[key] = time.monotonic() + ttl
             elif key in self._ttls:
                 del self._ttls[key]
+            # F8: enforce the bucket cap on the write path.
+            self._enforce_cap_locked()
 
     def delete_bucket(self, key: str) -> bool:
-        """Delete a bucket."""
+        """Delete a bucket.
+
+        SECURITY: do NOT pop ``self._locks[key]`` here. Doing so
+        would let the next concurrent caller re-create the per-key
+        lock under the false impression that fresh state was being
+        protected, while the previous holder is still blocked on the
+        dropped Lock object. The lock stays until the bucket re-uses
+        the same key (which is harmless; both threads will acquire
+        the same Lock).
+        """
         with self._global_lock:
             existed = key in self._buckets
             self._buckets.pop(key, None)
             self._ttls.pop(key, None)
-            self._locks.pop(key, None)
+            # ``self._locks``: preserved on purpose.
             return existed
 
     def get_keys_by_prefix(self, prefix: str) -> List[str]:
@@ -101,21 +193,34 @@ class MemoryStorage(RateLimitStorage):
             return [k for k in self._buckets.keys() if k.startswith(prefix)]
 
     def delete_by_prefix(self, prefix: str) -> int:
-        """Delete all keys matching a prefix."""
+        """Delete all keys matching a prefix.
+
+        SECURITY: see :meth:`delete_bucket` for the rationale on
+        preserving the per-key locks.
+        """
         with self._global_lock:
             keys_to_delete = [k for k in self._buckets.keys() if k.startswith(prefix)]
             for key in keys_to_delete:
                 self._buckets.pop(key, None)
                 self._ttls.pop(key, None)
-                self._locks.pop(key, None)
+                # ``self._locks``: preserved on purpose.
             return len(keys_to_delete)
 
     def clear_all(self) -> None:
-        """Clear all stored buckets."""
+        """Clear all stored buckets.
+
+        SECURITY: ``self._locks`` is preserved across ``clear_all``
+        to match the rationale in :meth:`delete_bucket`. If a thread
+        is mid-acquire on a Lock for an evicted key, the next
+        ``_get_lock`` call MUST hand back the same Lock instance to
+        keep serialisation working. Wiping ``_locks`` here would
+        create a window where two callers race against the same
+        logical key on different Lock objects.
+        """
         with self._global_lock:
             self._buckets.clear()
             self._ttls.clear()
-            self._locks.clear()
+            # ``self._locks``: preserved on purpose.
 
     def increment(self, key: str, field: str, amount: int = 1) -> int:
         """Atomically increment a field in a bucket."""
@@ -174,7 +279,7 @@ class MemoryStorage(RateLimitStorage):
             return original_len - len(lst)
 
     def acquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
-        """Acquire a lock for atomic operations."""
+        """Acquire a lock for external atomic operations."""
         lock = self._get_lock(f"lock:{key}")
         if lock.acquire(timeout=timeout):
             return "locked"
@@ -188,22 +293,70 @@ class MemoryStorage(RateLimitStorage):
         except RuntimeError:
             pass
 
-    def eval_token_bucket(
-        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
-    ) -> tuple:
-        """Atomically evaluate a token bucket."""
+    def update_bucket(
+        self,
+        key: str,
+        mutate_fn: Callable[[Dict[str, Any]], None],
+        ttl: Optional[float] = None,
+    ) -> None:
+        """Read-modify-write a bucket atomically under the per-key lock.
+
+        SECURITY: legacy rate-limit algorithms perform
+        get_bucket()->mutate->set_bucket(). Doing that with separate
+        public calls lets two concurrent requests both read the same
+        snapshot and the later write clobber the earlier one (effective
+        limit bypass). This method holds the SAME per-key lock used by
+        ``eval_token_bucket`` / ``increment`` across the whole
+        read-modify-write and installs a fresh (copy-on-write) state
+        dict atomically, so concurrent mutations of one bucket are
+        serialised and no field is lost.
+        """
         lock = self._get_lock(key)
         with lock:
             now = time.monotonic()
-            bucket = self.get_bucket(key) or {
-                "tokens": float(capacity),
-                "last_update": now,
-            }
+            with self._global_lock:
+                existing = self._buckets.get(key)
+            state: Dict[str, Any] = dict(existing) if existing is not None else {}
 
-            tokens = bucket.get("tokens", float(capacity))
-            last_update = bucket.get("last_update", now)
+            mutate_fn(state)
 
-            # Refill
+            with self._global_lock:
+                self._buckets[key] = state
+                if ttl is not None:
+                    self._ttls[key] = now + ttl
+                elif key in self._ttls:
+                    del self._ttls[key]
+                # F8: bound key growth on the write path.
+                self._enforce_cap_locked()
+
+    def eval_token_bucket(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
+    ) -> tuple:
+        """Atomically evaluate a token bucket with copy-on-write state.
+
+        SECURITY: the previous implementation forwarded through
+        ``self.get_bucket`` (which only briefly holds ``_global_lock``)
+        and ``self.set_bucket`` (which REPLACES the entire state
+        dict). Two concurrent ``increment`` + ``eval_token_bucket``
+        callers could each see / write the *shared* dict reference,
+        so the second writer's ``set_bucket`` clobbered any
+        additional fields the first writer had merged in
+        (lost-update). We now build a fresh state dict under the
+        per-key lock, mutate only the bucket-relevant fields, and
+        install the fresh dict atomically under both locks — no
+        field from outside ``eval_token_bucket`` can be lost even if
+        the bucket is concurrently ``increment``-ed.
+        """
+        lock = self._get_lock(key)
+        with lock:
+            now = time.monotonic()
+            with self._global_lock:
+                existing = self._buckets.get(key)
+            bucket: Dict[str, Any] = dict(existing) if existing is not None else {}
+
+            tokens = float(bucket.get("tokens", float(capacity)))
+            last_update = float(bucket.get("last_update", now))
+
             elapsed = now - last_update
             tokens = min(float(capacity), tokens + elapsed * refill_rate)
 
@@ -215,7 +368,14 @@ class MemoryStorage(RateLimitStorage):
 
             bucket["tokens"] = tokens
             bucket["last_update"] = now
-            self.set_bucket(key, bucket, ttl=ttl)
+            with self._global_lock:
+                self._buckets[key] = bucket
+                if ttl is not None:
+                    self._ttls[key] = now + ttl
+                else:
+                    self._ttls.pop(key, None)
+                # F8: bound key growth on the write path.
+                self._enforce_cap_locked()
 
             remaining = int(tokens)
             reset_after = (cost - tokens) / refill_rate if not allowed else 0.0
@@ -231,3 +391,79 @@ class MemoryStorage(RateLimitStorage):
                 "lock_count": len(self._locks),
                 "max_buckets": self._max_buckets,
             }
+
+    # ------------------------------------------------------------------
+    # Async API
+    # ------------------------------------------------------------------
+    # These deliberately call straight through instead of inheriting the
+    # ``asyncio.to_thread`` defaults, for two reasons:
+    #
+    # 1. CORRECTNESS. acquire_lock/release_lock wrap a ``threading.Lock``,
+    #    and a Lock must be released by the thread that acquired it. Under
+    #    the default offload, the acquire could run on one pool thread and
+    #    the release on another, so ``release`` would raise RuntimeError --
+    #    which acquire_lock's caller swallows -- and the lock would stay
+    #    held forever, deadlocking that key. Pinning both to the caller's
+    #    thread keeps lock ownership intact.
+    #
+    # 2. COST. Everything here is an in-process dict operation. There is no
+    #    I/O to get out of the way, so a thread hop per operation is pure
+    #    overhead on the per-request hot path.
+
+    async def aget_bucket(self, key: str) -> Optional[Dict[str, Any]]:
+        return self.get_bucket(key)
+
+    async def aset_bucket(
+        self, key: str, state: Dict[str, Any], ttl: Optional[float] = None
+    ) -> None:
+        self.set_bucket(key, state, ttl)
+
+    async def adelete_bucket(self, key: str) -> bool:
+        return self.delete_bucket(key)
+
+    async def aget_keys_by_prefix(self, prefix: str) -> List[str]:
+        return self.get_keys_by_prefix(prefix)
+
+    async def adelete_by_prefix(self, prefix: str) -> int:
+        return self.delete_by_prefix(prefix)
+
+    async def aclear_all(self) -> None:
+        self.clear_all()
+
+    async def aincrement(self, key: str, field: str, amount: int = 1) -> int:
+        return self.increment(key, field, amount)
+
+    async def aget_and_set(
+        self, key: str, field: str, value: Any, default: Any = None
+    ) -> Any:
+        return self.get_and_set(key, field, value, default)
+
+    async def aadd_to_list(
+        self, key: str, field: str, value: Any, max_size: int = 1000
+    ) -> int:
+        return self.add_to_list(key, field, value, max_size)
+
+    async def atrim_list(self, key: str, field: str, min_value: Any) -> int:
+        return self.trim_list(key, field, min_value)
+
+    async def aacquire_lock(self, key: str, timeout: float = 1.0) -> Optional[str]:
+        return self.acquire_lock(key, timeout)
+
+    async def arelease_lock(self, key: str, token: Optional[str] = None) -> None:
+        self.release_lock(key, token)
+
+    async def aeval_token_bucket(
+        self, key: str, capacity: int, refill_rate: float, cost: int, ttl: int = 86400
+    ) -> tuple:
+        return self.eval_token_bucket(key, capacity, refill_rate, cost, ttl)
+
+    async def aupdate_bucket(
+        self,
+        key: str,
+        mutate_fn: Callable[[Dict[str, Any]], None],
+        ttl: Optional[float] = None,
+    ) -> None:
+        self.update_bucket(key, mutate_fn, ttl)
+
+    async def aclose(self) -> None:
+        self.close()

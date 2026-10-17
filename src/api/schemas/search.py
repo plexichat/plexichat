@@ -9,10 +9,14 @@ from .messages import MessageResponse
 
 
 class UserSearchResultResponse(BaseModel):
-    """User search result equivalent to UserSearchResult."""
+    """User search result equivalent to UserSearchResult.
+
+    ``id`` mirrors ``user_id`` so clients can rely on a stable primary key.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
+    id: Optional[SnowflakeID] = None
     user_id: SnowflakeID
     username: str
     display_name: Optional[str] = None
@@ -45,11 +49,19 @@ class MessageSearchPageResponse(BaseModel):
 
 
 class UserSearchPageResponse(BaseModel):
-    """Paginated user search results."""
+    """Paginated user search results.
+
+    Canonical envelope: ``{"items": [...], "total": n}``. ``total`` is the
+    number of results in the current page (cursor pagination does not expose
+    a global count); keep reading ``next_cursor`` to fetch further pages.
+    ``results`` is a legacy alias of ``items`` kept for backward compatibility.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
-    results: List[UserSearchResultResponse]
+    items: List[UserSearchResultResponse] = Field(default_factory=list)
+    total: int = 0
+    results: List[UserSearchResultResponse] = Field(default_factory=list)
     next_cursor: Optional[str] = None
 
 

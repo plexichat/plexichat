@@ -1,52 +1,39 @@
-"""Fixtures for WebSocket gateway tests."""
+"""
+WebSocket test fixtures.
+"""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
-from dataclasses import dataclass
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock
 
-import utils.logger as logger
+# common_utils is now a native package.
+
+
+# Config is already setup in the main conftest.py at import time
+# No need to setup again here
+
 from src.api.websocket.connection import Connection
-from src.api.websocket.session import SessionManager
 from src.api.websocket.dispatcher import GatewayDispatcher
 from src.api.websocket.handlers import OpcodeHandler
-from src.core.events.types import GatewayIntent
-from src.core import events
-
-
-@pytest.fixture(autouse=True)
-def setup_modules():
-    """Setup required modules for tests."""
-    if not logger._setup_called:
-        logger.setup(log_dir="logs", level="WARNING")
-    if not events.is_setup():
-        events.setup()
-    yield
-
-
-@pytest.fixture
-def event_loop():
-    """Create event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+from src.api.websocket.session import SessionManager
+from src.core.auth.models import AccountType, TokenInfo
 
 
 @pytest.fixture
 def mock_websocket():
-    """Create a mock WebSocket."""
-    ws = AsyncMock()
-    ws.send_json = AsyncMock()
-    ws.send_bytes = AsyncMock()
-    ws.receive = AsyncMock()
-    ws.close = AsyncMock()
-    ws.accept = AsyncMock()
-    return ws
+    """Async transport double with the attributes used by ConnectionHandler."""
+    websocket = MagicMock()
+    websocket.client = SimpleNamespace(host="127.0.0.1")
+    websocket.headers = {"User-Agent": "TestClient/1.0"}
+    websocket.send_json = AsyncMock()
+    websocket.send_bytes = AsyncMock()
+    websocket.close = AsyncMock()
+    return websocket
 
 
 @pytest.fixture
 def session_manager():
-    """Create a session manager instance."""
+    """Isolated gateway session manager for websocket tests."""
     return SessionManager(
         heartbeat_interval_ms=45000,
         session_timeout_ms=60000,
@@ -55,137 +42,123 @@ def session_manager():
 
 
 @pytest.fixture
-def connection(mock_websocket, session_manager):
-    """Create a connection instance."""
-    conn_id = session_manager.generate_connection_id()
-    return Connection(
-        websocket=mock_websocket,
-        connection_id=conn_id,
-        heartbeat_interval_ms=session_manager.heartbeat_interval_ms,
-    )
-
-
-@pytest.fixture
-def authenticated_connection(mock_websocket, session_manager):
-    """Create an authenticated connection."""
-    conn_id = session_manager.generate_connection_id()
-    conn = Connection(
-        websocket=mock_websocket,
-        connection_id=conn_id,
-        heartbeat_interval_ms=session_manager.heartbeat_interval_ms,
-    )
-    session_manager.add_connection(conn)
-    session_manager.create_session(
-        conn, user_id=12345, intents=GatewayIntent.default_intents()
-    )
-    return conn
-
-
-@pytest.fixture
 def mock_auth_module():
-    """Create a mock auth module."""
-    auth = MagicMock()
-
-    @dataclass
-    class TokenInfo:
-        user_id: int
-        permissions: dict
-
-    @dataclass
-    class User:
-        id: int
-        username: str
-
-    auth.verify_token = MagicMock(return_value=TokenInfo(user_id=12345, permissions={}))
-    auth.get_user = MagicMock(return_value=User(id=12345, username="testuser"))
+    """Authentication double returning a complete production TokenInfo."""
+    auth = Mock()
+    auth.verify_token.return_value = TokenInfo(
+        valid=True,
+        token_type="user",
+        account_id=12345,
+        user_id=12345,
+        session_id="auth-session",
+        permissions={},
+        rate_limit_tier="free",
+        expires_at=None,
+        username="test-user",
+        account_type=AccountType.USER,
+    )
+    # READY payloads are enriched from get_user when a record exists; return
+    # a real user shape so identify tests assert the documented payload
+    # contract (id + username) rather than the empty fallback.
+    auth.get_user.return_value = SimpleNamespace(
+        id=12345,
+        username="test-user",
+        discriminator="0",
+        avatar=None,
+        bot=False,
+    )
     return auth
 
 
 @pytest.fixture
-def mock_events_module():
-    """Create a mock events module."""
-    events = MagicMock()
-    events.subscribe = MagicMock()
-    events.unsubscribe = MagicMock()
-    return events
-
-
-@pytest.fixture
-def mock_presence_module():
-    """Create a mock presence module."""
-    presence = MagicMock()
-    presence.set_status = MagicMock()
-    presence.set_activity = MagicMock()
-    return presence
-
-
-@pytest.fixture
-def mock_servers_module():
-    """Create a mock servers module."""
-    servers = MagicMock()
-    servers.get_servers = MagicMock(return_value=[])
-    return servers
-
-
-@pytest.fixture
-def opcode_handler(
-    session_manager, mock_auth_module, mock_presence_module, mock_servers_module
-):
-    """Create an opcode handler instance."""
+def opcode_handler(session_manager, mock_auth_module):
+    """Opcode handler wired with the isolated session and auth doubles."""
     return OpcodeHandler(
         session_manager=session_manager,
         auth_module=mock_auth_module,
-        presence_module=mock_presence_module,
-        servers_module=mock_servers_module,
+        # Servers boundary as a Mock so channel-visibility filtering helpers
+        # (typing recipients, voice state targets) are exercisable without a
+        # live database — and so the READY payload path (which now resolves
+        # guilds through this injected boundary) stays DB-free in tests.
+        servers_module=Mock(get_servers=Mock(return_value=[])),
     )
 
 
 @pytest.fixture
-def dispatcher(session_manager, mock_events_module):
-    """Create a gateway dispatcher instance."""
-    return GatewayDispatcher(
-        session_manager=session_manager,
-        events_module=mock_events_module,
-        rate_limit_per_minute=120,
+def dispatcher(session_manager):
+    """Gateway dispatcher backed by the test session manager."""
+    return GatewayDispatcher(session_manager=session_manager)
+
+
+@pytest.fixture
+def connection(mock_websocket):
+    """Concrete unauthenticated gateway connection for handler tests."""
+    return Connection(
+        websocket=mock_websocket,
+        connection_id="test_conn_123",
+        heartbeat_interval_ms=45000,
     )
 
 
 @pytest.fixture
-def sample_identify_payload():
-    """Create a sample IDENTIFY payload."""
-    return {
-        "token": "test_token_12345",
-        "intents": GatewayIntent.default_intents(),
-        "properties": {
-            "os": "windows",
-            "browser": "test",
-            "device": "test",
-        },
-    }
+def connect_as(session_manager, mock_websocket):
+    """Factory creating a READY connection for an arbitrary real user id.
+
+    ``authenticated_connection`` is pinned to the mock auth user (12345);
+    end-to-end suites that create real users need a connection identified as
+    a specific one of them, with real session bookkeeping behind it.
+    """
+    from src.core.events.types import GatewayIntent
+
+    def _connect(user_id: int) -> Connection:
+        conn = Connection(
+            websocket=mock_websocket,
+            connection_id=session_manager.generate_connection_id(),
+            heartbeat_interval_ms=45000,
+        )
+        session_manager.add_connection(conn)
+        session = session_manager.create_session(
+            conn, user_id=user_id, intents=GatewayIntent.all_intents()
+        )
+        conn.set_identified(user_id, session.session_id, GatewayIntent.all_intents())
+        return conn
+
+    return _connect
 
 
 @pytest.fixture
-def sample_resume_payload():
-    """Create a sample RESUME payload."""
-    return {
-        "token": "test_token_12345",
-        "session_id": "test_session_id",
-        "seq": 42,
-    }
+def authenticated_connection(connection, session_manager):
+    """Concrete READY connection for authenticated opcode tests.
 
-
-@pytest.fixture
-def sample_heartbeat_payload():
-    """Create a sample HEARTBEAT payload."""
-    return 42
+    Creates a real session through the session manager so dispatcher
+    bookkeeping (event recording, replay buffers) actually runs; a bare
+    ``set_identified`` leaves the session invisible to ``record_event``.
+    """
+    session = session_manager.create_session(connection, user_id=12345, intents=513)
+    connection.set_identified(12345, session.session_id, 513)
+    return connection
 
 
 @pytest.fixture
 def sample_presence_update_payload():
-    """Create a sample PRESENCE_UPDATE payload."""
+    """Valid PRESENCE_UPDATE payload shared by gateway tests."""
     return {
         "status": "online",
-        "activities": [{"type": 0, "name": "Testing"}],
-        "afk": False,
-        "since": None,
+        "custom_status": None,
+        "custom_emoji": None,
+        "activities": [],
+    }
+
+
+@pytest.fixture
+def sample_identify_payload():
+    """Valid IDENTIFY payload shared by gateway tests."""
+    return {
+        "token": "test_token",
+        "intents": 513,
+        "properties": {
+            "os": "linux",
+            "browser": "pytest",
+            "device": "pytest",
+        },
     }

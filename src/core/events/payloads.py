@@ -7,6 +7,7 @@ import time
 
 from .types import EventType
 from .models import (
+    Event,
     ReadyEvent,
     MessageEvent,
     PresenceEvent,
@@ -36,18 +37,25 @@ def create_ready_event(
     resume_gateway_url: str = "",
 ) -> ReadyEvent:
     """Create a READY event."""
+    # Copy (not ``or``/alias) so the event never holds the caller's
+    # containers: mutating ``user``/``guilds`` after the build must not
+    # corrupt the already-built event. ``ReadyEvent.__post_init__``
+    # rebuilds ``data`` from these fields with its own copies so
+    # ``data`` and the model fields stay independent.
+    user_copy = dict(user)
+    guilds_copy = list(guilds)
     return ReadyEvent(
         event_type=EventType.READY,
         data={
             "v": 10,
-            "user": user,
-            "guilds": guilds,
+            "user": dict(user_copy),
+            "guilds": list(guilds_copy),
             "session_id": session_id,
             "resume_gateway_url": resume_gateway_url,
         },
         session_id=session_id,
-        user=user,
-        guilds=guilds,
+        user=user_copy,
+        guilds=guilds_copy,
         resume_gateway_url=resume_gateway_url,
     )
 
@@ -66,25 +74,36 @@ def create_message_create(
     timestamp: Optional[int] = None,
 ) -> MessageEvent:
     """Create a MESSAGE_CREATE event."""
-    ts = timestamp or _get_timestamp()
+    ts = timestamp if timestamp is not None else _get_timestamp()
+    default_author = {"id": _str_id(author_id)}
+    # Copy the caller's author dict too (not ``author or default``): like the
+    # list args below, the event must never hold caller-owned containers, or
+    # mutating the dict after the build corrupts the already-built event.
+    author_copy = dict(author) if author is not None else default_author
+    # Copy list args (not ``or []``) so the event never aliases the
+    # caller's list and ``data``/model fields stay independent.
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "author": author or {"id": _str_id(author_id)},
+        "author": dict(author_copy),
         "content": content,
         "timestamp": ts,
         "edited_timestamp": None,
         "tts": False,
         "mention_everyone": False,
-        "mentions": mentions or [],
+        "mentions": list(mentions) if mentions is not None else [],
         "mention_roles": [],
-        "attachments": attachments or [],
-        "embeds": embeds or [],
+        "attachments": list(attachments) if attachments is not None else [],
+        "embeds": list(embeds) if embeds is not None else [],
         "pinned": pinned,
         "type": 0,
     }
-    if server_id:
-        data["guild_id"] = _str_id(server_id)
+    if server_id is not None:
+        sid = _str_id(server_id)
+        # Canonical scope key is ``server_id``; ``guild_id`` is kept as a
+        # legacy alias so older client readers keep working.
+        data["server_id"] = sid
+        data["guild_id"] = sid
 
     return MessageEvent(
         event_type=EventType.MESSAGE_CREATE,
@@ -95,10 +114,10 @@ def create_message_create(
         user_id=author_id,
         message_id=message_id,
         content=content,
-        author=author or {"id": _str_id(author_id)},
-        attachments=attachments or [],
-        embeds=embeds or [],
-        mentions=mentions or [],
+        author=author_copy,
+        attachments=list(attachments) if attachments is not None else [],
+        embeds=list(embeds) if embeds is not None else [],
+        mentions=list(mentions) if mentions is not None else [],
         pinned=pinned,
     )
 
@@ -113,17 +132,23 @@ def create_message_update(
 ) -> MessageEvent:
     """Create a MESSAGE_UPDATE event."""
     ts = _get_timestamp()
+    # Copy the caller's author dict so the event never aliases caller-owned
+    # containers (mutating it after the build must not corrupt the event).
+    author_copy = dict(author) if author is not None else None
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "edited_timestamp": edited_timestamp or ts,
+        "edited_timestamp": edited_timestamp if edited_timestamp is not None else ts,
     }
     if content is not None:
         data["content"] = content
-    if author:
-        data["author"] = author
-    if server_id:
-        data["guild_id"] = _str_id(server_id)
+    if author_copy is not None:
+        data["author"] = dict(author_copy)
+    if server_id is not None:
+        # Canonical ``server_id`` with legacy ``guild_id`` alias.
+        sid = _str_id(server_id)
+        data["server_id"] = sid
+        data["guild_id"] = sid
 
     return MessageEvent(
         event_type=EventType.MESSAGE_UPDATE,
@@ -133,8 +158,8 @@ def create_message_update(
         channel_id=channel_id,
         message_id=message_id,
         content=content,
-        author=author,
-        edited_timestamp=edited_timestamp or ts,
+        author=author_copy,
+        edited_timestamp=edited_timestamp if edited_timestamp is not None else ts,
     )
 
 
@@ -143,13 +168,19 @@ def create_message_delete(
     channel_id: int,
     server_id: Optional[int] = None,
 ) -> MessageEvent:
-    """Create a MESSAGE_DELETE event."""
+    """Create a MESSAGE_DELETE event.
+
+    The scope key is canonical ``server_id`` (matching every other live
+    message event); ``guild_id`` remains as an alias for older readers.
+    """
     data = {
         "id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
     }
-    if server_id:
-        data["guild_id"] = _str_id(server_id)
+    if server_id is not None:
+        sid = _str_id(server_id)
+        data["server_id"] = sid
+        data["guild_id"] = sid
 
     return MessageEvent(
         event_type=EventType.MESSAGE_DELETE,
@@ -169,13 +200,20 @@ def create_presence_update(
     user: Optional[Dict[str, Any]] = None,
 ) -> PresenceEvent:
     """Create a PRESENCE_UPDATE event."""
+    default_user = {"id": _str_id(user_id)}
+    # Copy the caller's dicts so the event never aliases caller-owned
+    # containers (mutating them after the build must not corrupt the event).
+    user_copy = dict(user) if user is not None else default_user
+    client_status_copy = (
+        dict(client_status) if client_status is not None else {"desktop": status}
+    )
     data = {
-        "user": user or {"id": _str_id(user_id)},
+        "user": dict(user_copy),
         "status": status,
-        "activities": activities or [],
-        "client_status": client_status or {"desktop": status},
+        "activities": list(activities) if activities is not None else [],
+        "client_status": dict(client_status_copy),
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
 
     return PresenceEvent(
@@ -184,8 +222,8 @@ def create_presence_update(
         server_id=server_id,
         user_id=user_id,
         status=status,
-        activities=activities or [],
-        client_status=client_status,
+        activities=list(activities) if activities is not None else [],
+        client_status=dict(client_status_copy) if client_status is not None else None,
     )
 
 
@@ -200,12 +238,12 @@ def create_typing_start(
     data = {
         "user_id": _str_id(user_id),
         "channel_id": _str_id(channel_id),
-        "timestamp": ts // 1000,
+        "timestamp": ts,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if member:
-        data["member"] = member
+    if member is not None:
+        data["member"] = dict(member)
 
     return TypingEvent(
         event_type=EventType.TYPING_START,
@@ -234,13 +272,15 @@ def create_channel_create(
         "position": position,
         "nsfw": nsfw,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if name:
+    # ``is not None`` (not truthiness) so explicit empty values (e.g.
+    # ``topic=""``) survive, matching ``create_channel_update``.
+    if name is not None:
         data["name"] = name
-    if topic:
+    if topic is not None:
         data["topic"] = topic
-    if parent_id:
+    if parent_id is not None:
         data["parent_id"] = _str_id(parent_id)
 
     return ChannelEvent(
@@ -274,13 +314,16 @@ def create_channel_update(
         "position": position,
         "nsfw": nsfw,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if name:
+    # ``is not None`` (not truthiness) so callers can explicitly clear a
+    # field (e.g. ``topic=""`` when a channel topic is removed), matching
+    # ``create_guild_update`` and ``gateway_emit.emit_guild_update``.
+    if name is not None:
         data["name"] = name
-    if topic:
+    if topic is not None:
         data["topic"] = topic
-    if parent_id:
+    if parent_id is not None:
         data["parent_id"] = _str_id(parent_id)
 
     return ChannelEvent(
@@ -308,9 +351,9 @@ def create_channel_delete(
         "id": _str_id(channel_id),
         "type": channel_type,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if name:
+    if name is not None:
         data["name"] = name
 
     return ChannelEvent(
@@ -339,11 +382,13 @@ def create_guild_create(
         "name": name,
         "owner_id": _str_id(owner_id),
         "member_count": member_count,
-        "channels": channels or [],
-        "roles": roles or [],
-        "members": members or [],
+        "channels": list(channels) if channels is not None else [],
+        "roles": list(roles) if roles is not None else [],
+        "members": list(members) if members is not None else [],
     }
-    if icon:
+    # ``is not None`` (not truthiness) so an explicit empty icon (``""``)
+    # survives, matching ``create_guild_update``.
+    if icon is not None:
         data["icon"] = icon
 
     return GuildEvent(
@@ -354,8 +399,8 @@ def create_guild_create(
         icon=icon,
         owner_id=owner_id,
         member_count=member_count,
-        channels=channels or [],
-        roles=roles or [],
+        channels=list(channels) if channels is not None else [],
+        roles=list(roles) if roles is not None else [],
     )
 
 
@@ -367,11 +412,14 @@ def create_guild_update(
 ) -> GuildEvent:
     """Create a GUILD_UPDATE event."""
     data = {"id": _str_id(server_id)}
-    if name:
+    # ``is not None`` (not truthiness) so callers can explicitly clear a
+    # field (e.g. ``icon=""`` when a server icon is deleted), matching
+    # ``gateway_emit.emit_guild_update``.
+    if name is not None:
         data["name"] = name
-    if owner_id:
+    if owner_id is not None:
         data["owner_id"] = _str_id(owner_id)
-    if icon:
+    if icon is not None:
         data["icon"] = icon
 
     return GuildEvent(
@@ -402,14 +450,14 @@ def create_guild_member_add(
     joined_at: Optional[int] = None,
 ) -> GuildMemberEvent:
     """Create a GUILD_MEMBER_ADD event."""
-    ts = joined_at or _get_timestamp()
+    ts = joined_at if joined_at is not None else _get_timestamp()
     data = {
         "guild_id": _str_id(server_id),
-        "user": user or {"id": _str_id(user_id)},
-        "roles": [_str_id(r) for r in (roles or [])],
+        "user": dict(user) if user is not None else {"id": _str_id(user_id)},
+        "roles": [_str_id(r) for r in (roles if roles is not None else [])],
         "joined_at": ts,
     }
-    if nick:
+    if nick is not None:
         data["nick"] = nick
 
     return GuildMemberEvent(
@@ -419,7 +467,7 @@ def create_guild_member_add(
         user_id=user_id,
         member_user_id=user_id,
         nick=nick,
-        roles=roles or [],
+        roles=list(roles) if roles is not None else [],
         joined_at=ts,
     )
 
@@ -434,7 +482,7 @@ def create_guild_member_remove(
         event_type=EventType.GUILD_MEMBER_REMOVE,
         data={
             "guild_id": _str_id(server_id),
-            "user": user or {"id": _str_id(user_id)},
+            "user": dict(user) if user is not None else {"id": _str_id(user_id)},
         },
         server_id=server_id,
         user_id=user_id,
@@ -452,8 +500,8 @@ def create_guild_member_update(
     """Create a GUILD_MEMBER_UPDATE event."""
     data = {
         "guild_id": _str_id(server_id),
-        "user": user or {"id": _str_id(user_id)},
-        "roles": [_str_id(r) for r in (roles or [])],
+        "user": dict(user) if user is not None else {"id": _str_id(user_id)},
+        "roles": [_str_id(r) for r in (roles if roles is not None else [])],
     }
     if nick is not None:
         data["nick"] = nick
@@ -465,7 +513,7 @@ def create_guild_member_update(
         user_id=user_id,
         member_user_id=user_id,
         nick=nick,
-        roles=roles or [],
+        roles=list(roles) if roles is not None else [],
     )
 
 
@@ -490,12 +538,12 @@ def create_voice_state_update(
         "deaf": deaf,
         "suppress": False,
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if session_id:
+    if session_id is not None:
         data["session_id"] = session_id
-    if member:
-        data["member"] = member
+    if member is not None:
+        data["member"] = dict(member)
 
     return VoiceStateEvent(
         event_type=EventType.VOICE_STATE_UPDATE,
@@ -524,12 +572,12 @@ def create_reaction_add(
         "user_id": _str_id(user_id),
         "message_id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "emoji": emoji,
+        "emoji": dict(emoji),
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
-    if member:
-        data["member"] = member
+    if member is not None:
+        data["member"] = dict(member)
 
     return ReactionEvent(
         event_type=EventType.MESSAGE_REACTION_ADD,
@@ -538,8 +586,8 @@ def create_reaction_add(
         channel_id=channel_id,
         user_id=user_id,
         message_id=message_id,
-        emoji=emoji,
-        member=member,
+        emoji=dict(emoji),
+        member=dict(member) if member is not None else None,
     )
 
 
@@ -555,9 +603,9 @@ def create_reaction_remove(
         "user_id": _str_id(user_id),
         "message_id": _str_id(message_id),
         "channel_id": _str_id(channel_id),
-        "emoji": emoji,
+        "emoji": dict(emoji),
     }
-    if server_id:
+    if server_id is not None:
         data["guild_id"] = _str_id(server_id)
 
     return ReactionEvent(
@@ -567,8 +615,28 @@ def create_reaction_remove(
         channel_id=channel_id,
         user_id=user_id,
         message_id=message_id,
-        emoji=emoji,
+        emoji=dict(emoji),
     )
+
+
+def create_gateway_error(
+    code: str,
+    message: Optional[str] = None,
+    guild_id: Optional[int] = None,
+) -> Event:
+    """Create an ERROR event frame for a failed client request.
+
+    ``code`` is a stable machine-readable identifier (e.g.
+    ``"guild_members_denied"``); ``message`` is optional and must never
+    contain internal details. ``guild_id``, when present, lets the client
+    correlate the error with the request that produced it.
+    """
+    data: Dict[str, Any] = {"code": code}
+    if message is not None:
+        data["message"] = message
+    if guild_id is not None:
+        data["guild_id"] = _str_id(guild_id)
+    return Event(event_type=EventType.ERROR, data=data)
 
 
 def create_guild_members_chunk(
@@ -583,10 +651,14 @@ def create_guild_members_chunk(
         event_type=EventType.GUILD_MEMBERS_CHUNK,
         data={
             "guild_id": _str_id(server_id),
-            "members": members,
+            # Copy (not alias) so mutating the caller's list after the
+            # build cannot corrupt the already-built event.
+            "members": list(members),
             "chunk_index": chunk_index,
             "chunk_count": chunk_count,
-            "not_found": [_str_id(r) for r in (not_found or [])],
+            "not_found": [
+                _str_id(r) for r in (not_found if not_found is not None else [])
+            ],
         },
         server_id=server_id,
     )

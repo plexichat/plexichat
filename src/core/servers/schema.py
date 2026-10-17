@@ -4,6 +4,8 @@ Server database schema - Table definitions for server module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Servers table
@@ -11,12 +13,14 @@ CREATE TABLE IF NOT EXISTS srv_servers (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     owner_id INTEGER NOT NULL,
-    description TEXT,
+    description_encrypted TEXT,
     icon_url TEXT,
+    is_public INTEGER NOT NULL DEFAULT 0,
     default_role_id INTEGER,
     default_channel_id INTEGER,
     system_channel_id INTEGER,
     verification_level INTEGER DEFAULT 0,
+    default_message_notifications INTEGER DEFAULT 0,
     max_reactions_per_message INTEGER DEFAULT 20,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -51,10 +55,11 @@ CREATE TABLE IF NOT EXISTS srv_channels (
     channel_type TEXT NOT NULL DEFAULT 'text',
     category_id INTEGER,
     position INTEGER DEFAULT 0,
-    topic TEXT,
+    topic_encrypted TEXT,
     nsfw INTEGER DEFAULT 0,
     slowmode_seconds INTEGER DEFAULT 0,
     read_receipts_enabled INTEGER DEFAULT 1,
+    transcript_export_enabled INTEGER DEFAULT 1,
     conversation_id INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -104,6 +109,12 @@ CREATE TABLE IF NOT EXISTS srv_members (
     muted INTEGER DEFAULT 0,
     deafened INTEGER DEFAULT 0,
     inviter_id INTEGER,
+    -- Timeout (013)
+    timeout_until BIGINT,
+    timeout_reason TEXT,
+    -- Temporary-invite membership (Agent 16 F9): set when the member joined
+    -- via a temporary invite; cleared when they are granted a role.
+    is_temporary INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
 );
@@ -176,6 +187,7 @@ CREATE TABLE IF NOT EXISTS srv_bans (
     user_id INTEGER NOT NULL,
     banned_by INTEGER NOT NULL,
     reason TEXT,
+    reason_encrypted TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id),
     UNIQUE(server_id, user_id)
@@ -194,6 +206,7 @@ CREATE TABLE IF NOT EXISTS srv_audit_log (
     target_type TEXT,
     target_id INTEGER,
     changes TEXT,
+    changes_encrypted TEXT,
     reason TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (server_id) REFERENCES srv_servers(id)
@@ -341,7 +354,7 @@ CREATE INDEX IF NOT EXISTS idx_srv_progress_user ON srv_onboarding_progress(user
 
 def create_tables(db):
     """Create all server tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:
@@ -356,5 +369,13 @@ def create_tables(db):
             except Exception as e:
                 logger.error(f"Failed to execute schema statement: {e}")
                 raise
+
+    # Additive migration: ``CREATE TABLE IF NOT EXISTS`` does not add columns
+    # to pre-existing tables, so upgrade older databases explicitly. A
+    # duplicate-column error means the column already exists and is harmless.
+    try:
+        db.execute("ALTER TABLE srv_members ADD COLUMN is_temporary INTEGER DEFAULT 0")
+    except Exception as e:
+        logger.debug(f"srv_members.is_temporary migration skipped: {e}")
 
     logger.info("Server tables created successfully")

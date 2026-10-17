@@ -1,0 +1,379 @@
+"""
+Tests for audit bug fixes in the reports system.
+
+Covers:
+- REP-2: the divergent duplicate schema was removed from reports.__init__
+- REP-3: enhanced reports reject self-reports (user and own message)
+- REP-4: enhanced reports validate target_type and target existence
+- REP-5: enhanced reports validate evidence URLs and return 404 for missing reports
+- REP-6: missing enhanced report returns 404, not 400
+"""
+
+import asyncio
+import pytest
+
+from src.core import reports as reports_module
+from src.core.reports import schema as reports_schema
+from src.api.routes.features.reports import (
+    submit_enhanced_report,
+    get_report_details,
+    EnhancedReportRequest,
+)
+
+
+class TestRep2SchemaDelegation:
+    """REP-2: no divergent duplicate schema in reports.__init__."""
+
+    def test_init_has_no_divergent_schema(self):
+        # The duplicate SCHEMA block was removed; creation now delegates to
+        # the canonical schema.py definition.
+        assert not hasattr(reports_module, "SCHEMA")
+
+    def test_canonical_schema_has_reports_table(self):
+        assert "CREATE TABLE IF NOT EXISTS reports" in reports_schema.SCHEMA
+
+    def test_create_tables_is_callable(self):
+        assert callable(reports_module.create_tables)
+
+
+class _FakeUser:
+    def __init__(self, user_id):
+        self.user_id = user_id
+
+
+class _FakeRow(dict):
+    pass
+
+
+class _FakeDB:
+    """Minimal DB stub for the enhanced-report endpoint."""
+
+    def __init__(self, user_exists=True, report_row=None):
+        self.user_exists = user_exists
+        self.report_row = report_row
+        self.executed = []
+
+    def execute(self, query, params=None):
+        self.executed.append((query, params))
+        return None
+
+    def fetch_one(self, query, params=None):
+        if "FROM auth_users" in query:
+            return {"id": params[0]} if self.user_exists else None
+        if "FROM reports" in query:
+            return self.report_row
+        return None
+
+
+class _FakeMessage:
+    def __init__(self, author_id, content="hello"):
+        self.author_id = author_id
+        self.content = content
+
+
+class _FakeMessaging:
+    def __init__(self, message=None):
+        self._message = message
+
+    def get_message(self, user_id, message_id):
+        return self._message
+
+
+def _patch_api(monkeypatch, db, messaging):
+    import src.api as api_module
+
+    monkeypatch.setattr(api_module, "get_db", lambda: db)
+    monkeypatch.setattr(api_module, "get_messaging", lambda: messaging)
+
+
+class TestRep345EnhancedReportValidation:
+    """REP-3 / REP-4 / REP-5: enhanced report input validation."""
+
+    def test_invalid_target_type_rejected(self, monkeypatch):
+        db = _FakeDB()
+        _patch_api(monkeypatch, db, None)
+        req = EnhancedReportRequest(target_type="server", target_id="5", reason="spam")
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert exc.value.status_code == 400
+
+    def test_self_user_report_rejected(self, monkeypatch):
+        db = _FakeDB(user_exists=True)
+        _patch_api(monkeypatch, db, None)
+        req = EnhancedReportRequest(target_type="user", target_id="5", reason="spam")
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(5)))
+        assert exc.value.status_code == 400
+
+    def test_unknown_user_report_rejected(self, monkeypatch):
+        db = _FakeDB(user_exists=False)
+        _patch_api(monkeypatch, db, None)
+        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam")
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert exc.value.status_code == 400
+
+    def test_invalid_evidence_url_rejected(self, monkeypatch):
+        db = _FakeDB(user_exists=True)
+        _patch_api(monkeypatch, db, None)
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            evidence_urls=["javascript:alert(1)"],
+        )
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert exc.value.status_code == 400
+
+    def test_self_message_report_rejected(self, monkeypatch):
+        db = _FakeDB()
+        messaging = _FakeMessaging(message=_FakeMessage(author_id=5))
+        _patch_api(monkeypatch, db, messaging)
+        req = EnhancedReportRequest(
+            target_type="message",
+            target_id="100",
+            reason="spam",
+            channel_id="1",
+            server_id="2",
+        )
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(5)))
+        assert exc.value.status_code == 400
+
+    def test_missing_message_report_rejected(self, monkeypatch):
+        db = _FakeDB()
+        messaging = _FakeMessaging(message=None)
+        _patch_api(monkeypatch, db, messaging)
+        req = EnhancedReportRequest(
+            target_type="message",
+            target_id="100",
+            reason="spam",
+            channel_id="1",
+            server_id="2",
+        )
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(5)))
+        assert exc.value.status_code == 400
+
+    def test_enhanced_report_rate_limit_rejects_flood(self, monkeypatch):
+        db = _FakeDB(user_exists=True)
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (False, 0)
+        )
+        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam")
+        with pytest.raises(Exception) as exc:
+            asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert exc.value.status_code == 429
+        assert db.executed == []
+
+    def test_enhanced_report_deduplicates_existing_open_report(self, monkeypatch):
+        db = _FakeDB(user_exists=True, report_row={"id": 42})
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam")
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["success"] is True
+        assert result["report_id"] == "42"
+        assert result["message"] == "Report already submitted"
+        assert db.executed == []
+
+    def test_duplicate_returns_stored_priority_and_status(self, monkeypatch):
+        # A duplicate submission must reflect the stored moderation state,
+        # not echo the incoming request body.
+        db = _FakeDB(
+            user_exists=True,
+            report_row={"id": 42, "priority": "low", "status": "investigating"},
+        )
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            priority="critical",
+        )
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["success"] is True
+        assert result["report_id"] == "42"
+        assert result["priority"] == "low"
+        assert result["status"] == "investigating"
+        assert result["message"] == "Report already submitted"
+        assert db.executed == []
+
+    def test_duplicate_tuple_row_returns_stored_fields(self, monkeypatch):
+        db = _FakeDB(user_exists=True, report_row=(42, "high", "open"))
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            priority="critical",
+        )
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["priority"] == "high"
+        assert result["status"] == "open"
+
+    def test_insert_race_returns_stored_report(self, monkeypatch):
+        # The check-then-insert race fallback must also return stored fields.
+        class _RaceDB(_FakeDB):
+            def execute(self, query, params=None):
+                raise RuntimeError("unique constraint hit")
+
+        db = _RaceDB(
+            user_exists=True,
+            report_row={"id": 7, "priority": "low", "status": "open"},
+        )
+        _patch_api(monkeypatch, db, None)
+        monkeypatch.setattr(
+            "src.core.database.check_rate_limit", lambda *args: (True, 9)
+        )
+        req = EnhancedReportRequest(
+            target_type="user",
+            target_id="999",
+            reason="spam",
+            priority="critical",
+        )
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["report_id"] == "7"
+        assert result["priority"] == "low"
+        assert result["status"] == "open"
+
+    def test_valid_user_report_accepted(self, monkeypatch):
+        db = _FakeDB(user_exists=True)
+        _patch_api(monkeypatch, db, None)
+        req = EnhancedReportRequest(target_type="user", target_id="999", reason="spam")
+        result = asyncio.run(submit_enhanced_report(req, _FakeUser(1)))
+        assert result["success"] is True
+        assert "INSERT INTO reports" in db.executed[0][0]
+
+
+class _TupleReportsDB:
+    """Driver stub that returns positional rows for each report table."""
+
+    def __init__(self, reports=None, message_reports=None, user_reports=None):
+        self._rows = {
+            "reports": reports,
+            "message_reports": message_reports,
+            "user_reports": user_reports,
+        }
+
+    def fetch_one(self, query, params=None):
+        if "FROM admin_users" in query:
+            return None
+        for table, row in self._rows.items():
+            if f"FROM {table} " in query:
+                return row
+        return None
+
+    def execute(self, query, params=None):
+        return None
+
+
+def _tuple_for(table, **overrides):
+    """Build a positional row for `table` from named overrides."""
+    from src.api.routes.features.reports import (
+        _REPORT_COLUMNS,
+        _MESSAGE_REPORT_COLUMNS,
+        _USER_REPORT_COLUMNS,
+    )
+
+    columns = {
+        "reports": _REPORT_COLUMNS,
+        "message_reports": _MESSAGE_REPORT_COLUMNS,
+        "user_reports": _USER_REPORT_COLUMNS,
+    }[table]
+    values = {name: None for name in columns}
+    values.update(overrides)
+    return tuple(values[name] for name in columns)
+
+
+class TestRepReportDetailsTupleRows:
+    """Tuple rows must be labelled with the matching table's column order."""
+
+    BIG = 9007199254740993  # past 2**53: a JSON number would lose precision
+
+    def test_reports_tuple_row_maps_lifecycle_fields(self, monkeypatch):
+        # ``priority``, ``reviewed_at`` and ``assigned_to`` sit at different
+        # offsets in the reports table than the old single column list used.
+        row = _tuple_for(
+            "reports",
+            id=self.BIG,
+            reporter_id=1,
+            status="investigating",
+            priority="high",
+            assigned_to=7,
+            reviewed_at=111,
+            created_at=222,
+            updated_at=333,
+        )
+        db = _TupleReportsDB(reports=row)
+        _patch_api(monkeypatch, db, None)
+        # Viewer is the reporter, so admin-only fields are stripped; assert on
+        # the non-admin fields that were previously mislabelled.
+        result = asyncio.run(get_report_details(self.BIG, _FakeUser(1)))["report"]
+        assert result["status"] == "investigating"
+        assert result["priority"] == "high"
+        assert result["updated_at"] == 333
+        assert "assigned_to" not in result
+        # Snowflake ids cross the wire as decimal strings.
+        assert result["id"] == str(self.BIG)
+        assert isinstance(result["id"], str)
+
+    def test_message_report_tuple_row_maps_reported_user(self, monkeypatch):
+        row = _tuple_for(
+            "message_reports",
+            id=9,
+            message_id=self.BIG,
+            reporter_id=1,
+            reported_user_id=5,
+            status="pending",
+            priority="low",
+            reported_at=444,
+        )
+        db = _TupleReportsDB(message_reports=row)
+        _patch_api(monkeypatch, db, None)
+        result = asyncio.run(get_report_details(9, _FakeUser(1)))["report"]
+        assert result["reported_user_id"] == "5"
+        assert isinstance(result["reported_user_id"], str)
+        assert result["message_id"] == str(self.BIG)
+        assert isinstance(result["message_id"], str)
+        assert result["id"] == "9"
+        assert result["status"] == "pending"
+        assert result["priority"] == "low"
+
+    def test_user_report_tuple_row_maps_reported_user(self, monkeypatch):
+        row = _tuple_for(
+            "user_reports",
+            id=11,
+            reported_user_id=self.BIG,
+            reporter_id=1,
+            status="pending",
+            priority="medium",
+            reported_at=555,
+        )
+        db = _TupleReportsDB(user_reports=row)
+        _patch_api(monkeypatch, db, None)
+        result = asyncio.run(get_report_details(11, _FakeUser(1)))["report"]
+        assert result["reported_user_id"] == str(self.BIG)
+        assert isinstance(result["reported_user_id"], str)
+        assert result["status"] == "pending"
+
+
+class TestRep6MissingReportNotFound:
+    """REP-6: a missing enhanced report returns 404, not 400."""
+
+    def test_missing_report_returns_404(self, monkeypatch):
+        db = _FakeDB(report_row=None)
+        _patch_api(monkeypatch, db, None)
+        with pytest.raises(Exception) as exc:
+            asyncio.run(get_report_details(12345, _FakeUser(1)))
+        assert exc.value.status_code == 404

@@ -155,7 +155,7 @@ class OAuth2Flow:
         """
         code_id = generate_snowflake_id()
         now = self._current_time()
-        expires_at = now + self._config.get("code_expiry_seconds", 600)
+        expires_at = now + int(self._config.get("code_expiry_seconds", 600)) * 1000
 
         full_code, code_hash = generate_authorization_code(code_id)
 
@@ -254,9 +254,20 @@ class OAuth2Flow:
         if code_record["redirect_uri"] != redirect_uri:
             raise InvalidGrantError("Redirect URI mismatch")
 
-        self._db.execute(
-            "UPDATE app_oauth_codes SET used = 1 WHERE id = ?", (parsed["id"],)
+        cursor = self._db.execute(
+            "UPDATE app_oauth_codes SET used = 1 WHERE id = ? AND used = 0",
+            (parsed["id"],),
         )
+        # SECURITY: fail closed. If the driver does not expose rowcount we
+        # cannot prove the single-use guard fired, so the exchange MUST
+        # fail rather than risk double-spending the code.
+        rowcount = getattr(cursor, "rowcount", None)
+        if rowcount is None:
+            raise InvalidGrantError(
+                "Authorization code could not be atomically consumed"
+            )
+        if rowcount == 0:
+            raise InvalidGrantError("Authorization code already used")
 
         scopes = json.loads(code_record["scopes"])
         token = self._create_token(
@@ -380,11 +391,26 @@ class OAuth2Flow:
         if token_record["revoked"]:
             raise TokenRevokedError()
 
+        # SECURITY: verify the token secret hash BEFORE checking expiry.
+        # This avoids a timing side-channel where a non-holder can
+        # distinguish valid-but-expired tokens from invalid tokens by
+        # measuring response time.
+        if not verify_token_hash(parsed["secret"], token_record["access_token_hash"]):
+            raise InvalidGrantError("Invalid access token")
+
         if token_record["expires_at"] < self._current_time():
             raise TokenExpiredError()
 
-        if not verify_token_hash(parsed["secret"], token_record["access_token_hash"]):
-            raise InvalidGrantError("Invalid access token")
+        try:
+            self._db.execute(
+                "UPDATE app_oauth_tokens SET last_used_at = ? WHERE id = ?",
+                (self._current_time(), token_record["id"]),
+            )
+        except Exception as exc:
+            logger.error(
+                f"Failed to update last_used_at for OAuth token "
+                f"{token_record['id']}: {exc}"
+            )
 
         return {
             "token_id": token_record["id"],
@@ -394,12 +420,17 @@ class OAuth2Flow:
             "expires_at": token_record["expires_at"],
         }
 
-    def revoke_token(self, token: str) -> bool:
+    def revoke_token(self, token: str, user_id: Optional[int] = None) -> bool:
         """
         Revoke an access or refresh token.
 
+        SECURITY: the caller must present the real token secret (verified
+        in constant time against the stored hash) and, when ``user_id`` is
+        supplied, must own the token record. Unknown IDs return False.
+
         Args:
             token: Token to revoke
+            user_id: Optional owner that must match the token's user
 
         Returns:
             True if revoked
@@ -411,8 +442,39 @@ class OAuth2Flow:
         if parsed["token_type"] not in ("access", "refresh"):
             return False
 
+        token_record = self._db.fetch_one(
+            """SELECT id, application_id, user_id, access_token_hash,
+                      refresh_token_hash, revoked
+               FROM app_oauth_tokens WHERE id = ?""",
+            (parsed["id"],),
+        )
+
+        # Fail closed: a nonexistent ID is never a silent success.
+        if not token_record:
+            return False
+
+        hash_column = (
+            "access_token_hash"
+            if parsed["token_type"] == "access"
+            else "refresh_token_hash"
+        )
+        expected_hash = token_record[hash_column]
+        if not expected_hash or not verify_token_hash(parsed["secret"], expected_hash):
+            logger.warning(
+                f"Token revocation denied for {parsed['id']}: secret mismatch"
+            )
+            return False
+
+        if user_id is not None and token_record["user_id"] != user_id:
+            logger.warning(
+                f"Token revocation denied for {parsed['id']}: "
+                f"user {user_id} does not own the token"
+            )
+            return False
+
         self._db.execute(
-            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?", (parsed["id"],)
+            "UPDATE app_oauth_tokens SET revoked = 1 WHERE id = ?",
+            (parsed["id"],),
         )
 
         logger.debug(f"Token revoked: {parsed['id']}")
@@ -448,7 +510,7 @@ class OAuth2Flow:
         """Create a new OAuth2 token pair."""
         token_id = generate_snowflake_id()
         now = self._current_time()
-        expires_at = now + self._config.get("token_expiry_seconds", 604800)
+        expires_at = now + int(self._config.get("token_expiry_seconds", 604800)) * 1000
 
         access_token, access_hash = generate_access_token(token_id)
 

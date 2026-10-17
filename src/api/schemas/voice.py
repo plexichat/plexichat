@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 
+from .common import SnowflakeID
+
 
 class ICEServerConfig(BaseModel):
     """Configuration for a single ICE server."""
@@ -27,7 +29,7 @@ class VoiceChannelInfoResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    channel_id: str = Field(..., description="The ID of the voice channel")
+    channel_id: SnowflakeID = Field(..., description="The ID of the voice channel")
     session_id: str = Field(..., description="The session ID for the voice connection")
     ice_servers: List[ICEServerConfig] = Field(
         ..., description="List of ICE server configurations"

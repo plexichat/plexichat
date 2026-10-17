@@ -3,14 +3,13 @@ Production Simulation Test Suite
 
 Tests verify system behavior under production-like conditions:
 - Multiple uvicorn workers accessing shared PostgreSQL pool
-- Redis caching enabled with database queries
+- Valkey caching enabled with database queries
 - Worker restart scenarios and graceful shutdown
 - Connection pool utilization monitoring
 
 Requirements:
 - PostgreSQL Docker container (automatically managed by fixtures)
-- fakeredis for Redis simulation (no external Redis required)
-- pytest-xdist for parallel test execution
+- No external Valkey/Valkey required (simulated with inline mock)
 
 Usage:
     # Run all production simulation tests
@@ -31,13 +30,27 @@ from dataclasses import dataclass, asdict
 from multiprocessing import Process, Queue
 from typing import List, Dict, Any, Optional
 
-import fakeredis
 import pytest
-from sqlalchemy import text
 
 from src.core.database.core import Database
 
 logger = logging.getLogger(__name__)
+
+
+class _FakeRedis:
+    """Minimal in-memory Valkey mock for testing cache patterns."""
+
+    def __init__(self):
+        self._data: dict[str, bytes] = {}
+
+    def get(self, key: str) -> bytes | None:
+        return self._data.get(key)
+
+    def set(self, key: str, value: str | bytes, ex: int | None = None) -> None:
+        self._data[key] = value if isinstance(value, bytes) else value.encode()
+
+    def delete(self, key: str) -> None:
+        self._data.pop(key, None)
 
 
 # ============================================================================
@@ -324,6 +337,27 @@ async def collect_pool_metrics_async(
     return metrics
 
 
+def _worker_database(db_config: Dict[str, Any]) -> Database:
+    """Build a ``Database`` bound to ``db_config`` inside a worker process.
+
+    ``Database`` is a process-wide singleton with a no-argument constructor:
+    it reads the *global* configuration, so the config has to be installed
+    before the instance is built -- it cannot be passed to the constructor.
+
+    Importing the test configuration environment is what makes that possible
+    in a spawned worker: the module calls ``config.setup()`` at import time,
+    exactly as this pytest process did. Without it a fresh interpreter has no
+    configuration at all, and ``config.set`` fails with "Config not
+    configured" so every worker dies before running a single query.
+    """
+    import utils.config as config
+
+    import src.tests._conftest.config_env  # noqa: F401  (calls config.setup)
+
+    config.set("database", db_config)
+    return Database()
+
+
 def simulate_production_load(
     worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
 ) -> WorkerResult:
@@ -345,15 +379,13 @@ def simulate_production_load(
 
     try:
         # Initialize database in worker process
-        db = Database(db_config)
+        db = _worker_database(db_config)
 
         for i in range(queries_per_worker):
             try:
                 start_time = time.time()
-                # Execute simple query
-                with db.get_session() as session:
-                    result = session.execute(text("SELECT 1"))
-                    result.fetchone()
+                # Execute a simple query through the app's DB-API surface.
+                db.fetch_one("SELECT 1")
                 query_time = (time.time() - start_time) * 1000  # Convert to ms
                 query_times.append(query_time)
                 successful += 1
@@ -379,6 +411,99 @@ def simulate_production_load(
         max_query_time_ms=max_time,
         errors=errors[:10],  # Limit error list
     )
+
+
+def get_worker_connection_id(
+    worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Report the PostgreSQL backend serving this worker process.
+
+    ``pg_backend_pid()`` is PostgreSQL's own connection identifier. The
+    ``current_connection_number()`` this worker used to call is not a
+    function PostgreSQL (or this application) defines, so every worker
+    raised before reporting anything.
+    """
+    database = _worker_database(db_config)
+    try:
+        row = database.fetch_one("SELECT pg_backend_pid() as conn_id")
+        return {"worker_id": worker_id, "conn_id": row["conn_id"] if row else None}
+    finally:
+        database.close()
+
+
+def execute_worker_transactions(
+    worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Run ``queries_per_worker`` committed transactions in this worker."""
+    database = _worker_database(db_config)
+    successful = 0
+    failed = 0
+    try:
+        for _ in range(queries_per_worker):
+            try:
+                database.begin_transaction()
+                database.fetch_one("SELECT 1")
+                database.commit()
+                successful += 1
+            except Exception as e:
+                failed += 1
+                logger.error(f"Transaction failed: {e}")
+                try:
+                    database.rollback()
+                except Exception:
+                    pass
+    finally:
+        database.close()
+    return {"worker_id": worker_id, "successful": successful, "failed": failed}
+
+
+def long_running_query(
+    worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Run deliberately slow queries in this worker."""
+    db = _worker_database(db_config)
+    completed = 0
+    try:
+        for _ in range(queries_per_worker):
+            # Simulate a long-running query with a server-side sleep.
+            db.execute("SELECT pg_sleep(0.1)")
+            completed += 1
+    finally:
+        db.close()
+    return {"worker_id": worker_id, "completed": completed}
+
+
+def sustained_load(
+    worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Issue a sustained stream of queries in this worker."""
+    database = _worker_database(db_config)
+    completed = 0
+    try:
+        for _ in range(queries_per_worker):
+            database.fetch_one("SELECT 1")
+            completed += 1
+    finally:
+        database.close()
+    return {"worker_id": worker_id, "completed": completed}
+
+
+def worker_ids(results: List[Any]) -> List[int]:
+    """Worker ids present in ``collect_results`` output.
+
+    A worker target may return either a ``WorkerResult`` dataclass or a plain
+    dict, and both shapes flow through the same result queue.
+    """
+    ids = []
+    for item in results:
+        worker_id = (
+            item.get("worker_id")
+            if isinstance(item, dict)
+            else getattr(item, "worker_id", None)
+        )
+        if worker_id is not None:
+            ids.append(worker_id)
+    return ids
 
 
 # ============================================================================
@@ -441,27 +566,11 @@ class TestMultiWorkerPostgresPool:
         - Workers don't interfere with each other
         """
 
-        def get_connection_id(
-            worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
-        ) -> Dict[str, Any]:
-            """Get connection ID in worker process."""
-            database = Database(db_config)
-            try:
-                with database.get_session() as session:
-                    result = session.execute(
-                        text("SELECT current_connection_number() as conn_id")
-                    )
-                    row = result.fetchone()
-                    conn_id = row.conn_id if row else None
-                    return {"worker_id": worker_id, "conn_id": conn_id}
-            finally:
-                database.close()
-
         simulator = ProductionSimulator(
             db_config=postgres_config, worker_count=4, queries_per_worker=1
         )
 
-        result_queue = simulator.spawn_workers(get_connection_id)
+        result_queue = simulator.spawn_workers(get_worker_connection_id)
         results = simulator.collect_results(result_queue)
         simulator.join_all_workers(timeout=30)
 
@@ -485,18 +594,6 @@ class TestMultiWorkerPostgresPool:
         simulator = ProductionSimulator(
             db_config=postgres_config, worker_count=8, queries_per_worker=100
         )
-
-        # Collect pool stats during execution
-        MetricsAggregator()
-
-        # Start metrics collection in background
-        try:
-            asyncio.create_task(
-                collect_pool_metrics_async(db, interval_ms=50, duration_seconds=30)
-            )
-        except Exception:
-            # If asyncio not available in test context, skip metrics collection
-            pass
 
         result_queue = simulator.spawn_workers(simulate_production_load)
         results = simulator.collect_results(result_queue, timeout=120)
@@ -528,44 +625,11 @@ class TestMultiWorkerPostgresPool:
         - All transactions complete successfully
         """
 
-        def execute_transaction(
-            worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
-        ) -> Dict[str, Any]:
-            """Execute transactions in worker."""
-            try:
-                database = Database(db_config)
-                successful = 0
-                failed = 0
-
-                for _ in range(queries_per_worker):
-                    try:
-                        with database.get_session() as session:
-                            # Start transaction
-                            session.execute(text("BEGIN"))
-                            # Execute query
-                            session.execute(text("SELECT 1"))
-                            # Commit
-                            session.execute(text("COMMIT"))
-                            successful += 1
-                    except Exception as e:
-                        failed += 1
-                        logger.error(f"Transaction failed: {e}")
-
-                database.close()
-                return {
-                    "worker_id": worker_id,
-                    "successful": successful,
-                    "failed": failed,
-                }
-            except Exception as e:
-                logger.exception(f"Worker {worker_id} error: {e}")
-                return {"worker_id": worker_id, "error": str(e)}
-
         simulator = ProductionSimulator(
             db_config=postgres_config, worker_count=4, queries_per_worker=50
         )
 
-        result_queue = simulator.spawn_workers(execute_transaction)
+        result_queue = simulator.spawn_workers(execute_worker_transactions)
         results = simulator.collect_results(result_queue)
         simulator.join_all_workers(timeout=60)
 
@@ -576,13 +640,13 @@ class TestMultiWorkerPostgresPool:
         )
 
 
-class TestRedisWithDatabaseQueries:
-    """Tests for Redis caching layer with database operations."""
+class TestValkeyWithDatabaseQueries:
+    """Tests for Valkey caching layer with database operations."""
 
     @pytest.mark.production_simulation
     def test_redis_cache_with_database_fallback(self, postgres_config):
         """
-        Execute queries with Redis cache, fall back to database on miss.
+        Execute queries with Valkey cache, fall back to database on miss.
 
         Verifies:
         - Cache hit rate improves on subsequent queries
@@ -590,8 +654,8 @@ class TestRedisWithDatabaseQueries:
         - Cache is properly populated
         """
         # Use fakeredis for testing without external dependency
-        fake_redis = fakeredis.FakeRedis()
-        db = Database(postgres_config)
+        fake_valkey = _FakeRedis()
+        db = _worker_database(postgres_config)
 
         try:
             cache_hits = 0
@@ -600,27 +664,25 @@ class TestRedisWithDatabaseQueries:
             test_key = "test_query_1"
 
             # First query - cache miss, hit database
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             if cached is None:
                 cache_misses += 1
-                with db.get_session() as session:
-                    result = session.execute(text("SELECT 1 as value"))
-                    row = result.fetchone()
-                    value = row.value if row else None
+                row = db.fetch_one("SELECT 1 as value")
+                value = row["value"] if row else None
                 # Populate cache
-                fake_redis.set(test_key, json.dumps({"value": value}), ex=300)
+                fake_valkey.set(test_key, json.dumps({"value": value}), ex=300)
             else:
                 cache_hits += 1
 
             # Second query - cache hit
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             if cached is None:
                 cache_misses += 1
             else:
                 cache_hits += 1
 
             # Third query - cache hit
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             if cached is None:
                 cache_misses += 1
             else:
@@ -636,37 +698,37 @@ class TestRedisWithDatabaseQueries:
     @pytest.mark.production_simulation
     def test_cache_invalidation_with_database_updates(self, postgres_config):
         """
-        Update database records and verify Redis cache invalidation.
+        Update database records and verify Valkey cache invalidation.
 
         Verifies:
         - Cache is invalidated on database updates
         - Write-through pattern works
         - Cache contains current data after update
         """
-        fake_redis = fakeredis.FakeRedis()
-        db = Database(postgres_config)
+        fake_valkey = _FakeRedis()
+        db = _worker_database(postgres_config)
 
         try:
             test_key = "user:1"
 
             # Initial cache set
-            fake_redis.set(test_key, json.dumps({"id": 1, "name": "Original"}), ex=300)
+            fake_valkey.set(test_key, json.dumps({"id": 1, "name": "Original"}), ex=300)
 
             # Simulate database update
             # In real scenario, would execute UPDATE query
 
             # Invalidate cache
-            fake_redis.delete(test_key)
+            fake_valkey.delete(test_key)
 
             # Verify cache is invalidated
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             assert cached is None, "Cache should be invalidated"
 
             # Repopulate cache with new data
-            fake_redis.set(test_key, json.dumps({"id": 1, "name": "Updated"}), ex=300)
+            fake_valkey.set(test_key, json.dumps({"id": 1, "name": "Updated"}), ex=300)
 
             # Verify new data in cache
-            cached = fake_redis.get(test_key)
+            cached = fake_valkey.get(test_key)
             assert cached is not None, "Cache should be repopulated"
             data = json.loads(cached)
             assert data["name"] == "Updated", f"Expected 'Updated', got {data['name']}"
@@ -678,28 +740,24 @@ class TestRedisWithDatabaseQueries:
     @pytest.mark.production_simulation
     def test_redis_failure_graceful_degradation(self, postgres_config):
         """
-        Simulate Redis connection failure and verify database queries continue.
+        Simulate Valkey connection failure and verify database queries continue.
 
         Verifies:
-        - Database queries work when Redis is unavailable
+        - Database queries work when Valkey is unavailable
         - Performance impact is captured
         - Graceful degradation works
         """
-        db = Database(postgres_config)
+        db = _worker_database(postgres_config)
 
         try:
-            # Query with Redis available
+            # Query with Valkey available
             start_time = time.time()
-            with db.get_session() as session:
-                result = session.execute(text("SELECT 1"))
-                result.fetchone()
+            assert db.fetch_one("SELECT 1") is not None
             time_with_redis = time.time() - start_time
 
-            # Simulate Redis failure by not using cache
+            # Simulate Valkey failure by not using cache
             start_time = time.time()
-            with db.get_session() as session:
-                result = session.execute(text("SELECT 1"))
-                result.fetchone()
+            assert db.fetch_one("SELECT 1") is not None
             time_without_redis = time.time() - start_time
 
             # Both should succeed
@@ -713,38 +771,35 @@ class TestRedisWithDatabaseQueries:
     @pytest.mark.production_simulation
     def test_session_caching_with_database_queries(self, postgres_config):
         """
-        Test session data cached in Redis while user data queries hit PostgreSQL.
+        Test session data cached in Valkey while user data queries hit PostgreSQL.
 
         Verifies:
         - Session cache reduces database load
         - Database queries still work
         - Cache layer is transparent to application
         """
-        fake_redis = fakeredis.FakeRedis()
-        db = Database(postgres_config)
+        fake_valkey = _FakeRedis()
+        db = _worker_database(postgres_config)
 
         try:
             session_id = "sess:123"
             user_id = 456
 
             # Cache session data
-            fake_redis.set(
+            fake_valkey.set(
                 session_id,
                 json.dumps({"user_id": user_id, "login_time": time.time()}),
                 ex=3600,
             )
 
             # Query from cache
-            cached_session = fake_redis.get(session_id)
+            cached_session = fake_valkey.get(session_id)
             assert cached_session is not None, "Session should be cached"
             session_data = json.loads(cached_session)
             assert session_data["user_id"] == user_id
 
             # Query user data from database
-            with db.get_session() as session:
-                result = session.execute(text("SELECT 1 as user_id"))
-                row = result.fetchone()
-                assert row is not None
+            assert db.fetch_one("SELECT 1 as user_id") is not None
 
             logger.info("Session caching with database queries test passed")
         finally:
@@ -783,8 +838,10 @@ class TestWorkerRestartScenarios:
         results = simulator.collect_results(result_queue, timeout=120)
         simulator.join_all_workers(timeout=30)
 
-        # Verify at least some workers completed successfully
-        completed_workers = len([r for r in results if "worker_id" in r])
+        # Verify at least some workers completed successfully. These workers
+        # return a ``WorkerResult`` dataclass rather than a dict, so membership
+        # must be probed by attribute.
+        completed_workers = len(worker_ids(results))
         assert completed_workers >= 2, (
             f"Expected at least 2 workers to complete, got {completed_workers}"
         )
@@ -932,22 +989,6 @@ class TestGracefulShutdown:
         - Shutdown signal properly received
         """
 
-        def long_running_query(
-            worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
-        ) -> Dict[str, Any]:
-            """Execute long-running query."""
-            db = Database(db_config)
-            completed = 0
-            try:
-                for _ in range(queries_per_worker):
-                    with db.get_session() as session:
-                        # Simulate long-running query with sleep
-                        session.execute(text("SELECT pg_sleep(0.1)"))
-                        completed += 1
-            finally:
-                db.close()
-            return {"worker_id": worker_id, "completed": completed}
-
         simulator = ProductionSimulator(
             db_config=postgres_config, worker_count=2, queries_per_worker=10
         )
@@ -961,8 +1002,13 @@ class TestGracefulShutdown:
         results = simulator.collect_results(result_queue, timeout=60)
         simulator.join_all_workers(timeout=30)
 
-        # Verify queries completed
+        # Verify queries completed: every worker ran its full quota and none
+        # was torn down mid-query.
         total_completed = sum(r.get("completed", 0) for r in results)
+        assert len(results) == 2, f"Expected 2 worker results, got {len(results)}"
+        assert total_completed == 20, (
+            f"Expected 20 completed queries, got {total_completed}"
+        )
         logger.info(f"Graceful shutdown: {total_completed} queries completed")
 
     @pytest.mark.production_simulation
@@ -977,8 +1023,7 @@ class TestGracefulShutdown:
         - No connection leaks
         """
         # Create connection
-        with db.get_session() as session:
-            session.execute(text("SELECT 1"))
+        db.fetch_one("SELECT 1")
 
         # Get stats before close
         stats_before = db.get_pool_stats()
@@ -1002,12 +1047,8 @@ class TestGracefulShutdown:
         """
         timeout_seconds = 5
 
-        try:
-            with db.get_session() as session:
-                session.execute(text("SELECT 1"))
-            logger.info(f"Query completed within {timeout_seconds}s timeout")
-        except Exception as e:
-            logger.error(f"Timeout error: {e}")
+        assert db.fetch_one("SELECT 1") is not None
+        logger.info(f"Query completed within {timeout_seconds}s timeout")
 
     @pytest.mark.production_simulation
     @pytest.mark.requires_postgres
@@ -1047,21 +1088,6 @@ class TestPoolUtilizationMonitoring:
         - Includes active_connections, idle_connections, acquisitions, timings
         - Metrics are consistent and meaningful
         """
-
-        def sustained_load(
-            worker_id: int, queries_per_worker: int, db_config: Dict[str, Any]
-        ) -> Dict[str, Any]:
-            """Execute sustained load."""
-            database = Database(db_config)
-            results = []
-            try:
-                for _ in range(queries_per_worker):
-                    with database.get_session() as session:
-                        session.execute(text("SELECT 1"))
-                        results.append(True)
-            finally:
-                database.close()
-            return {"worker_id": worker_id, "results": len(results)}
 
         simulator = ProductionSimulator(
             db_config=postgres_config, worker_count=4, queries_per_worker=250

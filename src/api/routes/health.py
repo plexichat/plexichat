@@ -2,6 +2,8 @@
 Health check endpoint.
 """
 
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, status, HTTPException
 from pydantic import BaseModel
 
@@ -12,11 +14,33 @@ from src.api.schemas.common import ErrorResponse
 router = APIRouter(tags=["Health"])
 
 
+@router.get(
+    "/ready",
+    response_model=dict,
+    summary="Readiness probe",
+    responses={
+        200: {"description": "Server is alive and accepting requests"},
+    },
+)
+async def readiness_probe() -> dict:
+    """Minimal readiness probe for container orchestrators.
+
+    Returns 200 as soon as the HTTP server is bound.  No database,
+    Valkey, or filesystem checks — this is a pure liveness signal so
+    Docker / Kubernetes can route traffic to the pod.  For deeper
+    health checks (DB, events, cross-worker listener) use ``/health``.
+    """
+    return {"status": "ready"}
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
     status: str
     version: str
+    events_metrics: Optional[Dict[str, Any]] = None
+    is_queue_recreate_pending: Optional[bool] = None
+    cross_worker_listener: Optional[Dict[str, Any]] = None
 
 
 @router.get(
@@ -28,10 +52,29 @@ class HealthResponse(BaseModel):
     },
 )
 async def health_check() -> HealthResponse:
-    """
-    Check API health status.
+    """Check API health status.
 
-    Returns the current health status and API version.
+    Returns the current health status, API version, and — when
+    available — observable EventManager saturation metrics
+    (``events_metrics``: dropped-event count, subscribers,
+    queue size/max, critical-subscribers). Also exposes
+    ``is_queue_recreate_pending`` so operators can detect
+    uvicorn reloads / closed-loop drift before the next dispatch
+    migrates the queue.
+
+    Events metrics are ADVISORY — ``status`` + ``version`` are
+    the contract /health consumers actually depend on, and a
+    bug in the events layer must NOT take this endpoint down.
+    Each metric is wrapped in its own try/except so partial
+    success returns one without dropping both. We log the
+    fallbacks at DEBUG (not WARNING) because they are an
+    EXPECTED transient during cold-boot before
+    ``events.setup(...)`` has populated ``src.core.events.event_manager``
+    — a real production warning here would imply a deployment
+    misorder, but the path is harmless and self-heals as soon
+    as the first dispatch lands. ``logger.debug`` uses lazy
+    ``%s`` formatting; eager f-strings would force string
+    construction even when DEBUG is disabled.
     """
     try:
         try:
@@ -39,9 +82,63 @@ async def health_check() -> HealthResponse:
         except RuntimeError:
             ver = "unknown"
 
-        return HealthResponse(status="healthy", version=ver)
+        events_metrics: Optional[Dict[str, Any]] = None
+        recreate_pending: Optional[bool] = None
+        try:
+            # Import ONCE — both blocks below share the cached
+            # module object so a re-entrant / partial-init failure
+            # surfaces in one place, not twice. Hoist keeps partial
+            # success: if the import raises, both metrics return
+            # None with a single log line; if one method call
+            # raises, the other can still succeed.
+            from src.core import events as events_module
+
+            event_manager = getattr(events_module, "event_manager", None)
+            if event_manager is None:
+                raise RuntimeError("Event manager is not initialized")
+
+            try:
+                events_metrics = event_manager.get_loss_metrics()
+            except Exception as exc:
+                logger.debug(
+                    "Health check: event_manager.get_loss_metrics() failed: %s",
+                    exc,
+                )
+            try:
+                recreate_pending = event_manager.is_queue_recreate_pending()
+            except Exception as exc:
+                logger.debug(
+                    "Health check: event_manager.is_queue_recreate_pending() failed: %s",
+                    exc,
+                )
+        except Exception as exc:
+            logger.debug(
+                "Health check: event_manager import failed: %s",
+                exc,
+            )
+
+        # Cross-worker listener health — advisory, same contract
+        # as events_metrics.
+        listener_status: Optional[Dict[str, Any]] = None
+        try:
+            from src.api.websocket import cross_worker_listener_status
+
+            listener_status = cross_worker_listener_status()
+        except Exception as exc:
+            logger.debug(
+                "Health check: cross_worker_listener_status() failed: %s",
+                exc,
+            )
+
+        return HealthResponse(
+            status="healthy",
+            version=ver,
+            events_metrics=events_metrics,
+            is_queue_recreate_pending=recreate_pending,
+            cross_worker_listener=listener_status,
+        )
     except Exception as e:
-        logger.error(f"Health check failed: {e}", exc_info=True)
+        logger.error("Health check failed: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": {"code": 500, "message": "Internal server error"}},

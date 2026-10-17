@@ -1,0 +1,517 @@
+"""
+Friend request mixin - create / accept friend request route handlers.
+"""
+
+import asyncio
+import time
+
+from fastapi import HTTPException, Depends, status
+
+import src.api as api
+from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.relationships import (
+    FriendRequestCreate,
+    RelationshipResponse,
+)
+from src.api.schemas.common import SnowflakeID, SuccessResponse
+from src.core.relationships.exceptions import (
+    AlreadyFriendsError,
+    FriendRequestExistsError,
+    FriendRequestNotFoundError,
+    PermissionDeniedError,
+    RelationshipValidationError,
+    SelfRelationshipError,
+    UserBlockedError,
+    UserNotFoundError,
+)
+from .base import RelationshipBaseProtocol
+import utils.logger as logger
+
+# Maximum friend requests a single user may send per rolling minute.
+FRIEND_REQUEST_RATE_LIMIT = 10
+
+# Setting key consulted on the recipient's profile. Absent/unreadable → open.
+ALLOW_FRIEND_REQUESTS_SETTING_KEY = "allow_friend_requests"
+
+# Stored values treated as "not accepting friend requests".
+_FRIEND_REQUESTS_DISABLED_VALUES = frozenset(
+    {"0", "false", "off", "no", "disabled", "none"}
+)
+
+
+def _recipient_accepts_friend_requests(recipient_id: int) -> bool:
+    """Best-effort read of the recipient's allow_friend_requests flag.
+
+    Defaults to open (accepting) when the settings module is unavailable,
+    the flag is unset, or the lookup fails — matching the historical
+    behaviour. Never raises.
+    """
+    try:
+        settings = api.get_settings()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request privacy check unavailable: {e}")
+        return True
+    if settings is None:
+        return True
+    try:
+        raw = settings.get(recipient_id, ALLOW_FRIEND_REQUESTS_SETTING_KEY)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request privacy lookup failed for {recipient_id}: {e}")
+        return True
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in _FRIEND_REQUESTS_DISABLED_VALUES
+
+
+async def _check_friend_request_rate_limit(user_id: int) -> None:
+    """Throttle friend-request submission per user (best-effort).
+
+    Reuses the shared rate-limit manager used elsewhere (reports, feedback).
+    If it cannot be initialised we skip the check rather than blocking
+    legitimate requests.
+    """
+    try:
+        import src.core.ratelimit as ratelimit
+        from src.core.ratelimit.storage import MemoryStorage
+
+        if not ratelimit.is_setup():
+            ratelimit.setup(storage_backend=MemoryStorage(), enable_global_limit=False)
+        manager = ratelimit.get_manager()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request rate limit unavailable, skipping check: {e}")
+        return
+
+    now_seconds = int(time.time())
+    minute_window = now_seconds - (now_seconds % 60)
+    key = f"friend_requests:send:minute:{user_id}:{minute_window}"
+    try:
+        count = await manager.aincrement_custom_usage(key, "count", 0, ttl=120)
+        if count >= FRIEND_REQUEST_RATE_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": {
+                        "code": 429,
+                        "message": "Too many friend requests sent. Please slow down.",
+                    }
+                },
+            )
+        await manager.aincrement_custom_usage(key, "count", 1, ttl=120)
+    except HTTPException:
+        raise
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Friend-request rate limit increment failed: {e}")
+
+
+class FriendRequestMixin:
+    async def create_relationship(
+        self: RelationshipBaseProtocol,
+        body: FriendRequestCreate,
+        current_user: TokenInfo = Depends(get_current_user),
+    ) -> RelationshipResponse:
+        """
+        Send a friend request.
+
+        Creates a pending friend request to the specified user.
+        """
+        relationships = api.get_relationships()
+        auth = api.get_auth()
+        if not relationships:
+            logger.error("Relationships module not available")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Relationships module not available",
+                    }
+                },
+            )
+
+        try:
+            try:
+                target_id = int(body.user_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"User {current_user.user_id} provided invalid target ID: {body.user_id}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid user ID"}},
+                )
+
+            await _check_friend_request_rate_limit(current_user.user_id)
+
+            if not _recipient_accepts_friend_requests(target_id):
+                # M2: recipient disabled incoming friend requests. Denied
+                # with 403 (permission/privacy denial, per this file's
+                # PermissionDeniedError convention). This is intentionally
+                # distinct from the M3 generic 404 used for blocked/missing
+                # targets — it reflects the recipient's own public setting,
+                # not a block — and the message says nothing about blocks.
+                logger.debug(
+                    f"User {current_user.user_id} friend request to {target_id} "
+                    f"refused: recipient is not accepting friend requests"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": {
+                            "code": 403,
+                            "message": "This user is not accepting friend requests",
+                        }
+                    },
+                )
+
+            try:
+                request = relationships.send_friend_request(
+                    sender_id=current_user.user_id,
+                    recipient_id=target_id,
+                    message=body.message,
+                )
+            except SelfRelationshipError:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": 400,
+                            "message": "Cannot send friend request to yourself",
+                        }
+                    },
+                )
+            except UserBlockedError as e:
+                # M3: block-status oracle — blocked and nonexistent targets
+                # must be indistinguishable (generic 404). Real reason stays
+                # server-side in the log only.
+                logger.debug(
+                    f"User {current_user.user_id} blocked from sending friend "
+                    f"request to {target_id}: {e}"
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
+                )
+            except (FriendRequestExistsError, AlreadyFriendsError):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": {
+                            "code": 409,
+                            "message": "Friend request already exists",
+                        }
+                    },
+                )
+            except UserNotFoundError:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": {"code": 404, "message": "User not found"}},
+                )
+            except RelationshipValidationError:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {"code": 400, "message": "Invalid friend request"}
+                    },
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to send friend request from {current_user.user_id} to {target_id}: {e}",
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Failed to send friend request",
+                        }
+                    },
+                )
+
+            sender_username = None
+            target_username = None
+            if auth:
+                try:
+                    profiles = auth.get_user_profiles_bulk(
+                        [current_user.user_id, target_id]
+                    )
+                    sender = (
+                        profiles.get(str(current_user.user_id)) if profiles else None
+                    )
+                    target = profiles.get(str(target_id)) if profiles else None
+                    if sender:
+                        sender_username = sender.get("username")
+                    if target:
+                        target_username = target.get("username")
+                except Exception as e:
+                    logger.debug(f"Failed to get usernames for relationship event: {e}")
+
+            req_status = getattr(request, "status", None)
+            if req_status is not None and hasattr(req_status, "value"):
+                req_status = req_status.value
+            auto_accepted = req_status == "accepted"
+
+            if auto_accepted:
+                # A reverse pending request existed, so send_friend_request auto-accepted
+                # it: both users are now friends. Emit "friend" events, not pending ones.
+                await asyncio.gather(
+                    self._dispatch_relationship_event(
+                        "add",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "username": sender_username,
+                            "status": "friend",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                    self._dispatch_relationship_event(
+                        "add",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                            "username": target_username,
+                            "status": "friend",
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                )
+            else:
+                await asyncio.gather(
+                    self._dispatch_relationship_event(
+                        "add",
+                        target_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                            "username": sender_username,
+                            "status": "pending_incoming",
+                            "message": body.message,
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                    self._dispatch_relationship_event(
+                        "add",
+                        current_user.user_id,
+                        target_id,
+                        {
+                            "user_id": str(target_id),
+                            "username": target_username,
+                            "status": "pending_outgoing",
+                            "message": body.message,
+                            "created_at": getattr(request, "created_at", None),
+                        },
+                    ),
+                )
+
+            try:
+                self._invalidate_relationship_list_cache(
+                    current_user.user_id, target_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to invalidate relationship cache in create: {e}")
+
+            response_status = "friend" if auto_accepted else "pending_outgoing"
+
+            return RelationshipResponse(
+                user_id=SnowflakeID(target_id),
+                status=response_status,
+                created_at=getattr(request, "created_at", None),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in create_relationship for user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )
+
+    async def accept_friend_request(
+        self: RelationshipBaseProtocol,
+        user_id: str,
+        current_user: TokenInfo = Depends(get_current_user),
+    ) -> SuccessResponse:
+        """
+        Accept a friend request.
+
+        Accepts a pending friend request from the specified user.
+        """
+        relationships = api.get_relationships()
+        auth = api.get_auth()
+        presence = api.get_presence()
+        if not relationships:
+            logger.error("Relationships module not available")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Relationships module not available",
+                    }
+                },
+            )
+
+        try:
+            try:
+                sender_id = int(user_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"User {current_user.user_id} provided invalid sender ID: {user_id}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid user ID"}},
+                )
+
+            try:
+                pending = relationships.get_pending_requests_incoming(
+                    current_user.user_id
+                )
+                request_id = None
+
+                for r in pending:
+                    if r.sender_id == sender_id:
+                        request_id = r.id
+                        break
+
+                if not request_id:
+                    logger.warning(
+                        f"Friend request from user {sender_id} not found for user {current_user.user_id}. Pending senders: {[r.sender_id for r in pending]}"
+                    )
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {
+                                "code": 404,
+                                "message": "Friend request not found",
+                            }
+                        },
+                    )
+
+                result = relationships.accept_friend_request(
+                    current_user.user_id, request_id
+                )
+            except HTTPException:
+                raise
+            except FriendRequestNotFoundError:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": {"code": 404, "message": "Friend request not found"}
+                    },
+                )
+            except PermissionDeniedError:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Permission denied"}},
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to accept friend request from {sender_id} for user {current_user.user_id}: {e}",
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Failed to accept friend request",
+                        }
+                    },
+                )
+
+            sender_username = None
+            accepter_username = None
+            sender_presence = None
+            accepter_presence = None
+            if auth:
+                try:
+                    profiles = auth.get_user_profiles_bulk(
+                        [sender_id, current_user.user_id]
+                    )
+                    sender = profiles.get(str(sender_id)) if profiles else None
+                    accepter = (
+                        profiles.get(str(current_user.user_id)) if profiles else None
+                    )
+                    if sender:
+                        sender_username = sender.get("username")
+                    if accepter:
+                        accepter_username = accepter.get("username")
+                except Exception as e:
+                    logger.debug(f"Failed to get user info for accept event: {e}")
+
+            if presence:
+                try:
+                    sp = presence.get_visible_presence(current_user.user_id, sender_id)
+                    ap = presence.get_visible_presence(sender_id, current_user.user_id)
+                    if sp:
+                        status = getattr(sp, "status", None)
+                        if status and hasattr(status, "value"):
+                            status = status.value
+                        sender_presence = {"status": status or "offline"}
+                    if ap:
+                        status = getattr(ap, "status", None)
+                        if status and hasattr(status, "value"):
+                            status = status.value
+                        accepter_presence = {"status": status or "offline"}
+                except Exception as e:
+                    logger.debug(f"Failed to get presence for accept event: {e}")
+
+            created_at = getattr(result, "updated_at", None) or getattr(
+                result, "created_at", None
+            )
+
+            await asyncio.gather(
+                self._dispatch_relationship_event(
+                    "add",
+                    sender_id,
+                    current_user.user_id,
+                    {
+                        "user_id": str(current_user.user_id),
+                        "username": accepter_username,
+                        "status": "friend",
+                        "presence": accepter_presence,
+                        "created_at": created_at,
+                    },
+                ),
+                self._dispatch_relationship_event(
+                    "add",
+                    current_user.user_id,
+                    sender_id,
+                    {
+                        "user_id": str(sender_id),
+                        "username": sender_username,
+                        "status": "friend",
+                        "presence": sender_presence,
+                        "created_at": created_at,
+                    },
+                ),
+            )
+
+            try:
+                self._invalidate_relationship_list_cache(
+                    current_user.user_id, sender_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to invalidate relationship cache: {e}")
+
+            return SuccessResponse(success=True, message=None)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in accept_friend_request for user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )

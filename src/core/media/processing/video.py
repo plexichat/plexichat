@@ -8,6 +8,7 @@ Security features:
 """
 
 import json
+import os
 import subprocess
 import shutil
 from typing import Optional
@@ -31,6 +32,25 @@ def _get_video_config() -> dict:
         return media_config.get("video_processing", {})
     except RuntimeError:
         return {}
+
+
+def resolve_ffprobe_path(candidate: Optional[str] = None) -> Optional[str]:
+    """Resolve a configured ffprobe executable, falling back to PATH."""
+    configured_path = candidate or _get_video_config().get("ffprobe_path")
+    if configured_path:
+        resolved = shutil.which(configured_path)
+        if resolved:
+            logger.debug("Found configured ffprobe at %s", resolved)
+            return resolved
+        logger.debug(
+            "Configured ffprobe_path is not executable or not found: %s",
+            configured_path,
+        )
+
+    path = shutil.which("ffprobe")
+    if path:
+        logger.debug("Found ffprobe at %s", path)
+    return path
 
 
 class VideoProcessor:
@@ -62,7 +82,7 @@ class VideoProcessor:
             timeout: Timeout in seconds for ffprobe (default: 30)
             max_size_for_metadata: Max file size to extract metadata from (default: 500MB)
         """
-        self._ffprobe_path = ffprobe_path or self._find_ffprobe()
+        self._ffprobe_path = resolve_ffprobe_path(ffprobe_path)
 
         # Load config with fallbacks
         video_config = _get_video_config()
@@ -74,14 +94,9 @@ class VideoProcessor:
         )
 
         if not self._ffprobe_path:
-            logger.warning("ffprobe not found - video metadata extraction disabled")
-
-    def _find_ffprobe(self) -> Optional[str]:
-        """Find ffprobe executable in PATH."""
-        path = shutil.which("ffprobe")
-        if path:
-            logger.debug(f"Found ffprobe at {path}")
-        return path
+            logger.debug(
+                "Optional dependency ffprobe is unavailable; video metadata extraction is disabled"
+            )
 
     def is_available(self) -> bool:
         """Check if ffprobe is available."""
@@ -99,6 +114,25 @@ class VideoProcessor:
         """
         if not self._ffprobe_path:
             raise VideoProcessingError("ffprobe not available", "metadata")
+
+        # Security: Check file size before processing. The bytes path
+        # (``get_metadata_from_bytes``) already enforces ``self._max_size``;
+        # the pipeline only uses that path for files <= the in-memory
+        # threshold, so without this check the configured cap was silently
+        # skipped for every larger (temp-file) upload — the files it exists
+        # to bound.
+        try:
+            size_on_disk = os.path.getsize(file_path)
+        except OSError:
+            size_on_disk = 0
+        if size_on_disk > self._max_size:
+            logger.warning(
+                f"Video too large for metadata extraction: {size_on_disk} > {self._max_size}"
+            )
+            raise VideoProcessingError(
+                f"Video exceeds maximum size for metadata extraction ({self._max_size // (1024 * 1024)}MB)",
+                "metadata",
+            )
 
         try:
             cmd = [

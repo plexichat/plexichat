@@ -11,6 +11,14 @@ import pytest
 
 
 @pytest.fixture
+def migration_manager(db):
+    """Create a MigrationManager instance for testing."""
+    from src.core.migrations.manager import MigrationManager
+
+    return MigrationManager(db)
+
+
+@pytest.fixture
 def temp_migrations_dir():
     """Create a temporary migrations directory."""
     with tempfile.TemporaryDirectory() as tmpdir:

@@ -6,6 +6,7 @@ with proper transaction handling, error recovery, and dry-run support.
 """
 
 import importlib.util
+import inspect
 import logging
 import time
 from pathlib import Path
@@ -50,10 +51,49 @@ class MigrationRunner:
         if spec is None or spec.loader is None:
             raise ImportError(f"Could not load migration module: {file_path}")
 
+        if not Path(file_path).exists():
+            raise ImportError(f"Migration file not found: {file_path}")
+
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
         return module
+
+    def _screen_migration_sql(
+        self, migration_module, fn_name: str, version: str
+    ) -> None:
+        """Screen a migration's SQL before it executes (M5).
+
+        ``validate_sql_safety`` previously ran only inside unit tests - the
+        runner and manager never invoked it, so the destructive-SQL
+        screening provided zero runtime protection. Migration SQL lives in
+        ``up()``/``down()`` as inlined strings, so screening the function
+        source turns the validator into an execution-time guard.
+
+        Screening is direction-aware and fails closed: ``up()`` is gated by
+        ``validate_migration_up_sql`` (DROP TABLE / TRUNCATE / DELETE
+        without WHERE / DROP DATABASE / DROP SCHEMA block the run with a
+        clear error), while ``down()`` keeps the lenient check because
+        rollbacks legitimately reverse DDL. Any screening failure raises
+        ValueError so an unscreened migration never executes.
+        """
+        fn = getattr(migration_module, fn_name, None)
+        if fn is None:
+            return
+        try:
+            source = inspect.getsource(fn)
+            if fn_name == "up":
+                _, warnings = validator.validate_migration_up_sql(source)
+            else:
+                _, warnings = validator.validate_sql_safety(source)
+            for w in warnings:
+                logger.warning(f"Migration {version} {fn_name}(): {w}")
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(
+                f"Migration {version} {fn_name}() SQL safety screening failed: {e}"
+            )
 
     def execute_migration_up(
         self, migration_module, version: str, name: str
@@ -75,6 +115,8 @@ class MigrationRunner:
         """
         if not hasattr(migration_module, "up"):
             raise AttributeError(f"Migration {version} missing up() function")
+
+        self._screen_migration_sql(migration_module, "up", version)
 
         start_time = time.time()
 
@@ -132,6 +174,8 @@ class MigrationRunner:
             raise AttributeError(
                 f"Migration {version} has no down() function, rollback not available"
             )
+
+        self._screen_migration_sql(migration_module, "down", version)
 
         start_time = time.time()
 

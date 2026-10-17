@@ -4,6 +4,8 @@ Admin security routes.
 
 from fastapi import APIRouter, Request, HTTPException
 from typing import List
+import secrets
+
 from src.api.schemas.admin import (
     BlockedIPResponse,
     IPBlockRequest,
@@ -23,8 +25,12 @@ from src.api.schemas.admin import (
     AccessTokenUsageIPResponse,
     AccessTokenUsagePathResponse,
 )
-from src.api.schemas.common import SuccessResponse
-from .utils import check_host_restriction, get_admin_from_token
+from src.api.schemas.common import ErrorResponse, SnowflakeIDParam, SuccessResponse
+from .utils import (
+    check_host_restriction,
+    require_admin_permission,
+)
+import utils.logger as logger
 
 router = APIRouter()
 
@@ -64,58 +70,115 @@ def _serialize_access_token_scope(scope) -> AccessTokenScopeResponse:
     )
 
 
-@router.get("/security/blocked-ips", response_model=List[BlockedIPResponse])
+@router.get(
+    "/security/blocked-ips",
+    response_model=List[BlockedIPResponse],
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_blocked_ips(request: Request):
     """
     Retrieve a list of all currently blocked IP addresses.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
-    return [BlockedIPResponse(**ip) for ip in auth.get_blocked_ips()]
+    # blocked_by is the blocking admin's snowflake id; stringify it so the
+    # response keeps the project-wide "ids are strings in JSON" contract.
+    return [
+        BlockedIPResponse(
+            **{
+                **ip,
+                "blocked_by": (
+                    str(ip["blocked_by"]) if ip.get("blocked_by") is not None else None
+                ),
+            }
+        )
+        for ip in auth.get_blocked_ips()
+    ]
 
 
-@router.post("/security/block-ip", response_model=SuccessResponse)
+@router.post(
+    "/security/block-ip",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def block_ip(request: Request, body: IPBlockRequest):
     """
     Block a specific IP address from accessing the platform.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
     auth.block_ip(body.ip_address, body.reason, admin_id, body.duration_hours)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
-@router.get("/security/access-tokens", response_model=List[AccessTokenResponse])
+@router.get(
+    "/security/access-tokens",
+    response_model=List[AccessTokenResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def list_access_tokens(request: Request, include_revoked: bool = True):
     """
     List all API access tokens created by administrators.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     tokens = auth.list_api_access_tokens(include_revoked=include_revoked)
     return [_serialize_access_token(t) for t in tokens]
 
 
-@router.post("/security/access-tokens", response_model=AccessTokenCreateResponse)
+@router.post(
+    "/security/access-tokens",
+    response_model=AccessTokenCreateResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        409: {"model": ErrorResponse, "description": "Token name already exists"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def create_access_token(request: Request, body: AccessTokenCreateRequest):
     """
     Create a new permanent API access token for administrative use.
+
+    The token value is always generated server-side; caller-supplied token
+    values are rejected to prevent weak or pre-known credentials.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
+    if body.token:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "Token values are generated server-side and cannot be supplied by clients",
+                }
+            },
+        )
     from src.core import auth
 
     try:
         token = auth.create_api_access_token(
             body.name,
             admin_id,
-            body.token,
+            secrets.token_urlsafe(32),
             description=body.description,
             expires_at=body.expires_at,
             scope_mode=body.scope_mode,
@@ -135,13 +198,21 @@ async def create_access_token(request: Request, body: AccessTokenCreateRequest):
 @router.get(
     "/security/access-tokens/{token_id}",
     response_model=AccessTokenDetailResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def get_access_token_detail(
-    request: Request, token_id: int, recent_limit: int = 100
+    request: Request,
+    token_id: SnowflakeIDParam,
+    recent_limit: int = 100,
 ):
     """Get detailed usage and policy information for a specific API access token."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     try:
@@ -182,15 +253,21 @@ async def get_access_token_detail(
 @router.patch(
     "/security/access-tokens/{token_id}",
     response_model=AccessTokenResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def update_access_token(
     request: Request,
-    token_id: int,
+    token_id: SnowflakeIDParam,
     body: AccessTokenUpdateRequest,
 ):
     """Update metadata, expiry, or scope mode for a specific API access token."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     try:
@@ -219,19 +296,41 @@ async def update_access_token(
 @router.post(
     "/security/access-tokens/{token_id}/rotate",
     response_model=AccessTokenCreateResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def rotate_access_token(
     request: Request,
-    token_id: int,
+    token_id: SnowflakeIDParam,
     body: AccessTokenRotateRequest,
 ):
-    """Rotate an API access token, cloning policy and scopes into a replacement."""
+    """Rotate an API access token, cloning policy and scopes into a replacement.
+
+    The new token value is always generated server-side; caller-supplied
+    values are rejected.
+    """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
+    if body.token:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "Token values are generated server-side and cannot be supplied by clients",
+                }
+            },
+        )
     from src.core import auth
 
     try:
-        token = auth.rotate_api_access_token(token_id, admin_id, body.token)
+        token = auth.rotate_api_access_token(
+            token_id, admin_id, secrets.token_urlsafe(32)
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -242,6 +341,18 @@ async def rotate_access_token(
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token not found"}},
         )
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "token_rotated",
+            {"token_id": str(token_id), "rotated_by": str(admin_id)},
+            source="admin",
+            severity="info",
+        )
+    except Exception:
+        pass
+
     return AccessTokenCreateResponse(
         token=token.token or "", access_token=_serialize_access_token(token)
     )
@@ -250,15 +361,21 @@ async def rotate_access_token(
 @router.post(
     "/security/access-tokens/{token_id}/scopes",
     response_model=AccessTokenScopeResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def add_access_token_scope(
     request: Request,
-    token_id: int,
+    token_id: SnowflakeIDParam,
     body: AccessTokenScopeCreateRequest,
 ):
     """Add an IP or CIDR scope rule to an API access token."""
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     try:
@@ -269,6 +386,11 @@ async def add_access_token_scope(
             admin_id,
         )
     except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": 404, "message": str(exc)}},
+            )
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": str(exc)}},
@@ -279,11 +401,19 @@ async def add_access_token_scope(
 @router.delete(
     "/security/access-tokens/{token_id}/scopes/{scope_id}",
     response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token scope not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
-async def remove_access_token_scope(request: Request, token_id: int, scope_id: int):
+async def remove_access_token_scope(
+    request: Request, token_id: SnowflakeIDParam, scope_id: SnowflakeIDParam
+):
     """Remove an IP or CIDR scope rule from an API access token."""
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     success = auth.remove_api_access_token_scope(token_id, scope_id)
@@ -292,18 +422,25 @@ async def remove_access_token_scope(request: Request, token_id: int, scope_id: i
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token scope not found"}},
         )
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.post(
-    "/security/access-tokens/{token_id}/revoke", response_model=SuccessResponse
+    "/security/access-tokens/{token_id}/revoke",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {"model": ErrorResponse, "description": "Access token not found"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
-async def revoke_access_token(request: Request, token_id: int):
+async def revoke_access_token(request: Request, token_id: SnowflakeIDParam):
     """
     Revoke a specific API access token.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
     from src.core import auth
 
     success = auth.revoke_api_access_token(token_id, admin_id)
@@ -312,29 +449,107 @@ async def revoke_access_token(request: Request, token_id: int):
             status_code=404,
             detail={"error": {"code": 404, "message": "Access token not found"}},
         )
-    return SuccessResponse(success=True)
+
+    # Record as a system alert.
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "token_revoked",
+            {"token_id": str(token_id), "revoked_by": str(admin_id)},
+            source="admin",
+            severity="warning",
+        )
+    except Exception:
+        pass
+
+    return SuccessResponse(success=True, message=None)
 
 
-@router.delete("/security/unblock-ip/{ip_address:path}", response_model=SuccessResponse)
+@router.post(
+    "/security/access-tokens/{token_id}/unrevoke",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        404: {
+            "model": ErrorResponse,
+            "description": "Access token not found or not revoked",
+        },
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
+async def unrevoke_access_token(request: Request, token_id: SnowflakeIDParam):
+    """
+    Unrevoke a previously revoked API access token.
+    """
+    check_host_restriction(request)
+    admin_id = require_admin_permission(request, "admin.security.tokens")
+    from src.core import auth
+
+    success = auth.unrevoke_api_access_token(token_id, admin_id)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "code": 404,
+                    "message": "Access token not found or not revoked",
+                }
+            },
+        )
+
+    # Record as a system alert.
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "token_unrevoked",
+            {"token_id": str(token_id), "unrevoked_by": str(admin_id)},
+            source="admin",
+            severity="info",
+        )
+    except Exception:
+        pass
+
+    return SuccessResponse(success=True, message=None)
+
+
+@router.delete(
+    "/security/unblock-ip/{ip_address:path}",
+    response_model=SuccessResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def unblock_ip(request: Request, ip_address: str):
     """
     Remove an IP address from the blocklist.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.ipblock")
     from src.core import auth
 
     auth.unblock_ip(ip_address)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
-@router.get("/security/banned-usernames", response_model=List[BannedUsernameResponse])
+@router.get(
+    "/security/banned-usernames",
+    response_model=List[BannedUsernameResponse],
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_banned_usernames(request: Request):
     """
     Retrieve the list of patterns used to ban specific usernames.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.usernames")
     from src.core import admin
 
     return [
@@ -343,41 +558,63 @@ async def get_banned_usernames(request: Request):
     ]
 
 
-@router.post("/security/banned-usernames", response_model=SuccessResponse)
+@router.post(
+    "/security/banned-usernames",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def add_banned_username(request: Request, body: BannedUsernameCreate):
     """
     Add a new pattern to the list of banned usernames.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.usernames")
     from src.core import admin
 
-    admin.add_banned_username(body.pattern, body.reason, admin_id, body.is_regex)  # type: ignore
-    return SuccessResponse(success=True)
+    admin.add_banned_username(body.pattern, body.reason or "", admin_id, body.is_regex)
+    return SuccessResponse(success=True, message=None)
 
 
 @router.delete(
-    "/security/banned-usernames/{pattern_id}", response_model=SuccessResponse
+    "/security/banned-usernames/{pattern_id}",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request data"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
-async def remove_banned_username(request: Request, pattern_id: int):
+async def remove_banned_username(request: Request, pattern_id: SnowflakeIDParam):
     """
     Remove a pattern from the list of banned usernames.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.usernames")
     from src.core import admin
 
     admin.remove_banned_username(pattern_id)
-    return SuccessResponse(success=True)
+    return SuccessResponse(success=True, message=None)
 
 
-@router.post("/security/force-logout", response_model=SuccessResponse)
+@router.post(
+    "/security/force-logout",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def force_logout(request: Request, body: ForceLogoutRequest):
     """
     Immediately invalidate all active sessions for a specific user.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
         from src.core import auth
@@ -396,8 +633,24 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
                 )
                 await get_dispatcher().dispatch_event(event, [uid])
         except Exception:
+            logger.warning(
+                "Failed to broadcast force-logout WebSocket event", exc_info=True
+            )
+
+        try:
+            from src.utils.system_alerts import record_system_alert
+
+            record_system_alert(
+                "user_sessions_killed",
+                {"user_id": str(uid), "initiated_by": str(admin_id)},
+                source="admin",
+                severity="warning",
+                target_path=f"#user-{uid}",
+            )
+        except Exception:
             pass
-        return SuccessResponse(success=True)
+
+        return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -405,13 +658,21 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
         )
 
 
-@router.post("/security/lock-user", response_model=SuccessResponse)
+@router.post(
+    "/security/lock-user",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_lock_user(request: Request, body: UserLockRequest):
     """
     Lock a user account, preventing all access for a specified duration.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
         from src.core import admin
@@ -430,8 +691,28 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
                 )
                 await get_dispatcher().dispatch_event(event, [uid])
         except Exception:
+            logger.warning(
+                "Failed to broadcast lock-user WebSocket event", exc_info=True
+            )
+
+        try:
+            from src.utils.system_alerts import record_system_alert
+
+            record_system_alert(
+                "user_suspended",
+                {
+                    "user_id": str(uid),
+                    "duration_seconds": body.duration_seconds,
+                    "suspended_by": str(admin_id),
+                },
+                source="admin",
+                severity="warning",
+                target_path=f"#user-{uid}",
+            )
+        except Exception:
             pass
-        return SuccessResponse(success=True)
+
+        return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -439,19 +720,27 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
         )
 
 
-@router.post("/security/unlock-user", response_model=SuccessResponse)
+@router.post(
+    "/security/unlock-user",
+    response_model=SuccessResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid user ID"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
     """
     Unlock a previously locked user account.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.security.sessions")
     try:
         uid = int(body.user_id)
         from src.core import admin
 
         admin.unlock_user(uid)
-        return SuccessResponse(success=True)
+        return SuccessResponse(success=True, message=None)
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -459,13 +748,20 @@ async def admin_unlock_user(request: Request, body: ForceLogoutRequest):
         )
 
 
-@router.post("/security/logout-all", response_model=SuccessResponse)
+@router.post(
+    "/security/logout-all",
+    response_model=SuccessResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def logout_all_users(request: Request):
     """
     Invalidate all active sessions for every user on the platform.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    admin_id = require_admin_permission(request, "admin.security.logout_all")
     from src.core import auth
 
     auth.logout_all_users()
@@ -477,5 +773,20 @@ async def logout_all_users(request: Request):
                 close_code=4004, reason="Security reset"
             )
     except Exception:
+        logger.warning(
+            "Failed to close WebSocket connections on logout-all", exc_info=True
+        )
+
+    try:
+        from src.utils.system_alerts import record_system_alert
+
+        record_system_alert(
+            "global_session_purge",
+            {"initiated_by": str(admin_id)},
+            source="admin",
+            severity="warning",
+        )
+    except Exception:
         pass
-    return SuccessResponse(success=True)
+
+    return SuccessResponse(success=True, message=None)

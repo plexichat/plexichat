@@ -80,8 +80,9 @@ class AlertModeratorsAction(BaseAction):
         if role_ids:
             placeholders = ",".join("?" * len(role_ids))
             members = self._db.fetch_all(
-                f"""SELECT DISTINCT user_id FROM srv_member_roles
-                    WHERE server_id = ? AND role_id IN ({placeholders})""",  # nosec: B608
+                f"""SELECT DISTINCT m.user_id FROM srv_member_roles mr
+                    JOIN srv_members m ON m.id = mr.member_id
+                    WHERE m.server_id = ? AND mr.role_id IN ({placeholders})""",
                 (server_id, *role_ids),
             )
             for m in members:
@@ -90,22 +91,31 @@ class AlertModeratorsAction(BaseAction):
         return list(mod_ids)
 
     def _get_alert_channel(self, server_id: int) -> Optional[int]:
-        """Get the configured alert channel for a server."""
-        automod_config = config.get("automod", {})
+        """Get the configured alert channel for a server.
 
-        server_config = self._db.fetch_one(
-            "SELECT config FROM automod_rules WHERE server_id = ? LIMIT 1", (server_id,)
+        Resolution order:
+          1. Server scope: the server's ``system_channel_id``.
+          2. Global scope: the ``automod.default_alert_channel_id`` config key.
+
+        The previous implementation scraped an arbitrary automod_rules row for
+        an ``alert_channel_id`` key that nothing ever set; that dead lookup
+        path has been removed.
+        """
+        server_row = self._db.fetch_one(
+            "SELECT system_channel_id FROM srv_servers WHERE id = ?", (server_id,)
         )
+        if server_row and server_row["system_channel_id"]:
+            return server_row["system_channel_id"]
 
-        if server_config:
+        automod_config = config.get("automod", {}) or {}
+        default_channel = automod_config.get("default_alert_channel_id")
+        if default_channel:
             try:
-                cfg = json.loads(server_config["config"])
-                if "alert_channel_id" in cfg:
-                    return cfg["alert_channel_id"]
-            except (json.JSONDecodeError, KeyError):
-                pass
+                return int(default_channel)
+            except (TypeError, ValueError):
+                return None
 
-        return automod_config.get("default_alert_channel_id")
+        return None
 
     def _send_channel_alert(
         self, channel_id: int, violation: Violation, context: Optional[Dict[str, Any]]
@@ -169,12 +179,29 @@ class AlertModeratorsAction(BaseAction):
         content_preview = self._format_alert_message(violation)
 
         for moderator_id in moderator_ids:
-            if not manager._should_notify_user(
+            # Resolve this moderator's settings and channel override so the
+            # shared eligibility gate can be applied. This previously called a
+            # ``_should_notify_user`` method that does not exist anywhere in
+            # the codebase (the real one is ``_should_notify_user_optimized``),
+            # so every ALERT_MODERATORS action raised AttributeError: no
+            # moderator was ever notified and execute()'s broad handler
+            # skipped ``_log_alert`` as well.
+            settings = manager.get_notification_settings(
+                moderator_id, violation.server_id
+            )
+            override = (
+                manager.get_channel_override(moderator_id, channel_id)
+                if channel_id
+                else None
+            )
+            if not manager._should_notify_user_optimized(
                 moderator_id,
                 violation.user_id,
                 violation.server_id,
                 channel_id,
                 MentionType.USER,
+                settings,
+                override,
             ):
                 continue
 

@@ -1,0 +1,137 @@
+"""Regression tests for the next verified admin hardening batch."""
+
+from unittest.mock import MagicMock
+
+
+def test_search_users_escapes_like_wildcards():
+    from src.core.admin.users import search_users
+
+    db = MagicMock()
+    db.fetch_all.return_value = []
+    search_users(db, "%_", 20, 0)
+    query, params = db.fetch_all.call_args.args
+    assert "ESCAPE" in query
+    assert params[:2] == (r"%\%\_%", r"%\%\_%")
+
+
+def test_dm_stats_accepts_tuple_rows():
+    from src.core.antispam.detector import DMSpamDetector
+
+    db = MagicMock()
+    db.fetch_all.side_effect = [
+        [("rate_limited", 2)],
+        [(123, 2)],
+    ]
+    stats = DMSpamDetector(db).get_spam_stats(9)
+    assert stats["events_by_type"] == {"rate_limited": 2}
+    assert stats["top_spammers"] == [{"sender_id": 123, "count": 2}]
+
+
+def test_admin_logger_reports_failures_without_print(capsys):
+    from src.core.admin.logging import AdminLogger, AdminLogEntry
+
+    file_logger = MagicMock()
+    file_logger.log.side_effect = RuntimeError("sink failed")
+    logger = AdminLogger(file_logger)
+    assert (
+        logger.log_action(
+            MagicMock(), AdminLogEntry(admin_id=1, action="test"), log_to_db=False
+        )
+        is False
+    )
+    assert capsys.readouterr().out == ""
+    file_logger.exception.assert_called_once()
+
+
+def test_admin_template_errors_do_not_include_exception(monkeypatch):
+    from src.api.routes.admin import utils
+
+    monkeypatch.setattr(
+        utils.Path,
+        "read_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("secret path")),
+    )
+    result = utils.load_admin_template("login.html")
+    assert "secret path" not in result
+    assert result == "<h1>Template Error</h1>"
+
+
+def test_admin_template_allows_the_migrations_page():
+    """The migrations route serves migrations.html; the loader must allow it."""
+    from src.api.routes.admin import utils
+
+    result = utils.load_admin_template("migrations.html", csp_nonce="n")
+    assert result != "<h1>Access Denied</h1>"
+    assert "<title>Plexichat Admin - Migrations</title>" in result
+    assert '<script nonce="n">' in result
+
+
+def test_admin_template_rejects_an_unknown_template():
+    from src.api.routes.admin import utils
+
+    assert utils.load_admin_template("../secrets.html") == "<h1>Access Denied</h1>"
+    assert utils.load_admin_template("nope.html") == "<h1>Access Denied</h1>"
+
+
+def test_dashboard_version_is_stamped_from_the_build():
+    """The sidebar version is the running build, not a hardcoded placeholder."""
+    from src.api.routes.admin import utils
+    from src.server.lifecycle import VERSION
+
+    result = utils.load_admin_template("dashboard.html", csp_nonce="n")
+    assert f"API {VERSION}" in result
+    assert "{{ version }}" not in result
+    assert "a.1.0-73" not in result
+
+
+def test_admin_login_otp_claim_is_conditional(monkeypatch):
+    """Regression: a lost OTP claim must not mint an admin session.
+
+    ``verify_otp`` marks the TOTP code used with a *conditional* UPDATE and
+    only issues a session when the claim lands (rowcount == 1). Before the fix
+    the UPDATE was unconditional and the rowcount was never checked, so two
+    concurrent replays of one code both received a session.
+    """
+    from src.core.admin.auth import otp_mixin as om
+
+    monkeypatch.setattr(om, "_validate_otp_challenge", lambda *a, **k: True)
+    monkeypatch.setattr(om, "_check_otp_attempt_limit", lambda *a, **k: True)
+    monkeypatch.setattr(om, "_consume_otp_challenge", lambda *a, **k: None)
+
+    class _TOTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def verify(self, *a, **k):
+            return True
+
+    monkeypatch.setattr(om.pyotp, "TOTP", _TOTP)
+
+    class _LostClaimCursor:
+        rowcount = 0  # another request already consumed this code
+
+    db = MagicMock()
+    db.fetch_one.side_effect = [
+        {
+            "totp_secret": "SECRET",
+            "totp_secret_encrypted": None,
+            "backup_codes": None,
+            "backup_codes_hash": None,
+        },
+        {"otp_last_used_code": "000000", "otp_last_used_at": 1},
+    ]
+    db.execute.return_value = _LostClaimCursor()
+
+    mixin = object.__new__(om.OTPMixin)
+    mixin._db = db
+    mixin.create_session = MagicMock()
+    mixin.check_password_change_required = MagicMock(return_value=False)
+
+    result = mixin.verify_otp(1, "123456", "challenge")
+
+    assert result.success is False
+    # The claim itself must carry the single-use guard...
+    claim_sql = db.execute.call_args.args[0]
+    assert "otp_last_used_code IS NULL OR otp_last_used_code <> ?" in claim_sql
+    # ...and a lost claim must not hand out a session.
+    mixin.create_session.assert_not_called()

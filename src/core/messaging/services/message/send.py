@@ -1,0 +1,533 @@
+"""
+Send message operations mixin for the MessageService.
+"""
+
+from typing import Any, Dict, List, Optional
+
+from urllib.parse import urlparse
+
+import utils.logger as logger
+from src.core.base import SnowflakeID
+from src.core.database import cache_set
+from src.core.embeds.validator import sanitize_message_embeds
+from src.utils.encryption import (
+    encrypt_message,
+    blind_index,
+    encrypt_data,
+)
+
+from ...models import (
+    Message,
+    MessageType,
+    Attachment,
+    MessageStatusType,
+    ConversationType,
+)
+from ...exceptions import (
+    ConversationAccessDeniedError,
+    ConversationNotFoundError,
+    MessageNotFoundError,
+    InvalidContentError,
+    ContentTooLongError,
+    AttachmentLimitError,
+)
+from ..base import BaseService, _get_relationships_module, get_encrypt_messages_default
+from .protocol import MessageServiceProtocol
+from .search_helpers import search_index_message
+
+
+class SendMixin(BaseService, MessageServiceProtocol):
+    """Mixin providing send-related message operations."""
+
+    _ratchet_manager: Any = None
+
+    def send_message(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        content: str,
+        message_type: MessageType = MessageType.TEXT,
+        reply_to_id: Optional[SnowflakeID] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        embeds: Optional[List[Dict[str, Any]]] = None,
+        webhook_id: Optional[SnowflakeID] = None,
+    ) -> Message:
+        """Send a message to a conversation."""
+        if not self._participant_svc.is_participant(conversation_id, user_id):
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
+
+        self._enforce_dm_block_rules(conversation_id, user_id)
+
+        user_settings = self._user_settings_svc.get_message_settings(user_id)
+        max_length = user_settings.max_message_length or self._get_config(
+            "max_message_length", 4000
+        )
+
+        user_filter = self._content_filter_svc.get_filter_settings(user_id)
+        content_result = self._content_filter_svc.validate_content(
+            content, user_filter, max_length
+        )
+
+        if not content_result.valid:
+            if any(
+                "exceeds maximum length" in issue for issue in content_result.issues
+            ):
+                raise ContentTooLongError(
+                    f"Message exceeds maximum length of {max_length}",
+                    max_length,
+                    len(content),
+                )
+            raise InvalidContentError("Invalid message content", content_result.issues)
+
+        if reply_to_id:
+            if not self._repo.exists_in_conversation(reply_to_id, conversation_id):
+                raise MessageNotFoundError(
+                    "Reply target message not found in this conversation"
+                )
+            reply_row = self._repo.get_by_id(reply_to_id)
+            if reply_row and reply_row.get("deleted"):
+                raise MessageNotFoundError("Reply target message has been deleted")
+
+        if attachments:
+            max_attachments = (
+                user_settings.max_attachments_per_message
+                or self._get_config("max_attachments_per_message", 10)
+            )
+            if len(attachments) > max_attachments:
+                raise AttachmentLimitError(
+                    f"Cannot attach more than {max_attachments} files",
+                    max_attachments,
+                    len(attachments),
+                )
+
+        now = self._get_timestamp()
+        msg_id = self._generate_id()
+
+        final_content = content_result.sanitized_content
+        content_idx = blind_index(final_content, "message_content")
+
+        ratchet_interval_id = None
+        from src.utils.encryption.channel_ratchet import (
+            ratchet_encryption_licensed,
+        )
+
+        if self._get_config("encrypt_messages", get_encrypt_messages_default()):
+            if self._ratchet_manager is not None and ratchet_encryption_licensed():
+                ratchet_result = self._ratchet_manager.encrypt(
+                    conversation_id=conversation_id,
+                    message_id=msg_id,
+                    plaintext=final_content.encode("utf-8"),
+                    now=now,
+                )
+                final_content = ratchet_result.envelope
+                ratchet_interval_id = ratchet_result.interval_id
+            else:
+                final_content = encrypt_message(final_content, msg_id)
+
+        metadata: Dict[str, Any] = {}
+        if content_result.has_spoilers:
+            metadata["has_spoilers"] = True
+        if content_result.has_nsfw:
+            metadata["has_nsfw"] = True
+        if content_result.filtered_words:
+            metadata["filtered"] = True
+        if embeds:
+            metadata["embeds"] = sanitize_message_embeds(embeds)
+
+        try:
+            self._repo.begin_transaction()
+            self._repo.create(
+                msg_id,
+                conversation_id,
+                user_id,
+                final_content,
+                message_type,
+                now,
+                reply_to_id=reply_to_id,
+                content_index=content_idx,
+                metadata=metadata if metadata else None,
+                webhook_id=webhook_id,
+                ratchet_interval_id=ratchet_interval_id,
+                auto_commit=False,
+            )
+
+            self._conversation_repo.update(
+                conv_id=conversation_id,
+                updated_at=now,
+                last_message_id=msg_id,
+                last_message_at=now,
+                auto_commit=False,
+            )
+
+            # Store per-word blind indexes so substring search keeps working
+            # for encrypted messages (content holds the ENC envelope; the
+            # whole-content content_index only supports exact equality).
+            token_indexes = self._repo.content_token_indexes(
+                content_result.sanitized_content
+            )
+            self._repo.set_content_tokens(msg_id, token_indexes, auto_commit=False)
+
+            status_id = self._generate_id()
+            self._status_repo.create(
+                status_id=status_id,
+                message_id=msg_id,
+                user_id=user_id,
+                status=MessageStatusType.SENT,
+                timestamp=now,
+                auto_commit=False,
+            )
+
+            attachment_list: List[Attachment] = []
+            if attachments:
+                bulk_data = []
+                for att_data in attachments:
+                    att_id = self._generate_id()
+                    normalized_url = self._normalize_url(att_data.get("url", ""))
+                    encrypted_url = None
+                    stored_url = normalized_url
+                    if self._get_config("encrypt_attachments"):
+                        encrypted_url = encrypt_data(normalized_url)
+                        stored_url = "[encrypted]"
+                    bulk_data.append(
+                        {
+                            "id": att_id,
+                            "message_id": msg_id,
+                            "filename": att_data.get("filename", "file"),
+                            "content_type": att_data.get(
+                                "content_type", "application/octet-stream"
+                            ),
+                            "size": att_data.get("size", 0),
+                            "url": stored_url,
+                            "url_encrypted": encrypted_url,
+                            "created_at": now,
+                            "metadata": att_data.get("metadata"),
+                            "checksum": att_data.get("hash")
+                            or att_data.get("checksum"),
+                        }
+                    )
+                    attachment_list.append(
+                        Attachment(
+                            id=att_id,
+                            message_id=msg_id,
+                            filename=att_data.get("filename", "file"),
+                            content_type=att_data.get(
+                                "content_type", "application/octet-stream"
+                            ),
+                            size=att_data.get("size", 0),
+                            url=normalized_url,
+                            created_at=now,
+                            checksum=att_data.get("hash") or att_data.get("checksum"),
+                        )
+                    )
+                self._attachment_repo.create_bulk(bulk_data, auto_commit=False)
+
+            self._repo.commit()
+        except Exception:
+            self._repo.rollback()
+            raise
+
+        logger.debug(f"Message {msg_id} sent to conversation {conversation_id}")
+
+        if (
+            self._ratchet_manager is not None
+            and ratchet_interval_id is not None
+            and ratchet_encryption_licensed()
+        ):
+            try:
+                new_interval = self._ratchet_manager.rotate_if_due(
+                    conversation_id=conversation_id,
+                    last_message_id=msg_id,
+                    now_ms=now,
+                )
+                if new_interval is not None:
+                    try:
+                        from src.utils.encryption.channel_ratchet import (
+                            notify_ratchet_update,
+                        )
+
+                        notify_ratchet_update(
+                            conversation_id=int(conversation_id),
+                            update_data={
+                                "reason": "rotation",
+                                "new_interval_id": int(new_interval.interval_id),
+                                "at_message_id": int(new_interval.start_message_id),
+                                "at": int(now),
+                            },
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"Ratchet rotation broadcast scheduling failed: {e}"
+                        )
+            except Exception as e:
+                logger.debug(f"Ratchet rotation check failed: {e}")
+
+        msg = Message(
+            id=msg_id,
+            conversation_id=conversation_id,
+            author_id=user_id,
+            content=content_result.sanitized_content,
+            message_type=message_type,
+            created_at=now,
+            updated_at=now,
+            reply_to_id=reply_to_id,
+            edited=False,
+            deleted=False,
+            pinned=False,
+            metadata=metadata if metadata else None,
+            embeds=metadata.get("embeds") or [],
+            attachments=attachment_list,
+        )
+
+        try:
+            search_index_message(
+                msg_id,
+                content_result.sanitized_content,
+                {
+                    "author_id": user_id,
+                    "conversation_id": conversation_id,
+                    "created_at": now,
+                    "has_attachments": bool(attachments),
+                    "has_embeds": bool(embeds),
+                    "source_updated_at": now,
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Failed to index message for search: {e}")
+
+        self._dispatch_message_notifications(
+            msg_id=msg_id,
+            conversation_id=conversation_id,
+            author_id=user_id,
+            content=content_result.sanitized_content,
+        )
+
+        cache_set(f"msg:obj:{msg_id}", msg, ttl=3600)
+
+        try:
+            from src.core.database import get_valkey_client as get_client
+
+            client = get_client()
+            if client:
+                list_key = f"msg:recent:{conversation_id}"
+                client.lpush(list_key, msg_id)
+                client.ltrim(list_key, 0, 99)
+                client.expire(list_key, 3600)
+        except Exception as e:
+            logger.debug(f"Failed to update recent messages cache: {e}")
+
+        return msg
+
+    def _dispatch_message_notifications(
+        self,
+        msg_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        author_id: SnowflakeID,
+        content: str,
+    ) -> None:
+        """Best-effort server-side mention notifications for a sent message.
+
+        NEVER raises and NEVER blocks delivery: the whole fan-out (channel
+        resolution, per-user permission checks, inserts) runs on the
+        notifications module's bounded background consumer instead of the
+        caller's thread, so a 10k-recipient mention cannot stall sends.
+        If the notifications module is not initialized (embedded
+        deployments, some test setups) or any step fails, we log at debug
+        and return. Recipient collection inside the notifications module
+        enforces per-user channel view permissions so previews never leak
+        to users who cannot see the channel; device push delivery is
+        queued onto the same consumer by the creator itself.
+        """
+        try:
+            from src.core import notifications as notifications_module
+
+            if not (
+                getattr(notifications_module, "_setup_complete", False)
+                and getattr(notifications_module, "_manager", None) is not None
+            ):
+                return
+
+            from src.core.notifications.background import (
+                get_notification_dispatcher,
+                is_sync_notification_dispatch,
+            )
+
+            def _fanout_job():
+                try:
+                    # Resolve the server channel backing this conversation
+                    # (DMs have none — server_id/channel_id stay unset).
+                    server_id = None
+                    channel_id = None
+                    try:
+                        channel_row = self._db.fetch_one(
+                            """SELECT id, server_id FROM srv_channels
+                               WHERE conversation_id = ? AND deleted = 0 LIMIT 1""",
+                            (conversation_id,),
+                        )
+                        if channel_row:
+                            channel_id = channel_row["id"]
+                            server_id = channel_row["server_id"]
+                    except Exception as e:
+                        logger.debug(f"Channel lookup for notifications failed: {e}")
+
+                    created = notifications_module.create_notifications_for_message(
+                        message_id=msg_id,
+                        author_id=author_id,
+                        conversation_id=conversation_id,
+                        content=content,
+                        server_id=server_id,
+                        channel_id=channel_id,
+                    )
+                    if created:
+                        logger.debug(
+                            f"Created {len(created)} notification(s) for "
+                            f"message {msg_id}"
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"Notification creation skipped for message {msg_id}: {e}"
+                    )
+
+            if is_sync_notification_dispatch():
+                _fanout_job()
+                return
+
+            if not get_notification_dispatcher().submit(_fanout_job):
+                logger.debug(
+                    f"Notification dispatch queue full; skipped for message {msg_id}"
+                )
+        except Exception as e:
+            logger.debug(f"Notification scheduling failed for message {msg_id}: {e}")
+
+    def _enforce_dm_block_rules(
+        self, conversation_id: SnowflakeID, user_id: SnowflakeID
+    ) -> None:
+        """Reject sends into a DM whose participants block each other.
+
+        Keeps legacy DM channels (created before a block) from remaining
+        writable by either blocked party.
+        """
+        conv_row = self._conversation_repo.get_by_id(conversation_id)
+        if not conv_row or conv_row.get("deleted"):
+            return
+
+        conv_type = conv_row.get("conversation_type")
+        if isinstance(conv_type, str):
+            conv_type = conv_type.lower()
+        else:
+            conv_type = getattr(conv_type, "value", conv_type)
+
+        if conv_type != ConversationType.DM.value:
+            return
+
+        relationships = _get_relationships_module()
+        if relationships is None:
+            return
+
+        other_ids = [
+            pid
+            for pid in self._participant_svc.get_participant_ids(conversation_id)
+            if pid != user_id
+        ]
+        for other_id in other_ids:
+            if relationships.is_blocked_by_either(user_id, other_id):
+                raise ConversationAccessDeniedError(
+                    "Cannot send messages in this conversation"
+                )
+
+    # Attachment URL scheme allowlist (L4): only absolute http(s) URLs and
+    # site-relative media paths are accepted. Everything else — javascript:,
+    # data:, vbscript:, file:, protocol-relative "//host", etc. — is
+    # rejected at send time so dangerous schemes can never reach storage.
+    _ALLOWED_ATTACHMENT_SCHEMES = frozenset({"http", "https"})
+
+    def _normalize_url(self, url: str) -> str:
+        if not url:
+            return url
+
+        candidate = url.strip()
+        if not candidate:
+            return candidate
+
+        lowered = candidate.lower()
+
+        # Site-relative media path (e.g. /api/v1/media/attachments/...).
+        # Must start with a single "/" and must not be protocol-relative.
+        if candidate.startswith("/"):
+            if lowered.startswith("//") or candidate.startswith("/\\"):
+                raise InvalidContentError(
+                    "Attachment URL scheme is not allowed",
+                    [f"disallowed url: {candidate[:120]}"],
+                )
+            return candidate
+
+        parsed = urlparse(candidate)
+        if parsed.scheme in self._ALLOWED_ATTACHMENT_SCHEMES and parsed.netloc:
+            return candidate
+
+        raise InvalidContentError(
+            "Attachment URL scheme is not allowed",
+            [f"disallowed url scheme: {candidate[:120]}"],
+        )
+
+    def send_system_message(
+        self,
+        conversation_id: SnowflakeID,
+        content: str,
+        event_type: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Message:
+        """Send a system message.
+
+        Encryption parity (L2): when the conversation encryption default is
+        enabled the content is routed through the SAME ``encrypt_message``
+        path user messages take when no channel ratchet applies. The
+        per-message channel-ratchet envelope is NOT applied here — system
+        messages are not part of any key interval (author id 0) — so on an
+        encrypted deployment nothing is stored in plaintext, but the
+        ciphertext is the standard ``encrypt_message`` envelope carrying
+        its ``system`` metadata flag and ``event_type``, not ratchet
+        framing. The deterministic blind index of the plaintext is stored
+        for search parity.
+
+        NOTE on author id 0: system messages keep ``author_id = 0`` which
+        has NO matching auth_users row. SQLite does not enforce the FK so
+        this works, but PostgreSQL deployments must either disable FK
+        enforcement for msg_messages.author_id or provision a reserved
+        system user with id 0 before migrating.
+        """
+        conv_row = self._conversation_repo.get_by_id(conversation_id)
+        if not conv_row or conv_row.get("deleted"):
+            raise ConversationNotFoundError("Conversation not found")
+
+        now = self._get_timestamp()
+        msg_id = self._generate_id()
+
+        full_metadata: Dict[str, Any] = {
+            "event_type": event_type,
+            "system": True,
+        }
+        if metadata:
+            full_metadata.update(metadata)
+
+        final_content = content
+        content_idx = blind_index(content, "message_content")
+        if self._get_config("encrypt_messages", get_encrypt_messages_default()):
+            final_content = encrypt_message(final_content, msg_id)
+
+        self._repo.create(
+            msg_id,
+            conversation_id,
+            0,
+            final_content,
+            MessageType.SYSTEM,
+            now,
+            content_index=content_idx,
+            metadata=full_metadata,
+        )
+
+        row = self._repo.get_by_id(msg_id)
+        if row is None:
+            raise MessageNotFoundError("Failed to create system message")
+        return self._repo.row_to_model(row)

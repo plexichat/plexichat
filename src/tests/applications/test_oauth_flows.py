@@ -1,162 +1,295 @@
-"""
-Tests for OAuth2 authorization flows.
-"""
+"""Tests for application OAuth2 flows."""
 
 import pytest
 
+from src.core.applications.models import OAuth2Scope
+from src.core.applications.exceptions import (
+    InvalidClientError,
+    InvalidScopeError,
+    InvalidRedirectUriError,
+    InvalidGrantError,
+)
+
 
 @pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2AuthorizationUrl:
-    """Tests for OAuth2 authorization URL generation."""
+class TestOAuthFlows:
+    """Tests for OAuth2 authorization and token flows."""
 
-    def test_generate_authorization_url(self, modules, test_application):
-        """Test generating authorization URL."""
-        app, owner = test_application
+    def test_oauth2_scopes_exist(self):
+        """Test all OAuth2 scopes are defined."""
+        assert OAuth2Scope.IDENTIFY.value == "identify"
+        assert OAuth2Scope.EMAIL.value == "email"
+        assert OAuth2Scope.GUILDS.value == "guilds"
+        assert OAuth2Scope.BOT.value == "bot"
+        assert OAuth2Scope.APPLICATIONS_COMMANDS.value == "applications.commands"
+        assert OAuth2Scope.MESSAGES_READ.value == "messages.read"
+        assert OAuth2Scope.WEBHOOK_INCOMING.value == "webhook.incoming"
 
-        url = modules.applications.generate_oauth_url(
+    def test_generate_oauth_url(self, app_manager, test_user):
+        """Test generating an OAuth2 authorization URL."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="OAuth App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        url = app_manager.generate_oauth_url(
             application_id=app.id,
             redirect_uri="https://example.com/callback",
-            scopes=["identify", "guilds"],
+            scopes=["identify", "email"],
         )
+        assert "oauth2" in url.lower() or "authorize" in url.lower()
+        assert str(app.id) in url
 
-        assert f"client_id={app.id}" in url
-        assert "redirect_uri=" in url
-        assert "scope=" in url
-        assert "response_type=code" in url
-
-    def test_generate_url_with_state(self, modules, test_application):
-        """Test generating URL with state parameter."""
-        app, owner = test_application
-
-        url = modules.applications.generate_oauth_url(
+    def test_generate_oauth_url_with_state(self, app_manager, test_user):
+        """Test generating OAuth URL with state parameter."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="State App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        url = app_manager.generate_oauth_url(
             application_id=app.id,
             redirect_uri="https://example.com/callback",
             scopes=["identify"],
             state="random_state_123",
         )
+        assert "random_state_123" in url
 
-        assert "state=random_state_123" in url
+    def test_revoke_token(self, app_manager, test_user):
+        """Test revoking an OAuth2 token."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Revoke App")
+        from src.core.applications.oauth.flows import OAuth2Flow
+        from src.core.applications.oauth.tokens import generate_client_secret
 
-    def test_generate_url_with_bot_permissions(self, modules, test_application):
-        """Test generating URL with bot permissions."""
-        app, owner = test_application
-
-        url = modules.applications.generate_oauth_url(
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
             application_id=app.id,
+            user_id=test_user.id,
             redirect_uri="https://example.com/callback",
-            scopes=["bot"],
-            permissions="8",
+            scopes=["identify"],
+        )
+        client_secret, secret_hash = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (secret_hash, app.id),
+        )
+        token = flow.exchange_code(
+            app.id, client_secret, code.code, "https://example.com/callback"
         )
 
-        assert "permissions=8" in url
+        # Revoking a real token returns True and marks it revoked.
+        assert (
+            app_manager.revoke_token(token.access_token, user_id=test_user.id) is True
+        )
+        row = app_manager._db.fetch_one(
+            "SELECT revoked FROM app_oauth_tokens WHERE id = ?", (token.id,)
+        )
+        assert row is not None
+        assert row["revoked"] == 1
 
+        # Revoking garbage (unparseable token) returns False.
+        assert app_manager.revoke_token("not-a-token") is False
 
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2Scopes:
-    """Tests for OAuth2 scope validation."""
+        # SECURITY: wrong secret or non-owner must NOT revoke.
+        other_user = app_manager.create_application(
+            owner_id=test_user.id, name="Revoke Other App"
+        )
+        code_b = flow.create_authorization_code(
+            application_id=other_user.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        secret_b, hash_b = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (hash_b, other_user.id),
+        )
+        token_b = flow.exchange_code(
+            other_user.id, secret_b, code_b.code, "https://example.com/callback"
+        )
+        assert (
+            app_manager.revoke_token(token_b.access_token + "x", user_id=test_user.id)
+            is False
+        )
+        assert app_manager.revoke_token(token_b.access_token, user_id=999999) is False
+        row_b = app_manager._db.fetch_one(
+            "SELECT revoked FROM app_oauth_tokens WHERE id = ?", (token_b.id,)
+        )
+        assert row_b["revoked"] == 0
 
-    def test_validate_valid_scopes(self, modules):
-        """Test validating valid scopes."""
-        valid, issues = modules.applications.validate_scopes(["identify", "guilds"])
+    def test_invalid_client_error(self):
+        """Test InvalidClientError has correct error field."""
+        err = InvalidClientError()
+        assert err.error == "invalid_client"
 
-        assert valid is True
-        assert len(issues) == 0
+    def test_invalid_scope_error(self):
+        """Test InvalidScopeError has correct error field."""
+        err = InvalidScopeError()
+        assert err.error == "invalid_scope"
 
-    def test_validate_invalid_scopes(self, modules):
-        """Test validating invalid scopes."""
-        valid, issues = modules.applications.validate_scopes(
-            ["identify", "invalid_scope"]
+    def test_invalid_redirect_uri_error(self):
+        """Test InvalidRedirectUriError has correct error field."""
+        err = InvalidRedirectUriError()
+        assert err.error == "invalid_request"
+
+    def test_code_expiry_is_in_milliseconds(self, app_manager, test_user):
+        """Test that authorization code expiry is in milliseconds, not seconds."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="Expiry App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        from src.core.applications.oauth.flows import OAuth2Flow
+
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        now = flow._current_time()
+        remaining = code.expires_at - now
+        assert remaining > 500000, (
+            f"Code expiry too short: {remaining}ms (should be ~600000ms)"
         )
 
-        assert valid is False
-        assert len(issues) > 0
+    def test_token_expiry_is_in_milliseconds(self, app_manager, test_user):
+        """Test that token expiry is in milliseconds, not seconds."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="TokenExpiry App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        from src.core.applications.oauth.flows import OAuth2Flow
 
-    def test_validate_empty_scopes(self, modules):
-        """Test validating empty scopes."""
-        valid, issues = modules.applications.validate_scopes([])
-
-        assert valid is False
-
-    def test_parse_scope_string(self, modules):
-        """Test parsing scope string."""
-        scopes = modules.applications.parse_scopes("identify guilds email")
-
-        assert len(scopes) == 3
-        assert "identify" in scopes
-        assert "guilds" in scopes
-        assert "email" in scopes
-
-    def test_scopes_to_string(self, modules):
-        """Test converting scopes to string."""
-        scope_str = modules.applications.scopes_to_string(
-            ["guilds", "identify", "email"]
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        token = flow._create_token(
+            application_id=app.id,
+            user_id=test_user.id,
+            scopes=["identify"],
+        )
+        now = flow._current_time()
+        remaining = token.expires_at - now
+        assert remaining > 60000000, (
+            f"Token expiry too short: {remaining}ms (should be ~604800000ms)"
         )
 
-        assert "identify" in scope_str
-        assert "guilds" in scope_str
-        assert "email" in scope_str
+    def test_exchange_code_rejects_reuse(self, app_manager, test_user):
+        """Test that exchanging a code twice fails on second attempt."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="Reuse App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        from src.core.applications.oauth.flows import OAuth2Flow
 
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        from src.core.applications.oauth.tokens import hash_token
 
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2CodeExchange:
-    """Tests for OAuth2 code exchange."""
+        client_secret = "test_secret"
 
-    def test_exchange_invalid_code(self, modules, test_application):
-        """Test exchanging invalid authorization code."""
-        app, owner = test_application
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (hash_token(client_secret), app.id),
+        )
 
-        with pytest.raises(modules.applications.InvalidGrantError):
-            modules.applications.exchange_code(
-                application_id=app.id,
-                client_secret=app.client_secret,
-                code="invalid_code",
-                redirect_uri="https://example.com/callback",
+        token1 = flow.exchange_code(
+            app.id, client_secret, code.code, "https://example.com/callback"
+        )
+        assert token1 is not None
+        assert token1.access_token is not None
+
+        with pytest.raises(InvalidGrantError, match="already used"):
+            flow.exchange_code(
+                app.id, client_secret, code.code, "https://example.com/callback"
             )
 
-    def test_exchange_invalid_client_secret(self, modules, test_application):
-        """Test exchanging with invalid client secret."""
-        app, owner = test_application
+    def test_expires_in_is_in_seconds(self, app_manager, test_user):
+        """Test that expires_in in response is in seconds, not milliseconds."""
+        app = app_manager.create_application(
+            owner_id=test_user.id,
+            name="ExpiresIn App",
+            redirect_uris=["https://example.com/callback"],
+        )
+        from src.core.applications.oauth.flows import OAuth2Flow
+        from src.core.applications.oauth.tokens import generate_client_secret
 
-        with pytest.raises(modules.applications.InvalidClientError):
-            modules.applications.exchange_code(
-                application_id=app.id,
-                client_secret="wrong_secret",
-                code="auth.123.abc",
-                redirect_uri="https://example.com/callback",
-            )
+        flow = OAuth2Flow(
+            app_manager._db,
+            {
+                "code_expiry_seconds": 600,
+                "token_expiry_seconds": 604800,
+                "refresh_enabled": True,
+            },
+        )
+        code = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        client_secret, secret_hash = generate_client_secret()
+        app_manager._db.execute(
+            "UPDATE app_applications SET client_secret_hash = ? WHERE id = ?",
+            (secret_hash, app.id),
+        )
+        token = flow.exchange_code(
+            app.id, client_secret, code.code, "https://example.com/callback"
+        )
+        assert token is not None
+        assert token.access_token
 
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2TokenRefresh:
-    """Tests for OAuth2 token refresh."""
-
-    def test_refresh_invalid_token(self, modules, test_application):
-        """Test refreshing invalid token."""
-        app, owner = test_application
-
-        with pytest.raises(modules.applications.InvalidGrantError):
-            modules.applications.refresh_token(
-                application_id=app.id,
-                client_secret=app.client_secret,
-                refresh_token_str="invalid_refresh_token",
-            )
-
-
-@pytest.mark.applications
-@pytest.mark.integration
-class TestOAuth2TokenRevocation:
-    """Tests for OAuth2 token revocation."""
-
-    def test_revoke_invalid_token(self, modules):
-        """Test revoking invalid token returns False."""
-        result = modules.applications.revoke_token("invalid_token")
-        assert result is False
-
-    def test_revoke_malformed_token(self, modules):
-        """Test revoking malformed token."""
-        result = modules.applications.revoke_token("not.a.valid.token.format")
-        assert result is False
+        # The flow call above consumes the code, so issue a fresh one for
+        # the manager-level exchange under test.
+        code2 = flow.create_authorization_code(
+            application_id=app.id,
+            user_id=test_user.id,
+            redirect_uri="https://example.com/callback",
+            scopes=["identify"],
+        )
+        result = app_manager.exchange_code(
+            app.id, client_secret, code2.code, "https://example.com/callback"
+        )
+        expires_in = result["expires_in"]
+        assert expires_in > 500, (
+            f"expires_in too small: {expires_in} (should be seconds, ~604800)"
+        )
+        assert expires_in < 700000, (
+            f"expires_in too large: {expires_in} (should be seconds, not ms)"
+        )

@@ -4,8 +4,7 @@ Admin telemetry routes.
 
 from fastapi import APIRouter, Request, HTTPException, Response
 from typing import Optional
-import time
-import urllib.parse
+from datetime import datetime, timezone
 import csv
 import io
 from src.api.schemas.admin import (
@@ -16,13 +15,26 @@ from src.api.schemas.admin import (
     TelemetryResetResponse,
     TelemetryExportResponse,
 )
-from .utils import check_host_restriction, get_admin_from_token
+from .utils import (
+    check_host_restriction,
+    get_admin_from_token,
+    require_admin_permission,
+)
+from src.api.schemas.common import ErrorResponse
 import utils.logger as logger
 
 router = APIRouter()
 
 
-@router.get("/telemetry/stats", response_model=TelemetryStatsResponse)
+@router.get(
+    "/telemetry/stats",
+    response_model=TelemetryStatsResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_telemetry_stats(
     request: Request,
     hours: int = 24,
@@ -48,7 +60,11 @@ async def get_telemetry_stats(
         return TelemetryStatsResponse(
             stats=[
                 TelemetryEndpointStat(
-                    endpoint=urllib.parse.unquote(s.endpoint),
+                    # No URL-decoding here: stored endpoints are already
+                    # decoded once at ingest; decoding again corrupts literal
+                    # '%' sequences and aliases distinct endpoints. Stats and
+                    # export paths now treat stored values identically.
+                    endpoint=s.endpoint,
                     method=s.method,
                     count=s.count,
                     avg_ms=round(s.avg_response_time_ms, 2),
@@ -82,7 +98,15 @@ async def get_telemetry_stats(
         )
 
 
-@router.get("/telemetry/history", response_model=TelemetryHistoryResponse)
+@router.get(
+    "/telemetry/history",
+    response_model=TelemetryHistoryResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid query parameters"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def get_telemetry_history(
     request: Request,
     endpoint: str,
@@ -119,13 +143,20 @@ async def get_telemetry_history(
         )
 
 
-@router.post("/telemetry/reset", response_model=TelemetryResetResponse)
+@router.post(
+    "/telemetry/reset",
+    response_model=TelemetryResetResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def reset_telemetry_stats(request: Request):
     """
     Clear all collected telemetry data from the system.
     """
     check_host_restriction(request)
-    get_admin_from_token(request)
+    require_admin_permission(request, "admin.telemetry.reset")
     try:
         from src.core import telemetry
 
@@ -141,7 +172,14 @@ async def reset_telemetry_stats(request: Request):
         )
 
 
-@router.get("/telemetry/export")
+@router.get(
+    "/telemetry/export",
+    responses={
+        400: {"model": ErrorResponse, "description": "Unsupported format"},
+        401: {"model": ErrorResponse, "description": "Invalid or expired token"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
+)
 async def export_telemetry_stats(
     request: Request,
     format: str = "json",
@@ -158,10 +196,15 @@ async def export_telemetry_stats(
     try:
         from src.core import telemetry
 
-        if not telemetry.is_setup():
-            raise HTTPException(status_code=500, detail="Telemetry not setup")
-        stats = telemetry.get_endpoint_stats(hours=hours)
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        # Telemetry is opt-in (``telemetry.enabled``), so the module can be
+        # inert in a default deployment. Degrade to an empty export exactly
+        # like /stats and /reset do instead of failing the download.
+        stats = (
+            telemetry.get_endpoint_stats(hours=hours) if telemetry.is_setup() else []
+        )
+        # Render the export stamp in UTC, not server-local, so the exported
+        # figure is the same instant on every host.
+        ts = datetime.now(timezone.utc).isoformat()
 
         if format == "json":
             import json

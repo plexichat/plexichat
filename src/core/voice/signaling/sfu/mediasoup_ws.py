@@ -6,15 +6,25 @@ This adapter is designed to work with the mediasoup-demo server.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
-import secrets
+import os
 import ssl
-from typing import Dict, Optional, Any, Callable, cast
+import time
+from typing import Dict, List, Optional, Any, Callable, cast
 from dataclasses import dataclass, field
 
 import utils.logger as logger
+import utils.config as _voice_config  # noqa: F401
+
 
 from ..exceptions import SFUConnectionError, SFUTimeoutError
+from .paths import (
+    resolve_recording_dir,
+    ensure_within_recording_dir,
+    safe_filename_component,
+)
 from .base import (
     SFUAdapter,
     SFUTransport,
@@ -23,7 +33,99 @@ from .base import (
     RoomInfo,
     TransportDirection,
     MediaKind,
+    AcousticDefenseConfig,
 )
+
+# Deployment-scoped secret used to derive stable peer / room
+# identifiers. Loaded once per process so the same `peer_id`
+# reproduces across calls — preventing Janus mediasoup-demo
+# reconnections from spinning a brand new room every time.
+_STABLE_PEER_SECRET: bytes = b""
+
+
+def _load_stable_peer_secret() -> bytes:
+    """Return the deployment-scoped secret used for stable peer IDs.
+
+    Order of precedence:
+    1. ``voice.mediated.stable_peer_secret`` config value (operators
+       who want long-lived PIDs across restarts set this),
+    2. ``PLEXICHAT_VOICE_STABLE_PEER_SECRET`` env var,
+    3. ``PLEXICHAT_SYSTEM_KEY`` env var (the same keyring secret
+       used by everything else; reuse keeps cross-module correlation
+       deterministic),
+    4. ``rate_limiting.bypass_secret`` (also random + stored in keyring),
+    5. Final fallback: an empty bytes blob (deterministic but NOT
+       secret — emits a single CRITICAL log so operators know).
+    """
+    global _STABLE_PEER_SECRET
+    if _STABLE_PEER_SECRET:
+        return _STABLE_PEER_SECRET
+    try:
+        voice_cfg = _voice_config.get("voice", {}) or {}
+        mediated = voice_cfg.get("mediated", {}) or {}
+        secret = mediated.get("stable_peer_secret")
+        if secret:
+            _STABLE_PEER_SECRET = secret.encode("utf-8")
+            return _STABLE_PEER_SECRET
+    except Exception:
+        pass
+
+    for env_name in (
+        "PLEXICHAT_VOICE_STABLE_PEER_SECRET",
+        "PLEXICHAT_SYSTEM_KEY",
+    ):
+        env_v = os.environ.get(env_name)
+        if env_v:
+            _STABLE_PEER_SECRET = env_v.encode("utf-8")
+            return _STABLE_PEER_SECRET
+
+    try:
+        rl_cfg = _voice_config.get("rate_limiting", {}) or {}
+        secret = rl_cfg.get("bypass_secret")
+        if secret:
+            _STABLE_PEER_SECRET = secret.encode("utf-8")
+            return _STABLE_PEER_SECRET
+    except Exception:
+        pass
+
+    # Best-effort: this runs at import time (see the module-level call below),
+    # which can precede ``logger.setup()``. An unconfigured logger raises,
+    # and a crash here would take the whole signaling package with it. The
+    # notice is not lost: no secret means the next ``_stable_peer_id`` call
+    # resolves it again, with a configured logger by then.
+    try:
+        logger.critical(
+            "mediasoup_ws: NO deployment-scoped stable-peer secret was "
+            "configured. peer_id values will be CONSTANT per instance "
+            "(any restart / redeploy rotates them). Set "
+            "voice.mediated.stable_peer_secret or "
+            "PLEXICHAT_VOICE_STABLE_PEER_SECRET in production."
+        )
+    except RuntimeError:
+        pass  # Logger not configured yet
+    return b""
+
+
+def _stable_peer_id(purpose: bytes) -> str:
+    """Compute a stable, deterministic hex-encoded peer/room identifier.
+
+    The output is identical across processes / restarts because we
+    mix a deployment-scoped secret with the ``purpose`` payload via
+    HMAC-SHA256. Two callers using the same ``purpose`` will get the
+    same hex string, so Janus mediasoup reconnections latch onto the
+    same room rather than spinning a fresh one every time.
+
+    If the secret is empty (no deployment config), this still returns
+    a *deterministic* value — the operator just loses the
+    deploy-wide uniqueness guarantee. Operators MUST configure a
+    secret before production use.
+    """
+    secret = _load_stable_peer_secret() or b"plexichat-dev-fallback"
+    digest = hmac.new(secret, purpose, hashlib.sha256).hexdigest()
+    return digest[:32]
+
+
+_load_stable_peer_secret()
 
 
 @dataclass
@@ -65,6 +167,7 @@ class MediasoupWSAdapter(SFUAdapter):
         ws_url: str,
         timeout: int = 10,
         origin: str = "https://localhost:4443",
+        acoustic_defense: Optional[AcousticDefenseConfig] = None,
     ):
         """
         Initialize the mediasoup WebSocket adapter.
@@ -73,20 +176,105 @@ class MediasoupWSAdapter(SFUAdapter):
             ws_url: WebSocket URL of the mediasoup server (e.g., wss://host:4443)
             timeout: Request timeout in seconds
             origin: Origin header to send (must match server config)
+            acoustic_defense: Optional acoustic eavesdropping defense configuration
         """
         self._ws_url = ws_url.rstrip("/")
         self._timeout = timeout
         self._origin = origin
         self._connections: Dict[str, PeerConnection] = {}  # peer_id -> connection
         self._rooms: Dict[str, RoomInfo] = {}  # room_id -> info
+        self._recordings: Dict[str, Dict] = {}  # room_id -> recording state
+        # Recording teardown failures encountered during final adapter shutdown
+        # are retained as explicit diagnostics, not as retryable recordings:
+        # shutdown closes the signaling connection and cannot retry afterward.
+        self._recording_teardown_failures: Dict[str, Dict[str, Any]] = {}
+        self._quality_mixin: Optional[Any] = None
         self._message_handlers: Dict[str, Callable] = {}
+        # Strong references to the per-connection receive tasks: asyncio only
+        # holds a weak reference, so a task created without one can be
+        # garbage-collected mid-flight and silently end the SFU session.
+        self._receiver_tasks: Dict[str, asyncio.Task] = {}
         self._ssl_context = self._create_ssl_context()
+        self._acoustic_defense = acoustic_defense
+
+    def _acoustic_defense_to_dict(self) -> Dict[str, Any]:
+        if not self._acoustic_defense or not self._acoustic_defense.enabled:
+            return {}
+        return {
+            "enabled": self._acoustic_defense.enabled,
+            "jitter_ms_min": self._acoustic_defense.jitter_ms_min,
+            "jitter_ms_max": self._acoustic_defense.jitter_ms_max,
+            "spectral_masking": self._acoustic_defense.spectral_masking,
+            "spectral_mask_noise_db": self._acoustic_defense.spectral_mask_noise_db,
+            "spectral_mask_low_hz": self._acoustic_defense.spectral_mask_low_hz,
+            "spectral_mask_high_hz": self._acoustic_defense.spectral_mask_high_hz,
+            "vad_gating": self._acoustic_defense.vad_gating,
+            "vad_speech_threshold": self._acoustic_defense.vad_speech_threshold,
+            "vad_silence_frames": self._acoustic_defense.vad_silence_frames,
+            "transient_shaving": self._acoustic_defense.transient_shaving,
+            "transient_attack_ms": self._acoustic_defense.transient_attack_ms,
+            "transient_release_ms": self._acoustic_defense.transient_release_ms,
+            "transient_ratio": self._acoustic_defense.transient_ratio,
+        }
+
+    def set_quality_mixin(self, quality_mixin: Any) -> None:
+        """Set the quality mixin reference for score notifications."""
+        self._quality_mixin = quality_mixin
 
     def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create SSL context that accepts self-signed certificates."""
+        """Create an SSL context for the mediasoup signaling socket.
+
+        SECURITY: the previous implementation set
+        ``verify_mode=ssl.CERT_NONE`` and ``check_hostname=False`` which
+        disabled every protection against an active MITM. Any peer on
+        the wire path could substitute / replay packets and our
+        WebRTC handshake (carrying ICE / DTLS fingerprints) would still
+        accept the malicious server.
+
+        We now require full chain + hostname verification by default.
+        Operators who actually need self-signed dev certs must opt in
+        explicitly via ``voice.mediated.mtls.allow_self_signed`` (only
+        honourable in ``MAINTAINER_MODE``/dev); operators who run
+        production with a public CA MUST NOT touch that flag.
+        """
+        import os as _os
+        import utils.config as _cfg
+
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            voice_cfg = _cfg.get("voice", {}) or {}
+            mediated = voice_cfg.get("mediated", {}) or {}
+            mtls_cfg = mediated.get("mtls", {}) or {}
+            allow_self_signed = bool(mtls_cfg.get("allow_self_signed", False))
+        except Exception:
+            allow_self_signed = False
+
+        # Refuse self-signed overrides outside an explicit dev mode.
+        # ``PLEXICHAT_ALLOW_INSECURE_TLS=1`` is the documented opt-in
+        # but is intentionally noisy: any operator running it in
+        # production sees the loud CRITICAL log line below.
+        env_override = _os.environ.get("PLEXICHAT_ALLOW_INSECURE_TLS", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        env_override = env_override and not _os.environ.get(
+            "PLEXICHAT_REQUIRE_FAIL_CLOSED", ""
+        )
+
+        if allow_self_signed and env_override:
+            logger.critical(
+                "mediasoup WebSocket TLS verification DISABLED via "
+                "PLEXICHAT_ALLOW_INSECURE_TLS + voice.mediated.mtls."
+                "allow_self_signed. This MUST NOT be used in "
+                "production."
+            )
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
         return ctx
 
     def _get_connection_key(self, room_id: str, peer_id: str) -> str:
@@ -118,7 +306,10 @@ class MediasoupWSAdapter(SFUAdapter):
             return self._connections[key]
 
         # Build WebSocket URL with query parameters
-        ws_url = f"{self._ws_url}/?roomId={room_id}&peerId={peer_id}"
+        # Encode query values so identifiers cannot alter the signaling URL.
+        from urllib.parse import urlencode
+
+        ws_url = f"{self._ws_url}/?{urlencode({'roomId': room_id, 'peerId': peer_id})}"
 
         try:
             websocket = await asyncio.wait_for(
@@ -149,8 +340,11 @@ class MediasoupWSAdapter(SFUAdapter):
         )
         self._connections[key] = connection
 
-        # Start message receiver task
-        asyncio.create_task(self._receive_messages(connection))
+        # Start message receiver task (keep a strong reference; see
+        # ``_receiver_tasks``).
+        self._receiver_tasks[key] = asyncio.create_task(
+            self._receive_messages(connection)
+        )
 
         logger.debug(f"Connected to mediasoup: room={room_id}, peer={peer_id}")
         return connection
@@ -165,6 +359,27 @@ class MediasoupWSAdapter(SFUAdapter):
         finally:
             key = self._get_connection_key(connection.room_id, connection.peer_id)
             self._connections.pop(key, None)
+            self._receiver_tasks.pop(key, None)
+            self._fail_pending_requests(connection)
+
+    @staticmethod
+    def _fail_pending_requests(connection: PeerConnection) -> None:
+        """Fail every in-flight request when the signaling socket ends.
+
+        Otherwise callers block for the full request timeout after a
+        disconnect instead of failing immediately.
+        """
+        pending = list(connection.pending_requests.values())
+        connection.pending_requests.clear()
+        for request in pending:
+            if request.future.done():
+                continue
+            request.future.set_exception(
+                SFUConnectionError(
+                    "Signaling connection closed",
+                    backend="mediasoup-ws",
+                )
+            )
 
     async def _handle_message(self, connection: PeerConnection, message: str):
         """Handle incoming protoo message."""
@@ -173,12 +388,28 @@ class MediasoupWSAdapter(SFUAdapter):
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON message: {message[:100]}")
             return
+        if not isinstance(data, dict):
+            # A JSON array/string/number is schema-invalid protoo traffic;
+            # ``data.get`` would raise AttributeError and end the session.
+            logger.warning(f"Ignoring non-object SFU message: {str(data)[:100]}")
+            return
 
         if data.get("response"):
-            # Response to a request
-            request_id = data.get("id")
-            if request_id in connection.pending_requests:
-                pending = connection.pending_requests.pop(request_id)
+            # Response to a request. Resolving an already-settled future (a
+            # duplicate or late response) raises InvalidStateError, which
+            # would otherwise escape and tear down the receive loop.
+            try:
+                raw_id = data.get("id")
+                if raw_id is None:
+                    return
+                # Pending requests are keyed by the integer ids we sent; a
+                # non-numeric echo is schema drift and is ignored below.
+                request_id = int(raw_id)
+                pending = connection.pending_requests.pop(request_id, None)
+                if pending is None:
+                    return
+                if pending.future.done():
+                    return
                 if data.get("ok"):
                     pending.future.set_result(data.get("data", {}))
                 else:
@@ -188,12 +419,23 @@ class MediasoupWSAdapter(SFUAdapter):
                             error_msg, backend="mediasoup-ws", url=self._ws_url
                         )
                     )
+            except Exception as e:
+                logger.warning(f"Failed to resolve SFU response: {e}")
         elif data.get("request"):
             # Server request (e.g., newConsumer)
-            await self._handle_server_request(connection, data)
+            try:
+                await self._handle_server_request(connection, data)
+            except Exception as e:
+                # One malformed frame must not tear down the peer's SFU
+                # session: an escaping exception ends the receive loop in
+                # ``_receive_messages`` and drops the connection.
+                logger.warning(f"Failed to handle SFU server request: {e}")
         elif data.get("notification"):
             # Server notification
-            await self._handle_notification(connection, data)
+            try:
+                await self._handle_notification(connection, data)
+            except Exception as e:
+                logger.warning(f"Failed to handle SFU notification: {e}")
 
     async def _handle_server_request(self, connection: PeerConnection, data: Dict):
         """Handle server-initiated request."""
@@ -203,33 +445,65 @@ class MediasoupWSAdapter(SFUAdapter):
 
         logger.debug(f"Server request: {method}")
 
-        response = {"response": True, "id": request_id, "ok": True, "data": {}}
+        response: Dict[str, Any] = {
+            "response": True,
+            "id": request_id,
+            "ok": True,
+            "data": {},
+        }
 
-        if method == "newConsumer":
-            # Server wants us to consume a producer
-            consumer = SFUConsumer(
-                id=request_data.get("id"),
-                producer_id=request_data.get("producerId"),
-                kind=MediaKind(request_data.get("kind")),
-                rtp_parameters=request_data.get("rtpParameters", {}),
-                paused=request_data.get("producerPaused", False),
-            )
-            connection.consumers[consumer.id] = consumer
+        try:
+            if method == "newConsumer":
+                # Server wants us to consume a producer
+                consumer = SFUConsumer(
+                    id=request_data.get("id"),
+                    producer_id=request_data.get("producerId"),
+                    kind=MediaKind(request_data.get("kind")),
+                    rtp_parameters=request_data.get("rtpParameters", {}),
+                    paused=request_data.get("producerPaused", False),
+                )
+                connection.consumers[consumer.id] = consumer
 
-            # Store consumer info for the handler
-            handler_key = f"newConsumer:{connection.room_id}:{connection.peer_id}"
-            if handler_key in self._message_handlers:
-                await self._message_handlers[handler_key](consumer)
+                # Store consumer info for the handler
+                handler_key = f"newConsumer:{connection.room_id}:{connection.peer_id}"
+                if handler_key in self._message_handlers:
+                    await self._message_handlers[handler_key](consumer)
 
-        elif method == "newDataConsumer":
-            # Data channel consumer - acknowledge but don't process
-            logger.debug(
-                f"Acknowledged newDataConsumer from server for peer {connection.peer_id}"
-            )
-            # No logic needed for data consumers in this implementation
+            elif method == "newDataConsumer":
+                # Data channel consumer - acknowledge but don't process
+                logger.debug(
+                    f"Acknowledged newDataConsumer from server for peer "
+                    f"{connection.peer_id}"
+                )
+                # No logic needed for data consumers in this implementation
+        except Exception as e:
+            # A protoo server WAITS on this response: swallowing the failure
+            # without answering leaves the request hanging and can drop the
+            # peer. Report the failure in the response instead.
+            logger.warning(f"Failed to handle SFU server request {method}: {e}")
+            response["ok"] = False
+            response["errorReason"] = "request handler failed"
 
-        # Send response
-        await connection.websocket.send(json.dumps(response))
+        try:
+            await connection.websocket.send(json.dumps(response))
+        except Exception as e:
+            logger.warning(f"Failed to respond to SFU server request {method}: {e}")
+
+    def _report_peer_quality(
+        self,
+        connection: PeerConnection,
+        notification_data: Dict[str, Any],
+        **metrics: Any,
+    ) -> None:
+        """Report an SFU score notification to the canonical quality store.
+
+        ``producerScore`` / ``consumerScore`` carry SFU-scoped identifiers
+        (``voice_<channel>`` / ``user_<id>``); the shared base bridge maps them
+        back to the numeric ids the store is keyed by and contains any sink
+        failure, so a metric update can never tear down the receive loop.
+        """
+        raw_peer = notification_data.get("peerId") or connection.peer_id
+        self.report_quality(connection.room_id, raw_peer, metrics)
 
     async def _handle_notification(self, connection: PeerConnection, data: Dict):
         """Handle server notification."""
@@ -249,11 +523,24 @@ class MediasoupWSAdapter(SFUAdapter):
                 f"Peer left room {connection.room_id}: {notification_data.get('peerId')}"
             )
         elif method == "producerScore":
-            # Producer quality score
-            logger.debug(f"Producer score update: {notification_data}")
+            self._report_peer_quality(
+                connection,
+                notification_data,
+                bitrate=notification_data.get("bitrate", 0),
+                packet_loss=notification_data.get("packetLoss", 0.0),
+                jitter=notification_data.get("jitter", 0.0),
+                score=notification_data.get("score", 0),
+            )
         elif method == "consumerScore":
-            # Consumer quality score
-            logger.debug(f"Consumer score update: {notification_data}")
+            self._report_peer_quality(
+                connection,
+                notification_data,
+                bitrate=notification_data.get("bitrate", 0),
+                packet_loss=notification_data.get("packetLoss", 0.0),
+                jitter=notification_data.get("jitter", 0.0),
+                round_trip_time=notification_data.get("roundTripTime", 0),
+                score=notification_data.get("score", 0),
+            )
         elif method == "activeSpeaker":
             # Active speaker changed
             handler_key = f"activeSpeaker:{connection.room_id}"
@@ -289,7 +576,7 @@ class MediasoupWSAdapter(SFUAdapter):
             "data": data or {},
         }
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         pending = PendingRequest(
@@ -329,6 +616,38 @@ class MediasoupWSAdapter(SFUAdapter):
 
     async def close_room(self, room_id: str) -> bool:
         """Close a room by disconnecting all peers."""
+        # Close any active recording before removing the room state.
+        if room_id in self._recordings:
+            teardown_error: Optional[Exception] = None
+            try:
+                await self.stop_recording(room_id)
+            except Exception as exc:
+                teardown_error = exc
+                logger.warning(
+                    "Failed to stop mediasoup WebSocket recording for room %s: %s",
+                    room_id,
+                    exc,
+                )
+            # Retry any retained state, including state preserved after an
+            # unexpected cleanup exception, while the connection is available.
+            if room_id in self._recordings:
+                try:
+                    await self.stop_recording(room_id)
+                except Exception as exc:
+                    teardown_error = exc
+                    logger.warning(
+                        "Retry failed for mediasoup WebSocket recording in room %s: %s",
+                        room_id,
+                        exc,
+                    )
+            # The room's signaling connection is about to be destroyed. Do not
+            # leave metadata claiming that a later retry is possible.
+            if room_id in self._recordings:
+                reason = "room closed before recorder teardown completed"
+                if teardown_error is not None:
+                    reason = f"{reason}: {teardown_error}"
+                self._record_recording_teardown_failure(room_id, reason)
+
         # Close all connections in this room
         keys_to_remove = [
             key for key in self._connections if key.startswith(f"{room_id}:")
@@ -389,6 +708,7 @@ class MediasoupWSAdapter(SFUAdapter):
                 "device": {"name": "Plexichat", "version": "1.0"},
                 "rtpCapabilities": rtp_capabilities,
                 "sctpCapabilities": None,
+                "acoustic_defense": self._acoustic_defense_to_dict(),
             },
         )
 
@@ -664,40 +984,313 @@ class MediasoupWSAdapter(SFUAdapter):
         spatial_layer: int,
         temporal_layer: int,
     ) -> bool:
-        """Set preferred simulcast layers for a consumer."""
+        """Set preferred simulcast layers for the peer's consumers.
+
+        ``BandwidthEstimator`` calls this with an empty ``consumer_id`` -- it
+        has no per-consumer mapping -- and the previous code sent
+        ``consumerId: ""`` verbatim, which mediasoup cannot resolve, so the
+        degradation hint silently never applied. An empty id now means "every
+        consumer this peer receives"; layers are meaningful for video, so
+        video consumers are preferred and audio ones are only used when the
+        peer has no video consumer. Returns False when there is nothing to
+        configure rather than claiming success.
+        """
         key = self._get_connection_key(room_id, peer_id)
         connection = self._connections.get(key)
         if not connection:
             return False
 
-        await self._request(
-            connection,
-            "setConsumerPreferredLayers",
-            {
-                "consumerId": consumer_id,
-                "spatialLayer": spatial_layer,
-                "temporalLayer": temporal_layer,
-            },
-        )
+        if consumer_id:
+            consumer_ids = [consumer_id]
+        else:
+            consumer_ids = [
+                consumer.id
+                for consumer in connection.consumers.values()
+                if consumer.kind is MediaKind.VIDEO
+            ] or [consumer.id for consumer in connection.consumers.values()]
+
+        if not consumer_ids:
+            logger.debug(
+                f"No consumers to configure for peer {peer_id} in room {room_id}"
+            )
+            return False
+
+        # An SFU rejection propagates rather than being swallowed: reporting
+        # success on a failed layer change is the fail-open shape this audit
+        # exists to remove (see test_mediasoup_simulcast_layer_manipulation).
+        for target_id in consumer_ids:
+            await self._request(
+                connection,
+                "setConsumerPreferredLayers",
+                {
+                    "consumerId": target_id,
+                    "spatialLayer": spatial_layer,
+                    "temporalLayer": temporal_layer,
+                },
+            )
 
         return True
 
     async def health_check(self) -> bool:
         """Check if the mediasoup server is healthy by attempting a connection."""
-        test_room = f"health_check_{secrets.token_hex(4)}"
-        test_peer = f"health_{secrets.token_hex(4)}"
+        # CORRECTNESS FIX: ``secrets.token_hex(4)`` was being used to
+        # generate ``test_room``/``test_peer`` — random strings that
+        # change on every call, so each health-check opened a brand
+        # new room in mediasoup-demo and the operator had no way to
+        # correlate results across runs. We now derive BOTH values
+        # deterministically from a deployment-scoped secret so the
+        # same physical SFU gets the same probe identity, and falls
+        # back to a constant when the secret is missing (dev mode).
+        static_purpose = b"plexichat.mediasoup_ws.health_check"
+        test_room = _stable_peer_id(static_purpose + b".room")
+        test_peer = _stable_peer_id(static_purpose + b".peer")
 
         try:
             connection = await self._connect(test_room, test_peer)
             await self._request(connection, "getRouterRtpCapabilities")
-            await self.leave_room(test_room, test_peer)
             return True
         except Exception as e:
             logger.warning(f"Health check failed: {e}")
             return False
+        finally:
+            # Always release the probe connection. Leaving it registered on a
+            # failed probe kept the websocket and its receiver task alive, so
+            # every periodic health check leaked one connection.
+            try:
+                await self.leave_room(test_room, test_peer)
+            except Exception as exc:
+                logger.debug(f"Health check cleanup failed: {exc}")
+
+    async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
+        """Start recording by creating a recv transport and consuming all audio."""
+        safe_output_dir = resolve_recording_dir(output_dir)
+        recording_id = f"rec_{safe_filename_component(room_id)}_{int(time.time())}"
+
+        # Find a peer connection in this room to use for the recorder session
+        key = next(
+            (k for k in self._connections if k.startswith(f"{room_id}:")),
+            None,
+        )
+        if key is None:
+            logger.warning(f"No connections in room {room_id} to attach recorder to")
+            self._recordings[room_id] = {
+                "recording_id": recording_id,
+                "output_dir": str(safe_output_dir),
+                "file_count": 0,
+                "transport_id": None,
+                "consumer_ids": [],
+                "recorder_peer_id": None,
+            }
+            return {"recording_id": recording_id, "file_count": 0}
+
+        connection = self._connections[key]
+
+        try:
+            os.makedirs(safe_output_dir, exist_ok=True)
+        except OSError:
+            pass
+
+        transport = await self.create_transport(
+            room_id, connection.peer_id, TransportDirection.RECV
+        )
+        transport_id = transport.id
+        consumer_ids: List[str] = []
+
+        sfu_producers = list(connection.producers.values())
+
+        # Consume each existing audio producer
+        for producer in sfu_producers:
+            if producer.kind == MediaKind.AUDIO:
+                try:
+                    consumer = await self.consume(
+                        room_id,
+                        connection.peer_id,
+                        transport_id,
+                        producer.id,
+                        connection.rtp_capabilities or {},
+                    )
+                    consumer_ids.append(consumer.id)
+                except Exception as exc:
+                    logger.debug(
+                        f"Could not consume producer {producer.id} for recording: {exc}"
+                    )
+
+        self._recordings[room_id] = {
+            "recording_id": recording_id,
+            "output_dir": str(safe_output_dir),
+            "transport_id": transport_id,
+            "consumer_ids": consumer_ids,
+            "recorder_peer_id": connection.peer_id,
+            "file_count": len(consumer_ids),
+            "acoustic_defense": self._acoustic_defense_to_dict(),
+        }
+        logger.info(
+            f"Recording started for room {room_id} (id={recording_id}, "
+            f"consumers={len(consumer_ids)})"
+        )
+        return {"recording_id": recording_id, "file_count": len(consumer_ids)}
+
+    async def stop_recording(self, room_id: str) -> Optional[List[str]]:
+        """Stop recording, tear down recorder media, and return file paths."""
+        info = self._recordings.get(room_id)
+        if info is None:
+            return None
+
+        # The recorder uses a real recv transport and one consumer per audio
+        # producer. Removing only the local metadata leaks both resources on
+        # mediasoup. Tear them down before calculating the output paths; each
+        # request is best-effort so one stale consumer cannot prevent cleanup
+        # of the remaining transport.
+        teardown_complete = True
+        recorder_peer_id = info.get("recorder_peer_id")
+        if recorder_peer_id:
+            key = self._get_connection_key(room_id, str(recorder_peer_id))
+            connection = self._connections.get(key)
+            if connection is None:
+                teardown_complete = False
+            else:
+                failed_consumers: List[str] = []
+                for consumer_id in list(info.get("consumer_ids") or []):
+                    consumer_id = str(consumer_id)
+                    try:
+                        await self._request(
+                            connection,
+                            "closeConsumer",
+                            {"consumerId": consumer_id},
+                        )
+                    except Exception as exc:
+                        teardown_complete = False
+                        failed_consumers.append(consumer_id)
+                        logger.debug(
+                            "Failed to close recorder consumer %s in room %s: %s",
+                            consumer_id,
+                            room_id,
+                            exc,
+                        )
+                    else:
+                        # Only remove local state after the SFU confirms the
+                        # close. Failed resources remain retryable.
+                        connection.consumers.pop(consumer_id, None)
+                info["consumer_ids"] = failed_consumers
+
+                transport_id = info.get("transport_id")
+                if transport_id:
+                    transport_id = str(transport_id)
+                    try:
+                        await self._request(
+                            connection,
+                            "closeWebRtcTransport",
+                            {"transportId": transport_id},
+                        )
+                    except Exception as exc:
+                        teardown_complete = False
+                        logger.debug(
+                            "Failed to close recorder transport %s in room %s: %s",
+                            transport_id,
+                            room_id,
+                            exc,
+                        )
+                    else:
+                        # A successfully closed transport must not be retried.
+                        info["transport_id"] = None
+                        if connection.recv_transport_id == transport_id:
+                            connection.recv_transport_id = None
+
+        filepaths: List[str] = []
+        for idx in range(info.get("file_count", 0)):
+            candidate = os.path.join(
+                str(
+                    ensure_within_recording_dir(
+                        os.path.join(
+                            info["output_dir"],
+                            f"{info['recording_id']}_track_{idx}.webm",
+                        ),
+                        info["output_dir"],
+                    )
+                ),
+            )
+            if os.path.isfile(candidate):
+                filepaths.append(candidate)
+
+        if not filepaths:
+            fallback = str(
+                ensure_within_recording_dir(
+                    os.path.join(info["output_dir"], f"{info['recording_id']}.webm"),
+                    info["output_dir"],
+                )
+            )
+            filepaths.append(fallback)
+
+        if teardown_complete:
+            self._recordings.pop(room_id, None)
+        else:
+            # Keep the metadata so shutdown or a later lifecycle callback can
+            # retry releasing resources instead of treating partial cleanup as
+            # complete.
+            logger.warning(
+                "Recording media teardown incomplete for room %s; retained for retry",
+                room_id,
+            )
+        logger.info(f"Recording stopped for room {room_id}, files={len(filepaths)}")
+        return filepaths
+
+    def _record_recording_teardown_failure(self, room_id: str, reason: str) -> None:
+        """Record unrecoverable recorder cleanup after a connection is closed."""
+        info = self._recordings.pop(room_id, None)
+        if info is None:
+            return
+        failures = getattr(self, "_recording_teardown_failures", None)
+        if failures is None:
+            failures = self._recording_teardown_failures = {}
+        failures[room_id] = {
+            "recording_id": info.get("recording_id"),
+            "consumer_ids": list(info.get("consumer_ids") or []),
+            "transport_id": info.get("transport_id"),
+            "reason": reason,
+            "failed_at": time.time(),
+        }
+        logger.error(
+            "Recorder teardown for room %s was incomplete at shutdown: %s",
+            room_id,
+            reason,
+        )
 
     async def close(self) -> None:
-        """Close all connections."""
+        """Stop active recordings and close all signaling connections."""
+        for room_id in list(self._recordings):
+            try:
+                await self.stop_recording(room_id)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to stop mediasoup WebSocket recording for %s: %s",
+                    room_id,
+                    exc,
+                )
+            # Retry retained partial state, including unexpected exceptions,
+            # before the signaling connection is closed.
+            if room_id in self._recordings:
+                try:
+                    await self.stop_recording(room_id)
+                except Exception as exc:
+                    logger.debug(
+                        "Retry failed to stop mediasoup WebSocket recording for %s: %s",
+                        room_id,
+                        exc,
+                    )
+            if room_id in self._recordings:
+                # The connection will be closed below, so this state is no
+                # longer retryable. Preserve an explicit diagnostic instead.
+                self._record_recording_teardown_failure(
+                    room_id, "adapter closed before recorder teardown completed"
+                )
+
+        # Cancel receiver tasks before closing the sockets they are iterating.
+        receiver_tasks = getattr(self, "_receiver_tasks", {})
+        for task in list(receiver_tasks.values()):
+            if not task.done():
+                task.cancel()
+        receiver_tasks.clear()
+
         for key in list(self._connections.keys()):
             connection = self._connections.pop(key, None)
             if connection and connection.websocket:
@@ -705,6 +1298,9 @@ class MediasoupWSAdapter(SFUAdapter):
                     await connection.websocket.close()
                 except Exception:
                     pass
+        self._connections.clear()
+        self._rooms.clear()
+        self._message_handlers.clear()
 
     def register_consumer_handler(
         self,

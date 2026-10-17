@@ -1,0 +1,486 @@
+"""SDP handling mixin for SignalingManager."""
+
+import asyncio
+import inspect
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+import utils.logger as logger
+import utils.config as _cfg
+
+from ..exceptions import NotConnectedError, SDPError
+from ...exceptions import PermissionDeniedError
+from ..models import SDPMessage, SDPType, SignalingState
+from ..sdp import parse_sdp, validate_sdp, SDPCodecConfig
+from ..sfu.base import TransportDirection
+
+if TYPE_CHECKING:
+    from ..models import VoiceServerInfo
+
+
+class SDPMixin:
+    """Mixin handling SDP offer/answer methods."""
+
+    if TYPE_CHECKING:
+
+        def create_voice_connection(
+            self, user_id: int, channel_id: int
+        ) -> VoiceServerInfo: ...
+        def _get_timestamp(self) -> int: ...
+        def _get_room_id(self, channel_id: int) -> str: ...
+        def _require_connect_permission(
+            self, user_id: int, channel_id: int
+        ) -> None: ...
+        def _require_stream_permission(self, user_id: int, channel_id: int) -> None: ...
+
+    _voice: Optional[Any]
+    _connections: Dict[int, Any]
+    _sdp_manipulator: Any
+    _ice_builder: Any
+    _get_sfu: Any
+
+    def handle_sdp_offer(
+        self,
+        user_id: int,
+        channel_id: int,
+        sdp: str,
+        sdp_type: str = "offer",
+    ) -> SDPMessage:
+        """
+        Handle an SDP offer from a client (sync wrapper).
+
+        Args:
+            user_id: User ID
+            channel_id: Voice channel ID
+            sdp: SDP string
+            sdp_type: SDP type (offer/answer)
+
+        Returns:
+            SDPMessage with answer
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            loop.create_task(
+                self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
+            )
+            raise RuntimeError("Use handle_sdp_offer_async in async context")
+
+        return asyncio.run(
+            self.handle_sdp_offer_async(user_id, channel_id, sdp, sdp_type)
+        )
+
+    async def handle_sdp_offer_async(
+        self,
+        user_id: int,
+        channel_id: int,
+        sdp: str,
+        sdp_type: str = "offer",
+    ) -> SDPMessage:
+        """
+        Handle an SDP offer from a client (async version that uses SFU).
+
+        Args:
+            user_id: User ID
+            channel_id: Voice channel ID
+            sdp: SDP string
+            sdp_type: SDP type (offer/answer)
+
+        Returns:
+            SDPMessage with answer
+        """
+        connection = self._connections.get(user_id)
+        if not connection:
+            # SECURITY (Agent 34 C3): an SDP offer without a signaling
+            # connection used to auto-create one after checking ONLY
+            # ``channels.view`` (via get_voice_channel), letting users who
+            # could see a voice channel obtain full SFU room joins without
+            # ``voice.connect``. Enforce connect permission BEFORE any
+            # media-plane resource allocation.
+            self._require_connect_permission(user_id, channel_id)
+            self.create_voice_connection(user_id, channel_id)
+            connection = self._connections[user_id]
+        elif connection.channel_id != channel_id:
+            # SECURITY (Agent 34 H4): the offered channel MUST match the
+            # channel bound at connection time; otherwise clients could
+            # cross-inject signaling into arbitrary channels.
+            logger.warning(
+                f"Channel mismatch on SDP offer for user {user_id}: "
+                f"bound={connection.channel_id} offered={channel_id}"
+            )
+            raise NotConnectedError(
+                f"User {user_id} is not connected to channel {channel_id}",
+                user_id=user_id,
+                channel_id=channel_id,
+            )
+
+        try:
+            parsed_type = SDPType(sdp_type)
+            validate_sdp(sdp, parsed_type)
+        except Exception as e:
+            raise SDPError(f"Invalid SDP: {e}")
+
+        # SECURITY (Agent 34 M7, media plane): a client that shares its
+        # screen (or camera) P2P publishes the video track directly inside
+        # this SDP offer and never calls start_screen_share, so the REST
+        # endpoint's voice.speak gate was silently bypassed. Reject any
+        # offer that publishes a video/screen track from a user without
+        # voice.speak in the channel's server.
+        try:
+            offered_media = parse_sdp(sdp).get("media", [])
+            if any(
+                str(media.get("type", "")).lower() == "video" for media in offered_media
+            ):
+                self._require_stream_permission(user_id, channel_id)
+        except PermissionDeniedError:
+            raise
+        except Exception as e:
+            logger.warning(
+                f"Could not inspect SDP media sections for stream permission "
+                f"(user {user_id}, channel {channel_id}): {e}"
+            )
+
+        connection.remote_sdp = sdp
+        connection.last_activity = self._get_timestamp()
+
+        bitrate = 64000
+        codec_cfg = SDPCodecConfig()
+        if self._voice:
+            channel = self._voice.get_voice_channel(channel_id, user_id)
+            if not channel:
+                logger.warning(
+                    f"Unauthorized SDP offer for channel {channel_id} by user {user_id}"
+                )
+                raise NotConnectedError(f"Access denied to channel {channel_id}")
+            bitrate = channel.bitrate
+            try:
+                voice_cfg = _cfg.get("voice", {}) or {}
+                codec_section = voice_cfg.get("codec", {}) or {}
+                if codec_section:
+                    codec_cfg = SDPCodecConfig(
+                        opus_fec=codec_section.get("opus_fec", True),
+                        opus_stereo=codec_section.get("opus_stereo", False),
+                        opus_dtx=codec_section.get("opus_dtx", False),
+                        opus_packet_loss_perc=codec_section.get(
+                            "opus_packet_loss_perc", 15
+                        ),
+                        opus_bitrate=codec_section.get("opus_bitrate", bitrate),
+                        opus_application=codec_section.get(
+                            "opus_application", "lowdelay"
+                        ),
+                        video_bitrate=codec_section.get("video_bitrate", 0),
+                        video_codec=codec_section.get("video_codec", "VP8"),
+                    )
+            except Exception:
+                pass
+
+        self._sdp_manipulator.set_codec_config(codec_cfg)
+        modified_sdp = self._sdp_manipulator.set_bitrate(sdp, bitrate)
+
+        try:
+            answer_sdp = await self._get_sfu_answer(
+                user_id, channel_id, modified_sdp, connection.session_id
+            )
+            logger.info(f"Got SDP answer from SFU for user {user_id}")
+        except Exception as e:
+            # SECURITY/correctness (audit: fabricated SDP answers): an SFU
+            # that cannot negotiate must FAIL the offer. The old fallback
+            # invented an answer with random ICE credentials and a random
+            # DTLS fingerprint, so the client was told the call had connected
+            # while no media could ever flow.
+            logger.warning(f"SFU negotiation failed for user {user_id}: {e}")
+            raise SDPError(f"SFU negotiation failed: {e}") from e
+
+        connection.local_sdp = answer_sdp
+        connection.state = SignalingState.CONNECTING
+
+        logger.debug(f"Processed SDP offer from user {user_id}")
+
+        return SDPMessage(
+            sdp_type=SDPType.ANSWER,
+            sdp=answer_sdp,
+            session_id=connection.session_id,
+        )
+
+    async def _get_sfu_answer(
+        self,
+        user_id: int,
+        channel_id: int,
+        offer_sdp: str,
+        session_id: str,
+    ) -> str:
+        """
+        Get SDP answer from the SFU by creating a transport.
+
+        Args:
+            user_id: User ID
+            channel_id: Voice channel ID
+            offer_sdp: Client's SDP offer
+            session_id: Session ID
+
+        Returns:
+            SDP answer string
+        """
+        sfu = self._get_sfu()
+        room_id = self._get_room_id(channel_id)
+        peer_id = f"user_{user_id}"
+
+        logger.debug(f"Joining SFU room {room_id} as peer {peer_id}")
+        room_info = await sfu.join_room(room_id, peer_id)
+        router_caps = room_info.get("routerRtpCapabilities", {})
+
+        logger.debug(f"Completing join for peer {peer_id}")
+        await sfu.complete_join(
+            room_id,
+            peer_id,
+            rtp_capabilities=router_caps,
+            display_name=f"User {user_id}",
+        )
+
+        # SECURITY-correctness (audit: SFU/media path dead): the client's
+        # offer MUST reach the SFU's peer connection so ICE/DTLS parameters
+        # are negotiated for real. For aiortc this calls
+        # setRemoteDescription; out-of-band SFUs (mediasoup) ignore it and
+        # we fall back to transport-derived SDP below.
+        pc_local: Dict[str, Any] = {}
+        transport = None
+        try:
+            pc_local = await sfu.apply_remote_offer(room_id, peer_id, offer_sdp)
+        except Exception as e:
+            logger.warning(f"apply_remote_offer failed, using transport fallback: {e}")
+
+        if not pc_local:
+            logger.debug(f"Creating send transport for peer {peer_id}")
+            transport = await sfu.create_transport(
+                room_id, peer_id, TransportDirection.SEND
+            )
+
+            connection = self._connections.get(user_id)
+            if connection:
+                connection.transport_id = transport.id
+                connection.sfu_room_id = room_id
+                connection.sfu_peer_id = peer_id
+
+            answer_sdp = self._build_sdp_from_transport(
+                offer_sdp, transport, session_id
+            )
+            return answer_sdp
+
+        connection = self._connections.get(user_id)
+        if connection:
+            connection.sfu_room_id = room_id
+            connection.sfu_peer_id = peer_id
+
+        # The aiortc peer produced a REAL local description from a complete
+        # negotiation: use it verbatim instead of synthesizing SDP.
+        answer_sdp = pc_local["sdp"]
+
+        return answer_sdp
+
+    async def on_renegotiation_needed(
+        self, room_id: str, peer_id: str, offer_sdp: str
+    ) -> bool:
+        """Deliver an SFU-initiated SDP offer to the peer's client.
+
+        This is the adapter's renegotiation sink. aiortc never emits
+        ``negotiationneeded``, so when a producer is forwarded to a peer that
+        has already negotiated, the offer the SFU builds has no built-in way
+        to reach the client; without this the forwarded track never arrives.
+
+        The SFU peer is mapped back to a user and channel, and the offer is
+        delivered ONLY when that user has a live signaling connection bound to
+        that same channel -- a peer room must never leak media signaling to a
+        user who is not in the call. Returns whether the offer was handed off.
+        """
+        from ..sfu.quality import canonical_channel_id, canonical_user_id
+
+        user_id = canonical_user_id(peer_id)
+        channel_id = canonical_channel_id(room_id)
+        if user_id is None or channel_id is None:
+            logger.debug(
+                f"Ignoring SFU renegotiation for unmappable ids: "
+                f"room={room_id!r} peer={peer_id!r}"
+            )
+            return False
+
+        connection = self._connections.get(user_id)
+        if connection is None or getattr(connection, "channel_id", None) != channel_id:
+            # No live session in this channel: do not hand media signaling to a
+            # user who is not (or is no longer) in the call.
+            logger.debug(
+                f"Refusing SFU renegotiation for user {user_id}: no connection "
+                f"bound to channel {channel_id}"
+            )
+            return False
+
+        try:
+            from .. import _get_offer_sender
+
+            sender = _get_offer_sender()
+        except Exception:
+            sender = None
+        if sender is None:
+            logger.debug(
+                "No offer sender registered: server-initiated offer for user "
+                f"{user_id} was not delivered"
+            )
+            return False
+
+        try:
+            result = sender(user_id, channel_id, offer_sdp)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning(
+                f"Failed to deliver server-initiated offer to user {user_id}: {exc}"
+            )
+            return False
+
+        logger.info(
+            f"Delivered server-initiated SDP offer to user {user_id} "
+            f"in channel {channel_id}"
+        )
+        return True
+
+    def _build_sdp_from_transport(
+        self, offer_sdp: str, transport, session_id: str
+    ) -> str:
+        """
+        Build an SDP answer from mediasoup transport parameters.
+
+        Args:
+            offer_sdp: Client's SDP offer
+            transport: SFUTransport with ICE/DTLS parameters
+            session_id: Session ID
+
+        Returns:
+            SDP answer string
+        """
+        parsed = parse_sdp(offer_sdp)
+
+        numeric_session_id = str(int(session_id[:16], 16) % (10**18))
+
+        # SECURITY/correctness (audit: fabricated ICE credentials): the answer
+        # MUST carry the SFU's REAL ICE ufrag/pwd and DTLS fingerprint. A
+        # missing value means this backend cannot terminate the media session
+        # itself (Janus negotiates in-band over its VideoRoom plugin). Filling
+        # the gap with a fresh random credential produced an answer the client
+        # accepted but that could never connect -- a silent dead call. Fail
+        # closed instead.
+        ice_params = transport.ice_parameters or {}
+        ice_ufrag = ice_params.get("usernameFragment")
+        ice_pwd = ice_params.get("password")
+        if not ice_ufrag or not ice_pwd:
+            raise SDPError(
+                "SFU transport carries no ICE credentials; refusing to "
+                "fabricate an SDP answer"
+            )
+
+        dtls_params = transport.dtls_parameters or {}
+        fingerprints = dtls_params.get("fingerprints") or []
+        if not fingerprints:
+            raise SDPError(
+                "SFU transport carries no DTLS fingerprint; refusing to "
+                "fabricate an SDP answer"
+            )
+        fingerprint = fingerprints[0]
+        dtls_role = dtls_params.get("role", "auto")
+
+        setup_map = {"auto": "active", "server": "passive", "client": "active"}
+        setup = setup_map.get(dtls_role, "active")
+
+        lines = [
+            "v=0",
+            f"o=- {numeric_session_id} 2 IN IP4 127.0.0.1",
+            "s=-",
+            "t=0 0",
+            "a=group:BUNDLE 0",
+            "a=msid-semantic: WMS",
+        ]
+
+        for idx, media in enumerate(parsed.get("media", [])):
+            media_type = media.get("type", "audio")
+            port = media.get("port", 9)
+            protocol = media.get("protocol", "UDP/TLS/RTP/SAVPF")
+            formats = media.get("formats", ["111"])
+
+            lines.append(f"m={media_type} {port} {protocol} {' '.join(formats)}")
+            lines.append("c=IN IP4 0.0.0.0")
+            lines.append("a=rtcp:9 IN IP4 0.0.0.0")
+
+            lines.append(f"a=ice-ufrag:{ice_ufrag}")
+            lines.append(f"a=ice-pwd:{ice_pwd}")
+            lines.append("a=ice-options:trickle")
+
+            for candidate in transport.ice_candidates:
+                cand_str = self._format_ice_candidate(candidate)
+                if cand_str:
+                    lines.append(f"a={cand_str}")
+
+            lines.append(
+                f"a=fingerprint:{fingerprint.get('algorithm', 'sha-256')} {fingerprint.get('value', '')}"
+            )
+            lines.append(f"a=setup:{setup}")
+            lines.append(f"a=mid:{idx}")
+
+            lines.append("a=sendrecv")
+            lines.append("a=rtcp-mux")
+            lines.append("a=rtcp-rsize")
+
+            media_attrs = media.get("attributes", {})
+            for fmt in formats:
+                rtpmap = media_attrs.get(f"rtpmap:{fmt}") or media_attrs.get("rtpmap")
+                if rtpmap:
+                    if isinstance(rtpmap, list):
+                        for r in rtpmap:
+                            if r.startswith(fmt):
+                                lines.append(f"a=rtpmap:{r}")
+                    else:
+                        lines.append(f"a=rtpmap:{fmt} {rtpmap}")
+                elif fmt == "111" and media_type == "audio":
+                    lines.append("a=rtpmap:111 opus/48000/2")
+                    cfg = self._sdp_manipulator._codec_config
+                    opus_params = (
+                        f"minptime=10;useinbandfec={'1' if cfg.opus_fec else '0'};"
+                        f"stereo={'1' if cfg.opus_stereo else '0'};"
+                        f"dtx={'1' if cfg.opus_dtx else '0'};"
+                        f"maxplaybackrate={cfg.opus_bitrate};"
+                        f"maxaveragebitrate={cfg.opus_bitrate};"
+                        f"ptime=20"
+                    )
+                    lines.append(f"a=fmtp:111 {opus_params}")
+
+        return "\r\n".join(lines) + "\r\n"
+
+    def _format_ice_candidate(self, candidate: dict) -> str:
+        """Format an ICE candidate dict as an SDP candidate line."""
+        try:
+            foundation = candidate.get("foundation", "1")
+            component = candidate.get("component", 1)
+            protocol = candidate.get("protocol", "udp").lower()
+            priority = candidate.get("priority", 2130706431)
+            ip = candidate.get("ip", candidate.get("address", ""))
+            port = candidate.get("port", 0)
+            typ = candidate.get("type", "host")
+
+            if not ip or not port:
+                return ""
+
+            cand = f"candidate:{foundation} {component} {protocol} {priority} {ip} {port} typ {typ}"
+
+            if typ in ("srflx", "relay", "prflx"):
+                raddr = candidate.get("relatedAddress", candidate.get("raddr", ""))
+                rport = candidate.get("relatedPort", candidate.get("rport", 0))
+                if raddr and rport:
+                    cand += f" raddr {raddr} rport {rport}"
+
+            if protocol == "tcp":
+                tcptype = candidate.get("tcpType", "passive")
+                cand += f" tcptype {tcptype}"
+
+            return cand
+        except Exception as e:
+            logger.warning(f"Failed to format ICE candidate: {e}")
+            return ""

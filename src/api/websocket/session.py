@@ -7,7 +7,7 @@ from typing import Optional, Dict, List, Set, Any
 import time
 import secrets
 import threading
-from src.core.database import get_redis_client, redis_available
+from src.core.database import get_valkey_client, valkey_available
 import utils.logger as logger
 
 from .connection import Connection, ConnectionState
@@ -22,24 +22,42 @@ class Session:
     sequence: int = 0
     intents: int = 0
     created_at: float = field(default_factory=time.monotonic)
+    created_at_epoch: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.monotonic)
+    # Wall-clock timestamp is persisted so a session can be resumed by a
+    # different worker. ``last_activity`` remains monotonic for local checks.
+    last_activity_epoch: float = field(default_factory=time.time)
     connection_id: Optional[str] = None
     replay_events: List[Dict[str, Any]] = field(default_factory=list)
     max_replay_events: int = 100
 
     def add_replay_event(self, event: Dict[str, Any]) -> None:
-        """Add an event to the replay buffer."""
+        """Add an event to the replay buffer.
+
+        The buffer is bounded (``max_replay_events``): once full, the oldest
+        entry is evicted so a long disconnect can never miss more than the
+        window. Eviction is logged at WARNING (previously silent) so replay
+        gaps caused by buffer overflow are observable rather than invisible.
+        """
         self.replay_events.append(event)
         if len(self.replay_events) > self.max_replay_events:
             self.replay_events.pop(0)
+            if not getattr(self, "_replay_overflow_warned", False):
+                self._replay_overflow_warned = True
+                logger.warning(
+                    f"Session {self.session_id}: replay buffer overflow "
+                    f"(max {self.max_replay_events}); oldest events evicted "
+                    f"and unrecoverable on resume"
+                )
 
     def get_replay_events(self, after_sequence: int) -> List[Dict[str, Any]]:
         """Get events after a specific sequence number."""
         return [e for e in self.replay_events if e.get("s", 0) > after_sequence]
 
     def update_activity(self) -> None:
-        """Update last activity timestamp."""
+        """Update local and cross-worker activity timestamps."""
         self.last_activity = time.monotonic()
+        self.last_activity_epoch = time.time()
 
 
 class SessionManager:
@@ -68,18 +86,83 @@ class SessionManager:
         self._user_connections: Dict[int, Set[str]] = {}
         self._lock = threading.Lock()
 
-        # Redis settings
+        # Valkey settings
         self._worker_id = "unknown"
-        client = get_redis_client()
+        client = get_valkey_client()
         if client:
             self._worker_id = client.worker_id
 
-    def _redis_register_connection(self, user_id: int, connection_id: str) -> None:
-        """Register a connection in Redis for global tracking."""
-        if not redis_available():
+    def _session_key(self, session_id: str) -> str:
+        return f"gateway:session:{session_id}"
+
+    def _session_to_payload(self, session: Session) -> Dict[str, Any]:
+        return {
+            "session_id": session.session_id,
+            "user_id": session.user_id,
+            "sequence": session.sequence,
+            "intents": session.intents,
+            "created_at_epoch": session.created_at_epoch,
+            "last_activity_epoch": session.last_activity_epoch,
+            "replay_events": session.replay_events[-session.max_replay_events :],
+        }
+
+    def _persist_session(self, session: Session) -> None:
+        """Persist resumable identity and replay state for sibling workers."""
+        if not valkey_available():
+            return
+        client = get_valkey_client()
+        if not client or not hasattr(client, "set_json"):
+            return
+        try:
+            client.set_json(
+                self._session_key(session.session_id),
+                self._session_to_payload(session),
+                ttl=max(1, int(self._session_timeout_ms / 1000)),
+            )
+        except Exception as exc:
+            logger.debug(f"Valkey session persistence failed: {exc}")
+
+    def _load_shared_session(self, session_id: str) -> Optional[Session]:
+        """Hydrate a session created by another worker, if it is still valid."""
+        if not valkey_available():
+            return None
+        client = get_valkey_client()
+        if not client or not hasattr(client, "get_json"):
+            return None
+        try:
+            raw = client.get_json(self._session_key(session_id))
+            if not isinstance(raw, dict):
+                return None
+            last_epoch = float(raw.get("last_activity_epoch", 0))
+            if time.time() - last_epoch > self._session_timeout_ms / 1000:
+                return None
+            session = Session(
+                session_id=str(raw["session_id"]),
+                user_id=int(raw["user_id"]),
+                sequence=int(raw.get("sequence", 0)),
+                intents=int(raw.get("intents", 0)),
+                created_at_epoch=float(raw.get("created_at_epoch", last_epoch)),
+                last_activity_epoch=last_epoch,
+                replay_events=list(raw.get("replay_events") or [])[-100:],
+            )
+            # Hydration must not refresh activity: merely probing a session
+            # must not extend its resume TTL. Activity is refreshed only after
+            # a successful resume or event dispatch.
+            session.last_activity = time.monotonic()
+            return session
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            logger.debug(f"Invalid shared gateway session {session_id}: {exc}")
+            return None
+        except Exception as exc:
+            logger.debug(f"Valkey session hydration failed: {exc}")
+            return None
+
+    def _valkey_register_connection(self, user_id: int, connection_id: str) -> None:
+        """Register a connection in Valkey for global tracking."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -98,14 +181,14 @@ class SessionManager:
             client.hset(f"conn:{connection_id}:info", "user_id", str(user_id))
             client.expire(f"conn:{connection_id}:info", 3600)  # 1h safety TTL
         except Exception as e:
-            logger.debug(f"Redis session registration failed: {e}")
+            logger.debug(f"Valkey session registration failed: {e}")
 
-    def _redis_unregister_connection(self, user_id: int, connection_id: str) -> None:
-        """Unregister a connection from Redis."""
-        if not redis_available():
+    def _valkey_unregister_connection(self, user_id: int, connection_id: str) -> None:
+        """Unregister a connection from Valkey."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -116,7 +199,12 @@ class SessionManager:
             )
             client.delete(f"conn:{connection_id}:info")
         except Exception as e:
-            logger.debug(f"Redis session unregistration failed: {e}")
+            logger.debug(f"Valkey session unregistration failed: {e}")
+
+    @property
+    def worker_id(self) -> str:
+        """The unique identity of this worker instance."""
+        return self._worker_id
 
     @property
     def heartbeat_interval_ms(self) -> int:
@@ -138,12 +226,13 @@ class SessionManager:
         Args:
             connection: Connection to add
         """
+        user_id = connection.user_id
+        conn_id = connection.connection_id
         with self._lock:
-            self._connections[connection.connection_id] = connection
-            if connection.user_id:
-                self._redis_register_connection(
-                    connection.user_id, connection.connection_id
-                )
+            self._connections[conn_id] = connection
+        # Valkey I/O outside lock to avoid blocking all connection operations
+        if user_id:
+            self._valkey_register_connection(user_id, conn_id)
 
     def remove_connection(self, connection_id: str) -> Optional[Connection]:
         """
@@ -155,17 +244,20 @@ class SessionManager:
         Returns:
             Removed connection or None
         """
+        connection = None
+        user_id = None
         with self._lock:
             connection = self._connections.pop(connection_id, None)
             if connection and connection.user_id:
-                user_conns = self._user_connections.get(connection.user_id, set())
+                user_id = connection.user_id
+                user_conns = self._user_connections.get(user_id, set())
                 user_conns.discard(connection_id)
                 if not user_conns:
-                    self._user_connections.pop(connection.user_id, None)
-
-                # Unregister from Redis
-                self._redis_unregister_connection(connection.user_id, connection_id)
-            return connection
+                    self._user_connections.pop(user_id, None)
+        # Valkey I/O outside lock
+        if user_id and connection:
+            self._valkey_unregister_connection(user_id, connection_id)
+        return connection
 
     def get_connection(self, connection_id: str) -> Optional[Connection]:
         """Get a connection by ID."""
@@ -186,8 +278,8 @@ class SessionManager:
             local_count = len(self._user_connections.get(user_id, set()))
 
         # 2. Add global count if available
-        if redis_available():
-            client = get_redis_client()
+        if valkey_available():
+            client = get_valkey_client()
             if client:
                 try:
                     # smembers returns a set of strings like "worker_id:connection_id"
@@ -232,20 +324,36 @@ class SessionManager:
             user_conns = self._user_connections.setdefault(user_id, set())
             user_conns.add(connection.connection_id)
 
-        # Register in Redis since we now know the user_id
-        self._redis_register_connection(user_id, connection.connection_id)
+        # Register in Valkey since we now know the user_id
+        self._valkey_register_connection(user_id, connection.connection_id)
+        self._persist_session(session)
 
         connection.set_identified(user_id, session_id, intents)
         return session
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        """Get a session by ID."""
-        return self._sessions.get(session_id)
+        """Get a local or cross-worker session by ID."""
+        session = self._sessions.get(session_id)
+        if session is not None:
+            return session
+        shared = self._load_shared_session(session_id)
+        if shared is not None:
+            with self._lock:
+                self._sessions[session_id] = shared
+        return shared
 
     def remove_session(self, session_id: str) -> Optional[Session]:
-        """Remove a session."""
+        """Remove a local and shared session."""
         with self._lock:
-            return self._sessions.pop(session_id, None)
+            session = self._sessions.pop(session_id, None)
+        if valkey_available():
+            client = get_valkey_client()
+            if client:
+                try:
+                    client.delete(self._session_key(session_id))
+                except Exception as exc:
+                    logger.debug(f"Valkey session removal failed: {exc}")
+        return session
 
     def can_resume_session(self, session_id: str, user_id: int) -> bool:
         """
@@ -258,16 +366,15 @@ class SessionManager:
         Returns:
             True if session can be resumed
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if not session:
             return False
 
         if session.user_id != user_id:
             return False
 
-        now = time.monotonic()
         timeout_seconds = self._session_timeout_ms / 1000
-        if now - session.last_activity > timeout_seconds:
+        if time.time() - session.last_activity_epoch > timeout_seconds:
             self.remove_session(session_id)
             return False
 
@@ -290,7 +397,7 @@ class SessionManager:
         Returns:
             Resumed session or None
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if not session:
             return None
 
@@ -301,6 +408,10 @@ class SessionManager:
                 old_conn.set_disconnected()
 
             session.connection_id = connection.connection_id
+            # The client may have received fewer events than this worker has
+            # persisted. Never move the session sequence backwards during a
+            # cross-worker resume; the next dispatch must remain monotonic.
+            session.sequence = max(session.sequence, int(sequence))
             session.update_activity()
 
             user_conns = self._user_connections.setdefault(session.user_id, set())
@@ -309,8 +420,58 @@ class SessionManager:
             user_conns.add(connection.connection_id)
 
         connection.set_identified(session.user_id, session_id, session.intents)
-        connection.sequence = sequence
+        connection.sequence = session.sequence
+
+        # Valkey I/O outside the lock. The NEW connection id must be
+        # registered immediately: without this, get_user_connection_count
+        # undercounts after every resume and the global 5-connection cap
+        # could be bypassed via repeated resume churn.
+        self._valkey_register_connection(session.user_id, connection.connection_id)
+        if old_conn_id and old_conn_id != connection.connection_id:
+            # Drop the OLD member from the user's global set right away so
+            # the count stays accurate even before the old socket's cleanup
+            # runs. Deliberately srem-only (no decr): stats:total_connections
+            # stays balanced because the old socket's eventual
+            # remove_connection() performs the matching decr for the incr
+            # this resume just issued for the new connection id.
+            self._valkey_drop_connection_member(session.user_id, old_conn_id)
+
+        self._persist_session(session)
         return session
+
+    def _valkey_drop_connection_member(self, user_id: int, connection_id: str) -> None:
+        """Remove a connection from the user's global set WITHOUT decr.
+
+        Used when resuming: the old connection id must stop counting
+        toward the per-user cap immediately, but its
+        ``stats:total_connections`` decrement still belongs to the old
+        socket's own cleanup path.
+        """
+        if not valkey_available():
+            return
+        client = get_valkey_client()
+        if not client:
+            return
+        try:
+            # CROSS-WORKER RESUME: the set member was registered by the
+            # worker that owned the OLD connection as
+            # ``<that worker's id>:<conn_id>`` — not ours. Read the owner
+            # from conn:{id}:info (written at registration time) and srem
+            # under THAT prefix; otherwise the stale member survives until
+            # the 24h TTL and inflates get_user_connection_count past the
+            # per-user connection cap. Fall back to our own worker id when
+            # the info hash has already expired (same-worker case).
+            owner_worker = client.hget(f"conn:{connection_id}:info", "worker")
+            if isinstance(owner_worker, bytes):
+                owner_worker = owner_worker.decode("utf-8", "replace")
+            if not owner_worker:
+                owner_worker = self._worker_id
+            client.srem(
+                f"user:{user_id}:connections",
+                f"{owner_worker}:{connection_id}",
+            )
+        except Exception as e:
+            logger.debug(f"Valkey connection member drop failed: {e}")
 
     def record_event(self, session_id: str, event: Dict[str, Any]) -> None:
         """
@@ -320,10 +481,14 @@ class SessionManager:
             session_id: Session ID
             event: Event data with sequence number
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if session:
             session.add_replay_event(event)
+            event_sequence = event.get("s")
+            if isinstance(event_sequence, (int, float)):
+                session.sequence = max(session.sequence, int(event_sequence))
             session.update_activity()
+            self._persist_session(session)
 
     def get_replay_events(
         self, session_id: str, after_sequence: int
@@ -338,7 +503,7 @@ class SessionManager:
         Returns:
             List of events to replay
         """
-        session = self._sessions.get(session_id)
+        session = self.get_session(session_id)
         if not session:
             return []
         return session.get_replay_events(after_sequence)
@@ -386,11 +551,11 @@ class SessionManager:
         return len(stale_ids)
 
     def clear_all_global_sessions(self) -> None:
-        """Clear all connections belonging to this worker from Redis (on shutdown)."""
-        if not redis_available():
+        """Clear all connections belonging to this worker from Valkey (on shutdown)."""
+        if not valkey_available():
             return
 
-        client = get_redis_client()
+        client = get_valkey_client()
         if not client:
             return
 
@@ -399,15 +564,25 @@ class SessionManager:
             with self._lock:
                 users = list(self._user_connections.keys())
 
-            # 2. Remove each connection from Redis
+            # 2. Remove each connection from Valkey
             for user_id in users:
                 conn_ids = self._user_connections.get(user_id, set())
                 for cid in list(conn_ids):
-                    self._redis_unregister_connection(user_id, cid)
+                    self._valkey_unregister_connection(user_id, cid)
 
-            logger.info(f"Cleared all Redis sessions for worker {self._worker_id}")
+            logger.info(f"Cleared all Valkey sessions for worker {self._worker_id}")
         except Exception as e:
-            logger.debug(f"Redis global session cleanup failed: {e}")
+            logger.debug(f"Valkey global session cleanup failed: {e}")
+
+    def get_all_connections(self) -> List[Connection]:
+        """
+        Get all connections across all users.
+
+        Returns:
+            List of all connections (authenticated and unauthenticated)
+        """
+        with self._lock:
+            return list(self._connections.values())
 
     def get_stats(self) -> Dict[str, int]:
         """Get session manager statistics."""

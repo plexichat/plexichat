@@ -3,7 +3,7 @@ Version and status schemas for API responses.
 """
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Union
 from enum import Enum
 
 
@@ -48,7 +48,11 @@ class VersionNegotiateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    client_version: str = Field(..., description="Client's current version string")
+    client_version: str = Field(
+        ...,
+        min_length=1,
+        description="Client's current version string",
+    )
     supported_versions: Optional[List[str]] = Field(
         None, description="List of server versions client supports"
     )
@@ -95,7 +99,7 @@ class VersionErrorDetail(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    code: str = Field(..., description="Error code")
+    code: Union[str, int] = Field(..., description="Error code")
     message: str = Field(..., description="Human-readable error message")
     client_version: Optional[str] = Field(None, description="Client's version")
     min_version: Optional[str] = Field(None, description="Minimum required version")

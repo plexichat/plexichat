@@ -9,6 +9,36 @@ import uuid
 
 
 @pytest.fixture
+def db_and_modules(
+    db, auth_manager, messaging_manager, server_manager, sticker_manager
+):
+    """Override root ``db_and_modules`` for the stickers tree.
+
+    The root ``db_and_modules`` fixture returns
+    ``(db, auth, messaging, servers, embeds_manager)`` so unpacking
+    ``db, auth, messaging, servers, stickers`` ends up binding
+    ``stickers = embeds_manager`` — which then surfaces as
+    ``AttributeError: 'EmbedManager' object has no attribute
+    'create_pack'`` (and friends) inside sticker tests.
+
+    This override keeps the 5-tuple positional contract the sticker
+    tests expect but swaps the ``module`` element to ``sticker_manager``
+    (already wired with ``servers_module`` and ``messaging_module``
+    by the root fixture). The bundle is a named tuple: unpack by name
+    (``bundle.module``), never positionally.
+    """
+    from src.tests._conftest.module_registry import ModuleBundle
+
+    return ModuleBundle(
+        db=db,
+        auth=auth_manager,
+        messaging=messaging_manager,
+        servers=server_manager,
+        module=sticker_manager,
+    )
+
+
+@pytest.fixture
 def server_with_owner(modules, user_pool):
     """Create a server with owner for sticker tests."""
     owner = user_pool.get_user()

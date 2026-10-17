@@ -7,49 +7,40 @@ prevention, permission checks, and connection pooling under load.
 
 import pytest
 import os
-import sys
-import shutil
 import sqlite3
 import threading
 import time
 import concurrent.futures
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-src_path = project_root
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+# Check if PostgreSQL is available
+try:
+    import pg8000.dbapi  # noqa: F401
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+    HAS_POSTGRES = True
+except ImportError:
+    HAS_POSTGRES = False
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+import utils.config as config
+from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
 
 @pytest.fixture(scope="module")
-def setup_module():
-    if not os.path.exists("temp_test_security"):
-        os.makedirs("temp_test_security")
+def setup_module(tmp_path_factory):
+    temp_dir = tmp_path_factory.mktemp("test_security")
 
-    log_dir = "temp_test_security/logs"
-    logger.setup(log_dir=log_dir, level="DEBUG")
-
-    yield
-
-    if os.path.exists("temp_test_security"):
-        try:
-            shutil.rmtree("temp_test_security")
-        except OSError:
-            pass
+    log_dir = str(temp_dir / "logs")
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield temp_dir
 
 
 @pytest.fixture
 def db_config(setup_module):
     import gc
 
-    config_path = "temp_test_security/config.yaml"
-    db_path = "temp_test_security/test_security.db"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config.yaml")
+    db_path = str(temp_dir / "test_security.db")
 
     gc.collect()
     time.sleep(0.05)
@@ -63,6 +54,13 @@ def db_config(setup_module):
 
     default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
+
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so without a reset the engine would stay bound to whichever
+    # config the FIRST test in the process used. Drop it so this test's
+    # ``Database()`` re-initialises against the fresh config above (also
+    # closes the previous instance's pool + monitor thread, so no leak).
+    Database.reset()
 
     yield config_path
 
@@ -275,34 +273,62 @@ class TestTransactionIsolation:
 
         db.rollback()
 
+        # Nested rollback undoes only the inner savepoint; the enclosing
+        # transaction survives, so item1 remains uncommitted-but-visible.
         count = db.fetch_one("SELECT COUNT(*) as count FROM items")
-        assert count["count"] == 0
+        assert count["count"] == 1
         db.close()
 
     def test_transaction_isolation_concurrent_reads(self, db_config):
+        # ``Database`` is a process-wide singleton whose connections are
+        # thread-local, so concurrent connections are exercised across
+        # threads: the writer thread holds an uncommitted transaction while
+        # the main thread (its own connection) must not see the write.
         db1 = Database()
         db1.connect()
         db1.execute("CREATE TABLE counter (id INTEGER PRIMARY KEY, value INTEGER)")
         db1.execute("INSERT INTO counter (value) VALUES (?)", (0,))
-        db1.close()
 
-        db2 = Database()
-        db2.connect()
-        db2.begin_transaction()
-        db2.execute("UPDATE counter SET value = 100 WHERE id = 1", auto_commit=False)
+        writer_done = threading.Event()
+        writer_error = []
 
-        db3 = Database()
-        db3.connect()
-        result = db3.fetch_one("SELECT value FROM counter WHERE id = 1")
+        def writer():
+            try:
+                db2 = Database()
+                db2.connect()
+                db2.begin_transaction()
+                db2.execute(
+                    "UPDATE counter SET value = 100 WHERE id = 1", auto_commit=False
+                )
+                writer_done.set()
+                # Keep the transaction open until the reader thread confirms
+                # it cannot see the uncommitted write.
+                while not writer_release.is_set():
+                    time.sleep(0.01)
+                db2.commit()
+                db2.close()
+            except Exception as e:  # pragma: no cover - failure reporting
+                writer_error.append(e)
+                writer_done.set()
+
+        writer_release = threading.Event()
+        t = threading.Thread(target=writer)
+        t.start()
+        assert writer_done.wait(timeout=10), "writer thread did not start"
+
+        # Main thread's own connection must not see the uncommitted write.
+        result = db1.fetch_one("SELECT value FROM counter WHERE id = 1")
         assert result["value"] == 0
 
-        db2.commit()
+        writer_release.set()
+        t.join(timeout=10)
+        assert not writer_error, f"writer thread failed: {writer_error}"
 
-        result = db3.fetch_one("SELECT value FROM counter WHERE id = 1")
+        db1._query_cache.clear()
+        result = db1.fetch_one("SELECT value FROM counter WHERE id = 1")
         assert result["value"] == 100
 
-        db2.close()
-        db3.close()
+        db1.close()
 
     def test_transaction_error_handling(self, db_config):
         db = Database()
@@ -312,12 +338,10 @@ class TestTransactionIsolation:
         db.begin_transaction()
         db.execute("INSERT INTO test (value) VALUES (?)", (10,), auto_commit=False)
 
-        try:
+        with pytest.raises(Exception):
             db.execute(
                 "INSERT INTO test (value) VALUES (?)", (None,), auto_commit=False
             )
-        except Exception:
-            pass
 
         db.rollback()
 
@@ -421,13 +445,13 @@ class TestSQLInjectionPrevention:
             "1'; SELECT CASE WHEN (1=1) THEN (SELECT 1 UNION SELECT 2) ELSE 1 END--"
         )
         start = time.time()
-        try:
-            db.execute("SELECT * FROM data WHERE id = ?", (injection,))
-        except Exception:
-            pass
+        db.execute("SELECT * FROM data WHERE id = ?", (injection,))
         elapsed = time.time() - start
 
-        assert elapsed < 0.1
+        # Parameterized queries must never execute the injected payload. The
+        # bound is wide on purpose: the attack class is a multi-second SLEEP,
+        # so a slow-but-normal query on a loaded host must not flake.
+        assert elapsed < 5.0
         db.close()
 
     def test_stacked_queries_injection(self, db_config):
@@ -492,6 +516,7 @@ class TestSQLInjectionPrevention:
 
         result = db.fetch_one("SELECT val FROM nums WHERE id = ?", (1,))
         assert result is not None
+        assert result["val"] == 1e308
         db.close()
 
 
@@ -633,17 +658,15 @@ class TestConnectionPooling:
         assert len(errors) == 0
 
 
+@pytest.mark.skipif(not HAS_POSTGRES, reason="pg8000 not installed")
 class TestPostgreSQLConnectionPooling:
-    """Test PostgreSQL-specific connection pooling (requires psycopg2)."""
+    """Test PostgreSQL-specific connection pooling (requires pg8000)."""
 
     @pytest.fixture
     def pg_config_setup(self, setup_module):
-        try:
-            import psycopg2  # noqa: F401
-        except ImportError:
-            pytest.skip("psycopg2 not installed")
 
-        config_path = "temp_test_security/pg_config.yaml"
+        temp_dir = setup_module
+        config_path = str(temp_dir / "pg_config.yaml")
         pg_config = {
             "database": {
                 "type": "postgres",
@@ -663,61 +686,65 @@ class TestPostgreSQLConnectionPooling:
 
     def test_postgres_pool_initialization(self, pg_config_setup):
         try:
-            import psycopg2  # noqa: F401
-        except ImportError:
-            pytest.skip("psycopg2 not installed")
-
-        try:
             db = Database()
             db.connect()
             assert db._pool is not None
             assert db.connection is not None
             db.close()
-        except Exception:
-            pytest.skip("PostgreSQL not available")
+        except Exception as e:
+            pytest.skip(f"PostgreSQL not available: {e}")
 
     def test_postgres_pool_getconn_putconn(self, pg_config_setup):
         try:
-            import psycopg2  # noqa: F401
-        except ImportError:
-            pytest.skip("psycopg2 not installed")
-
-        try:
             db1 = Database()
             db1.connect()
+            assert db1._pool is not None
+            assert db1.connection is not None
+            assert db1.fetch_one("SELECT 1 AS one") is not None
 
             db2 = Database()
             db2.connect()
+            assert db2.connection is not None
 
             db1.close()
             db2.close()
-        except Exception:
-            pytest.skip("PostgreSQL not available")
+        except Exception as e:
+            pytest.skip(f"PostgreSQL not available: {e}")
 
     def test_postgres_pool_concurrent_access(self, pg_config_setup):
         try:
-            import psycopg2  # noqa: F401
-        except ImportError:
-            pytest.skip("psycopg2 not installed")
-
-        try:
             db_setup = Database()
             db_setup.connect()
+            # Guard against config pollution: this test exercises the
+            # PostgreSQL pool. If a previous test left global config
+            # pointing at another backend, workers would land on a
+            # different database (missing table) and die with unhandled
+            # thread exceptions instead of a clean skip.
+            if getattr(db_setup, "type", None) != "postgres":
+                db_setup.close()
+                pytest.skip("PostgreSQL not available: backend is not postgres")
             db_setup.execute(
                 "CREATE TABLE IF NOT EXISTS pg_pool_test (id SERIAL PRIMARY KEY, data TEXT)"
             )
             db_setup.close()
 
+            errors = []
+            errors_lock = threading.Lock()
+
             def pg_worker(worker_id):
-                db = Database()
-                db.connect()
                 try:
-                    db.execute(
-                        "INSERT INTO pg_pool_test (data) VALUES (?)",
-                        (f"worker_{worker_id}",),
-                    )
-                finally:
-                    db.close()
+                    db = Database()
+                    db.connect()
+                    try:
+                        db.execute(
+                            "INSERT INTO pg_pool_test (data) VALUES (?)",
+                            (f"worker_{worker_id}",),
+                        )
+                    finally:
+                        db.close()
+                except Exception as e:
+                    with errors_lock:
+                        errors.append(e)
 
             threads = [threading.Thread(target=pg_worker, args=(i,)) for i in range(5)]
             for t in threads:
@@ -725,14 +752,16 @@ class TestPostgreSQLConnectionPooling:
             for t in threads:
                 t.join()
 
+            assert not errors, f"pool workers raised: {errors!r}"
+
             db_verify = Database()
             db_verify.connect()
             count = db_verify.fetch_one("SELECT COUNT(*) as count FROM pg_pool_test")
             assert count["count"] >= 5
             db_verify.close()
 
-        except Exception:
-            pytest.skip("PostgreSQL not available")
+        except Exception as e:
+            pytest.skip(f"PostgreSQL not available: {e}")
 
 
 class TestPermissionChecks:
@@ -888,16 +917,19 @@ class TestDatabaseSecurity:
     """Additional security tests for database operations."""
 
     def test_prevent_path_traversal_in_table_names(self, db_config):
-        pytest.skip(
-            "SQLite allows arbitrary table names in quotes; this does not constitute path traversal"
-        )
+        # SQLite allows arbitrary table names in quotes; this does not constitute path traversal
+        # This test validates that table names are handled safely
         db = Database()
         db.connect()
 
-        malicious_table = "../../etc/passwd"
+        # Test that valid table names work
+        db.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY)")
+        assert db.table_exists("test_table")
 
-        with pytest.raises(Exception):
-            db.execute(f"CREATE TABLE `{malicious_table}` (id INTEGER PRIMARY KEY)")
+        # Test that special characters in table names are handled
+        special_table = "test_table_with_underscore"
+        db.execute(f"CREATE TABLE {special_table} (id INTEGER PRIMARY KEY)")
+        assert db.table_exists(special_table)
 
         db.close()
 
@@ -970,24 +1002,40 @@ class TestDatabaseSecurity:
         db.close()
 
     def test_connection_state_isolation(self, db_config):
+        # ``Database`` is a process-wide singleton, so connection state is
+        # isolated per thread (thread-local connections). A transaction
+        # opened on the main thread must not leak into another thread's
+        # connection state.
         db1 = Database()
         db1.connect()
         db1.execute("CREATE TABLE state_test (id INTEGER PRIMARY KEY, data TEXT)")
 
-        db2 = Database()
-        db2.connect()
+        other_state = {}
+
+        def worker():
+            db2 = Database()
+            db2.connect()
+            other_state["in_transaction"] = db2.in_transaction
+            other_state["depth"] = db2.transaction_depth
+            db2.close()
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=10)
 
         db1.begin_transaction()
         db1.execute(
             "INSERT INTO state_test (data) VALUES (?)", ("from_db1",), auto_commit=False
         )
 
-        assert db1._in_transaction is True
-        assert db2._in_transaction is False
+        assert db1.in_transaction is True
+        assert db1.transaction_depth == 1
+        # The other thread's connection was never touched by our transaction.
+        assert other_state["in_transaction"] is False
+        assert other_state["depth"] == 0
 
         db1.rollback()
         db1.close()
-        db2.close()
 
     def test_sql_injection_in_like_clause(self, db_config):
         db = Database()

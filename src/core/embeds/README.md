@@ -1,60 +1,53 @@
-# Embeds Module
+# Embeds module
 
-Rich embed system for Plexichat API supporting rich embeds with fields, images, authors, footers, and URL previews.
+Create and manage rich embeds for PlexiChat messages.
 
-## Features
+## Overview
 
-- Rich embed creation with all standard fields
-- Field limits and character validation
-- URL preview embeds (OpenGraph/Twitter Card simulation)
-- Attach/update/remove embeds from messages
-- Suppress/unsuppress embeds (hide URL previews)
-- Bot/webhook embeds vs user URL previews distinction
-- XSS prevention and URL sanitization
-- Permission integration with servers module
+The embeds module provides rich embeds with fields, images, authors, footers, and URL previews (OpenGraph and Twitter Card). It handles validation, sanitization, and permission checks before persisting embeds to the database.
+
+Embeds are attached to messages. A single message can have up to 10 embeds, each with up to 25 fields and a total character budget of 6000 characters.
 
 ## Setup
 
+Initialize the module once at application startup. The `messaging` and `servers` modules are optional but enable message access and permission checks.
+
 ```python
 from src.core.database import Database
-from src.core import auth
-from src.core import messaging
-from src.core import servers
-from src.core import embeds
+from src.core import auth, messaging, servers, embeds
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize dependencies
 auth.setup(db)
 messaging.setup(db, auth)
 servers.setup(db, auth, messaging)
 
-# Initialize embeds
 embeds.setup(db, messaging, servers)
 ```
 
+`embeds.setup()` is defined in `__init__.py:94`.
+
 ## Usage
 
-### Create Rich Embed
+### Create a rich embed
 
 ```python
 from src.core import embeds
 
-# Create a basic embed
+# Basic embed
 embed = embeds.create_embed(
     user_id=1,
     title="Welcome!",
-    description="This is a rich embed with multiple features.",
-    color="#FF5733"
+    description="This is a rich embed.",
+    color="#FF5733",
 )
 
-# Create embed with all fields
+# Full-featured embed
 embed = embeds.create_embed(
     user_id=1,
-    title="Full Featured Embed",
-    description="Description text here (max 4096 chars)",
+    title="Full featured embed",
+    description="Description text (max 4096 characters).",
     url="https://example.com",
     timestamp="2025-01-15T12:00:00Z",
     color="#00FF00",
@@ -65,15 +58,14 @@ embed = embeds.create_embed(
     fields=[
         {"name": "Field 1", "value": "Value 1", "inline": True},
         {"name": "Field 2", "value": "Value 2", "inline": True},
-        {"name": "Field 3", "value": "Value 3", "inline": False}
-    ]
+        {"name": "Field 3", "value": "Value 3", "inline": False},
+    ],
 )
 ```
 
-### Attach Embed to Message
+### Attach embeds to a message
 
 ```python
-# Create embed and attach to message
 embed = embeds.create_embed(user_id=1, title="Announcement", description="Important info")
 embeds.attach_embed_to_message(user_id=1, message_id=msg.id, embed_id=embed.id)
 
@@ -81,115 +73,117 @@ embeds.attach_embed_to_message(user_id=1, message_id=msg.id, embed_id=embed.id)
 message_embeds = embeds.get_message_embeds(user_id=1, message_id=msg.id)
 ```
 
-### Update and Remove Embeds
+### Update and remove embeds
 
 ```python
-# Update embed
 embed = embeds.update_embed(
     user_id=1,
     embed_id=embed.id,
-    title="Updated Title",
-    description="New description"
+    title="Updated title",
+    description="New description",
 )
 
-# Remove embed from message
 embeds.remove_embed_from_message(user_id=1, message_id=msg.id, embed_id=embed.id)
-
-# Delete embed entirely
 embeds.delete_embed(user_id=1, embed_id=embed.id)
 ```
 
-### Suppress Embeds
+### Suppress embeds
+
+Hide or show all embeds on a message (for example, to hide URL previews):
 
 ```python
-# Hide all embeds on a message (e.g., hide URL previews)
 embeds.suppress_embeds(user_id=1, message_id=msg.id)
-
-# Show embeds again
 embeds.unsuppress_embeds(user_id=1, message_id=msg.id)
 ```
 
-### URL Preview Embeds
+### Create URL preview embeds
 
 ```python
-# Create URL preview embed
+# Create a preview and optionally attach it to a message
 preview = embeds.create_url_preview(
     user_id=1,
     url="https://youtube.com/watch?v=abc123",
-    message_id=msg.id  # Optional: auto-attach to message
+    message_id=msg.id,
 )
 
-# Parse URL metadata without creating embed
+# Parse URL metadata without creating an embed
 metadata = embeds.parse_url_metadata("https://github.com/user/repo")
-print(metadata)
 # {"url": "...", "title": "...", "description": "...", "image": "...", "site_name": "GitHub"}
 ```
 
-### Validation
+### Validate and sanitize
 
 ```python
-# Validate embed data before creating
 result = embeds.validate_embed(embed_data)
 if result["valid"]:
     embed = embeds.create_embed(user_id=1, **embed_data)
 else:
-    print(f"Validation errors: {result['issues']}")
-    print(f"Total characters: {result['total_chars']}")
+    print(result["issues"])
+    print(result["total_chars"])
 
-# Sanitize content
 safe_content = embeds.sanitize_embed_content(user_input)
 ```
 
-## Field Limits
+`validate_embed` is defined in `__init__.py:256` and `sanitize_embed_content` in `__init__.py:266`. The underlying logic lives in `validator.py:762`.
 
-| Field | Max Length |
-|-------|------------|
-| title | 256 characters |
-| description | 4096 characters |
-| field.name | 256 characters |
-| field.value | 1024 characters |
-| footer.text | 2048 characters |
-| author.name | 256 characters |
-| fields | 25 maximum |
-| embeds per message | 10 maximum |
-| total characters | 6000 maximum |
+## Field limits
 
-## Embed Types
+| Field | Limit |
+|-------|-------|
+| `title` | 256 characters |
+| `description` | 4096 characters |
+| `field.name` | 256 characters |
+| `field.value` | 1024 characters |
+| `footer.text` | 2048 characters |
+| `author.name` | 256 characters |
+| `fields` | 25 per embed |
+| Embeds per message | 10 |
+| Total characters per embed | 6000 |
+
+Limits are defined in `validator.py:27`. `calculate_embed_chars` (`validator.py:726`) sums `title`, `description`, `footer.text`, `author.name`, and all `fields` names and values.
+
+## Embed types
 
 | Type | Description |
 |------|-------------|
-| rich | Standard rich embed (default) |
-| image | Image-focused embed |
-| video | Video embed (YouTube, etc.) |
-| gifv | Animated GIF embed |
-| article | Article/blog post embed |
-| link | Generic link preview |
+| `rich` | Standard rich embed (default) |
+| `image` | Image-focused embed |
+| `video` | Video embed (YouTube and similar) |
+| `gifv` | Animated GIF embed |
+| `article` | Article or blog post embed |
+| `link` | Generic link preview |
 
-## URL Validation
+Types are defined in `models.py` as `EmbedType`.
 
-All URLs must:
-- Use http:// or https:// protocol
-- Not contain javascript:, data:, or vbscript: schemes
-- Be properly formatted
+## URL validation
 
-## Security Features
+All URLs in embeds must meet these requirements:
 
-1. XSS Prevention: All content sanitized for script tags and event handlers
-2. URL Validation: Only http/https URLs allowed
-3. Content Limits: Strict character limits prevent abuse
-4. Permission Checks: Server embed_links permission required
+* Use `http://` or `https://` (or a server-relative path under `/api/v1/media/`).
+* Not use `javascript:`, `data:`, or `vbscript:` schemes.
+* Not contain attribute-breakout characters (`"`, `'`, `<`, `>`, `` ` ``) or control characters.
+* Pass shape validation (`validator.py:57`) and SSRF checks through `src.utils.security.URLValidator` (`validator.py:305`).
 
-## Permission Integration
+Relative media paths such as `/api/v1/media/...` are accepted and lifted to an absolute URL using `public_server_url` when available. See `validator.py:86`.
 
-For server channels, the module checks:
+Invalid URLs raise `InvalidUrlError`. See `validator.py:192`.
+
+## Security
+
+1. **Cross-site scripting (XSS) prevention** — `sanitize_content` (`validator.py:423`) checks raw, decoded, and normalized forms of content against blocklists for `<script>`, event handlers, and active-content tags. See `validator.py:131` for the full pattern list.
+2. **URL validation** — Only `http` and `https` URLs are allowed, with SSRF protection for private and loopback ranges.
+3. **Content limits** — Strict character and field limits prevent abuse.
+4. **Permission checks** — Server channels require the `messages.embed_links` permission to attach embeds. The check is performed through the `servers` module passed to `setup()`.
+
+## Permission integration
 
 | Permission | Description |
 |------------|-------------|
-| messages.embed_links | Required to attach embeds to messages |
+| `messages.embed_links` | Required to attach embeds to messages in server channels. |
 
-## Error Handling
+## Error handling
 
-All embed errors inherit from `EmbedError`:
+All embed errors inherit from `EmbedError` (`exceptions.py`):
 
 ```python
 from src.core.embeds import (
@@ -209,7 +203,7 @@ from src.core.embeds import (
 try:
     embeds.create_embed(user_id, title="x" * 300)
 except EmbedValidationError as e:
-    print(f"Validation failed: {e.issues}")
+    print(e.issues)
 
 try:
     embeds.attach_embed_to_message(user_id, msg_id, embed_id)
@@ -219,14 +213,17 @@ except PermissionDeniedError as e:
     print(f"Missing permission: {e.permission}")
 ```
 
-## Database Schema
+## Database schema
 
-Tables (prefixed with `embed_`):
-- `embed_embeds` - Embed metadata and content
-- `embed_fields` - Embed fields (name/value pairs)
-- `embed_message_embeds` - Message-embed associations
+Tables are prefixed with `embed_` and defined in `schema.py`:
+
+* `embed_embeds` — Embed metadata and content.
+* `embed_fields` — Embed fields (name and value pairs).
+* `embed_message_embeds` — Message-to-embed associations.
 
 ## Testing
+
+Run the embed tests with:
 
 ```bash
 pytest src/tests/embeds/ -v

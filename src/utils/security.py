@@ -7,6 +7,7 @@ Provides:
 - Content-Type verification
 """
 
+import os
 import socket
 import ipaddress
 import secrets
@@ -14,6 +15,29 @@ import base64
 import utils.logger as logger
 from typing import Tuple, Optional, Set
 from urllib.parse import urlparse, urlunparse
+
+
+# RFC 6598 shared address space (CGNAT, 100.64.0.0/10): not flagged by
+# ipaddress.is_private on some Python releases, but it is a non-global
+# carrier-grade NAT range that must never be reachable via SSRF.
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
+
+
+def bracket_ip_literal(host: str) -> str:
+    """Return ``host`` in the form a URL/``Host`` header requires.
+
+    RFC 3986 section 3.2.2 requires IPv6 literals to carry square brackets
+    inside a URL authority; a bare ``2606:4700::1111:8443`` is ambiguous
+    with the port separator and no HTTP client parses it as intended. IPv4
+    literals and DNS names pass through unchanged, and an already-bracketed
+    host is not double-bracketed.
+    """
+    if ":" not in host:
+        return host
+    if host.startswith("["):
+        return host
+    return f"[{host}]"
 
 
 def generate_csp_nonce() -> str:
@@ -60,7 +84,7 @@ class URLValidator:
         "localhost",
         "127.0.0.1",
         "::1",
-        "0.0.0.0",  # nosec B104
+        "0.0.0.0",
         "localhost.localdomain",
         "local",
     }
@@ -92,6 +116,19 @@ class URLValidator:
             raise ValueError("Invalid URL: missing hostname")
 
         hostname_lower = hostname.lower()
+
+        # Self-test allowance (TEST ONLY): when the PLEXICHAT_SELF_TEST
+        # environment variable is set (self-test CLI mode), loopback
+        # literals resolve straight to 127.0.0.1/::1 without DNS. This lets
+        # the suite exercise outbound federation delivery against a fake
+        # remote instance running alongside the server. Scope is deliberately
+        # minimal: loopback literals only, env-gated, no effect on any other
+        # host. Without the env var every loopback URL below stays blocked.
+        if os.getenv("PLEXICHAT_SELF_TEST") is not None:
+            if hostname_lower in ("127.0.0.1", "localhost"):
+                return hostname, "127.0.0.1"
+            if hostname_lower == "::1":
+                return hostname, "::1"
 
         # 1. Block known forbidden hostnames
         if hostname_lower in self._blocked_hosts:
@@ -136,11 +173,12 @@ class URLValidator:
         hostname, resolved_ip = self.validate_url_for_request(url)
 
         parsed = urlparse(url)
-        # Replace hostname with resolved IP in the URL
+        # Replace hostname with resolved IP in the URL. An IPv6 literal has
+        # to be bracketed or the reconstructed authority is ambiguous with
+        # the ``:port`` separator and no client parses it as intended.
+        netloc = bracket_ip_literal(resolved_ip)
         if parsed.port:
-            netloc = f"{resolved_ip}:{parsed.port}"
-        else:
-            netloc = resolved_ip
+            netloc = f"{netloc}:{parsed.port}"
 
         safe_url = urlunparse(
             (
@@ -159,14 +197,33 @@ class URLValidator:
         """Check if an IP address is private or reserved."""
         try:
             addr = ipaddress.ip_address(ip)
-            return (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_reserved
-                or addr.is_multicast
-                or addr.is_unspecified
-            )
         except ValueError:
             # If not a valid IP, it might be a hostname that escaped previous checks
             return True
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+            or addr.is_unspecified
+        ):
+            return True
+        # Explicit CGNAT check — covers plain IPv4 and IPv4-mapped IPv6
+        # (``::ffff:100.64.0.1`` has ``version == 6`` and ``is_private`` is
+        # False for the embedded address on some Python releases).
+        if addr.version == 4:
+            return addr in _CGNAT_NETWORK
+        if isinstance(addr, ipaddress.IPv6Address):
+            # NAT64 transition range (64:ff9b::/96) embeds an IPv4 address in
+            # the low 32 bits; on NAT64-capable hosts it routes to that IPv4
+            # address, so private targets must be rejected.
+            if addr in _NAT64_NETWORK:
+                embedded = ipaddress.ip_address(int.from_bytes(addr.packed[12:], "big"))
+                if self.is_private_ip(str(embedded)):
+                    return True
+            if addr.ipv4_mapped is not None:
+                if self.is_private_ip(str(addr.ipv4_mapped)):
+                    return True
+                return addr.ipv4_mapped in _CGNAT_NETWORK
+        return False

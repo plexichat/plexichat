@@ -3,15 +3,16 @@ Username Blacklist Manager.
 Handles blocked terms, regex patterns, and clever evasion detection.
 """
 
+import importlib
 import re
 import unicodedata
-from typing import List, Tuple, Optional, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple, cast
 from difflib import SequenceMatcher
 
 from src.core.base import BaseManager
 
 try:
-    import re2 as _safe_regex  # pyright: ignore[reportMissingImports]
+    _safe_regex = cast(Any, importlib.import_module("re2"))
 except ImportError:  # pragma: no cover - fallback when re2 isn't installed
     _safe_regex = re
 

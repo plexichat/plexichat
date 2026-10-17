@@ -1,0 +1,228 @@
+"""
+Deletion mixin - DELETE /{user_id} route handler.
+"""
+
+from fastapi import HTTPException, Depends
+
+import src.api as api
+from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.common import SnowflakeIDParam, SuccessResponse
+from src.core.relationships.exceptions import (
+    FriendRequestNotFoundError,
+    NotBlockedError,
+    NotFriendsError,
+    PermissionDeniedError,
+)
+from .base import RelationshipBaseProtocol
+import utils.logger as logger
+
+
+class DeletionMixin:
+    async def delete_relationship(
+        self: RelationshipBaseProtocol,
+        user_id: SnowflakeIDParam,
+        current_user: TokenInfo = Depends(get_current_user),
+    ) -> SuccessResponse:
+        """
+        Remove a relationship.
+
+        Removes friend, declines request, or unblocks user.
+        """
+        relationships = api.get_relationships()
+        if not relationships:
+            logger.error("Relationships module not available")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": 500,
+                        "message": "Relationships module not available",
+                    }
+                },
+            )
+
+        try:
+            try:
+                rel = relationships.get_relationship(current_user.user_id, user_id)
+
+                status = getattr(rel, "status", None)
+                if status is None and isinstance(rel, dict):
+                    status = rel.get("status")
+                if status is not None and hasattr(status, "value"):
+                    status = status.value
+
+                status_str = str(status).lower() if status is not None else ""
+                if "." in status_str:
+                    status_str = status_str.split(".")[-1]
+
+                if status_str == "none":
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": {"code": 404, "message": "Relationship not found"}
+                        },
+                    )
+
+                if status_str in ("friend", "friends"):
+                    relationships.remove_friend(current_user.user_id, user_id)
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        current_user.user_id,
+                        user_id,
+                        {
+                            "user_id": str(user_id),
+                        },
+                    )
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        user_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                        },
+                    )
+                elif status_str == "blocked":
+                    relationships.unblock_user(current_user.user_id, user_id)
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        current_user.user_id,
+                        user_id,
+                        {
+                            "user_id": str(user_id),
+                        },
+                    )
+                elif status_str == "pending_incoming":
+                    row = relationships._get_pending_request(
+                        user_id, current_user.user_id
+                    )
+                    if not row:
+                        raise HTTPException(
+                            status_code=404,
+                            detail={
+                                "error": {
+                                    "code": 404,
+                                    "message": "Friend request not found",
+                                }
+                            },
+                        )
+                    req_id = row["id"]
+                    relationships.decline_friend_request(current_user.user_id, req_id)
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        current_user.user_id,
+                        user_id,
+                        {
+                            "user_id": str(user_id),
+                        },
+                    )
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        user_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                        },
+                    )
+                elif status_str == "pending_outgoing":
+                    row = relationships._get_pending_request(
+                        current_user.user_id, user_id
+                    )
+                    if not row:
+                        raise HTTPException(
+                            status_code=404,
+                            detail={
+                                "error": {
+                                    "code": 404,
+                                    "message": "Friend request not found",
+                                }
+                            },
+                        )
+                    req_id = row["id"]
+                    relationships.cancel_friend_request(current_user.user_id, req_id)
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        current_user.user_id,
+                        user_id,
+                        {
+                            "user_id": str(user_id),
+                        },
+                    )
+                    await self._dispatch_relationship_event(
+                        "remove",
+                        user_id,
+                        current_user.user_id,
+                        {
+                            "user_id": str(current_user.user_id),
+                        },
+                    )
+                else:
+                    try:
+                        friends = relationships.get_friends(current_user.user_id)
+                        if any(
+                            int(getattr(f, "friend_id", 0)) == int(user_id)
+                            for f in friends
+                        ):
+                            relationships.remove_friend(current_user.user_id, user_id)
+                        else:
+                            raise HTTPException(
+                                status_code=404,
+                                detail={
+                                    "error": {
+                                        "code": 404,
+                                        "message": "Relationship not found",
+                                    }
+                                },
+                            )
+                    except HTTPException:
+                        raise
+
+                try:
+                    self._invalidate_relationship_list_cache(
+                        current_user.user_id, user_id
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to invalidate relationship cache during delete: {e}"
+                    )
+
+            except HTTPException:
+                raise
+            except (FriendRequestNotFoundError, NotBlockedError, NotFriendsError):
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "error": {"code": 404, "message": "Relationship not found"}
+                    },
+                )
+            except PermissionDeniedError:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"error": {"code": 403, "message": "Permission denied"}},
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to delete relationship between {current_user.user_id} and {user_id}: {e}",
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {
+                            "code": 500,
+                            "message": "Failed to delete relationship",
+                        }
+                    },
+                )
+
+            return SuccessResponse(success=True, message=None)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in delete_relationship for user {current_user.user_id}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": {"code": 500, "message": "Internal server error"}},
+            )

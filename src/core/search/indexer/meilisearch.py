@@ -36,6 +36,40 @@ class MeilisearchIndexer(BaseIndexer):
         http_client=None,
     ):
         super().__init__(config)
+        # SECURITY: the host string is configured at module-load
+        # time. We previously passed it straight into urllib with a
+        # blanket ``# nosec B310`` suppression. The configured host
+        # could be ``http://10.0.0.5`` (SSRF landing page inside the
+        # data-centre network) or ``http://localhost:7700`` (SSRF
+        # loopback into a dev instance). Validate the configured
+        # host up-front via the centralised URLValidator so the
+        # ``ActivityIndexer`` cannot be coerced into hitting an
+        # arbitrary internal endpoint at index time.
+        #
+        # When a caller injects a custom ``http_client`` the urllib
+        # path (and its SSRF surface) is never used — ``_request``
+        # short-circuits to the injected client — so there is nothing
+        # to validate and the default host must not abort construction
+        # (this is what mock-based unit tests rely on).
+        if http_client is None:
+            try:
+                from src.utils.security import URLValidator
+
+                URLValidator().validate_url_for_request(host)
+            except Exception as _meili_host_exc:
+                import utils.logger as _meili_logger
+
+                _meili_logger.critical(
+                    "Meilisearch host %r failed SSRF validation; "
+                    "aborting indexer construction: %s",
+                    host,
+                    _meili_host_exc,
+                )
+                raise SearchBackendError(
+                    f"Meilisearch host failed SSRF validation: {_meili_host_exc}",
+                    backend="meilisearch",
+                    original_error=_meili_host_exc,
+                )
         self._host = host.rstrip("/")
         self._api_key = api_key
         self._index_prefix = index_prefix
@@ -82,6 +116,22 @@ class MeilisearchIndexer(BaseIndexer):
         """Close the indexer."""
         self._initialized = False
 
+    @staticmethod
+    def _escape_filter_value(value: Any) -> str:
+        """Escape a value for interpolation into a Meilisearch filter
+        expression.
+
+        User-supplied values (e.g. discovery ``category``) must not be able
+        to alter filter semantics via unescaped double quotes or backslashes
+        (OR/AND injection widening result sets).
+        """
+        text = str(value)
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
+    @classmethod
+    def _filter_equality(cls, field: str, value: Any) -> str:
+        return f'{field} = "{cls._escape_filter_value(value)}"'
+
     def _request(
         self,
         method: str,
@@ -94,6 +144,9 @@ class MeilisearchIndexer(BaseIndexer):
         # nosec B310
         try:
             url = self._validate_http_url(f"{self._host}{path}")
+            from src.utils.security import URLValidator
+
+            URLValidator().validate_url_for_request(url)
             data = json.dumps(body).encode() if body else None
             headers = {"Content-Type": "application/json"}
 
@@ -199,7 +252,7 @@ class MeilisearchIndexer(BaseIndexer):
                 "message_id": str(message.message_id),
                 "content": message.content or "",
                 "author_id": str(message.author_id),
-                "author_username": "",
+                "author_username": message.author_username or "",
                 "conversation_id": str(message.conversation_id),
                 "server_id": str(message.server_id) if message.server_id else None,
                 "channel_id": str(message.channel_id) if message.channel_id else None,
@@ -211,6 +264,7 @@ class MeilisearchIndexer(BaseIndexer):
                 if message.mentions
                 else [],
                 "is_pinned": message.is_pinned,
+                "attachment_types": message.attachment_types or [],
             }
 
             self._request("POST", f"/indexes/{self._message_index}/documents", [doc])
@@ -235,6 +289,7 @@ class MeilisearchIndexer(BaseIndexer):
                         "message_id": str(message.message_id),
                         "content": message.content or "",
                         "author_id": str(message.author_id),
+                        "author_username": message.author_username or "",
                         "conversation_id": str(message.conversation_id),
                         "server_id": str(message.server_id)
                         if message.server_id
@@ -250,6 +305,7 @@ class MeilisearchIndexer(BaseIndexer):
                         if message.mentions
                         else [],
                         "is_pinned": message.is_pinned,
+                        "attachment_types": message.attachment_types or [],
                     }
                 )
 
@@ -298,21 +354,39 @@ class MeilisearchIndexer(BaseIndexer):
 
             if conversation_ids:
                 conv_filter = " OR ".join(
-                    f'conversation_id = "{c}"' for c in conversation_ids
+                    self._filter_equality("conversation_id", int(c))
+                    for c in conversation_ids
+                    if c is not None
                 )
-                filters.append(f"({conv_filter})")
+                if conv_filter:
+                    filters.append(f"({conv_filter})")
 
             if server_ids:
-                server_filter = " OR ".join(f'server_id = "{s}"' for s in server_ids)
-                filters.append(f"({server_filter})")
+                server_filter = " OR ".join(
+                    self._filter_equality("server_id", int(s))
+                    for s in server_ids
+                    if s is not None
+                )
+                if server_filter:
+                    filters.append(f"({server_filter})")
 
             if channel_ids:
-                channel_filter = " OR ".join(f'channel_id = "{c}"' for c in channel_ids)
-                filters.append(f"({channel_filter})")
+                channel_filter = " OR ".join(
+                    self._filter_equality("channel_id", int(c))
+                    for c in channel_ids
+                    if c is not None
+                )
+                if channel_filter:
+                    filters.append(f"({channel_filter})")
 
             if author_ids:
-                author_filter = " OR ".join(f'author_id = "{a}"' for a in author_ids)
-                filters.append(f"({author_filter})")
+                author_filter = " OR ".join(
+                    self._filter_equality("author_id", int(a))
+                    for a in author_ids
+                    if a is not None
+                )
+                if author_filter:
+                    filters.append(f"({author_filter})")
 
             search_body = {
                 "q": query,
@@ -336,6 +410,7 @@ class MeilisearchIndexer(BaseIndexer):
                         message_id=int(hit.get("message_id", 0)),
                         content=hit.get("content", ""),
                         author_id=int(hit.get("author_id", 0)),
+                        author_username=hit.get("author_username", ""),
                         conversation_id=int(hit.get("conversation_id", 0)),
                         server_id=int(hit["server_id"])
                         if hit.get("server_id")
@@ -345,16 +420,25 @@ class MeilisearchIndexer(BaseIndexer):
                         else None,
                         created_at=hit.get("created_at", 0),
                         has_attachments=hit.get("has_attachments", False),
+                        has_embeds=hit.get("has_embeds", False),
+                        has_links=hit.get("has_links", False),
+                        attachment_types=hit.get("attachment_types", []),
                         is_pinned=hit.get("is_pinned", False),
-                        score=1.0,
+                        score=hit.get("_score", 1.0),
                     )
                 )
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Meilisearch search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Meilisearch message search failed: {e}",
+                backend="meilisearch",
+                original_error=e,
+            )
 
     def index_user(self, user: IndexedUser) -> bool:
         """Index a user."""
@@ -378,7 +462,8 @@ class MeilisearchIndexer(BaseIndexer):
         try:
             self._request("DELETE", f"/indexes/{self._user_index}/documents/{user_id}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove user {user_id} from Meilisearch: {e}")
             return False
 
     def search_users(
@@ -410,9 +495,15 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Meilisearch user search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Meilisearch user search failed: {e}",
+                backend="meilisearch",
+                original_error=e,
+            )
 
     def index_server(self, server: IndexedServer) -> bool:
         """Index a server."""
@@ -441,7 +532,8 @@ class MeilisearchIndexer(BaseIndexer):
                 "DELETE", f"/indexes/{self._server_index}/documents/{server_id}"
             )
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to remove server {server_id} from Meilisearch: {e}")
             return False
 
     def search_servers(
@@ -459,7 +551,7 @@ class MeilisearchIndexer(BaseIndexer):
             if public_only:
                 filters.append("is_public = true")
             if category:
-                filters.append(f'category = "{category}"')
+                filters.append(self._filter_equality("category", category))
 
             search_body = {
                 "q": query,
@@ -492,9 +584,15 @@ class MeilisearchIndexer(BaseIndexer):
 
             return results
 
+        except SearchBackendError:
+            raise
         except Exception as e:
             logger.error(f"Meilisearch server search failed: {e}")
-            return []
+            raise SearchBackendError(
+                f"Meilisearch server search failed: {e}",
+                backend="meilisearch",
+                original_error=e,
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get indexer statistics."""

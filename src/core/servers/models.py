@@ -7,6 +7,8 @@ from enum import Enum
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 
+from src.core.database.cache.serialization import register_reconstructable_type
+
 
 class ChannelType(Enum):
     """Types of channels."""
@@ -160,6 +162,11 @@ class Server:
         }
 
 
+# Cached Server rows (GET /servers, server:{id} tier) must come back as
+# Server instances, not plain dicts — consumers access dataclass attributes.
+register_reconstructable_type(Server)
+
+
 @dataclass
 class Channel:
     """Represents a channel within a server."""
@@ -183,10 +190,16 @@ class Channel:
     rtc_region: Optional[str] = None
     slowmode_seconds: int = 0
     read_receipts_enabled: bool = True
+    transcript_export_enabled: bool = True
     conversation_id: Optional[SnowflakeID] = None
     deleted: bool = False
     deleted_at: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+# Channel rows are cached via @cached get_channels (server_channels tier) and
+# must reconstruct as Channel instances with a real ChannelType enum member.
+register_reconstructable_type(Channel)
 
 
 @dataclass
@@ -233,8 +246,6 @@ class Member:
     username: Optional[str] = None  # Populated via enrichment
     avatar_url: Optional[str] = None  # Populated via enrichment
     roles: List[SnowflakeID] = field(default_factory=list)
-    deaf: bool = False
-    mute: bool = False
     pending: bool = False
     premium_since: Optional[int] = None
     permissions: Optional[Dict[str, bool]] = None
@@ -243,6 +254,10 @@ class Member:
     inviter_id: Optional[SnowflakeID] = None
     timeout_until: Optional[int] = None
     timeout_reason: Optional[str] = None
+    # True when the membership was granted by a temporary invite and the
+    # member has not (yet) been granted a role. Such memberships are revoked
+    # when the member's last connection closes.
+    is_temporary: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert member to dictionary including properties."""
@@ -254,13 +269,12 @@ class Member:
             "updated_at": self.updated_at,
             "nickname": self.nickname,
             "roles": [str(r) for r in self.roles],
-            "deaf": self.deaf,
-            "mute": self.mute,
             "muted": self.muted,
             "deafened": self.deafened,
             "avatar_url": self.avatar_url,
             "timeout_until": self.timeout_until,
             "timeout_reason": self.timeout_reason,
+            "is_temporary": self.is_temporary,
         }
 
 
@@ -448,6 +462,7 @@ SERVER_PERMISSIONS = {
     # Member management
     "members.kick": "Kick members",
     "members.ban": "Ban members",
+    "bans.view": "View server bans",
     "members.manage_nicknames": "Change other members nicknames",
     "members.manage_roles": "Assign and remove roles",
     # Invite management
@@ -455,6 +470,8 @@ SERVER_PERMISSIONS = {
     "invites.manage": "Manage and delete invites",
     # Emoji management
     "emojis.manage": "Create, edit, delete custom emojis",
+    # Webhook management (enforced by src/core/webhooks via has_permission)
+    "webhooks.manage": "Create and manage webhooks",
     # Message permissions (per channel)
     "messages.send": "Send messages",
     "messages.read": "Read messages",
@@ -474,12 +491,24 @@ SERVER_PERMISSIONS = {
     # Event permissions
     "events.manage": "Create, edit, delete scheduled events",
     "events.view": "View scheduled events",
+    # Thread permissions (enforced by src/core/threads via has_permission)
+    "threads.manage": "Manage, archive, lock and delete threads",
+    "threads.create_public": "Create public threads",
+    "threads.create_private": "Create private threads",
     # Template permissions
     "templates.manage": "Create and manage server templates",
     # Onboarding permissions
     "onboarding.manage": "Manage welcome screen and onboarding",
     # AutoMod permissions
     "server.automod": "Manage server auto-moderation rules",
+    # Transcript export
+    "messages.export_transcript": "Export chat transcripts",
+    # Artifact permissions (PlexiScribe / PlexiScript / PlexiBoard documents)
+    "artifact.view": "View artifacts",
+    "artifact.create": "Create artifacts",
+    "artifact.edit": "Edit artifacts",
+    "artifact.delete": "Delete artifacts",
+    "artifact.manage_retention": "Manage artifact retention",
     # Administrator (bypasses all permissions)
     "administrator": "Full administrator access",
 }
@@ -495,5 +524,13 @@ DEFAULT_EVERYONE_PERMISSIONS = {
     "voice.connect": True,
     "voice.speak": True,
     "invites.create": True,
+    "messages.export_transcript": True,
     "events.view": True,
+    # Every member can start public threads (private ones stay mod-granted).
+    "threads.create_public": True,
+    # Every member can use the collaborative suite artifacts in a server.
+    "artifact.view": True,
+    "artifact.create": True,
+    "artifact.edit": True,
+    "artifact.delete": True,
 }

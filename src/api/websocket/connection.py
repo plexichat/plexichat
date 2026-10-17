@@ -4,7 +4,7 @@ Connection state management - Tracks individual WebSocket connections.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import time
 import asyncio
 import zlib
@@ -48,6 +48,10 @@ class Connection:
     is_selftest: bool = False
     _zlib_context: Optional[Any] = field(default=None, repr=False)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    # Per-connection inbound throttle state: opcode -> monotonic timestamps.
+    _inbound_rate_buckets: Dict[int, List[float]] = field(
+        default_factory=dict, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.compress and self._zlib_context is None:
@@ -69,7 +73,13 @@ class Connection:
 
     @property
     def latency_ms(self) -> float:
-        """Get connection latency in milliseconds."""
+        """Server-side heartbeat receive->ACK-send interval, in milliseconds.
+
+        This is NOT a client round-trip time (the server has no mirrored
+        clock to measure that); it is how long the server took to answer the
+        last heartbeat, recorded when the ACK is written. Clients that need
+        RTT measure it themselves.
+        """
         return (self.last_heartbeat_ack - self.last_heartbeat) * 1000
 
     def record_heartbeat(self) -> None:
@@ -133,13 +143,27 @@ class Connection:
                     await self.websocket.send_json(data)
             return True
         except Exception:
+            # C6: a partially-failed compressed send leaves the shared zlib
+            # context mid-stream; reusing it would emit a corrupt deflate
+            # stream and desync the client decompressor on every subsequent
+            # binary frame. Reset the context so the next frame starts from a
+            # clean deflate boundary (the client falls back to a reconnect on
+            # persistent failures).
+            if self.compress:
+                self._zlib_context = zlib.compressobj()
             return False
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
-        """Close the connection."""
+        """Close the connection.
+
+        Acquires ``_send_lock`` so a final in-flight frame cannot interleave
+        AFTER the close frame (C5): without the lock, ``close()`` could race
+        a concurrent ``send_json`` and emit a frame past the close handshake.
+        """
         self.set_disconnecting()
         try:
-            await self.websocket.close(code, reason)
+            async with self._send_lock:
+                await self.websocket.close(code, reason)
         except Exception:
             pass
         self.set_disconnected()

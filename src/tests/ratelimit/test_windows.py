@@ -1,5 +1,11 @@
 """
 Tests for time window behavior and reset.
+
+Window and refill assertions run against the shared ``rate_limit_clock``
+instead of real ``time.sleep`` calls. With sub-second windows the requests
+before a boundary can take longer than the window on a loaded xdist worker,
+which flips the assertion; advancing a controlled clock makes every boundary
+exact and reproducible.
 """
 
 import time
@@ -11,7 +17,9 @@ from src.core.ratelimit.manager import RateLimitManager
 class TestFixedWindowReset:
     """Tests for fixed window reset behavior."""
 
-    def test_window_resets_after_duration(self, memory_storage, test_user_id):
+    def test_window_resets_after_duration(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test fixed window resets after window duration."""
         config = RateLimitConfig(
             requests=3,
@@ -35,7 +43,7 @@ class TestFixedWindowReset:
             route="GET /test",
         )
         assert not result.allowed
-        time.sleep(0.15)
+        rate_limit_clock.advance(0.15)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -72,7 +80,9 @@ class TestFixedWindowReset:
 class TestSlidingWindowBehavior:
     """Tests for sliding window behavior."""
 
-    def test_sliding_window_gradual_recovery(self, memory_storage, test_user_id):
+    def test_sliding_window_gradual_recovery(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test sliding window allows gradual recovery."""
         config = RateLimitConfig(
             requests=3,
@@ -85,26 +95,30 @@ class TestSlidingWindowBehavior:
             route_configs={"GET /test": config},
             enable_global_limit=False,
         )
-        for i in range(3):
+        for _ in range(3):
             result = manager.check_rate_limit(
                 user_id=test_user_id,
                 route="GET /test",
             )
             assert result.allowed
-            time.sleep(0.05)
+            rate_limit_clock.advance(0.05)
+        # t=10000.15: all three timestamps (10000.0/05/10) are inside the window.
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
         )
         assert not result.allowed
-        time.sleep(0.2)
+        # t=10000.35: the 10000.0 timestamp has aged out, so one slot is free.
+        rate_limit_clock.advance(0.2)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
         )
         assert result.allowed
 
-    def test_sliding_window_timestamp_cleanup(self, memory_storage, test_user_id):
+    def test_sliding_window_timestamp_cleanup(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test sliding window cleans up old timestamps."""
         config = RateLimitConfig(
             requests=5,
@@ -122,7 +136,7 @@ class TestSlidingWindowBehavior:
                 user_id=test_user_id,
                 route="GET /test",
             )
-        time.sleep(0.15)
+        rate_limit_clock.advance(0.15)
         for i in range(5):
             result = manager.check_rate_limit(
                 user_id=test_user_id,
@@ -134,7 +148,9 @@ class TestSlidingWindowBehavior:
 class TestTokenBucketRefill:
     """Tests for token bucket refill behavior."""
 
-    def test_token_bucket_refills_over_time(self, memory_storage, test_user_id):
+    def test_token_bucket_refills_over_time(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test token bucket refills tokens over time."""
         config = RateLimitConfig(
             requests=10,
@@ -158,7 +174,8 @@ class TestTokenBucketRefill:
             route="GET /test",
         )
         assert not result.allowed
-        time.sleep(0.2)
+        # 0.2s at 10 tokens/s refills two tokens.
+        rate_limit_clock.advance(0.2)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -194,7 +211,9 @@ class TestTokenBucketRefill:
 class TestLeakyBucketBehavior:
     """Tests for leaky bucket behavior."""
 
-    def test_leaky_bucket_drains_over_time(self, memory_storage, test_user_id):
+    def test_leaky_bucket_drains_over_time(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test leaky bucket drains water over time."""
         config = RateLimitConfig(
             requests=10,
@@ -218,7 +237,8 @@ class TestLeakyBucketBehavior:
             route="GET /test",
         )
         assert not result.allowed
-        time.sleep(0.2)
+        # 0.2s at a 10/s leak rate drains two of the ten units of water.
+        rate_limit_clock.advance(0.2)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -275,7 +295,9 @@ class TestResetTimestamps:
 class TestHourlyWindowReset:
     """Tests for hourly window reset."""
 
-    def test_hourly_window_tracked_separately(self, memory_storage, test_user_id):
+    def test_hourly_window_tracked_separately(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test hourly window is tracked separately from main window."""
         config = RateLimitConfig(
             requests=100,
@@ -295,7 +317,6 @@ class TestHourlyWindowReset:
                 route="GET /test",
             )
             assert result.allowed
-            time.sleep(0.15)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",
@@ -306,7 +327,9 @@ class TestHourlyWindowReset:
 class TestDailyWindowReset:
     """Tests for daily window reset."""
 
-    def test_daily_window_tracked_separately(self, memory_storage, test_user_id):
+    def test_daily_window_tracked_separately(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test daily window is tracked separately from main window."""
         config = RateLimitConfig(
             requests=100,
@@ -326,7 +349,6 @@ class TestDailyWindowReset:
                 route="GET /test",
             )
             assert result.allowed
-            time.sleep(0.15)
         result = manager.check_rate_limit(
             user_id=test_user_id,
             route="GET /test",

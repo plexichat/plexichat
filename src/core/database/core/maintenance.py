@@ -1,3 +1,4 @@
+import re
 from typing import Any, Optional, Protocol
 
 import utils.logger as logger
@@ -24,10 +25,27 @@ class _DatabaseMaintenanceProtocol(Protocol):
     def in_transaction(self, value: bool) -> None: ...
 
     def get_correlation_id(self) -> Optional[str]: ...
+    def fetch_one(
+        self, query: str, params: Optional[tuple] = None
+    ) -> Optional[dict]: ...
+    def fetch_all(self, query: str, params: Optional[tuple] = None) -> list: ...
+    def execute(self, query: str, params: Optional[tuple] = None) -> DbCursor: ...
+    def table_exists(self, table: str) -> bool: ...
+    def column_exists(self, table: str, column: str) -> bool: ...
+    def index_exists(self, index_name: str) -> bool: ...
+    def _sanitize_identifier(self, identifier: str) -> str: ...
+    def _validate_transaction_state(self) -> None: ...
+    def _handle_execution_error(
+        self, conn: Any, cursor: Any, e: BaseException, query: str
+    ) -> None: ...
+    def _get_conn(self, auto_connect: bool = True) -> DbConnection: ...
+    def _invalidate_query_cache(self) -> None: ...
+    def _touch_pool(self, conn: Any, in_transaction: bool = False) -> None: ...
+    def _generate_correlation_id(self) -> str: ...
 
 
 class DatabaseMaintenanceMixin:
-    def _validate_transaction_state(self: _DatabaseMaintenanceProtocol):
+    def _validate_transaction_state(self: _DatabaseMaintenanceProtocol) -> None:
         if self.type == "postgres" and hasattr(self._local, "connection"):
             conn = self._local.connection
             try:
@@ -62,27 +80,70 @@ class DatabaseMaintenanceMixin:
 
     def _handle_execution_error(
         self: _DatabaseMaintenanceProtocol,
-        conn: DbConnection,
-        cursor: DbCursor,
-        e: Exception,
+        conn: Any,
+        cursor: Any,
+        e: BaseException,
         query: str,
-    ):
+    ) -> None:
         error_type = type(e).__name__
-        logger.error(f"Query failed ({error_type}): {str(e)[:100]}")
+        logger.error(f"Query execution failed ({error_type}): {str(e)[:100]}")
 
+        fatal_cleanup_error: Optional[RuntimeError] = None
         try:
             if self.type == "postgres":
                 if conn and getattr(conn, "closed", 0) > 0:
                     self.transaction_depth = 0
                     self.in_transaction = False
-                elif conn and self.transaction_depth > 0:
+                elif conn and self.transaction_depth > 1:
                     try:
                         if cursor is not None:
                             cursor.execute(
                                 f"ROLLBACK TO SAVEPOINT sp_{self.transaction_depth}"
                             )
-                    except Exception:
+                    except Exception as rb_e:
+                        # The savepoint could not be rolled back, so the only
+                        # safe recovery is a FULL rollback. That aborts the
+                        # caller's entire outer transaction — silently reset-
+                        # ting depth here previously let the caller believe it
+                        # was still inside a live transaction and later
+                        # commits became silent no-ops (partial-commit data
+                        # loss). Surface it loudly instead.
+                        logger.error(
+                            "Savepoint rollback failed during error cleanup; "
+                            f"rolling back ENTIRE transaction: {rb_e}"
+                        )
+                        try:
+                            conn.rollback()
+                        except Exception as full_rb_e:
+                            logger.error(
+                                f"Full rollback also failed during cleanup: {full_rb_e}"
+                            )
+                        finally:
+                            self.transaction_depth = 0
+                            self.in_transaction = False
+                        fatal_cleanup_error = RuntimeError(
+                            "Savepoint rollback failed; the outer transaction "
+                            f"was fully rolled back: {rb_e}"
+                        )
+                elif conn and self.transaction_depth == 1:
+                    # Outermost transaction: ``begin_transaction`` only issues
+                    # a SAVEPOINT for depth >= 2, so ``ROLLBACK TO SAVEPOINT
+                    # sp_1`` does not exist and itself fails with 3B001 -- the
+                    # recovery below then masked the ORIGINAL error with a
+                    # RuntimeError, so callers never saw the failure they
+                    # caused. PostgreSQL also refuses to serve further
+                    # statements (25P02) until the aborted transaction is
+                    # closed, so a full rollback is the only recovery. Reset
+                    # the depth so the caller's next ``commit()`` cannot
+                    # silently no-op (partial-commit data loss), and let the
+                    # original error propagate unchanged.
+                    try:
                         conn.rollback()
+                    except Exception as full_rb_e:
+                        logger.error(
+                            f"Full rollback also failed during cleanup: {full_rb_e}"
+                        )
+                    finally:
                         self.transaction_depth = 0
                         self.in_transaction = False
                 elif conn:
@@ -94,17 +155,80 @@ class DatabaseMaintenanceMixin:
             logger.error(f"Error during error cleanup: {cleanup_e}")
         finally:
             if cursor is not None:
-                cursor.close()
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+        if fatal_cleanup_error is not None:
+            raise fatal_cleanup_error from e
 
     def convert_schema(self: _DatabaseMaintenanceProtocol, schema: str) -> str:
+        """Convert a SQLite-authored schema into a PostgreSQL-compatible one.
+
+        The codebase writes a single canonical schema string in SQLite dialect
+        (the form used in every ``src/core/*/schema.py`` file) and converts
+        it to PostgreSQL on demand via this function. SQLite is permissive
+        about type names (it stores everything as one of five affinities)
+        so most of the schema already works verbatim, but a handful of
+        SQLite-specific constructs need to be rewritten:
+
+        * ``BLOB`` -> ``BYTEA`` (PostgreSQL binary type).
+        * ``INTEGER`` -> ``BIGINT`` (PostgreSQL has no 32-bit integer;
+          snowflake IDs require 64-bit).
+        * ``INTEGER PRIMARY KEY AUTOINCREMENT`` -> ``BIGINT PRIMARY KEY
+          GENERATED BY DEFAULT AS IDENTITY`` (PostgreSQL's standard
+          autoincrement form). We deliberately don't use ``SERIAL`` so
+          the column accepts explicit IDs (snowflakes) and so the
+          generated type matches the BIGINT we use elsewhere.
+        * ``BOOLEAN DEFAULT 0/1`` -> ``BOOLEAN DEFAULT FALSE/TRUE``
+          (PostgreSQL rejects 0/1 as boolean defaults; the cast still
+          accepts them as input values).
+        * ``TIMESTAMP`` -> ``TIMESTAMP`` (already portable; kept here as
+          a no-op anchor for future changes).
+
+        The conversions are intentionally surgical so they only target
+        type names and a few well-defined constructs, not the contents
+        of string literals or comments.
+        """
         if self.type != "postgres":
             return schema
 
         import re
 
         converted = schema
+
+        # BLOB -> BYTEA (must run before INTEGER to keep word boundaries clean)
         converted = re.sub(r"\bBLOB\b", "BYTEA", converted, flags=re.IGNORECASE)
+
+        # INTEGER PRIMARY KEY AUTOINCREMENT -> BIGINT PRIMARY KEY GENERATED ...
+        # We rewrite the autoincrement column shape to PostgreSQL's identity
+        # syntax, then let the generic INTEGER -> BIGINT pass upgrade any
+        # remaining INTEGER column types.
+        converted = re.sub(
+            r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+            "BIGINT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY",
+            converted,
+            flags=re.IGNORECASE,
+        )
+
+        # Any remaining bare INTEGER -> BIGINT. This is safe because the
+        # INTEGER -> BIGINT upgrade matches word boundaries and the
+        # codebase doesn't use 32-bit specific semantics anywhere.
         converted = re.sub(r"\bINTEGER\b", "BIGINT", converted, flags=re.IGNORECASE)
+
+        # BOOLEAN DEFAULT 0/1 -> BOOLEAN DEFAULT FALSE/TRUE
+        converted = re.sub(
+            r"\bBOOLEAN\s+DEFAULT\s+0\b",
+            "BOOLEAN DEFAULT FALSE",
+            converted,
+            flags=re.IGNORECASE,
+        )
+        converted = re.sub(
+            r"\bBOOLEAN\s+DEFAULT\s+1\b",
+            "BOOLEAN DEFAULT TRUE",
+            converted,
+            flags=re.IGNORECASE,
+        )
 
         return converted
 
@@ -116,7 +240,7 @@ class DatabaseMaintenanceMixin:
     def _convert_placeholders(self: _DatabaseMaintenanceProtocol, query: str) -> str:
         return dialect.convert_placeholders(query, self.type)
 
-    def _check_connection_age(self: _DatabaseMaintenanceProtocol, conn_id: int):
+    def _check_connection_age(self: _DatabaseMaintenanceProtocol, conn_id: int) -> None:
         self.monitor.check_connection_age(conn_id)
 
     def _format_log_context(self: _DatabaseMaintenanceProtocol, **kwargs) -> str:
@@ -125,3 +249,92 @@ class DatabaseMaintenanceMixin:
         if correlation_id:
             ctx.append(f"correlation_id={correlation_id}")
         return f"[{' '.join(ctx)}]"
+
+    def table_exists(self: _DatabaseMaintenanceProtocol, table_name: str) -> bool:
+        """
+        Check if a table exists in the database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            True if table exists, False otherwise
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", table_name):
+            logger.warning(f"Invalid table name for existence check: {table_name}")
+            return False
+
+        if self.type == "postgres":
+            row = self.fetch_one(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
+                (table_name,),
+            )
+            return row is not None
+        else:
+            row = self.fetch_one(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            )
+            return row is not None
+
+    def column_exists(
+        self: _DatabaseMaintenanceProtocol, table_name: str, column_name: str
+    ) -> bool:
+        """
+        Check if a column exists in a table.
+
+        Args:
+            table_name: Name of the table
+            column_name: Name of the column
+
+        Returns:
+            True if column exists, False otherwise
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", table_name) or not re.match(
+            r"^[a-zA-Z0-9_]+$", column_name
+        ):
+            logger.warning(
+                f"Invalid table/column name for existence check: {table_name}.{column_name}"
+            )
+            return False
+
+        if not self.table_exists(table_name):
+            return False
+
+        if self.type == "postgres":
+            row = self.fetch_one(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+                (table_name, column_name),
+            )
+            return row is not None
+        else:
+            safe_table = self._sanitize_identifier(table_name)
+            rows = self.fetch_all(f"PRAGMA table_info({safe_table})")
+            return any(row["name"] == column_name for row in rows)
+
+    def index_exists(self: _DatabaseMaintenanceProtocol, index_name: str) -> bool:
+        """
+        Check if an index exists in the database.
+
+        Args:
+            index_name: Name of the index to check
+
+        Returns:
+            True if index exists, False otherwise
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", index_name):
+            logger.warning(f"Invalid index name for existence check: {index_name}")
+            return False
+
+        if self.type == "postgres":
+            row = self.fetch_one(
+                "SELECT 1 FROM pg_indexes WHERE indexname = ?",
+                (index_name,),
+            )
+            return row is not None
+        else:
+            row = self.fetch_one(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                (index_name,),
+            )
+            return row is not None

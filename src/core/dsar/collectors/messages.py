@@ -1,0 +1,152 @@
+"""
+Messages collector for msg_messages, msg_participants, msg_conversations,
+msg_forwarded, msg_scheduled, msg_edit_history, user_bookmarks tables.
+
+Collects messages authored by user, conversation participation, conversations
+owned, forwarded messages, scheduled messages, edit history, and bookmarks.
+Redacts encrypted message content.
+"""
+
+from typing import Any, Dict, List
+
+from ..base import BaseCollector
+
+
+class MessagesCollector(BaseCollector):
+    """Collects message-related data from multiple tables."""
+
+    def collect(self, user_id: int) -> Dict[str, Any]:
+        """Collect all message-related data."""
+        return {
+            "messages": self._collect_messages(user_id),
+            "participants": self._collect_participants(user_id),
+            "conversations": self._collect_conversations(user_id),
+            "forwarded": self._collect_forwarded(user_id),
+            "scheduled": self._collect_scheduled(user_id),
+            "edit_history": self._collect_edit_history(user_id),
+            "bookmarks": self._collect_bookmarks(user_id),
+        }
+
+    def _collect_messages(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect messages authored by user."""
+        try:
+            rows = self._db.fetch_all(
+                """
+                SELECT id, conversation_id, author_id, content, created_at,
+                       edited_at, deleted_at, message_type, reply_to_id
+                FROM msg_messages WHERE author_id = ?
+                """,
+                (user_id,),
+            )
+            result = []
+            for row in rows:
+                r = dict(row)
+                if r.get("content", "").startswith("ENC:"):
+                    r["content"] = "(encrypted)"
+                result.append(r)
+            return result
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect messages for user {user_id}: {e}")
+            return []
+
+    def _collect_participants(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect msg_participants."""
+        try:
+            # Column set matches the live schema: there is no `left_at`,
+            # `nick`, `is_owner` or `is_muted` column. The old projection used
+            # all four, so SQLite raised "no such column" and the except
+            # branch returned an empty list -- meaning a subject's DSAR export
+            # silently omitted every conversation they had ever been in.
+            rows = self._db.fetch_all(
+                """
+                SELECT mp.id, mp.conversation_id, mp.user_id, mp.joined_at,
+                       mp.last_read_at, mp.nickname, mp.role, mp.muted,
+                       mp.muted_until, mp.permissions
+                FROM msg_participants mp WHERE mp.user_id = ?
+                """,
+                (user_id,),
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect participants for user {user_id}: {e}")
+            return []
+
+    def _collect_conversations(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect msg_conversations owned by user."""
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM msg_conversations WHERE owner_id = ?", (user_id,)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect conversations for user {user_id}: {e}")
+            return []
+
+    def _collect_forwarded(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect msg_forwarded where user is original author."""
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM msg_forwarded WHERE original_author_id = ?", (user_id,)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect forwarded for user {user_id}: {e}")
+            return []
+
+    def _collect_scheduled(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect msg_scheduled authored by user."""
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM msg_scheduled WHERE author_id = ?", (user_id,)
+            )
+            result = []
+            for row in rows:
+                r = dict(row)
+                if r.get("content", "").startswith("ENC:"):
+                    r["content"] = "(encrypted)"
+                result.append(r)
+            return result
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect scheduled for user {user_id}: {e}")
+            return []
+
+    def _collect_edit_history(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect msg_edit_history where user is editor.
+
+        ``old_content_encrypted`` is raw ciphertext with no decryptable
+        context in an export; per the DSAR redaction policy it is
+        replaced by an "(encrypted)" placeholder.
+        """
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM msg_edit_history WHERE editor_id = ?", (user_id,)
+            )
+            return self.serialize_rows(rows, redact_fields=["old_content_encrypted"])
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect edit history for user {user_id}: {e}")
+            return []
+
+    def _collect_bookmarks(self, user_id: int) -> List[Dict[str, Any]]:
+        """Collect user_bookmarks."""
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM user_bookmarks WHERE user_id = ?", (user_id,)
+            )
+            return [dict(row) for row in rows]
+        except Exception as e:
+            import utils.logger as logger
+
+            logger.error(f"Failed to collect bookmarks for user {user_id}: {e}")
+            return []

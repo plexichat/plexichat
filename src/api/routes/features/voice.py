@@ -1,0 +1,357 @@
+from fastapi import APIRouter, Depends, UploadFile, File, Form
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+from typing import Optional
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
+import utils.logger as logger
+import src.api as api
+from src.core.events.snowflakes import stringify_snowflake_ids
+from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.schemas.common import ErrorResponse
+from .common import (
+    parse_id,
+    raise_bad_request,
+    raise_forbidden,
+    raise_internal,
+)
+
+router = APIRouter()
+
+# M3 FIX: the JSON variant previously trusted client-supplied attachment
+# metadata verbatim (url/filename/content_type/size), unlike the multipart
+# variant which validates server-side. Apply the same class of checks here.
+ALLOWED_CONTENT_TYPES = {
+    "audio/webm",
+    "audio/ogg",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/opus",
+}
+ALLOWED_EXTENSIONS = {"webm", "ogg", "mp3", "wav", "opus"}
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # matches the multipart variant
+MAX_DURATION_MS = 600000
+ALLOWED_URL_PREFIXES = ("/api/v1/media/", "/media/", "/uploads/")
+ALLOWED_URL_SCHEMES = ("http://", "https://")
+
+
+def _validate_voice_metadata(
+    filename: str, content_type: str, size: int, duration_ms: int, url: str
+) -> None:
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        raise_bad_request(
+            f"Invalid content type '{content_type}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_CONTENT_TYPES))}"
+        )
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise_bad_request(
+            f"Unsupported voice format '{ext}'. "
+            f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        )
+
+    if size <= 0:
+        raise_bad_request("Voice file is empty")
+    if size > MAX_UPLOAD_SIZE:
+        raise_bad_request("Audio file exceeds 10MB maximum size")
+
+    if duration_ms <= 0:
+        raise_bad_request("Duration must be positive")
+    if duration_ms > MAX_DURATION_MS:
+        raise_bad_request("Voice message exceeds 10 minute maximum duration")
+
+    candidate = url.strip()
+    lowered = candidate.lower()
+    if lowered.startswith(("javascript:", "data:", "file:", "blob:")):
+        raise_bad_request("Invalid storage URL")
+    if candidate.startswith(ALLOWED_URL_PREFIXES):
+        return
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise_bad_request("Invalid storage URL")
+    if parsed.username or parsed.password:
+        raise_bad_request("Invalid storage URL")
+    # The DNS + IP screening is deliberately NOT done here: see
+    # _assert_public_storage_host, which the route awaits off the event loop.
+
+
+def _assert_public_storage_host(hostname: str) -> None:
+    """Resolve `hostname` and reject any non-public address.
+
+    Separate from the metadata checks because it performs blocking I/O.
+    """
+    try:
+        addresses = [
+            ipaddress.ip_address(info[4][0])
+            for info in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        ]
+    except (OSError, ValueError):
+        raise_bad_request("Invalid storage URL")
+    if not addresses or any(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        for address in addresses
+    ):
+        raise_bad_request("Invalid storage URL")
+    # External URLs are accepted only after DNS/IP safety checks. This keeps
+    # legacy JSON clients working while preventing loopback/private targets.
+
+
+async def _validate_voice_storage_url(url: str) -> None:
+    """Run the storage-URL safety checks without blocking the event loop.
+
+    ``socket.getaddrinfo`` is a synchronous syscall that can block for the
+    full resolver timeout. Calling it directly from this module's ``async def``
+    route stalled the entire worker for every concurrent request whenever the
+    hostname was slow to resolve -- and the hostname is supplied by the
+    client, so a handful of requests pointing at a black-hole DNS name was
+    enough to stall a worker. Offloading to the threadpool keeps the loop
+    responsive; the media proxy already uses this pattern for the same reason.
+    """
+    candidate = url.strip()
+    if not candidate or candidate.startswith(ALLOWED_URL_PREFIXES):
+        return
+    parsed = urlparse(candidate)
+    if parsed.hostname:
+        await run_in_threadpool(_assert_public_storage_host, parsed.hostname)
+
+
+class VoiceMessageRequest(BaseModel):
+    conversation_id: str = Field(..., description="Target conversation ID")
+    duration_ms: int = Field(..., gt=0, description="Duration in milliseconds")
+    filename: str = Field(..., min_length=1, description="Audio filename")
+    content_type: str = Field(..., description="MIME type (audio/*)")
+    size: int = Field(..., gt=0, description="File size in bytes")
+    url: str = Field(..., description="Storage URL")
+    waveform: Optional[str] = Field(None, description="Base64 waveform data")
+
+
+@router.post(
+    "/voice-messages",
+    summary="Send a voice message",
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def send_voice_message(
+    body: VoiceMessageRequest, current_user: TokenInfo = Depends(get_current_user)
+):
+    conv_id = parse_id(body.conversation_id, "conversation ID")
+
+    _validate_voice_metadata(
+        filename=body.filename,
+        content_type=body.content_type,
+        size=body.size,
+        duration_ms=body.duration_ms,
+        url=body.url,
+    )
+
+    # DNS-backed SSRF screening, run off the event loop.
+    await _validate_voice_storage_url(body.url)
+
+    db = api.get_db()
+    messaging = api.get_messaging()
+    participant_svc = (
+        getattr(messaging, "_participant_svc", None) if messaging else None
+    )
+
+    from src.core.messaging.services.voice import VoiceMessageService
+
+    svc = VoiceMessageService(db)
+
+    try:
+        result = svc.create_voice_message(
+            user_id=current_user.user_id,
+            conversation_id=conv_id,
+            duration_ms=body.duration_ms,
+            filename=body.filename,
+            content_type=body.content_type,
+            size=body.size,
+            url=body.url,
+            waveform=body.waveform,
+            participant_svc=participant_svc,
+        )
+
+        attachment_data = getattr(result, "attachment_data", None)
+        if attachment_data is None:
+            attachment_data = {
+                "filename": result.get("filename")
+                if isinstance(result, dict)
+                else result.filename,
+                "content_type": result.get("content_type")
+                if isinstance(result, dict)
+                else result.content_type,
+                "size": result.get("size") if isinstance(result, dict) else result.size,
+                "url": result.get("url") if isinstance(result, dict) else result.url,
+                "metadata": result.get("metadata")
+                if isinstance(result, dict)
+                else result.metadata,
+            }
+
+        if messaging:
+            try:
+                msg = messaging.send_message(
+                    user_id=current_user.user_id,
+                    conversation_id=conv_id,
+                    content="Voice message",
+                    attachments=[attachment_data],
+                )
+                if isinstance(result, dict):
+                    result["message_id"] = msg.id
+                else:
+                    setattr(result, "message_id", msg.id)
+            except Exception as e:
+                logger.error(f"Failed to send voice message via messaging: {e}")
+
+        return {"success": True, "voice_message": stringify_snowflake_ids(result)}
+    except ValueError:
+        raise_bad_request("Invalid voice message data")
+    except PermissionError:
+        # M6 FIX: authorization failures are 403 with a static message,
+        # never a 500 echoing the exception text.
+        raise_forbidden("Not a participant in this conversation")
+
+
+@router.post(
+    "/voice-messages/upload",
+    summary="Upload a voice message audio file",
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+)
+async def upload_voice_message(
+    conversation_id: str = Form(..., description="Target conversation ID"),
+    duration_ms: int = Form(..., gt=0, description="Duration in milliseconds"),
+    audio: UploadFile = File(..., description="Audio file (webm, ogg, mp3, wav, opus)"),
+    waveform: Optional[str] = Form(None, description="Base64 waveform data"),
+    current_user: TokenInfo = Depends(get_current_user),
+):
+    allowed_content_types = {
+        "audio/webm",
+        "audio/ogg",
+        "audio/mp3",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/opus",
+    }
+    if not audio.content_type or audio.content_type not in allowed_content_types:
+        raise_bad_request(
+            f"Invalid content type. Allowed: {', '.join(sorted(allowed_content_types))}"
+        )
+
+    MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+    content = await audio.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise_bad_request("Audio file exceeds 10MB maximum size")
+    if len(content) == 0:
+        raise_bad_request("Audio file is empty")
+
+    MAX_DURATION_MS = 600000
+    if duration_ms > MAX_DURATION_MS:
+        raise_bad_request("Voice message exceeds 10 minute maximum duration")
+
+    conv_id = parse_id(conversation_id, "conversation ID")
+
+    import time
+
+    try:
+        media = api.get_media()
+        ext_map = {
+            "audio/webm": "webm",
+            "audio/ogg": "ogg",
+            "audio/mp3": "mp3",
+            "audio/mpeg": "mp3",
+            "audio/wav": "wav",
+            "audio/x-wav": "wav",
+            "audio/opus": "opus",
+        }
+        ext = ext_map.get(audio.content_type, "webm")
+        filename = f"voice_{current_user.user_id}_{int(time.time() * 1000)}.{ext}"
+
+        if media:
+            result = media.upload_file(
+                file_data=content,
+                filename=filename,
+                content_type=audio.content_type,
+                user_id=current_user.user_id,
+            )
+            attachment_data = {
+                "filename": result.get("filename")
+                if isinstance(result, dict)
+                else result.filename,
+                "content_type": result.get("content_type")
+                if isinstance(result, dict)
+                else result.content_type,
+                "size": result.get("size") if isinstance(result, dict) else result.size,
+                "url": result.get("url") if isinstance(result, dict) else result.url,
+                "metadata": result.get("metadata")
+                if isinstance(result, dict)
+                else result.metadata,
+            }
+            storage_url = attachment_data["url"] if attachment_data["url"] else ""
+            file_size = (
+                attachment_data["size"] if attachment_data["size"] else len(content)
+            )
+        else:
+            import base64
+
+            storage_url = f"data:{audio.content_type};base64,{base64.b64encode(content).decode('ascii')}"
+            file_size = len(content)
+    except Exception as e:
+        logger.error(f"Failed to store voice message audio: {e}")
+        raise_internal("Failed to store audio file")
+
+    db = api.get_db()
+    messaging = api.get_messaging()
+    participant_svc = (
+        getattr(messaging, "_participant_svc", None) if messaging else None
+    )
+
+    from src.core.messaging.services.voice import VoiceMessageService
+
+    svc = VoiceMessageService(db)
+
+    try:
+        result = svc.create_voice_message(
+            user_id=current_user.user_id,
+            conversation_id=conv_id,
+            duration_ms=duration_ms,
+            filename=filename,
+            content_type=audio.content_type,
+            size=file_size,
+            url=storage_url,
+            waveform=waveform,
+            participant_svc=participant_svc,
+        )
+
+        attachment_data = (
+            result.get("attachment_data")
+            if isinstance(result, dict)
+            else getattr(result, "attachment_data", None)
+        )
+        if messaging and attachment_data:
+            try:
+                msg = messaging.send_message(
+                    user_id=current_user.user_id,
+                    conversation_id=conv_id,
+                    content="Voice message",
+                    attachments=[attachment_data],
+                )
+                if isinstance(result, dict):
+                    result["message_id"] = msg.id
+                else:
+                    setattr(result, "message_id", msg.id)
+            except Exception as e:
+                logger.error(f"Failed to send voice message via messaging: {e}")
+        return {"success": True, "voice_message": stringify_snowflake_ids(result)}
+    except ValueError:
+        raise_bad_request("Invalid voice message data")
+    except PermissionError:
+        # M6 FIX: static 403 instead of raise_internal(str(e)).
+        raise_forbidden("Not a participant in this conversation")

@@ -52,30 +52,34 @@ class TestBasicOperations:
 class TestTTL:
     """Tests for TTL (time-to-live) functionality."""
 
-    def test_bucket_expires_after_ttl(self):
+    def test_bucket_expires_after_ttl(self, rate_limit_clock):
         """Test bucket expires after TTL."""
         storage = MemoryStorage(cleanup_interval=0.05)
         state = {"tokens": 10}
         storage.set_bucket("test:key", state, ttl=0.1)
         assert storage.get_bucket("test:key") is not None
-        time.sleep(0.15)
+        rate_limit_clock.advance(0.15)
         assert storage.get_bucket("test:key") is None
 
-    def test_bucket_without_ttl_persists(self, memory_storage):
+    def test_bucket_without_ttl_persists(self, memory_storage, rate_limit_clock):
         """Test bucket without TTL persists."""
         state = {"tokens": 10}
         memory_storage.set_bucket("test:key", state)
-        time.sleep(0.1)
-        assert memory_storage.get_bucket("test:key") is not None
+        rate_limit_clock.advance(0.1)
+        bucket = memory_storage.get_bucket("test:key")
+        assert bucket is not None
+        assert bucket["tokens"] == 10
 
-    def test_ttl_can_be_updated(self):
+    def test_ttl_can_be_updated(self, rate_limit_clock):
         """Test TTL can be updated."""
         storage = MemoryStorage(cleanup_interval=0.05)
         state = {"tokens": 10}
         storage.set_bucket("test:key", state, ttl=0.1)
         storage.set_bucket("test:key", state, ttl=1.0)
-        time.sleep(0.15)
-        assert storage.get_bucket("test:key") is not None
+        rate_limit_clock.advance(0.15)
+        bucket = storage.get_bucket("test:key")
+        assert bucket is not None
+        assert bucket["tokens"] == 10
 
 
 class TestPrefixOperations:
@@ -186,18 +190,28 @@ class TestLocking:
     def test_acquire_and_release_lock(self, memory_storage):
         """Test acquiring and releasing a lock."""
         acquired = memory_storage.acquire_lock("test:lock")
-        assert acquired is True
+        assert acquired == "locked"
         memory_storage.release_lock("test:lock")
 
     def test_lock_blocks_concurrent_access(self, memory_storage):
         """Test lock blocks concurrent access."""
         results = []
+        max_concurrent = {"value": 0}
+        concurrent_holders = []
+        lock_protect = threading.Lock()
 
         def worker(worker_id):
-            acquired = memory_storage.acquire_lock("test:lock", timeout=0.1)
+            acquired = memory_storage.acquire_lock("test:lock", timeout=0.5)
             if acquired:
-                results.append(worker_id)
+                with lock_protect:
+                    results.append(worker_id)
+                    concurrent_holders.append(worker_id)
+                    max_concurrent["value"] = max(
+                        max_concurrent["value"], len(concurrent_holders)
+                    )
                 time.sleep(0.05)
+                with lock_protect:
+                    concurrent_holders.pop()
                 memory_storage.release_lock("test:lock")
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(3)]
@@ -205,11 +219,15 @@ class TestLocking:
             t.start()
         for t in threads:
             t.join()
-        assert len(results) >= 1
+
+        # All 3 workers contend and (with a generous timeout) all get in.
+        assert len(results) == 3
+        # Mutual exclusion: at no point did more than one thread hold the lock.
+        assert max_concurrent["value"] == 1
 
     def test_release_unacquired_lock(self, memory_storage):
         """Test releasing an unacquired lock doesn't raise."""
-        memory_storage.release_lock("nonexistent:lock")
+        assert memory_storage.release_lock("nonexistent:lock") is None
 
 
 class TestThreadSafety:
@@ -272,22 +290,22 @@ class TestThreadSafety:
 class TestCleanup:
     """Tests for automatic cleanup."""
 
-    def test_cleanup_removes_expired_buckets(self):
+    def test_cleanup_removes_expired_buckets(self, rate_limit_clock):
         """Test cleanup removes expired buckets."""
         storage = MemoryStorage(cleanup_interval=0.05, max_buckets=1000)
         storage.set_bucket("key1", {"tokens": 10}, ttl=0.05)
         storage.set_bucket("key2", {"tokens": 20}, ttl=1.0)
-        time.sleep(0.1)
+        rate_limit_clock.advance(0.1)
         storage.get_bucket("trigger_cleanup")
         assert storage.get_bucket("key1") is None
         assert storage.get_bucket("key2") is not None
 
-    def test_max_buckets_enforced(self):
+    def test_max_buckets_enforced(self, rate_limit_clock):
         """Test max buckets limit is enforced."""
         storage = MemoryStorage(cleanup_interval=0.01, max_buckets=10)
         for i in range(20):
             storage.set_bucket(f"key:{i}", {"tokens": i, "last_update": i})
-        time.sleep(0.02)
+        rate_limit_clock.advance(0.02)
         storage.get_bucket("trigger_cleanup")
         stats = storage.get_stats()
         assert stats["bucket_count"] <= 10
@@ -306,3 +324,84 @@ class TestStats:
         assert "max_buckets" in stats
         assert stats["bucket_count"] == 2
         assert stats["ttl_count"] == 1
+
+
+class _FakeLockingDb:
+    """Minimal Database stand-in that raises 'database is locked' N times.
+
+    Only the surface used by ``DatabaseStorage.eval_token_bucket`` is
+    implemented, so the retry path can be exercised in isolation. The
+    token-bucket evaluation relies on conditional UPDATE ... WHERE
+    tokens >= cost with ``cursor.rowcount`` check, so ``execute``
+    returns a minimal cursor.
+    """
+
+    type = "sqlite"
+
+    class _Cursor:
+        rowcount = 1
+
+    def __init__(self, lock_failures: int):
+        self.lock_failures = lock_failures
+        self._row = {"tokens": 10.0, "last_update": 0.0}
+        self.rollback_calls = 0
+
+    def insert_or_ignore(self, *_args, **_kwargs):
+        pass
+
+    def begin_transaction(self):
+        pass
+
+    def fetch_one(self, *_args, **_kwargs):
+        return self._row
+
+    def execute(self, *_args, **_kwargs):
+        if self.lock_failures > 0:
+            self.lock_failures -= 1
+            raise RuntimeError("database is locked")
+        return self._Cursor()
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        self.rollback_calls += 1
+
+
+class TestDatabaseStorageRetry:
+    """DatabaseStorage must retry transient lock errors before failing closed."""
+
+    def test_retries_on_database_locked(self):
+        from src.core.ratelimit.storage.database import (
+            DatabaseStorage,
+            _is_lock_error,
+        )
+
+        assert _is_lock_error(RuntimeError("database is locked")) is True
+        assert _is_lock_error(RuntimeError("other error")) is False
+
+        db = _FakeLockingDb(lock_failures=2)
+        storage = DatabaseStorage.__new__(DatabaseStorage)
+        storage._db = db
+
+        # Two failures then success: the third attempt should be allowed.
+        allowed, remaining, _reset = storage.eval_token_bucket(
+            "key", capacity=10, refill_rate=0.1, cost=1, ttl=60
+        )
+        assert allowed is True
+        assert remaining == 9
+        assert db.rollback_calls >= 2
+
+    def test_fails_closed_after_exhausted_retries(self):
+        from src.core.ratelimit.storage.database import DatabaseStorage
+
+        db = _FakeLockingDb(lock_failures=100)
+        storage = DatabaseStorage.__new__(DatabaseStorage)
+        storage._db = db
+
+        allowed, remaining, reset = storage.eval_token_bucket(
+            "key", capacity=10, refill_rate=0.1, cost=1, ttl=60
+        )
+        assert allowed is False
+        assert remaining == 0
+        assert reset == 60.0

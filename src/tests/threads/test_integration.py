@@ -2,7 +2,10 @@
 Tests for thread integration with other modules.
 """
 
+import pytest
+
 from src.core.threads import (
+    ThreadArchivedError,
     ThreadType,
     ThreadState,
     AutoArchiveDuration,
@@ -149,8 +152,14 @@ class TestThreadLifecycle:
         archived = threads.archive_thread(owner.id, thread.id)
         assert archived.state == ThreadState.ARCHIVED
 
-        threads.send_message(member2.id, thread.id, "Unarchive message")
-        unarchived = threads.get_thread(owner.id, thread.id)
+        # M5: sends to an archived thread are rejected (no auto-unarchive);
+        # an explicit unarchive is required before sending again.
+        with pytest.raises(ThreadArchivedError):
+            threads.send_message(member2.id, thread.id, "Unarchive message")
+        still_archived = threads.get_thread(owner.id, thread.id)
+        assert still_archived.state == ThreadState.ARCHIVED
+
+        unarchived = threads.unarchive_thread(owner.id, thread.id)
         assert unarchived.state == ThreadState.ACTIVE
 
         locked = threads.lock_thread(owner.id, thread.id)

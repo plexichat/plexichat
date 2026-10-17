@@ -6,20 +6,56 @@ entire migration process including discovery, validation, execution, and trackin
 """
 
 import logging
+import time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+from src.core.database import cached
 
 from . import validator
+from .validator import RETIRED_MIGRATIONS  # noqa: F401 (re-exported for compat)
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
+from .progress import ProgressBar
 
 logger = logging.getLogger(__name__)
+
+
+def _migration_status_cache_key(manager: "MigrationManager") -> str:
+    """Scope the status cache to the database instance (M8).
+
+    The default key (``migration_status:Core:MigrationManager``) is shared
+    across every manager in every worker, so a migration applied by worker
+    A leaves workers B/C serving a stale status for up to the TTL. Embedding
+    the database identity keeps instances isolated; the ``migration_status:*``
+    invalidation pattern still matches because the key keeps the same prefix.
+    """
+    import os
+
+    cfg = getattr(manager.db, "config", None) or {}
+    db_type = getattr(manager.db, "type", None) or str(cfg.get("type", "unknown"))
+    if db_type == "sqlite":
+        path = os.path.abspath(os.path.expanduser(str(cfg.get("path", ""))))
+        scope = f"sqlite:{path}"
+    else:
+        pg = cfg.get("postgres", {}) or {}
+        scope = (
+            f"postgres:{pg.get('host', '')}:{pg.get('port', '')}:{pg.get('dbname', '')}"
+        )
+    return f"migration_status:{scope}:status"
 
 
 class Migration:
     """Represents a single migration with metadata."""
 
-    def __init__(self, version: str, name: str, file_path: str, checksum: str = ""):
+    def __init__(
+        self,
+        version: str,
+        name: str,
+        file_path: str,
+        checksum: str = "",
+        depends_on: Optional[List[str]] = None,
+    ):
         """
         Initialize migration metadata.
 
@@ -28,11 +64,13 @@ class Migration:
             name: Human-readable name
             file_path: Path to migration file
             checksum: SHA256 checksum of file content
+            depends_on: List of migration versions this migration depends on
         """
         self.version = version
         self.name = name
         self.file_path = file_path
         self.checksum = checksum
+        self.depends_on = depends_on or []
 
 
 class MigrationManager:
@@ -90,11 +128,112 @@ class MigrationManager:
                 filename = Path(file_path).stem
                 name = filename.split("_", 1)[1] if "_" in filename else filename
 
-                pending.append(Migration(version, name, file_path, checksum))
+                # Extract dependencies from docstring
+                depends_on = self._extract_dependencies(file_path)
+
+                pending.append(
+                    Migration(version, name, file_path, checksum, depends_on)
+                )
             else:
                 logger.debug(f"Migration {version} already applied")
 
         return pending
+
+    def _extract_dependencies(self, file_path: str) -> List[str]:
+        """
+        Extract migration dependencies from file docstring.
+
+        Dependencies can be specified in the docstring as:
+        Depends: 001, 005, 010
+
+        Args:
+            file_path: Path to migration file
+
+        Returns:
+            List of migration version strings this migration depends on
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Look for "Depends:" in docstring
+            for line in content.split("\n"):
+                line = line.strip()
+                if line.startswith("Depends:"):
+                    deps_str = line.split(":", 1)[1].strip()
+                    # Parse comma-separated versions
+                    deps = [d.strip() for d in deps_str.split(",") if d.strip()]
+                    logger.debug(f"Extracted dependencies from {file_path}: {deps}")
+                    return deps
+        except Exception as e:
+            logger.warning(f"Could not extract dependencies from {file_path}: {e}")
+
+        return []
+
+    def _migration_file_is_irreversible(self, file_path: str) -> bool:
+        """Check the codebase's irreversible marker for a migration file (M3).
+
+        The canonical marker is ``MIGRATION_METADATA`` with
+        ``"irreversible": true`` in the module docstring (see
+        ``validator.migration_is_irreversible`` and
+        ``migrations/README.md``). Missing/unreadable files fail open
+        (return False) so dependency validation never blocks on I/O.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        try:
+            import ast
+
+            module_doc = ast.get_docstring(ast.parse(content))
+            metadata = validator.migration_metadata_from_docstring(module_doc)
+        except Exception:
+            return False
+        return bool(metadata.get("irreversible"))
+
+    def validate_dependencies(self, migration: Migration, applied: List[str]) -> bool:
+        """
+        Validate that all dependencies for a migration are satisfied.
+
+        Args:
+            migration: Migration to validate
+            applied: List of applied migration versions
+
+        Returns:
+            True if all dependencies are satisfied
+
+        Raises:
+            ValueError: If dependencies are not satisfied
+        """
+        if not migration.depends_on:
+            if self._migration_file_is_irreversible(migration.file_path):
+                raise ValueError(
+                    f"Migration {migration.version} is marked irreversible but "
+                    "declares no depends_on ordering dependency (missing "
+                    "Depends: header). Irreversible migrations must declare "
+                    "depends_on so the ordering gate has an explicit anchor."
+                )
+            logger.warning(
+                "Migration %s declares no depends_on ordering dependency; "
+                "dependency/ordering gate skipped for this reversible migration",
+                migration.version,
+            )
+            return True
+
+        applied_set = set(applied)
+        unsatisfied = [dep for dep in migration.depends_on if dep not in applied_set]
+
+        if unsatisfied:
+            raise ValueError(
+                f"Migration {migration.version} depends on {unsatisfied} which are not applied"
+            )
+
+        logger.debug(
+            f"Migration {migration.version} dependencies satisfied: {migration.depends_on}"
+        )
+        return True
 
     def apply_migration(self, version: str, dry_run: bool = False) -> Dict[str, Any]:
         """
@@ -122,7 +261,53 @@ class MigrationManager:
         if migration is None:
             raise ValueError(f"Migration {version} not found in pending migrations")
 
-        return self._execute_migration(migration, dry_run)
+        # Validate dependencies
+        applied = self.tracker.get_applied_migrations()
+        self.validate_dependencies(migration, applied)
+
+        # Serialize single-migration runs with batch runs (same lock path).
+        # Without this, an admin API apply_migration races apply_all_pending.
+        if not dry_run:
+            if not self.tracker.acquire_lock():
+                raise Exception(
+                    "Could not acquire migration lock - another migration may be in progress"
+                )
+
+        try:
+            # Check if irreversible migration can be run (skip for dry-run).
+            # The gate check only PEEKS at the emergency override so read-only
+            # callers never burn it; when the gate passes via override the
+            # token is atomically claimed exactly once here, before executing
+            # (fail closed if it was raced or expired since the peek), and the
+            # tamper guard below reuses that claim instead of consuming again.
+            override_consumed = False
+            if not dry_run:
+                import utils.config as config
+
+                delay_days = config.get(
+                    "database.migrations.irreversible_migration_delay_days", 7
+                )
+                delay_hours = delay_days * 24
+
+                can_run, reason = self.tracker.can_run_irreversible_migration(
+                    version, delay_hours
+                )
+                if not can_run:
+                    raise ValueError(f"Cannot run migration {version}: {reason}")
+                if reason == self.tracker.EMERGENCY_OVERRIDE_ACTIVE_REASON:
+                    if not self.tracker.try_consume_emergency_override_from_env():
+                        raise ValueError(
+                            f"Cannot run migration {version}: emergency override "
+                            "token is no longer valid (already used or expired)."
+                        )
+                    override_consumed = True
+
+            return self._execute_migration(
+                migration, dry_run, _override_consumed=override_consumed
+            )
+        finally:
+            if not dry_run:
+                self.tracker.release_lock()
 
     def apply_all_pending(self, dry_run: bool = False) -> Dict[str, Any]:
         """
@@ -137,58 +322,103 @@ class MigrationManager:
         Raises:
             Exception: If any migration fails
         """
-        self.tracker.ensure_table_exists()
+        # Acquire lock to prevent concurrent migration runs
+        if not dry_run:
+            if not self.tracker.acquire_lock():
+                raise Exception(
+                    "Could not acquire migration lock - another migration may be in progress"
+                )
 
-        pending = self.get_pending_migrations()
+        try:
+            self.tracker.ensure_table_exists()
 
-        if not pending:
-            logger.info("No pending migrations to apply")
-            return {
+            pending = self.get_pending_migrations()
+
+            if not pending:
+                logger.info("No pending migrations to apply")
+                return {
+                    "success": True,
+                    "applied_count": 0,
+                    "failed_count": 0,
+                    "migrations": [],
+                    "dry_run": dry_run,
+                }
+
+            # Validate migration order
+            applied = self.tracker.get_applied_migrations()
+            pending_versions = [m.version for m in pending]
+
+            try:
+                validator.validate_migration_order(pending_versions, applied)
+            except ValueError as e:
+                logger.error(f"Migration order validation failed: {str(e)}")
+                raise
+
+            results = {
                 "success": True,
                 "applied_count": 0,
                 "failed_count": 0,
                 "migrations": [],
                 "dry_run": dry_run,
+                "total_elapsed_ms": 0,
             }
 
-        # Validate migration order
-        applied = self.tracker.get_applied_migrations()
-        pending_versions = [m.version for m in pending]
+            total = len(pending)
+            batch_start = time.monotonic()
+            with ProgressBar("migrations", total=total) as progress:
+                for index, migration in enumerate(pending, start=1):
+                    migration_start = time.monotonic()
+                    try:
+                        # Validate dependencies before applying
+                        self.validate_dependencies(migration, applied)
 
-        try:
-            validator.validate_migration_order(pending_versions, applied)
-        except ValueError as e:
-            logger.error(f"Migration order validation failed: {str(e)}")
-            raise
+                        result = self._execute_migration(migration, dry_run)
+                        results["migrations"].append(result)
+                        results["applied_count"] += 1
 
-        results = {
-            "success": True,
-            "applied_count": 0,
-            "failed_count": 0,
-            "migrations": [],
-            "dry_run": dry_run,
-        }
+                        # Update applied list for dependency validation of subsequent migrations
+                        applied.append(migration.version)
 
-        for migration in pending:
-            try:
-                result = self._execute_migration(migration, dry_run)
-                results["migrations"].append(result)
-                results["applied_count"] += 1
-            except Exception as e:
-                results["success"] = False
-                results["failed_count"] += 1
-                error_result = {
-                    "version": migration.version,
-                    "name": migration.name,
-                    "success": False,
-                    "error": str(e),
-                }
-                results["migrations"].append(error_result)
-                logger.error(f"Failed to apply migration {migration.version}: {str(e)}")
-                # Continue with next migration or stop based on configuration
-                break
+                        elapsed_ms = int((time.monotonic() - migration_start) * 1000)
+                        logger.info(
+                            f"Migration {migration.version} applied in {elapsed_ms}ms"
+                        )
+                        progress.set(
+                            index,
+                            suffix=f"{migration.version} {elapsed_ms}ms",
+                        )
+                    except Exception as e:
+                        results["success"] = False
+                        results["failed_count"] += 1
+                        error_result = {
+                            "version": migration.version,
+                            "name": migration.name,
+                            "success": False,
+                            "error": str(e),
+                        }
+                        results["migrations"].append(error_result)
+                        logger.error(
+                            f"Failed to apply migration {migration.version}: {str(e)}"
+                        )
+                        # Stop on the first failure - this is a fatal state and
+                        # continuing would just compound errors. The caller
+                        # surfaces the failure so startup can abort.
+                        progress.set(index, suffix=f"{migration.version} FAILED")
+                        break
 
-        return results
+            results["total_elapsed_ms"] = int((time.monotonic() - batch_start) * 1000)
+
+            # Invalidate cached migration status after applying all
+            if not dry_run and results["applied_count"] > 0:
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
+
+            return results
+        finally:
+            # Always release the lock
+            if not dry_run:
+                self.tracker.release_lock()
 
     def rollback_migration(self, version: str) -> Dict[str, Any]:
         """
@@ -228,6 +458,14 @@ class MigrationManager:
         if migration_file is None:
             raise ValueError(f"Migration file for version {version} not found")
 
+        # Serialize single-migration rollbacks with the apply paths (same lock
+        # path). Without this, an admin rollback races an in-flight
+        # apply_all_pending on the shared database and migrations_history.
+        if not self.tracker.acquire_lock():
+            raise Exception(
+                "Could not acquire migration lock - another migration may be in progress"
+            )
+
         try:
             runner = MigrationRunner(self.db, self.tracker)
             runner.validate_migration_file(migration_file)
@@ -236,6 +474,11 @@ class MigrationManager:
 
             # Mark as rolled back in tracker
             self.tracker.record_rollback(version)
+
+            # Invalidate cached migration status
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern("migration_status:*")
 
             return {
                 "success": True,
@@ -246,10 +489,14 @@ class MigrationManager:
         except Exception as e:
             logger.error(f"Rollback of migration {version} failed: {str(e)}")
             raise
+        finally:
+            # Always release the lock we took above.
+            self.tracker.release_lock()
 
+    @cached(ttl=15, prefix="migration_status", key_builder=_migration_status_cache_key)
     def get_migration_status(self) -> Dict[str, Any]:
         """
-        Get current migration status.
+        Get current migration status (cached for 15s to reduce admin dashboard DB load).
 
         Returns:
             Dictionary with applied, pending, failed counts and lists
@@ -284,7 +531,12 @@ class MigrationManager:
         self.tracker.ensure_table_exists()
 
         records = self.tracker.get_all_migration_records()
-        results = {"valid": True, "checked": 0, "mismatches": []}
+        results = {
+            "valid": True,
+            "checked": 0,
+            "mismatches": [],
+            "retired": [],
+        }
 
         try:
             migration_files = validator.get_migration_files(str(self.migrations_dir))
@@ -303,6 +555,12 @@ class MigrationManager:
             results["checked"] += 1
 
             if version not in migration_dict:
+                if version in RETIRED_MIGRATIONS:
+                    # 002-004 were folded into the authoritative initial
+                    # schema. Preserve their historical records without
+                    # requiring deleted migration source files.
+                    results["retired"].append(version)
+                    continue
                 results["valid"] = False
                 results["mismatches"].append(
                     {"version": version, "error": "Migration file not found"}
@@ -326,7 +584,10 @@ class MigrationManager:
         return results
 
     def _execute_migration(
-        self, migration: Migration, dry_run: bool = False
+        self,
+        migration: Migration,
+        dry_run: bool = False,
+        _override_consumed: bool = False,
     ) -> Dict[str, Any]:
         """
         Internal method to execute a migration.
@@ -334,6 +595,10 @@ class MigrationManager:
         Args:
             migration: Migration object to execute
             dry_run: If True, execute without committing or persisting tracker state
+            _override_consumed: If True, a single-use emergency override token
+                was already atomically claimed for this run (by the
+                irreversible gate); the tamper guard reuses that claim
+                instead of consuming a second time.
 
         Returns:
             Dictionary with execution result
@@ -354,11 +619,35 @@ class MigrationManager:
                             actual_checksum = validator.calculate_checksum(content)
 
                         if actual_checksum != existing_status["checksum"]:
-                            logger.warning(
-                                f"Migration checksum mismatch for {migration.version}: "
-                                f"recorded={existing_status['checksum']}, actual={actual_checksum}. "
-                                "Proceeding anyway."
+                            # TAMPERING GUARD: a migration file that differs from
+                            # the recorded checksum must never silently re-execute
+                            # against production data. Block unless the operator
+                            # explicitly consumes a valid single-use emergency
+                            # override token.
+                            logger.error(
+                                f"BLOCKED migration {migration.version}: checksum "
+                                f"mismatch (recorded={existing_status['checksum']}, "
+                                f"actual={actual_checksum}). The migration file was "
+                                "modified after being recorded. Execution is blocked; "
+                                "set a valid single-use EMERGENCY_MIGRATION_OVERRIDE "
+                                "token to proceed."
                             )
+                            if (
+                                not _override_consumed
+                                and not self.tracker.try_consume_emergency_override_from_env()
+                            ):
+                                raise ValueError(
+                                    f"Migration {migration.version} is BLOCKED: "
+                                    "checksum mismatch with recorded history and no "
+                                    "valid EMERGENCY_MIGRATION_OVERRIDE token was "
+                                    "provided."
+                                )
+                            logger.error(
+                                f"Emergency override accepted (single-use) for tampered "
+                                f"migration {migration.version}; proceeding once"
+                            )
+                    except ValueError:
+                        raise
                     except Exception as e:
                         logger.warning(
                             f"Could not verify checksum for migration {migration.version}: {e}"
@@ -387,6 +676,12 @@ class MigrationManager:
                     migration.version, result["execution_time_ms"], rollback_sql
                 )
 
+                # Invalidate cached migration status so the admin dashboard
+                # reflects the change immediately.
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
+
             return {
                 "success": True,
                 "version": migration.version,
@@ -400,4 +695,9 @@ class MigrationManager:
             # Record failure only on real runs
             if not dry_run:
                 self.tracker.record_migration_failure(migration.version, str(e))
+                # Invalidate cached migration status even on failure
+                # (failed_count may have changed).
+                from src.core.database import invalidate_pattern
+
+                invalidate_pattern("migration_status:*")
             raise

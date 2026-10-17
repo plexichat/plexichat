@@ -11,11 +11,13 @@ from ..exceptions import (
     ChannelNotFoundError,
     CategoryNotFoundError,
     InvalidChannelNameError,
+    InvalidChannelSettingError,
     ServerAccessDeniedError,
     ServerNotFoundError,
 )
-from ..permissions import has_permission as check_permission
-from src.core.database import cache_delete, redis_available
+from ..permission_utils import has_permission as check_permission
+from ..manager.converters import _row_to_channel, _row_to_category
+from src.core.database import cache_delete, valkey_available
 from src.core.database.cache import cached, invalidate_pattern
 
 
@@ -67,7 +69,7 @@ class ChannelHandler:
         nsfw: bool = False,
         slowmode_seconds: int = 0,
         read_receipts_enabled: bool = True,
-    ) -> Channel:
+    ) -> Optional[Channel]:
         """Create a new channel in a server."""
         server = self.manager.get_server(server_id, user_id)
         if not server:
@@ -100,9 +102,22 @@ class ChannelHandler:
         now = self.manager._get_timestamp()
         channel_id = self.manager._generate_id()
 
+        # Store topic in topic_encrypted column (or topic column for backward compat)
+        # If encryption is enabled, encrypt it; otherwise, store as plaintext
+        topic_encrypted = None
+        if topic:
+            if self.manager._encrypt_descriptions:
+                from src.utils.encryption import encrypt_data
+
+                topic_encrypted = encrypt_data(topic)
+            else:
+                topic_encrypted = topic
+
+        # After migration 029, unencrypted topic column no longer exists.
+        # Always use topic_encrypted (encrypted or plaintext based on config).
         self.db.execute(
             """INSERT INTO srv_channels 
-               (id, server_id, name, channel_type, category_id, position, topic, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
+               (id, server_id, name, channel_type, category_id, position, topic_encrypted, nsfw, slowmode_seconds, read_receipts_enabled, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 channel_id,
@@ -111,7 +126,7 @@ class ChannelHandler:
                 channel_type.value,
                 category_id,
                 position,
-                topic,
+                topic_encrypted,
                 1 if nsfw else 0,
                 slowmode_seconds,
                 1 if read_receipts_enabled else 0,
@@ -140,6 +155,29 @@ class ChannelHandler:
                         "UPDATE srv_channels SET conversation_id = ? WHERE id = ?",
                         (conv.id, channel_id),
                     )
+                    # The creator passed channels.manage and owns this
+                    # channel: seed them as the conversation's first
+                    # participant (OWNER) so they can read/send in the
+                    # channel they just created. Without this, the owner
+                    # can create channels but gets 404/denied on every
+                    # message operation (only joiners were added via the
+                    # member-join path). Uses the messaging manager's
+                    # batch add (no owner/admin pre-check, which cannot
+                    # pass for the first participant by definition).
+                    try:
+                        from src.core.messaging.models import ParticipantRole
+
+                        self.manager._messaging.add_participant_to_conversations(
+                            user_id, [conv.id], ParticipantRole.OWNER
+                        )
+                    except Exception as _part_e:
+                        # Loud on purpose: a channel whose creator cannot
+                        # participate is broken for its owner (message
+                        # reads/writes 404). Never swallow silently.
+                        logger.warning(
+                            f"Creator participant seed failed for channel "
+                            f"{channel_id}: {_part_e}"
+                        )
             except Exception:
                 if conv and hasattr(self.manager._messaging, "delete_conversation"):
                     try:
@@ -159,13 +197,20 @@ class ChannelHandler:
             channel_id,
         )
 
-        if redis_available():
+        if valkey_available():
             cache_delete(f"server_channels:{server_id}")
         invalidate_pattern(f"server_channels:*{server_id}*")
 
         result = self.manager.get_channel(channel_id, user_id)
-        assert result is not None
-        return result
+        if result:
+            return result
+        # Fallback: direct DB fetch if membership/permission check filtered it out
+        row = self.db.fetch_one(
+            "SELECT * FROM srv_channels WHERE id = ? AND deleted = 0", (channel_id,)
+        )
+        if row:
+            return _row_to_channel(row, self.manager._encrypt_descriptions)
+        return None
 
     def create_category(
         self,
@@ -195,7 +240,7 @@ class ChannelHandler:
         )
 
         row = self.db.fetch_one("SELECT * FROM srv_categories WHERE id = ?", (cat_id,))
-        return self.manager._row_to_category(row)
+        return _row_to_category(row)
 
     def delete_category(self, user_id: SnowflakeID, category_id: SnowflakeID) -> bool:
         """Delete a channel category."""
@@ -254,7 +299,9 @@ class ChannelHandler:
             # If batch fails or returns empty for some reason, we default to denied (safe)
             # unless administrator (handled in get_permissions_batch)
             if check_permission(perms, "channels.view"):
-                channels.append(self.manager._row_to_channel(row))
+                channels.append(
+                    _row_to_channel(row, self.manager._encrypt_descriptions)
+                )
 
         return channels
 
@@ -288,8 +335,19 @@ class ChannelHandler:
             changes["name"] = {"old": channel.name, "new": name}
 
         if topic is not None:
-            updates.append("topic = ?")
-            params.append(topic)
+            # After migration 029, unencrypted topic column no longer exists.
+            # Always use topic_encrypted (encrypted or plaintext based on config).
+            topic_encrypted = None
+            if topic:
+                if self.manager._encrypt_descriptions:
+                    from src.utils.encryption import encrypt_data
+
+                    topic_encrypted = encrypt_data(topic)
+                else:
+                    topic_encrypted = topic
+
+            updates.append("topic_encrypted = ?")
+            params.append(topic_encrypted)
             changes["topic"] = {"old": channel.topic, "new": topic}
 
         if nsfw is not None:
@@ -298,6 +356,13 @@ class ChannelHandler:
             changes["nsfw"] = {"old": channel.nsfw, "new": nsfw}
 
         if slowmode_seconds is not None:
+            # L1: the route schema caps slowmode 0..21600, but internal
+            # callers bypass the schema entirely - enforce the same bound at
+            # the handler so no entry point can persist an out-of-range value.
+            if not (0 <= slowmode_seconds <= 21600):
+                raise InvalidChannelSettingError(
+                    "slowmode_seconds must be between 0 and 21600"
+                )
             updates.append("slowmode_seconds = ?")
             params.append(slowmode_seconds)
             changes["slowmode_seconds"] = {
@@ -326,19 +391,39 @@ class ChannelHandler:
             changes["category_id"] = {"old": channel.category_id, "new": category_id}
 
         if updates:
-            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
-            now = self.manager._get_timestamp()
-            for i, update in enumerate(updates):
-                col_name = update.split(" = ")[0]
-                value = params[i]
-                query = (
-                    "UPDATE srv_channels SET "  # nosec: B608
-                    + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"  # nosec: B608
-                )
-                self.db.execute(query, (value, now, channel_id))
+            allowed_columns = {
+                "name",
+                "topic_encrypted",
+                "nsfw",
+                "slowmode_seconds",
+                "read_receipts_enabled",
+                "category_id",
+            }
 
-            self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
+                col_name = update.split(" = ")[0]
+                if col_name not in allowed_columns:
+                    raise ValueError(f"Invalid column name: {col_name}")
+                set_columns.append(col_name)
+                set_params.append(value)
+            now = self.manager._get_timestamp()
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_channels SET " + set_clause + " WHERE id = ?"
+            self.db.execute(query, (*set_params, channel_id))
+
+            self.manager._cache_invalidate(
+                self.manager._channel_cache_prefix, channel_id
+            )
             self.manager._log_audit(
                 channel.server_id,
                 user_id,
@@ -368,8 +453,48 @@ class ChannelHandler:
             (now, channel_id),
         )
 
-        self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
-        if redis_available():
+        # Cascade thread cleanup: every thread of this channel is
+        # atomically tombstoned (links + members removed, starter linkage
+        # cleared) and each deletion is announced as THREAD_DELETE so
+        # gateway clients drop their panels.
+        try:
+            from src.core import threads as threads_mod
+            from src.core.events.gateway_emit import emit_thread_delete
+
+            for thread_id in threads_mod.delete_threads_for_channel(channel_id):
+                emit_thread_delete(
+                    thread_id, guild_id=channel.server_id, parent_id=channel_id
+                )
+        except Exception as e:
+            logger.warning(f"Thread cascade skipped for channel {channel_id}: {e}")
+
+        # L3: tombstoning the channel used to orphan its permission-override
+        # rows AND its messaging conversation (whose messages remain readable
+        # through the orphaned conversation id). Clean both up now.
+        try:
+            self.db.execute(
+                "DELETE FROM srv_channel_overrides WHERE channel_id = ?",
+                (channel_id,),
+            )
+        except Exception as e:
+            logger.warning(
+                f"Channel override cleanup failed for channel {channel_id}: {e}"
+            )
+        conversation_id = getattr(channel, "conversation_id", None)
+        if conversation_id:
+            try:
+                self.db.execute(
+                    "UPDATE msg_conversations SET deleted = 1 "
+                    "WHERE id = ? AND deleted = 0",
+                    (conversation_id,),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Conversation cleanup failed for channel {channel_id}: {e}"
+                )
+
+        self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
+        if valkey_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
         invalidate_pattern(f"server_channels:*{channel.server_id}*")
@@ -399,14 +524,10 @@ class ChannelHandler:
             (position, self.manager._get_timestamp(), channel_id),
         )
 
-        self.manager._cache_invalidate(self.manager._channel_cache, channel_id)
-        if redis_available():
+        self.manager._cache_invalidate(self.manager._channel_cache_prefix, channel_id)
+        if valkey_available():
             cache_delete(f"channel:{channel_id}")
             cache_delete(f"server_channels:{channel.server_id}")
-
-        result = self.manager.get_channel(channel_id, user_id)
-        assert result is not None
-        return result
 
         result = self.manager.get_channel(channel_id, user_id)
         assert result is not None

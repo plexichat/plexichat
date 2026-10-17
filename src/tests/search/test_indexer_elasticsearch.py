@@ -9,27 +9,23 @@ This tests that our client code correctly:
 """
 
 import pytest
-import os
-import sys
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+from src.core.search.indexer.elasticsearch import ElasticsearchIndexer
+from src.core.search.models import IndexedMessage
+from src.tests._conftest.logger_isolation import isolated_logger
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
 
-import utils.logger as logger  # noqa: E402
-
-try:
-    os.makedirs("temp_es_test/logs", exist_ok=True)
-    logger.setup(log_dir="temp_es_test/logs", level="WARNING", zip_logs=False)
-except Exception:
-    pass
-
-from src.core.search.indexer.elasticsearch import ElasticsearchIndexer  # noqa: E402
-from src.core.search.models import IndexedMessage  # noqa: E402
+@pytest.fixture(scope="module", autouse=True)
+def setup_logger(tmp_path_factory):
+    """Setup logger for elasticsearch tests."""
+    log_dir = str(tmp_path_factory.mktemp("es_test_logs"))
+    with isolated_logger(
+        log_dir=log_dir,
+        level="WARNING",
+        zip_logs=False,
+        suppress_setup_errors=True,
+    ):
+        yield
 
 
 class ElasticsearchMock:

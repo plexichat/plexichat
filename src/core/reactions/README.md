@@ -1,81 +1,59 @@
-# Reactions Module
+# Reactions
 
-Message reaction system for Plexichat API supporting Unicode emoji and custom server emoji with permission checks and block filtering.
+Add emoji reactions to messages with support for Unicode emoji, custom server emoji, permissions, and block filtering.
 
-## Features
+## Overview
 
-- Add/remove reactions to messages
-- Unicode emoji support
-- Custom emoji support (server-specific, format: `<:name:id>` or `<a:name:id>` for animated)
-- Custom emoji upload with image storage
-- Reaction counts per emoji
-- User lists for each reaction (paginated)
-- One reaction per emoji per user
-- Configurable max unique reactions per message (default 20)
-- Configurable max emojis per server (default 50 static, 50 animated)
-- Permission checks for server channels
-- Blocked user filtering (users cannot see each other's reactions)
-- Moderator actions (remove all reactions, remove specific emoji reactions)
+The reactions module provides an API for adding, removing, and querying reactions on messages. It supports Unicode emoji and custom server emoji (`<:name:id>` for static, `<a:name:id>` for animated), with permission checks for server channels and filtering for blocked users.
 
-## Setup
+Custom emoji are uploaded through the media module and stored with metadata such as URL, dimensions, and file size.
+
+## Before you begin
+
+Initialize the database and the modules that reactions depends on. The reactions module requires a connected database and, optionally, messaging, servers, relationships, and media modules.
 
 ```python
 from src.core.database import Database
-from src.core import auth
-from src.core import messaging
-from src.core import servers
-from src.core import relationships
-from src.core import media
-from src.core import reactions
+from src.core import auth, messaging, servers, relationships, media, reactions
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize dependencies
 auth.setup(db)
 messaging.setup(db, auth)
 servers.setup(db, auth, messaging)
 relationships.setup(db, auth, servers)
 media.setup(db, messaging)
 
-# Initialize reactions with media module for emoji uploads
 reactions.setup(db, messaging, servers, relationships, media)
 ```
 
-## Usage
-
-### Add Reaction
+## Add a reaction
 
 ```python
 from src.core import reactions
 
-# Add Unicode emoji reaction
-reaction = reactions.add_reaction(
-    user_id=1,
-    message_id=123,
-    emoji="thumbsup"
-)
+# Unicode emoji
+reaction = reactions.add_reaction(user_id=1, message_id=123, emoji="thumbsup")
 
-# Add custom emoji reaction (server-specific)
-reaction = reactions.add_reaction(
-    user_id=1,
-    message_id=123,
-    emoji="<:custom:456>"
-)
+# Custom server emoji
+reaction = reactions.add_reaction(user_id=1, message_id=123, emoji="<:custom:456>")
 ```
 
-### Remove Reaction
+Reactions enforces one reaction per emoji per user, a configurable maximum of unique emojis per message, and a per-user limit. If the message is in a server channel, the caller must have `messages.add_reactions`.
+
+## Remove a reaction
 
 ```python
-# Remove own reaction
+# Remove your own reaction
 reactions.remove_reaction(user_id=1, message_id=123, emoji="thumbsup")
 ```
 
-### Get Reactions
+Only the user who added a reaction can remove it. To remove another user's reaction, use the moderator methods described below.
+
+## Get reactions on a message
 
 ```python
-# Get all reactions on a message
 msg_reactions = reactions.get_reactions(user_id=1, message_id=123)
 
 for r in msg_reactions.reactions:
@@ -84,46 +62,62 @@ for r in msg_reactions.reactions:
 print(f"Total: {msg_reactions.total_count}")
 ```
 
-### Get Users Who Reacted
+Counts and the `me` flag exclude users blocked by or blocking the viewer. Results are grouped by emoji and ordered by the earliest reaction.
+
+### Batch queries
+
+Use batch methods to avoid N+1 queries when loading message lists:
 
 ```python
-# Get users who reacted with specific emoji
+batch = reactions.get_reactions_batch(user_id=1, message_ids=[123, 456, 789])
+# Returns {message_id: [{"emoji": ..., "count": ..., "me": ..., "is_custom": ...}]}
+
+# Alias with identical semantics
+batch = reactions.get_reactions_bulk(user_id=1, message_ids=[123, 456, 789])
+```
+
+## Get users who reacted
+
+```python
 users = reactions.get_reaction_users(
     user_id=1,
     message_id=123,
     emoji="thumbsup",
-    limit=50
+    limit=50,
 )
 
 for user in users:
     print(f"User {user.user_id} reacted at {user.reacted_at}")
 
-# Pagination
-more_users = reactions.get_reaction_users(
+# Paginate with after_user_id
+more = reactions.get_reaction_users(
     user_id=1,
     message_id=123,
     emoji="thumbsup",
     limit=50,
-    after_user_id=users[-1].user_id
+    after_user_id=users[-1].user_id,
 )
 ```
 
-### Moderator Actions
+The `limit` is capped by `max_users_per_reaction_page` (default 100). Blocked users are excluded.
+
+## Moderate reactions
+
+These actions require `messages.manage` on server channels, or owner/admin role on direct conversations:
 
 ```python
 # Remove all reactions from a message
 count = reactions.remove_all_reactions(moderator_id, message_id)
-print(f"Removed {count} reactions")
 
-# Remove all reactions of specific emoji
+# Remove all reactions of a specific emoji
 count = reactions.remove_all_reactions_for_emoji(moderator_id, message_id, "thumbsup")
-print(f"Removed {count} thumbsup reactions")
 ```
 
-### Custom Emoji
+## Manage custom emoji
+
+### Create an emoji
 
 ```python
-# Create custom emoji for server (with image upload)
 with open("pepe.png", "rb") as f:
     image_data = f.read()
 
@@ -132,57 +126,67 @@ emoji = reactions.create_custom_emoji(
     server_id=server_id,
     name="pepe",
     image_data=image_data,
-    content_type="image/png"
+    content_type="image/png",
 )
 
 print(f"Emoji created: <:{emoji.name}:{emoji.id}>")
 print(f"URL: {emoji.url}")
+```
 
-# Update emoji name
-emoji = reactions.update_custom_emoji(
-    user_id=owner_id,
-    emoji_id=emoji.id,
-    name="happy_pepe"
-)
+Requires `server.manage`. The name must be 2–32 characters, unique per server, and the file must be `image/png`, `image/gif`, or `image/webp` under 256 KB by default. Limits are 50 static and 50 animated emojis per server by default.
 
-# Get server's custom emojis
+### Update and delete
+
+```python
+# Rename
+emoji = reactions.update_custom_emoji(user_id=owner_id, emoji_id=emoji.id, name="happy_pepe")
+
+# Delete
+reactions.delete_custom_emoji(owner_id, emoji.id)
+```
+
+### List emoji
+
+```python
+# All emoji for a server
 emojis = reactions.get_server_custom_emojis(server_id)
 for e in emojis:
     print(f":{e.name}: - {e.url} (animated: {e.animated})")
 
-# Get emoji counts and limits
+# Counts and limits
 counts = reactions.get_emoji_counts(server_id)
 print(f"Static: {counts['static']}/{counts['max_static']}")
 print(f"Animated: {counts['animated']}/{counts['max_animated']}")
 
-# Delete custom emoji
-reactions.delete_custom_emoji(owner_id, emoji.id)
+# Single emoji by ID
+emoji = reactions.get_custom_emoji(emoji_id)
 ```
 
-### Using Custom Emoji in Messages
+### Use custom emoji in reactions
 
-Custom emojis can be used in messages and reactions using the format:
-- Static: `<:name:id>` (e.g., `<:pepe:123456789>`)
-- Animated: `<a:name:id>` (e.g., `<a:dance:123456789>`)
+```
+Static:   <:name:id>   (for example, <:pepe:123456789>)
+Animated: <a:name:id>  (for example, <a:dance:123456789>)
+```
 
 ```python
-# React with custom emoji
 reactions.add_reaction(user_id, message_id, "<:pepe:123456789>")
 ```
 
 ## Configuration
 
-Settings in `config/config.yaml`:
+Configure limits in `config/config.yaml`:
 
 ```yaml
 reactions:
   max_reactions_per_message: 20
+  max_unique_reactions_per_user: 50
   max_users_per_reaction_page: 100
 
 emojis:
   max_emojis_per_server: 50
   max_animated_emojis_per_server: 50
-  max_emoji_size: 262144  # 256KB
+  max_emoji_size: 262144  # 256 KB
   emoji_allowed_formats:
     - image/png
     - image/gif
@@ -191,23 +195,25 @@ emojis:
   emoji_min_name_length: 2
 ```
 
-## Permission Integration
+Per-server overrides for `max_reactions_per_message` are read from `srv_servers` when available.
 
-For server channels, the module checks:
+## Permissions
 
-| Permission | Description |
-|------------|-------------|
-| messages.add_reactions | Required to add reactions |
-| messages.manage | Required for moderator actions |
-| server.manage | Required to create/delete custom emoji |
+| Permission | Required for |
+|------------|--------------|
+| `messages.add_reactions` | Add reactions in server channels |
+| `messages.manage` | Remove all reactions or remove reactions by emoji in server channels |
+| `server.manage` | Create, update, or delete custom emoji |
 
-## Blocked User Behavior
+For direct conversations, the conversation owner or a participant with `owner` or `admin` role can perform moderator actions.
 
-- Blocked users cannot see each other's reactions
-- Reaction counts exclude blocked users
-- User lists exclude blocked users
+## Blocked user behavior
 
-## Error Handling
+* Blocked users cannot react to each other's messages.
+* Reaction counts exclude reactions from blocked users.
+* User lists exclude blocked users.
+
+## Error handling
 
 All reaction errors inherit from `ReactionError`:
 
@@ -221,7 +227,6 @@ from src.core.reactions import (
     CustomEmojiNotFoundError,
     ReactionLimitError,
     PermissionDeniedError,
-    # Custom emoji errors
     EmojiLimitError,
     EmojiNameExistsError,
     InvalidEmojiNameError,
@@ -240,7 +245,6 @@ except PermissionDeniedError as e:
 except InvalidEmojiError:
     print("Invalid emoji format")
 
-# Custom emoji error handling
 try:
     reactions.create_custom_emoji(user_id, server_id, name, image_data, content_type)
 except EmojiLimitError as e:
@@ -255,27 +259,43 @@ except InvalidEmojiFileError:
     print("Invalid file format")
 ```
 
-## Database Schema
+Reads with legacy or invalid emoji values return empty results rather than raising `InvalidEmojiError`, so stored data does not break queries.
 
-Tables (prefixed with `react_`):
-- `react_reactions` - User reactions on messages
-- `react_custom_emoji` - Server custom emoji definitions
+## Database schema
 
-### Custom Emoji Table Schema
+Tables are prefixed with `react_`:
+
+| Table | Description |
+|-------|-------------|
+| `react_reactions` | User reactions on messages |
+| `react_custom_emoji` | Server custom emoji definitions |
+
+### `react_custom_emoji` columns
 
 | Column | Type | Description |
 |--------|------|-------------|
-| id | INTEGER | Snowflake ID (primary key) |
-| server_id | INTEGER | Server the emoji belongs to |
-| name | TEXT | Emoji name (unique per server) |
-| animated | INTEGER | 1 if animated, 0 if static |
-| url | TEXT | URL to emoji image |
-| size | INTEGER | File size in bytes |
-| width | INTEGER | Image width (nullable) |
-| height | INTEGER | Image height (nullable) |
-| created_by | INTEGER | User ID who created the emoji |
-| available | INTEGER | 1 if available for use |
-| created_at | INTEGER | Creation timestamp |
+| `id` | INTEGER | Snowflake ID (primary key) |
+| `server_id` | INTEGER | Server that owns the emoji |
+| `name` | TEXT | Emoji name, unique per server |
+| `animated` | INTEGER | `1` if animated, `0` if static |
+| `url` | TEXT | URL to the emoji image |
+| `size` | INTEGER | File size in bytes |
+| `width` | INTEGER | Image width, or `NULL` |
+| `height` | INTEGER | Image height, or `NULL` |
+| `created_by` | INTEGER | User ID of the creator |
+| `available` | INTEGER | `1` if available for use |
+| `created_at` | INTEGER | Creation timestamp |
+
+## Module structure
+
+| File | Class | Responsibility |
+|------|-------|---------------|
+| `manager/__init__.py` | — | Re-exports `ReactionManager` |
+| `manager/base.py` | `ReactionBase` + `ReactionManager` | Core setup, config, and DB helpers |
+| `manager/permissions.py` | `ReactionPermissionsMixin` | Participant checks, server permissions, and block filtering |
+| `manager/validation.py` | `ReactionValidationMixin` | Emoji validation and name validation |
+| `manager/reactions.py` | `ReactionOpsMixin` | Add, remove, and query reactions |
+| `manager/emojis.py` | `EmojiOpsMixin` | Custom emoji CRUD and image upload |
 
 ## Testing
 

@@ -4,7 +4,6 @@ API routes - Route registration for all endpoints.
 
 from fastapi import APIRouter
 
-from pydantic import BaseModel
 from .health import router as health_router
 from .auth import router as auth_router
 from .users import router as users_router
@@ -14,15 +13,19 @@ from .messages import router as messages_router
 from .relationships import router as relationships_router
 from .presence import router as presence_router
 from .reactions import router as reactions_router
+from .threads import router as threads_router
 from .emojis import router as emojis_router
 from .search import router as search_router
 from .webhooks import router as webhooks_router
+from .applications import router as applications_router
+from .bots import router as bots_router
 from .version import router as version_router
 from .settings import router as settings_router
 from .feedback import router as feedback_router
 from .notifications import router as notifications_router
 from .polls import router as polls_router
 from .stickers import router as stickers_router
+from .soundboard import router as soundboard_router
 from .docs import (
     router as docs_router,
     is_docs_enabled,
@@ -31,7 +34,7 @@ from .docs import (
 )
 from .telemetry import router as telemetry_router
 from .admin import router as admin_router
-from .features import router as features_router
+from .features import features_router, feature_expansion_router
 from .voice import router as voice_router
 from .avatars import router as avatars_router
 from .media import router as media_router
@@ -39,101 +42,102 @@ from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router, robots_router
 from .config import router as config_router
+from .capabilities import router as capabilities_router
+from .artifacts import router as artifacts_router
+from .federation import router as federation_router
+from .join import router as join_router
+from .public_license import router as public_license_router
+from .suite.registry import router as suite_router
+from .suite.stash import router as stash_router
+from .suite.sum import router as sum_router
 
 import utils.config as config
-import utils.logger as logger
-from src.api.schemas.common import ErrorResponse
-
-
-class RootResponse(BaseModel):
-    """API root response schema."""
-
-    version: str
-    status: str
-    message: str
 
 
 def create_api_router() -> APIRouter:
     """Create and configure the main API router."""
     api_router = APIRouter()
 
-    @api_router.get(
-        "/",
-        tags=["General"],
-        response_model=RootResponse,
-        summary="API root",
-        responses={
-            500: {"model": ErrorResponse, "description": "Internal server error"},
-        },
-    )
-    async def api_root() -> RootResponse:
-        """API v1 root endpoint."""
-        try:
-            return RootResponse(
-                version="v1", status="online", message="Plexichat API v1 is operational"
-            )
-        except Exception as e:
-            logger.error(f"API root endpoint failed: {e}", exc_info=True)
-            from fastapi import HTTPException, status
-
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={"error": {"code": 500, "message": "Internal server error"}},
-            )
-
-    api_router.include_router(health_router, tags=["Health"])
-    api_router.include_router(version_router, tags=["Version"])
-    api_router.include_router(config_router, tags=["System"])
-    api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
-    api_router.include_router(users_router, prefix="/users", tags=["Users"])
-    api_router.include_router(servers_router, prefix="/servers", tags=["Servers"])
-    api_router.include_router(emojis_router, prefix="/servers", tags=["Emojis"])
-    api_router.include_router(messages_router, tags=["Messages"])
-    api_router.include_router(search_router, tags=["Search"])
-    api_router.include_router(channels_router, prefix="/channels", tags=["Channels"])
-    api_router.include_router(
-        relationships_router, prefix="/relationships", tags=["Relationships"]
-    )
-    api_router.include_router(presence_router, tags=["Presence"])
-    api_router.include_router(reactions_router, tags=["Reactions"])
-    api_router.include_router(webhooks_router, tags=["Webhooks"])
-    api_router.include_router(
-        settings_router, prefix="/users/@me/settings", tags=["Settings"]
-    )
-    api_router.include_router(feedback_router, tags=["Feedback"])
-    api_router.include_router(notifications_router, tags=["Notifications"])
-    api_router.include_router(telemetry_router, tags=["Telemetry"])
-    api_router.include_router(voice_router, tags=["Voice"])
-    api_router.include_router(polls_router, tags=["Polls"])
+    api_router.include_router(health_router)
+    api_router.include_router(version_router)
+    api_router.include_router(config_router)
+    api_router.include_router(capabilities_router)
+    api_router.include_router(auth_router, prefix="/auth")
+    api_router.include_router(users_router, prefix="/users")
+    api_router.include_router(servers_router, prefix="/servers")
+    api_router.include_router(emojis_router, prefix="/servers")
+    api_router.include_router(messages_router)
+    api_router.include_router(search_router)
+    api_router.include_router(channels_router, prefix="/channels")
+    api_router.include_router(relationships_router, prefix="/relationships")
+    api_router.include_router(presence_router)
+    api_router.include_router(reactions_router)
+    api_router.include_router(threads_router)
+    api_router.include_router(webhooks_router)
+    api_router.include_router(bots_router)
+    api_router.include_router(applications_router)
+    api_router.include_router(settings_router, prefix="/users/@me/settings")
+    api_router.include_router(feedback_router)
+    api_router.include_router(notifications_router)
+    api_router.include_router(telemetry_router)
+    api_router.include_router(voice_router)
+    api_router.include_router(polls_router)
 
     # Include admin router with configurable path
     admin_config = config.get("admin_ui", {})
-    if admin_config.get("enabled", False):
-        admin_path = admin_config.get("path", "/admin")
-        # Remove /api/v1 prefix since admin is mounted at root
-        api_router.include_router(admin_router, prefix=admin_path, tags=["Admin"])
+    admin_path = admin_config.get("path", "/admin")
+    api_router.include_router(admin_router, prefix=admin_path)
 
     # Include features router (admin endpoints + user features)
-    api_router.include_router(features_router, tags=["Features"])
+    api_router.include_router(features_router)
 
     # Include avatars router
-    api_router.include_router(avatars_router, prefix="/avatars", tags=["Avatars"])
+    api_router.include_router(avatars_router, prefix="/avatars")
 
     # Include media router
-    api_router.include_router(media_router, tags=["Media"])
+    api_router.include_router(media_router)
 
     # Include reports router
-    api_router.include_router(reports_router, tags=["Reports"])
+    api_router.include_router(reports_router)
 
     # Include QR router
-    api_router.include_router(qr_router, tags=["Utilities"])
+    api_router.include_router(qr_router)
 
     # Include Stickers router
-    api_router.include_router(stickers_router, tags=["Stickers"])
+    api_router.include_router(stickers_router)
+
+    # Include Soundboard router (server sound library)
+    api_router.include_router(soundboard_router, prefix="/servers")
 
     # Include help router
     api_router.include_router(robots_router)
-    api_router.include_router(help_router, prefix="/help", tags=["Help"])
+    api_router.include_router(help_router, prefix="/help")
+
+    # Include feature expansion routes under /features prefix
+    api_router.include_router(feature_expansion_router, prefix="/features")
+
+    # Include artifacts router (artifact CRUD + inline transcript emission)
+    api_router.include_router(artifacts_router)
+
+    # Cross-instance artifact federation (PlexiJoin) inbound transport.
+    api_router.include_router(federation_router, prefix="/federation")
+
+    # Client-facing PlexiJoin federation surface (/Join contract, join.js).
+    api_router.include_router(join_router, prefix="/Join")
+
+    # Public license endpoints under the API prefix. The router carries its
+    # own ``/public/license`` prefix, so this serves
+    # ``/api/v1/public/license/*`` (the provisional-banner contract the web
+    # client reads). The root mount in ``src/api/app.py`` is preserved for
+    # the external signing-authority protocol.
+    api_router.include_router(public_license_router)
+
+    # Include the authenticated PlexiSuite registry and universal-home feed.
+    api_router.include_router(suite_router)
+    # PlexiStash owns its metadata and authorization boundary; binary content
+    # continues to use the existing media routes.
+    api_router.include_router(stash_router)
+    api_router.include_router(sum_router)
 
     return api_router
 
@@ -149,4 +153,5 @@ __all__ = [
     "is_docs_enabled",
     "clear_docs_cache",
     "get_docs_stats",
+    "feature_expansion_router",
 ]

@@ -1,103 +1,111 @@
-# Error Handling
+# Error handling
 
-All API errors follow a consistent format.
+All API errors use a single JSON envelope. Check the HTTP status code first, then parse the body for details.
 
-## Error Response Format
+## Error envelope
+
+Every error response returns this shape (`src/api/schemas/common.py:58`):
 
 ```json
 {
   "error": {
-    "code": 404,
-    "message": "Resource not found"
+    "code": 400,
+    "message": "Request validation failed"
   }
 }
 ```
 
 | Field | Type | Description |
-|-------|------|-------------|
-| code | int/string | Error code (HTTP status or custom) |
-| message | string | Human-readable error message |
+| --- | --- | --- |
+| `error.code` | integer | HTTP status code that matches the response status. |
+| `error.message` | string | Human-readable message. For 5xx errors this is a generic safe message; for 4xx errors it is client-actionable. |
+| `error.retry_after` | number | Included only for 429 rate-limit errors. Seconds to wait before retrying. |
+| `error.traceback` | string | Included only for self-test requests with `X-Plexichat-SelfTest-Debug: true` when `selftest.capture_stack_traces` is enabled. |
 
-## HTTP Status Codes
+The server never leaks SQL, file paths, or internal details in `error.message`. Messages are sanitized server-side (`src/api/middleware/error_handling.py:71`).
 
-| Code | Description |
-|------|-------------|
-| 200 | Success |
-| 201 | Created |
-| 400 | Bad Request - Invalid input |
-| 401 | Unauthorized - Authentication required |
-| 403 | Forbidden - Permission denied |
-| 404 | Not Found - Resource doesn't exist |
-| 409 | Conflict - Resource already exists |
-| 426 | Upgrade Required - Client update needed |
-| 429 | Too Many Requests - Rate limited |
-| 500 | Internal Server Error |
-| 503 | Service Unavailable - Module not available |
+### Validation errors are 400, not 422
 
-## Common Error Messages
+FastAPI generates 422 for Pydantic validation failures by default. Plexichat normalizes all `RequestValidationError` responses to `400` with the standard envelope (`src/api/middleware/error_handling.py:245` and `src/api/middleware/error_handling.py:372`). If you handle validation failures, check for `400` — your client will never receive `422` from this API.
 
-### Authentication Errors (401)
+Example validation error:
 
-| Message | Description |
-|---------|-------------|
-| Authentication required | No token provided |
-| Invalid token | Token is malformed or invalid |
-| Token expired | Token has expired |
-| Invalid credentials | Wrong username/password |
-| Invalid code | Wrong 2FA code |
-| Expired token | Challenge token expired |
+```json
+{
+  "error": {
+    "code": 400,
+    "message": "Invalid size: value is not a valid integer"
+  }
+}
+```
 
-### Permission Errors (403)
+## HTTP status codes
 
-| Message | Description |
-|---------|-------------|
-| Access denied | No access to resource |
-| Permission denied | Missing required permission |
-| Account locked | Too many failed login attempts |
-| Admin access required | Admin permission needed |
-| Cannot message this user | User has blocked you |
+| Code | Meaning | When it occurs |
+| --- | --- | --- |
+| 200 | OK | Request succeeded. |
+| 201 | Created | Resource created. |
+| 400 | Bad request | Validation failed, malformed ID, weak password, empty message, malformed `Content-Length`, or unknown version format. |
+| 401 | Unauthorized | Missing, invalid, or expired token or credentials. |
+| 403 | Forbidden | Permission denied, blocked user, account locked, or missing license feature. |
+| 404 | Not found | Resource does not exist. |
+| 409 | Conflict | Resource already exists, username or email taken, or duplicate membership. |
+| 410 | Gone | Resource is archived or no longer available. |
+| 423 | Locked | Resource is locked. |
+| 426 | Upgrade required | Client version is no longer supported (`VERSION_OUTDATED`). |
+| 429 | Too many requests | Rate limited. Check `retry_after`. |
+| 500 | Internal server error | Generic server error. `message` is always `Internal server error` when `api.debug` is false. |
+| 503 | Service unavailable | Module not available. |
+| 507 | Insufficient storage | Channel is full. |
 
-### Validation Errors (400)
+## Error details by category
 
-| Message | Description |
-|---------|-------------|
-| Invalid input | Request validation failed |
-| Invalid user ID | ID format invalid |
-| Invalid channel ID | ID format invalid |
-| Invalid server ID | ID format invalid |
-| Invalid message ID | ID format invalid |
-| Weak password | Password doesn't meet requirements |
-| Message must have content... | Empty message |
-| File too large | Upload exceeds size limit |
-| Invalid file type | Unsupported file format |
+### Authentication errors (401)
 
-### Resource Errors (404)
+- `Authentication required` — No token provided.
+- `Invalid token` — Token is malformed or invalid.
+- `Token expired` — Token has expired.
+- `Invalid credentials` — Wrong username or password.
+- `Invalid code` — Wrong 2FA code.
+- `Expired token` — Challenge token expired.
 
-| Message | Description |
-|---------|-------------|
-| User not found | User doesn't exist |
-| Server not found | Server doesn't exist |
-| Channel not found | Channel doesn't exist |
-| Message not found | Message doesn't exist |
-| Webhook not found | Webhook doesn't exist |
-| Session not found | Session doesn't exist |
-| Friend request not found | No pending request |
-| Relationship not found | No relationship exists |
-| Setting not found | Setting key doesn't exist |
+### Permission errors (403)
 
-### Conflict Errors (409)
+- `Access denied` — You don't have access to the resource.
+- `Permission denied` — You lack the required permission.
+- `Account locked` — Too many failed login attempts.
+- `Admin access required` — Admin permission is required.
+- `Cannot message this user` — The user has blocked you.
 
-| Message | Description |
-|---------|-------------|
-| Already exists | Resource already exists |
-| Username already taken | Username is in use |
-| Email already taken | Email is in use |
-| Already a member | Already in server |
-| 2FA is already enabled | 2FA already active |
+### Validation errors (400)
 
-## Version Errors
+Validation errors return `400` with the envelope above, never `422`.
 
-Version-related errors include additional fields:
+- `Request validation failed` — Generic validation failure (first field error is surfaced as `Invalid <field>: <reason>`).
+- `Invalid user ID` / `Invalid channel ID` / `Invalid server ID` / `Invalid message ID` — ID format is invalid.
+- `Weak password` — Password does not meet policy.
+- `Message must have content...` — Empty message.
+- `File too large` — Upload exceeds the size limit.
+- `Invalid file type` — Unsupported file format.
+- `Invalid storage URL` — Voice metadata URL failed private-network or credential checks (`src/api/routes/features/voice.py:40`).
+- `Invalid version format` — Malformed version string (`INVALID_VERSION_FORMAT`).
+
+### Resource errors (404)
+
+- `User not found` / `Server not found` / `Channel not found` / `Message not found`
+- `Webhook not found` / `Session not found` / `Friend request not found`
+- `Relationship not found` / `Setting not found`
+
+### Conflict errors (409)
+
+- `Already exists` — Resource already exists.
+- `Username already taken` / `Email already taken`
+- `Already a member` — Already in the server.
+- `2FA is already enabled`
+
+## Version errors
+
+Version errors include extra fields for client update logic:
 
 ```json
 {
@@ -112,12 +120,12 @@ Version-related errors include additional fields:
 }
 ```
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| VERSION_OUTDATED | 426 | Client must update |
-| INVALID_VERSION_FORMAT | 400 | Malformed version string |
+| Code | HTTP status | Meaning |
+| --- | --- | --- |
+| `VERSION_OUTDATED` | 426 | Update your client. |
+| `INVALID_VERSION_FORMAT` | 400 | Version string is malformed. |
 
-## Rate Limit Errors (429)
+## Rate-limit errors (429)
 
 ```json
 {
@@ -129,68 +137,81 @@ Version-related errors include additional fields:
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| retry_after | Seconds to wait before retrying |
+`retry_after` is the number of seconds to wait before retrying. Use exponential backoff and respect this value.
 
-## Error Handling Best Practices
+## How to handle errors
 
-1. Check HTTP status code first
-2. Parse error body for details
-3. Handle specific codes appropriately
-4. Use exponential backoff for retries
-5. Display user-friendly messages
+1. Check the HTTP status code.
+2. Parse `error.code` and `error.message`. For 429, read `error.retry_after`.
+3. For 400, show the message to the user — it already names the invalid field.
+4. For 401, refresh or re-authenticate.
+5. For 426, prompt the user to update.
 
-## Example Error Handling
+### Python example
 
 ```python
 import time
+import requests
 
 def api_request(url, **kwargs):
     response = requests.request(url, **kwargs)
-    
-    if response.status_code == 200:
+
+    if response.ok:
         return response.json()
-    
-    elif response.status_code == 401:
-        # Re-authenticate
+
+    body = response.json()
+    error = body.get("error", {})
+
+    if response.status_code == 401:
         refresh_token()
         return retry_request()
-    
-    elif response.status_code == 429:
-        # Rate limited - wait and retry
-        error = response.json().get("error", {})
+
+    if response.status_code == 429:
         retry_after = error.get("retry_after", 1)
         time.sleep(retry_after)
         return retry_request()
-    
-    elif response.status_code == 426:
-        # Update required
+
+    if response.status_code == 426:
         show_update_prompt()
         return None
-    
-    else:
-        error = response.json().get("error", {})
-        log_error(error.get("code"), error.get("message"))
-        raise APIError(error.get("message"))
+
+    if response.status_code == 400:
+        # Validation error — message already contains the field name
+        raise ValueError(error.get("message", "Invalid request"))
+
+    log_error(error.get("code"), error.get("message"))
+    raise APIError(error.get("message", "Request failed"))
 ```
+
+### JavaScript example
 
 ```javascript
 async function apiRequest(url, options) {
-    const response = await fetch(url, options);
-    
-    if (response.ok) {
-        return response.json();
-    }
-    
-    const error = await response.json();
-    
-    if (response.status === 429) {
-        const retryAfter = error.error?.retry_after || 1;
-        await sleep(retryAfter * 1000);
-        return apiRequest(url, options);
-    }
-    
-    throw new Error(error.error?.message || 'Unknown error');
+  const response = await fetch(url, options);
+
+  if (response.ok) {
+    return response.json();
+  }
+
+  const body = await response.json();
+  const error = body.error || {};
+
+  if (response.status === 429) {
+    const retryAfter = error.retry_after || 1;
+    await sleep(retryAfter * 1000);
+    return apiRequest(url, options);
+  }
+
+  if (response.status === 400) {
+    throw new Error(error.message || 'Invalid request');
+  }
+
+  throw new Error(error.message || 'Unknown error');
 }
 ```
+
+## Related documentation
+
+- `src/api/middleware/error_handling.py:109` — `format_error_response` envelope
+- `src/api/middleware/error_handling.py:306` — `setup_exception_handlers` handlers
+- `src/api/schemas/common.py:49` — `ErrorDetail` and `ErrorResponse` models

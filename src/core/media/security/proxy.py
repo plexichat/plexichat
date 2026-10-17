@@ -14,8 +14,14 @@ try:
 except Exception:
     requests = None
 
+try:
+    from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+except Exception:
+    HTTPConnectionPool = None
+    HTTPSConnectionPool = None
+
 import utils.logger as logger
-from src.utils.security import URLValidator
+from src.utils.security import URLValidator, bracket_ip_literal
 
 from ..models import ProxiedContent
 from ..exceptions import ProxyError, ProxyFetchError, ProxyCacheError
@@ -23,16 +29,21 @@ from ..exceptions import ProxyError, ProxyFetchError, ProxyCacheError
 
 class ResponseStreamWrapper(io.RawIOBase):
     """
-    Wrapper for requests response stream that tracks size and calculates hash
+    Wrapper for urllib3 response stream that tracks size and calculates hash
     while reading, preventing large files from being fully loaded into memory.
     """
 
-    def __init__(self, response_iterator: Iterator[bytes], max_size: int):
+    def __init__(
+        self, response_iterator: Iterator[bytes], max_size: int, initial: bytes = b""
+    ):
+        if len(initial) > max_size:
+            raise ValueError(f"Content exceeds maximum size of {max_size} bytes")
         self._iterator = iter(response_iterator)
         self._max_size = max_size
-        self._bytes_read = 0
+        self._bytes_read = len(initial)
         self._hash = hashlib.sha256()
-        self._buffer = b""
+        self._hash.update(initial)
+        self._buffer = initial
 
     def read(self, size: int = -1) -> bytes:
         if size == -1:
@@ -88,8 +99,30 @@ class ExternalProxy:
         "image/png",
         "image/gif",
         "image/webp",
-        "image/svg+xml",
     }
+
+    # SECURITY: image/svg+xml is deliberately NOT in DEFAULT_ALLOWED_TYPES.
+    # SVG can carry embedded scripts; when a proxied SVG is opened directly
+    # in a browser (not via <img>) those scripts execute.
+
+    # Magic bytes used to verify that the streamed content matches the
+    # declared Content-Type (and to sniff SVG masquerading as a raster
+    # image). Content whose bytes contradict the declared type is rejected
+    # before it is cached.
+    IMAGE_MAGIC_BYTES = {
+        "image/jpeg": (b"\xff\xd8\xff",),
+        "image/png": (b"\x89PNG\r\n\x1a\n",),
+        "image/gif": (b"GIF87a", b"GIF89a"),
+        "image/webp": (b"RIFF",),  # full check: RIFF....WEBP
+    }
+
+    SVG_SNIFF_PREFIXES = (b"<svg", b"<?xml", b"<!doctype")
+
+    # SECURITY: number of leading bytes accumulated for content sniffing.
+    # Must be large enough that leading-whitespace/BOM padding cannot push
+    # a "<svg"/"<?xml"/"<!doctype" marker out of the inspected window
+    # (fail-closed: padded SVG polyglots are still rejected).
+    SNIFF_WINDOW_SIZE = 4096
 
     MAX_CONTENT_SIZE = 10 * 1024 * 1024
 
@@ -292,27 +325,86 @@ class ExternalProxy:
     def _fetch_url(
         self, url: str, hostname: str, resolved_ip: str
     ) -> Tuple[str, ResponseStreamWrapper]:
-        """Fetch content from URL using safe IP."""
+        """Fetch content from URL using safe IP.
+
+        SECURITY: the connection is made to the ``resolved_ip`` (returned by
+        the SSRF validator) so a DNS rebinding between validation and connect
+        cannot redirect us to an internal host. The real ``hostname`` is
+        carried in the ``Host`` header AND — for HTTPS — as the TLS
+        ``server_hostname``/``assert_hostname`` so certificate verification
+        and SNI still target the original host (verifying against the raw IP
+        makes every HTTPS fetch fail). This mirrors what
+        ``LinkPreviewService._fetch_with_redirects`` does with httpx's
+        ``sni_hostname`` extension.
+        """
         parsed = urlparse(url)
-        port = parsed.port or (80 if parsed.scheme == "http" else 443)
-        request_url = f"{parsed.scheme}://{resolved_ip}:{port}{parsed.path}"
+        try:
+            port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        except ValueError as e:
+            raise ProxyFetchError(f"Invalid port in URL: {e}", url)
+
+        path = parsed.path or "/"
         if parsed.query:
-            request_url += f"?{parsed.query}"
+            path = f"{path}?{parsed.query}"
+
+        # ``urlparse().hostname`` strips the brackets from an IPv6 literal,
+        # so put them back: RFC 7230 requires the Host header to carry the
+        # bracketed form, otherwise an IPv6-literal source URL produces an
+        # ambiguous header that the origin cannot route.
+        host_header = bracket_ip_literal(hostname)
+        if (parsed.scheme == "http" and port != 80) or (
+            parsed.scheme == "https" and port != 443
+        ):
+            host_header = f"{host_header}:{port}"
+
+        headers = {
+            "User-Agent": self._user_agent,
+            "Host": host_header,
+        }
+        timeout = self._timeout
 
         try:
-            response = self._requests.get(
-                request_url,
-                headers={
-                    "User-Agent": self._user_agent,
-                    "Host": hostname,  # Important for virtual hosting
-                },
-                timeout=self._timeout,
-                stream=True,
-                verify=False if parsed.scheme == "http" else True,
-                allow_redirects=False,
+            if parsed.scheme == "http":
+                if HTTPConnectionPool is None:
+                    raise ProxyFetchError("urllib3 is required for proxying", url)
+                pool = HTTPConnectionPool(
+                    resolved_ip,
+                    port,
+                    maxsize=1,
+                    block=True,
+                    headers=headers,
+                    timeout=timeout,
+                )
+            elif parsed.scheme == "https":
+                if HTTPSConnectionPool is None:
+                    raise ProxyFetchError("urllib3 is required for proxying", url)
+                pool = HTTPSConnectionPool(
+                    resolved_ip,
+                    port,
+                    maxsize=1,
+                    block=True,
+                    headers=headers,
+                    timeout=timeout,
+                    cert_reqs="CERT_REQUIRED",
+                    server_hostname=hostname,
+                    assert_hostname=hostname,
+                )
+            else:
+                raise ProxyFetchError(f"Unsupported scheme: {parsed.scheme}", url)
+
+            response = pool.urlopen(
+                "GET",
+                path,
+                headers=headers,
+                timeout=timeout,
+                retries=False,
+                redirect=False,
+                assert_same_host=False,
+                preload_content=False,
+                decode_content=True,
             )
 
-            status_code = getattr(response, "status_code", 200)
+            status_code = getattr(response, "status", 200)
             try:
                 status_code = int(status_code)
             except Exception:
@@ -323,8 +415,8 @@ class ExternalProxy:
                     f"Redirects are not allowed for security reasons (status {status_code})",
                     url,
                 )
-
-            response.raise_for_status()
+            if status_code != 200:
+                raise ProxyFetchError(f"Unexpected status code: {status_code}", url)
 
             content_type = response.headers.get(
                 "Content-Type", "application/octet-stream"
@@ -335,17 +427,80 @@ class ExternalProxy:
                 raise ProxyFetchError(f"Content type not allowed: {content_type}", url)
 
             content_length = response.headers.get("Content-Length")
-            if content_length and int(content_length) > self._max_size:
-                raise ProxyFetchError(f"Content too large: {content_length} bytes", url)
+            if content_length:
+                try:
+                    content_length = int(content_length)
+                except ValueError:
+                    content_length = None
+                if content_length is not None and content_length > self._max_size:
+                    raise ProxyFetchError(
+                        f"Content too large: {content_length} bytes", url
+                    )
+
+            # Sniff the first bytes of the body and validate them against the
+            # declared type BEFORE anything is streamed into the cache. This
+            # rejects SVG (script-bearing) content even when served under a
+            # raster Content-Type, and rejects content whose magic bytes
+            # contradict the declared type.
+            gen = response.stream(amt=self._buffer_size, decode_content=True)
+            peek, gen = self._sniff_content(gen, content_type, url)
 
             # Create stream wrapper for memory-safe reading and hashing
-            stream_wrapper = ResponseStreamWrapper(
-                response.iter_content(chunk_size=self._buffer_size), self._max_size
-            )
+            stream_wrapper = ResponseStreamWrapper(gen, self._max_size, initial=peek)
 
             return content_type, stream_wrapper
-        except (self._requests.RequestException, ValueError) as e:
+        except ProxyFetchError:
+            raise
+        except Exception as e:
             raise ProxyFetchError(f"Failed to fetch URL: {e}", url)
+
+    def _sniff_content(
+        self, gen: Iterator[bytes], content_type: str, url: str
+    ) -> Tuple[bytes, Iterator[bytes]]:
+        """
+        Read and validate the first bytes of a response stream.
+
+        Returns:
+            Tuple of (peek_bytes, remaining_stream_generator)
+
+        Raises:
+            ProxyFetchError: If the content looks like SVG or its magic bytes
+                contradict the declared Content-Type.
+        """
+        peek = b""
+        try:
+            for chunk in gen:
+                peek += chunk
+                if len(peek) >= self.SNIFF_WINDOW_SIZE:
+                    break
+        except Exception as e:
+            raise ProxyFetchError(f"Failed to read content: {e}", url)
+
+        if not peek:
+            return peek, gen
+
+        stripped = peek.lstrip(b"\xef\xbb\xbf \t\r\n")
+        head = stripped[:9].lower()
+        if head.startswith(self.SVG_SNIFF_PREFIXES):
+            raise ProxyFetchError("SVG content is blocked (can contain scripts)", url)
+
+        if content_type in self.IMAGE_MAGIC_BYTES:
+            expected = self.IMAGE_MAGIC_BYTES[content_type]
+            if content_type == "image/webp":
+                if not (
+                    peek.startswith(b"RIFF")
+                    and len(peek) >= 12
+                    and peek[8:12] == b"WEBP"
+                ):
+                    raise ProxyFetchError(
+                        f"Content does not match declared type {content_type}", url
+                    )
+            elif not any(peek.startswith(magic) for magic in expected):
+                raise ProxyFetchError(
+                    f"Content does not match declared type {content_type}", url
+                )
+
+        return peek, gen
 
     def _cache_content(
         self, url: str, content_type: str, stream_wrapper: ResponseStreamWrapper
@@ -359,6 +514,14 @@ class ExternalProxy:
             # store_stream will consume the wrapper, calculating hash and size
             self._storage.store_stream(stream_wrapper, storage_path, content_type, -1)
         except Exception as e:
+            # SECURITY (fail-closed): a streaming failure part-way through
+            # (e.g. the body exceeding the size cap) may leave a partial
+            # object behind. Remove it best-effort so no attacker-controlled
+            # truncated artifact lingers under the cache path.
+            try:
+                self._storage.delete(storage_path)
+            except Exception:
+                pass
             raise ProxyCacheError(f"Failed to cache content: {e}", url)
 
         checksum = stream_wrapper.hex_digest

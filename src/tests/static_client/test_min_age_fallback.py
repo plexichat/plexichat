@@ -1,0 +1,289 @@
+"""
+Tests for the static client min_age fallback logic.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from unittest.mock import patch
+
+
+from src.static_client.config import (
+    CacheControlConfig,
+    ConfigInjectionConfig,
+    GitLabConfig,
+    SecurityHeadersConfig,
+    StaticClientConfig,
+    StaticRateLimitConfig,
+)
+from src.static_client.fetcher import ReleaseAsset
+from src.static_client.manager import (
+    InstallResult,
+    StaticClientManager,
+)
+from src.utils.common_utils.utils.version.core import parse_version
+
+
+def _make_cfg(tmp_path: str, min_age: int) -> StaticClientConfig:
+    return StaticClientConfig(
+        enabled=True,
+        serve=True,
+        install_dir=tmp_path,
+        source="gitlab_release",
+        version_pin="latest",
+        auto_update=True,
+        auto_update_min_age_seconds=min_age,
+        auto_update_check_interval_seconds=60,
+        git_lab=GitLabConfig(
+            project_id=2,
+            api_url="http://example.invalid/api/v4",
+            private_token_env="PLEXICHAT_GITLAB_TOKEN",
+            verify_tls=False,
+            request_timeout_seconds=5,
+        ),
+        cache_control=CacheControlConfig(),
+        security_headers=SecurityHeadersConfig(),
+        rate_limit=StaticRateLimitConfig(),
+        max_zip_size_bytes=1024,
+        spa_routes={},
+        log_downloads=False,
+        config_injection=ConfigInjectionConfig(),
+        invite_redirect=True,
+    )
+
+
+def _make_asset(tag: str) -> tuple:
+    return (
+        parse_version(tag),
+        ReleaseAsset(
+            tag_name=tag,
+            released_at="2026-06-07T00:00:00Z",
+            zip_url=f"http://example.invalid/{tag}.zip",
+            sha256_url="",
+        ),
+    )
+
+
+def test_min_age_falls_back_to_older_release():
+    """When the newest release is below min_age, the manager picks the
+    next-newer release instead of giving up."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh = _make_asset("a.1.0-60")
+        stale = _make_asset("a.1.0-59")
+
+        mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
+
+        with patch.object(
+            StaticClientManager, "_candidate_releases", return_value=[fresh, stale]
+        ):
+            with patch.object(
+                StaticClientManager,
+                "_should_fetch",
+                side_effect=lambda a, v, n: v.build < 60,
+            ) as should:
+                with patch.object(
+                    StaticClientManager,
+                    "_fetch_and_install",
+                    return_value=InstallResult(
+                        installed_version="a.1.0-59", already_current=False
+                    ),
+                ) as fetch:
+                    result = mgr.ensure_active()
+                    assert fetch.call_count == 1
+                    assert fetch.call_args[0][0].build == 59
+                    assert result.installed_version == "a.1.0-59"
+                    assert should.call_count == 2
+
+
+def test_below_min_age_returns_error_when_all_too_new():
+    """If every newer release fails min_age, return below_min_age without
+    installing anything."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fresh = _make_asset("a.1.0-60")
+        fresher = _make_asset("a.1.0-59")
+
+        mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
+
+        with patch.object(
+            StaticClientManager, "_candidate_releases", return_value=[fresh, fresher]
+        ):
+            with patch.object(StaticClientManager, "_should_fetch", return_value=False):
+                with patch.object(StaticClientManager, "_fetch_and_install") as fetch:
+                    result = mgr.ensure_active()
+                    assert fetch.call_count == 0
+                    assert result.error == "below_min_age"
+                    assert result.already_current is True
+
+
+def test_already_on_newest_returns_current():
+    """If the installed version matches the newest release, return
+    already_current without any fetch attempt."""
+    with tempfile.TemporaryDirectory() as tmp:
+        newer = _make_asset("a.1.0-60")
+
+        mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
+
+        with patch.object(
+            StaticClientManager, "_candidate_releases", return_value=[newer]
+        ):
+            with patch.object(
+                StaticClientManager, "current_version", return_value="a.1.0-60"
+            ):
+                with patch.object(StaticClientManager, "_fetch_and_install") as fetch:
+                    result = mgr.ensure_active()
+                    assert fetch.call_count == 0
+                    assert result.already_current is True
+                    assert result.error is None
+
+
+def test_older_candidates_are_skipped():
+    """Releases older than the installed version must be skipped so the
+    manager does not downgrade."""
+    with tempfile.TemporaryDirectory() as tmp:
+        newer = _make_asset("a.1.0-60")
+        older = _make_asset("a.1.0-58")
+
+        mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
+
+        with patch.object(
+            StaticClientManager, "_candidate_releases", return_value=[newer, older]
+        ):
+            with patch.object(
+                StaticClientManager, "current_version", return_value="a.1.0-59"
+            ):
+                with patch.object(
+                    StaticClientManager,
+                    "_should_fetch",
+                    return_value=True,
+                ) as should:
+                    with patch.object(
+                        StaticClientManager,
+                        "_fetch_and_install",
+                        return_value=InstallResult(
+                            installed_version="a.1.0-60", already_current=False
+                        ),
+                    ) as fetch:
+                        result = mgr.ensure_active()
+                        assert fetch.call_count == 1
+                        assert fetch.call_args[0][0].build == 60
+                        assert should.call_count == 1
+                        assert result.installed_version == "a.1.0-60"
+
+
+def test_config_template_does_not_raise_keyerror():
+    """The default config.js template must format without KeyError now
+    that the literal braces are escaped."""
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    out = cfg.config_injection.content.format(
+        origin="https://plexichat.example", version="a.1.0-60"
+    )
+    assert "serverUrl" in out
+    assert "https://plexichat.example" in out
+    assert "a.1.0-60" in out
+    assert "{origin}" not in out
+    assert "{version}" not in out
+
+
+def test_config_injection_defaults_to_empty_public_server_url(monkeypatch):
+    """A stock install must not hard-code localhost:8000.
+
+    ``public_server_url`` defaults to empty so the router falls back to the
+    request's actual origin — the previous default silently pointed every
+    non-localhost deployment's client at http://localhost:8000.
+    """
+    monkeypatch.delenv("PLEXICHAT_PUBLIC_SERVER_URL", raising=False)
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    assert cfg.config_injection.public_server_url == ""
+
+
+def test_config_injection_env_override_is_honoured(monkeypatch):
+    """An explicit env override still wins over the empty default."""
+    monkeypatch.setenv("PLEXICHAT_PUBLIC_SERVER_URL", "https://chat.example.com")
+    from src.static_client.config import get_static_client_config
+
+    cfg = get_static_client_config()
+    assert cfg.config_injection.public_server_url == "https://chat.example.com"
+
+
+def test_security_headers_csp_defaults_are_consistent():
+    """All three CSP defaults must agree: no inline scripts (they are now
+    externalized) while inline styles remain allowed for runtime <style>
+    injection."""
+    from src.static_client.config import SecurityHeadersConfig, get_static_client_config
+
+    dataclass_default = SecurityHeadersConfig().content_security_policy
+    fallback = get_static_client_config().security_headers.content_security_policy
+    assert dataclass_default == fallback
+
+    assert "script-src 'self' https://cdn.jsdelivr.net" in fallback
+    script_src = fallback.split("script-src", 1)[1].split(";", 1)[0]
+    assert "'unsafe-inline'" not in script_src
+    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in fallback
+    # Self-hosted fonts (Phosphor.woff2) and data: media must be allowed.
+    assert "font-src 'self' https://fonts.gstatic.com data:" in fallback
+    assert "media-src 'self' blob: data:" in fallback
+
+
+def test_request_origin_prefers_origin_then_host():
+    """The runtime origin used for config.js must reflect the request."""
+    from src.static_client.router import StaticClientMiddleware
+
+    with_origin = {
+        "scheme": "https",
+        "headers": [
+            (b"origin", b"https://chat.example.com"),
+            (b"host", b"internal:8000"),
+        ],
+    }
+    assert (
+        StaticClientMiddleware._request_origin(with_origin)
+        == "https://chat.example.com"
+    )
+
+    host_only = {
+        "scheme": "http",
+        "headers": [(b"host", b"chat.example.com")],
+    }
+    assert (
+        StaticClientMiddleware._request_origin(host_only) == "http://chat.example.com"
+    )
+
+    assert (
+        StaticClientMiddleware._request_origin({"scheme": "http", "headers": []}) == ""
+    )
+
+
+def test_render_config_js_escapes_host_header_injection():
+    """A malicious Host/Origin header must not break out of the JS string."""
+    from src.static_client.manager import _render_config_js
+
+    template = (
+        'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", version: "{version}" }};'
+    )
+    out = _render_config_js(template, 'http://x";alert(1)//', "a.1.0-60")
+    # The raw unescaped breakout never appears verbatim...
+    assert 'http://x";alert(1)' not in out
+    # ...the quote is escaped, so the string literal never closes...
+    assert '\\"' in out
+    # ...and the payload survives only as inert string content.
+    assert "alert(1)" in out
+
+
+def test_render_config_js_escapes_backslashes_and_newlines():
+    from src.static_client.manager import _render_config_js
+
+    template = 'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}" }};'
+    out = _render_config_js(template, "http://x\n\"'", "v")
+    assert "\n" not in out
+    assert "\\n" in out
+
+
+def test_js_escape_leaves_plain_origin_unchanged():
+    from src.static_client.manager import _js_escape
+
+    assert _js_escape("https://chat.example.com") == "https://chat.example.com"
+    assert _js_escape("") == ""

@@ -7,17 +7,12 @@ concurrent access, and data integrity across rotations.
 
 import pytest
 import os
-import sys
 import time
 import threading
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-for path in [project_root, src_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# common_utils is now a native package.
 
-from src.utils.encryption.core import (  # noqa: E402
+from src.utils.encryption.core import (
     EncryptionManager,
     MessageEncryptor,
     Keyring,
@@ -163,6 +158,28 @@ class TestKeyRotationMigration:
 
         assert manager_with_keyring.decrypt_data(new_encrypted) == original_data
         assert old_encrypted != new_encrypted
+
+    def test_rotated_out_version_names_the_missing_version(self, manager_with_keyring):
+        """A missing key version must name the version and what is loaded.
+
+        A rotated-out key used to fail with no actionable detail; the error
+        now reports the version the envelope asked for and the versions
+        actually present, so an operator can tell a pruned key from a
+        context/integrity failure.
+        """
+        encrypted = manager_with_keyring.encrypt_data("payload")
+        version = int(encrypted.split(":", 2)[1])
+
+        # Rotate forward, then prune the older version this ciphertext needs.
+        manager_with_keyring.keyring.rotate()
+        del manager_with_keyring.keyring.keys[version]
+
+        with pytest.raises(ValueError) as exc_info:
+            manager_with_keyring.decrypt_data(encrypted)
+
+        message = str(exc_info.value)
+        assert f"version {version}" in message
+        assert "loaded versions" in message
 
 
 class TestConcurrentKeyRotation:
@@ -336,16 +353,17 @@ class TestKeyRotationErrorHandling:
 
     def test_keyring_corruption_recovery(self, temp_keyring_path):
         """Test that keyring handles corrupted file gracefully."""
-        keyring1 = Keyring(temp_keyring_path)
-        keyring1.get_key()
-        keyring1.save()
+        # Keyring now raises error on corruption instead of silently resetting
+        # This test verifies that the error is raised correctly
+        from src.utils.encryption.core import Keyring, KeyringDecryptionError
 
+        # Create a corrupted keyring file
         with open(temp_keyring_path, "w") as f:
-            f.write("corrupted data {{{")
+            f.write("corrupted data")
 
-        keyring2 = Keyring(temp_keyring_path)
-        assert keyring2.current_version == 0
-        assert len(keyring2.keys) == 0
+        # Should raise KeyringDecryptionError
+        with pytest.raises(KeyringDecryptionError):
+            Keyring(temp_keyring_path)
 
 
 class TestAutomaticKeyRotation:
@@ -356,7 +374,8 @@ class TestAutomaticKeyRotation:
         manager_with_keyring.keyring.get_key()
         initial_version = manager_with_keyring.keyring.current_version
 
-        manager_with_keyring.keyring.rotated_at = int(time.time()) - (100 * 86400)
+        # Set rotated_at to 200 days ago (default rotation interval is 180 days)
+        manager_with_keyring.keyring.rotated_at = int(time.time()) - (200 * 86400)
 
         rotated = manager_with_keyring.rotate_keys()
         assert rotated is True

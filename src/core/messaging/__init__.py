@@ -46,6 +46,8 @@ from .exceptions import (
     AttachmentTooLargeError,
     AttachmentLimitError,
     RateLimitError,
+    MessageConflictError,
+    MessageEditWindowExpiredError,
 )
 from .models import (
     Message,
@@ -60,13 +62,6 @@ from .models import (
     MessageStatusType,
     ParticipantRole,
     FilterAction,
-)
-from .events import (
-    MessagingEventBus,
-    MessagingEvent,
-    MessagingEventType,
-    EventResult,
-    get_event_bus,
 )
 
 # Module state
@@ -194,6 +189,11 @@ def get_conversation(conversation_id: int, user_id: int) -> Optional[Conversatio
     return _get_manager().get_conversation(conversation_id, user_id)
 
 
+def conversation_exists(conversation_id: int) -> bool:
+    """Membership-agnostic existence probe for a conversation ID."""
+    return _get_manager().conversation_exists(conversation_id)
+
+
 def get_conversations(
     user_id: int,
     limit: int = 50,
@@ -251,6 +251,17 @@ def add_participant(
     """Add a participant to a group conversation."""
     return _get_manager().add_participant(
         user_id, conversation_id, participant_id, role
+    )
+
+
+def add_participant_to_conversations(
+    user_id: int,
+    conversation_ids: list,
+    role: ParticipantRole = ParticipantRole.MEMBER,
+) -> None:
+    """Add a participant to multiple conversations (for server joins)."""
+    return _get_manager().add_participant_to_conversations(
+        user_id, conversation_ids, role
     )
 
 
@@ -330,28 +341,40 @@ def send_message(
         AttachmentError: If attachment is invalid
     """
     return _get_manager().send_message(
-        user_id,
-        conversation_id,
-        content,
-        message_type,
-        reply_to_id,
-        attachments,
-        embeds,
-        webhook_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        content=content,
+        message_type=message_type,
+        reply_to_id=reply_to_id,
+        attachments=attachments,
+        embeds=embeds,
+        webhook_id=webhook_id,
     )
 
 
-def edit_message(user_id: int, message_id: int, content: str) -> Message:
-    """Edit a message (own messages only)."""
-    return _get_manager().edit_message(user_id, message_id, content)
+def edit_message(
+    user_id: int,
+    message_id: int,
+    content: str,
+    expected_edited_at: Optional[int] = None,
+) -> Message:
+    """Edit a message (own messages only).
+
+    ``expected_edited_at`` is an optional optimistic-concurrency token;
+    when provided and stale, MessageConflictError is raised.
+    """
+    return _get_manager().edit_message(
+        user_id, message_id, content, expected_edited_at=expected_edited_at
+    )
 
 
 def update_message_metadata(
+    user_id: int,
     message_id: int,
     metadata: Optional[Dict[str, Any]],
     merge: bool = True,
 ) -> Message:
-    return _get_manager().update_message_metadata(message_id, metadata, merge)
+    return _get_manager().update_message_metadata(user_id, message_id, metadata, merge)
 
 
 def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> bool:
@@ -367,6 +390,34 @@ def delete_message(user_id: int, message_id: int, hard_delete: bool = False) -> 
         True if deleted
     """
     return _get_manager().delete_message(user_id, message_id, hard_delete)
+
+
+def automod_remove_message(
+    message_id: int,
+    violation_id: Optional[int] = None,
+    rule_name: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Optional[Message]:
+    """Replace a message with an AutoMod removal placeholder (system op).
+
+    Only invoked by the AutoMod engine after the system-context check.
+    """
+    return _get_manager().automod_remove_message(
+        message_id, violation_id, rule_name, reason
+    )
+
+
+def delete_messages_bulk(
+    user_id: int, channel_id: int, message_ids: List[int]
+) -> List[int]:
+    """
+    Bulk-delete messages from a channel.
+
+    Delegates to the manager, which scopes every candidate message to the
+    requested channel and only removes messages the caller is permitted to
+    delete. Returns the list of message IDs actually deleted.
+    """
+    return _get_manager().delete_messages_bulk(user_id, channel_id, message_ids)
 
 
 def get_message(user_id: int, message_id: int) -> Optional[Message]:
@@ -396,6 +447,20 @@ def get_messages(
     """
     return _get_manager().get_messages(
         user_id, conversation_id, limit, before_id, after_id
+    )
+
+
+def search_messages(
+    user_id: int,
+    conversation_id: int,
+    query: str,
+    limit: int = 50,
+    before_id: Optional[int] = None,
+    after_id: Optional[int] = None,
+) -> List[Message]:
+    """Search messages in a conversation for the channel search route."""
+    return _get_manager().search_messages(
+        user_id, conversation_id, query, limit, before_id, after_id
     )
 
 
@@ -437,6 +502,51 @@ def mark_read(
         Count of messages marked as read
     """
     return _get_manager().mark_read(user_id, conversation_id, up_to_message_id)
+
+
+def get_last_read(user_id: int, conversation_id: int) -> Dict[str, Any]:
+    """
+    Get the last read position for a user in a conversation.
+
+    Args:
+        user_id: User ID
+        conversation_id: Conversation ID
+
+    Returns:
+        Dict with last_read_message_id and last_read_at
+    """
+    return _get_manager().get_last_read(user_id, conversation_id)
+
+
+def mark_unread(
+    user_id: int, conversation_id: int, up_to_message_id: Optional[int] = None
+) -> int:
+    """
+    Mark messages as unread by rolling back last read position.
+
+    Args:
+        user_id: User ID
+        conversation_id: Conversation ID
+        up_to_message_id: Optional message ID to mark as the new last read
+
+    Returns:
+        New unread count
+    """
+    return _get_manager().mark_unread(user_id, conversation_id, up_to_message_id)
+
+
+def mark_all_server_read(user_id: int, server_id: int) -> int:
+    """
+    Mark all channels in a server as read.
+
+    Args:
+        user_id: User ID
+        server_id: Server ID
+
+    Returns:
+        Number of channels marked as read
+    """
+    return _get_manager().mark_all_server_read(user_id, server_id)
 
 
 def get_unread_count(
@@ -589,6 +699,8 @@ __all__ = [
     "AttachmentTooLargeError",
     "AttachmentLimitError",
     "RateLimitError",
+    "MessageConflictError",
+    "MessageEditWindowExpiredError",
     # Models
     "Message",
     "Conversation",
@@ -602,12 +714,6 @@ __all__ = [
     "MessageStatusType",
     "ParticipantRole",
     "FilterAction",
-    # Events
-    "MessagingEventBus",
-    "MessagingEvent",
-    "MessagingEventType",
-    "EventResult",
-    "get_event_bus",
     # Conversations
     "create_dm",
     "create_group",
@@ -619,6 +725,7 @@ __all__ = [
     "leave_conversation",
     # Participants
     "add_participant",
+    "add_participant_to_conversations",
     "remove_participant",
     "update_participant_role",
     "get_participants",
@@ -627,16 +734,21 @@ __all__ = [
     "is_participant",
     # Messages
     "send_message",
+    "delete_messages_bulk",
     "edit_message",
     "delete_message",
     "get_message",
     "get_messages",
+    "search_messages",
     "pin_message",
     "unpin_message",
     "get_pinned_messages",
     # Message Status
     "mark_delivered",
     "mark_read",
+    "get_last_read",
+    "mark_unread",
+    "mark_all_server_read",
     "get_unread_count",
     "get_message_status",
     "get_reader_ids",

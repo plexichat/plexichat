@@ -123,6 +123,9 @@ class TestGlobalLimit:
         manager = RateLimitManager(
             storage_backend=memory_storage,
             enable_global_limit=False,
+            user_config=RateLimitConfig(
+                requests=1000, window_seconds=60
+            ),  # High user limit to test global limit
         )
         for i in range(100):
             result = manager.check_rate_limit(user_id=test_user_id)
@@ -386,12 +389,16 @@ class TestModuleInterface:
 
     def test_reset_user(self, setup_ratelimit, test_user_id):
         """Test resetting all buckets for a user."""
-        ratelimit.check_rate_limit(user_id=test_user_id, route="GET /test1")
-        ratelimit.check_rate_limit(user_id=test_user_id, route="GET /test2")
+        r1 = ratelimit.check_rate_limit(user_id=test_user_id, route="GET /test1")
+        r2 = ratelimit.check_rate_limit(user_id=test_user_id, route="GET /test2")
         ratelimit.reset_user(test_user_id)
+        assert ratelimit.get_bucket_info(r1.bucket_key) is None
+        assert ratelimit.get_bucket_info(r2.bucket_key) is None
 
     def test_reset_all(self, setup_ratelimit, test_user_id):
         """Test resetting all buckets."""
-        ratelimit.check_rate_limit(user_id=test_user_id)
-        ratelimit.check_rate_limit(user_id=99999)
+        r1 = ratelimit.check_rate_limit(user_id=test_user_id)
+        r2 = ratelimit.check_rate_limit(user_id=99999)
         ratelimit.reset_all()
+        assert ratelimit.get_bucket_info(r1.bucket_key) is None
+        assert ratelimit.get_bucket_info(r2.bucket_key) is None

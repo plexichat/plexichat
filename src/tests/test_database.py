@@ -5,45 +5,30 @@ Tests cover SQLite connectivity, CRUD operations, error handling,
 logging integration, and the new helper methods.
 """
 
-import pytest
 import os
-import sys
 import shutil
 import sqlite3
 
-# Setup paths before any imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-src_path = project_root
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+import pytest
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+import utils.config as config
+from src.core.database.core import Database
+from src.tests._conftest.logger_isolation import isolated_logger
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-from src.core.database.core import Database  # noqa: E402
+pytestmark = pytest.mark.database_integration
 
 
 # Fixture for setup/teardown
 @pytest.fixture(scope="module")
-def setup_module():
-    # Setup temp environment
-    if not os.path.exists("temp_test"):
-        os.makedirs("temp_test")
+def setup_module(tmp_path_factory):
+    """Setup temp environment for module."""
+    temp_dir = tmp_path_factory.mktemp("test_db")
 
-    # Setup Logger for tests (once)
-    log_dir = "temp_test/logs"
-    logger.setup(log_dir=log_dir, level="DEBUG")
-
-    yield
-
-    # Teardown
-    if os.path.exists("temp_test"):
-        try:
-            shutil.rmtree("temp_test")
-        except OSError:
-            pass
+    # Setup Logger for tests (once). ``isolated_logger`` restores the level
+    # after the module so it cannot leak into later tests in this worker.
+    log_dir = str(temp_dir / "logs")
+    with isolated_logger(log_dir=log_dir, level="DEBUG"):
+        yield temp_dir
 
 
 @pytest.fixture
@@ -52,8 +37,9 @@ def db_config(setup_module):
     import gc
     import time
 
-    config_path = "temp_test/config.yaml"
-    db_path = "temp_test/test.db"
+    temp_dir = setup_module
+    config_path = str(temp_dir / "config.yaml")
+    db_path = str(temp_dir / "test.db")
 
     # Force garbage collection to close any lingering connections
     gc.collect()
@@ -74,14 +60,21 @@ def db_config(setup_module):
     default_config = {"database": {"type": "sqlite", "path": db_path}}
     config.setup(config_path=config_path, default_config=default_config)
 
-    yield config_path
+    # ``Database`` is a process-wide singleton whose ``__init__`` runs only
+    # once, so without a reset the engine would stay bound to whichever
+    # config the FIRST test in the process used. Drop it so this test's
+    # ``Database()`` re-initialises against the fresh config above (also
+    # closes the previous instance's pool + monitor thread, so no leak).
+    Database.reset()
+
+    yield config_path, temp_dir
 
     # Force garbage collection before cleanup
     gc.collect()
     time.sleep(0.1)
 
     # Cleanup after test
-    for path in [db_path, "temp_test/other.db"]:
+    for path in [db_path, str(temp_dir / "other.db")]:
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -92,14 +85,20 @@ def db_config(setup_module):
 # SQLite Basic Tests
 def test_sqlite_connection(db_config):
     """Test basic SQLite connection."""
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     assert db.connection is not None
+    row = db.fetch_one("SELECT 1 AS one")
+    assert row["one"] == 1
     db.close()
 
 
 def test_sqlite_create_table(db_config):
     """Test creating a table in SQLite."""
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
@@ -116,6 +115,8 @@ def test_sqlite_create_table(db_config):
 
 def test_sqlite_insert_single_row(db_config):
     """Test inserting a single row."""
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -129,6 +130,7 @@ def test_sqlite_insert_single_row(db_config):
 
 def test_sqlite_insert_multiple_rows(db_config):
     """Test inserting multiple rows."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -144,6 +146,7 @@ def test_sqlite_insert_multiple_rows(db_config):
 
 def test_sqlite_update_row(db_config):
     """Test updating a row."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -160,6 +163,7 @@ def test_sqlite_update_row(db_config):
 
 def test_sqlite_delete_row(db_config):
     """Test deleting a row."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -179,6 +183,7 @@ def test_sqlite_delete_row(db_config):
 
 def test_sqlite_select_with_where(db_config):
     """Test SELECT with WHERE clause."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute(
@@ -195,6 +200,7 @@ def test_sqlite_select_with_where(db_config):
 
 def test_sqlite_special_characters_in_data(db_config):
     """Test handling special characters in data."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -209,6 +215,7 @@ def test_sqlite_special_characters_in_data(db_config):
 
 def test_sqlite_empty_table(db_config):
     """Test querying an empty table."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -221,6 +228,7 @@ def test_sqlite_empty_table(db_config):
 
 def test_sqlite_large_text_data(db_config):
     """Test inserting large text data."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -236,7 +244,9 @@ def test_sqlite_large_text_data(db_config):
 # Configuration Tests
 def test_config_integration(db_config):
     """Test that database respects configuration changes."""
-    new_path = "temp_test/other.db"
+    config_path, temp_dir = db_config
+    config_path, temp_dir = db_config
+    new_path = str(temp_dir / "other.db")
     config.set("database", {"type": "sqlite", "path": new_path})
 
     db = Database()
@@ -247,6 +257,7 @@ def test_config_integration(db_config):
 
 def test_config_default_path(db_config):
     """Test default path fallback."""
+    config_path, temp_dir = db_config
     cfg = config.get("database")
     db = Database()
     db.connect()
@@ -256,6 +267,7 @@ def test_config_default_path(db_config):
 
 def test_config_type_detection(db_config):
     """Test database type detection from config."""
+    config_path, temp_dir = db_config
     db = Database()
     assert db.type == "sqlite"
 
@@ -263,14 +275,15 @@ def test_config_type_detection(db_config):
 # Error Handling Tests
 def test_invalid_db_type(db_config):
     """Test that invalid database type raises error."""
+    config_path, temp_dir = db_config
     config.set("database", {"type": "invalid"})
-    db = Database()
     with pytest.raises(ValueError, match="Unsupported database type"):
-        db.connect()
+        Database()
 
 
 def test_invalid_sql_query(db_config):
     """Test that invalid SQL raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     with pytest.raises(sqlite3.OperationalError):
@@ -279,14 +292,26 @@ def test_invalid_sql_query(db_config):
 
 
 def test_query_on_disconnected_db(db_config):
-    """Test querying without connection raises error."""
+    """Test that a fresh Database lazily connects on first query.
+
+    The current API auto-connects on first use (no explicit connect() call
+    is required), so querying a never-connected Database succeeds and
+    establishes a connection.
+    """
+    config_path, temp_dir = db_config
     db = Database()
-    with pytest.raises(ConnectionError):
-        db.execute("SELECT 1")
+    assert db.connection is None
+
+    cursor = db.execute("SELECT 1")
+    cursor.close()
+
+    assert db.connection is not None
+    db.close()
 
 
 def test_table_not_exists_error(db_config):
     """Test querying non-existent table raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     with pytest.raises(sqlite3.OperationalError):
@@ -296,6 +321,7 @@ def test_table_not_exists_error(db_config):
 
 def test_duplicate_primary_key(db_config):
     """Test inserting duplicate primary key raises error."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -308,7 +334,8 @@ def test_duplicate_primary_key(db_config):
 # Logging Tests
 def test_logging_connection(db_config):
     """Test that connection is logged."""
-    log_file = "temp_test/logs/latest.log"
+    config_path, temp_dir = db_config
+    log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
     db.close()
@@ -321,7 +348,8 @@ def test_logging_connection(db_config):
 
 def test_logging_query_execution(db_config):
     """Test that queries are logged."""
-    log_file = "temp_test/logs/latest.log"
+    config_path, temp_dir = db_config
+    log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
@@ -334,13 +362,12 @@ def test_logging_query_execution(db_config):
 
 def test_logging_errors(db_config):
     """Test that errors are logged."""
-    log_file = "temp_test/logs/latest.log"
+    config_path, temp_dir = db_config
+    log_file = str(temp_dir / "logs" / "latest.log")
     db = Database()
     db.connect()
-    try:
+    with pytest.raises(Exception):
         db.execute("INVALID SQL")
-    except Exception:
-        pass
     db.close()
 
     with open(log_file, "r") as f:
@@ -351,6 +378,7 @@ def test_logging_errors(db_config):
 # Integration Tests
 def test_full_crud_cycle(db_config):
     """Test complete CRUD cycle integration."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -381,6 +409,7 @@ def test_full_crud_cycle(db_config):
 
 def test_multiple_tables(db_config):
     """Test working with multiple tables."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -401,6 +430,7 @@ def test_multiple_tables(db_config):
 
 def test_database_reconnection(db_config):
     """Test closing and reconnecting to database."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -418,12 +448,13 @@ def test_database_reconnection(db_config):
 
 def test_config_logger_database_integration(db_config):
     """Test full integration of config, logger, and database."""
+    config_path, temp_dir = db_config
     # Config should be loaded
     db_cfg = config.get("database")
     assert db_cfg["type"] == "sqlite"
 
     # Logger should be active
-    log_file = "temp_test/logs/latest.log"
+    log_file = str(temp_dir / "logs" / "latest.log")
     assert os.path.exists(log_file)
 
     # Database should use both
@@ -441,16 +472,20 @@ def test_config_logger_database_integration(db_config):
 # PostgreSQL Tests
 def test_postgres_connection_real(db_config):
     """Test PostgreSQL connection with real driver."""
-    pytest.importorskip("psycopg2")
+    config_path, temp_dir = db_config
+    pytest.importorskip("pg8000")
 
     pg_config = {
         "type": "postgres",
         "postgres": {
-            "host": "localhost",
-            "port": 5432,
-            "user": "postgres",
-            "password": "password",
-            "dbname": "postgres",
+            # Env-driven like the postgres fixtures so this runs against the
+            # CI services (test:database_backends) instead of silently
+            # skipping on a hardcoded localhost address.
+            "host": os.getenv("POSTGRES_HOST", "localhost"),
+            "port": int(os.getenv("POSTGRES_PORT", "5432")),
+            "user": os.getenv("POSTGRES_USER", "postgres"),
+            "password": os.getenv("POSTGRES_PASSWORD", "password"),
+            "dbname": os.getenv("POSTGRES_DB", "postgres"),
         },
     }
     config.set("database", pg_config)
@@ -465,6 +500,7 @@ def test_postgres_connection_real(db_config):
 
 def test_postgres_type_detection(db_config):
     """Test PostgreSQL type detection."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -483,6 +519,7 @@ def test_postgres_type_detection(db_config):
 
 def test_placeholder_conversion(db_config):
     """Test that ? placeholders are converted to %s for PostgreSQL."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -515,6 +552,7 @@ def test_placeholder_conversion(db_config):
 
 def test_placeholder_no_conversion_sqlite(db_config):
     """Test that SQLite queries are not modified."""
+    config_path, temp_dir = db_config
     db = Database()
 
     query = "SELECT * FROM users WHERE id = ?"
@@ -525,6 +563,7 @@ def test_placeholder_no_conversion_sqlite(db_config):
 # Edge Cases
 def test_null_values(db_config):
     """Test handling NULL values."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
@@ -538,6 +577,7 @@ def test_null_values(db_config):
 
 def test_numeric_data_types(db_config):
     """Test various numeric data types."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute(
@@ -554,6 +594,7 @@ def test_numeric_data_types(db_config):
 
 def test_boolean_values(db_config):
     """Test handling boolean values (stored as integers in SQLite)."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, flag INTEGER)")
@@ -575,6 +616,7 @@ def test_boolean_values(db_config):
 
 def test_fetch_one(db_config):
     """Test fetch_one helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -592,6 +634,7 @@ def test_fetch_one(db_config):
 
 def test_fetch_all(db_config):
     """Test fetch_all helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -609,6 +652,7 @@ def test_fetch_all(db_config):
 
 def test_fetch_all_empty(db_config):
     """Test fetch_all on empty table."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
@@ -620,6 +664,7 @@ def test_fetch_all_empty(db_config):
 
 def test_table_exists(db_config):
     """Test table_exists helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -633,6 +678,7 @@ def test_table_exists(db_config):
 
 def test_execute_many(db_config):
     """Test execute_many for batch inserts."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
@@ -653,6 +699,7 @@ def test_execute_many(db_config):
 
 def test_context_manager(db_config):
     """Test database as context manager."""
+    config_path, temp_dir = db_config
     with Database() as db:
         db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
         db.execute("INSERT INTO test (data) VALUES (?)", ("test_data",))
@@ -666,6 +713,7 @@ def test_context_manager(db_config):
 
 def test_transaction_commit(db_config):
     """Test transaction with commit."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
@@ -683,6 +731,7 @@ def test_transaction_commit(db_config):
 
 def test_transaction_rollback(db_config):
     """Test transaction with rollback."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
@@ -700,6 +749,7 @@ def test_transaction_rollback(db_config):
 
 def test_row_factory_dict_access(db_config):
     """Test that rows can be accessed like dictionaries."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT)")
@@ -717,22 +767,28 @@ def test_row_factory_dict_access(db_config):
 
 
 def test_ensure_connected_error(db_config):
-    """Test that operations fail gracefully when not connected."""
+    """Test that operations auto-connect when no connection is open.
+
+    The API lazily reconnects after close(), so fetch/table helpers work
+    without an explicit connect() call.
+    """
+    config_path, temp_dir = db_config
     db = Database()
+    db.connect()
+    db.close()
+    assert db.connection is None
 
-    with pytest.raises(ConnectionError):
-        db.fetch_one("SELECT 1")
-
-    with pytest.raises(ConnectionError):
-        db.fetch_all("SELECT 1")
-
-    with pytest.raises(ConnectionError):
-        db.table_exists("test")
+    # Operations auto-reconnect after close.
+    assert db.fetch_one("SELECT 1") is not None
+    assert db.fetch_all("SELECT 1") != []
+    assert db.table_exists("test") is False
+    db.close()
 
 
 def test_auto_create_directory(db_config):
     """Test that database directory is created automatically."""
-    nested_path = "temp_test/nested/deep/test.db"
+    config_path, temp_dir = db_config
+    nested_path = str(temp_dir / "nested" / "deep" / "test.db")
     config.set("database", {"type": "sqlite", "path": nested_path})
 
     db = Database()
@@ -741,7 +797,7 @@ def test_auto_create_directory(db_config):
     db.close()
 
     # Cleanup
-    shutil.rmtree("temp_test/nested", ignore_errors=True)
+    shutil.rmtree(str(temp_dir / "nested"), ignore_errors=True)
 
 
 # Cross-database helper method tests
@@ -749,6 +805,7 @@ def test_auto_create_directory(db_config):
 
 def test_insert_or_ignore(db_config):
     """Test insert_or_ignore helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
@@ -774,6 +831,7 @@ def test_insert_or_ignore(db_config):
 
 def test_upsert(db_config):
     """Test upsert helper method."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
@@ -798,6 +856,7 @@ def test_upsert(db_config):
 
 def test_upsert_specific_columns(db_config):
     """Test upsert with specific update columns."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     db.execute(
@@ -833,6 +892,7 @@ def test_upsert_specific_columns(db_config):
 # Comprehensive Placeholder Conversion Tests
 def test_placeholder_conversion_edge_cases(db_config):
     """Test placeholder conversion handles complex queries with string literals."""
+    config_path, temp_dir = db_config
     from src.core.database.core import _PLACEHOLDER_PATTERN
 
     # Test 1: Question marks in single-quoted strings
@@ -888,6 +948,7 @@ def test_placeholder_conversion_edge_cases(db_config):
 
 def test_placeholder_conversion_in_execute_method(db_config):
     """Test that execute method uses regex pattern for placeholder conversion."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -914,6 +975,7 @@ def test_placeholder_conversion_in_execute_method(db_config):
 
 def test_placeholder_conversion_in_execute_many_method(db_config):
     """Test that execute_many method uses regex pattern for placeholder conversion."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -944,6 +1006,7 @@ def test_placeholder_conversion_in_execute_many_method(db_config):
 
 def test_postgres_connection_pool_config(db_config):
     """Test that PostgreSQL connection pool respects configuration settings."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -971,6 +1034,7 @@ def test_postgres_connection_pool_config(db_config):
 
 def test_postgres_connection_pool_config_defaults(db_config):
     """Test that PostgreSQL connection pool uses default values when not configured."""
+    config_path, temp_dir = db_config
     pg_config = {
         "type": "postgres",
         "postgres": {
@@ -1000,6 +1064,7 @@ def test_postgres_connection_pool_config_defaults(db_config):
 
 def test_connection_reuse_validation(db_config):
     """Test that connections are properly reused and validated."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1030,6 +1095,7 @@ def test_connection_reuse_validation(db_config):
 
 def test_stale_connection_handling(db_config):
     """Test that stale/closed connections are properly handled and replaced."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1053,6 +1119,7 @@ def test_stale_connection_handling(db_config):
 
 def test_connection_replacement_in_connect(db_config):
     """Test that calling connect() again properly replaces old connection."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1078,6 +1145,7 @@ def test_connection_replacement_in_connect(db_config):
 
 def test_thread_local_state_clearing(db_config):
     """Test that thread-local state is properly cleared on close()."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1130,6 +1198,7 @@ def test_connection_lifecycle_logging(db_config, caplog):
 
 def test_sqlite_connection_reuse(db_config):
     """Test that SQLite connections are properly reused within same thread."""
+    config_path, temp_dir = db_config
     db = Database()
 
     # First connection
@@ -1149,6 +1218,7 @@ def test_sqlite_connection_reuse(db_config):
 
 def test_connection_acquire_release_cycle(db_config):
     """Test complete acquire-release cycle with proper state management."""
+    config_path, temp_dir = db_config
     db = Database()
 
     # Start fresh
@@ -1174,6 +1244,7 @@ def test_connection_acquire_release_cycle(db_config):
 
 def test_multiple_connection_cycles(db_config):
     """Test multiple acquire-release cycles work correctly."""
+    config_path, temp_dir = db_config
     db = Database()
 
     connections = []
@@ -1194,6 +1265,7 @@ def test_multiple_connection_cycles(db_config):
 
 def test_connection_validation_detects_closed(db_config):
     """Test that _get_conn properly detects and handles closed connections."""
+    config_path, temp_dir = db_config
     db = Database()
     db.connect()
 
@@ -1216,11 +1288,12 @@ def test_connection_validation_detects_closed(db_config):
 
 def test_connection_timeout_config_exists(db_config):
     """Test that connect_timeout configuration is properly read."""
+    config_path, temp_dir = db_config
     # Create a config with connect_timeout
     test_config = {
         "database": {
             "type": "sqlite",
-            "path": db_config.replace("test.db", "timeout_test.db"),
+            "path": str(temp_dir / "timeout_test.db"),
             "connection_pool": {
                 "min_connections": 2,
                 "max_connections": 20,
@@ -1239,6 +1312,7 @@ def test_connection_timeout_config_exists(db_config):
 
 def test_connection_pool_state_consistency(db_config):
     """Test that connection pool state remains consistent across operations."""
+    config_path, temp_dir = db_config
     db = Database()
 
     # Multiple connections and operations
@@ -1264,20 +1338,21 @@ def test_connection_pool_state_consistency(db_config):
 def test_pool_exhaustion_handling(db_config, caplog):
     """Test that pool exhaustion is logged and raises appropriate error.
 
-    Configures a mock ThreadedConnectionPool with small maxconn,
-    requests more connections than available, verifies:
-    1. PoolError is raised
-    2. Specific pool-exhaustion error is logged
-    3. No connection leak (putconn called for returned connections)
-    """
-    try:
-        import psycopg2
-        import psycopg2.pool
-    except ImportError:
-        pytest.skip("psycopg2 not installed")
+    ``Database`` is a process-wide singleton and ``connect()`` discards its
+    thread-local connection before acquiring a new one, so one instance can
+    never hold two connections at once: exhaustion is unreachable by calling
+    ``connect()`` repeatedly. The pool's answer is therefore injected directly,
+    and the assertions cover what the application actually owns:
 
+    1. The pool's ``TimeoutError`` propagates to the caller.
+    2. It is classified and logged as pool exhaustion rather than as a generic
+       acquisition failure.
+    3. Connections handed out are returned to the pool (no leak).
+    """
     import logging
     from unittest.mock import MagicMock, patch
+
+    from src.core.database.engines.pool import ConnectionPool
 
     # Set logger to capture DEBUG level
     caplog.set_level(logging.DEBUG)
@@ -1302,33 +1377,32 @@ def test_pool_exhaustion_handling(db_config, caplog):
     # Create database instance
     db = Database()
 
-    # Mock the ThreadedConnectionPool to simulate exhaustion
-    mock_pool = MagicMock(spec=psycopg2.pool.ThreadedConnectionPool)
+    # Mock the pool to simulate exhaustion
+    mock_pool = MagicMock(spec=ConnectionPool)
 
     # Track connections handed out and returned
     connections_out = []
 
-    def getconn_side_effect():
-        """Simulate pool behavior: maxconn=2, raise PoolError when exhausted."""
-        if len(connections_out) >= 2:
-            raise psycopg2.pool.PoolError("Connection pool exhausted")
-
+    def get_connection_side_effect(timeout=None):
+        """Hand out a mock connection (unless the side effect is replaced)."""
         # Create mock connection
         mock_conn = MagicMock()
         mock_conn.closed = 0  # Connection is open
         connections_out.append(mock_conn)
         return mock_conn
 
-    def putconn_side_effect(conn):
-        """Simulate returning connection to pool."""
+    def return_connection_side_effect(conn, force_close=False):
+        """Simulate returning a connection to the pool."""
         if conn in connections_out:
             connections_out.remove(conn)
 
-    mock_pool.getconn = MagicMock(side_effect=getconn_side_effect)
-    mock_pool.putconn = MagicMock(side_effect=putconn_side_effect)
+    mock_pool.get_connection = MagicMock(side_effect=get_connection_side_effect)
+    mock_pool.return_connection = MagicMock(side_effect=return_connection_side_effect)
 
-    # Patch the ThreadedConnectionPool instantiation
-    with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+    # Patch the pool instantiation
+    with patch(
+        "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+    ):
         # First call to connect() creates pool and gets connection
         try:
             db.connect()
@@ -1336,22 +1410,13 @@ def test_pool_exhaustion_handling(db_config, caplog):
         except Exception as e:
             pytest.fail(f"First connection should succeed: {e}")
 
-        # Second call should also work (maxconn=2)
-        try:
-            # Need new db instance to avoid thread-local reuse
-            db2 = Database()
-            db2._pool = mock_pool  # Reuse the mock pool
-            db2.connect()
-            assert len(connections_out) == 2, "Second connection should be acquired"
-        except Exception as e:
-            pytest.fail(f"Second connection should succeed: {e}")
+        # Now make the pool answer with the exhaustion signal it really raises.
+        mock_pool.get_connection.side_effect = TimeoutError(
+            "PostgreSQL connection pool exhausted: no available connections"
+        )
 
-        # Third call should exhaust pool
-        db3 = Database()
-        db3._pool = mock_pool  # Reuse the mock pool
-
-        with pytest.raises(psycopg2.pool.PoolError):
-            db3.connect()
+        with pytest.raises(TimeoutError):
+            db.connect()
 
         # Verify pool exhaustion error was logged
         log_messages = [record.message for record in caplog.records]
@@ -1364,30 +1429,31 @@ def test_pool_exhaustion_handling(db_config, caplog):
             f"Expected 'no available connections' in logs, got: {log_messages}"
         )
 
-        # Clean up: return connections to pool to verify putconn was called
-        for conn in list(connections_out):
-            mock_pool.putconn(conn)
-
-        # Verify putconn was called for the connections
-        assert mock_pool.putconn.call_count >= 2, (
-            "putconn should be called to return connections to pool"
+        # Re-acquiring discards the previous thread-local connection, so the
+        # failed attempt must have returned it: no connection may leak.
+        assert mock_pool.return_connection.call_count >= 1, (
+            "return_connection should be called to return connections to the pool"
+        )
+        assert connections_out == [], (
+            f"Connection leaked from the pool: {connections_out}"
         )
 
 
 def test_connect_timeout_handling(db_config, caplog):
     """Test that connection timeout is logged with specific timeout event.
 
-    Mocks getconn() to raise a timeout-flavored OperationalError,
-    asserts the timeout log entry is emitted separately from generic errors.
+    Mocks the pool to raise a timeout-flavored driver error, asserts the
+    timeout log entry is emitted separately from generic errors.
     """
     try:
-        import psycopg2
-        import psycopg2.pool
+        import pg8000.dbapi
     except ImportError:
-        pytest.skip("psycopg2 not installed")
+        pytest.skip("pg8000 not installed")
 
     import logging
     from unittest.mock import MagicMock, patch
+
+    from src.core.database.engines.pool import ConnectionPool
 
     # Set logger to capture DEBUG level
     caplog.set_level(logging.DEBUG)
@@ -1413,18 +1479,22 @@ def test_connect_timeout_handling(db_config, caplog):
     # Create database instance
     db = Database()
 
-    # Mock the ThreadedConnectionPool
-    mock_pool = MagicMock(spec=psycopg2.pool.ThreadedConnectionPool)
+    # Mock the pool
+    mock_pool = MagicMock(spec=ConnectionPool)
 
-    # Create a timeout-flavored OperationalError
-    timeout_error = psycopg2.OperationalError("timeout during connection establishment")
+    # Create a timeout-flavored driver error
+    timeout_error = pg8000.dbapi.InterfaceError(
+        "timeout during connection establishment"
+    )
 
-    mock_pool.getconn = MagicMock(side_effect=timeout_error)
+    mock_pool.get_connection = MagicMock(side_effect=timeout_error)
 
-    # Patch the ThreadedConnectionPool instantiation
-    with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
+    # Patch the pool instantiation
+    with patch(
+        "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+    ):
         # Call connect() which should timeout
-        with pytest.raises(psycopg2.OperationalError):
+        with pytest.raises(pg8000.dbapi.InterfaceError):
             db.connect()
 
         # Verify timeout-specific error was logged
@@ -1474,6 +1544,9 @@ class TestPostgresConnectionPoolAcquisition:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton: drop it so this test's
+        # ``Database()`` re-initialises against the fresh config above.
+        Database.reset()
         return pg_config
 
     def test_pool_minconn_validation(self, postgres_pool_config):
@@ -1538,6 +1611,9 @@ class TestPostgresPlaceholderConversionComplex:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton: drop it so this test's
+        # ``Database()`` re-initialises against the fresh config above.
+        Database.reset()
 
     def test_nested_single_quotes_with_placeholders(self):
         """Test placeholder conversion with nested single quotes."""
@@ -1721,6 +1797,9 @@ class TestPostgresConnectionTimeout:
             },
         }
         config.set("database", pg_config)
+        # ``Database`` is a process-wide singleton: drop it so this test's
+        # ``Database()`` re-initialises against the fresh config above.
+        Database.reset()
         return pg_config
 
     def test_timeout_config_is_set(self, postgres_timeout_config):
@@ -1738,24 +1817,28 @@ class TestPostgresConnectionTimeout:
     def test_connection_timeout_error_handling(self, postgres_timeout_config, caplog):
         """Test that connection timeout raises proper error with logging."""
         try:
-            import psycopg2
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         from unittest.mock import MagicMock, patch
         import logging
+
+        from src.core.database.engines.pool import ConnectionPool
 
         caplog.set_level(logging.DEBUG)
 
         db = Database()
 
         # Create mock pool that raises timeout
-        mock_pool = MagicMock()
-        timeout_error = psycopg2.OperationalError("connection timeout")
-        mock_pool.getconn.side_effect = timeout_error
+        mock_pool = MagicMock(spec=ConnectionPool)
+        timeout_error = pg8000.dbapi.InterfaceError("connection timeout")
+        mock_pool.get_connection.side_effect = timeout_error
 
-        with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
-            with pytest.raises(psycopg2.OperationalError):
+        with patch(
+            "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+        ):
+            with pytest.raises(pg8000.dbapi.InterfaceError):
                 db.connect()
 
     def test_timeout_is_distinct_from_connection_refused(
@@ -1763,26 +1846,30 @@ class TestPostgresConnectionTimeout:
     ):
         """Test distinguishing timeout error from connection refused."""
         try:
-            import psycopg2
+            import pg8000.dbapi
         except ImportError:
-            pytest.skip("psycopg2 not installed")
+            pytest.skip("pg8000 not installed")
 
         from unittest.mock import MagicMock, patch
         import logging
+
+        from src.core.database.engines.pool import ConnectionPool
 
         caplog.set_level(logging.DEBUG)
 
         db = Database()
 
         # Create mock pool with timeout error (not connection refused)
-        mock_pool = MagicMock()
-        timeout_error = psycopg2.OperationalError(
+        mock_pool = MagicMock(spec=ConnectionPool)
+        timeout_error = pg8000.dbapi.InterfaceError(
             "timeout during connection establishment"
         )
-        mock_pool.getconn.side_effect = timeout_error
+        mock_pool.get_connection.side_effect = timeout_error
 
-        with patch("psycopg2.pool.ThreadedConnectionPool", return_value=mock_pool):
-            with pytest.raises(psycopg2.OperationalError) as exc_info:
+        with patch(
+            "src.core.database.engines.postgres.PostgresPool", return_value=mock_pool
+        ):
+            with pytest.raises(pg8000.dbapi.InterfaceError) as exc_info:
                 db.connect()
 
             # Verify it's a timeout error, not connection refused

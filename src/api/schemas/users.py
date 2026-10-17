@@ -2,14 +2,19 @@
 User schemas - Request/response models for user endpoints.
 """
 
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 from .common import SnowflakeID
 
 
 class UserUpdateRequest(BaseModel):
-    """User update request."""
+    """User update request.
+
+    ``username``/``email``/``password`` are account credentials handled by the
+    auth module; the profile fields below are forwarded to the profile manager
+    so PATCH /users/@me can update them (empty string clears a field).
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -17,10 +22,34 @@ class UserUpdateRequest(BaseModel):
         None, min_length=3, max_length=32, description="New username"
     )
     email: Optional[str] = Field(None, description="New email")
-    avatar_url: Optional[str] = Field(None, description="New avatar URL")
+    avatar_url: Optional[str] = Field(
+        None,
+        description=(
+            "Avatar URL. Must reference the user's uploaded avatar "
+            "(/api/v1/avatars/users/{user_id}); arbitrary URLs are rejected."
+        ),
+    )
     password: Optional[str] = Field(None, description="New password")
     current_password: Optional[str] = Field(
         None, description="Current password (required for password change)"
+    )
+    bio: Optional[str] = Field(
+        None, max_length=1000, description="Profile bio (empty string clears)"
+    )
+    pronouns: Optional[str] = Field(
+        None, max_length=40, description="Pronouns (empty string clears)"
+    )
+    location: Optional[str] = Field(
+        None, max_length=100, description="Location (empty string clears)"
+    )
+    timezone: Optional[str] = Field(
+        None, max_length=64, description="Timezone (empty string clears)"
+    )
+    banner_url: Optional[str] = Field(
+        None, description="Banner image URL (empty string clears)"
+    )
+    social_links: Optional[List[dict]] = Field(
+        None, description="Social link objects (empty list clears all)"
     )
 
 

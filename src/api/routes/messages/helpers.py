@@ -47,6 +47,7 @@ def _message_to_response(
     read_by_data: Optional[List[Dict[str, Any]]] = None,
     media_mod=None,
     viewer_user_id: Optional[int] = None,
+    poll_viewer_user_id: Optional[int] = None,
 ) -> MessageResponse:
     def get_attr(obj, name, default=None):
         if isinstance(obj, dict):
@@ -89,45 +90,57 @@ def _message_to_response(
 
             url = att_url if isinstance(att_url, str) else ""
             if media_mod and url and url.startswith("/api/v1/media/attachments/"):
-                try:
-                    file_id = get_attr(att, "file_id")
-                    stored_name = ""
-                    if not file_id:
-                        metadata = get_attr(att, "metadata")
-                        if metadata:
-                            if isinstance(metadata, dict):
-                                file_id = metadata.get("file_id")
-                            elif isinstance(metadata, str):
-                                import json
+                file_id = get_attr(att, "file_id")
+                stored_name = ""
+                if not file_id:
+                    metadata = get_attr(att, "metadata")
+                    if metadata:
+                        if isinstance(metadata, dict):
+                            file_id = metadata.get("file_id")
+                        elif isinstance(metadata, str):
+                            import json
 
-                                try:
-                                    meta = json.loads(metadata)
-                                    file_id = meta.get("file_id")
-                                except Exception:
-                                    pass
+                            try:
+                                meta = json.loads(metadata)
+                                file_id = meta.get("file_id")
+                            except Exception:
+                                pass
 
-                    if not file_id and att_url:
-                        stored_name = att_url.split("/")[-1]
-                        if stored_name:
-                            media_file = media_mod.get_file_by_filename(stored_name)
-                            if media_file:
-                                file_id = media_file.id
+                if not file_id and att_url:
+                    stored_name = att_url.split("/")[-1]
+                    if stored_name:
+                        media_file = media_mod.get_file_by_filename(stored_name)
+                        if media_file:
+                            file_id = media_file.id
 
-                    if file_id:
-                        stored_tail = stored_name
-                        if not stored_tail and att_url:
-                            parts = att_url.split("/")
-                            stored_tail = parts[-1] if parts else ""
-                        if not stored_tail:
-                            stored_tail = str(att_filename or "")
-                        signed = media_mod.sign_url(
-                            url=f"/api/v1/media/attachments/{stored_tail}",
-                            file_id=int(file_id),
-                            user_id=viewer_user_id,
-                        )
-                        url = signed.url
-                except Exception as e:
-                    logger.debug(f"Failed to sign attachment URL: {e}")
+                if file_id:
+                    stored_tail = stored_name
+                    if not stored_tail and att_url:
+                        parts = att_url.split("/")
+                        stored_tail = parts[-1] if parts else ""
+                    if not stored_tail:
+                        stored_tail = str(att_filename or "")
+                    # SECURITY: signed URLs are bound to the viewing
+                    # user (uid embedded in the HMAC and enforced at
+                    # verification time), so a leaked URL is useless
+                    # to anyone else. Only serialize-time viewers get
+                    # a signature; anonymous/broadcast serialization
+                    # keeps the raw URL, which stays protected by the
+                    # standard auth + per-file access checks.
+                    if viewer_user_id is not None:
+                        try:
+                            signed = media_mod.sign_url(
+                                int(file_id),
+                                user_id=viewer_user_id,
+                                url=f"/api/v1/media/attachments/{stored_tail}",
+                            )
+                            url = signed.url
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to sign attachment URL for file {file_id} "
+                                f"(viewer {viewer_user_id}): {e}; "
+                                "falling back to unsigned URL"
+                            )
 
             attachments.append(
                 AttachmentResponse(
@@ -183,21 +196,63 @@ def _message_to_response(
     if isinstance(metadata, dict):
         poll_id = metadata.get("poll_id")
 
-    if poll_id and viewer_user_id is not None:
+    # ``poll_viewer_user_id`` lets broadcast emitters (e.g. AutoMod
+    # tombstones) hydrate the poll for a context viewer without also
+    # signing attachment URLs for that specific user.
+    if poll_viewer_user_id is None:
+        poll_viewer_user_id = viewer_user_id
+
+    if poll_id and poll_viewer_user_id is not None:
         polls_module = api.get_polls()
         if polls_module:
             try:
-                poll_obj = polls_module.get_poll(int(poll_id), viewer_user_id)
+                poll_obj = polls_module.get_poll(int(poll_id), poll_viewer_user_id)
                 if poll_obj:
                     poll_response = _poll_to_response(poll_obj)
-                    # Include current results and user's voting status
-                    results = polls_module.get_results(int(poll_id), viewer_user_id)
+                    # Include current results and the poll viewer's voting status
+                    results = polls_module.get_results(
+                        int(poll_id), poll_viewer_user_id
+                    )
                     if results:
                         from src.api.routes.polls import _results_to_response
 
                         poll_results = _results_to_response(results)
             except Exception as e:
                 logger.debug(f"Failed to fetch poll/results for message {msg_id}: {e}")
+
+    # SECURITY/UX parity: ``suppress_embeds`` flips the
+    # ``embed_message_embeds.suppressed`` flag, but metadata-stored
+    # embeds (``metadata["embeds"]``, what clients actually render)
+    # previously ignored that state entirely, making suppression a dead
+    # end-to-end control. If every attached embed is suppressed, omit
+    # the embeds from the response and mark the message so clients can
+    # render an appropriate indicator.
+    embeds_out = get_attr(msg, "embeds", []) or []
+    try:
+        embeds_module = api.get_embeds()
+        if (
+            embeds_module
+            and msg_id
+            and embeds_module.are_embeds_suppressed(int(msg_id))
+        ):
+            embeds_out = []
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata["embeds_suppressed"] = True
+    except Exception as e:
+        logger.debug(f"Failed to evaluate embed suppression for {msg_id}: {e}")
+
+    # Mention parity: clients (notifications.js) read ``mentions`` to
+    # decide mention vs plain-message notifications. Parse user-mention
+    # ids straight from the content so REST responses and broadcast
+    # payloads carry the same array without extra service plumbing.
+    mention_ids: List[str] = []
+    try:
+        from src.core.notifications.parser import USER_MENTION_PATTERN
+
+        raw_content = content if isinstance(content, str) else ""
+        mention_ids = [m for m in USER_MENTION_PATTERN.findall(raw_content)]
+    except Exception as e:
+        logger.debug(f"Failed to parse mentions for message {msg_id}: {e}")
 
     return MessageResponse(
         id=SnowflakeID(msg_id),
@@ -210,7 +265,7 @@ def _message_to_response(
         if get_attr(msg, "reply_to_id")
         else None,
         attachments=attachments,
-        embeds=get_attr(msg, "embeds", []) or [],
+        embeds=embeds_out,
         pinned=get_attr(msg, "pinned", False),
         status=getattr(get_attr(msg, "status"), "value", get_attr(msg, "status"))
         if get_attr(msg, "status")
@@ -224,8 +279,10 @@ def _message_to_response(
         or f"User {author_id}",
         author_avatar_url=author_avatar_url or get_attr(msg, "author_avatar_url"),
         author_badges=author_badges or get_attr(msg, "author_badges") or [],
+        mentions=mention_ids,
         reactions=reactions_data or [],
         metadata=metadata,
+        deleted=bool(get_attr(msg, "deleted", False)),
         poll=poll_response,
         poll_results=poll_results,
     )

@@ -28,16 +28,23 @@ Usage:
 from typing import Optional, Tuple
 from .core import (
     EncryptionManager,
+    KeyringDecryptionError,
     SnowflakeGenerator,
     MessageEncryptor,
     generate_key_pair as _generate_key_pair,
     sign_data as _sign_data,
     verify_signature as _verify_signature,
 )
+from .hkdf import derive_key as _derive_key
+from .channel_ratchet import (
+    ChannelRatchetManager as _ChannelRatchetManager,
+    WIRE_PREFIX as _RATCHET_WIRE_PREFIX,
+)
 
 _encryption_manager: Optional[EncryptionManager] = None
 _snowflake_generator: Optional[SnowflakeGenerator] = None
 _message_encryptor: Optional[MessageEncryptor] = None
+_ratchet_manager: Optional[_ChannelRatchetManager] = None
 _setup_called = False
 
 
@@ -45,7 +52,7 @@ def setup(
     worker_id: int = 1,
     datacenter_id: int = 1,
     epoch_timestamp: Optional[int] = None,
-    argon2_time_cost: int = 2,
+    argon2_time_cost: int = 3,
     argon2_memory_cost: int = 65536,
     argon2_parallelism: int = 2,
 ):
@@ -53,8 +60,8 @@ def setup(
     Setup the encryption utilities. Optional - uses defaults if not called.
 
     Args:
-        worker_id (int): Worker ID for Snowflake generation (0-1023).
-        datacenter_id (int): Datacenter ID for Snowflake generation (0-1023).
+        worker_id (int): Worker ID for Snowflake generation (0-31, 5-bit).
+        datacenter_id (int): Datacenter ID for Snowflake generation (0-31, 5-bit).
         epoch_timestamp (int): Custom epoch timestamp in milliseconds.
         argon2_time_cost (int): Time cost for Argon2 (iterations).
         argon2_memory_cost (int): Memory cost for Argon2 in KiB.
@@ -75,6 +82,14 @@ def setup(
     )
 
     _setup_called = True
+    # Argon2 params changed -> cached pepper store may hold stale dummy
+    # state; refresh lazily on next use.
+    try:
+        from .pepper import reset_pepper_store
+
+        reset_pepper_store()
+    except Exception:
+        pass
 
 
 def _get_manager() -> EncryptionManager:
@@ -85,7 +100,8 @@ def _get_manager() -> EncryptionManager:
         _encryption_manager = EncryptionManager()
         _setup_called = True
 
-    assert _encryption_manager is not None
+    if _encryption_manager is None:
+        raise RuntimeError("Encryption manager could not be initialized.")
     return _encryption_manager
 
 
@@ -107,6 +123,86 @@ def _get_message_encryptor() -> MessageEncryptor:
         _message_encryptor = MessageEncryptor()
 
     return _message_encryptor
+
+
+def _get_ratchet_manager() -> Optional[_ChannelRatchetManager]:
+    """Internal: Get or create a default channel ratchet manager.
+
+    The manager is only created lazily when the database is available.
+    Callers that know they have a database should construct their own
+    manager via :class:`ChannelRatchetManager` and pass it in via
+    ``ratchet_manager=`` instead of relying on this singleton.
+    """
+    global _ratchet_manager
+    if _ratchet_manager is not None:
+        return _ratchet_manager
+    try:
+        from src.core.database import Database
+
+        db = Database()
+    except Exception:
+        return None
+    try:
+        is_connected = bool(getattr(db, "is_connected", lambda: False)())
+    except Exception:
+        is_connected = False
+    if not is_connected:
+        try:
+            db.connect()
+        except Exception:
+            return None
+    _ratchet_manager = _ChannelRatchetManager(db)
+    return _ratchet_manager
+
+
+def get_ratchet_manager(db: Optional[object] = None) -> _ChannelRatchetManager:
+    """Public accessor for the channel ratchet manager.
+
+    When ``db`` is provided, a fresh manager bound to that database
+    is returned (and cached). Otherwise the module-level singleton
+    is returned, creating it on first use.
+    """
+    global _ratchet_manager
+    if db is not None:
+        return _ChannelRatchetManager(db)
+    if _ratchet_manager is None:
+        _ratchet_manager = _get_ratchet_manager() or _ChannelRatchetManager(_LazyDb())
+    return _ratchet_manager
+
+
+class _LazyDb:
+    """Lazy database proxy used only when no explicit db is provided.
+
+    The proxy defers ``Database`` instantiation until a method is
+    actually called, so importing :mod:`utils.encryption` does not
+    eagerly open a connection.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        from src.core.database import Database
+
+        db = Database()
+        try:
+            is_connected = bool(getattr(db, "is_connected", lambda: False)())
+        except Exception:
+            is_connected = False
+        if not is_connected:
+            try:
+                db.connect()
+            except Exception:
+                pass
+        return getattr(db, name)
+
+
+def hkdf_derive(
+    ikm: bytes,
+    *,
+    salt: bytes,
+    info: bytes,
+    length: int = 32,
+) -> bytes:
+    """Convenience wrapper around :func:`src.utils.encryption.hkdf.derive_key`."""
+    return _derive_key(ikm, salt=salt, info=info, length=length)
 
 
 def hash_password(password: str) -> str:
@@ -134,6 +230,22 @@ def verify_password(password: str, hash_str: str) -> bool:
         bool: True if password matches, False otherwise.
     """
     return _get_manager().verify_password(password, hash_str)
+
+
+def needs_password_rehash(hash_str: str) -> bool:
+    """True when a stored hash should be upgraded (stale pepper/params)."""
+    try:
+        return bool(_get_manager().needs_rehash(hash_str))
+    except Exception:
+        return False
+
+
+def password_pepper_id(hash_str: str) -> Optional[str]:
+    """Pepper id for a peppered hash, else None (legacy)."""
+    try:
+        return _get_manager().get_password_pepper_id(hash_str)
+    except Exception:
+        return None
 
 
 def encrypt_data(
@@ -238,12 +350,13 @@ def generate_snowflake_id() -> int:
     return _get_snowflake().generate()
 
 
-def parse_snowflake_id(snowflake_id: int) -> dict:
+def parse_snowflake_id(snowflake_id: int | str) -> dict:
     """
     Parse a Snowflake ID into its components.
 
     Args:
-        snowflake_id (int): The Snowflake ID to parse.
+        snowflake_id (int | str): The Snowflake ID to parse. Numeric strings
+            are accepted because IDs serialize as strings in JSON.
 
     Returns:
         dict: Dictionary with timestamp, datacenter_id, worker_id, and sequence.
@@ -254,29 +367,70 @@ def parse_snowflake_id(snowflake_id: int) -> dict:
 # === Message Encryption (at rest) ===
 
 
-def encrypt_message(content: str, message_id: Optional[int] = None) -> str:
+def encrypt_message(
+    content: str,
+    message_id: Optional[int] = None,
+    *,
+    conversation_id: Optional[int] = None,
+    ratchet_manager: Optional[_ChannelRatchetManager] = None,
+) -> str:
     """
     Encrypt message content for storage at rest.
-    Uses AES-256-GCM with auto-generated key stored in ~/.plexichat/data/.message_encryption_key
+
+    When ``conversation_id`` and ``ratchet_manager`` are both provided,
+    the new v3 channel ratchet is used and the resulting envelope is
+    ``ENC:3:{interval_id}:{base64(...)}``. Otherwise the legacy
+    per-message keyring (``ENC:1:`` or ``ENC:2:``) is used.
 
     Args:
         content (str): The plaintext message content.
-        message_id (int, optional): Message ID for additional integrity protection.
+        message_id (int, optional): Message ID for additional integrity
+            protection.
+        conversation_id (int, optional): Conversation ID. When
+            supplied together with ``ratchet_manager``, enables the
+            v3 ratchet path.
+        ratchet_manager: Optional pre-built ratchet manager. When
+            ``None`` and ``conversation_id`` is provided, the module
+            singleton is used.
 
     Returns:
-        str: Encrypted content with prefix marker (ENC:1:...).
+        str: Encrypted content with prefix marker (ENC:1:..., ENC:2:...,
+        or ENC:3:...).
     """
+    if conversation_id is not None:
+        manager = ratchet_manager or _get_ratchet_manager()
+        if manager is not None and message_id is not None:
+            result = manager.encrypt(
+                conversation_id=int(conversation_id),
+                message_id=int(message_id),
+                plaintext=content.encode("utf-8"),
+            )
+            return result.envelope
     return _get_message_encryptor().encrypt_message(content, message_id)
 
 
-def decrypt_message(encrypted_content: str, message_id: Optional[int] = None) -> str:
+def decrypt_message(
+    encrypted_content: str,
+    message_id: Optional[int] = None,
+    *,
+    conversation_id: Optional[int] = None,
+    ratchet_manager: Optional[_ChannelRatchetManager] = None,
+) -> str:
     """
     Decrypt message content from storage.
-    Automatically detects legacy plaintext messages and returns them unchanged.
+    Automatically detects legacy plaintext messages and returns them
+    unchanged, and dispatches between the v3 ratchet envelope and
+    the legacy v1/v2 envelopes.
 
     Args:
-        encrypted_content (str): The encrypted content (or legacy plaintext).
+        encrypted_content (str): The encrypted content (or legacy
+            plaintext).
         message_id (int, optional): Message ID used during encryption.
+        conversation_id (int, optional): Conversation ID. Required to
+            decrypt v3 envelopes.
+        ratchet_manager: Optional pre-built ratchet manager. When
+            ``None`` and the envelope is v3, the module singleton is
+            used.
 
     Returns:
         str: Decrypted plaintext content.
@@ -284,6 +438,20 @@ def decrypt_message(encrypted_content: str, message_id: Optional[int] = None) ->
     Raises:
         ValueError: If decryption fails (corrupted data or wrong key).
     """
+    if encrypted_content.startswith(_RATCHET_WIRE_PREFIX):
+        if conversation_id is None or message_id is None:
+            raise ValueError(
+                "v3 ratchet envelope requires both conversation_id and message_id"
+            )
+        manager = ratchet_manager or _get_ratchet_manager()
+        if manager is None:
+            raise ValueError("no ratchet manager available to decrypt v3 envelope")
+        plaintext = manager.decrypt(
+            conversation_id=int(conversation_id),
+            message_id=int(message_id),
+            envelope=encrypted_content,
+        )
+        return plaintext.decode("utf-8")
     return _get_message_encryptor().decrypt_message(encrypted_content, message_id)
 
 
@@ -361,11 +529,14 @@ def decrypt_file(blob: bytes, aad: Optional[bytes] = None) -> bytes:
 
 __all__ = [
     "EncryptionManager",
+    "KeyringDecryptionError",
     "SnowflakeGenerator",
     "MessageEncryptor",
     "setup",
     "hash_password",
     "verify_password",
+    "needs_password_rehash",
+    "password_pepper_id",
     "encrypt_data",
     "decrypt_data",
     "generate_key_pair",
@@ -380,4 +551,6 @@ __all__ = [
     "rotate_keys",
     "encrypt_file",
     "decrypt_file",
+    "get_ratchet_manager",
+    "hkdf_derive",
 ]

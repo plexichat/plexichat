@@ -38,6 +38,7 @@ from .config import (
 from .manager import RateLimitManager
 from .decorators import rate_limit, custom_rate_limit
 from .middleware import RateLimitMiddlewareASGI
+from .storage import MemoryStorage
 
 # Alias for backward compatibility with tests
 RateLimitMiddleware = RateLimitMiddlewareASGI
@@ -45,11 +46,18 @@ RateLimitMiddleware = RateLimitMiddlewareASGI
 __all__ = [
     "setup",
     "check_rate_limit",
+    "acheck_rate_limit",
     "get_headers",
     "reset_bucket",
     "reset_user",
     "reset_all",
     "get_bucket_info",
+    "increment_custom_usage",
+    "aincrement_custom_usage",
+    "areset_bucket",
+    "areset_user",
+    "areset_all",
+    "aget_bucket_info",
     "set_bypass_check",
     "get_manager",
     "is_setup",
@@ -85,7 +93,7 @@ def setup(
     webhook_multiplier: float = 1.0,
     bypass_check: Optional[Callable[..., bool]] = None,
     enable_global_limit: bool = True,
-) -> None:
+) -> bool:
     """
     Initialize the rate limiting module.
 
@@ -99,8 +107,39 @@ def setup(
         webhook_multiplier: Multiplier for webhook rate limits.
         bypass_check: Callable(user_id, is_admin, is_internal) -> bool for bypass logic.
         enable_global_limit: Whether to enforce global rate limits.
+
+    Returns:
+        True if the module was set up (or already configured), False if the
+        call was REFUSED because it would have downgraded the limiter.
+
+    SECURITY: a lazy fallback such as ``setup(MemoryStorage(), ...)`` must
+    never silently replace an already-configured distributed backend
+    (Valkey / Database). That downgrade turns the shared limiter into
+    per-process memory with counters that diverge across workers — exactly
+    the multi-worker bypass condition server initialization warns about.
+    Requests that would downgrade are refused and logged instead.
     """
     global _manager, _setup_complete
+
+    if _setup_complete and _manager is not None:
+        requested_is_memory = storage_backend is None or isinstance(
+            storage_backend, MemoryStorage
+        )
+        existing_is_memory = isinstance(_manager._storage, MemoryStorage)
+        if requested_is_memory and not existing_is_memory:
+            try:
+                from utils import logger as _logger
+
+                _logger.warning(
+                    "ratelimit.setup() refused: refusing to DOWNGRADE the "
+                    "already-configured %s backend to per-process "
+                    "MemoryStorage. The existing distributed rate limiter "
+                    "stays active.",
+                    type(_manager._storage).__name__,
+                )
+            except Exception:
+                pass  # Logging must never break the refusal itself.
+            return False
 
     _manager = RateLimitManager(
         storage_backend=storage_backend,
@@ -114,6 +153,7 @@ def setup(
         enable_global_limit=enable_global_limit,
     )
     _setup_complete = True
+    return True
 
 
 def _ensure_setup() -> None:
@@ -249,6 +289,99 @@ def set_bypass_check(bypass_check: Callable[..., bool]) -> None:
     _manager.set_bypass_check(bypass_check)
 
 
+def increment_custom_usage(key: str, field: str, amount: int, ttl: int = 86400) -> int:
+    """Increment a custom usage counter directly in storage.
+
+    Args:
+        key: Bucket key.
+        field: Field name to increment.
+        amount: Amount to add.
+        ttl: TTL to apply to the counter.
+
+    Returns:
+        The new counter value.
+    """
+    _ensure_setup()
+    assert _manager is not None
+    return _manager.increment_custom_usage(key, field, amount, ttl)
+
+
 def is_setup() -> bool:
     """Check if the rate limit module is initialized."""
     return _setup_complete
+
+
+# ---------------------------------------------------------------------------
+# Async API
+# ---------------------------------------------------------------------------
+# Event-loop callers (the ASGI middleware, the route decorators, async
+# handlers) must not block on the storage backend. Each function below
+# mirrors the blocking one it is named for and awaits the backend directly.
+
+
+async def acheck_rate_limit(
+    user_id: Optional[int] = None,
+    ip_address: Optional[str] = None,
+    route: Optional[str] = None,
+    resource_id: Optional[int] = None,
+    is_bot: bool = False,
+    is_webhook: bool = False,
+    is_admin: bool = False,
+    is_internal: bool = False,
+    webhook_id: Optional[int] = None,
+    cost: int = 1,
+    override_config: Optional[RateLimitConfig] = None,
+) -> RateLimitResult:
+    """Awaitable counterpart of :func:`check_rate_limit`."""
+    _ensure_setup()
+    assert _manager is not None
+    return await _manager.acheck_rate_limit(
+        user_id=user_id,
+        ip_address=ip_address,
+        route=route,
+        resource_id=resource_id,
+        is_bot=is_bot,
+        is_webhook=is_webhook,
+        is_admin=is_admin,
+        is_internal=is_internal,
+        webhook_id=webhook_id,
+        cost=cost,
+        override_config=override_config,
+    )
+
+
+async def aincrement_custom_usage(
+    key: str, field: str, amount: int, ttl: int = 86400
+) -> int:
+    """Awaitable counterpart of :func:`increment_custom_usage`."""
+    _ensure_setup()
+    assert _manager is not None
+    return await _manager.aincrement_custom_usage(key, field, amount, ttl)
+
+
+async def aget_bucket_info(bucket_key: str) -> Optional[RateLimitBucket]:
+    """Awaitable counterpart of :func:`get_bucket_info`."""
+    _ensure_setup()
+    assert _manager is not None
+    return await _manager.aget_bucket_info(bucket_key)
+
+
+async def areset_bucket(bucket_key: str) -> None:
+    """Awaitable counterpart of :func:`reset_bucket`."""
+    _ensure_setup()
+    assert _manager is not None
+    await _manager.areset_bucket(bucket_key)
+
+
+async def areset_user(user_id: int) -> None:
+    """Awaitable counterpart of :func:`reset_user`."""
+    _ensure_setup()
+    assert _manager is not None
+    await _manager.areset_user(user_id)
+
+
+async def areset_all() -> None:
+    """Awaitable counterpart of :func:`reset_all`."""
+    _ensure_setup()
+    assert _manager is not None
+    await _manager.areset_all()

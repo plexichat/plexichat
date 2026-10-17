@@ -9,7 +9,7 @@ class AIModerationRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._backend: str = self.config.get("backend", "openai")
+        self._backend: str = self.config.get("backend", "shieldstral")
         self._categories: Optional[List[str]] = self.config.get("categories")
         self._score_threshold = self.config.get("score_threshold")
         self._severity = self._parse_severity(self.config.get("severity"))
@@ -86,8 +86,15 @@ class AIModerationRule(BaseRule):
     def validate_config(cls, config: Dict[str, Any]) -> tuple:
         issues = []
         backend = config.get("backend")
-        if backend and backend not in {"openai", "perspective", "custom"}:
-            issues.append("backend must be one of: openai, perspective, custom")
+        if backend and backend not in {
+            "openai",
+            "perspective",
+            "custom",
+            "shieldstral",
+        }:
+            issues.append(
+                "backend must be one of: openai, perspective, custom, shieldstral"
+            )
 
         categories = config.get("categories")
         if categories is not None and not isinstance(categories, list):

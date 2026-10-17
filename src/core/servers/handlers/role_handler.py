@@ -6,19 +6,24 @@ import json
 from typing import Optional, List, Dict, Any
 from src.core.base import SnowflakeID
 from ..models import Role, ChannelOverride, AuditLogAction
+from ..manager.converters import _row_to_role, _row_to_override
 from ..exceptions import (
     RoleNotFoundError,
     RoleHierarchyError,
     DefaultRoleError,
     MemberNotFoundError,
     InvalidRoleNameError,
+    ServerLimitReachedError,
 )
 from src.core.database import cached
-from ..permissions import (
+from ..permission_utils import (
     calculate_base_permissions,
     apply_channel_overrides,
     has_permission as check_permission,
     can_manage_role,
+    get_highest_role_position,
+    validate_permission_dict,
+    check_permissions_grantable,
 )
 
 
@@ -54,11 +59,45 @@ class RoleHandler:
         self.manager.require_permission(user_id, server_id, "roles.manage")
         name = self.validate_role_name(name)
 
+        # Permission dicts are validated against the SERVER_PERMISSIONS
+        # vocabulary; wildcards ("*", "namespace.*") must never be persisted.
+        validate_permission_dict(permissions)
+        # A role editor may only grant permissions they possess themselves,
+        # otherwise any roles.manage holder could self-escalate to
+        # administrator.
+        editor_perms = self.get_permissions(user_id, server_id)
+        check_permissions_grantable(editor_perms, permissions)
+
+        # L2: the configured per-server role cap was never consulted on the
+        # creation path, so a server could grow unbounded roles.
+        max_roles = self.manager._config.get("max_roles_per_server", 250)
+        count_row = self.db.fetch_one(
+            "SELECT COUNT(*) as count FROM srv_roles "
+            "WHERE server_id = ? AND deleted = 0",
+            (server_id,),
+        )
+        role_count = count_row["count"] if count_row else 0
+        if role_count >= max_roles:
+            raise ServerLimitReachedError(
+                f"Server has reached the maximum of {max_roles} roles",
+                limit=max_roles,
+            )
+
         pos_row = self.db.fetch_one(
             "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM srv_roles WHERE server_id = ? AND deleted = 0",
             (server_id,),
         )
         position = pos_row["next_pos"] if pos_row else 1
+
+        # Hierarchy on creation: a non-owner cannot create a role at or above
+        # their own highest role, so clamp the new role below it.
+        server_row = self.manager.get_server(server_id, user_id)
+        is_owner = server_row is not None and server_row.owner_id == user_id
+        if not is_owner:
+            user_roles = self.manager._get_member_role_rows(server_id, user_id)
+            user_highest = get_highest_role_position(user_roles)
+            if user_highest > 0 and position >= user_highest:
+                position = user_highest - 1
 
         now = self.manager._get_timestamp()
         role_id = self.manager._generate_id()
@@ -98,7 +137,7 @@ class RoleHandler:
             return None
         if not self.manager._is_member(row["server_id"], user_id):
             return None
-        return self.manager._row_to_role(row)
+        return _row_to_role(row)
 
     def get_roles(self, user_id: SnowflakeID, server_id: SnowflakeID) -> List[Role]:
         """Get all roles in a server."""
@@ -107,7 +146,7 @@ class RoleHandler:
             "SELECT * FROM srv_roles WHERE server_id = ? AND deleted = 0 ORDER BY position DESC",
             (server_id,),
         )
-        return [self.manager._row_to_role(row) for row in rows]
+        return [_row_to_role(row) for row in rows]
 
     def update_role(
         self,
@@ -118,6 +157,7 @@ class RoleHandler:
         color: Optional[str] = None,
         hoist: Optional[bool] = None,
         mentionable: Optional[bool] = None,
+        position: Optional[int] = None,
     ) -> Role:
         """Update role settings."""
         role = self.get_role(role_id, user_id)
@@ -134,6 +174,20 @@ class RoleHandler:
             raise RoleHierarchyError(
                 "Cannot modify a role at or above your highest role"
             )
+
+        if permissions is not None:
+            validate_permission_dict(permissions)
+            editor_perms = self.get_permissions(user_id, role.server_id)
+            check_permissions_grantable(editor_perms, permissions)
+
+        if position is not None and position != role.position:
+            if role.is_default:
+                raise DefaultRoleError("Cannot move the default role")
+            user_highest = get_highest_role_position(user_roles)
+            if not is_owner and position >= user_highest:
+                raise RoleHierarchyError(
+                    "Cannot move a role to or above your highest role"
+                )
 
         updates = []
         params = []
@@ -167,12 +221,17 @@ class RoleHandler:
             params.append(1 if mentionable else 0)
             changes["mentionable"] = {"old": role.mentionable, "new": mentionable}
 
-        if updates:
-            updates.append("updated_at = ?")
-            params.append(self.manager._get_timestamp())
-            params.append(role_id)
+        if position is not None and position != role.position:
+            updates.append("position = ?")
+            params.append(position)
+            changes["position"] = {"old": role.position, "new": position}
 
-            # Whitelist of allowed column names for UPDATE
+        if updates:
+            # Whitelist of allowed column names for UPDATE. ``updated_at`` is
+            # deliberately absent: every statement below already writes it, so
+            # keeping an ``updated_at = ?`` entry here would emit
+            # "SET updated_at = ?, updated_at = ?", which PostgreSQL rejects
+            # with "multiple assignments to same column".
             allowed_columns = {
                 "name",
                 "color",
@@ -180,25 +239,28 @@ class RoleHandler:
                 "mentionable",
                 "permissions",
                 "position",
-                "updated_at",
             }
-            # Validate all column names in updates
-            for update in updates:
+
+            # Single atomic UPDATE: one statement assigns every changed
+            # column plus updated_at, so a mid-update failure cannot leave a
+            # half-written row and the write costs one round trip instead of
+            # one per column. Column names come only from the allow-list
+            # (values stay parameterized) and the SET clause is joined, so
+            # the static SQL-guard audit keeps passing.
+            set_columns = []
+            set_params = []
+            for update, value in zip(updates, params):
                 col_name = update.split(" = ")[0]
                 if col_name not in allowed_columns:
                     raise ValueError(f"Invalid column name: {col_name}")
-
-            # Avoid dynamic UPDATE to satisfy bandit - execute individual updates per column
+                set_columns.append(col_name)
+                set_params.append(value)
             now = self.manager._get_timestamp()
-            for i, update in enumerate(updates):
-                col_name = update.split(" = ")[0]
-                value = params[i]
-                query = (
-                    "UPDATE srv_roles SET "  # nosec: B608
-                    + col_name
-                    + " = ?, updated_at = ? WHERE id = ?"  # nosec: B608
-                )
-                self.db.execute(query, (value, now, role_id))
+            set_columns.append("updated_at")
+            set_params.append(now)
+            set_clause = ", ".join(f"{col} = ?" for col in set_columns)
+            query = "UPDATE srv_roles SET " + set_clause + " WHERE id = ?"
+            self.db.execute(query, (*set_params, role_id))
 
             self.manager._log_audit(
                 role.server_id,
@@ -208,6 +270,11 @@ class RoleHandler:
                 role_id,
                 changes,
             )
+
+            # Role permission changes affect every member holding the role, so
+            # the cached permission snapshots for the whole server must be
+            # dropped or revocations would not take effect until the TTL.
+            self.manager._invalidate_server_permission_caches(role.server_id)
 
         updated_role = self.get_role(role_id, user_id)
         assert updated_role is not None
@@ -235,6 +302,10 @@ class RoleHandler:
 
         self.db.execute("UPDATE srv_roles SET deleted = 1 WHERE id = ?", (role_id,))
         self.db.execute("DELETE FROM srv_member_roles WHERE role_id = ?", (role_id,))
+
+        # Members who held the deleted role lose its permissions immediately;
+        # drop the server's cached permission snapshots so they are recomputed.
+        self.manager._invalidate_server_permission_caches(role.server_id)
 
         self.manager._log_audit(
             role.server_id, user_id, AuditLogAction.ROLE_DELETE, "role", role_id
@@ -286,7 +357,7 @@ class RoleHandler:
                WHERE channel_id = ? AND target_type = ? AND target_id = ?""",
             (channel_id, target_type, target_id),
         )
-        return self.manager._row_to_override(row) if row else None
+        return _row_to_override(row) if row else None
 
     def set_channel_override(
         self,
@@ -304,7 +375,7 @@ class RoleHandler:
 
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
-            user_id, channel.server_id, "roles.manage", channel_id
+            user_id, channel.server_id, "channels.manage", channel_id
         )
 
         now = self.manager._get_timestamp()
@@ -354,7 +425,7 @@ class RoleHandler:
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
 
-        self.manager._permission_cache.clear()
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
@@ -381,7 +452,7 @@ class RoleHandler:
 
             raise ChannelNotFoundError("Channel not found")
         self.manager.require_permission(
-            user_id, channel.server_id, "roles.manage", channel_id
+            user_id, channel.server_id, "channels.manage", channel_id
         )
 
         self.db.execute(
@@ -406,7 +477,7 @@ class RoleHandler:
         # Invalidate permissions cache
         from src.core.database import invalidate_pattern
 
-        self.manager._permission_cache.clear()
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         if target_type == "member":
             invalidate_pattern(f"perms:{target_id}:{channel.server_id}:*")
         else:
@@ -440,6 +511,11 @@ class RoleHandler:
         # Validate role_ids are integers to prevent SQL injection
         if role_ids and not all(isinstance(rid, int) for rid in role_ids):
             raise ValueError("All role IDs must be integers")
+
+        # Role-position map so overrides can be applied LOWEST position
+        # first: a higher-position role's deny must beat a lower role's
+        # allow (see apply_channel_overrides ordering contract).
+        role_positions = {int(r["id"]): int(r.get("position") or 0) for r in role_rows}
 
         # Avoid dynamic IN clause to satisfy bandit - use individual queries
         overrides_rows = []
@@ -475,6 +551,12 @@ class RoleHandler:
                 else:
                     channel_overrides[cid].append(dict(row))
 
+        # Lowest-position role first so the highest role's decision wins.
+        for cid in channel_overrides:
+            channel_overrides[cid].sort(
+                key=lambda o: role_positions.get(int(o.get("target_id") or 0), 0)
+            )
+
         # 4. Calculate permissions for each channel
         result = {}
         for cid in channel_ids:
@@ -485,7 +567,9 @@ class RoleHandler:
 
             # Populate cache
             cache_key = (user_id, server_id, cid)
-            self.manager._cache_set(self.manager._permission_cache, cache_key, perms)
+            self.manager._cache_set(
+                self.manager._permission_cache_prefix, cache_key, perms
+            )
 
         return result
 
@@ -495,31 +579,35 @@ class RoleHandler:
         server_id: SnowflakeID,
         channel_id: Optional[SnowflakeID] = None,
     ) -> Dict[str, bool]:
-        """Get all permissions for a user in a server/channel (cached in Redis)."""
+        """Get all permissions for a user in a server/channel (cached in Valkey)."""
         cache_key = f"perms:{user_id}:{server_id}:{channel_id or 0}"
 
         # 1. Try internal memory first
-        mem_cached = self.manager._cache_get(self.manager._permission_cache, cache_key)
+        mem_cached = self.manager._cache_get(
+            self.manager._permission_cache_prefix, cache_key
+        )
         if mem_cached is not None:
             return mem_cached
 
-        # 2. Try Redis
-        from src.core.database import cache_get, cache_set, redis_available
+        # 2. Try Valkey
+        from src.core.database import cache_get, cache_set, valkey_available
 
-        if redis_available():
-            redis_cached = cache_get(cache_key)
-            if redis_cached is not None:
-                if isinstance(redis_cached, str):
-                    perms = json.loads(redis_cached)
+        if valkey_available():
+            valkey_cached = cache_get(cache_key)
+            if valkey_cached is not None:
+                if isinstance(valkey_cached, str):
+                    perms = json.loads(valkey_cached)
                 else:
-                    perms = redis_cached
+                    perms = valkey_cached
                 self.manager._cache_set(
-                    self.manager._permission_cache, cache_key, perms
+                    self.manager._permission_cache_prefix, cache_key, perms
                 )
                 return perms
 
         # 3. Calculate permissions
-        owner_id = self.manager._cache_get(self.manager._server_owner_cache, server_id)
+        owner_id = self.manager._cache_get(
+            self.manager._server_owner_cache_prefix, server_id
+        )
         if owner_id is None:
             server_row = self.db.fetch_one(
                 "SELECT owner_id FROM srv_servers WHERE id = ? AND deleted = 0",
@@ -529,52 +617,81 @@ class RoleHandler:
                 return {}
             owner_id = int(server_row["owner_id"])
             self.manager._cache_set(
-                self.manager._server_owner_cache, server_id, owner_id
+                self.manager._server_owner_cache_prefix, server_id, owner_id
             )
 
         is_owner = int(owner_id) == int(user_id)
         role_rows = self.manager._get_member_role_rows(server_id, user_id)
         base_perms = calculate_base_permissions(role_rows, is_owner)
 
+        # The server owner is an administrator even if a legacy or partially
+        # restored database is missing the owner's membership row. Keep the
+        # base permissions in that case, but do not return early: timeout
+        # restrictions below must still be evaluated.
         result = base_perms
         if channel_id:
             member = self.manager.get_member(server_id, user_id)
             if not member:
-                return {}
-
-            role_ids = [r["id"] for r in role_rows]
-            role_overrides = []
-            if role_ids:
-                # Validate role_ids are integers to prevent SQL injection
-                if not all(isinstance(rid, int) for rid in role_ids):
-                    raise ValueError("All role IDs must be integers")
-                # Avoid dynamic IN clause to satisfy bandit - use individual queries
-                override_rows = []
-                for role_id in role_ids:
-                    row = self.db.fetch_one(
-                        "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id = ?",
-                        (channel_id, role_id),
+                if not is_owner:
+                    return {}
+                member = None
+            if member is None:
+                role_ids = []
+                role_overrides = []
+                member_override = None
+            else:
+                role_ids = [r["id"] for r in role_rows]
+                role_overrides = []
+                if role_ids:
+                    if not all(isinstance(rid, int) for rid in role_ids):
+                        raise ValueError("All role IDs must be integers")
+                    override_rows = []
+                    for role_id in role_ids:
+                        row = self.db.fetch_one(
+                            "SELECT * FROM srv_channel_overrides WHERE channel_id = ? AND target_type = 'role' AND target_id = ?",
+                            (channel_id, role_id),
+                        )
+                        if row:
+                            override_rows.append(row)
+                    # Lowest-position role first so a higher role's deny
+                    # beats a lower role's allow (apply_channel_overrides
+                    # applies them in the order given).
+                    role_positions = {
+                        int(r["id"]): int(r.get("position") or 0) for r in role_rows
+                    }
+                    role_overrides = sorted(
+                        (dict(row) for row in override_rows),
+                        key=lambda o: role_positions.get(
+                            int(o.get("target_id") or 0), 0
+                        ),
                     )
-                    if row:
-                        override_rows.append(row)
-                role_overrides = [dict(row) for row in override_rows]
 
-            member_override_row = self.db.fetch_one(
-                """SELECT * FROM srv_channel_overrides 
-                   WHERE channel_id = ? AND target_type = 'member' AND target_id = ?""",
-                (channel_id, user_id),
-            )
-            member_override = dict(member_override_row) if member_override_row else None
+                member_override_row = self.db.fetch_one(
+                    """SELECT * FROM srv_channel_overrides
+                       WHERE channel_id = ? AND target_type = 'member' AND target_id = ?""",
+                    (channel_id, user_id),
+                )
+                member_override = (
+                    dict(member_override_row) if member_override_row else None
+                )
 
-            result = apply_channel_overrides(
-                base_perms, role_overrides, member_override
-            )
+                result = apply_channel_overrides(
+                    base_perms, role_overrides, member_override
+                )
 
-        # 4. Check for timeout
+        # 4. Check for timeout. Channel overrides (if any) were already applied
+        #    above; here we only revoke the interaction permissions of a timed-out
+        #    member on top of the resolved permission set.
+        # get_member() is @cached and may hand back a plain dict on cache hits,
+        # so normalize before touching attributes.
         member = self.manager.get_member(server_id, user_id)
-        if member and member.timeout_until:
+        if isinstance(member, dict):
+            timeout_until = member.get("timeout_until")
+        else:
+            timeout_until = getattr(member, "timeout_until", None)
+        if timeout_until:
             now = self.manager._get_timestamp()
-            if member.timeout_until > now:
+            if timeout_until > now:
                 # User is timed out, revoke interaction permissions
                 restricted_perms = [
                     "messages.send",
@@ -588,8 +705,10 @@ class RoleHandler:
                     result[perm] = False
 
         # 5. Cache result
-        self.manager._cache_set(self.manager._permission_cache, cache_key, result)
-        if redis_available():
+        self.manager._cache_set(
+            self.manager._permission_cache_prefix, cache_key, result
+        )
+        if valkey_available():
             cache_set(cache_key, result, ttl=60)
 
         return result
@@ -621,7 +740,7 @@ class RoleHandler:
                ORDER BY r.position DESC""",
             (member.id,),
         )
-        return [self.manager._row_to_role(row) for row in rows]
+        return [_row_to_role(row) for row in rows]
 
     def assign_role(
         self,
@@ -649,6 +768,13 @@ class RoleHandler:
                 "Cannot assign a role at or above your highest role"
             )
 
+        # Attaching a role grants its permissions to the target, so the editor
+        # must possess every permission the role carries (incl. administrator).
+        role_permissions = role.permissions or {}
+        validate_permission_dict(role_permissions)
+        editor_perms = self.get_permissions(user_id, server_id)
+        check_permissions_grantable(editor_perms, role_permissions)
+
         existing = self.db.fetch_one(
             "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
             (member.id, role_id),
@@ -663,14 +789,12 @@ class RoleHandler:
             (self.manager._generate_id(), member.id, role_id, now, user_id),
         )
 
-        for key in list(self.manager._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self.manager._cache_invalidate(self.manager._permission_cache, key)
-
-        # Invalidate Redis
+        # Invalidate caches
         from src.core.database import invalidate_pattern
 
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+        invalidate_pattern("has_perm:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
 
         self.manager._log_audit(
@@ -717,14 +841,12 @@ class RoleHandler:
             (member.id, role_id),
         )
 
-        for key in list(self.manager._permission_cache.keys()):
-            if key[0] == member_user_id and key[1] == server_id:
-                self.manager._cache_invalidate(self.manager._permission_cache, key)
-
-        # Invalidate Redis
+        # Invalidate caches
         from src.core.database import invalidate_pattern
 
+        self.manager._cache_invalidate(self.manager._permission_cache_prefix)
         invalidate_pattern(f"perms:{member_user_id}:{server_id}:*")
+        invalidate_pattern("has_perm:*")
         invalidate_pattern(f"member_data:*{member_user_id}*")
 
         self.manager._log_audit(
@@ -736,3 +858,79 @@ class RoleHandler:
             {"role_id": role_id},
         )
         return True
+
+    def assign_roles_from_whitelist(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        role_ids: List[SnowflakeID],
+        allowed_role_ids: List[SnowflakeID],
+    ) -> List[SnowflakeID]:
+        """Self-service role assignment for onboarding steps.
+
+        Assigns the given roles to ``user_id``, but only those present in
+        ``allowed_role_ids`` - the admin-defined whitelist captured in the
+        onboarding step's options. Refuses the default role and any role that
+        grants the ``administrator`` permission to prevent privilege
+        escalation through self-service flows.
+
+        Returns the list of role IDs actually assigned.
+        """
+        member = self.manager.get_member(server_id, user_id)
+        if not member:
+            raise MemberNotFoundError("Member not found")
+
+        allowed = set(allowed_role_ids or [])
+        now = self.manager._get_timestamp()
+        assigned: List[SnowflakeID] = []
+
+        for role_id in role_ids:
+            if role_id not in allowed:
+                continue
+            row = self.db.fetch_one(
+                "SELECT * FROM srv_roles WHERE id = ? AND deleted = 0",
+                (role_id,),
+            )
+            if not row or row["server_id"] != server_id:
+                continue
+            if row["is_default"]:
+                continue
+
+            permissions = row["permissions"]
+            if isinstance(permissions, str):
+                permissions = json.loads(permissions) if permissions else {}
+            if permissions.get("administrator"):
+                continue
+
+            existing = self.db.fetch_one(
+                "SELECT 1 FROM srv_member_roles WHERE member_id = ? AND role_id = ?",
+                (member.id, role_id),
+            )
+            if existing:
+                assigned.append(role_id)
+                continue
+
+            self.db.execute(
+                """INSERT INTO srv_member_roles (id, member_id, role_id, assigned_at, assigned_by)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (self.manager._generate_id(), member.id, role_id, now, user_id),
+            )
+            self.manager._log_audit(
+                server_id,
+                user_id,
+                AuditLogAction.MEMBER_ROLE_ADD,
+                "member",
+                user_id,
+                {"role_id": role_id},
+            )
+            assigned.append(role_id)
+
+        if assigned:
+            from src.core.database import invalidate_pattern
+
+            self.manager._cache_invalidate(self.manager._permission_cache_prefix)
+            invalidate_pattern(f"perms:{user_id}:{server_id}:*")
+            invalidate_pattern("has_perm:*")
+            invalidate_pattern(f"member_data:*{user_id}*")
+
+        return assigned

@@ -4,6 +4,8 @@ Thread database schema - Table definitions for threads module.
 
 import utils.logger as logger
 
+from src.core.database.core.schema_splitter import split_sql_statements
+
 
 SCHEMA = """
 -- Threads table
@@ -13,12 +15,16 @@ CREATE TABLE IF NOT EXISTS thread_threads (
     server_id INTEGER NOT NULL,
     owner_id INTEGER NOT NULL,
     name TEXT NOT NULL,
+    name_encrypted TEXT,
     thread_type TEXT NOT NULL DEFAULT 'public',
     state TEXT NOT NULL DEFAULT 'active',
     parent_message_id INTEGER,
     auto_archive_duration INTEGER NOT NULL DEFAULT 1440,
     message_count INTEGER DEFAULT 0,
     member_count INTEGER DEFAULT 0,
+    slowmode_interval_ms INTEGER DEFAULT 0,
+    slowmode_updated_by INTEGER,
+    slowmode_updated_at INTEGER,
     created_at INTEGER NOT NULL,
     archived_at INTEGER,
     last_message_at INTEGER,
@@ -69,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_msg_user ON thread_messages(user_id);
 
 def create_tables(db):
     """Create all thread tables."""
-    statements = [s.strip() for s in SCHEMA.split(";") if s.strip()]
+    statements = split_sql_statements(SCHEMA)
 
     for statement in statements:
         if statement:

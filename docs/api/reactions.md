@@ -1,26 +1,100 @@
 # Reactions API
 
-Endpoints for managing message reactions.
+Manage emoji reactions on messages. You use this API to add, remove, list, and moderate reactions.
 
-## PUT /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
+All endpoints in this document are relative to `https://api.plexichat.com`.
+For local development, use `http://localhost:8000`.
 
-Add a reaction to a message.
+You must authenticate with `Authorization: Bearer <token>` for all reaction endpoints.
 
-### Headers
+Endpoints that include a `channel_id` validate that the message actually belongs to that channel. If the message does not exist in the given channel, the API returns `404 Message not found`. This prevents channel ID spoofing.
+
+Rate limits apply per user:
+
+| Route | Limit |
+| --- | --- |
+| `PUT /reactions` | 10 requests per second |
+| `DELETE /reactions` | 15 requests per second |
+| `DELETE /reactions/emoji/all` | Rate-limited |
+| `DELETE /reactions/all` | Rate-limited |
+
+## Reaction resource
+
+A reaction aggregates users who reacted with the same emoji.
+
+```json
+{
+  "emoji": "👍",
+  "count": 5,
+  "me": true,
+  "url": null,
+  "is_custom": false,
+  "custom_emoji_id": null
+}
+```
+
+### Properties
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `emoji` | string | Emoji identifier. Unicode or custom emoji. |
+| `count` | integer | Number of users who reacted with this emoji. |
+| `me` | boolean | Whether the current user reacted. |
+| `url` | string or null | URL for a custom emoji. |
+| `is_custom` | boolean | Whether the emoji is a custom server emoji. |
+| `custom_emoji_id` | string or null | Snowflake ID of the custom emoji, if `is_custom` is `true`. |
+
+```json
+{
+  "user_id": "123456789012345678",
+  "reacted_at": 1704067200
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `user_id` | string | Snowflake ID of the user who reacted. |
+| `reacted_at` | integer | Unix timestamp in milliseconds when the reaction was added. |
+
+### Emoji format
+
+| Format | Example | Notes |
+| --- | --- | --- |
+| Unicode | `👍`, `❤️`, `🎉` | Send the raw Unicode character, URL-encoded when in the path. |
+| Custom | `<:custom_emoji:123456789>` or `<a:name:id>` | Animated custom emoji includes the `a` prefix. |
+
+Do not use short-code format (`:name:`). The API rejects it with `400 Invalid emoji`.
+
+## Add a reaction
+
+Adds the specified emoji to a message.
 
 ```
-Authorization: Bearer <token>
+PUT /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 ```
 
-### Path Parameters
+You must have permission to add reactions in the channel. If you are timed out in the server, the API returns `403`.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| channel_id | string | Channel's snowflake ID |
-| message_id | string | Message's snowflake ID |
-| emoji | string | Emoji (Unicode or custom ID) |
+You can repeat this request safely. If the reaction already exists, the API returns `200` and does not create a duplicate.
 
-### Response (200 OK)
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_id` | string | Yes | Snowflake ID of the channel. |
+| `message_id` | string | Yes | Snowflake ID of the message. |
+| `emoji` | string | Yes | Emoji, URL-encoded. The server decodes it before storage. |
+
+### Example request
+
+```bash
+curl -X PUT https://api.plexichat.com/api/v1/channels/123456789012345678/messages/234567890123456789/reactions/%F0%9F%91%8D \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -28,26 +102,42 @@ Authorization: Bearer <token>
 }
 ```
 
-### Error Responses
+### Errors
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid emoji | Emoji not recognized |
-| 400 | Reaction limit | Too many reactions on message |
-| 403 | Permission denied | No add reactions permission |
-| 404 | Message not found | Message doesn't exist |
+| Status | Description |
+| --- | --- |
+| `400` | Invalid message ID, channel ID, or emoji. Reaction limit exceeded. |
+| `401` | Not authenticated. |
+| `403` | Missing permission, blocked, or timed out in the server. |
+| `404` | Message does not exist or does not belong to the channel. |
+| `503` | Reactions module not available. |
 
-## DELETE /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
+## Remove your reaction
 
-Remove your reaction from a message.
-
-### Headers
+Removes your own reaction from a message. This operation is idempotent. If the reaction does not exist, you still receive `200`.
 
 ```
-Authorization: Bearer <token>
+DELETE /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 ```
 
-### Response (200 OK)
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_id` | string | Yes | Snowflake ID of the channel. |
+| `message_id` | string | Yes | Snowflake ID of the message. |
+| `emoji` | string | Yes | Emoji, URL-encoded. |
+
+### Example request
+
+```bash
+curl -X DELETE https://api.plexichat.com/api/v1/channels/123456789012345678/messages/234567890123456789/reactions/%F0%9F%91%8D \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
 
 ```json
 {
@@ -55,60 +145,181 @@ Authorization: Bearer <token>
 }
 ```
 
-The endpoint returns a successful response regardless of whether the reaction previously existed, ensuring idempotent behavior for reaction removal operations.
+An invalid or unrecognized emoji returns `400 Invalid emoji` on this route, matching the `PUT` validation.
 
-## GET /channels/{channel_id}/messages/{message_id}/reactions
+### Errors
 
-Get all reactions on a message.
+| Status | Description |
+| --- | --- |
+| `400` | Invalid message ID, channel ID, or emoji. |
+| `401` | Not authenticated. |
+| `404` | Message does not exist or does not belong to the channel. |
 
-### Headers
+## Remove all reactions of one emoji
+
+Removes every reaction of a specific emoji from a message. This is a moderation action that requires the `manage messages` permission. The server emits a `MESSAGE_REACTION_REMOVE_EMOJI` event so clients can update reaction counts live.
 
 ```
-Authorization: Bearer <token>
+DELETE /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/all
 ```
 
-### Response (200 OK)
+Important: This route must be registered before the single-user `DELETE .../reactions/{emoji}` route. The `{emoji}` parameter uses a greedy `path` converter, so registering it after would cause `.../reactions/<emoji>/all` to be captured as an emoji named `<emoji>/all`.
+
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_id` | string | Yes | Snowflake ID of the channel. |
+| `message_id` | string | Yes | Snowflake ID of the message. |
+| `emoji` | string | Yes | Emoji to clear, URL-encoded. |
+
+### Example request
+
+```bash
+curl -X DELETE https://api.plexichat.com/api/v1/channels/123456789012345678/messages/234567890123456789/reactions/%F0%9F%91%8D/all \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Removed 12 reactions"
+}
+```
+
+`message` indicates how many reactions were removed.
+
+### Errors
+
+| Status | Description |
+| --- | --- |
+| `400` | Invalid message, channel, or emoji. |
+| `401` | Not authenticated. |
+| `403` | You do not have permission to moderate reactions. |
+| `404` | Message does not exist or does not belong to the channel. |
+| `503` | Reactions module not available. |
+
+## Clear all reactions
+
+Removes all reactions from a message. Requires the `manage messages` permission. The server emits a `MESSAGE_REACTION_REMOVE_ALL` event.
+
+```
+DELETE /api/v1/channels/{channel_id}/messages/{message_id}/reactions
+```
+
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_id` | string | Yes | Snowflake ID of the channel. |
+| `message_id` | string | Yes | Snowflake ID of the message. |
+
+### Example request
+
+```bash
+curl -X DELETE https://api.plexichat.com/api/v1/channels/123456789012345678/messages/234567890123456789/reactions \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
+
+```json
+{
+  "success": true
+}
+```
+
+### Errors
+
+| Status | Description |
+| --- | --- |
+| `400` | Invalid message or channel ID. |
+| `401` | Not authenticated. |
+| `403` | You do not have permission to clear reactions. |
+| `404` | Message does not exist or does not belong to the channel. |
+| `503` | Reactions module not available. |
+
+## List reactions on a message
+
+Returns aggregated reactions for a message.
+
+```
+GET /api/v1/channels/{channel_id}/messages/{message_id}/reactions
+```
+
+### Path parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_id` | string | Yes | Snowflake ID of the channel. |
+| `message_id` | string | Yes | Snowflake ID of the message. |
+
+### Response
+
+`200 OK`
 
 ```json
 [
   {
-    "emoji": ":thumbsup:",
+    "emoji": "👍",
     "count": 5,
     "me": true
   },
   {
-    "emoji": ":heart:",
+    "emoji": "❤️",
     "count": 3,
     "me": false
   }
 ]
 ```
 
-### Error Responses
+### Errors
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid message ID | ID format invalid |
-| 404 | Message not found | Message doesn't exist |
+| Status | Description |
+| --- | --- |
+| `400` | Invalid message ID format. |
+| `401` | Not authenticated. |
+| `404` | Message does not exist. |
 
-## GET /channels/{channel_id}/messages/{message_id}/reactions/{emoji}
+## List users who reacted with an emoji
 
-Get users who reacted with a specific emoji.
-
-### Headers
+Returns users who added a specific emoji to a message. Results are paginated.
 
 ```
-Authorization: Bearer <token>
+GET /api/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}
 ```
 
-### Query Parameters
+### Path parameters
 
-| Parameter | Type | Default | Constraints | Description |
-|-----------|------|---------|-------------|-------------|
-| limit | int | 50 | 1-100 | Max users to return |
-| after | string | - | Snowflake ID | Get users after this ID |
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `channel_id` | string | Yes | Snowflake ID of the channel. |
+| `message_id` | string | Yes | Snowflake ID of the message. |
+| `emoji` | string | Yes | Emoji, URL-encoded. |
 
-### Response (200 OK)
+### Query parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer | No | Maximum users to return. `1`–`100`, default `50`. |
+| `after` | string | No | Snowflake ID. Returns users after this user. |
+
+### Example request
+
+```bash
+curl -X GET "https://api.plexichat.com/api/v1/channels/123456789012345678/messages/234567890123456789/reactions/%F0%9F%91%8D?limit=25&after=123456789012345678" \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN"
+```
+
+### Response
+
+`200 OK`
 
 ```json
 [
@@ -123,45 +334,26 @@ Authorization: Bearer <token>
 ]
 ```
 
-### Error Responses
+### Errors
 
-| Status | Code | Description |
-|--------|------|-------------|
-| 400 | Invalid message ID | ID format invalid |
-| 404 | Message not found | Message doesn't exist |
+| Status | Description |
+| --- | --- |
+| `400` | Invalid message ID or `after` ID. |
+| `401` | Not authenticated. |
+| `404` | Message does not exist. |
 
-## Reaction Object
+## WebSocket events
 
-```json
-{
-  "emoji": ":thumbsup:",
-  "count": 5,
-  "me": true
-}
-```
+| Event | When it fires |
+| --- | --- |
+| `MESSAGE_REACTION_ADD` | A user adds a reaction. The actor does not receive an echo because the REST response already covers the optimistic update. |
+| `MESSAGE_REACTION_REMOVE` | A user removes their own reaction. |
+| `MESSAGE_REACTION_REMOVE_EMOJI` | A moderator removes all reactions of one emoji. |
+| `MESSAGE_REACTION_REMOVE_ALL` | A moderator clears all reactions on a message. |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| emoji | string | Emoji identifier |
-| count | int | Number of users who reacted |
-| me | bool | Whether current user reacted |
+Each event payload includes `user_id`, `message_id`, `channel_id`, and `emoji` (except `REMOVE_ALL`, which omits `emoji`).
 
-## Reaction User Object
+## Related endpoints
 
-```json
-{
-  "user_id": "123456789012345678",
-  "reacted_at": 1704067200
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | string | User's snowflake ID |
-| reacted_at | int | Unix timestamp of reaction |
-
-## Emoji Format
-
-Reactions support:
-- Unicode emoji: `:thumbsup:`, `:heart:`, `:tada:`
-- Custom emoji: `emoji_id` (snowflake ID)
+*   [Messages](messages.md) — Send and manage messages.
+*   [Channels](channels.md) — Channel management and permissions.

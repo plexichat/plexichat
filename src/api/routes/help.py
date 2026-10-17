@@ -3,18 +3,34 @@ Help routes - Serve user-facing help documentation.
 """
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse, FileResponse
-import os
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
+from pathlib import Path
 
 router = APIRouter(tags=["Help"])
 robots_router = APIRouter()
+
+_FALLBACK_ROBOTS_TXT = "User-agent: *\nDisallow: /\n"
+
+
+def _resolve_robots_txt() -> Path | None:
+    """Locate robots.txt independent of the process working directory."""
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent.parent / "static" / "robots.txt",
+        Path.cwd() / "static" / "robots.txt",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 @robots_router.get("/robots.txt", include_in_schema=False)
 async def robots_txt():
     """Serve robots.txt."""
-    static_path = os.path.join(os.getcwd(), "static", "robots.txt")
-    return FileResponse(static_path)
+    static_path = _resolve_robots_txt()
+    if static_path is None:
+        return PlainTextResponse(_FALLBACK_ROBOTS_TXT, media_type="text/plain")
+    return FileResponse(static_path, media_type="text/plain")
 
 
 def _get_help_style():
@@ -58,7 +74,15 @@ def _get_help_style():
     """
 
 
-@router.get("/security-logout")
+@router.get(
+    "/security-logout",
+    responses={
+        200: {
+            "description": "HTML help page",
+            "content": {"text/html": {"schema": {"type": "string"}}},
+        }
+    },
+)
 async def security_logout_help():
     """Help page explaining security logouts."""
     html = f"""
@@ -90,7 +114,15 @@ async def security_logout_help():
     return HTMLResponse(content=html)
 
 
-@router.get("/access-blocked")
+@router.get(
+    "/access-blocked",
+    responses={
+        200: {
+            "description": "HTML help page",
+            "content": {"text/html": {"schema": {"type": "string"}}},
+        }
+    },
+)
 async def access_blocked_help():
     """Help page explaining IP blocks."""
     html = f"""

@@ -1,0 +1,3 @@
+"""
+Licensing module tests.
+"""

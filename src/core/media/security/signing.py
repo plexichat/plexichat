@@ -143,7 +143,9 @@ class UrlSigner:
                 check_url, file_id, expires_at, extra_data
             )
             expected_sig = self._generate_signature(expected_data)
-            if hmac.compare_digest(signature, expected_sig):
+            if hmac.compare_digest(
+                signature.encode("utf-8", "ignore"), expected_sig.encode()
+            ):
                 return True, file_id
 
         # Fallback to full URL check (for absolute signed URLs)
@@ -152,7 +154,9 @@ class UrlSigner:
         )
         expected_sig_full = self._generate_signature(expected_data_full)
 
-        if not hmac.compare_digest(signature, expected_sig_full):
+        if not hmac.compare_digest(
+            signature.encode("utf-8", "ignore"), expected_sig_full.encode()
+        ):
             raise SignatureInvalidError("Invalid signature")
 
         return True, file_id

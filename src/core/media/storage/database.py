@@ -149,8 +149,24 @@ class DatabaseStorage(StorageBackendBase):
                 "database",
             )
 
-        # Read entire stream into memory (acceptable for small files)
-        file_data = stream.read()
+        # Read in chunks to enforce the size limit during the read itself,
+        # rather than trusting the caller-supplied ``size`` and reading the
+        # entire stream into memory unconditionally.
+        chunks: list[bytes] = []
+        total = 0
+        chunk_size = min(64 * 1024, self._max_size)
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > self._max_size:
+                raise StorageWriteError(
+                    f"File size {total} exceeds database storage limit {self._max_size}",
+                    "database",
+                )
+            chunks.append(chunk)
+        file_data = b"".join(chunks)
         return self.store(file_data, path, content_type)
 
     def retrieve(self, path: str) -> bytes:
@@ -189,8 +205,8 @@ class DatabaseStorage(StorageBackendBase):
             return deleted
 
         except Exception as e:
-            logger.error(f"Failed to delete blob at {path}: {e}")  # nosec: B608
-            raise StorageDeleteError(f"Failed to delete from database: {e}", "database")  # nosec: B608
+            logger.error(f"Failed to delete blob at {path}: {e}")
+            raise StorageDeleteError(f"Failed to delete from database: {e}", "database")
 
     def exists(self, path: str) -> bool:
         """Check if file exists in database."""

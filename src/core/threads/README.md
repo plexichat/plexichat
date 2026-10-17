@@ -1,44 +1,44 @@
-# Threads Module
+# Threads module
 
 Thread management system for Plexichat API supporting reply threads, forum-style threads, and thread membership.
 
 ## Features
 
-- Thread creation:
+- **Thread creation**:
   - Create thread from message (reply thread)
   - Create thread without message (forum-style)
   - Thread name (required, max 100 chars)
   - Auto-archive duration (1 hour, 24 hours, 3 days, 7 days)
   - Thread type (public, private, announcement)
-- Thread membership:
+- **Thread membership**:
   - Auto-join on thread creation
   - Join thread
   - Leave thread
   - Add member to thread
   - Remove member from thread
   - Get thread members
-- Thread messages:
+- **Thread messages**:
   - Send message to thread
   - Thread message count
   - Thread starter message reference
-- Thread state:
+- **Thread state**:
   - Active / Archived / Locked
   - Archive thread (manual or auto after inactivity)
   - Unarchive thread (on new message or manual)
   - Lock thread (prevent new messages, moderator only)
   - Unlock thread
-- Thread listing:
+- **Thread listing**:
   - Get active threads in channel
   - Get archived threads in channel (paginated)
   - Get user's joined threads
   - Get user's private threads
-- Thread permissions:
+- **Thread permissions**:
   - Inherit from parent channel
   - Private threads: only members can view
   - Create public threads permission
   - Create private threads permission
   - Manage threads permission (archive, lock, delete)
-- Thread metadata:
+- **Thread metadata**:
   - Owner (creator)
   - Parent channel
   - Parent message (if created from message)
@@ -71,7 +71,7 @@ threads.setup(db, auth, messaging, servers, notifications)
 
 ## Usage
 
-### Create Thread
+### Create thread
 
 ```python
 from src.core import threads
@@ -101,7 +101,7 @@ thread = threads.create_thread(
 )
 ```
 
-### Thread Membership
+### Thread membership
 
 ```python
 # Join a thread
@@ -120,7 +120,7 @@ threads.remove_member(user_id=1, thread_id=thread.id, member_user_id=3)
 members = threads.get_thread_members(user_id=1, thread_id=thread.id)
 ```
 
-### Thread Messages
+### Thread messages
 
 ```python
 # Send message to thread
@@ -137,7 +137,7 @@ messages = threads.get_messages(user_id=1, thread_id=thread.id, limit=50)
 count = threads.get_message_count(thread.id)
 ```
 
-### Thread State
+### Thread state
 
 ```python
 # Archive thread
@@ -153,7 +153,7 @@ thread = threads.lock_thread(user_id=1, thread_id=thread.id)
 thread = threads.unlock_thread(user_id=1, thread_id=thread.id)
 ```
 
-### Thread Listing
+### Thread listing
 
 ```python
 # Get active threads in channel
@@ -174,7 +174,7 @@ my_threads = threads.get_user_threads(user_id=1)
 private = threads.get_user_private_threads(user_id=1)
 ```
 
-### Thread Info
+### Thread info
 
 ```python
 # Get thread
@@ -192,7 +192,7 @@ thread = threads.update_thread(
 threads.delete_thread(user_id=1, thread_id=thread.id)
 ```
 
-### Permission Checks
+### Permission checks
 
 ```python
 # Check if user can view thread
@@ -205,42 +205,42 @@ can_send = threads.can_send_in_thread(user_id=2, thread_id=thread.id)
 can_manage = threads.can_manage_thread(user_id=2, thread_id=thread.id)
 ```
 
-## Thread Types
+## Thread types
 
 | Type | Description |
 |------|-------------|
-| public | Visible to all channel members |
-| private | Only visible to thread members |
-| announcement | Read-only for non-moderators |
+| `public` | Visible to all channel members |
+| `private` | Only visible to thread members |
+| `announcement` | Read-only for non-moderators |
 
-## Thread States
+## Thread states
 
 | State | Description |
 |-------|-------------|
-| active | Thread is active and accepting messages |
-| archived | Thread is archived (auto or manual) |
-| locked | Thread is locked (no new messages) |
+| `active` | Thread is active and accepting messages |
+| `archived` | Thread is archived (auto or manual) |
+| `locked` | Thread is locked (no new messages) |
 
-## Auto-Archive Durations
+## Auto-archive durations
 
 | Duration | Minutes |
 |----------|---------|
-| ONE_HOUR | 60 |
-| ONE_DAY | 1440 |
-| THREE_DAYS | 4320 |
-| SEVEN_DAYS | 10080 |
+| `ONE_HOUR` | 60 |
+| `ONE_DAY` | 1440 |
+| `THREE_DAYS` | 4320 |
+| `SEVEN_DAYS` | 10080 |
 
-## Permission Integration
+## Permission integration
 
 | Permission | Description |
 |------------|-------------|
-| threads.create_public | Create public threads |
-| threads.create_private | Create private threads |
-| threads.manage | Archive, lock, delete threads |
-| channels.view | View threads in channel |
-| messages.send | Send messages in threads |
+| `threads.create_public` | Create public threads |
+| `threads.create_private` | Create private threads |
+| `threads.manage` | Archive, lock, delete threads |
+| `channels.view` | View threads in channel |
+| `messages.send` | Send messages in threads |
 
-## Error Handling
+## Error handling
 
 All thread errors inherit from `ThreadError`:
 
@@ -270,12 +270,13 @@ except PermissionDeniedError as e:
     print(f"Missing permission: {e.permission}")
 ```
 
-## Database Schema
+## Database schema
 
 Tables (prefixed with `thread_`):
-- `thread_threads` - Thread metadata
-- `thread_members` - Thread membership
-- `thread_messages` - Thread message references
+
+- `thread_threads` — Thread metadata
+- `thread_members` — Thread membership
+- `thread_messages` — Thread message references
 
 ## Testing
 

@@ -9,27 +9,25 @@ This tests that our client code correctly:
 """
 
 import pytest
-import os
-import sys
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-src_path = os.path.join(project_root, "src")
-common_utils_path = os.path.join(project_root, "src", "utils", "common-utils")
+# common_utils is now a native package.
 
-for path in [project_root, src_path, common_utils_path]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+from src.core.search.indexer.meilisearch import MeilisearchIndexer
+from src.core.search.models import IndexedMessage
+from src.tests._conftest.logger_isolation import isolated_logger
 
-import utils.logger as logger  # noqa: E402
 
-try:
-    os.makedirs("temp_ms_test/logs", exist_ok=True)
-    logger.setup(log_dir="temp_ms_test/logs", level="WARNING", zip_logs=False)
-except Exception:
-    pass
-
-from src.core.search.indexer.meilisearch import MeilisearchIndexer  # noqa: E402
-from src.core.search.models import IndexedMessage  # noqa: E402
+@pytest.fixture(scope="module", autouse=True)
+def setup_logger(tmp_path_factory):
+    """Setup logger for meilisearch tests."""
+    log_dir = str(tmp_path_factory.mktemp("ms_test_logs"))
+    with isolated_logger(
+        log_dir=log_dir,
+        level="WARNING",
+        zip_logs=False,
+        suppress_setup_errors=True,
+    ):
+        yield
 
 
 class MeilisearchMock:

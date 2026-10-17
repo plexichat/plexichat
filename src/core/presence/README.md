@@ -1,253 +1,221 @@
-# Presence Module
+# Presence
 
-User presence and status management system for Plexichat API supporting online status, custom status messages, activities, and typing indicators.
+Manage user presence, custom status, activities, and typing indicators.
 
-## Features
+## Overview
 
-- User status: online, idle, dnd (do not disturb), invisible, offline
-- Custom status message with optional emoji and expiration
-- Activity types: playing, streaming, listening, watching, competing, custom
-- Activity data (game name, stream URL, song info, timestamps, assets)
-- Last seen timestamp (updated on activity)
-- Typing indicators with automatic 10-second timeout
-- Get user presence (single and bulk)
-- Get online friends (integrates with relationships)
-- Get online members in server (integrates with servers)
-- Presence auto-expires to offline after configurable timeout
-- Invisible users appear offline to others but can see others
-- Blocked users cannot see real presence
+The presence module tracks online status, custom messages, activities, and typing state. It integrates with relationships and servers for visibility rules and online-member queries, and auto-expires stale presence.
 
-## Setup
+Features:
+
+- Status values: `online`, `idle`, `dnd`, `invisible`, `offline`.
+- Custom status with optional emoji and expiration.
+- Activities: `playing`, `streaming`, `listening`, `watching`, `competing`, `custom`.
+- Last-seen timestamp updated on activity.
+- Typing indicators with automatic timeout.
+- Bulk presence queries for friends and server members.
+- Visibility rules for invisible mode and blocked users.
+
+## Before you begin
+
+Initialize the module once at startup.
 
 ```python
 from src.core.database import Database
-from src.core import auth
-from src.core import relationships
-from src.core import servers
-from src.core import presence
+from src.core import auth, relationships, servers, presence
 
-# Initialize database
 db = Database()
 db.connect()
 
-# Initialize dependencies
 auth.setup(db)
 relationships.setup(db, auth)
 servers.setup(db, auth)
-
-# Initialize presence
 presence.setup(db, auth, relationships, servers)
 ```
 
-## Usage
-
-### Status Management
+## Manage status
 
 ```python
 from src.core import presence
 
-# Set user status
 presence.set_status(user_id, presence.UserStatus.ONLINE)
 presence.set_status(user_id, presence.UserStatus.IDLE)
 presence.set_status(user_id, presence.UserStatus.DND)
 presence.set_status(user_id, presence.UserStatus.INVISIBLE)
 
-# Get user status
 status = presence.get_status(user_id)
-
-# Clear status (set to offline)
-presence.clear_status(user_id)
+presence.clear_status(user_id)  # Sets status to offline
 ```
 
-### Custom Status
+| Status | Behavior |
+|--------|----------|
+| `online` | User is active. |
+| `idle` | User is online but inactive. |
+| `dnd` | Do not disturb; suppresses notifications. |
+| `invisible` | Appears as `offline` to other users. |
+| `offline` | User is not connected. |
+
+On startup, call `presence.sweep_all_offline()` once to clear stale live statuses left by a crash. The sweep is guarded by a distributed lock so only one worker runs it.
+
+## Manage custom status
 
 ```python
-# Set custom status
 presence.set_custom_status(
     user_id=user_id,
     text="Working on a project",
     emoji=":computer:",
-    expires_at=1700000000000  # Optional expiration timestamp
+    expires_at=1700000000000,
 )
 
-# Get custom status
 custom = presence.get_custom_status(user_id)
 if custom:
     print(f"{custom.emoji} {custom.text}")
 
-# Clear custom status
 presence.clear_custom_status(user_id)
 ```
 
-### Activities
+Expired custom statuses are removed automatically on read.
+
+## Manage activities
 
 ```python
-# Set playing activity
 presence.set_activity(
     user_id=user_id,
     activity_type=presence.ActivityType.PLAYING,
     name="Minecraft",
     details="Building a castle",
     state="In Creative Mode",
-    timestamps={"start": 1700000000000}
+    timestamps={"start": 1700000000000},
 )
 
-# Set streaming activity
 presence.set_activity(
     user_id=user_id,
     activity_type=presence.ActivityType.STREAMING,
     name="Live Coding Session",
-    url="https://twitch.tv/example"
+    url="https://twitch.tv/example",
 )
 
-# Set listening activity
-presence.set_activity(
-    user_id=user_id,
-    activity_type=presence.ActivityType.LISTENING,
-    name="Spotify",
-    details="Song Title",
-    state="by Artist Name"
-)
-
-# Get activity
 activity = presence.get_activity(user_id)
-
-# Clear activity
 presence.clear_activity(user_id)
 ```
 
-### Full Presence
+| Type | Description |
+|------|-------------|
+| `playing` | Playing a game. |
+| `streaming` | Streaming content. |
+| `listening` | Listening to music. |
+| `watching` | Watching content. |
+| `competing` | Competing in an event. |
+| `custom` | Custom activity. |
+
+## Get presence
 
 ```python
-# Get full presence (status + custom status + activity)
+# Full presence for one user
 pres = presence.get_presence(user_id)
 print(f"Status: {pres.status.value}")
 print(f"Last seen: {pres.last_seen}")
 
-# Get multiple presences
+# Multiple users
 presences = presence.get_presences([user1_id, user2_id, user3_id])
 
-# Update last seen
+# Update last-seen timestamp
 presence.update_last_seen(user_id)
+
+# Track focused channel (transient, Redis only)
+presence.set_focused_channel(user_id, channel_id=10, server_id=1)
 ```
 
-### Typing Indicators
+## Use typing indicators
+
+Typing indicators expire automatically after the configured timeout.
 
 ```python
-# Start typing (auto-expires after 10 seconds)
-indicator = presence.start_typing(user_id, channel_id)
+presence.start_typing(user_id, channel_id)
 
-# Stop typing manually
 presence.stop_typing(user_id, channel_id)
 
-# Get users typing in a channel
 typing_users = presence.get_typing_users(channel_id)
 for indicator in typing_users:
     print(f"User {indicator.user_id} is typing...")
+
+# Clear all channels for a user
+presence.clear_all_typing(user_id)
 ```
 
-### Online Queries
+## Query online users
 
 ```python
-# Get online friends
 online_friends = presence.get_online_friends(user_id)
-
-# Get online server members
 online_members = presence.get_online_server_members(user_id, server_id)
 ```
 
-### Visibility Rules
+## Check visibility
+
+Visibility respects blocks and invisible mode.
 
 ```python
-# Get presence as visible to a specific viewer
-# (respects invisible mode and blocks)
-visible_presence = presence.get_visible_presence(viewer_id, target_id)
+# Presence as seen by a specific viewer
+visible = presence.get_visible_presence(viewer_id, target_id)
 
-# Check if viewer can see target's real presence
+# Bulk variant
+visible_map = presence.get_visible_presences_bulk(viewer_id, [target1, target2])
+
+# Whether the viewer can see the target's real status
 can_see = presence.can_see_presence(viewer_id, target_id)
 ```
 
-## Status Types
+Visibility rules:
 
-| Status | Description |
-|--------|-------------|
-| online | User is online and active |
-| idle | User is online but inactive |
-| dnd | Do not disturb - no notifications |
-| invisible | Appears offline to others |
-| offline | User is offline |
+1. You always see your own real presence.
+2. A user you block, or who blocks you, appears as `offline`.
+3. A user with `invisible` status appears as `offline` to others. Their custom status, activity, and timestamps are not revealed.
+4. An `invisible` user can still see other users' presence.
 
-## Activity Types
+## Real-time updates
 
-| Type | Description |
-|------|-------------|
-| playing | Playing a game |
-| streaming | Streaming content |
-| listening | Listening to music |
-| watching | Watching content |
-| competing | Competing in an activity |
-| custom | Custom activity |
-
-## Visibility Rules
-
-1. Users always see their own real presence
-2. Blocked users see target as offline
-3. Invisible users appear offline to others
-4. Invisible users can still see others' presence
-
-## Real-Time WebSocket Updates
-
-Presence changes are automatically broadcast via WebSocket to:
-
-- **Friends** - All users in the friend list
-- **Server members** - All users in shared servers
-
-### Events Triggered
+Presence changes are broadcast over WebSocket to friends and server members.
 
 | Action | Event | Recipients |
 |--------|-------|------------|
-| User connects | PRESENCE_UPDATE (online) | Friends + server members |
-| Status change | PRESENCE_UPDATE | Friends + server members |
-| User disconnects | PRESENCE_UPDATE (offline) | Friends + server members |
+| User connects | `PRESENCE_UPDATE` (`online`) | Friends and server members |
+| Status changes | `PRESENCE_UPDATE` | Friends and server members |
+| User disconnects | `PRESENCE_UPDATE` (`offline`) | Friends and server members |
 
-### Event Payload
+Event payload:
 
 ```json
 {
-    "user_id": "123456789",
-    "status": "online",
-    "custom_status": "Working on a project",
-    "custom_emoji": ":computer:"
+  "user_id": "123456789",
+  "status": "online",
+  "custom_status": "Working on a project",
+  "custom_emoji": ":computer:"
 }
 ```
 
-### Client Integration
+Client example:
 
 ```javascript
-// Handle presence update from WebSocket
 function handlePresenceUpdate(data) {
-    // Update relationships array
-    const rel = AppState.relationships.find(r => r.user_id === data.user_id);
-    if (rel) {
-        rel.presence = { status: data.status, custom_status: data.custom_status };
-    }
-    
-    // Update UI elements
-    updateFriendPresence(data.user_id, data.status);
+  const rel = AppState.relationships.find(r => r.user_id === data.user_id);
+  if (rel) {
+    rel.presence = { status: data.status, custom_status: data.custom_status };
+  }
+  updateFriendPresence(data.user_id, data.status);
 }
 ```
 
 ## Configuration
 
-Settings in `config/config.yaml` under `presence`:
+Configure `config/config.yaml` under `presence`:
 
 ```yaml
 presence:
-  typing_timeout_ms: 10000  # 10 seconds
-  timeout_ms: 300000  # 5 minutes for auto-offline
+  typing_timeout_ms: 10000  # Typing indicator timeout
+  timeout_ms: 300000        # Auto-offline timeout (5 minutes)
 ```
 
-## Error Handling
+## Error handling
 
 All presence errors inherit from `PresenceError`:
 
@@ -257,25 +225,24 @@ from src.core.presence import (
     UserNotFoundError,
     InvalidStatusError,
     InvalidActivityError,
-    TypingIndicatorError,
-    PresenceNotFoundError,
 )
 
 try:
     presence.set_status(user_id, status)
 except UserNotFoundError:
-    print("User not found")
+    print("User not found.")
 except InvalidStatusError:
-    print("Invalid status value")
+    print("Invalid status value.")
 ```
 
-## Database Schema
+## Database schema
 
-Tables (prefixed with `pres_`):
-- `pres_presence` - User status and last seen
-- `pres_custom_status` - Custom status messages
-- `pres_activity` - User activities
-- `pres_typing` - Typing indicators
+| Table | Description |
+|-------|-------------|
+| `pres_presence` | Status and `last_seen` per user. |
+| `pres_custom_status` | Custom status text, emoji, and expiry. |
+| `pres_activity` | Current activity per user. |
+| `pres_typing` | Typing indicators (`UNIQUE(user_id, channel_id)`). |
 
 ## Testing
 

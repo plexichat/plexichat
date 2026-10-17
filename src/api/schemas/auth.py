@@ -31,6 +31,15 @@ class LoginRequest(BaseModel):
 
     username: str = Field(..., description="Username or email")
     password: str = Field(..., description="Password")
+    device_fingerprint: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=256,
+        description=(
+            "Stable client device fingerprint. Required for trusted-device "
+            "(2FA skip) support; devices can be marked trusted via /auth/devices/trust."
+        ),
+    )
 
 
 class TwoFactorRequest(BaseModel):
@@ -78,12 +87,28 @@ class SessionResponse(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Login response."""
+    """Login response.
+
+    M9: ``token`` is the raw session bearer and is present SOLELY when the
+    caller explicitly opts in with ``X-Plexichat-Token-Mode: bearer``
+    (non-browser clients that cannot persist cookies). Browser cookie
+    flows receive ``token=None`` plus a ``status`` marker and
+    ``expires_in`` (session lifetime in seconds, mirroring the HttpOnly
+    ``plexichat_token`` cookie Max-Age) — the credential travels only in
+    the ``Set-Cookie`` header, never in JS-readable JSON.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     status: str = Field(..., description="Login status: success, two_factor_required")
-    token: Optional[str] = Field(default=None, description="Session token (if success)")
+    token: Optional[str] = Field(
+        default=None,
+        description=(
+            "Session token — present ONLY for explicit non-browser opt-in "
+            "(X-Plexichat-Token-Mode: bearer); None for cookie flows where "
+            "the HttpOnly cookie is the credential"
+        ),
+    )
     user: Optional[UserResponse] = Field(
         default=None, description="User info (if success)"
     )
@@ -94,7 +119,12 @@ class LoginResponse(BaseModel):
         default=None, description="Available 2FA methods"
     )
     expires_in: Optional[int] = Field(
-        default=None, description="Challenge expiration seconds"
+        default=None,
+        description=(
+            "Session lifetime in seconds on success (mirrors the HttpOnly "
+            "cookie Max-Age); 2FA challenge TTL when status is "
+            "two_factor_required"
+        ),
     )
 
 
@@ -213,10 +243,14 @@ class OAuthLoginResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     url: str = Field(..., description="OAuth authorization URL")
-    state: str = Field(..., description="CSRF state token")
-    code_verifier: Optional[str] = Field(
-        default=None,
-        description="PKCE code verifier (client must store and return in callback)",
+    auth_url: str = Field(
+        ...,
+        description="OAuth authorization URL (alias of ``url``; the canonical "
+        "field web clients consume)",
+    )
+    state: str = Field(
+        ...,
+        description="CSRF state token (bound to an HttpOnly cookie set alongside)",
     )
 
 
@@ -248,3 +282,103 @@ class OAuthCallbackRequest(BaseModel):
     code_verifier: Optional[str] = Field(
         None, description="PKCE code verifier (required if PKCE was used)"
     )
+
+
+class WsTicketResponse(BaseModel):
+    """Short-lived single-use WebSocket gateway ticket."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ticket: str = Field(..., description="Gateway ticket (wst.* format)")
+    expires_in: int = Field(..., description="Ticket lifetime in seconds")
+
+
+# === Passkey (WebAuthn/FIDO2) Schemas ===
+
+
+class PasskeyRegisterOptionsRequest(BaseModel):
+    """Request passkey registration options."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    device_name: Optional[str] = Field(
+        None, description="User-friendly device name (e.g., 'My YubiKey')"
+    )
+
+
+class PasskeyRegisterOptionsResponse(BaseModel):
+    """Passkey registration options response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID for this registration")
+    options: dict = Field(
+        ..., description="WebAuthn PublicKeyCredentialCreationOptions as dict"
+    )
+
+
+class PasskeyRegisterRequest(BaseModel):
+    """Complete passkey registration."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID from options request")
+    credential: dict = Field(..., description="WebAuthn PublicKeyCredential response")
+
+
+class PasskeyAuthenticateOptionsRequest(BaseModel):
+    """Request passkey authentication options."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    username: Optional[str] = Field(
+        None,
+        description="Username to filter credentials (omit for usernameless/discoverable credential)",
+    )
+
+
+class PasskeyAuthenticateOptionsResponse(BaseModel):
+    """Passkey authentication options response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID for this authentication")
+    options: dict = Field(
+        ..., description="WebAuthn PublicKeyCredentialRequestOptions as dict"
+    )
+
+
+class PasskeyAuthenticateRequest(BaseModel):
+    """Complete passkey authentication."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    challenge_id: str = Field(..., description="Challenge ID from options request")
+    credential: dict = Field(..., description="WebAuthn PublicKeyCredential response")
+
+
+class PasskeyResponse(BaseModel):
+    """Passkey information response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: SnowflakeID = Field(..., description="Passkey ID")
+    credential_id: str = Field(..., description="WebAuthn credential ID (base64url)")
+    device_name: Optional[str] = Field(None, description="User-friendly device name")
+    device_type: Optional[str] = Field(
+        None, description="Device type: 'platform' or 'cross-platform'"
+    )
+    created_at: int = Field(..., description="Registration timestamp")
+    last_used_at: Optional[int] = Field(
+        None, description="Last authentication timestamp"
+    )
+    backed_up: bool = Field(False, description="Whether credential is synced/backed up")
+    revoked: bool = Field(False, description="Whether credential is revoked")
+
+
+class PasskeyRenameRequest(BaseModel):
+    """Rename a passkey."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str = Field(..., min_length=1, max_length=100, description="New device name")

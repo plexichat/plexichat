@@ -1,0 +1,849 @@
+import os
+import secrets
+import threading
+import time
+from typing import Any, Dict, Protocol, Tuple, cast
+
+import utils.logger as logger
+import utils.config as config
+
+
+class _ServerQueryDatabase(Protocol):
+    def fetch_all(self, query: str, params: tuple = ()) -> list[dict[str, Any]]: ...
+
+
+def initialize_modules(
+    modules_store: dict, worker_id: str
+) -> Tuple[Any, Tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any]]:
+    from src.core.database import Database, setup_valkey
+    from src.core import (
+        auth,
+        messaging,
+        polls,
+        servers,
+        relationships,
+        presence,
+        reactions,
+        stickers,
+        soundboard,
+        embeds,
+        webhooks,
+        settings,
+        media,
+        events,
+        automod,
+        antispam,
+        search,
+    )
+    from src.core import voice, notifications, threads
+    from src.core.voice import signaling
+    import src.api as api
+
+    internal_secret = secrets.token_hex(32)
+    api.set_internal_secret(internal_secret)
+    logger.info("Internal security secret generated for self-test")
+
+    app_config = config.get("applications", {})
+    if not app_config.get("webhook_signature_secret"):
+        app_config["webhook_signature_secret"] = secrets.token_hex(32)
+        config.set("applications", app_config)
+        logger.info("Generated and persisted webhook_signature_secret")
+
+    failed_modules = []
+
+    logger.info("Initializing database...")
+    db = Database()
+
+    from src.core.migrations import run_migrations
+
+    try:
+        migration_result = run_migrations(db)
+
+        if migration_result["success"]:
+            logger.info(
+                f"Migrations applied successfully: "
+                f"{migration_result['applied_count']} applied, "
+                f"{migration_result['failed_count']} failed "
+                f"in {migration_result.get('total_elapsed_ms', 0)}ms"
+            )
+        else:
+            failed = next(
+                (
+                    m
+                    for m in migration_result.get("migrations", [])
+                    if not m.get("success")
+                ),
+                None,
+            )
+            detail = ""
+            if failed:
+                detail = f" (version={failed.get('version', '?')}, error={failed.get('error', '?')})"
+            logger.error(
+                f"Migration process had failures: "
+                f"{migration_result['applied_count']} applied, "
+                f"{migration_result['failed_count']} failed{detail}"
+            )
+            raise RuntimeError(
+                f"Database migrations failed{detail}. "
+                "Server cannot start with an inconsistent schema."
+            )
+    except Exception as e:
+        logger.error(f"Critical error during migrations: {e}")
+        raise
+
+    db.connect()
+
+    valkey_config = config.get("valkey") or {}
+    if valkey_config.get("enabled", False):
+        logger.info("Initializing Valkey...")
+        valkey_client = setup_valkey()
+        if valkey_client and valkey_client.ping():
+            valkey_client.set_worker_id(worker_id)
+            logger.info(
+                f"Connected to Valkey at {valkey_config.get('host', 'localhost')}:{valkey_config.get('port', 6379)} (Worker ID: {worker_id})"
+            )
+        else:
+            logger.warning(
+                "Valkey is enabled but connection failed - continuing without Valkey"
+            )
+    else:
+        logger.info("Valkey is disabled in configuration")
+
+    try:
+        from src.utils import encryption
+
+        if encryption.rotate_keys():
+            logger.info("Encryption keys rotated successfully")
+    except Exception as e:
+        logger.error(f"Failed to check encryption key rotation: {e}")
+
+    startup_times: Dict[str, float] = {}
+
+    def timed_init(name: str, init_func):
+        start = time.perf_counter()
+        logger.info(f"Initializing {name} module...")
+        try:
+            result = init_func()
+            elapsed = (time.perf_counter() - start) * 1000
+            startup_times[name] = elapsed
+            logger.info(f"  -> {name} initialized in {elapsed:.1f}ms")
+            return result
+        except Exception as e:
+            elapsed = (time.perf_counter() - start) * 1000
+            startup_times[name] = elapsed
+            logger.error(f"  -> {name} FAILED after {elapsed:.1f}ms: {e}")
+            raise
+
+    def init_independent():
+        threads_list = []
+
+        def init_servers():
+            timed_init("servers", lambda: servers.setup(db, auth, messaging))
+            modules_store["servers"] = servers
+
+        threads_list.append(threading.Thread(target=init_servers, name="InitServers"))
+
+        def init_rel():
+            timed_init("relationships", lambda: relationships.setup(db, auth, servers))
+            modules_store["relationships"] = relationships
+
+        threads_list.append(threading.Thread(target=init_rel, name="InitRel"))
+
+        def init_media():
+            timed_init("media", lambda: media.setup(db, messaging))
+            modules_store["media"] = media
+
+        threads_list.append(threading.Thread(target=init_media, name="InitMedia"))
+
+        def init_settings():
+            timed_init("settings", lambda: settings.setup(db))
+            modules_store["settings"] = settings
+
+        threads_list.append(threading.Thread(target=init_settings, name="InitSettings"))
+
+        for t in threads_list:
+            t.start()
+        for t in threads_list:
+            t.join()
+
+    # PlexiSum workbook files are independent SQLite databases (``.plexisum``)
+    # stored through the main file-storage adapter. Wire the blob boundary now
+    # that media is available so workbook reads/writes never touch the main
+    # database. Schema creation already happened through migration 000.
+    from src.core.suite import stash as stash_domain
+    from src.core.suite import sum as sum_domain
+
+    stash_domain.setup(db, servers_module=servers, media=media)
+    sum_domain.setup(
+        db,
+        servers_module=servers,
+        media=media,
+    )
+    logger.info("PlexiStash and PlexiSum storage wired to media adapter")
+
+    # Stash background cleanup job: purge soft-deleted items past their
+    # retention window and expire one-time download tickets. Runs only when
+    # the plexistash capability is available and an interval is configured.
+    try:
+        from src.core.artifacts.capabilities import (
+            get_capability,
+            is_usable,
+        )
+
+        if is_usable(get_capability("plexistash").state):
+            from src.core.suite.stash.cleanup import StashCleanupJob
+
+            stash_cfg = config.get("artifacts", {}).get("plexistash", {}) or {}
+            try:
+                cleanup_interval = int(
+                    stash_cfg.get("cleanup_interval_minutes", 60) or 0
+                )
+            except (TypeError, ValueError):
+                cleanup_interval = 60
+            if cleanup_interval > 0:
+                stash_cleanup = StashCleanupJob(db, config.get("artifacts", {}))
+                stash_cleanup.start()
+                modules_store["stash_cleanup"] = stash_cleanup
+                logger.info("Stash cleanup job started")
+            else:
+                logger.info("Stash cleanup disabled (cleanup_interval_minutes <= 0)")
+    except Exception as e:
+        logger.warning(f"Failed to start Stash cleanup job: {e}")
+
+    email_config = config.get("email", {})
+    email_sender = None
+    smtp_password = os.getenv("PLEXICHAT_SMTP_PASSWORD")
+    if email_config.get("smtp_host") and smtp_password:
+        from src.utils.mailer import SMTPEmailSender
+
+        email_sender = SMTPEmailSender(
+            host=email_config["smtp_host"],
+            port=email_config.get("smtp_port", 587),
+            user=email_config.get("smtp_user", ""),
+            password=smtp_password,
+            from_email=email_config.get("from_email", "noreply@plexichat.internal"),
+            use_tls=email_config.get("use_tls", True),
+        )
+        logger.info(f"Email sender initialized via SMTP ({email_config['smtp_host']})")
+    else:
+        logger.info(
+            "Email sender not initialized (SMTP host or PLEXICHAT_SMTP_PASSWORD missing)"
+        )
+
+    def init_auth_and_messaging_parallel():
+        """Initialize auth and messaging concurrently.
+
+        ``messaging.setup`` only stores the auth reference on its manager
+        (via ``BaseManager.__init__``) and never calls into auth at
+        construction time, so we can build both managers in parallel and
+        attach the real auth reference to messaging once auth has
+        finished initializing.
+        """
+        threads_list = []
+
+        def init_auth():
+            timed_init("auth", lambda: auth.setup(db, email_sender=email_sender))
+            modules_store["auth"] = auth
+
+        threads_list.append(threading.Thread(target=init_auth, name="InitAuth"))
+
+        def init_messaging():
+            timed_init("messaging", lambda: messaging.setup(db, None))
+            modules_store["messaging"] = messaging
+
+        threads_list.append(
+            threading.Thread(target=init_messaging, name="InitMessaging")
+        )
+
+        for t in threads_list:
+            t.start()
+        for t in threads_list:
+            t.join()
+
+        # Re-attach the real auth module to the messaging manager. This
+        # is the only post-init step required because auth was deferred
+        # while messaging was being constructed in parallel.
+        if (
+            modules_store.get("messaging") is not None
+            and modules_store["messaging"]._manager is not None
+        ):
+            modules_store["messaging"]._manager._auth = auth
+
+    init_auth_and_messaging_parallel()
+
+    init_independent()
+
+    try:
+        timed_init("search", lambda: search.setup(db, auth, messaging, servers))
+        modules_store["search"] = search
+    except Exception as e:
+        import utils.logger as _log
+
+        _log.warning(
+            f"Search module failed to initialize ({e}); continuing with low-resource blind-index fallback"
+        )
+        try:
+            # still expose a minimal search module so API returns degraded responses instead of 500
+            modules_store["search"] = search
+        except Exception:
+            pass
+
+    def init_dependent():
+        threads_list = []
+
+        try:
+            from src.core.auth.reaper import AccountReaper
+
+            reaper = AccountReaper(db, auth)
+            reaper.start()
+            modules_store["reaper"] = reaper
+        except Exception as e:
+            logger.error(f"Failed to start Account Reaper: {e}")
+
+        # DSAR Harvester (GDPR data export worker)
+        try:
+            from src.core.dsar import setup as dsar_setup, is_setup
+            from src.core.dsar.harvester import DSARHarvester
+
+            dsar_setup(db)
+            if is_setup():
+                harvester_config = config.get("dsar", {})
+                if harvester_config.get("enabled", True):
+                    harvester = DSARHarvester(db, harvester_config)
+                    harvester.start()
+                    modules_store["dsar_harvester"] = harvester
+                    logger.info("DSAR Harvester background worker started")
+        except Exception as e:
+            logger.error(f"Failed to start DSAR Harvester: {e}")
+
+        # Artifact retention cleanup job (scheduled purge of expired artifacts)
+        try:
+            from src.core.artifacts.retention import RetentionCleanupJob
+
+            artifacts_cfg = config.get("artifacts", {}) or {}
+            retention_cfg = artifacts_cfg.get("retention", {}) or {}
+            cleanup_interval = retention_cfg.get("run_cleanup_interval_minutes", 60)
+            try:
+                cleanup_interval = int(cleanup_interval)
+            except (TypeError, ValueError):
+                cleanup_interval = 60
+            if cleanup_interval > 0:
+                artifact_retention = RetentionCleanupJob(db, artifacts_cfg)
+                artifact_retention.start()
+                modules_store["artifact_retention"] = artifact_retention
+                logger.info("Artifact retention cleanup job started")
+            else:
+                logger.info(
+                    "Artifact retention cleanup disabled "
+                    "(run_cleanup_interval_minutes <= 0)"
+                )
+        except Exception as e:
+            logger.error(f"Failed to start artifact retention job: {e}")
+
+        def init_presence():
+            timed_init(
+                "presence",
+                lambda: presence.setup(db, auth, relationships, servers),
+            )
+            modules_store["presence"] = presence
+
+        threads_list.append(threading.Thread(target=init_presence, name="InitPresence"))
+
+        def init_reactions():
+            timed_init(
+                "reactions",
+                lambda: reactions.setup(db, messaging, servers, relationships),
+            )
+            modules_store["reactions"] = reactions
+
+        threads_list.append(
+            threading.Thread(target=init_reactions, name="InitReactions")
+        )
+
+        def init_embeds():
+            timed_init("embeds", lambda: embeds.setup(db, messaging, servers))
+            modules_store["embeds"] = embeds
+
+        threads_list.append(threading.Thread(target=init_embeds, name="InitEmbeds"))
+
+        def init_polls():
+            timed_init(
+                "polls",
+                lambda: polls.setup(db, messaging, auth_module=auth),
+            )
+            modules_store["polls"] = polls
+
+        threads_list.append(threading.Thread(target=init_polls, name="InitPolls"))
+
+        def init_notifications():
+            try:
+                timed_init(
+                    "notifications",
+                    lambda: notifications.setup(
+                        db,
+                        auth_module=auth,
+                        messaging_module=messaging,
+                        servers_module=servers,
+                        relationships_module=relationships,
+                        presence_module=presence,
+                    ),
+                )
+                modules_store["notifications"] = notifications
+            except Exception as e:
+                logger.warning(f"Failed to initialize notifications module: {e}")
+
+        threads_list.append(
+            threading.Thread(target=init_notifications, name="InitNotifications")
+        )
+
+        def init_stickers():
+            timed_init(
+                "stickers",
+                lambda: stickers.setup(
+                    db,
+                    messaging_module=messaging,
+                    servers_module=servers,
+                    media_module=media,
+                ),
+            )
+            modules_store["stickers"] = stickers
+
+        threads_list.append(threading.Thread(target=init_stickers, name="InitStickers"))
+
+        def init_soundboard():
+            timed_init(
+                "soundboard",
+                lambda: soundboard.setup(
+                    db,
+                    servers_module=servers,
+                    media_module=media,
+                ),
+            )
+            modules_store["soundboard"] = soundboard
+
+        threads_list.append(
+            threading.Thread(target=init_soundboard, name="InitSoundboard")
+        )
+
+        for t in threads_list:
+            t.start()
+        for t in threads_list:
+            t.join()
+
+    init_dependent()
+
+    # Push module depends on notifications (user push preferences); it must
+    # be initialized BEFORE any notification creation runs so device
+    # delivery has a manager. Failure to init push is non-fatal — chat
+    # keeps working without mobile delivery.
+    try:
+        from src.core import push
+
+        timed_init(
+            "push",
+            lambda: push.setup(
+                db, notifications_module=modules_store.get("notifications")
+            ),
+        )
+        modules_store["push"] = push
+    except Exception as e:
+        logger.warning(f"Failed to initialize push module: {e}")
+
+    timed_init(
+        "automod",
+        lambda: automod.setup(
+            db,
+            servers_module=servers,
+            messaging_module=messaging,
+            notifications_module=modules_store.get("notifications"),
+        ),
+    )
+    modules_store["automod"] = automod
+
+    timed_init(
+        "antispam",
+        lambda: antispam.setup(db),
+    )
+    modules_store["antispam"] = antispam
+
+    try:
+        all_servers = cast(_ServerQueryDatabase, db).fetch_all(
+            "SELECT id, owner_id FROM srv_servers WHERE deleted = 0"
+        )
+        server_count = 0
+        for srv in all_servers:
+            automod.ensure_default_rules(srv["id"], srv["owner_id"])
+            server_count += 1
+        if server_count:
+            logger.info(
+                "Verified automod rules across %d server(s)",
+                server_count,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to ensure default rules for servers: {e}")
+
+    timed_init(
+        "events",
+        lambda: events.setup(
+            relationships_module=relationships,
+            servers_module=servers,
+            messaging_module=messaging,
+        ),
+    )
+    modules_store["events"] = events
+
+    # Tag cross-worker events with this worker's identity so sibling
+    # workers can ignore their own echoes.
+    try:
+        events_mod = modules_store.get("events")
+        if events_mod is not None:
+            events_mod.set_worker_id(worker_id)
+            logger.debug(f"EventManager worker_id set to {worker_id}")
+    except Exception:
+        pass
+
+    timed_init(
+        "webhooks",
+        lambda: webhooks.setup(db, auth, messaging, servers, embeds),
+    )
+    modules_store["webhooks"] = webhooks
+
+    # Outbound webhook retry-delivery job: periodically drains the
+    # ``webhook_retry_queue`` so failed deliveries get their backoff attempts.
+    # Disabled when ``webhooks.delivery_interval_seconds <= 0``.
+    try:
+        from src.core.webhooks.delivery import WebhookDeliveryJob
+
+        webhook_cfg = config.get("webhooks", {}) or {}
+        delivery_job = WebhookDeliveryJob(db, webhook_cfg)
+        delivery_job.start()
+        if delivery_job._is_running:
+            modules_store["webhook_delivery"] = delivery_job
+            logger.info("Webhook retry delivery job started")
+        else:
+            logger.info(
+                "Webhook retry delivery job disabled "
+                "(delivery_interval_seconds <= 0 or no database)"
+            )
+    except Exception as e:
+        logger.error(f"Failed to start webhook retry delivery job: {e}")
+
+    try:
+        timed_init("threads", lambda: threads.setup(db, auth, messaging, servers))
+        modules_store["threads"] = threads
+    except Exception as e:
+        logger.warning(f"Failed to initialize threads module: {e}")
+        failed_modules.append("threads")
+
+    features = None
+    try:
+        from src.core import features
+
+        timed_init("features", lambda: features.setup(db))
+        modules_store["features"] = features
+    except Exception as e:
+        logger.warning(f"Failed to initialize user features module: {e}")
+        failed_modules.append("features")
+
+    try:
+        from src.core import avatars
+
+        timed_init("avatars", lambda: avatars.setup(db))
+        modules_store["avatars"] = avatars
+    except Exception as e:
+        logger.warning(f"Failed to initialize avatars module: {e}")
+        failed_modules.append("avatars")
+
+    try:
+        timed_init(
+            "voice",
+            lambda: voice.setup(db, auth, servers, relationships, presence),
+        )
+        modules_store["voice"] = voice
+    except Exception as e:
+        logger.warning(f"Failed to initialize voice module: {e}")
+        failed_modules.append("voice")
+
+    # voice_call_manager / artifact_manager are stored globally so the
+    # recording manager can be wired in after signaling initialises.
+    _voice_call_manager = None
+    _artifact_manager = None
+    _artifacts_cfg: Dict[str, Any] = {}
+
+    if "voice" not in failed_modules:
+        try:
+            from src.core.artifacts.manager import ArtifactManager
+            from src.core.artifacts.voice_calls import VoiceCallManager
+
+            _artifacts_cfg = config.get("artifacts", {}) or {}
+            _artifact_manager = ArtifactManager(db, _artifacts_cfg)
+            _voice_call_manager = VoiceCallManager(
+                db, _artifact_manager, _artifacts_cfg
+            )
+            voice.set_voice_call_manager(_voice_call_manager)
+            try:
+                from src.core.artifacts.transcription.worker import (
+                    ensure_transcription_drainer,
+                )
+
+                ensure_transcription_drainer()
+            except Exception as e:
+                logger.debug(f"Failed to start transcription drainer: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to attach voice call manager: {e}")
+
+    # Federation bridge for artifacts (PlexiJoin). Built only when the
+    # PlexiJoin feature is licensed and its encryption service is available,
+    # mirroring how the PlexiJoin admin routes construct the manager. When
+    # federation is unavailable the WS artifact layer simply skips forwarding;
+    # local relay is never affected.
+    try:
+        from utils import licensing as license_module
+
+        if license_module.has_feature("plexijoin", default=False):
+            try:
+                import utils.encryption as enc_mod
+
+                class _PlexiJoinEncryptionService:
+                    @staticmethod
+                    def encrypt(data: str) -> str:
+                        return enc_mod.encrypt_data(data)
+
+                    @staticmethod
+                    def decrypt(data: str) -> str:
+                        return enc_mod.decrypt_data(data)
+
+                encryption_service = _PlexiJoinEncryptionService()
+            except Exception:
+                encryption_service = None
+
+            if encryption_service is not None and db is not None:
+                from src.core.plexijoin import PlexiJoinManager
+                from src.core.admin.logging import get_admin_logger
+                from src.core.artifacts.federation import (
+                    FederationArtifactBridge,
+                    set_artifact_federation_bridge,
+                )
+
+                plexijoin_manager = PlexiJoinManager(
+                    db=db,
+                    admin_logger=get_admin_logger(),
+                    encryption_service=encryption_service,
+                )
+                federation_bridge = FederationArtifactBridge(db, plexijoin_manager)
+                set_artifact_federation_bridge(federation_bridge)
+                modules_store["artifact_federation"] = federation_bridge
+                logger.info("Federation (PlexiJoin) artifact bridge initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize artifact federation bridge: {e}")
+
+    voice_config = config.get("voice") or {}
+    if voice_config.get("enabled", False):
+        try:
+            sfu_backend = voice_config.get("sfu_backend", "aiortc")
+
+            def init_signaling():
+                signaling.setup(
+                    voice_module=voice,
+                    events_module=events,
+                    sfu_backend=sfu_backend,
+                    mediasoup_url=voice_config.get(
+                        "mediasoup_url", "https://localhost:4443"
+                    ),
+                    mediasoup_origin=voice_config.get(
+                        "mediasoup_origin",
+                        "https://localhost:4443",
+                    ),
+                    janus_url=voice_config.get(
+                        "janus_url", "http://localhost:8088/janus"
+                    ),
+                    stun_urls=voice_config.get(
+                        "stun_urls", ["stun:stun.l.google.com:19302"]
+                    ),
+                    turn_urls=voice_config.get("turn_urls", []),
+                    turn_secret=voice_config.get("turn_secret", ""),
+                    turn_ttl=voice_config.get("turn_ttl", 86400),
+                    turn_username=voice_config.get("turn_username", ""),
+                    turn_credential=voice_config.get("turn_credential", ""),
+                    acoustic_defense_config=voice_config.get("acoustic_defense", {}),
+                )
+
+            timed_init("signaling", init_signaling)
+            modules_store["signaling"] = signaling
+            sfu_url = (
+                voice_config.get("mediasoup_url")
+                if sfu_backend in ("mediasoup", "mediasoup-ws")
+                else voice_config.get("janus_url")
+            )
+            logger.info(
+                f"Voice signaling initialized with {sfu_backend} backend at {sfu_url}"
+            )
+            if voice_config.get("turn_urls"):
+                logger.info(
+                    f"TURN servers configured: {len(voice_config.get('turn_urls', []))} servers"
+                )
+            if voice_config.get("log_connections", False):
+                logger.info("Voice connection logging enabled")
+        except Exception as e:
+            logger.warning(f"Failed to initialize voice signaling module: {e}")
+            failed_modules.append("signaling")
+    else:
+        logger.info("Voice module disabled in configuration")
+
+    # --- Recording manager (after signaling is ready) ---
+    if _voice_call_manager is not None and modules_store.get("signaling") is not None:
+        try:
+            from src.core.artifacts.recording import RecordingManager
+
+            voice_cfg = _artifacts_cfg.get("voice", {}) or {}
+            recording_cfg = voice_cfg.get("recording", {}) or {}
+            sfu_adapter = modules_store["signaling"]._get_manager()._get_sfu()
+            if sfu_adapter is not None:
+                recording_mgr = RecordingManager(
+                    db=db,
+                    media_module=media,
+                    artifact_manager=_artifact_manager,
+                    sfu_adapter=sfu_adapter,
+                    recording_config=recording_cfg,
+                )
+                _voice_call_manager.set_recording_manager(recording_mgr)
+                logger.info("Recording manager initialized and attached")
+            else:
+                logger.info("Recording manager disabled (SFU adapter returned None)")
+        except Exception as exc:
+            logger.warning(f"Recording manager init skipped: {exc}")
+
+    rate_limit_settings = config.get("rate_limiting", {})
+    if rate_limit_settings.get("enabled", True):
+        try:
+            from src.core import ratelimit
+            from src.core.ratelimit.storage import (
+                ValkeyStorage,
+                MemoryStorage,
+                DatabaseStorage,
+            )
+            from src.core.database.valkey_client import (
+                is_available as valkey_is_available,
+            )
+
+            def init_ratelimit():
+                storage = None
+                if valkey_is_available():
+                    storage = ValkeyStorage()
+                    logger.info("Using Valkey storage for rate limiting")
+                elif db:
+                    storage = DatabaseStorage(db)
+                    db_type = db.type.capitalize()
+                    logger.info(
+                        f"Using {db_type} storage for rate limiting (shared across workers)"
+                    )
+                else:
+                    storage = MemoryStorage()
+                    logger.warning("=" * 60)
+                    logger.warning(
+                        "SECURITY WARNING: Using in-memory storage for rate limiting!"
+                    )
+                    logger.warning(
+                        "In a multi-worker environment (Uvicorn), this will result in"
+                    )
+                    logger.warning(
+                        "independent counters per worker, allowing rate-limit bypass."
+                    )
+                    logger.warning(
+                        "To fix: Enable Valkey or configure a shared database."
+                    )
+                    logger.warning("=" * 60)
+
+                ratelimit.setup(
+                    storage_backend=storage,
+                    bot_multiplier=rate_limit_settings.get("bot_multiplier", 1.5),
+                    webhook_multiplier=rate_limit_settings.get(
+                        "webhook_multiplier", 1.0
+                    ),
+                    enable_global_limit=True,
+                )
+
+            timed_init("ratelimit", init_ratelimit)
+            modules_store["ratelimit"] = ratelimit
+        except Exception as e:
+            logger.warning(f"Failed to initialize rate limit module: {e}")
+            failed_modules.append("ratelimit")
+
+    telemetry_config = config.get("telemetry") or {}
+    # Opt-in only: telemetry stays disabled unless explicitly enabled.
+    if telemetry_config.get("enabled", False):
+        try:
+            from src.core import telemetry
+
+            timed_init("telemetry", lambda: telemetry.setup(db))
+            modules_store["telemetry"] = telemetry
+        except Exception as e:
+            logger.warning(f"Failed to initialize telemetry module: {e}")
+            failed_modules.append("telemetry")
+
+    feedback_config = config.get("feedback") or {}
+    if feedback_config.get("enabled", True):
+        try:
+            from src.core import feedback
+
+            timed_init("feedback", lambda: feedback.setup(db))
+            modules_store["feedback"] = feedback
+        except Exception as e:
+            logger.warning(f"Failed to initialize feedback module: {e}")
+            failed_modules.append("feedback")
+
+    reports_config = config.get("reports") or {}
+    if reports_config.get("enabled", True):
+        try:
+            from src.core import reports
+
+            timed_init("reports", lambda: reports.setup(db, messaging))
+            modules_store["reports"] = reports
+        except Exception as e:
+            logger.warning(f"Failed to initialize reports module: {e}")
+            failed_modules.append("reports")
+
+    admin_config = config.get("admin_ui") or {}
+    if admin_config.get("enabled", True):
+        try:
+            from src.core import admin
+
+            timed_init("admin", lambda: admin.setup(db, auth, features))
+            modules_store["admin"] = admin
+            logger.info(
+                f"Admin module initialized (path: {admin_config.get('path', '/admin')})"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize admin module: {e}")
+            failed_modules.append("admin")
+
+    total_time = sum(startup_times.values())
+    logger.info("=" * 60)
+    logger.info("MODULE INITIALIZATION SUMMARY")
+    logger.info("=" * 60)
+    for module_name, elapsed in sorted(startup_times.items(), key=lambda x: -x[1]):
+        logger.info(f"  {module_name:20s} {elapsed:8.1f}ms")
+    logger.info("-" * 60)
+    logger.info(f"  {'TOTAL':20s} {total_time:8.1f}ms")
+    logger.info("=" * 60)
+
+    if failed_modules:
+        logger.error(
+            f"Module initialization incomplete. Failed modules: {', '.join(failed_modules)}"
+        )
+    else:
+        logger.info("All modules initialized successfully")
+
+    return db, (
+        auth,
+        messaging,
+        servers,
+        relationships,
+        presence,
+        reactions,
+        embeds,
+        webhooks,
+        settings,
+        media,
+        search,
+    )

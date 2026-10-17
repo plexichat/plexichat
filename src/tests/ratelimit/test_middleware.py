@@ -70,6 +70,24 @@ class TestRouteExtraction:
         )
         assert route == "GET /api/v1/unknown/path"
 
+    def test_extract_suite_item_route(self):
+        """Suite item routes use a bounded user-scoped route key."""
+        route, resource_id, webhook_id = extract_route_info(
+            "/api/v1/suite/stash/items/12345", "PATCH"
+        )
+        assert route == "PATCH /suite/stash/items/{id}"
+        assert resource_id == 12345
+        assert webhook_id is None
+
+    def test_extract_suite_workbook_route(self):
+        """Suite workbook routes use a bounded user-scoped route key."""
+        route, resource_id, webhook_id = extract_route_info(
+            "/api/v1/suite/sum/workbooks/67890", "GET"
+        )
+        assert route == "GET /suite/sum/workbooks/{id}"
+        assert resource_id == 67890
+        assert webhook_id is None
+
 
 class TestMiddlewareIntegration:
     """Tests for middleware integration with FastAPI."""
@@ -234,6 +252,7 @@ class TestMiddlewareBypass:
             enable_global_limit=False,
             bypass_check=lambda uid, admin, internal: admin or internal,
         )
+
         app = FastAPI()
         app.add_middleware(RateLimitMiddleware)
 
@@ -245,6 +264,7 @@ class TestMiddlewareBypass:
                 permissions = {"admin.*": request.headers.get("X-Admin") == "true"}
 
             request.state.user = MockUser()
+            request.state.is_internal = request.headers.get("X-Internal") == "true"
             return await call_next(request)
 
         @app.get("/api/v1/test")
@@ -268,9 +288,7 @@ class TestMiddlewareBypass:
         """Test internal requests bypass rate limiting."""
         client = TestClient(app_with_bypass)
         for i in range(10):
-            response = client.get(
-                "/api/v1/test", headers={"X-Internal-Request": "true"}
-            )
+            response = client.get("/api/v1/test", headers={"X-Internal": "true"})
             assert response.status_code == 200
 
     def test_normal_user_rate_limited(self, app_with_bypass):

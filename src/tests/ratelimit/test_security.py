@@ -20,6 +20,7 @@ from src.core.ratelimit.models import (
 from src.core.ratelimit.storage import MemoryStorage
 from src.core.ratelimit.manager import RateLimitManager
 from src.core.ratelimit.middleware import RateLimitMiddleware, extract_route_info
+
 from src.core import ratelimit
 from src.api.websocket.connection import Connection
 
@@ -310,7 +311,8 @@ class TestDistributedAttacks:
             if not result.allowed:
                 blocked = True
                 break
-        assert blocked
+        assert blocked is True
+        assert i < 100
 
     def test_webhook_channel_flood_attack(self, memory_storage):
         """Test that multiple webhooks can't flood a single channel."""
@@ -341,7 +343,7 @@ class TestDistributedAttacks:
                     break
             if blocked:
                 break
-        assert blocked
+        assert blocked is True
 
 
 class TestBucketManipulation:
@@ -428,7 +430,9 @@ class TestBucketManipulation:
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert not result.allowed
 
-    def test_fixed_window_boundary_manipulation(self, memory_storage, test_user_id):
+    def test_fixed_window_boundary_manipulation(
+        self, memory_storage, test_user_id, rate_limit_clock
+    ):
         """Test fixed window boundaries can't be manipulated."""
         config = RateLimitConfig(
             requests=5,
@@ -446,7 +450,7 @@ class TestBucketManipulation:
             assert result.allowed
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert not result.allowed
-        time.sleep(1.1)
+        rate_limit_clock.advance(1.1)
         result = manager.check_rate_limit(user_id=test_user_id, route="GET /test")
         assert result.allowed
 
@@ -575,7 +579,7 @@ class TestHeaderSpoofing:
         # 2. Spoofed header request - Should FAIL (429)
         resp2 = client.get("/api/v1/test", headers={"X-Internal-Request": "true"})
         assert resp2.status_code == 429
-        assert "Rate limit exceeded" in resp2.text
+        assert "You are being rate limited." in resp2.text
 
         ratelimit._manager = None
         ratelimit._setup_complete = False

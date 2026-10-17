@@ -1,0 +1,55 @@
+# Plexichat development / pre-commit toolchain.
+#
+# Direct dev dependencies only. Generate the fully-pinned lock with:
+#   uv pip compile requirements-dev.in --generate-hashes -o requirements-dev.txt
+# Dev / CI environments sync to this lock (which also pulls in every
+# runtime dependency via ``-r requirements.in``):
+#   uv pip sync requirements-dev.txt
+#
+# Rationale: every hook in .pre-commit-config.yaml uses
+# ``language: system``, so the binaries below must exist in the active
+# Python environment. Pinning them here (and syncing to the compiled
+# requirements-dev.txt) makes the lint/static-analysis toolchain
+# reproducible and stops ``uv pip sync requirements.txt`` from silently
+# stripping developer tooling (pyright, detect-secrets, ...).
+
+-r requirements.in
+
+# pre-commit: runs the hooks defined in .pre-commit-config.yaml.
+pre-commit==4.6.0
+# virtualenv is a transitive dependency of pre-commit; pinned to 21.7.13+
+# to clear PYSEC-2026-4011, PYSEC-2026-4012, PYSEC-2026-4013, PYSEC-2026-4014
+# (pip-audit). Pinned here so a later resolution cannot regress it.
+virtualenv==21.7.13
+
+# ruff + ruff-format: the ``ruff`` and ``ruff-format`` hooks.
+ruff==0.15.12
+
+# pyright: the ``pyright`` type-check hook.
+pyright==1.1.411
+
+# bandit: the ``bandit`` security-lint hook.
+bandit==1.9.4
+
+# detect-secrets: the ``detect-secrets`` secret-scanning hook.
+detect-secrets==1.5.0
+
+# pip-audit: dependency vulnerability scanning (run against both lock files).
+pip-audit==2.10.1
+
+# --- Test toolchain ---
+#
+# These were previously in requirements.in, which meant the runtime image and
+# the production pip-audit surface both carried the whole test stack. They are
+# test-only: no module under src/core or src/api imports pytest, hypothesis or
+# any pytest plugin, so nothing in the shipped server needs them.
+#
+# CI jobs that run pytest (e.g. the ``test:pytest`` job in .gitlab-ci.yml) must
+# install this lock, not requirements.txt.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-benchmark==5.2.3
+pytest-cov==7.1.0
+pytest-timeout==2.4.0
+pytest-xdist==3.8.0
+hypothesis==6.161.6
