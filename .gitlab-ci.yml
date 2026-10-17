@@ -352,10 +352,24 @@ pip-licenses:
 # TEST STAGE (Unit/Integration + API Self-Test)
 # =========================================================
 
+# The four pytest jobs below share a resource group, so they never co-run.
+#
+# The performance:no_slow_tests gate judges test:pytest's JUnit report against
+# wall clock, and pipeline #2030 redded on
+# src/tests/suite/test_sum_coalescing.py::test_time_based_flush_fires_after_window
+# at 16.41s against the 5s default. That test takes ~1.5s on the same code with
+# the box idle, and the job's own timings show it overlapped
+# test:shuffled_order for 9 of its 13 minutes (and test:database_backends for
+# 2): three pytest runs were sharing the disk every one of them fsyncs to.
+# test:timing_under_load deliberately oversubscribes the CPU to probe wait
+# budgets, so it must never share the box with a job whose verdict is a
+# measured duration. A duration gate that measures its neighbours gates the
+# runner instead of the code -- and, as here, reds a commit that is fine.
 test:pytest:
   extends: .python_base
   stage: test
   timeout: 1h
+  resource_group: pytest-suite
   script:
     # pytest and its plugins (asyncio, benchmark, xdist, timeout) are test-only
     # and live in requirements-dev.in, so the runtime lock no longer carries
@@ -405,6 +419,8 @@ test:shuffled_order:
   extends: .python_base
   stage: test
   timeout: 1h
+  # Same resource group as test:pytest: see the note above it.
+  resource_group: pytest-suite
   variables:
     SHUFFLE_SEED: "424242"
   script:
@@ -425,6 +441,9 @@ test:timing_under_load:
   extends: .python_base
   stage: test
   timeout: 30m
+  # Same resource group as test:pytest: the burners this job runs are exactly
+  # the load a duration gate must not be measuring.
+  resource_group: pytest-suite
   variables:
     # Busy-loop burners per CPU; >1 deliberately oversubscribes the scheduler.
     PLEXICHAT_LOAD_PER_CPU: "2"
@@ -483,6 +502,8 @@ test:database_backends:
   extends: .python_base
   stage: test
   timeout: 30m
+  # Its JUnit report is judged by the same gate; see the note at test:pytest.
+  resource_group: pytest-suite
   services:
     - name: postgres:15-alpine
       alias: postgres
@@ -817,6 +838,20 @@ create_merge_request:
     - |
       API="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}"
       AUTH="PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}"
+
+      # A dead token used to read as "no merge request yet": the API answers
+      # 401 with a JSON *object*, jq's `.[0].iid` errors on it, MR_IID came out
+      # empty, and the job exited 0 -- a green request-merge job that opened
+      # nothing. That is exactly what pipeline #2030 did once the group's
+      # PLEXICHAT_MR_PAT had been revoked, so the token is checked first and a
+      # rotation fails this job by name instead of silently doing nothing.
+      STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        --header "$AUTH" "${API}/merge_requests?per_page=1")
+      if [ "$STATUS" != "200" ]; then
+        echo "FATAL: PLEXICHAT_MR_PAT rejected by the API (HTTP ${STATUS})" >&2
+        echo "Rotate the group CI variable, then retry this job." >&2
+        exit 1
+      fi
       
       echo "Creating merge request from dev to master..."
       RESPONSE=$(curl --silent --request POST \
@@ -832,12 +867,17 @@ create_merge_request:
       if [ -z "$MR_IID" ]; then
         echo "MR creation returned: $(echo "$RESPONSE" | jq -r '.message // .')"
         echo "Checking for existing MR from dev to master..."
-        EXISTING=$(curl --silent --header "$AUTH" \
-          "${API}/merge_requests?source_branch=dev&target_branch=master&state=opened")
-        MR_IID=$(echo "$EXISTING" | jq -r '.[0].iid // empty')
+        if ! EXISTING=$(curl --silent --fail --header "$AUTH" \
+          "${API}/merge_requests?source_branch=dev&target_branch=master&state=opened"); then
+          echo "FATAL: could not list merge requests (API error)" >&2
+          exit 1
+        fi
+        # The response is an array only on success; anything else means the
+        # lookup failed, and saying so beats indexing into an error object.
+        MR_IID=$(echo "$EXISTING" | jq -r 'if type == "array" then (.[0].iid // empty) else empty end')
         if [ -z "$MR_IID" ]; then
-          echo "No existing MR found. Cannot set auto-merge."
-          exit 0
+          echo "FATAL: no open dev->master merge request, and creating one failed" >&2
+          exit 1
         fi
         echo "Found existing MR !$MR_IID"
       else
@@ -845,7 +885,7 @@ create_merge_request:
       fi
       
       echo "Setting auto-merge (merge when pipeline succeeds)..."
-      curl --request PUT \
+      curl --silent --request PUT \
         --header "$AUTH" \
         --data "merge_when_pipeline_succeeds=true" \
         --data "should_remove_source_branch=false" \
