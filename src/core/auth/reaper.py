@@ -196,7 +196,11 @@ class AccountReaper:
         # deletion_at is stored in MILLISECONDS (matching
         # DeletionMixin.schedule_account_deletion); compare in the same unit.
         now = int(time.time() * 1000)
-        batch_size = self._reaper_config.get("batch_size", 50)
+        # SQLite reads ``LIMIT -1`` as *unlimited*, so a non-positive
+        # configured ``batch_size`` would purge every frozen account in a
+        # single cycle (and ``LIMIT 0`` would stall purges forever). Clamp to
+        # at least one account per cycle.
+        batch_size = max(1, int(self._reaper_config.get("batch_size", 50)))
 
         # Clean up expired passkey challenges and Suite download tickets.
         self._cleanup_passkey_challenges()

@@ -123,7 +123,11 @@ class DSARHarvester:
                 "DSAR Harvester: ``harvest()`` called while audit chain is halted; refusing to run."
             )
             return
-        batch_size = self._harvester_config.get("batch_size", 10)
+        # SQLite reads ``LIMIT -1`` as *unlimited*, so a non-positive
+        # configured ``batch_size`` would let a single harvest cycle export
+        # every approved request at once (and ``LIMIT 0`` would stall the
+        # worker forever). Clamp to at least one row per cycle.
+        batch_size = max(1, int(self._harvester_config.get("batch_size", 10)))
 
         self._cleanup_expired()
 

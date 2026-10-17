@@ -15,7 +15,7 @@ because require_admin_review defaults to true.
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -103,8 +103,8 @@ def _handle_value_error(exc: ValueError) -> HTTPException:
 async def list_data_exports(
     request: Request,
     status: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     """List all DSAR export requests with optional status filter."""
     check_host_restriction(request)
