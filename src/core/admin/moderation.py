@@ -8,6 +8,14 @@ import time
 import utils.logger as logger
 
 
+# Every admin listing helper in this module clamps its page bound to this
+# ceiling. ``limit`` used to reach SQL ``LIMIT ?`` verbatim, and SQLite reads
+# ``LIMIT -1`` as *unlimited* -- so ``?limit=-1`` dumped the whole table
+# instead of an empty page. Clamping from below fixes that; clamping from
+# above keeps a single request from materializing an unbounded result set.
+MAX_PAGE_SIZE = 200
+
+
 @dataclass
 class HashReport:
     """A content hash report for moderation."""
@@ -59,6 +67,9 @@ def get_hash_reports(
     db: Any, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
 ) -> List[HashReport]:
     """Get hash reports for admin review."""
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
+
     query = """SELECT r.id, r.hash_value, r.reporter_id, u.username, r.reason, 
                       r.details, r.status, r.reported_at, r.reviewed_at, 
                       r.reviewed_by, r.admin_notes, r.phash_value, r.uploader_id,
@@ -145,6 +156,9 @@ def get_hash_report_counts(db: Any) -> Dict[str, int]:
 
 def get_blocked_hashes(db: Any, limit: int = 100, offset: int = 0) -> List[BlockedHash]:
     """Get list of blocked hashes."""
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
+
     rows = db.fetch_all(
         """SELECT hash_value, reason, blocked_at, blocked_by, auto_blocked,
                   hash_type, phash_threshold
@@ -274,6 +288,9 @@ def block_hash(
 
 def get_blocked_users(db: Any, limit: int = 100, offset: int = 0) -> List[BlockedUser]:
     """Get list of users blocked from uploading media."""
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
+
     rows = db.fetch_all(
         """SELECT b.user_id, u.username, b.reason, b.blocked_at, b.blocked_by, b.expires_at
            FROM media_blocked_users b
