@@ -909,6 +909,42 @@ create_merge_request:
         exit 1
       fi
       
+      # Release gate. A green dev pipeline is not a release: before this gate
+      # existed, one afternoon of ordinary green dev pipelines put three merge
+      # requests into master (!10, !11, !12). dev is merged only for a commit
+      # that carries this project's release tag, ``<stage>.<major>.<minor>-
+      # <build>`` with stage in a/b/c/r -- the format src/api/schemas/version.py
+      # enforces and docs/deployment/versioning.md describes. Build markers such
+      # as ``a.1.0-build681`` are deliberately not release tags and do not count.
+      TAGS=$(curl --silent --fail --header "$AUTH" \
+        "${API}/repository/commits/${CI_COMMIT_SHA}/refs?type=tag") || {
+        echo "FATAL: could not read the tags on ${CI_COMMIT_SHA}" >&2
+        exit 1
+      }
+      RELEASE_TAG=$(echo "$TAGS" | jq -r '.[].name' \
+        | grep -E '^[abcr]\.[0-9]+\.[0-9]+-[0-9]+$' | head -n 1 || true)
+      if [ -z "$RELEASE_TAG" ]; then
+        echo "No release tag <stage>.<major>.<minor>-<build> on ${CI_COMMIT_SHA}."
+        echo "Tags on this commit: $(echo "$TAGS" | jq -r '[.[].name] | join(", ")')"
+        echo "Nothing to release; dev is not merged into master."
+        exit 0
+      fi
+      echo "Releasing ${RELEASE_TAG} (${CI_COMMIT_SHA})"
+
+      # A release tag can be pushed on a commit that already reached master,
+      # leaving dev with nothing to merge. Asking for that merge request would
+      # fail the job by name over an empty diff, which is not a release
+      # failure, so check first and say so.
+      COMPARE=$(curl --silent --fail --header "$AUTH" \
+        "${API}/repository/compare?from=master&to=dev") || {
+        echo "FATAL: could not compare master and dev" >&2
+        exit 1
+      }
+      if [ "$(echo "$COMPARE" | jq -r '.commits | length')" = "0" ]; then
+        echo "dev has no commits that master lacks; nothing to merge."
+        exit 0
+      fi
+
       echo "Creating merge request from dev to master..."
       RESPONSE=$(curl --silent --request POST \
         --header "$AUTH" \
@@ -970,7 +1006,11 @@ create_merge_request:
       fi
       echo "Auto-merge set on !${MR_IID}"
   rules:
+    # A release tag pushed on a dev commit usually arrives after that commit's
+    # dev pipeline has run, so the tag pipeline is the one that can see it.
+    # Neither arm merges without the release-tag check in the script above.
     - if: $CI_COMMIT_BRANCH == "dev"
+    - if: '$CI_COMMIT_TAG =~ /^[abcr]\.[0-9]+\.[0-9]+-[0-9]+$/'
 
 validate_master_and_tag:
   stage: test-and-release
