@@ -360,7 +360,7 @@ pip-licenses:
 # TEST STAGE (Unit/Integration + API Self-Test)
 # =========================================================
 
-# The four pytest jobs below share a resource group, so they never co-run.
+# The pytest jobs below share a resource group, so they never co-run.
 #
 # The performance:no_slow_tests gate judges test:pytest's JUnit report against
 # wall clock, and pipeline #2030 redded on
@@ -437,6 +437,15 @@ test:formula_parity:
 # one. A fixed seed makes the order -- and any failure it exposes --
 # reproducible: replay locally with the same --shuffle-seed value. Files stay
 # whole, so this is the same test set as test:pytest in a shuffled order.
+#
+# It runs in two shapes. On the merge path it is four workers: the collection
+# hook shuffles whole files and xdist hands files to workers in collection
+# order (``--dist loadfile``), so the run still exercises the shuffled order,
+# and the same 11,612 tests take 2:18 instead of 8:54 (pipeline #2058). On
+# master -- the branch a release is tagged from -- it stays in one process,
+# because that is the shape in which every file's leaked state is visible to
+# every later file; with four workers only the files that end up sharing a
+# worker see it. Cheap while iterating, exhaustive before shipping.
 test:shuffled_order:
   extends: .python_base
   stage: test
@@ -447,9 +456,34 @@ test:shuffled_order:
     SHUFFLE_SEED: "424242"
   script:
     - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q -n 4 --dist loadfile --maxfail=20
+      --shuffle-seed "$SHUFFLE_SEED"
+  needs: []
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: never
+    # Branch pipelines only: a tag pipeline re-runs the same commit, which
+    # already ran this gate on its branch.
+    - if: $CI_COMMIT_BRANCH
+
+# The single-process half of the gate above, kept for master for the reason
+# spelled out there.
+test:shuffled_order_serial:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  resource_group: pytest-suite
+  variables:
+    SHUFFLE_SEED: "424242"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
     - python -m pytest -q --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
   needs: []
   allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
 
 # Wall-clock determinism gate. These suites wait on background effects -- a
 # worker thread's first cycle, an executor-driven database update, the pool

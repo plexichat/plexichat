@@ -149,6 +149,65 @@ class TestTelemetryModule:
         # The error rate calculation may have floating point precision issues
         assert stats[0].error_rate > 30 and stats[0].error_rate < 40
 
+    def test_get_endpoint_stats_escapes_like_wildcards(self, telemetry_module, mock_db):
+        """A ``%``/``_`` endpoint filter must be matched literally."""
+        # One aggregate row so the second (raw-sample) pass actually runs: an
+        # empty first result short-circuits get_endpoint_stats before it, and
+        # then only one of the two LIKE sites would be exercised.
+        mock_db.fetch_all.side_effect = [
+            [
+                {
+                    "endpoint": "/api/v1/items/100%_off",
+                    "method": "GET",
+                    "count": 1,
+                    "avg_ms": 10.0,
+                    "min_ms": 10,
+                    "max_ms": 10,
+                    "avg_q": 0.0,
+                    "avg_dt": 0.0,
+                    "err_count": 0,
+                }
+            ],
+            [],
+        ]
+
+        telemetry_module.get_endpoint_stats(hours=24, endpoint_filter="100%_off")
+
+        # Two queries run: the aggregate pass and the raw-sample pass.
+        assert mock_db.fetch_all.call_count == 2
+        for call in mock_db.fetch_all.call_args_list:
+            sql, params = call.args
+            assert "endpoint LIKE ? ESCAPE '\\'" in sql
+            # The filter's position moves with the other filters and the
+            # sample cap, so look for the escaped value rather than a slot.
+            assert "%100\\%\\_off%" in params
+
+    def test_get_endpoint_stats_percent_is_not_match_all(
+        self, telemetry_module, mock_db
+    ):
+        """A bare ``%`` must not degenerate into a match-everything wildcard."""
+        mock_db.fetch_all.return_value = []
+
+        telemetry_module.get_endpoint_stats(hours=24, endpoint_filter="%")
+
+        sql, params = mock_db.fetch_all.call_args_list[0].args
+        assert params[-1] == "%\\%%"
+        assert params[-1] != "%%%"
+
+    def test_get_response_time_history_escapes_literal_segments(
+        self, telemetry_module, mock_db
+    ):
+        """Literal route segments are escaped; the route param stays a wildcard."""
+        mock_db.fetch_all.return_value = []
+
+        telemetry_module.get_response_time_history(
+            endpoint="/api/v1/users/{user_id}/a_b", method="GET", hours=24
+        )
+
+        sql, params = mock_db.fetch_all.call_args.args
+        assert "endpoint LIKE ? ESCAPE '\\'" in sql
+        assert params[0] == "/api/v1/users/%/a\\_b"
+
     def test_get_response_time_history_empty(self, telemetry_module, mock_db):
         """Test getting history when no data exists."""
         mock_db.fetch_all.return_value = []

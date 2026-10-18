@@ -31,6 +31,17 @@ def _coerce_nullable_int(value):
 NullableInt = Annotated[Optional[int], BeforeValidator(_coerce_nullable_int)]
 
 
+def _escape_like(text: str) -> str:
+    """Escape LIKE metacharacters so the filter is matched literally.
+
+    Parameterization blocks SQL injection but not ``%``/``_`` acting as
+    wildcards, so a bare ``%`` action-family filter would silently match every
+    action. ``docs/admin-hardening.md`` requires ``%``, ``_`` and ``\\`` to be
+    treated literally; the escape character is declared via ``ESCAPE '\\'``.
+    """
+    return str(text).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @router.get(
     "/audit/logs",
     responses={
@@ -73,8 +84,8 @@ async def get_audit_logs(
         params = []
 
         if action_family:
-            conditions.append("action LIKE ?")
-            params.append(f"{action_family}%")
+            conditions.append("action LIKE ? ESCAPE '\\'")
+            params.append(f"{_escape_like(action_family)}%")
 
         if status:
             conditions.append("status = ?")
@@ -270,8 +281,8 @@ async def export_audit_logs(
         params = []
 
         if action_family:
-            conditions.append("action LIKE ?")
-            params.append(f"{action_family}%")
+            conditions.append("action LIKE ? ESCAPE '\\'")
+            params.append(f"{_escape_like(action_family)}%")
 
         if status:
             conditions.append("status = ?")
