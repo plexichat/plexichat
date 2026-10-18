@@ -99,6 +99,32 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "the runner (#2046, which paid it eight times), 10-13s idle on the build box, "
         "27-31s with two pipelines sharing it",
     ),
+    # The three tests that sweep the real repository (1,886 modules read and
+    # parsed) are the same class as the import sweeps above: their cost is the
+    # size of the tree, not the code under test, so they are priced per sweep
+    # rather than by the 5s default. They measured 1.25-1.42s in-suite with the
+    # box idle, and 5.06s/5.12s in pipeline #2060 -- the run that redded this
+    # gate with all three a hair over the default -- where test:pytest runs
+    # four files at a time on four cores and each sweep competes with three
+    # other workers. Under the deliberate 3x oversubscription of
+    # test:timing_under_load they measured 8.2s/14.4s/15.2s, so like the import
+    # sweeps they are past the budget at that load; the ceiling is for the
+    # suite's own concurrency, and a sweep that doubles at rest still trips it.
+    "src.tests.security.test_audit_failopen::test_real_repository_manager_writes_all_resolve_the_caller": (
+        10.0,
+        "sweeps every manager in src/core: 1.42s idle, 5.12s at -n 4 on the runner "
+        "(#2060), 14.4s at 3x oversubscription",
+    ),
+    "src.tests.security.test_audit_failopen::test_real_repository_has_no_facade_probe_grants": (
+        10.0,
+        "sweeps every module under src for facade probes: 1.25s idle, 5.06s at -n 4 "
+        "on the runner (#2060), 8.2s at 3x oversubscription",
+    ),
+    "src.tests.security.test_audit_failopen::test_real_repository_routes_all_authenticate_and_authorize": (
+        10.0,
+        "inventories every route under src/api/routes: 1.25s idle, 15.2s at 3x "
+        "oversubscription",
+    ),
 }
 
 
