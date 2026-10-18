@@ -18,6 +18,16 @@ Postgres and Valkey with multi-worker simulations whose cost is wall-clock
 4.01s with the box idle against a 5s default a loaded runner would cross. A
 per-test budget still takes precedence over the job's ceiling.
 
+A wall clock also measures the *runner*, and this one is 4 cores shared with the
+other repository's pipeline. When both pushed at once (pipelines #2070 and
+#2071), the import sweeps that take 2.7s and 1.9s on an idle box took 22.5s and
+15.2s, and three 2.5s tests crossed 5s -- five false reds from the queue, not
+from the code. So ``src/tests/_conftest/cpu_time.py`` records the CPU every
+testcase consumed (children included) as a ``cpu_seconds`` property in the
+JUnit report, and a test is judged on the work it did rather than the time it
+stood in line: see :func:`judged_seconds`. A test that is slow because it does
+more work keeps ``wall ~= cpu`` and is judged exactly as it was.
+
 Usage::
 
     python scripts/check_slow_tests.py test-results.xml test-results-db.xml \\
@@ -51,6 +61,16 @@ from typing import Dict, List, Optional, Tuple
 
 DEFAULT_THRESHOLD_SECONDS = 5.0
 
+# How the contention correction is bounded (see :func:`judged_seconds`).
+# ``LOAD_CAP`` is the most a test's wall clock may be discounted for waiting: a
+# test 3x descheduled is judged on its CPU time, one 10x descheduled is still
+# judged at a third of its wall time. ``CPU_FLOOR_SECONDS`` keeps the correction
+# away from tests that used almost no CPU -- a rate-limit wait, a deliberate
+# sleep, a TTL -- because for those the waiting *is* the test and there is
+# nothing to subtract.
+LOAD_CAP = 3.0
+CPU_FLOOR_SECONDS = 1.0
+
 # Per-test budgets for the two cold, full-tree import sweeps in
 # ``test_module_import_safety.py``. Each spawns a throwaway interpreter that
 # discovers and imports every module in the production tree, with bytecode
@@ -65,11 +85,14 @@ DEFAULT_THRESHOLD_SECONDS = 5.0
 # trips: a sweep that doubles in cost crosses its budget with nothing else
 # running (see the reasons below for the measured numbers).
 #
-# A budget is a partial mitigation, not a cure -- at 3x the heavier sweep is
-# past even its ceiling -- but it is the honest one here. The client repository
-# scales its ceiling by a calibration test of its own (its suite is in-process,
-# so a test in it measures the machine the suite runs on); these sweeps are
-# child processes, whose cost the parent process's own timings do not track.
+# The budget is what the sweep costs, not what the queue cost: the contention
+# correction below judges a sweep on the CPU it used, so 15.7s at 3x is still
+# read as the ~5s of work it was. That is what keeps the budget meaningful on a
+# runner shared with another repository's pipeline, and why these entries can
+# stay at the cost of the work instead of climbing to cover the worst queue.
+# The client repository does the same with a calibration test of its own; these
+# sweeps are child processes, so the measure has to include children (see
+# ``src/tests/_conftest/cpu_time.py``, which records both).
 #
 # The registry is enforced against the report: an entry whose test id does not
 # appear in any report fails the run (see ``main``), so an exemption can never
@@ -170,13 +193,61 @@ def _parse_report(xml_path: str) -> Element:
     return root
 
 
-def _scan_tests(root: Element) -> List[Tuple[float, str]]:
-    """Return ``(duration_seconds, test_id)`` for every testcase in the report.
+def _cpu_seconds(case: Element) -> Optional[float]:
+    """The ``cpu_seconds`` property pytest recorded for a testcase, if any.
+
+    ``None`` when the report has no such property (an older run, or a report
+    written by a tool that does not record it), which leaves the wall time to
+    stand on its own. A malformed or negative value is treated the same way
+    rather than trusted as a discount.
+    """
+    for prop in case.findall("properties/property"):
+        if prop.get("name") != "cpu_seconds":
+            continue
+        try:
+            value = float(prop.get("value") or "")
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0:
+            return None
+        return value
+    return None
+
+
+def judged_seconds(wall: float, cpu: Optional[float]) -> float:
+    """The duration a test is judged by: its wall clock, less the time it waited.
+
+    A test that a busy runner descheduled spends wall-clock time it did not
+    spend working, and only the wall clock sees it. Its CPU time does not: 2.7s
+    of imports are 2.7s of imports whether the box is idle or shared. So a test
+    that used most of its wall time on CPU -- ``cpu >= wall``, the ordinary case
+    -- is judged on the wall clock exactly as before, and a test that spent it
+    waiting is judged on ``max(cpu, wall / LOAD_CAP)``.
+
+    Both bounds matter. ``LOAD_CAP`` stops the correction becoming an exemption:
+    past 3x the wall clock is still two thirds of the verdict. ``CPU_FLOOR``
+    keeps it away from tests whose wait *is* the assertion -- a rate-limit window
+    or a deliberate sleep uses almost no CPU, and a regression there has to be
+    caught on the wall clock.
+
+    :param wall: The testcase's ``time`` attribute, in seconds.
+    :param cpu: Its measured CPU seconds, or ``None`` when the report has none.
+    """
+    if cpu is None or not math.isfinite(cpu) or cpu <= 0:
+        return wall
+    if cpu < CPU_FLOOR_SECONDS or wall <= cpu:
+        return wall
+    return max(cpu, wall / LOAD_CAP)
+
+
+def _scan_tests(root: Element) -> List[Tuple[float, str, Optional[float]]]:
+    """Return ``(duration_seconds, test_id, cpu_seconds)`` for every testcase.
 
     ``test_id`` prefers the file path attribute (pytest's ``junit_family=xunit2``
     sets ``file``); it falls back to ``classname::name`` when absent.
+    ``cpu_seconds`` is ``None`` when the report does not carry it.
     """
-    tests: List[Tuple[float, str]] = []
+    tests: List[Tuple[float, str, Optional[float]]] = []
     for case in root.iter("testcase"):
         try:
             duration = float(case.get("time") or 0)
@@ -186,7 +257,7 @@ def _scan_tests(root: Element) -> List[Tuple[float, str]]:
         file_path = case.get("file") or ""
         classname = case.get("classname") or ""
         test_id = f"{file_path}::{name}" if file_path else f"{classname}::{name}"
-        tests.append((duration, test_id))
+        tests.append((duration, test_id, _cpu_seconds(case)))
     return tests
 
 
@@ -195,17 +266,21 @@ def slow_tests_from_root(
     threshold: float,
     budgets: Optional[Dict[str, Tuple[float, str]]] = None,
 ) -> List[Tuple[float, str]]:
-    """Return ``(duration_seconds, test_id)`` for every testcase over its budget.
+    """Return ``(judged_seconds, test_id)`` for every testcase over its budget.
 
     A testcase is slow when it exceeds its own registered budget, falling back
-    to the global *threshold* when it has none.
+    to the global *threshold* when it has none. The duration reported is the one
+    it was judged by (:func:`judged_seconds`), so a contended test is listed
+    with the figure that tripped the gate rather than the wall time that did not
+    reflect its work.
     """
     effective = SLOW_TEST_BUDGETS if budgets is None else budgets
-    return [
-        (d, tid)
-        for d, tid in _scan_tests(root)
-        if d > _budget_seconds(tid, threshold, effective)
-    ]
+    slow: List[Tuple[float, str]] = []
+    for wall, test_id, cpu in _scan_tests(root):
+        judged = judged_seconds(wall, cpu)
+        if judged > _budget_seconds(test_id, threshold, effective):
+            slow.append((judged, test_id))
+    return slow
 
 
 def find_slow_tests(
@@ -227,10 +302,13 @@ def metrics_from_root(
     effective = SLOW_TEST_BUDGETS if budgets is None else budgets
     tests = _scan_tests(root)
     count = len(tests)
-    total = sum(d for d, _ in tests)
-    worst_duration, worst_test = max(tests, default=(0.0, ""))
+    total = sum(wall for wall, _, _ in tests)
+    # The trend's worst test is the one the gate would name, so a run reads the
+    # same in the report as in the verdict.
+    judged = [(judged_seconds(wall, cpu), tid) for wall, tid, cpu in tests]
+    worst_duration, worst_test = max(judged, default=(0.0, ""))
     slow_count = sum(
-        1 for d, tid in tests if d > _budget_seconds(tid, threshold, effective)
+        1 for d, tid in judged if d > _budget_seconds(tid, threshold, effective)
     )
     return {
         "job": job,
@@ -350,11 +428,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error(str(exc))
 
     # Each offender carries the ceiling of the report it came from, so the
-    # printed budget is the one it was actually judged by.
-    slow: List[Tuple[float, str, float]] = []
+    # printed budget is the one it was actually judged by, and the wall clock and
+    # CPU it was measured by, so a corrected verdict can be read back.
+    slow: List[Tuple[float, str, float, float, Optional[float]]] = []
     metrics: List[Dict[str, object]] = []
     seen_ids: set = set()
-    judged: List[Tuple[str, float]] = []
+    ceilings: List[Tuple[str, float]] = []
     for idx, xml_path in enumerate(args.xml_paths):
         # Parse each report exactly once and share the root between the slow
         # scan and the metrics pass (each was previously parsed separately).
@@ -365,12 +444,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 2
         job = _job_label(idx, job_specs, xml_path)
         ceiling = _job_ceiling(idx, job_specs, args.threshold)
-        judged.append((job, ceiling))
-        seen_ids.update(tid for _, tid in _scan_tests(root))
-        slow.extend(
-            (duration, test_id, ceiling)
-            for duration, test_id in slow_tests_from_root(root, ceiling)
-        )
+        ceilings.append((job, ceiling))
+        tests = _scan_tests(root)
+        seen_ids.update(tid for _, tid, _ in tests)
+        for wall, test_id, cpu in tests:
+            judged = judged_seconds(wall, cpu)
+            if judged > _budget_seconds(test_id, ceiling, SLOW_TEST_BUDGETS):
+                slow.append((judged, test_id, ceiling, wall, cpu))
         if args.metrics_out:
             metrics.append(metrics_from_root(root, job, ceiling))
 
@@ -390,21 +470,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     # How the ceiling is named in the verdict: one number when every report is
     # held to the same one (the wording this gate has always used), and per job
     # when they are not, so a reader can tell which ceiling binds which report.
-    if len({ceiling for _, ceiling in judged}) <= 1:
-        only = judged[0][1] if judged else args.threshold
+    if len({ceiling for _, ceiling in ceilings}) <= 1:
+        only = ceilings[0][1] if ceilings else args.threshold
         where = (
             f"default {only:g}s"
             if only == args.threshold
             else f"{only:g}s for every job"
         )
     else:
-        where = ", ".join(f"{job} {ceiling:g}s" for job, ceiling in judged)
+        where = ", ".join(f"{job} {ceiling:g}s" for job, ceiling in ceilings)
 
-    for duration, test_id, ceiling in sorted(slow, reverse=True):
+    for duration, test_id, ceiling, wall, cpu in sorted(slow, reverse=True):
         budget = _budget_seconds(test_id, ceiling, SLOW_TEST_BUDGETS)
         reason = SLOW_TEST_BUDGETS.get(test_id, (0.0, ""))[1]
         suffix = f"  [{reason}]" if reason else ""
-        print(f"SLOW TEST ({duration:.2f}s > {budget:g}s): {test_id}{suffix}")
+        # Show the measurement when the contention correction moved it: a
+        # reader seeing 6.4s has to be able to tell it from a 19.2s wall clock.
+        measured = (
+            f", wall {wall:.2f}s, cpu {cpu:.2f}s"
+            if cpu is not None and wall > duration
+            else ""
+        )
+        print(f"SLOW TEST ({duration:.2f}s > {budget:g}s{measured}): {test_id}{suffix}")
 
     # Metrics are written even when the gate trips: a red run's durations are
     # still worth recording (the artifact is uploaded with ``when: always``).
