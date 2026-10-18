@@ -892,12 +892,35 @@ create_merge_request:
         echo "MR created: !$MR_IID"
       fi
       
+      # GitLab works out whether a new merge request can be merged in the
+      # background: for the first seconds after creation it answers a merge
+      # request with "Branch cannot be merged" while it is still checking. This
+      # job used to print that answer and exit 0, which is a green request-merge
+      # job with the merge request left open -- what pipeline #2047's !10 did
+      # (its API carried the MR as mergeable a minute later). So ask again
+      # until the merge is actually scheduled or taken, and fail by name if it
+      # never is: a release nobody merged is not a release.
       echo "Setting auto-merge (merge when pipeline succeeds)..."
-      curl --silent --request PUT \
-        --header "$AUTH" \
-        --data "merge_when_pipeline_succeeds=true" \
-        --data "should_remove_source_branch=false" \
-        "${API}/merge_requests/${MR_IID}/merge" | jq '.'
+      MERGE_SET=no
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        RESULT=$(curl --silent --request PUT \
+          --header "$AUTH" \
+          --data "merge_when_pipeline_succeeds=true" \
+          --data "should_remove_source_branch=false" \
+          "${API}/merge_requests/${MR_IID}/merge")
+        if echo "$RESULT" | jq -e '.merge_when_pipeline_succeeds == true or .state == "merged"' >/dev/null 2>&1; then
+          MERGE_SET=yes
+          break
+        fi
+        echo "attempt ${attempt}: $(echo "$RESULT" | jq -r '.message // "no message"' 2>/dev/null) (merge status: $(curl --silent --header "$AUTH" \
+          "${API}/merge_requests/${MR_IID}" | jq -r '.detailed_merge_status // .merge_status // "unknown"'))" >&2
+        sleep 5
+      done
+      if [ "$MERGE_SET" != yes ]; then
+        echo "FATAL: could not set auto-merge on !${MR_IID} after 10 attempts" >&2
+        exit 1
+      fi
+      echo "Auto-merge set on !${MR_IID}"
   rules:
     - if: $CI_COMMIT_BRANCH == "dev"
 
