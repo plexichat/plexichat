@@ -58,8 +58,16 @@ ots:push_proofs:
       echo "Publishing $(stat -c%s "$PROOF") bytes from $PROOF"
     - git config user.email "ci@plexichat.com"
     - git config user.name "Plexichat CI"
-    - git fetch origin ots-proofs || true
+    - git fetch origin ots-proofs:refs/remotes/origin/ots-proofs || true
     - |
+      # The runner reuses this build directory across pipelines, so a previous
+      # attempt can leave an ``ots-proofs`` branch behind. Both checkout paths
+      # below refuse to run while it exists (``--orphan`` included: "a branch
+      # named 'ots-proofs' already exists"), and the retry then fails before it
+      # reaches the push it was meant to test. Drop the stale local branch
+      # first -- the remote one, when there is one, is fetched above and is the
+      # only copy that matters.
+      git branch -D ots-proofs >/dev/null 2>&1 || true
       if git rev-parse --verify origin/ots-proofs >/dev/null 2>&1; then
         git checkout -B ots-proofs origin/ots-proofs
       else
