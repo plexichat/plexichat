@@ -404,6 +404,23 @@ class TestStickerSearch:
         results = sticker_manager.search_stickers("")
         assert len(results) == 0
 
+    def test_search_stickers_treats_like_wildcards_literally(self, sticker_manager):
+        """``%``/``_``/``\\`` in the query must not act as wildcards."""
+        pack = sticker_manager.create_pack(1, "Pack", pack_type=PackType.PERSONAL)
+        sticker_manager.add_sticker(
+            1, pack.id, "under_score", StickerFormat.PNG, "url", 1000
+        )
+        sticker_manager.add_sticker(
+            1, pack.id, "underXscore", StickerFormat.PNG, "url", 1000
+        )
+
+        # "_" must match only a literal underscore, not any character.
+        results = sticker_manager.search_stickers("_")
+        assert [s.name for s in results] == ["under_score"]
+
+        # A bare "%" is not a match-everything wildcard.
+        assert sticker_manager.search_stickers("%") == []
+
 
 class TestStickerSuggestions:
     """Test sticker suggestions."""

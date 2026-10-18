@@ -4,6 +4,15 @@ from typing import Optional, List, Dict, Any
 from .protocol import ApplicationManagerProtocol
 
 
+# Every admin listing helper in this module clamps its page bound to this
+# ceiling. ``limit`` used to reach SQL ``LIMIT ?`` with only an upper bound,
+# and SQLite reads ``LIMIT -1`` as *unlimited* -- so
+# ``GET /admin/bots/applications?limit=-1`` returned the whole table instead
+# of an empty page. Clamping from below fixes that; clamping from above keeps
+# a single request from materializing an unbounded result set.
+MAX_ADMIN_PAGE_SIZE = 100
+
+
 @dataclass
 class AdminBotStats:
     total_applications: int = 0
@@ -132,8 +141,8 @@ class AdminMixin(ApplicationManagerProtocol):
     def get_admin_bot_applications(
         self, limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        if limit > 100:
-            limit = 100
+        limit = max(0, min(limit, MAX_ADMIN_PAGE_SIZE))
+        offset = max(0, offset)
 
         rows = self._db.fetch_all(
             """SELECT a.id, a.name, a.owner_id, a.bot_id, a.icon_url, a.created_at,
@@ -166,8 +175,8 @@ class AdminMixin(ApplicationManagerProtocol):
         limit: int = 50,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        if limit > 100:
-            limit = 100
+        limit = max(0, min(limit, MAX_ADMIN_PAGE_SIZE))
+        offset = max(0, offset)
 
         conditions = []
         params: List[Any] = []

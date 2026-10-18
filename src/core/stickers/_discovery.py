@@ -124,12 +124,22 @@ class StickerUsageDiscoveryMixin(_ManagerBase):
         # Clamp from below: SQLite treats LIMIT -1 as unlimited, so a
         # negative limit would bypass the page cap and dump every match.
         limit = max(0, limit)
-        needle = f"%{query.strip().lower()}%"
+        # Escape LIKE metacharacters so ``%``/``_``/``\`` are matched
+        # literally instead of acting as wildcards (docs/admin-hardening.md).
+        escaped = (
+            query.strip()
+            .lower()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        needle = f"%{escaped}%"
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count
                FROM sticker_stickers s
                LEFT JOIN sticker_usage u ON s.id = u.sticker_id
-               WHERE LOWER(s.name) LIKE ? OR LOWER(s.tags) LIKE ?
+               WHERE LOWER(s.name) LIKE ? ESCAPE '\\'
+                  OR LOWER(s.tags) LIKE ? ESCAPE '\\'
                GROUP BY s.id
                ORDER BY usage_count DESC
                LIMIT ?""",

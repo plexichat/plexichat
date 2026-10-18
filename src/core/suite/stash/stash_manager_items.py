@@ -316,12 +316,25 @@ class StashManagerItems(StashManagerProtocol):
             clauses.append("collection_id = ?")
             params.append(int(collection_id))
         if search:
-            needle = f"%{str(search).strip().lower()}%"
+            # Escape LIKE metacharacters so ``%``/``_``/``\`` are matched
+            # literally instead of acting as wildcards
+            # (docs/admin-hardening.md).
+            escaped = (
+                str(search)
+                .strip()
+                .lower()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            needle = f"%{escaped}%"
             clauses.append(
-                "(LOWER(title) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? "
-                "OR LOWER(tags_json) LIKE ? "
+                "(LOWER(title) LIKE ? ESCAPE '\\' "
+                "OR LOWER(COALESCE(description, '')) LIKE ? ESCAPE '\\' "
+                "OR LOWER(tags_json) LIKE ? ESCAPE '\\' "
                 "OR EXISTS (SELECT 1 FROM stash_item_text t "
-                "WHERE t.item_id = stash_items.id AND LOWER(t.content_text) LIKE ?))"
+                "WHERE t.item_id = stash_items.id "
+                "AND LOWER(t.content_text) LIKE ? ESCAPE '\\'))"
             )
             params.extend([needle, needle, needle, needle])
         where = " AND ".join(clauses)

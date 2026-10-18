@@ -2,7 +2,7 @@
 Admin moderation and content review routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Query, Request, HTTPException
 from typing import List, Optional, Dict, Any
 from src.api.schemas.admin import (
     HashReportResponse,
@@ -139,8 +139,8 @@ def _user_report_to_response(report) -> UserReportResponse:
 async def get_hash_reports(
     request: Request,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     """
     Retrieve a list of content hash reports for review.
@@ -248,8 +248,8 @@ async def review_hash_report(
 async def get_message_reports(
     request: Request,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     """Retrieve message reports for admin review."""
     check_host_restriction(request)
@@ -412,8 +412,8 @@ async def review_message_report(
 async def get_user_reports(
     request: Request,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     """Retrieve user behavior reports for admin review."""
     check_host_restriction(request)
@@ -490,7 +490,11 @@ async def review_user_report(
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_blocked_hashes(request: Request, limit: int = 100, offset: int = 0):
+async def get_blocked_hashes(
+    request: Request,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
     """
     List all currently blocked content hashes.
     """
@@ -591,7 +595,11 @@ async def unblock_hash(hash_value: str, request: Request):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_blocked_users(request: Request, limit: int = 100, offset: int = 0):
+async def get_blocked_users(
+    request: Request,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
     """
     Retrieve a list of all currently blocked or banned users.
     """

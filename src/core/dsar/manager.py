@@ -7,6 +7,12 @@ import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
 
+# Hard upper bound for the admin listing endpoint. Mirrors the ``le=200``
+# taken by the sibling admin routes (see src/api/routes/admin/audit.py) and
+# caps direct core callers that bypass the route.
+MAX_ADMIN_PAGE_SIZE = 200
+
+
 class DSARManager:
     """
     High-level API for DSAR operations.
@@ -310,7 +316,16 @@ class DSARManager:
     def get_admin_requests(
         self, status: Optional[str] = None, limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Admin lists all DSAR requests with optional status filter."""
+        """Admin lists all DSAR requests with optional status filter.
+
+        ``limit``/``offset`` are clamped before they reach SQL. SQLite reads
+        ``LIMIT -1`` as *unlimited*, so an unclamped negative limit dumped
+        every DSAR row (full export history for every user) regardless of the
+        requested page; a negative offset was likewise passed through
+        verbatim.
+        """
+        limit = max(0, min(int(limit), MAX_ADMIN_PAGE_SIZE))
+        offset = max(0, int(offset))
         if status:
             requests = self._db.fetch_all(
                 """

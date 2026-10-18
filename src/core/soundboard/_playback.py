@@ -443,12 +443,21 @@ class SoundboardPlaybackMixin(_PlaybackContract):
             return []
         if not query or not query.strip():
             return []
-        needle = f"%{query.strip().lower()}%"
+        # Escape LIKE metacharacters so ``%``/``_``/``\`` are matched
+        # literally instead of acting as wildcards (docs/admin-hardening.md).
+        escaped = (
+            query.strip()
+            .lower()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        needle = f"%{escaped}%"
         rows = self._db.fetch_all(
             """SELECT s.*, COUNT(u.id) as usage_count
                FROM soundboard_sounds s
                LEFT JOIN soundboard_usage u ON s.id = u.sound_id
-               WHERE s.server_id = ? AND LOWER(s.name) LIKE ?
+               WHERE s.server_id = ? AND LOWER(s.name) LIKE ? ESCAPE '\\'
                GROUP BY s.id
                ORDER BY usage_count DESC
                LIMIT ?""",

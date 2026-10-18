@@ -76,6 +76,14 @@ DEFAULT_THRESHOLD_SECONDS = 5.0
 # silently rot after a rename. This mirrors the enforced-registry convention
 # used by ``ci-tooling/license_audit.py`` and
 # ``src/tests/unit/test_intentional_sleep_sites.py``.
+# ``test_openapi_snowflake_ids`` used to be the other kind of offender: it
+# rebuilt the app and its whole document for each of its eight read-only checks,
+# 5.0s-6.8s apiece on pipeline #2046's runner and the reason six tests redded
+# ``performance:no_slow_tests`` there. It now builds the document once and the
+# checks cost hundredths of a second, but that one build is the whole API's
+# OpenAPI document (537 operations over 421 component schemas) and cannot be made
+# cheap by ordering the fixtures differently -- so it is a named test with a
+# budget, and the module's six assertions run free behind it.
 SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
     "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeLoggerSetup::test_every_production_module_imports": (
         10.0,
@@ -84,6 +92,12 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
     "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeConfigSetup::test_missing_config_fails_only_the_documented_way": (
         10.0,
         "child-interpreter import of the whole tree: 1.9s idle, 3.9s at 2x oversubscription, 6.9s at 3x",
+    ),
+    "src.tests.api.test_openapi_snowflake_ids::test_the_document_covers_the_api": (
+        20.0,
+        "builds the whole API's OpenAPI document for the module: 5.0-6.8s per build on "
+        "the runner (#2046, which paid it eight times), 10-13s idle on the build box, "
+        "27-31s with two pipelines sharing it",
     ),
 }
 

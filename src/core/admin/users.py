@@ -11,6 +11,14 @@ import utils.logger as logger
 from src.core.database import invalidate_pattern
 
 
+# Upper bound for admin user-search pages. ``limit`` used to reach SQL
+# ``LIMIT ?`` verbatim, and SQLite reads ``LIMIT -1`` as *unlimited* -- so
+# ``GET /admin/users/search?limit=-1`` dumped the whole ``auth_users`` table
+# instead of an empty page. Clamping from below fixes that; clamping from
+# above keeps one request from materializing an unbounded result set.
+MAX_PAGE_SIZE = 200
+
+
 @dataclass
 class AdminUserDetail:
     """Detailed user information for admin view."""
@@ -45,6 +53,11 @@ def search_users(
     db: Any, q: str, limit: int = 20, offset: int = 0
 ) -> List[AdminUserDetail]:
     """Search users by username or ID."""
+    # Clamp from below: SQLite reads ``LIMIT -1`` as *unlimited*, so a
+    # negative limit would dump every user instead of an empty page. Clamp
+    # from above so no single request can materialize an unbounded page.
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
     try:
         user_id = int(q)
         rows = db.fetch_all(

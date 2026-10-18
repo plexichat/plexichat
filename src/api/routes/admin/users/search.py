@@ -3,7 +3,7 @@ Search mixin - User search and scheduled deletions endpoints.
 """
 
 import time
-from fastapi import Request, HTTPException
+from fastapi import Query, Request, HTTPException
 
 from src.api.schemas.admin import (
     UserSearchListResponse,
@@ -18,7 +18,11 @@ import utils.logger as logger
 
 class SearchMixin(AdminUsersRouterProtocol):
     async def admin_user_search(
-        self, request: Request, q: str, limit: int = 20, offset: int = 0
+        self,
+        request: Request,
+        q: str,
+        limit: int = Query(20, ge=1, le=200),
+        offset: int = Query(0, ge=0),
     ):
         """
         Search for users based on a query string.
