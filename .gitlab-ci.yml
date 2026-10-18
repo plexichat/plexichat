@@ -384,17 +384,31 @@ test:pytest:
     # them. The dev lock is a superset of the runtime tree, so installing it
     # here is safe on top of a cached .venv.
     - pip install --require-hashes -r requirements-dev.txt
-    # Full unit + integration suite. ``--maxfail=20`` keeps a broken commit
+    # The database benchmarks are timing assertions -- ``median_ms < 10`` on a
+    # single query, ``< 50`` on connection acquisition -- and pytest-benchmark
+    # turns itself off under xdist, so they are not run beside the parallel
+    # suite. They are 1.2s on their own, so this costs the job nothing.
+    - python -m pytest -q src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+    # Full unit + integration suite, four files at a time. Each file stays on
+    # one worker (``--dist loadfile``), so a module's fixtures and module-level
+    # state are still built once and in file order: pipeline #2057 ran the same
+    # 11,612 tests serially in 8.7 min, and the same tree with -n 4 here runs
+    # them in 2.5 min with the slowest single test at 2.94s (the serial run's
+    # worst is 5s+ under contention). ``--maxfail=20`` keeps a broken commit
     # from burning the whole 1h timeout listing failures; the default pytest.ini
     # addopts already deselect slow/performance/postgres tests. The JUnit
     # report feeds the performance:no_slow_tests gate in the next stage.
-    - python -m pytest -q --maxfail=20 --durations=25 --junitxml=test-results.xml
+    - >
+      python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25
+      --ignore=src/tests/test_database_benchmarks.py
+      --junitxml=test-results.xml
   artifacts:
     when: always
     reports:
       junit: test-results.xml
     paths:
       - test-results.xml
+      - test-results-benchmarks.xml
     expire_in: 1 week
 
 # The PlexiSum engine's cross-engine contract gets its own job.
@@ -591,7 +605,7 @@ performance:no_slow_tests:
     # The metrics JSON (one entry per job, paired with the report order) is
     # uploaded alongside the gate verdict and feeds the metrics:trend job in
     # the next stage.
-    - python ci-tooling/check_slow_tests.py test-results.xml test-results-db.xml --threshold 5.0 --job test:pytest --job test:database_backends=15 --metrics-out test-durations.json
+    - python ci-tooling/check_slow_tests.py test-results.xml test-results-db.xml test-results-benchmarks.xml --threshold 5.0 --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks --metrics-out test-durations.json
   artifacts:
     when: always
     paths:
