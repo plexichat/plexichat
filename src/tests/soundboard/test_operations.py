@@ -582,6 +582,30 @@ class TestSoundSearch:
         results = soundboard_manager.search_sounds(1, 1, "")
         assert len(results) == 0
 
+    def test_search_sounds_treats_like_wildcards_literally(
+        self, soundboard_manager, test_db
+    ):
+        """``%``/``_``/``\\`` in the query must not act as wildcards."""
+        test_db.execute(
+            "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) VALUES (1, 'Test', 1, 1000, 1000)"
+        )
+        test_db.execute(
+            "INSERT INTO srv_members (id, server_id, user_id, joined_at, updated_at) VALUES (1, 1, 1, 1000, 1000)"
+        )
+        soundboard_manager.upload_sound(
+            1, 1, "under_score", SoundFormat.MP3, "url1", 1000, 1.0
+        )
+        soundboard_manager.upload_sound(
+            1, 1, "underXscore", SoundFormat.MP3, "url2", 1000, 1.0
+        )
+
+        # "_" must match only a literal underscore, not any character.
+        results = soundboard_manager.search_sounds(1, 1, "_")
+        assert [s.name for s in results] == ["under_score"]
+
+        # A bare "%" is not a match-everything wildcard.
+        assert soundboard_manager.search_sounds(1, 1, "%") == []
+
 
 class TestSoundPermissions:
     """Test sound permissions."""

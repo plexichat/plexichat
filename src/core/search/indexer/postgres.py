@@ -20,6 +20,17 @@ from ..models import (
 from ..exceptions import SearchIndexError, SearchBackendError
 
 
+def _escape_like(text: str) -> str:
+    """Escape LIKE/ILIKE metacharacters so user text matches literally.
+
+    Parameterization stops SQL injection but does NOT stop ``%``/``_`` from
+    acting as wildcards, so without this a bare ``%`` returns every indexed
+    row (docs/admin-hardening.md: "Treat %, _, and \\ literally in search
+    queries"). The ``\\`` escape character is declared via ``ESCAPE '\\'``.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class PostgresIndexer(BaseIndexer):
     """PostgreSQL search indexer using standard tables and LIKE/tsvector."""
 
@@ -270,6 +281,7 @@ class PostgresIndexer(BaseIndexer):
                 return []
 
             use_websearch = self._check_websearch_support()
+            like = f"%{_escape_like(query)}%"
 
             if use_websearch:
                 sql = """
@@ -279,9 +291,9 @@ class PostgresIndexer(BaseIndexer):
                            is_pinned, attachment_types,
                            ts_rank_cd(search_vector, query) as rank
                     FROM search_messages, websearch_to_tsquery('english', ?) query
-                    WHERE (search_vector @@ query OR content ILIKE ?)
+                    WHERE (search_vector @@ query OR content ILIKE ? ESCAPE '\\')
                 """
-                params: List[Any] = [query, f"%{query}%"]
+                params: List[Any] = [query, like]
             else:
                 sql = """
                     SELECT message_id, content, author_id, author_username,
@@ -290,9 +302,9 @@ class PostgresIndexer(BaseIndexer):
                            is_pinned, attachment_types,
                            ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
                     FROM search_messages
-                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR content ILIKE ?)
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR content ILIKE ? ESCAPE '\\')
                 """
-                params = [query, query, f"%{query}%"]
+                params = [query, query, like]
 
             if conversation_ids:
                 sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
@@ -384,9 +396,9 @@ class PostgresIndexer(BaseIndexer):
                        created_at, has_attachments, is_pinned,
                        ts_rank_cd(search_vector, query) as rank
                 FROM search_messages, websearch_to_tsquery('english', ?) query
-                WHERE (search_vector @@ query OR content ILIKE ?)
+                WHERE (search_vector @@ query OR content ILIKE ? ESCAPE '\\')
             """
-            params: List[Any] = [query, f"%{query}%"]
+            params: List[Any] = [query, f"%{_escape_like(query)}%"]
 
             if conversation_ids:
                 sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
@@ -496,19 +508,20 @@ class PostgresIndexer(BaseIndexer):
                 return []
 
             use_websearch = self._check_websearch_support()
+            like = f"%{_escape_like(query)}%"
 
             if use_websearch:
                 sql = """
                     SELECT user_id, username, display_name, is_bot,
                            ts_rank_cd(search_vector, query) as rank
                     FROM search_users, websearch_to_tsquery('english', ?) query
-                    WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
+                    WHERE (search_vector @@ query OR username ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\')
                     ORDER BY rank DESC LIMIT ? OFFSET ?
                 """
                 params = [
                     query,
-                    f"%{query}%",
-                    f"%{query}%",
+                    like,
+                    like,
                     max(1, int(limit)),
                     max(0, int(offset)),
                 ]
@@ -517,14 +530,14 @@ class PostgresIndexer(BaseIndexer):
                     SELECT user_id, username, display_name, is_bot,
                            ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
                     FROM search_users
-                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR username ILIKE ? OR display_name ILIKE ?)
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR username ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\')
                     ORDER BY rank DESC LIMIT ? OFFSET ?
                 """
                 params = [
                     query,
                     query,
-                    f"%{query}%",
-                    f"%{query}%",
+                    like,
+                    like,
                     max(1, int(limit)),
                     max(0, int(offset)),
                 ]
@@ -561,23 +574,24 @@ class PostgresIndexer(BaseIndexer):
                 return [], None
 
             use_websearch = self._check_websearch_support()
+            like = f"%{_escape_like(query)}%"
 
             if use_websearch:
                 sql = """
                     SELECT user_id, username, display_name, is_bot,
                            ts_rank_cd(search_vector, query) as rank
                     FROM search_users, websearch_to_tsquery('english', ?) query
-                    WHERE (search_vector @@ query OR username ILIKE ? OR display_name ILIKE ?)
+                    WHERE (search_vector @@ query OR username ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\')
                 """
-                params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+                params: List[Any] = [query, like, like]
             else:
                 sql = """
                     SELECT user_id, username, display_name, is_bot,
                            ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
                     FROM search_users
-                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR username ILIKE ? OR display_name ILIKE ?)
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR username ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\')
                 """
-                params = [query, query, f"%{query}%", f"%{query}%"]
+                params = [query, query, like, like]
 
             decoded = self._decode_cursor(cursor)
             if decoded and decoded.get("kind") == "usr":
@@ -677,23 +691,24 @@ class PostgresIndexer(BaseIndexer):
                 return []
 
             use_websearch = self._check_websearch_support()
+            like = f"%{_escape_like(query)}%"
 
             if use_websearch:
                 sql = """
                     SELECT server_id, name, description, category, tags, member_count,
                            ts_rank_cd(search_vector, query) as rank
                     FROM search_servers, websearch_to_tsquery('english', ?) query
-                    WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
+                    WHERE (search_vector @@ query OR name ILIKE ? ESCAPE '\\' OR description ILIKE ? ESCAPE '\\')
                 """
-                params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+                params: List[Any] = [query, like, like]
             else:
                 sql = """
                     SELECT server_id, name, description, category, tags, member_count,
                            ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
                     FROM search_servers
-                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR name ILIKE ? OR description ILIKE ?)
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR name ILIKE ? ESCAPE '\\' OR description ILIKE ? ESCAPE '\\')
                 """
-                params = [query, query, f"%{query}%", f"%{query}%"]
+                params = [query, query, like, like]
 
             if public_only:
                 sql += " AND is_public = TRUE"
@@ -741,23 +756,24 @@ class PostgresIndexer(BaseIndexer):
                 return [], None
 
             use_websearch = self._check_websearch_support()
+            like = f"%{_escape_like(query)}%"
 
             if use_websearch:
                 sql = """
                     SELECT server_id, name, description, category, tags, member_count,
                            ts_rank_cd(search_vector, query) as rank
                     FROM search_servers, websearch_to_tsquery('english', ?) query
-                    WHERE (search_vector @@ query OR name ILIKE ? OR description ILIKE ?)
+                    WHERE (search_vector @@ query OR name ILIKE ? ESCAPE '\\' OR description ILIKE ? ESCAPE '\\')
                 """
-                params: List[Any] = [query, f"%{query}%", f"%{query}%"]
+                params: List[Any] = [query, like, like]
             else:
                 sql = """
                     SELECT server_id, name, description, category, tags, member_count,
                            ts_rank_cd(search_vector, plainto_tsquery('english', ?)) as rank
                     FROM search_servers
-                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR name ILIKE ? OR description ILIKE ?)
+                    WHERE (search_vector @@ plainto_tsquery('english', ?) OR name ILIKE ? ESCAPE '\\' OR description ILIKE ? ESCAPE '\\')
                 """
-                params = [query, query, f"%{query}%", f"%{query}%"]
+                params = [query, query, like, like]
 
             if public_only:
                 sql += " AND is_public = TRUE"
