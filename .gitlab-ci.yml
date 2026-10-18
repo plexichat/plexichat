@@ -1016,19 +1016,26 @@ create_merge_request:
 #
 # This job used to open with ``exit 0`` (added 2026-07-28): the validation never
 # ran and the tag was never created, so every master pipeline reported a green
-# "production validation suite" for a job that did nothing, and no server build
-# has been marked since a.1.0-131 (07-30). The validation is now ``pre-flight``
-# -- it builds the configuration, initialises every module against the real
-# database layer and exits without binding a port -- and the tag push is
-# checked, so a job whose product is the tag fails when the tag cannot be
-# created. The master pipeline's test stage is still the real gate; this proves
-# the tree the tag points at loads.
+# "production validation suite" for a job that did nothing, and the repository
+# holds no build marker at all -- the newest tag of any kind is the ``a.1.0-131``
+# release from 07-30. The validation is now ``pre-flight`` -- it builds the
+# configuration, initialises every module against the real database layer and
+# exits without binding a port -- and the tag push is checked, so a job whose
+# product is the tag fails when the tag cannot be created. The master pipeline's
+# test stage is still the real gate; this proves the tree the tag points at
+# loads.
 #
-# The tag is a build marker (``a.1.0-build<pipeline id>``), not a release: it
-# does not match the ``a.X.Y-N`` pattern the docker and release jobs trigger
-# on, and ``-o ci.skip`` keeps it from starting a pipeline of its own. Releases
-# stay deliberate -- merge a dev commit that carries an ``a.X.Y-N`` tag, which
-# is what ``create_merge_request`` requires (see docs/deployment/versioning.md).
+# The tag is a build marker (``<version prefix>-build<pipeline id>``), not a
+# release: it does not match the ``a.X.Y-N`` pattern the docker and release jobs
+# trigger on, and ``-o ci.skip`` keeps it from starting a pipeline of its own.
+# Releases stay deliberate -- merge a dev commit that carries an ``a.X.Y-N`` tag,
+# which is what ``create_merge_request`` requires (see
+# docs/deployment/versioning.md).
+#
+# The prefix is read from the tree rather than written here: ``VERSION`` in
+# ``src/server/lifecycle.py`` is what ``python main.py version``, the API and the
+# installer all report, so a release that bumps it moves the marker with it
+# instead of leaving ``a.1.0-build<n>`` on a ``a.2.0`` tree.
 validate_master_and_tag:
   extends: .python_base
   stage: test-and-release
@@ -1040,7 +1047,18 @@ validate_master_and_tag:
     - echo "Running production validation suite on master..."
     - python main.py pre-flight
     - |
-      BUILD_TAG="a.1.0-build${CI_PIPELINE_IID}"
+      # "Plexichat Server a.1.0-134" -> a.1.0 -> a.1.0-build<pipeline id>.
+      VERSION="$(python main.py version | tail -1)"
+      VERSION="${VERSION##* }"
+      case "$VERSION" in
+        [abcr].[0-9]*.[0-9]*-[0-9]*) ;;
+        *)
+          echo "FAIL: could not read the server version (got '${VERSION}');" >&2
+          echo "refusing to tag master with a marker built from it." >&2
+          exit 1
+          ;;
+      esac
+      BUILD_TAG="${VERSION%-*}-build${CI_PIPELINE_IID}"
       REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
       # A retried job repeats its pipeline id, so the tag can already exist;
       # that is the desired end state, not a failure.
