@@ -244,3 +244,7 @@ Current version: `a.1.0-134` (Alpha), defined in `src/server/lifecycle.py:16`.
 
 `src.config_defaults.default_version()` reads that constant lazily, so a
 freshly generated config always advertises the build the process is running.
+
+Releases are cut by tagging a `dev` commit with this same string; the tag
+pipeline merges `dev` into `master`, and `master` then marks the merge as
+`a.1.0-build<pipeline id>`. See `docs/deployment/versioning.md#release-flow`.

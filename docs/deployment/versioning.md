@@ -37,6 +37,49 @@ An `r.1.0-1` server is newer than `a.99.99-999`.
 - `b.2.3-15` — Beta 2.3, build 15
 - `r.1.0-1` — Release 1.0, build 1
 
+## Release flow
+
+A release starts from a tag, not from a merge. Only a `dev` commit that carries
+a version tag in the scheme above is merged into `master`:
+
+```bash
+git checkout dev
+git pull
+git tag -a a.1.0-135 -m "a.1.0-135"
+git push origin a.1.0-135
+```
+
+The tag pipeline runs `create_merge_request`, which merges `dev` into `master`
+when the pipeline succeeds. A green `dev` pipeline on its own merges nothing,
+however many commits it carries; commits that only touch CI wait on `dev` until
+the next release tag.
+
+What each kind of tag does:
+
+| Tag | Pipeline |
+|---|---|
+| `<stage>.<major>.<minor>-<build>`, e.g. `a.1.0-135` | merges `dev` into `master`, then builds and pushes the backend and backup images, scans the image, and publishes the OpenTimestamp proof |
+| `a.1.0-build<N>` | nothing: a marker cut on `master` by `validate_master_and_tag` with `-o ci.skip`, so it starts no pipeline of its own |
+
+Notes:
+
+- `validate_master_and_tag` runs on every `master` pipeline. It runs
+  `python main.py pre-flight` (configuration and module initialisation, no port
+  bound) and only then tags the merge commit `a.1.0-build<pipeline id>`. A
+  retried job finds the tag already present and succeeds without pushing again.
+- The build marker is not a release: it does not match the `a.X.Y-N` pattern the
+  docker and release jobs trigger on, so marking `master` never builds an image
+  by itself.
+- The number you tag is the number the build advertises: `VERSION` in
+  `src/server/lifecycle.py` is what `python main.py version` and the API report,
+  so bump it and tag the same string. Keep the web client's number in step as
+  well — the pair is what the landing pages and the installer advertise.
+- The web client follows the same flow in its own repository; its tag pipeline
+  also publishes `dist.zip` to GitLab Releases. When cutting a release, keep the
+  landing site's advertised pair in step — the page footers, the
+  `Current versions` line and the deploy-script defaults described in
+  `plexichat-landing/README.md`.
+
 ## Check your version
 
 The API prefix is `/api/v1` by default.
