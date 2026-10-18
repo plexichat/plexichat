@@ -102,6 +102,11 @@ class ReportingMixin:
         self, status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
     ) -> List[HashReport]:
         """Get hash reports for admin review."""
+        # Clamp from below: SQLite reads LIMIT -1 as *unlimited*, so a
+        # negative limit would dump every report instead of an empty page.
+        limit = max(0, limit)
+        offset = max(0, offset)
+
         if status_filter:
             rows = self._db.fetch_all(
                 """SELECT r.id, r.hash_value, r.reporter_id, u.username, r.reason,
