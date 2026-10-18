@@ -110,15 +110,20 @@ def test_registry_covers_the_real_sweeps():
     """Every registered id still names a real class and test in the suite.
 
     The stale-budget guard relies on the registered id matching the report;
-    this proves the same id matches the source, so a rename is caught here.
+    this proves the same id matches the source, so a rename is caught here. An
+    id is ``module[.Class]::test`` and now covers a module-level test as well
+    as the two sweeps inside a class, so the module is resolved out of the
+    id's own path rather than assumed.
     """
-    source = (
-        _PROJECT_ROOT / "src" / "tests" / "unit" / "test_module_import_safety.py"
-    ).read_text(encoding="utf-8")
     for test_id in check.SLOW_TEST_BUDGETS:
         classname, _, name = test_id.partition("::")
-        assert f"class {classname.rsplit('.', 1)[-1]}" in source, test_id
-        assert f"def {name}" in source, test_id
+        parts = classname.split(".")
+        module = _PROJECT_ROOT.joinpath(*parts).with_suffix(".py")
+        if not module.is_file():
+            module = _PROJECT_ROOT.joinpath(*parts[:-1]).with_suffix(".py")
+            assert module.is_file(), test_id
+            assert f"class {parts[-1]}" in module.read_text(encoding="utf-8"), test_id
+        assert f"def {name}" in module.read_text(encoding="utf-8"), test_id
 
 
 @pytest.mark.unit

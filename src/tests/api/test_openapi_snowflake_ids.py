@@ -24,6 +24,8 @@ Ids that back an INTEGER PRIMARY KEY rowid rather than a 64-bit snowflake are
 allowlisted below.
 """
 
+import pytest
+
 from src.core.events.snowflakes import is_id_field
 
 # Fields whose value is an INTEGER PRIMARY KEY rowid (or other non-snowflake
@@ -304,9 +306,48 @@ def _inline_id_offenders(
     return offenders
 
 
-def test_inline_response_id_fields_are_strings(test_client):
+@pytest.fixture(scope="module")
+def openapi_schema() -> dict:
+    """The whole API's OpenAPI document, built once for this module.
+
+    Every check here reads the same static document, and the ``test_client``
+    fixture builds the app, wires every manager and opens a database per
+    test, so seven read-only assertions paid that cost seven times: 2.0s-5.5s
+    apiece on an idle box, and over the slow-test gate's 5s ceiling on a
+    shared runner (pipeline #2046's six red tests were all in this module or
+    the audit sweep beside it). ``test_document_matches_the_wired_client``
+    builds the same document as the wired client -- 537 operations over 421
+    component schemas, compared operation for operation and schema for schema
+    -- so the shortcut cannot shrink the surface these checks judge. The floor
+    below is what keeps that from rotting silently into a vacuous pass: a
+    document that stopped carrying the whole API would no longer have them.
+    """
+    from src.api import create_app
+
+    return create_app().openapi()
+
+
+def test_the_document_covers_the_api(openapi_schema):
+    """The document every other check reads has to be the whole API's.
+
+    This test is also where the module's one build is paid -- see the fixture
+    -- so it carries a budget of its own in ``ci-tooling/check_slow_tests.py``
+    rather than the suite's 5s ceiling. The floor is what keeps a document
+    that arrived half-built from passing every check here vacuously.
+    """
+    operations = sum(
+        1 for item in openapi_schema.get("paths", {}).values() for _ in item
+    )
+    assert operations >= 400, (
+        f"the built document carries only {operations} operations; every check "
+        "in this module reads it, and one that arrived half-built would pass "
+        "them all"
+    )
+
+
+def test_inline_response_id_fields_are_strings(openapi_schema):
     """Numeric id fields must also be caught outside named schemas."""
-    schema = test_client.app.openapi()
+    schema = openapi_schema
     offenders: list[str] = []
     for method, path, node in _json_2xx_schemas(schema):
         offenders += _inline_id_offenders(
@@ -318,7 +359,7 @@ def test_inline_response_id_fields_are_strings(test_client):
     )
 
 
-def test_freeform_response_operations_are_allowlisted(test_client):
+def test_freeform_response_operations_are_allowlisted(openapi_schema):
     """Opaque ``Dict[str, Any]`` responses must be explicitly allowlisted.
 
     A property-less response schema gives the id walk nothing to inspect, so
@@ -327,7 +368,7 @@ def test_freeform_response_operations_are_allowlisted(test_client):
     returning a bare dict could serve
     a numeric snowflake and every other check here would stay green.
     """
-    schema = test_client.app.openapi()
+    schema = openapi_schema
     offenders: list[str] = []
     for method, path, node in _json_2xx_schemas(schema):
         if not _is_opaque_freeform(node):
@@ -342,7 +383,7 @@ def test_freeform_response_operations_are_allowlisted(test_client):
     )
 
 
-def test_freeform_request_body_operations_are_allowlisted(test_client):
+def test_freeform_request_body_operations_are_allowlisted(openapi_schema):
     """Opaque ``Dict[str, Any]`` request bodies must be explicitly allowlisted.
 
     A property-less request-body schema gives the id walk nothing to inspect,
@@ -352,7 +393,7 @@ def test_freeform_request_body_operations_are_allowlisted(test_client):
     the browser before it was sent) and every other check here would stay
     green.
     """
-    schema = test_client.app.openapi()
+    schema = openapi_schema
     offenders: list[str] = []
     for method, path, node in _json_request_body_schemas(schema):
         if not _is_opaque_freeform(node):
@@ -367,7 +408,7 @@ def test_freeform_request_body_operations_are_allowlisted(test_client):
     )
 
 
-def test_inline_request_body_id_fields_are_strings(test_client):
+def test_inline_request_body_id_fields_are_strings(openapi_schema):
     """Numeric id fields declared inline in a request body must be strings.
 
     ``test_declared_request_body_id_fields_are_strings`` only sees named
@@ -375,7 +416,7 @@ def test_inline_request_body_id_fields_are_strings(test_client):
     (or a typed ``additionalProperties`` value schema) never reaches it. This
     closes the request-side gap, mirroring the response-side inline walk.
     """
-    schema = test_client.app.openapi()
+    schema = openapi_schema
     offenders: list[str] = []
     for method, path, node in _json_request_body_schemas(schema):
         key = f"{method.upper()} {path}"
@@ -389,8 +430,8 @@ def test_inline_request_body_id_fields_are_strings(test_client):
     )
 
 
-def test_declared_response_id_fields_are_strings(test_client):
-    schema = test_client.app.openapi()
+def test_declared_response_id_fields_are_strings(openapi_schema):
+    schema = openapi_schema
     response_schemas = _schemas_reachable_from(
         schema, [op.get("responses", {}) for _, _, op in _operations(schema)]
     )
@@ -404,8 +445,8 @@ def test_declared_response_id_fields_are_strings(test_client):
     )
 
 
-def test_declared_request_body_id_fields_are_strings(test_client):
-    schema = test_client.app.openapi()
+def test_declared_request_body_id_fields_are_strings(openapi_schema):
+    schema = openapi_schema
     request_schemas = _schemas_reachable_from(
         schema,
         [op["requestBody"] for _, _, op in _operations(schema) if "requestBody" in op],
@@ -421,7 +462,7 @@ def test_declared_request_body_id_fields_are_strings(test_client):
     )
 
 
-def test_declared_param_id_fields_are_strings(test_client):
+def test_declared_param_id_fields_are_strings(openapi_schema):
     """Every id path/query param must be able to carry the id as a string.
 
     A URL segment or query value is always a string, so the param's OpenAPI
@@ -430,7 +471,7 @@ def test_declared_param_id_fields_are_strings(test_client):
     ``SnowflakeIDParam`` (``integer|string``) and a plain ``str`` id param
     satisfy this; a numeric-only or untyped param does not.
     """
-    schema = test_client.app.openapi()
+    schema = openapi_schema
     offenders: list[str] = []
 
     for method, path, operation in _operations(schema):
