@@ -59,14 +59,16 @@ What each kind of tag does:
 | Tag | Pipeline |
 |---|---|
 | `<stage>.<major>.<minor>-<build>`, e.g. `a.1.0-135` | merges `dev` into `master`, then builds and pushes the backend and backup images, scans the image, and publishes the OpenTimestamp proof |
-| `a.1.0-build<N>` | nothing: a marker cut on `master` by `validate_master_and_tag` with `-o ci.skip`, so it starts no pipeline of its own |
+| `<stage>.<major>.<minor>-build<N>`, e.g. `a.1.0-build<n>` | nothing: a marker cut on `master` by `validate_master_and_tag` with `-o ci.skip`, so it starts no pipeline of its own |
 
 Notes:
 
 - `validate_master_and_tag` runs on every `master` pipeline. It runs
   `python main.py pre-flight` (configuration and module initialisation, no port
-  bound) and only then tags the merge commit `a.1.0-build<pipeline id>`. A
-  retried job finds the tag already present and succeeds without pushing again.
+  bound) and only then tags the merge commit `<version>-build<pipeline id>`,
+  where `<version>` is read from `python main.py version` — so the marker
+  follows a bump instead of staying on `a.1.0` forever. A retried job finds the
+  tag already present and succeeds without pushing again.
 - The build marker is not a release: it does not match the `a.X.Y-N` pattern the
   docker and release jobs trigger on, so marking `master` never builds an image
   by itself.

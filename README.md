@@ -247,4 +247,6 @@ freshly generated config always advertises the build the process is running.
 
 Releases are cut by tagging a `dev` commit with this same string; the tag
 pipeline merges `dev` into `master`, and `master` then marks the merge as
-`a.1.0-build<pipeline id>`. See `docs/deployment/versioning.md#release-flow`.
+`<version>-build<pipeline id>` (`a.1.0-build<pipeline id>` today, since the tag
+is derived from this constant). See
+`docs/deployment/versioning.md#release-flow`.
