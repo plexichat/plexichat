@@ -280,7 +280,11 @@ filters and module singletons on exit.
 
 CI runs the suite once in the default order (`test:pytest`) and once with a
 fixed `--shuffle-seed` (`test:shuffled_order`), so order dependence is caught
-on every merge request rather than by luck.
+on every merge request rather than by luck. The shuffled job runs four files
+at a time on the merge path and in a single process on `master`
+(`test:shuffled_order_serial`): a single process is the shape that can see one
+file's leaked state reach every later file, so that exhaustive run is what
+guards the branch a release is tagged from.
 
 ### Deterministic Timing
 
