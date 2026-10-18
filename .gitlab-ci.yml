@@ -1012,21 +1012,53 @@ create_merge_request:
     - if: $CI_COMMIT_BRANCH == "dev"
     - if: '$CI_COMMIT_TAG =~ /^[abcr]\.[0-9]+\.[0-9]+-[0-9]+$/'
 
+# Validate the master checkout, then mark it as a build.
+#
+# This job used to open with ``exit 0`` (added 2026-07-28): the validation never
+# ran and the tag was never created, so every master pipeline reported a green
+# "production validation suite" for a job that did nothing, and no server build
+# has been marked since a.1.0-131 (07-30). The validation is now ``pre-flight``
+# -- it builds the configuration, initialises every module against the real
+# database layer and exits without binding a port -- and the tag push is
+# checked, so a job whose product is the tag fails when the tag cannot be
+# created. The master pipeline's test stage is still the real gate; this proves
+# the tree the tag points at loads.
+#
+# The tag is a build marker (``a.1.0-build<pipeline id>``), not a release: it
+# does not match the ``a.X.Y-N`` pattern the docker and release jobs trigger
+# on, and ``-o ci.skip`` keeps it from starting a pipeline of its own. Releases
+# stay deliberate -- merge a dev commit that carries an ``a.X.Y-N`` tag, which
+# is what ``create_merge_request`` requires (see docs/deployment/versioning.md).
 validate_master_and_tag:
+  extends: .python_base
   stage: test-and-release
-  image: alpine:latest
-  before_script:
-    - apk add --no-cache git
+  timeout: 30m
+  cache:
+    policy: pull
   script:
+    - mkdir -p .plexichat
     - echo "Running production validation suite on master..."
-    - exit 0
-    - BUILD_TAG="a.1.0-build${CI_PIPELINE_IID}"
-    - COMMIT_MSG=$(git log -1 --pretty=%B)
-    - echo "All tests passed. Tagging commit as $BUILD_TAG"
-    - git config --global user.email "automerge@plexichat.com"
-    - git config --global user.name "Plexichat automerge dev into master"
-    - git tag -a "$BUILD_TAG" -m "$COMMIT_MSG"
-    - REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
-    - git push "$REPO_URL" "$BUILD_TAG" -o ci.skip
+    - python main.py pre-flight
+    - |
+      BUILD_TAG="a.1.0-build${CI_PIPELINE_IID}"
+      REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      # A retried job repeats its pipeline id, so the tag can already exist;
+      # that is the desired end state, not a failure.
+      if git ls-remote --tags "$REPO_URL" "refs/tags/${BUILD_TAG}" | grep -q .; then
+        echo "Tag ${BUILD_TAG} already exists; nothing to do"
+        exit 0
+      fi
+      git config user.email "automerge@plexichat.com"
+      git config user.name "Plexichat automerge dev into master"
+      git tag -a "$BUILD_TAG" -m "$(git log -1 --pretty=%B)"
+      if git push "$REPO_URL" "refs/tags/${BUILD_TAG}" -o ci.skip; then
+        echo "Tagged ${CI_COMMIT_SHA} as ${BUILD_TAG}"
+      else
+        echo "FAIL: could not push ${BUILD_TAG}." >&2
+        echo "Pushing over HTTP with the job token needs 'Allow Git push requests" >&2
+        echo "to the repository' enabled for this project; otherwise put a project" >&2
+        echo "access token with the 'api' scope in a masked variable and use it here." >&2
+        exit 1
+      fi
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
