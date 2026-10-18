@@ -5,7 +5,7 @@ Provides dashboard data and management endpoints for system-wide bot oversight.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pydantic import BaseModel
 
@@ -101,8 +101,8 @@ async def admin_bot_stats(
 )
 async def admin_list_applications(
     request: Request,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
     """List all applications with bot stats for the admin panel."""
     try:
@@ -132,8 +132,8 @@ async def admin_list_applications(
 async def admin_list_requests(
     request: Request,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
     """List bot requests for the admin panel."""
     try:

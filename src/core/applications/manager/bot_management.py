@@ -28,6 +28,13 @@ from .row_mappers import row_to_approved_bot, row_to_bot_request, row_to_bot_pro
 from .protocol import ApplicationManagerProtocol
 
 
+# Bot directory pages are clamped on both sides. ``limit`` used to reach SQL
+# ``LIMIT ?`` with only the route's upper bound, and SQLite reads ``LIMIT -1``
+# as *unlimited* -- so a negative limit dumped every public bot instead of an
+# empty page. The route clamps too, but the manager backs internal callers.
+MAX_DIRECTORY_PAGE_SIZE = 100
+
+
 class BotManagementMixin(ApplicationManagerProtocol):
     def _require_server_manage_permission(
         self,
@@ -579,6 +586,9 @@ class BotManagementMixin(ApplicationManagerProtocol):
         q: Optional[str] = None,
         tag: Optional[str] = None,
     ) -> Dict[str, Any]:
+        limit = max(0, min(limit, MAX_DIRECTORY_PAGE_SIZE))
+        offset = max(0, offset)
+
         base_where = ["a.bot_id IS NOT NULL"]
         params = []
 
