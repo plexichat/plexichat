@@ -248,8 +248,8 @@ async def review_hash_report(
 async def get_message_reports(
     request: Request,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     """Retrieve message reports for admin review."""
     check_host_restriction(request)
@@ -412,8 +412,8 @@ async def review_message_report(
 async def get_user_reports(
     request: Request,
     status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ):
     """Retrieve user behavior reports for admin review."""
     check_host_restriction(request)

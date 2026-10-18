@@ -156,6 +156,15 @@ USER_REPORT_COLUMNS = (
 )
 
 
+# Upper bound for admin report-listing pages. ``limit`` used to reach SQL
+# ``LIMIT ?`` verbatim, and SQLite reads ``LIMIT -1`` as *unlimited* -- so
+# ``GET /admin/moderation/message-reports?limit=-1`` (and the user-report
+# listing) returned every row instead of an empty page. Clamping from below
+# fixes that; clamping from above keeps one request from materializing an
+# unbounded result set.
+MAX_PAGE_SIZE = 200
+
+
 def setup(db, messaging_module=None) -> None:
     """Initialize the reports module."""
     global _db, _messaging, _setup_complete
@@ -357,6 +366,10 @@ def get_message_reports(
     status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
 ) -> List[MessageReport]:
     """Get message reports for admin review."""
+    # Clamp from below: SQLite reads ``LIMIT -1`` as *unlimited*, so a
+    # negative limit would dump every report instead of an empty page.
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
     db = _get_db()
 
     if status_filter:
@@ -563,6 +576,10 @@ def get_user_reports(
     status_filter: Optional[str] = None, limit: int = 50, offset: int = 0
 ) -> List[UserReport]:
     """Get user reports for admin review."""
+    # Clamp from below: SQLite reads ``LIMIT -1`` as *unlimited*, so a
+    # negative limit would dump every report instead of an empty page.
+    limit = max(0, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
     db = _get_db()
 
     if status_filter:
