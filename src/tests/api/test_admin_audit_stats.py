@@ -304,3 +304,76 @@ def test_list_stringifies_target_id_snowflake():
     finally:
         for c in reversed(ctx):
             c.stop()
+
+
+class _ExportRecordingDB:
+    """Fake DB that records the SQL/params passed to the export query."""
+
+    def __init__(self):
+        self.calls = []
+
+    def fetch_one(self, query, params=None):
+        return {"total": 0}
+
+    def fetch_all(self, query, params=None):
+        self.calls.append((query, tuple(params or ())))
+        return []
+
+
+def test_list_escapes_action_family_like_wildcards():
+    """A ``%``/``_`` in ``action_family`` must be matched literally.
+
+    Parameterization blocks injection but not wildcards, so a bare ``%`` would
+    otherwise dump every action (docs/admin-hardening.md).
+    """
+    from src.api.routes.admin import audit as audit_routes
+
+    fake_db = _RecordingDB()
+    app = FastAPI()
+    app.include_router(audit_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    ctx = (
+        patch.object(audit_routes, "check_host_restriction"),
+        patch.object(audit_routes, "require_admin_permission"),
+        patch("src.api.get_db", return_value=fake_db),
+    )
+    for c in ctx:
+        c.start()
+    try:
+        # URL-encoded ``100%_off``.
+        response = client.get("/api/v1/admin/audit/logs?action_family=100%25_off")
+        assert response.status_code == 200
+        count_query, count_params = fake_db.calls[0]
+        assert "action LIKE ? ESCAPE '\\'" in count_query
+        assert count_params == ("100\\%\\_off%",)
+    finally:
+        for c in reversed(ctx):
+            c.stop()
+
+
+def test_export_escapes_action_family_like_wildcards():
+    """The CSV/JSON export must escape ``action_family`` like the list endpoint."""
+    from src.api.routes.admin import audit as audit_routes
+
+    fake_db = _ExportRecordingDB()
+    app = FastAPI()
+    app.include_router(audit_routes.router, prefix="/api/v1/admin")
+    client = TestClient(app)
+    ctx = (
+        patch.object(audit_routes, "check_host_restriction"),
+        patch.object(audit_routes, "require_admin_permission"),
+        patch("src.api.get_db", return_value=fake_db),
+    )
+    for c in ctx:
+        c.start()
+    try:
+        response = client.get(
+            "/api/v1/admin/audit/logs/export?format=csv&action_family=%25"
+        )
+        assert response.status_code == 200
+        query, params = fake_db.calls[0]
+        assert "action LIKE ? ESCAPE '\\'" in query
+        assert params == ("\\%%",)
+    finally:
+        for c in reversed(ctx):
+            c.stop()

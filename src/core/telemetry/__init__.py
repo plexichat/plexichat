@@ -15,6 +15,17 @@ _db: Any = None
 _setup_complete = False
 
 
+def _escape_like(text: str) -> str:
+    """Escape LIKE metacharacters so stored endpoints match literally.
+
+    The admin endpoint filter is parameterized, but parameterization does not
+    stop ``%``/``_`` from acting as wildcards, so a bare ``%`` would match every
+    endpoint (``docs/admin-hardening.md``: treat ``%``, ``_`` and ``\\``
+    literally). The escape character is declared via ``ESCAPE '\\'``.
+    """
+    return str(text).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @dataclass
 class ResponseTimeEntry:
     """A single response time measurement."""
@@ -354,8 +365,8 @@ def get_endpoint_stats(
     """
     params: List[Any] = [cutoff]
     if endpoint_filter:
-        query += " AND endpoint LIKE ?"
-        params.append(f"%{endpoint_filter}%")
+        query += " AND endpoint LIKE ? ESCAPE '\\'"
+        params.append(f"%{_escape_like(endpoint_filter)}%")
     if client_id_filter:
         query += " AND client_id = ?"
         params.append(client_id_filter)
@@ -419,8 +430,8 @@ def get_endpoint_stats(
     """
     raw_params: List[Any] = [cutoff]
     if endpoint_filter:
-        raw_lookup += " AND endpoint LIKE ?"
-        raw_params.append(f"%{endpoint_filter}%")
+        raw_lookup += " AND endpoint LIKE ? ESCAPE '\\'"
+        raw_params.append(f"%{_escape_like(endpoint_filter)}%")
     if client_id_filter:
         raw_lookup += " AND client_id = ?"
         raw_params.append(client_id_filter)
@@ -550,9 +561,12 @@ def get_response_time_history(
 
     normalized_endpoint = _normalize_endpoint(endpoint)
     if "{" in normalized_endpoint and "}" in normalized_endpoint:
-        like_pattern = re.sub(r"\{[^/]+\}", "%", normalized_endpoint)
+        # Escape the literal path segments so ``%``/``_`` inside a route are
+        # matched literally, then swap the ``{param}`` placeholders for the
+        # intended ``%`` wildcard (docs/admin-hardening.md).
+        like_pattern = re.sub(r"\{[^/]+\}", "%", _escape_like(normalized_endpoint))
         rows = db.fetch_all(
-            "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint LIKE ? AND method = ? AND timestamp > ? ORDER BY timestamp",
+            "SELECT timestamp, response_time_ms, status_code FROM telemetry_response_times WHERE endpoint LIKE ? ESCAPE '\\' AND method = ? AND timestamp > ? ORDER BY timestamp",
             (like_pattern, method, cutoff),
         )
     else:
