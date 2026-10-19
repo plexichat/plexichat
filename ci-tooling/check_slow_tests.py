@@ -48,6 +48,14 @@ guard, a worker that never started) has still measured nothing. An xfail is not
 that case -- pytest marks it ``<skipped type="pytest.xfail">`` although the test
 executed -- so it counts as a test that ran.
 
+The invocation has to mean what it says, too: a ``--threshold`` that is not a
+finite, non-negative number of seconds is a usage error rather than a ceiling.
+``nan`` is the reason -- every comparison against it is false, so a run that
+names it would pass a report containing a 15-minute test -- and ``inf`` is the
+same hole spelled differently. An empty ``--metrics-out`` is refused as well:
+it is falsy, so the file was silently never written and the trend stage read a
+missing artifact instead of the run's metrics.
+
 ``--job`` and ``--load-log`` are paired with the reports positionally, so a
 surplus entry is a usage error (exit 2) rather than a silently dropped ceiling
 or sample. A short list is still allowed: the reports after it fall back to
@@ -517,6 +525,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Write a per-job metrics JSON array to this path (for the CI trend)",
     )
     args = parser.parse_args(argv)
+    # A ceiling nobody can apply is not a ceiling: ``nan`` makes every
+    # comparison in this gate false (so a 15-minute test passes) and ``inf`` is
+    # the same hole, which is how a mistyped threshold turned the gate off.
+    # ``--job NAME=SECONDS`` already refuses both (see parse_job_spec); the
+    # global default did not.
+    if not math.isfinite(args.threshold) or args.threshold < 0:
+        parser.error(
+            f"--threshold {args.threshold!r}: the ceiling must be a finite, "
+            f"non-negative number of seconds"
+        )
+    # ``--metrics-out ""`` parses but is falsy, so the metrics file was never
+    # written while the invocation looked like it asked for one.
+    if args.metrics_out is not None and not args.metrics_out.strip():
+        parser.error("--metrics-out needs a path")
     try:
         job_specs = [parse_job_spec(spec) for spec in args.job]
     except ValueError as exc:

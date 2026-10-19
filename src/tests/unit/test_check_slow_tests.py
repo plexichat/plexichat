@@ -441,6 +441,55 @@ def test_a_skip_alongside_a_test_that_ran_is_allowed(tmp_path):
     assert check.main([str(report), "--threshold", "5"]) == 0
 
 
+@pytest.mark.parametrize("threshold", ["nan", "inf", "-inf", "-5"])
+def test_a_ceiling_that_cannot_be_applied_is_refused(tmp_path, capsys, threshold):
+    """A threshold no duration can exceed must not pass the gate.
+
+    ``nan`` compares false against every duration, so ``--threshold nan``
+    over a report holding a 15-minute test printed ``OK: no test exceeded its
+    budget`` and exited 0 -- a mistyped ceiling switched the gate off.
+    ``inf`` is the same hole, and a negative one is a ceiling nobody meant.
+    The gate refuses the invocation instead of judging under it.
+    """
+    report = _write_report(
+        tmp_path / "r.xml",
+        _registered_cases() + [("x.Test", "test_very_slow", 900.0)],
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        check.main([str(report), "--threshold", threshold])
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 2
+    assert "--threshold" in captured.err
+    assert "OK:" not in captured.out
+
+
+def test_a_finite_threshold_still_fails_the_same_report(tmp_path, capsys):
+    """The control for the refusal above: 900s is slow against a real ceiling."""
+    report = _write_report(
+        tmp_path / "r.xml",
+        _registered_cases() + [("x.Test", "test_very_slow", 900.0)],
+    )
+    assert check.main([str(report), "--threshold", "5"]) == 1
+    assert "test_very_slow" in capsys.readouterr().out
+
+
+def test_an_empty_metrics_out_path_is_refused(tmp_path, capsys):
+    """``--metrics-out ""`` looked like a request and wrote nothing.
+
+    The flag parses to the empty string, which is falsy, so the metrics block
+    was skipped while the job's artifact upload went looking for a file the
+    run never asked to produce. A path is required or the flag is omitted.
+    """
+    report = _write_report(tmp_path / "r.xml", _registered_cases())
+
+    with pytest.raises(SystemExit) as exit_info:
+        check.main([str(report), "--threshold", "5", "--metrics-out", ""])
+    assert exit_info.value.code == 2
+    assert "--metrics-out" in capsys.readouterr().err
+    assert not (tmp_path / "test-durations.json").exists()
+
+
 def test_more_jobs_than_reports_exits_two(tmp_path):
     """``--job`` is positional: a ceiling for no report is a usage error."""
     report = _write_report(tmp_path / "r.xml", _registered_cases())
