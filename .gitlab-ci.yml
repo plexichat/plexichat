@@ -387,8 +387,10 @@ test:pytest:
     # The database benchmarks are timing assertions -- ``median_ms < 10`` on a
     # single query, ``< 50`` on connection acquisition -- and pytest-benchmark
     # turns itself off under xdist, so they are not run beside the parallel
-    # suite. They are 1.2s on their own, so this costs the job nothing.
-    - python -m pytest -q src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+    # suite. ``-n0`` overrides pytest.ini's default ``-n auto`` to keep this
+    # job in one process; without it the benchmarks would silently no-op.
+    # They are 1.2s on their own, so this costs the job nothing.
+    - python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
     # Full unit + integration suite, four files at a time. Each file stays on
     # one worker (``--dist loadfile``), so a module's fixtures and module-level
     # state are still built once and in file order: pipeline #2057 ran the same
@@ -498,7 +500,10 @@ test:shuffled_order_serial:
     SHUFFLE_SEED: "424242"
   script:
     - pip install --require-hashes -r requirements-dev.txt
-    - python -m pytest -q --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
+    # ``-n0`` overrides pytest.ini's default ``-n auto``: the whole point of
+    # this job is to run every file in ONE process so a leak from one file is
+    # visible to all the later ones.
+    - python -m pytest -q -n0 --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
   needs: []
   allow_failure: false
   rules:
@@ -541,10 +546,11 @@ test:timing_under_load:
       trap stop_burners EXIT
       # Serial on purpose: the burners supply the contention, and running in
       # one process keeps each file whole so the waits run where they live.
-      # The -m override relaxes pytest.ini's default deselect to include
-      # slow-marked timeout/reclaim tests -- the most clock-sensitive ones --
-      # while still excluding the duration-only performance suites.
-      python -m pytest -q --maxfail=20 --durations=25 \
+      # ``-n0`` overrides pytest.ini's default ``-n auto`` to hold this job to
+      # a single process. The -m override relaxes pytest.ini's default deselect
+      # to include slow-marked timeout/reclaim tests -- the most clock-sensitive
+      # ones -- while still excluding the duration-only performance suites.
+      python -m pytest -q -n0 --maxfail=20 --durations=25 \
         -m "not performance and not production_simulation and not multiprocess" \
         src/tests/ratelimit \
         src/tests/webhooks \
@@ -604,6 +610,9 @@ test:database_backends:
     # ``production_simulation`` cases (which are exactly the multi-worker
     # ones) run here. ``slow``/``performance`` stay out: they are duration
     # tests, not correctness ones, and have their own gate.
+    # ``-n0`` overrides pytest.ini's default ``-n auto``: the multi-worker
+    # simulations already own the box's processes and must not share it with
+    # xdist workers.
     # Same load sampling as test:pytest: this suite drives real Postgres and
     # Valkey, so its wall clock is the box and the services together, and the
     # gate scales its 15s ceiling by the queue the job measured.
@@ -615,7 +624,7 @@ test:database_backends:
       sampler=$!
       stop_sampler() { kill "$sampler" 2>/dev/null || true; }
       trap stop_sampler EXIT
-      python -m pytest -q -m "not slow and not performance" \
+      python -m pytest -q -n0 -m "not slow and not performance" \
         --durations=25 --junitxml=test-results-db.xml \
         src/tests/test_postgres_docker.py \
         src/tests/test_transactions.py \
