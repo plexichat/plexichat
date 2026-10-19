@@ -86,7 +86,6 @@ def db_config(setup_module):
 def test_sqlite_connection(db_config):
     """Test basic SQLite connection."""
     config_path, temp_dir = db_config
-    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     assert db.connection is not None
@@ -97,7 +96,6 @@ def test_sqlite_connection(db_config):
 
 def test_sqlite_create_table(db_config):
     """Test creating a table in SQLite."""
-    config_path, temp_dir = db_config
     config_path, temp_dir = db_config
     db = Database()
     db.connect()
@@ -115,7 +113,6 @@ def test_sqlite_create_table(db_config):
 
 def test_sqlite_insert_single_row(db_config):
     """Test inserting a single row."""
-    config_path, temp_dir = db_config
     config_path, temp_dir = db_config
     db = Database()
     db.connect()
@@ -244,7 +241,6 @@ def test_sqlite_large_text_data(db_config):
 # Configuration Tests
 def test_config_integration(db_config):
     """Test that database respects configuration changes."""
-    config_path, temp_dir = db_config
     config_path, temp_dir = db_config
     new_path = str(temp_dir / "other.db")
     config.set("database", {"type": "sqlite", "path": new_path})
