@@ -343,4 +343,4 @@ Reporters do not receive admin-only fields such as `admin_notes`, `reviewed_by`,
 ## Related endpoints
 
 *   [Messages](messages.md) — Message contents and moderation context.
-*   [Admin](../admin/overview.md) — Admin review workflows.
+*   [Admin](../admin/index.md) — Admin review workflows.

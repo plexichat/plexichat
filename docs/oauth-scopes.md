@@ -53,11 +53,11 @@ The server also enforces scopes during the OAuth flow. See `src/api/routes/auth/
 *   Privileged scopes require extra review because they expose sensitive data.
 *   The `bot` scope is distinct because it triggers bot installation behavior. Include it only when you install a bot.
 *   Scope validation happens server-side even if a client renders this list correctly.
-*   OAuth clients must register allowed redirect URIs. The server rejects unlisted `redirect_uri` values. See `src/api/routes/auth/oauth.py:50`.
+*   OAuth clients must register allowed redirect URIs. The server rejects unlisted `redirect_uri` values. See `src/api/routes/auth/oauth.py:74`.
 
 ## Related pages
 
-*   [Permissions](permissions.md)
+*   [Permissions](end-user/permissions.md)
 *   [Authentication](api/authentication.md)
 *   [Features](features.md)
-*   [OAuth configuration](deployment/configuration/config-oauth.md)
+*   [OAuth configuration](client-development/oauth-integration.md)

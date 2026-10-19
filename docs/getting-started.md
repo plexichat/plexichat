@@ -161,7 +161,7 @@ curl http://localhost:8000/api/v1/users/@me \
 
 ### Access-token gate
 
-Some deployments require an additional `X-API-Access-Token` header. Check `/capabilities` for `access_token_required`. See [Access Tokens](admin-access-tokens.md) for details.
+Some deployments require an additional `X-API-Access-Token` header. Check `/capabilities` for `access_token_required`. See [Access Tokens](deployment/configuration/config-api.md) for details.
 
 ## 4. Make your first requests
 

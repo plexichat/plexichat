@@ -967,7 +967,7 @@ authentication:
 
 ## Related documentation
 
-* [Configuration overview](deployment/configuration/configuration.md) - Discovery, interpolation, and module guides
+* [Configuration overview](configuration.md) - Discovery, interpolation, and module guides
 * [Authentication configuration](deployment/configuration/config-authentication.md)
 * [Database configuration](deployment/configuration/config-database.md)
 * [Valkey configuration](deployment/configuration/config-valkey.md)

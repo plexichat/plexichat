@@ -135,6 +135,6 @@ These endpoints return public constants and server state without revealing secre
 ## Related docs
 
 - [Default configuration reference](default-config.md)
-- [Deployment guide](deployment.md)
+- [Deployment guide](deployment/index.md)
 - [Security best practices](security.md)
 - [Performance guide](performance.md)

@@ -15,7 +15,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REFERENCE = re.compile(r"([A-Za-z0-9_./-]+\.py):(\d+)")
+LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 DOC_GLOBS = ("README.md", "docs/**/*.md", "src/**/*.md")
+EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "<", "/")
 
 
 def _documents():
@@ -84,3 +86,26 @@ def test_every_doc_line_reference_resolves():
                     )
 
     assert not problems, "stale doc references:\n" + "\n".join(problems)
+
+
+@pytest.mark.unit
+def test_every_doc_link_resolves():
+    """A relative markdown link must point at a file that exists.
+
+    Docs move; a link into the old location is a dead end for a reader and
+    invisible to every other check.
+    """
+    problems = []
+    for doc in _documents():
+        relative_doc = doc.relative_to(PROJECT_ROOT)
+        for lineno, line in enumerate(
+            doc.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            for match in LINK.finditer(line):
+                target = match.group(1).split("#", 1)[0].strip()
+                if not target or target.startswith(EXTERNAL_PREFIXES):
+                    continue
+                if not (doc.parent / target).resolve().exists():
+                    problems.append(f"{relative_doc}:{lineno}: broken link to {target}")
+
+    assert not problems, "broken doc links:\n" + "\n".join(problems)

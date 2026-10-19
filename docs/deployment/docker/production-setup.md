@@ -400,4 +400,4 @@ scrape_configs:
 
 - [Configuration](configuration.md) - Customize settings.
 - [Health checks](healthchecks.md) - Configure service health.
-- [Backup & recovery](../../disaster-recovery.md) - Test restore procedures.
+- [Backup & recovery](../disaster-recovery.md) - Test restore procedures.

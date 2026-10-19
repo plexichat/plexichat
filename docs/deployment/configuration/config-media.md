@@ -30,7 +30,7 @@ media:
 
 S3-compatible options include AWS S3, Google Cloud Storage, Azure Blob Storage, RustFS, Wasabi, and Backblaze B2.
 
-See the [Deployment guide](deployment.md#backup-and-recovery) for backup strategies for each backend.
+See the [Deployment guide](../index.md#backup-and-recovery) for backup strategies for each backend.
 
 ## Configure local storage
 

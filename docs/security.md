@@ -10,7 +10,7 @@ Plexichat uses bearer-token authentication for REST API and WebSocket connection
 
 *   **User sessions** — `Authorization: Bearer <token>` — Generated on login and validated on every request.
 *   **Bot tokens** — `Authorization: Bot <token>` — Long-lived tokens that are scoped to bot permissions.
-*   **Admin access token** — `X-API-Access-Token: <token>` — Optional gate for closed deployments. See [Access tokens](admin-access-tokens.md).
+*   **Admin access token** — `X-API-Access-Token: <token>` — Optional gate for closed deployments. See [Access tokens](deployment/configuration/config-api.md).
 
 #### Session configuration
 

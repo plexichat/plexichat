@@ -49,7 +49,7 @@ The WebSocket gateway is at `/gateway`, not `/ws`.
 - Implementation: `src/api/websocket/gateway.py` (`gateway_endpoint`) (`@router.websocket("/gateway")`)
 - Dev proxy: `vite.config.js` forwards `/api` and `/gateway` to `http://127.0.0.1:5411`
 
-See [Gateway and WebSocket](../websocket/gateway.md) and [Opcodes](../websocket/opcodes.md). Required opcodes include `50 RATCHET_UPDATE`, `60-67 ARTIFACT_*` and `SUM_*`, and `68 ARTIFACT_OP_REJECTED` (`src/api/websocket/opcodes.py:40`).
+See [Gateway and WebSocket](../websocket/index.md) and [Opcodes](../websocket/opcodes.md). Required opcodes include `50 RATCHET_UPDATE`, `60-67 ARTIFACT_*` and `SUM_*`, and `68 ARTIFACT_OP_REJECTED` (`src/api/websocket/opcodes.py:40`).
 
 ## Health checks
 
