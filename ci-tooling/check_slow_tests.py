@@ -33,6 +33,15 @@ reports load 1 and every budget is the one registered in
 ceiling by the queue it was under, capped at ``MAX_LOAD_FACTOR`` so a
 permanently loaded runner cannot hide a regression.
 
+The gate judges reports, so a report it cannot measure is refused rather than
+read as fast. A testcase whose ``time`` is missing or unparsable is not a
+testcase that took 0 seconds -- it is a testcase whose duration nobody knows,
+and the only honest verdict on it is exit 2. The same goes for a report with no
+testcases at all: ``OK: no test exceeded its budget`` over an empty report is a
+green light nobody earned. A skipped testcase is the one exception -- it did not
+run, so it has no duration to report, and pytest writes no ``<skipped>`` child
+for a test that ran.
+
 Usage::
 
     python scripts/check_slow_tests.py test-results.xml test-results-db.xml \\
@@ -258,20 +267,46 @@ def load_factor_from_log(
         return None
 
 
+def _testcase_duration(case: Element) -> float:
+    """A testcase's own wall clock, or ``ValueError`` when it has none.
+
+    Reading a missing or malformed ``time`` as 0.0 used to make every such
+    testcase look instantaneous, which turned a reporter change (or a truncated
+    report) into a green gate. A duration nobody can read is not a fast test, so
+    the run is refused instead. A skipped testcase is not a counter-example: it
+    did not run, has no work to measure, and is the only case that may stand at
+    zero without a duration.
+    """
+    raw = case.get("time")
+    try:
+        duration = float(raw) if raw is not None else math.nan
+    except (TypeError, ValueError):
+        duration = math.nan
+    if math.isfinite(duration) and duration >= 0:
+        return duration
+    if case.find("skipped") is not None:
+        return 0.0
+    name = case.get("name") or "<unnamed>"
+    classname = case.get("classname") or "<unclassed>"
+    raise ValueError(
+        f"testcase {classname}::{name} has no usable time attribute "
+        f"({raw!r}); it did not run rather than run instantly, and a report "
+        f"without durations cannot be judged"
+    )
+
+
 def _scan_tests(root: Element) -> List[Tuple[float, str]]:
     """Return ``(duration_seconds, test_id)`` for every testcase.
 
     ``test_id`` prefers the file path attribute (pytest's ``junit_family=xunit2``
     sets ``file``); it falls back to ``classname::name`` when absent. The
     duration is the report's own wall clock, which is the only thing the gate
-    judges.
+    judges; a testcase that reports no usable one raises ``ValueError`` (see
+    :func:`_testcase_duration`) rather than being counted as fast.
     """
     tests: List[Tuple[float, str]] = []
     for case in root.iter("testcase"):
-        try:
-            duration = float(case.get("time") or 0)
-        except (TypeError, ValueError):
-            duration = 0.0
+        duration = _testcase_duration(case)
         name = case.get("name") or "<unnamed>"
         file_path = case.get("file") or ""
         classname = case.get("classname") or ""
@@ -492,7 +527,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             else None
         ) or 1.0
         ceilings.append((job, round(nominal * factor, 3), factor))
-        tests = _scan_tests(root)
+        try:
+            tests = _scan_tests(root)
+        except ValueError as exc:
+            print(f"ERROR: {xml_path}: {exc}", file=sys.stderr)
+            return 2
+        # A report with nothing in it judges nothing, and "no test exceeded its
+        # budget" over it would be a green light for a suite that never ran.
+        if not tests:
+            print(
+                f"ERROR: {xml_path} contains no testcases; a report that judged "
+                f"nothing cannot pass a duration gate",
+                file=sys.stderr,
+            )
+            return 2
         seen_ids.update(tid for _, tid in tests)
         for duration, test_id in tests:
             budget = _budget_seconds(test_id, nominal, SLOW_TEST_BUDGETS) * factor

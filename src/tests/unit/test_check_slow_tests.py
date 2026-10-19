@@ -314,3 +314,73 @@ def test_an_unreadable_job_argument_exits_two(tmp_path):
     with pytest.raises(SystemExit) as exit_info:
         check.main([str(report), "--job", "test:db=soon"])
     assert exit_info.value.code == 2
+
+
+def test_a_report_with_no_testcases_is_refused(tmp_path, capsys):
+    """A gate over an empty report must not report the suite as green.
+
+    ``OK: no test exceeded its budget`` is vacuously true when the report holds
+    no testcase: a job that produced an empty artifact, or a reporter that
+    changed its output shape, would otherwise pass while measuring nothing.
+    """
+    report = tmp_path / "empty.xml"
+    report.write_text('<?xml version="1.0"?><testsuite tests="0" />', encoding="utf-8")
+
+    code = check.main([str(report), "--threshold", "5"])
+    captured = capsys.readouterr()
+    assert code == 2, captured.out + captured.err
+    assert "contains no testcases" in captured.err
+    assert "OK:" not in captured.out
+
+
+def test_an_unreadable_duration_is_refused_not_read_as_zero(tmp_path, capsys):
+    """A testcase with no measurable time is unknown, not instantaneous.
+
+    Coercing the missing attribute to 0.0 made every testcase in a truncated
+    (or reshaped) report look fast, which is the one failure mode a duration
+    gate cannot afford: it turns a broken report into a green pipeline.
+    """
+    report = tmp_path / "no-time.xml"
+    report.write_text(
+        '<?xml version="1.0"?><testsuite>'
+        '<testcase classname="x.Test" name="test_unmeasured" />'
+        "</testsuite>",
+        encoding="utf-8",
+    )
+
+    code = check.main([str(report), "--threshold", "5"])
+    captured = capsys.readouterr()
+    assert code == 2, captured.out + captured.err
+    assert "no usable time attribute" in captured.err
+    assert "x.Test::test_unmeasured" in captured.err
+
+    # The core scan refuses on its own too, so no caller can silently read the
+    # case as 0.0 by going around ``main``.
+    with pytest.raises(ValueError, match="no usable time attribute"):
+        check.slow_tests_from_root(check._parse_report(str(report)), 5.0)
+
+
+@pytest.mark.parametrize("time", ["nan", "inf", "-2.5", "soon"])
+def test_a_non_finite_or_negative_duration_is_refused(time):
+    """A bogus time attribute is not a fast test either."""
+    root = check.ET.fromstring(
+        f'<testsuite><testcase classname="x.Test" name="t" time="{time}" /></testsuite>'
+    )
+    with pytest.raises(ValueError, match="no usable time attribute"):
+        check.slow_tests_from_root(root, 5.0)
+
+
+def test_a_skipped_testcase_without_a_duration_is_not_a_failure():
+    """A test that did not run has no duration to be slow with.
+
+    This is the one case the old read-as-zero behaviour got right: pytest
+    writes ``time="0.0"`` for a skip, but a reporter that omits it is still
+    describing a test that never ran, so it stands at zero rather than
+    reddening the gate on a missing measurement.
+    """
+    root = check.ET.fromstring(
+        '<testsuite><testcase classname="x.Test" name="test_skipped">'
+        '<skipped message="not on this platform" />'
+        "</testcase></testsuite>"
+    )
+    assert check.slow_tests_from_root(root, 5.0) == []
