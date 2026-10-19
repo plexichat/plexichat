@@ -390,7 +390,25 @@ test:pytest:
     # suite. ``-n0`` overrides pytest.ini's default ``-n auto`` to keep this
     # job in one process; without it the benchmarks would silently no-op.
     # They are 1.2s on their own, so this costs the job nothing.
-    - python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+    #
+    # They get a load sampler of their own: the suite-level one below starts
+    # after they finish. On pipeline #2086 the benchmark ran 8.8s against a 5s
+    # ceiling while the client repository's e2e job shared the box -- while the
+    # query's own median stayed inside the 10ms target it asserts -- so the
+    # gate was measuring the queue, not the code. The samples let it scale this
+    # report by the load it actually ran behind, as it already does for the
+    # other two.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-benchmarks-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+      stop_sampler
+      trap - EXIT
     # Full unit + integration suite, four files at a time. Each file stays on
     # one worker (``--dist loadfile``), so a module's fixtures and module-level
     # state are still built once and in file order: pipeline #2057 ran the same
@@ -430,6 +448,7 @@ test:pytest:
       - test-results.xml
       - test-results-benchmarks.xml
       - test-results-load.log
+      - test-results-benchmarks-load.log
     expire_in: 1 week
 
 # The PlexiSum engine's cross-engine contract gets its own job.
@@ -661,9 +680,14 @@ test:database_backends:
 # that pytest.ini deselects ``slow``/``performance``-marked tests from the run,
 # so this gate deliberately enforces only the fast suite that CI actually runs.
 #
-# Both jobs that emit a JUnit report are judged. ``test:database_backends``
-# used to be left out, which left the suites that drive real Postgres and
-# Valkey -- and the multi-worker simulations among them -- unwatched. Its tests
+# Every JUnit report is judged, including the benchmark module that
+# ``test:pytest`` runs before the main suite: its wall clock is mostly harness
+# and fixture, so it carries its own load sampler rather than being read as an
+# unloaded measurement of the query it asserts on.
+#
+# ``test:database_backends`` used to be left out, which left the suites that
+# drive real Postgres and Valkey -- and the multi-worker simulations among
+# them -- unwatched. Its tests
 # are wall-clock rather than CPU (worker restarts, lock TTLs), so it carries a
 # ceiling of its own: 15s against a heaviest measured test of 4.01s on an idle
 # box, which is thin headroom under a 5s default because the same tests cross
@@ -690,6 +714,7 @@ performance:no_slow_tests:
       --threshold 5.0
       --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks
       --load-log test-results-load.log --load-log test-results-db-load.log
+      --load-log test-results-benchmarks-load.log
       --metrics-out test-durations.json
   artifacts:
     when: always

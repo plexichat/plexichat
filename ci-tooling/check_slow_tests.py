@@ -18,11 +18,13 @@ Postgres and Valkey with multi-worker simulations whose cost is wall-clock
 4.01s with the box idle against a 5s default a loaded runner would cross. A
 per-test budget still takes precedence over the job's ceiling.
 
-A wall clock also measures the *runner*, and this one is 4 cores shared with the
-other repository's pipeline. When both pushed at once (pipelines #2070 and
-#2071), the import sweeps that take 2.7s and 1.9s on an idle box took 22.5s and
-15.2s, and three 2.5s tests crossed 5s -- five false reds from the queue, not
-from the code. The verdict stays the wall clock, though: how long a test takes
+A wall clock also measures the *runner*, and this one is shared with the other
+repository's pipeline. When both pushed at once (pipelines #2070 and #2071), the
+import sweeps that take 2.7s and 1.9s on an idle box took 22.5s and 15.2s, and
+three 2.5s tests crossed 5s -- five false reds from the queue, not from the
+code. The samples carry the core count next to the load (``nproc`` in the test
+jobs), so the ratio below is per-core and stays right if the runner is resized:
+it reported 4 cores for the #2070 measurements and 8 by #2086. The verdict stays the wall clock, though: how long a test takes
 is what the gate is for, and how much CPU it burned is never a pass/fail
 criterion -- a test that uses every core it can get is fast or slow on its
 duration, not on its appetite. What the queue cost is measured separately, as
@@ -79,7 +81,7 @@ DEFAULT_THRESHOLD_SECONDS = 5.0
 # ``MAX_LOAD_FACTOR`` bounds the allowance a run's load samples can buy: at the
 # cap a test still has to take four times its registered budget to fail, so a
 # permanently loaded runner cannot hide a regression, while a box running two
-# pipelines at once -- the load of 2 on 4 cores that redded #2070 -- is covered.
+# pipelines at once -- the load of 2 per core that redded #2070 -- is covered.
 MAX_LOAD_FACTOR = 4.0
 
 # Per-test budgets for the two cold, full-tree import sweeps in
