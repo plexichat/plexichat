@@ -90,8 +90,12 @@ def test_registered_under_its_budget_is_not_flagged():
 
 def test_registered_over_its_budget_is_flagged():
     """A registered sweep that regresses past its ceiling still fails."""
-    root = _report([(REGISTERED_CLASS, REGISTERED_NAME, 11.0)])
-    assert check.slow_tests_from_root(root, 5.0) == [(11.0, REGISTERED)]
+    # Read the registered budget rather than repeating it, so raising a sweep's
+    # ceiling (as #2082's shared-box measurement did) cannot quietly turn this
+    # assertion into a no-op.
+    budget = check.SLOW_TEST_BUDGETS[REGISTERED][0]
+    root = _report([(REGISTERED_CLASS, REGISTERED_NAME, budget + 1.0)])
+    assert check.slow_tests_from_root(root, 5.0) == [(budget + 1.0, REGISTERED)]
 
 
 def test_stale_budget_is_reported():

@@ -115,8 +115,13 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "child-interpreter import of the whole tree: 2.7s idle, 7.7s at 2x oversubscription, 15.7s at 3x",
     ),
     "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeConfigSetup::test_missing_config_fails_only_the_documented_way": (
-        10.0,
-        "child-interpreter import of the whole tree: 1.9s idle, 3.9s at 2x oversubscription, 6.9s at 3x",
+        20.0,
+        "child-interpreter import of the whole tree: 1.9s idle, 3.9s at 2x "
+        "oversubscription, 6.9s at 3x, 19.9s in pipeline #2082 while the client "
+        "repository's e2e job shared the box -- a single-threaded cold import is "
+        "hit harder by a neighbouring CPU-bound pipeline than its loadavg (1.84 "
+        "on 4 cores) suggests, so this budget carries the shared-box measurement "
+        "rather than the idle cost multiplied by the load factor",
     ),
     "src.tests.api.test_openapi_snowflake_ids::test_the_document_covers_the_api": (
         20.0,
