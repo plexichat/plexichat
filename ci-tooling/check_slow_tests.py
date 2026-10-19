@@ -42,7 +42,17 @@ and the only honest verdict on it is exit 2. The same goes for a report with no
 testcases at all: ``OK: no test exceeded its budget`` over an empty report is a
 green light nobody earned. A skipped testcase is the one exception -- it did not
 run, so it has no duration to report, and pytest writes no ``<skipped>`` child
-for a test that ran.
+for a test that ran. A report made up *entirely* of them is refused too: it is
+not empty, but a suite where every test skipped (a missing service, a platform
+guard, a worker that never started) has still measured nothing. An xfail is not
+that case -- pytest marks it ``<skipped type="pytest.xfail">`` although the test
+executed -- so it counts as a test that ran.
+
+``--job`` and ``--load-log`` are paired with the reports positionally, so a
+surplus entry is a usage error (exit 2) rather than a silently dropped ceiling
+or sample. A short list is still allowed: the reports after it fall back to
+``CI_JOB_NAME``/``--threshold``, which is how a locally assembled report set is
+judged.
 
 Usage::
 
@@ -297,6 +307,20 @@ def _testcase_duration(case: Element) -> float:
     )
 
 
+def _did_not_run(case: Element) -> bool:
+    """Whether *case* describes a test the runner skipped rather than ran.
+
+    pytest writes ``<skipped>`` for a skipped test and for an xfail, even
+    though an xfail executes, so the ``type`` attribute is what tells them
+    apart. Calling an executed test unjudged would red a report that did its
+    work; see :func:`main`.
+    """
+    skipped = case.find("skipped")
+    if skipped is None:
+        return False
+    return skipped.get("type") != "pytest.xfail"
+
+
 def _scan_tests(root: Element) -> List[Tuple[float, str]]:
     """Return ``(duration_seconds, test_id)`` for every testcase.
 
@@ -504,6 +528,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"{len(args.load_log)} --load-log path(s) for "
             f"{len(args.xml_paths)} report(s)"
         )
+    # ``--job`` is paired positionally too, so a surplus one names no report at
+    # all: a ceiling written for a report that is not in this invocation is a
+    # configuration error, not something to drop.
+    if len(args.job) > len(args.xml_paths):
+        parser.error(
+            f"{len(args.job)} --job argument(s) for {len(args.xml_paths)} report(s)"
+        )
 
     # Each offender carries the ceiling of the report it came from, scaled by the
     # load that report's job measured, so the printed budget is the one it was
@@ -540,6 +571,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(
                 f"ERROR: {xml_path} contains no testcases; a report that judged "
                 f"nothing cannot pass a duration gate",
+                file=sys.stderr,
+            )
+            return 2
+        # A report can be non-empty and still have judged nothing: a run whose
+        # whole selection skipped (a missing backend, a platform guard, an
+        # xdist worker that never started) parses as a suite of 0-second
+        # testcases, and "no test exceeded its budget" over it is again a
+        # verdict nobody earned. xfail is the exception (see _did_not_run): it
+        # is written as a skip but the test did execute.
+        if all(_did_not_run(case) for case in root.iter("testcase")):
+            print(
+                f"ERROR: {xml_path} contains only skipped testcases; nothing "
+                f"ran, so the report cannot vouch for the suite's duration",
                 file=sys.stderr,
             )
             return 2

@@ -370,6 +370,87 @@ def test_a_non_finite_or_negative_duration_is_refused(time):
         check.slow_tests_from_root(root, 5.0)
 
 
+def test_a_report_of_only_skipped_testcases_is_refused(tmp_path, capsys):
+    """A report that is not empty can still have measured nothing.
+
+    Every test in the selection skipping -- a missing backend, a platform
+    guard, a worker that never started -- leaves a well-formed report of
+    0-second testcases. ``OK: no test exceeded its budget`` over that is the
+    same green light an empty report used to earn.
+    """
+    report = tmp_path / "all-skipped.xml"
+    report.write_text(
+        '<?xml version="1.0"?><testsuite tests="2">'
+        '<testcase classname="x.Test" name="test_pg" time="0.0">'
+        '<skipped message="postgres not reachable" /></testcase>'
+        '<testcase classname="x.Test" name="test_valkey" time="0.0">'
+        '<skipped message="valkey not reachable" /></testcase>'
+        "</testsuite>",
+        encoding="utf-8",
+    )
+
+    code = check.main([str(report), "--threshold", "5"])
+    captured = capsys.readouterr()
+    assert code == 2, captured.out + captured.err
+    assert "contains only skipped testcases" in captured.err
+    assert "OK:" not in captured.out
+
+
+def test_an_xfail_counts_as_having_run(tmp_path, capsys):
+    """pytest writes an xfail as ``<skipped type=\"pytest.xfail\">`` after running it.
+
+    Refusing such a report would red a suite that did its work, so only a
+    skipped testcase without that type is treated as never having run.
+    """
+    case = check.ET.fromstring(
+        '<testcase classname="x.Test" name="test_known_bug" time="0.2">'
+        '<skipped type="pytest.xfail" message="expected failure" /></testcase>'
+    )
+    assert check._did_not_run(case) is False
+
+    registered = "".join(
+        f'<testcase classname="{classname}" name="{name}" time="{time}" />'
+        for classname, name, time in _registered_cases()
+    )
+    report = tmp_path / "xfail.xml"
+    report.write_text(
+        f'<?xml version="1.0"?><testsuite>{registered}'
+        '<testcase classname="x.Test" name="test_known_bug" time="0.2">'
+        '<skipped type="pytest.xfail" message="expected failure" /></testcase>'
+        "</testsuite>",
+        encoding="utf-8",
+    )
+
+    assert check.main([str(report), "--threshold", "5"]) == 0, capsys.readouterr().err
+
+
+def test_a_skip_alongside_a_test_that_ran_is_allowed(tmp_path):
+    """One executed test is enough: a normal report mixes pass and skip."""
+    registered = "".join(
+        f'<testcase classname="{classname}" name="{name}" time="{time}" />'
+        for classname, name, time in _registered_cases()
+    )
+    report = tmp_path / "r.xml"
+    report.write_text(
+        f'<?xml version="1.0"?><testsuite>{registered}'
+        '<testcase classname="x.Test" name="test_pg" time="0.0">'
+        '<skipped message="postgres not reachable" /></testcase></testsuite>',
+        encoding="utf-8",
+    )
+
+    assert check.main([str(report), "--threshold", "5"]) == 0
+
+
+def test_more_jobs_than_reports_exits_two(tmp_path):
+    """``--job`` is positional: a ceiling for no report is a usage error."""
+    report = _write_report(tmp_path / "r.xml", _registered_cases())
+    with pytest.raises(SystemExit) as exit_info:
+        check.main(
+            [str(report), "--job", "test:pytest", "--job", "test:database_backends=15"]
+        )
+    assert exit_info.value.code == 2
+
+
 def test_a_skipped_testcase_without_a_duration_is_not_a_failure():
     """A test that did not run has no duration to be slow with.
 
