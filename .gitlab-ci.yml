@@ -398,10 +398,28 @@ test:pytest:
     # from burning the whole 1h timeout listing failures; the default pytest.ini
     # addopts already deselect slow/performance/postgres tests. The JUnit
     # report feeds the performance:no_slow_tests gate in the next stage.
-    - >
-      python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25
-      --ignore=src/tests/test_database_benchmarks.py
-      --junitxml=test-results.xml
+    #
+    # Sample the box's load while the suite runs, one "<load> <cores>" line
+    # every couple of seconds. A wall clock measures the neighbours as much as
+    # the suite -- #2071 redded tests that cost half their measured time -- and
+    # the gate reads these samples to widen this job's ceiling by the queue it
+    # actually shared the box with (``--load-log`` in
+    # ci-tooling/check_slow_tests.py). The samples scale the ceiling only: the
+    # verdict stays the test's own duration, so a test is never red or green on
+    # how much CPU it used.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25 \
+        --ignore=src/tests/test_database_benchmarks.py \
+        --junitxml=test-results.xml
+      stop_sampler
+      trap - EXIT
   artifacts:
     when: always
     reports:
@@ -409,6 +427,7 @@ test:pytest:
     paths:
       - test-results.xml
       - test-results-benchmarks.xml
+      - test-results-load.log
     expire_in: 1 week
 
 # The PlexiSum engine's cross-engine contract gets its own job.
@@ -585,14 +604,26 @@ test:database_backends:
     # ``production_simulation`` cases (which are exactly the multi-worker
     # ones) run here. ``slow``/``performance`` stay out: they are duration
     # tests, not correctness ones, and have their own gate.
-    - >
-      python -m pytest -q -m "not slow and not performance"
-      --durations=25 --junitxml=test-results-db.xml
-      src/tests/test_postgres_docker.py
-      src/tests/test_transactions.py
-      src/tests/test_database.py
-      src/tests/test_production_simulation.py
-      src/tests/test_valkey_docker.py
+    # Same load sampling as test:pytest: this suite drives real Postgres and
+    # Valkey, so its wall clock is the box and the services together, and the
+    # gate scales its 15s ceiling by the queue the job measured.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-db-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -m "not slow and not performance" \
+        --durations=25 --junitxml=test-results-db.xml \
+        src/tests/test_postgres_docker.py \
+        src/tests/test_transactions.py \
+        src/tests/test_database.py \
+        src/tests/test_production_simulation.py \
+        src/tests/test_valkey_docker.py
+      stop_sampler
+      trap - EXIT
     # These suites skip silently when a backend is missing. A skip here
     # means the services above did not come up, which must be a failure
     # rather than a green pipeline with no coverage.
@@ -607,6 +638,7 @@ test:database_backends:
       junit: test-results-db.xml
     paths:
       - test-results-db.xml
+      - test-results-db-load.log
     expire_in: 1 week
 
 # =========================================================
@@ -627,6 +659,10 @@ test:database_backends:
 # ceiling of its own: 15s against a heaviest measured test of 4.01s on an idle
 # box, which is thin headroom under a 5s default because the same tests cross
 # 5s on a busy runner with nothing wrong. ``test:pytest`` keeps the 5s.
+#
+# A ceiling is widened by the load its job measured (``--load-log``), never by
+# CPU time: how much CPU a test burns is not a verdict, only how long it took
+# is. On an idle box the samples are 1 and the ceilings above apply as written.
 performance:no_slow_tests:
   stage: performance
   image:
@@ -639,7 +675,13 @@ performance:no_slow_tests:
     # The metrics JSON (one entry per job, paired with the report order) is
     # uploaded alongside the gate verdict and feeds the metrics:trend job in
     # the next stage.
-    - python ci-tooling/check_slow_tests.py test-results.xml test-results-db.xml test-results-benchmarks.xml --threshold 5.0 --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks --metrics-out test-durations.json
+    - >
+      python ci-tooling/check_slow_tests.py
+      test-results.xml test-results-db.xml test-results-benchmarks.xml
+      --threshold 5.0
+      --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks
+      --load-log test-results-load.log --load-log test-results-db-load.log
+      --metrics-out test-durations.json
   artifacts:
     when: always
     paths:

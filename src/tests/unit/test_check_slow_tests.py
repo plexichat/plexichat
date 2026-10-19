@@ -211,81 +211,95 @@ def test_each_report_is_judged_by_its_own_ceiling(tmp_path, capsys):
     assert "15s for every job" in captured.out
 
 
-def _report_with_cpu(cases):
-    """Build a report from ``(classname, name, wall, cpu)`` tuples.
+def test_load_samples_use_the_busiest_moment():
+    """The worst sample decides: a quiet start does not excuse a busy run."""
+    assert check.load_room_factor(["0.4 4", "8.0 4", "1.2 4"]) == 2.0
+    # 2 of 4 cores busy is half a job: the factor floors at 1, not 0.5.
+    assert check.load_room_factor(["2.0 4"]) == 1.0
 
-    ``cpu`` lands in a ``<properties>`` block the way pytest writes one for a
-    test that called ``record_property("cpu_seconds", ...)``; ``None`` means the
-    report carries no measurement, as an older run's report does.
+
+def test_load_samples_never_tighten_a_ceiling():
+    """An idle box reports load 1, and a negative ratio cannot shrink a budget."""
+    assert check.load_room_factor(["0.0 4", "1.0 4"]) == 1.0
+    assert check.load_room_factor(["0.0 4"]) == 1.0
+
+
+def test_the_load_allowance_is_capped():
+    """A permanently loaded box buys at most the cap, not an exemption."""
+    assert check.load_room_factor(["64.0 4"]) == check.MAX_LOAD_FACTOR
+    # 8 runnable tasks on 2 cores is a 4x ratio, still held to the cap given.
+    assert check.load_room_factor(["8.0 2"], max_factor=1.5) == 1.5
+
+
+def test_malformed_load_samples_are_ignored():
+    """A missing or unreadable sampler degrades to the registered budget."""
+    assert check.load_room_factor([]) is None
+    assert check.load_room_factor(["", "garbage", "1 2 3", "nan 4", "4 0"]) is None
+    assert check.load_room_factor(["garbage", "3.0 3"]) == 1.0
+
+
+def test_a_missing_load_log_is_not_a_reason_to_refuse(tmp_path, capsys):
+    """A job (or a local report set) without samples is still judged."""
+    assert check.load_factor_from_log(str(tmp_path / "absent.log")) is None
+    assert "no load samples" in capsys.readouterr().err
+
+
+def test_a_contended_test_is_held_to_the_scaled_ceiling():
+    """9s on a box at 2x load is inside a 5s ceiling scaled to 10s."""
+    root = _report([("x.Test", "test_queued", 9.0)])
+    assert check.slow_tests_from_root(root, 5.0) == [(9.0, "x.Test::test_queued")]
+    assert check.slow_tests_from_root(root, 5.0, factor=2.0) == []
+
+
+def test_cpu_usage_is_not_a_failure_reason():
+    """A test is judged by its duration alone: a fast test never fails on CPU.
+
+    The gate is handed a report of a test that took 2s while burning the whole
+    box (parallel children, a spinning helper), and no load samples. Nothing
+    about how much CPU it used can red it, because the verdict is the wall
+    clock.
     """
-    cases_xml = "".join(
-        f'<testcase classname="{classname}" name="{name}" time="{wall}">'
-        + (
-            f'<properties><property name="cpu_seconds" value="{cpu}" /></properties>'
-            if cpu is not None
-            else ""
-        )
-        + "</testcase>"
-        for classname, name, wall, cpu in cases
+    root = check.ET.fromstring(
+        '<testsuite><testcase classname="x.Test" name="test_spin" time="2.0">'
+        '<properties><property name="cpu_seconds" value="8.0" /></properties>'
+        "</testcase></testsuite>"
     )
-    return check.ET.fromstring(f"<testsuite>{cases_xml}</testsuite>")
-
-
-def test_a_contended_test_is_judged_on_the_work_it_did():
-    """A 12s wall clock that did 3s of CPU was queued, not slow."""
-    root = _report_with_cpu([("x.Test", "test_queued", 12.0, 3.0)])
     assert check.slow_tests_from_root(root, 5.0) == []
 
 
-def test_a_test_slow_by_its_own_work_is_still_flagged():
-    """The correction must not hide a regression that costs real CPU."""
-    root = _report_with_cpu([("x.Test", "test_regressed", 7.0, 6.5)])
-    assert check.slow_tests_from_root(root, 5.0) == [(6.5, "x.Test::test_regressed")]
-
-
-def test_a_slow_test_is_still_slow_when_the_box_was_busy():
-    """6s of CPU behind 18s of wall clock is still 6s of work."""
-    root = _report_with_cpu([("x.Test", "test_regressed", 18.0, 6.0)])
-    assert check.slow_tests_from_root(root, 5.0) == [(6.0, "x.Test::test_regressed")]
-
-
-def test_the_discount_is_capped():
-    """A 10x-descheduled test is judged at a third of its wall clock."""
-    # 30s wall, 2s cpu: the cap (3x) decides, not the CPU time.
-    assert check.judged_seconds(30.0, 2.0) == pytest.approx(10.0)
-
-
-def test_a_test_that_waits_instead_of_working_is_judged_on_the_wall_clock():
-    """A sleep uses no CPU, so there is nothing for the correction to subtract."""
-    assert check.judged_seconds(9.0, 0.05) == 9.0
-
-
-def test_a_report_without_a_measurement_keeps_the_wall_clock():
-    """An older report, or a malformed value, is judged exactly as before."""
-    assert check.judged_seconds(9.0, None) == 9.0
-    root = _report_with_cpu([("x.Test", "test_old", 9.0, None)])
-    assert check.slow_tests_from_root(root, 5.0) == [(9.0, "x.Test::test_old")]
-    for bad in ("", "nan", "-3", "abc"):
-        root = _report_with_cpu([("x.Test", "test_bad", 9.0, bad)])
-        assert check.slow_tests_from_root(root, 5.0) == [(9.0, "x.Test::test_bad")]
-
-
-def test_a_corrected_verdict_shows_both_measurements(tmp_path, capsys):
-    """The log has to say why a 19s test is reported as 6.4s."""
-    report = _write_report(tmp_path / "r.xml", _registered_cases())
-    report.write_text(
-        report.read_text(encoding="utf-8").replace(
-            "</testsuite>",
-            '<testcase classname="x.Test" name="test_queued" time="19.2">'
-            '<properties><property name="cpu_seconds" value="6.4" /></properties>'
-            "</testcase></testsuite>",
-        ),
-        encoding="utf-8",
+def test_a_verdict_shows_the_scaled_ceiling(tmp_path, capsys):
+    """The log has to say which ceiling (and load) a test was judged by."""
+    report = _write_report(
+        tmp_path / "r.xml", _registered_cases() + [("x.Test", "test_slow", 9.0)]
     )
-    code = check.main([str(report), "--threshold", "5"])
+    load_log = tmp_path / "load.log"
+    load_log.write_text("0.5 4\n6.0 4\n", encoding="utf-8")
+    code = check.main([str(report), "--threshold", "5", "--load-log", str(load_log)])
     captured = capsys.readouterr()
     assert code == 1, captured.out + captured.err
-    assert "SLOW TEST (6.40s > 5s, wall 19.20s, cpu 6.40s)" in captured.out
+    assert (
+        "SLOW TEST (9.00s > 7.5s x1.5 load factor): x.Test::test_slow" in captured.out
+    )
+
+
+def test_metrics_record_the_load_factor(tmp_path):
+    """A scaled run reads back as the ceiling it was actually held to."""
+    report = _write_report(tmp_path / "r.xml", _registered_cases())
+    metrics = check.metrics_from_root(
+        check._parse_report(str(report)), "test:pytest", 5.0, factor=2.0
+    )
+    assert metrics["load_factor"] == 2.0
+    assert metrics["ceiling_seconds"] == 10.0
+
+
+def test_more_load_logs_than_reports_exits_two(tmp_path):
+    """The pairing is positional, so an unpaired log is a usage error."""
+    report = _write_report(tmp_path / "r.xml", _registered_cases())
+    log = tmp_path / "load.log"
+    log.write_text("1.0 4\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exit_info:
+        check.main([str(report), "--load-log", str(log), "--load-log", str(log)])
+    assert exit_info.value.code == 2
 
 
 def test_an_unreadable_job_argument_exits_two(tmp_path):

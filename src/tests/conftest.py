@@ -43,7 +43,6 @@ from src.tests._conftest.hooks import (  # noqa: F401
     pytest_collection_modifyitems,
     pytest_sessionfinish,
 )
-from src.tests._conftest.cpu_time import record_cpu_seconds  # noqa: F401
 
 # PostgreSQL Docker fixtures: pytest only sees fixtures defined in (or
 # imported into) a conftest on the collection path, so they are re-exported
