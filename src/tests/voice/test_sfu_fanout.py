@@ -177,6 +177,109 @@ async def test_pacing_delivers_every_frame_from_a_bursting_source() -> None:
 
 
 @pytest.mark.asyncio
+async def test_two_subscribers_get_their_own_frame_objects() -> None:
+    """One frame, two encoders: each view must own the buffer it encodes.
+
+    aiortc encodes a sender's frames on the loop's executor, so a frame handed
+    to two views is encoded by two threads at the same time. ``Vp8Encoder``
+    reformats its input with libswscale, which is not safe to run concurrently
+    on one ``av.VideoFrame``: measured here, two threads encoding one shared
+    frame segfaulted the interpreter in 6 of 6 trials and separate frames never
+    did. The relay therefore copies for every view when more than one is
+    subscribed.
+    """
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    frame = av.VideoFrame.from_ndarray(
+        np.zeros((120, 160, 3), dtype=np.uint8), format="rgb24"
+    )
+    frame.pts = 7
+
+    class _OneFrame:
+        kind = "video"
+        label = "one-frame"
+        read = 0
+
+        async def recv(self):
+            self.read += 1
+            return frame if self.read == 1 else None
+
+    relay = TrackFanout(_OneFrame())
+    a = relay.subscribe()
+    b = relay.subscribe()
+
+    got_a = await asyncio.wait_for(a.recv(), 2)
+    got_b = await asyncio.wait_for(b.recv(), 2)
+
+    assert got_a is not frame and got_b is not frame
+    assert got_a is not got_b, "two views shared one frame object"
+    # The copy is the encoder's input, so it keeps the timing the encoders use.
+    assert got_a.pts == 7 and got_b.pts == 7
+    assert frame.pts == 7, "copying mutated the source frame"
+
+    await relay.aclose()
+
+
+@pytest.mark.asyncio
+async def test_audio_frames_are_private_to_each_view_too() -> None:
+    """Audio is encoded off the loop as well, so it gets the same rule."""
+    av = pytest.importorskip("av")
+
+    frame = av.AudioFrame(format="s16", layout="mono", samples=480)
+    frame.pts = 3
+    frame.sample_rate = 48000
+
+    class _OneFrame:
+        kind = "audio"
+        label = "one-frame"
+        read = 0
+
+        async def recv(self):
+            self.read += 1
+            return frame if self.read == 1 else None
+
+    relay = TrackFanout(_OneFrame())
+    a = relay.subscribe()
+    b = relay.subscribe()
+
+    got_a = await asyncio.wait_for(a.recv(), 2)
+    got_b = await asyncio.wait_for(b.recv(), 2)
+
+    assert got_a is not got_b
+    assert got_a.samples == 480 and got_b.samples == 480
+    assert got_a.sample_rate == 48000 and got_a.pts == 3
+
+    await relay.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_single_subscriber_reads_the_source_frame_itself() -> None:
+    """The copy exists to stop a race; one view has nothing to race with.
+
+    The common call is one producer with one viewer, and paying a frame copy
+    per frame there would buy nothing.
+    """
+    frame = object()
+
+    class _OneFrame:
+        kind = "audio"
+        label = "one-frame"
+        read = 0
+
+        async def recv(self):
+            self.read += 1
+            return frame if self.read == 1 else None
+
+    relay = TrackFanout(_OneFrame())
+    only = relay.subscribe()
+
+    assert await asyncio.wait_for(only.recv(), 2) is frame
+
+    await relay.aclose()
+
+
+@pytest.mark.asyncio
 async def test_subscribing_after_a_view_stops_restarts_the_relay() -> None:
     relay = TrackFanout(_ScriptedSource(6))
     first = relay.subscribe()

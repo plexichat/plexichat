@@ -11,6 +11,12 @@ perfectly correct.
 bounded per-view queue, so each :class:`FanoutView` sees the whole stream.
 Each sender gets its own view, so one sender stopping detaches that view only
 -- the relay and the shared track underneath it keep running.
+
+The queue is not the only thing each sender needs of its own: aiortc encodes
+each sender's frames on the loop's executor, so with two subscribers the same
+media would be encoded by two threads at once. :func:`_private_frame` gives
+every view its own buffer when more than one is subscribed; see its docstring
+for the crash that sharing one cost.
 """
 
 from __future__ import annotations
@@ -43,6 +49,76 @@ _MediaStreamTrack = _TRACK_BASE
 # must not grow its buffer without bound -- a real SFU sheds rather than
 # queueing without limit -- and a small budget keeps latency tight.
 DEFAULT_MAX_LAG = 8
+
+
+def _av_module() -> Any:
+    """The ``av`` module, or ``None`` where it is not installed.
+
+    ``av`` is only reachable through aiortc, which is optional, so the relay
+    must import it lazily rather than fail to load in a deployment that has no
+    media backend at all.
+    """
+    try:
+        import av
+    except ImportError:  # pragma: no cover - aiortc/av absent
+        return None
+    return av
+
+
+def _private_frame(frame: Any) -> Any:
+    """A copy of ``frame`` that only one view's encoder will read.
+
+    aiortc encodes a sender's frames off the event loop (``loop.run_in_executor(
+    None, encoder.encode, frame)``), and a fan-out hands the same frame object to
+    every view. With two subscribers that is two encoders running
+    ``Vp8Encoder.encode`` on one ``av.VideoFrame`` at once, and its
+    ``frame.reformat`` -- a libswscale read of the frame's planes -- is not safe
+    to run concurrently: measured on this box, two threads encoding one shared
+    frame crashed the interpreter (SIGSEGV in ``asyncio_0``) in 6 of 6 trials,
+    while two threads encoding separate frames never did. In CI it surfaced as
+    pipeline #2091's red ``test:shuffled_order``: the test's teardown closed the
+    loop, the loop waited on an encoding thread wedged inside ``reformat``, and
+    pytest-timeout fired at 60s. The same wedged thread is the shape of the
+    "xdist node down" stall #2089 was retried for.
+
+    Copying is what makes each encoder's input its own: the relay reads the
+    source once, then gives every view a buffer that nothing else encodes. Video
+    is copied as ``yuv420p`` because that is the pixel format both aiortc video
+    encoders convert to anyway, so the copy replaces the per-encoder conversion
+    rather than adding one. A frame type this cannot copy (a ``Packet`` already
+    encoded, or a format ``to_ndarray`` rejects) is passed through unchanged: it
+    is the encoder's input, not a buffer two encoders share.
+
+    :param frame: A frame read from the relay's source.
+    :returns: A frame safe to hand to one encoder, or ``frame`` itself.
+    """
+    av = _av_module()
+    if av is None:  # pragma: no cover - no media backend in this deployment
+        return frame
+    try:
+        if isinstance(frame, av.VideoFrame):
+            clone = av.VideoFrame.from_ndarray(
+                frame.to_ndarray(format="yuv420p"), format="yuv420p"
+            )
+        elif isinstance(frame, av.AudioFrame):
+            clone = av.AudioFrame.from_ndarray(
+                frame.to_ndarray(), format=frame.format.name, layout=frame.layout.name
+            )
+            clone.sample_rate = frame.sample_rate
+        else:
+            return frame
+        # The encoders timestamp their output from these, so the copy carries
+        # them. A source frame need not have a time base (a test-built frame
+        # does not), and assigning ``None`` raises rather than clearing it.
+        clone.pts = frame.pts
+        if frame.time_base is not None:
+            clone.time_base = frame.time_base
+    except Exception as exc:
+        # A frame this cannot copy is still the encoder's input; the relay's
+        # read loop must not end because one frame was uncopyable.
+        logger.debug(f"Fan-out could not copy a {type(frame).__name__}: {exc}")
+        return frame
+    return clone
 
 
 class FanoutView(_MediaStreamTrack):
@@ -214,10 +290,21 @@ class TrackFanout:
                 self._offer(None)
 
     def _offer(self, frame: Any) -> None:
-        """Put ``frame`` (or the EOF sentinel) into every view's queue."""
-        for view, queue in list(self._queues.items()):
+        """Put ``frame`` (or the EOF sentinel) into every view's queue.
+
+        With more than one subscriber each view gets its own copy of the frame:
+        the views feed separate encoders, which run on the loop's executor at
+        the same time, and one frame object shared between them crashed the
+        process (see :func:`_private_frame`). A single subscriber has no one to
+        race with, so it keeps the source's own frame and pays nothing.
+        """
+        views = list(self._queues.items())
+        for view, queue in views:
+            offered = frame
+            if frame is not None and len(views) > 1:
+                offered = _private_frame(frame)
             try:
-                queue.put_nowait(frame)
+                queue.put_nowait(offered)
             except asyncio.QueueFull:
                 # Shed the oldest frame rather than block or grow: the view is
                 # behind and stale media is worse than a dropped frame.
@@ -227,7 +314,7 @@ class TrackFanout:
                     pass
                 self._dropped += 1
                 try:
-                    queue.put_nowait(frame)
+                    queue.put_nowait(offered)
                 except asyncio.QueueFull:
                     pass
 
