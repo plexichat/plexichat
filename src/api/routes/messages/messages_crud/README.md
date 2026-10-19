@@ -59,7 +59,7 @@ Concrete mixins come first. `BroadcastMixin` (fire-and-forget WebSocket dispatch
 
 5. **Channel scope validation** — `RetrieveMixin`, `EditMixin`, and `DeleteMixin` call `self._resolve_channel_scope()` and `self._ensure_message_in_channel()` so a URL/channel mismatch returns the same `404` as a nonexistent message and does not reveal foreign conversations (`base.py:42`).
 
-6. **Response shape** — `_message_to_response()` in `helpers.py:40` maps `read_by_data` to `List[ReaderInfo]` (`id`, `username`, `avatar_url`). Do not treat `read_by` as a list of bare IDs.
+6. **Response shape** — `_message_to_response()` in `../helpers.py:40` maps `read_by_data` to `List[ReaderInfo]` (`id`, `username`, `avatar_url`). Do not treat `read_by` as a list of bare IDs.
 
 ## Request and response contracts
 

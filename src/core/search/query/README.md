@@ -16,7 +16,7 @@ You can use each stage independently or through the convenience functions.
 
 ### Parser — `parser.py:45`
 
-`QueryParser` converts a raw string into a `ParsedQuery` (`models.py:53`) with `search_terms`, `filters`, and `exact_phrases`.
+`QueryParser` converts a raw string into a `ParsedQuery` (`../models.py:53`) with `search_terms`, `filters`, and `exact_phrases`.
 
 Supported filters (`parser.py:24`):
 

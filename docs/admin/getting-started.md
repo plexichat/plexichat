@@ -65,7 +65,7 @@ admin_ui:
     lockout_seconds: 900
 ```
 
-Global API rate limits are defined separately in `src/config_defaults.py:273`:
+Global API rate limits are defined separately in `src/config_defaults.py:270`:
 
 * Global: 25,000 requests per 60 seconds, burst 5,000
 * Per user: 10,000 requests per 60 seconds, burst 2,500
@@ -170,7 +170,7 @@ Search for users, edit profiles, manage account status, and add internal notes.
 
 ### Server management
 
-View servers, edit settings, manage members, and handle moderation. Channel configuration uses `channel_type` as documented in `servers.py:85`.
+View servers, edit settings, manage members, and handle moderation. Channel configuration uses `channel_type` as documented in `src/api/schemas/servers.py:87`.
 
 ## Follow security best practices
 
@@ -250,7 +250,7 @@ admin_ui:
       require_special_chars: true
 ```
 
-For all defaults, see `src/config_defaults.py:539`.
+For all defaults, see `src/config_defaults.py`.
 
 ## Next steps
 

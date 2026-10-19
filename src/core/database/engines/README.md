@@ -26,7 +26,7 @@ Abstract base class defined in `base.py:5`. Implement this class to add a new da
 
 ### SQLiteEngine
 
-Implementation in `sqlite.py:261` using the Python `sqlite3` standard library.
+Implementation in `sqlite.py:51` using the Python `sqlite3` standard library.
 
 * Enables WAL journal mode and `NORMAL` synchronous mode for concurrent reads.
 * Enforces foreign keys with `PRAGMA foreign_keys=ON`.
@@ -40,7 +40,7 @@ SQLite pooling is provided by `SqlitePool` (`sqlite.py:27`), a thread-safe pool 
 * Never reclaims a connection while a cursor is in flight (`mark_in_flight`) or while a live thread holds an open transaction within the grace window.
 * Supports configurable `min_size`, `max_size`, `idle_reclaim_seconds`, `connect_timeout`, `cache_size_kb`, `mmap_size`, and `journal_size_limit`.
 
-Relevant PRAGMAs are configurable through `connection_pool` in your config file. See `sqlite.py:297` for defaults.
+Relevant PRAGMAs are configurable through `connection_pool` in your config file. See `src/config_defaults.py:90` for defaults.
 
 ### PostgresEngine
 
@@ -110,4 +110,4 @@ Both engines return a common statistics dictionary from `get_pool_stats`:
 }
 ```
 
-For SQLite, `get_detailed_stats` (`sqlite.py:367`) also reports `page_size`, `page_count`, `database_size_bytes`, and `wal_size_bytes` when a connection is provided.
+For SQLite, `get_detailed_stats` (`sqlite.py:157`) also reports `page_size`, `page_count`, `database_size_bytes`, and `wal_size_bytes` when a connection is provided.

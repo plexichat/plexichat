@@ -20,7 +20,7 @@ All endpoints in this guide are prefixed with `/api/v1/avatars` unless noted. Th
 
 ## Configuration
 
-Configure avatars in `config.yaml` or `src/config_defaults.py:788`:
+Configure avatars in `config.yaml` or `src/config_defaults.py:790`:
 
 ```yaml
 avatars:

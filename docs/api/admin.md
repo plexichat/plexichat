@@ -15,9 +15,9 @@ Both `api.api_prefix` and `admin_ui.path` are configurable in `src/config_defaul
 ## Access model
 
 - Most JSON routes require administrator credentials or an admin session token (`Authorization: Bearer <admin-token>`).
-- Host restrictions are enforced before handlers run. See `admin_ui.host_restriction` in `src/config_defaults.py:546`.
+- Host restrictions are enforced before handlers run. See `admin_ui.host_restriction` in `src/config_defaults.py:565`.
 - Some UI routes return HTML and are intentionally excluded from the OpenAPI schema.
-- Permissions are checked against `PERMISSION_SCOPES` in `src/core/admin/permissions.py:42`. The role endpoints reject wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py:201`). Do not document `users.force_password_change`, `servers.ban`, or `reports.resolve`; use `users.force_username_change`, `servers.edit`, and `reports.action` instead.
+- Permissions are checked against `PERMISSION_SCOPES` in `src/core/admin/permissions.py:42`. The role endpoints reject wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py:200`). Do not document `users.force_password_change`, `servers.ban`, or `reports.resolve`; use `users.force_username_change`, `servers.edit`, and `reports.action` instead.
 - Destructive actions may require approval when `admin_ui.approval_workflows.enabled` is `true`. By default `users.force_purge`, `users.delete`, and `servers.delete` require approval.
 
 ## Route groups

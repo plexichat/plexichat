@@ -6,7 +6,7 @@ Use the Voice API to discover WebRTC ICE servers and to fetch voice-channel conn
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this guide are prefixed with `/api/v1/voice` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:131`).
+All endpoints in this guide are prefixed with `/api/v1/voice` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:130`).
 
 You must authenticate with `Authorization: Bearer <token>` for all Voice endpoints.
 
@@ -145,15 +145,15 @@ Plexichat routes media through a Selective Forwarding Unit (SFU).
 
 | Backend | Description | Config key |
 |---|---|---|
-| `aiortc` | Pure-Python WebRTC that runs in-process. Default for development and lightweight deployments (`src/config_defaults.py:399`) | `voice.sfu_backend` |
+| `aiortc` | Pure-Python WebRTC that runs in-process. Default for development and lightweight deployments (`src/config_defaults.py:396`) | `voice.sfu_backend` |
 | `mediasoup` | Native C++ SFU via an external REST API. High performance and independently scalable | `voice.sfu_backend` |
 | `janus` | REST adapter for Janus Gateway | `voice.sfu_backend` |
 
-Configure the backend with `voice.sfu_backend` (default: `aiortc`). Other voice keys include `voice.stun_urls`, `voice.turn_urls`, `voice.turn_username`, and `voice.turn_credential` (`src/config_defaults.py:397`).
+Configure the backend with `voice.sfu_backend` (default: `aiortc`). Other voice keys include `voice.stun_urls`, `voice.turn_urls`, `voice.turn_username`, and `voice.turn_credential` (`src/config_defaults.py:394`).
 
 ## Gateway voice signaling
 
-Actual media transport is negotiated outside these REST endpoints. Voice signaling uses the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py:261`).
+Actual media transport is negotiated outside these REST endpoints. Voice signaling uses the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)).
 
 Relevant gateway opcodes (`src/api/websocket/opcodes.py:25`):
 

@@ -54,7 +54,7 @@ The API prefix is `/api/v1` by default. This is controlled by `api.api_prefix` i
 * `GET /health`
 * `GET /api/v1/ready` — readiness check defined in `health.py:18`
 * `GET /api/v1/status` — detailed status
-* `GET /gateway` — WebSocket gateway defined in `gateway.py:261`
+* `GET /gateway` — WebSocket gateway defined in `gateway.py` (`gateway_endpoint`)
 
 ## Configuration overview
 
@@ -83,7 +83,7 @@ admin_ui:
     log_to_database: true
 ```
 
-For the full list of defaults, see `src/config_defaults.py:539`.
+For the full list of defaults, see `src/config_defaults.py`.
 
 ## Security recommendations
 

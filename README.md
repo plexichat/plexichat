@@ -53,7 +53,7 @@ Useful commands:
 The server stores data in `~/.plexichat/` and exposes:
 
 * API at `http://127.0.0.1:8000/api/v1` (`api.api_prefix` in `src/config_defaults.py:130`)
-* WebSocket gateway at `ws://127.0.0.1:8000/gateway` (`src/api/websocket/gateway.py:261`)
+* WebSocket gateway at `ws://127.0.0.1:8000/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`))
 * Health probes at `http://127.0.0.1:8000/api/v1/ready` and `http://127.0.0.1:8000/api/v1/health` (`src/api/routes/health.py:18`, `src/api/routes/health.py:47`)
 * Interactive docs at `http://127.0.0.1:8000/docs`
 
@@ -81,7 +81,7 @@ If you set `PLEXICHAT_CONFIG`, it points directly to the file you want to use (s
 
 ### Rate limits
 
-Global defaults live in `src/config_defaults.py:272`:
+Global defaults live in `src/config_defaults.py:270`:
 
 | Scope | Requests per window | Window | Burst | Notes |
 |---|---|---|---|---|

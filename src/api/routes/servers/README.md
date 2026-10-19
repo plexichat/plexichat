@@ -11,9 +11,9 @@ This directory exposes server and guild management endpoints, including channels
 | `server_crud.py` | `GET/POST ""`, `GET/PATCH/DELETE /{server_id}` | Server CRUD |
 | `channels.py` | `GET/POST /{server_id}/channels`, `GET /{server_id}/invites` | Channel create and list; enriched invite listing |
 | `members.py` | `GET /{server_id}/members`, `DELETE /{server_id}/members/{member_id}`, `PATCH /{server_id}/members/{member_id}`, `PUT/DELETE /{server_id}/members/{member_id}/roles/{role_id}` | Member listing, kick, update, and role assignment |
-| `roles.py` | `GET/POST /{server_id}/roles`, `PATCH/DELETE /{server_id}/roles/{role_id}` | Role CRUD; wildcard permissions are rejected (`roles.py:201`) |
+| `roles.py` | `GET/POST /{server_id}/roles`, `PATCH/DELETE /{server_id}/roles/{role_id}` | Role CRUD; wildcard permissions are rejected (`roles.py:200`) |
 | `bans.py` | `GET /{server_id}/bans`, `PUT/DELETE /{server_id}/bans/{user_id}` | Ban list and ban/unban |
-| `misc.py` | `POST /{server_id}/leave`, `GET /{server_id}/permissions` | Leave server and permission inspection (scopes defined in `permissions.py:42`) |
+| `misc.py` | `POST /{server_id}/leave`, `GET /{server_id}/permissions` | Leave server and permission inspection (scopes defined in `src/core/admin/permissions.py:42`) |
 | `audit_log.py` | `GET /{server_id}/audit-logs` | Paginated audit log |
 | `automod.py` | `GET/POST /{server_id}/automod/rules`, `PATCH/DELETE /{server_id}/automod/rules/{rule_id}`, `GET /{server_id}/automod/violations` | Automod rule CRUD and violation listing |
 | `webhooks.py` | `GET /{server_id}/webhooks` | List server webhooks (`webhooks.py:14`) |
@@ -121,7 +121,7 @@ Routes translate domain exceptions from `ServerManager` into HTTP responses:
 
 | HTTP code | Raised for |
 |-----------|------------|
-| `400` | `InvalidServerNameError`, `InvalidChannelNameError`, `InvalidRoleNameError`, invalid `server_id` or `channel_id`, wildcard permission (`roles.py:201`) |
+| `400` | `InvalidServerNameError`, `InvalidChannelNameError`, `InvalidRoleNameError`, invalid `server_id` or `channel_id`, wildcard permission (`roles.py:200`) |
 | `403` | `ServerAccessDeniedError`, `PermissionDeniedError`, `OwnerCannotLeaveError`, `RoleHierarchyError`, `CannotModifyOwnerError` |
 | `404` | `ServerNotFoundError`, `ChannelNotFoundError`, `MemberNotFoundError`, `InviteNotFoundError`, `BanNotFoundError` |
 | `409` | `MemberExistsError`, `BanExistsError`, `DefaultRoleError` |
@@ -154,6 +154,6 @@ except ServerAccessDeniedError:
 ## Notes
 
 * Use cache invalidation helpers `invalidate_server_channels()` after channel mutations (`channels.py:151`).
-* Permission checks are performed at the manager level before any mutation and use scopes defined in `permissions.py:42`.
+* Permission checks are performed at the manager level before any mutation and use scopes defined in `src/core/admin/permissions.py:42`.
 * The `GET /{server_id}/members` endpoint fetches `limit + 1` rows to compute `has_more` without a second query (`members.py:76`).
 * Icon uploads respect `media.size_limits.icon` from config; the default is `2 * 1024 * 1024` bytes (`helpers.py:10`).

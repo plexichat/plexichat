@@ -27,7 +27,7 @@ For details, see [Authentication](authentication.md), [Admin API](admin.md), and
 
 Rate limiting is enabled by default (`rate_limiting.enabled`) and enforced in the application and optionally in Nginx. Do not rely on hard-coded values from older docs.
 
-Real defaults are defined in `src/config_defaults.py:273`:
+Real defaults are defined in `src/config_defaults.py:270`:
 
 | Scope | Requests | Window | Burst | Notes |
 |---|---|---|---|---|
@@ -46,7 +46,7 @@ Rate-limit headers are returned on `429` responses. Admin and internal requests 
 The WebSocket gateway is at `/gateway`, not `/ws`.
 
 - Endpoint: `wss://api.plexichat.com/gateway` (dev: `ws://localhost:8000/gateway`)
-- Implementation: `src/api/websocket/gateway.py:261` (`@router.websocket("/gateway")`)
+- Implementation: `src/api/websocket/gateway.py` (`gateway_endpoint`) (`@router.websocket("/gateway")`)
 - Dev proxy: `vite.config.js` forwards `/api` and `/gateway` to `http://127.0.0.1:5411`
 
 See [Gateway and WebSocket](../websocket/gateway.md) and [Opcodes](../websocket/opcodes.md). Required opcodes include `50 RATCHET_UPDATE`, `60-67 ARTIFACT_*` and `SUM_*`, and `68 ARTIFACT_OP_REJECTED` (`src/api/websocket/opcodes.py:40`).
@@ -83,7 +83,7 @@ See [Gateway and WebSocket](../websocket/gateway.md) and [Opcodes](../websocket/
 | [Search](search.md) | Full-text search |
 | [Notifications](notifications.md) | Notifications |
 | [Polls](polls.md) | Polls |
-| [Voice](voice.md) | Voice and SFU. Default backend is `aiortc` (`src/config_defaults.py:399`), not `mediasoup` |
+| [Voice](voice.md) | Voice and SFU. Default backend is `aiortc` (`src/config_defaults.py:396`), not `mediasoup` |
 | [Media](media.md) | Uploads, `GET /media/proxy`, and `GET /api/v1/media/attachments/{filename}` |
 | [Reports](reports.md) | User and message reports |
 | [Feedback](feedback.md) | User feedback |

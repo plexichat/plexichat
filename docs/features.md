@@ -94,7 +94,7 @@ API: [Presence routes](api/presence.md)
 - WebRTC-based voice channels with ICE server discovery and TURN credential generation (HMAC-SHA1, RFC 5389).
 - Signaling is relayed through the gateway. Media is peer-to-peer mesh by default; you can enable an SFU backend for larger channels.
 - Supported SFU backends (`src/core/voice/signaling/sfu/__init__.py:45`):
-  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py:399`).
+  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py:396`).
   - `mediasoup` — REST adapter for a custom mediasoup server.
   - `mediasoup-ws` — WebSocket adapter for mediasoup-demo.
   - `janus` — REST adapter for Janus Gateway.

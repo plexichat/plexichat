@@ -4,7 +4,7 @@ This guide describes how to configure the WebSocket gateway for Plexichat in pro
 
 ## Configuration location
 
-Add WebSocket settings to your `config.yaml` file under the `websocket` key (`src/config_defaults.py:164`):
+Add WebSocket settings to your `config.yaml` file under the `websocket` key (`src/config_defaults.py:161`):
 
 ```yaml
 websocket:
@@ -27,7 +27,7 @@ websocket:
   allowed_origins: []
 ```
 
-Defaults are defined in `src/config_defaults.py:164`. The gateway uses them in `src/api/websocket/__init__.py:141`.
+Defaults are defined in `src/config_defaults.py:161`. The gateway uses them in `src/api/websocket/__init__.py:141`.
 
 ### Deployment considerations
 
@@ -156,8 +156,8 @@ The following keys use milliseconds and have smaller defaults than some older do
 
 | Outdated key or value | Correct key and default | Source |
 | --- | --- | --- |
-| `heartbeat_interval_seconds` | `heartbeat_interval_ms: 45000` | `src/config_defaults.py:165` |
-| `heartbeat_timeout_seconds` | `session_timeout_ms: 60000` | `src/config_defaults.py:166` |
+| `heartbeat_interval_seconds` | `heartbeat_interval_ms: 45000` | `src/config_defaults.py:162` |
+| `heartbeat_timeout_seconds` | `session_timeout_ms: 60000` | `src/config_defaults.py:163` |
 | `max_message_size: 1048576` (1 MB) | `max_message_size: 65536` (64 KB) | `src/config_defaults.py:169` |
 | `max_decompressed_size: 10485760` (10 MB) | `max_decompressed_size: 262144` (256 KB) | `src/config_defaults.py:170` |
 

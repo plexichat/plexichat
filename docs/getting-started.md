@@ -250,7 +250,7 @@ See [WebSocket Configuration](deployment/configuration/config-websocket.md) for 
 
 ## 6. Understand rate limits
 
-The server enforces rate limits at multiple levels. Defaults are defined in `src/config_defaults.py:273`.
+The server enforces rate limits at multiple levels. Defaults are defined in `src/config_defaults.py:270`.
 
 | Scope | Requests per 60 s | Burst | Hourly limit | Daily limit |
 | --- | --- | --- | --- | --- |

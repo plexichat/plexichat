@@ -7,7 +7,7 @@ Build a custom Plexichat client from scratch, including authentication, WebSocke
 A Plexichat client needs:
 
 - REST API integration for authentication and data.
-- A WebSocket gateway connection for real-time events at `/gateway` (`src/api/websocket/gateway.py:261`).
+- A WebSocket gateway connection for real-time events at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)).
 - Local state management and caching.
 - Message decryption.
 - UI rendering for messages, servers, and channels.
@@ -19,7 +19,7 @@ A Plexichat client needs:
 | Production | `https://api.plexichat.com/api/v1` | `wss://api.plexichat.com/gateway` |
 | Development | `http://localhost:8000/api/v1` | `ws://localhost:8000/gateway` |
 
-The API prefix defaults to `/api/v1` (`src/config_defaults.py:131`). All REST paths in this guide include that prefix.
+The API prefix defaults to `/api/v1` (`src/config_defaults.py:130`). All REST paths in this guide include that prefix.
 
 ## Authenticate
 
@@ -267,7 +267,7 @@ Handle `401` by redirecting to login. Handle `429` with the retry delay.
 
 ## Integrate with the WebSocket gateway
 
-The gateway lives at `/gateway` (`src/api/websocket/gateway.py:261`). In local development, the Vite dev server proxies both `/api` and `/gateway` to the API server.
+The gateway lives at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)). In local development, the Vite dev server proxies both `/api` and `/gateway` to the API server.
 
 ### Connect and identify
 
@@ -709,7 +709,7 @@ const date = new Date(message.created_at);
 
 ## Respect rate limits
 
-API rate limits come from `src/config_defaults.py:273`:
+API rate limits come from `src/config_defaults.py:270`:
 
 | Scope | Limit | Window | Burst |
 |---|---|---|---|

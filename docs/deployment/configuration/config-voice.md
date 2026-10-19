@@ -4,7 +4,7 @@ This guide describes how to configure voice and video for Plexichat. Voice setti
 
 ## Configuration location
 
-Add voice settings to your `config.yaml` file under the `voice` key (`src/config_defaults.py:397`):
+Add voice settings to your `config.yaml` file under the `voice` key (`src/config_defaults.py:394`):
 
 ```yaml
 voice:
@@ -20,7 +20,7 @@ Choose the SFU backend that routes voice and video streams between participants.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "aiortc"   # Default is aiortc. Defined in src/config_defaults.py:399
+  sfu_backend: "aiortc"   # Default is aiortc. Defined in src/config_defaults.py:396
 ```
 
 Plexichat supports four backend values in `src/core/voice/signaling/sfu/__init__.py:45` and `src/core/voice/signaling/manager/base.py:32`:
