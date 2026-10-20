@@ -46,6 +46,8 @@ from typing import Any, Callable, Dict, List, Optional
 import utils.logger as logger
 
 from src.core.artifacts.repository import get_artifact
+from src.core.plexijoin.manager import RemoteURLBlockedError, resolve_remote_target
+from src.utils.security import pinned_request_target
 
 # Inbound route paths (relative to the remote instance's base URL) that receive
 # forwarded artifact ops/events. Mirrors the route registered in
@@ -235,20 +237,63 @@ class HttpFederationTransport:
             shared_key, body, timestamp, nonce
         )
         url = remote_url.rstrip("/") + path
+
+        # SSRF validation has to hand back the address it approved. This
+        # transport used to POST to ``remote_url`` as stored, so httpx resolved
+        # the name a second time and a rebinding peer could pass the check as a
+        # public address and then answer with a loopback/private one for the
+        # actual delivery -- the same gap the PlexiJoin manager and the webhook
+        # deliverer had. Connections are admin-created but their URLs can come
+        # from an inbound join request that an admin approved, so they are not
+        # trusted here.
+        try:
+            hostname, resolved_ip = resolve_remote_target(url)
+            request_url, pin_headers, extensions = pinned_request_target(
+                url, hostname, resolved_ip
+            )
+        except (RemoteURLBlockedError, ValueError) as e:
+            logger.warning(
+                "FederationArtifactBridge: refusing delivery to %s: %s",
+                remote_url,
+                e,
+            )
+            return
+        headers.update(pin_headers)
+
         for attempt in range(self._max_retries + 1):
             try:
                 with httpx.Client(timeout=self._timeout) as client:
-                    client.post(url, content=body, headers=headers)
-                return
+                    response = client.post(
+                        request_url,
+                        content=body,
+                        headers=headers,
+                        extensions=extensions,
+                    )
+                # A peer that answers 4xx/5xx did not receive the op either.
+                # This loop used to return on *any* response, so a rejection
+                # was reported as delivery and the retries never fired.
+                if 200 <= response.status_code < 300:
+                    return
+                logger.warning(
+                    "FederationArtifactBridge: %s answered %s for %s",
+                    remote_url,
+                    response.status_code,
+                    path,
+                )
             except Exception as e:  # pragma: no cover - network failure
-                if attempt < self._max_retries:
-                    time.sleep(0.4 * (attempt + 1))
-                    continue
-                logger.debug(
+                logger.warning(
                     "FederationArtifactBridge: transport POST to %s failed: %s",
-                    url,
+                    remote_url,
                     e,
                 )
+            if attempt < self._max_retries:
+                time.sleep(0.4 * (attempt + 1))
+
+        logger.error(
+            "FederationArtifactBridge: giving up on %s after %s attempts",
+            remote_url,
+            self._max_retries + 1,
+        )
 
 
 class FederationArtifactBridge:

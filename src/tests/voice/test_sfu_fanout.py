@@ -280,6 +280,26 @@ async def test_a_single_subscriber_reads_the_source_frame_itself() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscribing_after_the_stream_ends_sees_end_of_stream() -> None:
+    """A late subscriber must end, not wait on a queue nothing fills.
+
+    A producer that has already ended leaves no read loop to restart, so a
+    sender attached to that track afterwards used to await ``recv()`` forever
+    -- aiortc's sender waits on it, so nothing raised and nothing was sent.
+    """
+    relay = TrackFanout(_ScriptedSource(1))
+    first = relay.subscribe()
+    assert await first.recv() == 1
+    assert await asyncio.wait_for(first.recv(), 2) is None
+
+    late = relay.subscribe()
+    assert await asyncio.wait_for(late.recv(), 2) is None
+    assert late.readyState == "ended"
+
+    await relay.aclose()
+
+
+@pytest.mark.asyncio
 async def test_subscribing_after_a_view_stops_restarts_the_relay() -> None:
     relay = TrackFanout(_ScriptedSource(6))
     first = relay.subscribe()

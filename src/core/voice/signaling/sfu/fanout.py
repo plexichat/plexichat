@@ -222,10 +222,18 @@ class TrackFanout:
             raise RuntimeError("fanout is closed")
         queue: asyncio.Queue = asyncio.Queue(maxsize=self._max_lag)
         view = FanoutView(self, queue)
+        if self._ended:
+            # The source already ended, so there is no read loop to start and
+            # nothing will ever fill this queue: hand the view its end-of-stream
+            # sentinel now. Without it ``recv()`` (which aiortc's sender awaits)
+            # waits forever and the sender silently never completes. The view is
+            # not registered -- an ended relay has no subscribers -- so it stays
+            # out of ``subscriber_count`` and off the read loop's pacing.
+            queue.put_nowait(None)
+            return view
         self._queues[view] = queue
         if self._task is None or self._task.done():
-            if not self._ended:
-                self._task = asyncio.ensure_future(self._run())
+            self._task = asyncio.ensure_future(self._run())
         return view
 
     def unsubscribe(self, view: FanoutView) -> None:
