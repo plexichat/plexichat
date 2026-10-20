@@ -188,6 +188,44 @@ def _reset_wired_module_globals():
 # =============================================================================
 
 
+# One app per worker, per middleware flavour.
+#
+# Constructing the app is not itself expensive, but the FIRST request that
+# goes through it is: FastAPI 0.140 resolves a route by materialising an
+# ``_EffectiveRouteContext`` for *every* route on the router (re-deriving the
+# pydantic dependant / response model of each one) and only then caches the
+# result, keyed on the router's route version. This app has ~620 routes, so
+# that first request measured ~0.45 s -- and the fixture used to build a new
+# app for every test, making every test pay it again (~250 s of CPU across
+# the API suite, roughly 40% of the whole run).
+#
+# Reusing the app is sound because it is a stateless view over the module
+# graph: every handler resolves its manager through the ``src.api`` module
+# globals at request time, and the fixtures re-wire that graph per test (see
+# ``_wire_module_graph`` / ``_reset_wired_module_globals``). Nothing in the
+# app or its middleware is mutated per request. Each test still gets a fresh
+# ``TestClient`` below, so cookie jars and portals stay isolated -- the app,
+# not the client, is what is shared.
+_APP_CACHE: dict[bool, object] = {}
+
+
+def _shared_app(enable_rate_limiting: bool):
+    """Return this worker's app for the given rate-limiting flavour.
+
+    Built lazily (not at import/session scope) because the rate-limited
+    flavour only installs its middleware when ``ratelimit`` is already set
+    up, and that happens per test inside ``_wire_module_graph``.
+    """
+    from src.api import create_app
+
+    key = bool(enable_rate_limiting)
+    app = _APP_CACHE.get(key)
+    if app is None:
+        app = create_app(enable_rate_limiting=key)
+        _APP_CACHE[key] = app
+    return app
+
+
 @pytest.fixture
 def test_client(
     db,
@@ -202,7 +240,7 @@ def test_client(
 ):
     """Create a FastAPI test client with rate limiting disabled."""
     from fastapi.testclient import TestClient
-    from src.api import create_app, setup
+    from src.api import setup
 
     _wire_module_graph(
         db,
@@ -262,7 +300,7 @@ def test_client(
         telemetry_module=telemetry,
     )
 
-    app = create_app(enable_rate_limiting=False)
+    app = _shared_app(enable_rate_limiting=False)
     yield TestClient(app)
     _teardown_wired_modules()
 
@@ -281,7 +319,7 @@ def rate_limit_client(
 ):
     """Create a FastAPI test client with rate limiting enabled."""
     from fastapi.testclient import TestClient
-    from src.api import create_app, setup
+    from src.api import setup
 
     _wire_module_graph(
         db,
@@ -341,7 +379,7 @@ def rate_limit_client(
         telemetry_module=telemetry,
     )
 
-    app = create_app(enable_rate_limiting=True)
+    app = _shared_app(enable_rate_limiting=True)
     yield TestClient(app)
     _teardown_wired_modules()
 

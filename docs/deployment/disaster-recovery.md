@@ -470,7 +470,7 @@ Expected response:
   "status": "healthy",
   "database": "connected",
   "valkey": "connected",
-  "version": "a.1.0-134"
+  "version": "a.1.0-136"
 }
 ```
 
@@ -531,7 +531,7 @@ Maintain current contacts for:
 ## Resources
 
 *   [Deployment guide](index.md)
-*   [Configuration guide](configuration.md)
-*   [Security best practices](security.md)
-*   [Performance guide](performance.md)
-*   [Troubleshooting guide](../troubleshooting/index.md)
+*   [Configuration guide](../configuration.md)
+*   [Security best practices](../security.md)
+*   [Performance guide](../performance.md)
+*   [Troubleshooting guide](../troubleshooting/client-troubleshooting.md)

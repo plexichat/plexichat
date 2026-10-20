@@ -12,7 +12,7 @@ Use this table to find the right doc for your task.
 
 | Task | Doc |
 | --- | --- |
-| Authenticate users, manage sessions, bots, or 2FA | [Authentication configuration](../config-authentication.md) |
+| Authenticate users, manage sessions, bots, or 2FA | [Authentication configuration](../deployment/configuration/config-authentication.md) |
 | Call REST endpoints | [API reference](../api/index.md) |
 | Stream real-time events | [WebSocket gateway](websocket.md) |
 | Handle rate limits and `429` responses | [Rate limits](../rate-limits.md) |

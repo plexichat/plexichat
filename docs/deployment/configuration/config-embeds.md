@@ -86,7 +86,7 @@ Set `enabled` to `false` if your server has limited outbound bandwidth or runs i
 
 ### Rate limiting
 
-`rate_limit_requests` is `10` and `rate_limit_window_seconds` is `60` by default. A user can trigger 10 URL fetches per 60 seconds. This limit is separate from the global API rate limit defined in `src/config_defaults.py:273`.
+`rate_limit_requests` is `10` and `rate_limit_window_seconds` is `60` by default. A user can trigger 10 URL fetches per 60 seconds. This limit is separate from the global API rate limit defined in `src/config_defaults.py:821`.
 
 ### Proxy images
 

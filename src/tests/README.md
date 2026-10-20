@@ -244,13 +244,26 @@ so a missing service can never masquerade as a green run.
 
 ### Parallel Execution
 
-```bash
-# Run tests in parallel (requires pytest-xdist)
-pytest -n auto              # Auto-detect CPU count
-pytest -n 4                 # Use 4 workers
+``pytest.ini`` runs the suite under ``pytest-xdist`` by default: ``-n auto``
+sizes the pool to the host's CPU count and ``--dist loadfile`` pins each test
+file to one worker, so a module's fixtures and module-level state are still
+built once per file. This is the same shape CI validates (``test:pytest`` uses
+``-n 4 --dist loadfile``).
 
-# Parallel with specific markers
-pytest -m "not slow" -n auto
+```bash
+# The default already runs in parallel; no flags needed.
+pytest
+
+# Pin an explicit worker count (overrides the addopts default).
+pytest -n 4
+
+# Force one process -- needed by the benchmark job, the serial
+# order-independence run, the timing-under-load gate, and anything that
+# spawns its own processes.
+pytest -n0
+
+# Parallel with specific markers.
+pytest -m "not slow"
 ```
 
 ### Order Independence
@@ -1102,7 +1115,7 @@ pytest --pdb
 ### Common Commands
 
 ```bash
-# Run all tests
+# Run all tests (parallel by default; see pytest.ini)
 pytest
 
 # Run specific module
@@ -1111,8 +1124,8 @@ pytest src/tests/auth/
 # Run with coverage
 pytest --cov=src
 
-# Run in parallel
-pytest -n auto
+# Force a single process (default is parallel)
+pytest -n0
 
 # Run marked tests
 pytest -m auth

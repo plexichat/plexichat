@@ -24,18 +24,18 @@ Infrastructure defaults that affect AutoMod:
 
 | Component | Default | Source |
 | --- | --- | --- |
-| `server.host` | `127.0.0.1` | `src/config_defaults.py:54` |
-| `api.api_prefix` | `/api/v1` | `src/config_defaults.py:131` |
-| WebSocket gateway path | `/gateway` (full: `/api/v1` prefix not applied; mount is `/gateway`) | `src/api/websocket/gateway.py:261` |
+| `server.host` | `127.0.0.1` | `src/config_defaults.py:70` |
+| `api.api_prefix` | `/api/v1` | `src/config_defaults.py:130` |
+| WebSocket gateway path | `/gateway` (full: `/api/v1` prefix not applied; mount is `/gateway`) | `src/api/websocket/gateway.py` (`gateway_endpoint`) |
 | Health ready probe | `GET /api/v1/ready` | `src/api/routes/health.py:18` |
 | Health detailed check | `GET /api/v1/health` | `src/api/routes/health.py:47` |
-| TLS | Disabled by default (`tls.enabled: false`) | `src/config_defaults.py:599` |
-| Voice SFU backend | `aiortc` | `src/config_defaults.py:399` |
+| TLS | Disabled by default (`tls.enabled: false`) | `src/config_defaults.py:618` |
+| Voice SFU backend | `aiortc` | `src/config_defaults.py:396` |
 | Database | PostgreSQL 18 (production) / SQLite (dev), Valkey 9.1.1 for presence/cache | `docker-compose.yml`, `src/config_defaults.py` |
 | Python | 3.14 | `Dockerfile`, `pyproject.toml` |
-| Rate limiting global | 25,000 req/60s burst 5,000 | `src/config_defaults.py:273` |
-| Rate limiting user | 10,000 req/60s burst 2,500 | `src/config_defaults.py:273` |
-| Rate limiting IP | 5,000 req/60s burst 1,500 | `src/config_defaults.py:273` |
+| Rate limiting global | 25,000 req/60s burst 5,000 | `src/config_defaults.py:270` |
+| Rate limiting user | 10,000 req/60s burst 2,500 | `src/config_defaults.py:270` |
+| Rate limiting IP | 5,000 req/60s burst 1,500 | `src/config_defaults.py:270` |
 | Gateway opcodes | `50` (identify), `60–67` (voice) | `src/api/websocket/opcodes.py` |
 | Gateway intents | `20`, `21` | `src/api/websocket/intents.py` |
 
@@ -387,7 +387,7 @@ except AIBackendError as e:
     print(f"AI error: {e.status_code}")
 ```
 
-Role permission errors: creating or updating a role with wildcard permissions such as `*` or `messages.*` raises `InvalidPermissionKey` and the API returns `400` (`src/api/routes/servers/roles.py:201`). Scopes are defined in `src/core/auth/permissions.py:42`.
+Role permission errors: creating or updating a role with wildcard permissions such as `*` or `messages.*` raises `InvalidPermissionKey` and the API returns `400` (`src/api/routes/servers/roles.py:200`). Scopes are defined in `src/core/auth/permissions.py:42`.
 
 ## Database schema
 

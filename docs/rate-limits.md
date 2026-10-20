@@ -1,6 +1,6 @@
 # Rate limits
 
-Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions. All defaults in this document come from `src/config_defaults.py:273` and `src/core/ratelimit/config.py:13`.
+Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions. All defaults in this document come from `src/config_defaults.py:270` and `src/core/ratelimit/config.py:13`.
 
 ## Default limits
 
@@ -107,7 +107,7 @@ Plexichat enforces limits in ASGI middleware (`src/core/ratelimit/middleware.py:
 ## What clients should expect
 
 *   Limits can be applied globally, per user, per IP, or per route and resource.
-*   The server can tune any limit away from the code defaults in `src/config_defaults.py:273`.
+*   The server can tune any limit away from the code defaults in `src/config_defaults.py:270`.
 *   Bots and feature tiers may receive different multipliers depending on server policy. See `src/core/ratelimit/config.py:76`.
 *   Admin and internal bypass behavior is configurable. Do not assume it is available.
 

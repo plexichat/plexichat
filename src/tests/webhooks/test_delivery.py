@@ -6,6 +6,7 @@ queue to delivered / retrying / dead-letter states. HTTP is faked via an
 injectable client so no real network is involved.
 """
 
+import socket
 import threading
 import time
 
@@ -21,9 +22,39 @@ from src.core.webhooks.delivery import (
 )
 from src.tests._conftest.waiting import wait_until
 
+# A public address the SSRF validator accepts. Every hostname in this module
+# resolves to it, so a delivery is deterministic and never touches the
+# runner's DNS.
+PUBLIC_IP = "93.184.216.34"
+
 
 def _fresh_timestamp_ms() -> str:
     return str(int(time.time() * 1000))
+
+
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _fake_getaddrinfo(host, port, *args, **kwargs):
+    # Loopback is left to the real resolver: the end-to-end tests below bind a
+    # local HTTP server and connect through httpx, which resolves in-process.
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return _REAL_GETADDRINFO(host, port, *args, **kwargs)
+    return [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (PUBLIC_IP, 0))
+    ]
+
+
+@pytest.fixture(autouse=True)
+def _pinned_dns(monkeypatch):
+    """Resolve every endpoint host to ``PUBLIC_IP``.
+
+    The HTTP clients here are fakes, so nothing is contacted, but the
+    validator still resolves the endpoint — and the delivery now connects to
+    the address it resolved. Pinning the answer keeps the recorded request
+    independent of the CI runner's resolver.
+    """
+    monkeypatch.setattr("src.utils.security.socket.getaddrinfo", _fake_getaddrinfo)
 
 
 class _FakeResponse:
@@ -38,14 +69,21 @@ class _ScriptedClient:
         self.statuses = list(statuses)
         self.calls = []
 
-    def post(self, url, json=None, headers=None):
-        self.calls.append({"url": url, "json": json, "headers": headers})
+    def post(self, url, json=None, headers=None, extensions=None):
+        self.calls.append(
+            {
+                "url": url,
+                "json": json,
+                "headers": headers,
+                "extensions": extensions,
+            }
+        )
         status = self.statuses.pop(0) if self.statuses else 200
         return _FakeResponse(status)
 
 
 class _RaisingClient:
-    def post(self, url, json=None, headers=None):
+    def post(self, url, json=None, headers=None, extensions=None):
         raise ConnectionError("connection refused")
 
 
@@ -82,7 +120,11 @@ class TestWebhookDeliverer:
 
         assert deliverer.deliver(record) == 200
         call = client.calls[0]
-        assert call["url"] == "https://example.com/hook"
+        # The POST goes to the validated IP, not the hostname (no second DNS
+        # lookup a rebinding server could answer differently).
+        assert call["url"] == f"https://{PUBLIC_IP}:443/hook"
+        assert call["headers"]["Host"] == "example.com"
+        assert call["extensions"] == {"sni_hostname": "example.com"}
         assert call["json"] == {"content": "hello"}
         assert call["headers"]["Content-Type"] == "application/json"
         assert call["headers"]["X-Plexichat-Signature"] == "sig"
@@ -99,7 +141,12 @@ class TestWebhookDeliverer:
 
         assert deliverer.deliver(record) == 204
         headers = client.calls[0]["headers"]
-        assert headers == {"Content-Type": "application/json"}
+        # ``Host`` carries the endpoint's real hostname: the connection itself
+        # goes to the IP the SSRF validator resolved.
+        assert headers == {
+            "Content-Type": "application/json",
+            "Host": "example.com",
+        }
 
     def test_deliver_missing_endpoint_url_raises(self):
         deliverer = WebhookDeliverer(client=_ScriptedClient([]))
@@ -144,7 +191,7 @@ class TestWebhookDeliverer:
         captured = {}
 
         class _CaptureClient:
-            def post(self, url, json=None, headers=None):
+            def post(self, url, json=None, headers=None, extensions=None):
                 captured["headers"] = headers
                 return _FakeResponse(200)
 
@@ -177,7 +224,7 @@ class TestWebhookDeliverer:
         captured = {}
 
         class _CaptureClient:
-            def post(self, url, json=None, headers=None):
+            def post(self, url, json=None, headers=None, extensions=None):
                 captured["headers"] = headers
                 return _FakeResponse(200)
 

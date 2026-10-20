@@ -13,7 +13,7 @@ media:
   local_url: "/media"
 ```
 
-Defaults use `~/.plexichat` as the home directory. See `src/config_defaults.py:46` for the `home_dir` definition.
+Defaults use `~/.plexichat` as the home directory. See `src/config_defaults.py:62` for the `home_dir` definition.
 
 ## Choose a storage backend
 
@@ -30,7 +30,7 @@ media:
 
 S3-compatible options include AWS S3, Google Cloud Storage, Azure Blob Storage, RustFS, Wasabi, and Backblaze B2.
 
-See the [Deployment guide](deployment.md#backup-and-recovery) for backup strategies for each backend.
+See the [Deployment guide](../index.md#backup-and-recovery) for backup strategies for each backend.
 
 ## Configure local storage
 
@@ -262,7 +262,7 @@ media:
 | `rate_limit.uploads_per_hour` | `100` | Maximum uploads per hour per user. |
 | `rate_limit.max_total_size_per_day` | `536870912` (512 MB) | Maximum total bytes a user can upload per day. |
 
-Thumbnail generation has its own limit at `media.image_processing.max_thumbnail_requests_per_minute` (`60` per minute). Do not use the stale key `media.rate_limit.thumbnails_per_minute`. See `src/config_defaults.py:253` for the correct structure.
+Thumbnail generation has its own limit at `media.image_processing.max_thumbnail_requests_per_minute` (`60` per minute). Do not use the stale key `media.rate_limit.thumbnails_per_minute`. See `src/config_defaults.py:235` for the correct structure.
 
 ## Configure the external proxy
 

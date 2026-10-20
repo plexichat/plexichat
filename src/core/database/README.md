@@ -38,7 +38,7 @@ pip install pg8000  # Only if you use PostgreSQL
 
 ## Configuration
 
-The module reads the `database` key — see `plexichat/src/config_defaults.py:64`:
+The module reads the `database` key — see `plexichat/src/config_defaults.py:79`:
 
 ```yaml
 database:
@@ -72,9 +72,9 @@ database:
 
 Global server keys use these paths — see `plexichat/src/config_defaults.py`:
 
-*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:54`. Do not use `api.host`, `api.port`, or `api.workers`.
-*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:131`. Do not use `api.prefix` or `prefix`.
-*   `tls` — see `plexichat/src/config_defaults.py:599`. Do not use `api.ssl`.
+*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:70`. Do not use `api.host`, `api.port`, or `api.workers`.
+*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:130`. Do not use `api.prefix` or `prefix`.
+*   `tls` — see `plexichat/src/config_defaults.py:618`. Do not use `api.ssl`.
 
 ### Switch to PostgreSQL
 
@@ -270,7 +270,7 @@ SQLite connections are not thread-safe by default. For multi-threaded use, creat
 *   Autocommit is disabled to match SQLite transaction semantics.
 *   Connection pooling is in-tree (`engines/pool.py`), shared with the SQLite engine.
 *   `?` placeholders are converted to `%s` automatically.
-*   Supports `sslmode` — default `prefer` — see `plexichat/src/config_defaults.py:79`.
+*   Supports `sslmode` — default `prefer` — see `plexichat/src/config_defaults.py:88`.
 
 ```yaml
 database:
@@ -307,7 +307,7 @@ PostgreSQL tests are skipped when no PostgreSQL server is available.
 
 # Valkey module
 
-Valkey provides caching, sessions, presence, and pub/sub with pooling and graceful degradation — see `plexichat/src/config_defaults.py:111`.
+Valkey provides caching, sessions, presence, and pub/sub with pooling and graceful degradation — see `plexichat/src/config_defaults.py:110`.
 
 ## Features
 
@@ -329,7 +329,7 @@ pip install valkey-glide-sync>=2.5.0
 
 ## Configuration
 
-Add to your `config.yaml` — see `plexichat/src/config_defaults.py:111`:
+Add to your `config.yaml` — see `plexichat/src/config_defaults.py:110`:
 
 ```yaml
 valkey:

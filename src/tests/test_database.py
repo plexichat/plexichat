@@ -34,16 +34,9 @@ def setup_module(tmp_path_factory):
 @pytest.fixture
 def db_config(setup_module):
     """Sets up a fresh config for each test."""
-    import gc
-    import time
-
     temp_dir = setup_module
     config_path = str(temp_dir / "config.yaml")
     db_path = str(temp_dir / "test.db")
-
-    # Force garbage collection to close any lingering connections
-    gc.collect()
-    time.sleep(0.1)
 
     # Ensure fresh config and db
     if os.path.exists(config_path):
@@ -69,9 +62,15 @@ def db_config(setup_module):
 
     yield config_path, temp_dir
 
-    # Force garbage collection before cleanup
-    gc.collect()
-    time.sleep(0.1)
+    # Close this test's pool + monitor thread deterministically before the
+    # files are removed. This used to be ``gc.collect()`` followed by a
+    # 100 ms sleep to let a collection close "lingering connections"; a full
+    # collection over this process's object graph measured ~460 ms, twice
+    # per test. ``Database.reset()`` is the deterministic equivalent: it
+    # stops the monitor, closes pooled/thread-local connections *and* the
+    # ones the monitor knows other threads still hold, so nothing the test
+    # opened survives into the next test.
+    Database.reset()
 
     # Cleanup after test
     for path in [db_path, str(temp_dir / "other.db")]:
@@ -86,7 +85,6 @@ def db_config(setup_module):
 def test_sqlite_connection(db_config):
     """Test basic SQLite connection."""
     config_path, temp_dir = db_config
-    config_path, temp_dir = db_config
     db = Database()
     db.connect()
     assert db.connection is not None
@@ -97,7 +95,6 @@ def test_sqlite_connection(db_config):
 
 def test_sqlite_create_table(db_config):
     """Test creating a table in SQLite."""
-    config_path, temp_dir = db_config
     config_path, temp_dir = db_config
     db = Database()
     db.connect()
@@ -115,7 +112,6 @@ def test_sqlite_create_table(db_config):
 
 def test_sqlite_insert_single_row(db_config):
     """Test inserting a single row."""
-    config_path, temp_dir = db_config
     config_path, temp_dir = db_config
     db = Database()
     db.connect()
@@ -244,7 +240,6 @@ def test_sqlite_large_text_data(db_config):
 # Configuration Tests
 def test_config_integration(db_config):
     """Test that database respects configuration changes."""
-    config_path, temp_dir = db_config
     config_path, temp_dir = db_config
     new_path = str(temp_dir / "other.db")
     config.set("database", {"type": "sqlite", "path": new_path})

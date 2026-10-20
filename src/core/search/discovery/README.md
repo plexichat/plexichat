@@ -109,7 +109,7 @@ Categories are stored in `search_categories` and cached in memory via `CappedDic
 ```python
 # Get all categories with live server counts
 categories = search.get_server_categories()
-# Returns list[ServerCategory] (models.py:171): id, name, description, icon, server_count
+# Returns list[ServerCategory] (../models.py:171): id, name, description, icon, server_count
 
 # Direct manager usage
 from plexichat.src.core.search.discovery.categories import CategoryManager
@@ -245,9 +245,9 @@ search:
 
 Defined in `src/core/search/models.py`:
 
-* `ServerListing` (`models.py:182`) — `id`, `server_id`, `name`, `description`, `icon_url`, `banner_url`, `category`, `tags`, `member_count`, `online_count`, `verification_level`, `is_verified`, `is_partnered`, `listed_at`, `bumped_at`, `bump_count`.
-* `ServerCategory` (`models.py:171`) — `id`, `name`, `description`, `icon`, `server_count`.
-* `VerificationLevel` (`models.py:33`) — `NONE`, `LOW`, `MEDIUM`, `HIGH`, `VERIFIED`.
+* `ServerListing` (`../models.py:182`) — `id`, `server_id`, `name`, `description`, `icon_url`, `banner_url`, `category`, `tags`, `member_count`, `online_count`, `verification_level`, `is_verified`, `is_partnered`, `listed_at`, `bumped_at`, `bump_count`.
+* `ServerCategory` (`../models.py:171`) — `id`, `name`, `description`, `icon`, `server_count`.
+* `VerificationLevel` (`../models.py:33`) — `NONE`, `LOW`, `MEDIUM`, `HIGH`, `VERIFIED`.
 
 ### Database tables
 

@@ -34,7 +34,7 @@ admin_ui:
 
 ## Rate limiting and approvals
 
-* Global rate limits default to `25000` requests per `60` s, user `10000`, and IP `5000` (`src/config_defaults.py:272`). Keep `rate_limiting.enabled: true` in production.
+* Global rate limits default to `25000` requests per `60` s, user `10000`, and IP `5000` (`src/config_defaults.py:270`). Keep `rate_limiting.enabled: true` in production.
 * Gate destructive actions with the approval workflow:
 
   ```yaml
@@ -80,7 +80,7 @@ Review audit logs regularly and forward them to your SIEM.
 
 ## Gateway and health
 
-* The WebSocket gateway is `ws://host/gateway` (`src/api/websocket/gateway.py:261`), not `/ws`.
+* The WebSocket gateway is `ws://host/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)), not `/ws`.
 * Use `GET /api/v1/ready` for liveness and `GET /api/v1/health` for detailed checks (`src/api/routes/health.py:18`). Both live under the API prefix (`src/config_defaults.py:130`).
 
 ## Next steps

@@ -12,9 +12,9 @@ A bot is an automated user account that can:
 - Automate moderation tasks.
 - Integrate with external services.
 
-The gateway is at `/gateway` (`src/api/websocket/gateway.py:261`). In development, connect to `ws://localhost:8000/gateway`. In production, use `wss://your-host/gateway`.
+The gateway is at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)). In development, connect to `ws://localhost:8000/gateway`. In production, use `wss://your-host/gateway`.
 
-All REST endpoints in this guide are prefixed with `/api/v1` unless noted. The API prefix defaults to `/api/v1` (`src/config_defaults.py:131`).
+All REST endpoints in this guide are prefixed with `/api/v1` unless noted. The API prefix defaults to `/api/v1` (`src/config_defaults.py:130`).
 
 Errors use the standard envelope (`src/api/schemas/common.py:58`):
 
@@ -141,7 +141,7 @@ ws.onopen = () => {
 };
 ```
 
-The gateway path is `/gateway`, not `/ws` (`src/api/websocket/gateway.py:261`). The dev and preview proxies forward `/api` and `/gateway` to the API server.
+The gateway path is `/gateway`, not `/ws` (`src/api/websocket/gateway.py` (`gateway_endpoint`)). The dev and preview proxies forward `/api` and `/gateway` to the API server.
 
 ### Use webhooks when you want serverless delivery
 
@@ -387,14 +387,14 @@ The API and gateway enforce rate limits to prevent abuse.
 | Hourly (user) | 300,000 | 3,600 seconds | — |
 | Daily (user) | 5,000,000 | 86,400 seconds | — |
 
-Defaults are from `src/config_defaults.py:273`. Do not rely on hard-coded values in older docs. Override them in `config.yaml` and in Nginx if you change them.
+Defaults are from `src/config_defaults.py:270`. Do not rely on hard-coded values in older docs. Override them in `config.yaml` and in Nginx if you change them.
 
 Gateway-specific limits:
 
 - Identify: 1 per 5 seconds per token.
 - Resume: no limit.
-- Other gateway payloads: 120 per 60 seconds (`src/config_defaults.py:168`).
-- Bot requests: multiplied by `1.5` (`src/config_defaults.py:304`).
+- Other gateway payloads: 120 per 60 seconds (`src/config_defaults.py:165`).
+- Bot requests: multiplied by `1.5` (`src/config_defaults.py:301`).
 
 Check `X-RateLimit-Remaining` and `X-RateLimit-Reset`. When you receive `429`, read `Retry-After` and retry after that delay. Error bodies use `{"error":{"code":429,"message":"Too many requests"}}`.
 
@@ -557,7 +557,7 @@ Server admins can manage bots at `/admin`:
 | Bot directory access | Read-only | Full access |
 | Bot profile management | Limited | Full |
 
-Limits are from `src/config_defaults.py:724` (`bots.max_per_server`, `bots.max_per_server_premium`).
+Limits are from `src/config_defaults.py:729` (`bots.max_per_server`, `bots.max_per_server_premium`).
 
 ## Use OAuth 2.0 (roadmap)
 
@@ -820,5 +820,5 @@ bot.start();
 - [API reference](../api/index.md)
 - [WebSocket guide](../client-development/websocket.md)
 - [OAuth scopes](../oauth-scopes.md) — regrouped by `PERMISSION_SCOPES` (`src/core/admin/permissions.py:42`)
-- [Rate limits](../rate-limits.md) — defaults from `src/config_defaults.py:273`
+- [Rate limits](../rate-limits.md) — defaults from `src/config_defaults.py:270`
 - [Error codes](../errors.md) — envelope is `{"error":{"code":...,"message":"..."}}`

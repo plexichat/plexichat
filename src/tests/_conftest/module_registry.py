@@ -49,11 +49,9 @@ class DatabaseAndAuth(NamedTuple):
 
 class ModuleRegistry:
     """
+    Backward compatibility wrapper for module fixtures.
 
-    import uuid
-        Backward compatibility wrapper for module fixtures.
-
-        Provides attribute access to individual manager fixtures.
+    Provides attribute access to individual manager fixtures.
     """
 
     def __init__(

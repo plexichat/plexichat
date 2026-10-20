@@ -10,7 +10,7 @@ Plexichat uses bearer-token authentication for REST API and WebSocket connection
 
 *   **User sessions** — `Authorization: Bearer <token>` — Generated on login and validated on every request.
 *   **Bot tokens** — `Authorization: Bot <token>` — Long-lived tokens that are scoped to bot permissions.
-*   **Admin access token** — `X-API-Access-Token: <token>` — Optional gate for closed deployments. See [Access tokens](admin-access-tokens.md).
+*   **Admin access token** — `X-API-Access-Token: <token>` — Optional gate for closed deployments. See [Access tokens](deployment/configuration/config-api.md).
 
 #### Session configuration
 
@@ -106,7 +106,7 @@ authentication:
 
 *   Require 2FA for all admin accounts. The admin UI requires OTP by default (`admin_ui.require_otp: true`).
 *   Make 2FA optional for regular users, but encourage adoption through UI prompts.
-*   The key is `require_otp`, not `require_2fa`. See `src/config_defaults.py:539`.
+*   The key is `require_otp`, not `require_2fa`. See `src/config_defaults.py:561`.
 
 ## Encryption
 
@@ -418,7 +418,7 @@ selftest:
     - "/api/v1/admin/logout"
 ```
 
-*   Self-test is production-safe. It uses long, randomly generated passwords and only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts. All test resources are cleaned up through API calls. See `src/config_defaults.py:506`.
+*   Self-test is production-safe. It uses long, randomly generated passwords and only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts. All test resources are cleaned up through API calls. See `src/config_defaults.py:542`.
 *   `exit_on_failure: false` prevents shutdown on self-test failure, which avoids denial-of-service.
 *   `capture_stack_traces: true` is useful in development. Set it to `false` in production to avoid revealing implementation details.
 *   Self-test cleanup is strictly non-destructive: it only removes rows owned by its `selftest_%` accounts and resources recorded by the current run. There are no whole-table wipes and no disposable-database escape hatch; the suite is safe to run on a live deployment at any time. See `src/core/selftest/services/cleanup.py`.

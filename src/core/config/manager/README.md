@@ -54,4 +54,4 @@ always see a consistent snapshot.
 ## Related documentation
 
 - [Configuration system README](../README.md)
-- [Config utility README](../../../../utils/common_utils/utils/config/README.md)
+- [Config utility README](../../../utils/common_utils/utils/config/README.md)

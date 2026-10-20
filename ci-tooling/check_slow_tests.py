@@ -18,6 +18,50 @@ Postgres and Valkey with multi-worker simulations whose cost is wall-clock
 4.01s with the box idle against a 5s default a loaded runner would cross. A
 per-test budget still takes precedence over the job's ceiling.
 
+A wall clock also measures the *runner*, and this one is shared with the other
+repository's pipeline. When both pushed at once (pipelines #2070 and #2071), the
+import sweeps that take 2.7s and 1.9s on an idle box took 22.5s and 15.2s, and
+three 2.5s tests crossed 5s -- five false reds from the queue, not from the
+code. The samples carry the core count next to the load (``nproc`` in the test
+jobs), so the ratio below is per-core and stays right if the runner is resized:
+it reported 4 cores for the #2070 measurements and 8 by #2086. The verdict stays the wall clock, though: how long a test takes
+is what the gate is for, and how much CPU it burned is never a pass/fail
+criterion -- a test that uses every core it can get is fast or slow on its
+duration, not on its appetite. What the queue cost is measured separately, as
+the box's 1-minute load average while the suite ran (``--load-log``), and a
+job's ceiling is scaled by it: see :func:`load_room_factor`. An idle box
+reports load 1 and every budget is the one registered in
+``SLOW_TEST_BUDGETS``; a box carrying another pipeline's work scales the
+ceiling by the queue it was under, capped at ``MAX_LOAD_FACTOR`` so a
+permanently loaded runner cannot hide a regression.
+
+The gate judges reports, so a report it cannot measure is refused rather than
+read as fast. A testcase whose ``time`` is missing or unparsable is not a
+testcase that took 0 seconds -- it is a testcase whose duration nobody knows,
+and the only honest verdict on it is exit 2. The same goes for a report with no
+testcases at all: ``OK: no test exceeded its budget`` over an empty report is a
+green light nobody earned. A skipped testcase is the one exception -- it did not
+run, so it has no duration to report, and pytest writes no ``<skipped>`` child
+for a test that ran. A report made up *entirely* of them is refused too: it is
+not empty, but a suite where every test skipped (a missing service, a platform
+guard, a worker that never started) has still measured nothing. An xfail is not
+that case -- pytest marks it ``<skipped type="pytest.xfail">`` although the test
+executed -- so it counts as a test that ran.
+
+The invocation has to mean what it says, too: a ``--threshold`` that is not a
+finite, non-negative number of seconds is a usage error rather than a ceiling.
+``nan`` is the reason -- every comparison against it is false, so a run that
+names it would pass a report containing a 15-minute test -- and ``inf`` is the
+same hole spelled differently. An empty ``--metrics-out`` is refused as well:
+it is falsy, so the file was silently never written and the trend stage read a
+missing artifact instead of the run's metrics.
+
+``--job`` and ``--load-log`` are paired with the reports positionally, so a
+surplus entry is a usage error (exit 2) rather than a silently dropped ceiling
+or sample. A short list is still allowed: the reports after it fall back to
+``CI_JOB_NAME``/``--threshold``, which is how a locally assembled report set is
+judged.
+
 Usage::
 
     python scripts/check_slow_tests.py test-results.xml test-results-db.xml \\
@@ -51,6 +95,13 @@ from typing import Dict, List, Optional, Tuple
 
 DEFAULT_THRESHOLD_SECONDS = 5.0
 
+# How far a busy box may scale a ceiling (see :func:`load_room_factor`).
+# ``MAX_LOAD_FACTOR`` bounds the allowance a run's load samples can buy: at the
+# cap a test still has to take four times its registered budget to fail, so a
+# permanently loaded runner cannot hide a regression, while a box running two
+# pipelines at once -- the load of 2 per core that redded #2070 -- is covered.
+MAX_LOAD_FACTOR = 4.0
+
 # Per-test budgets for the two cold, full-tree import sweeps in
 # ``test_module_import_safety.py``. Each spawns a throwaway interpreter that
 # discovers and imports every module in the production tree, with bytecode
@@ -65,11 +116,14 @@ DEFAULT_THRESHOLD_SECONDS = 5.0
 # trips: a sweep that doubles in cost crosses its budget with nothing else
 # running (see the reasons below for the measured numbers).
 #
-# A budget is a partial mitigation, not a cure -- at 3x the heavier sweep is
-# past even its ceiling -- but it is the honest one here. The client repository
-# scales its ceiling by a calibration test of its own (its suite is in-process,
-# so a test in it measures the machine the suite runs on); these sweeps are
-# child processes, whose cost the parent process's own timings do not track.
+# The budget is what the sweep costs, not what the worst queue cost: the load
+# scaling below raises the ceiling a sweep is held to by the load its job
+# measured, so 15.7s on a box at 3x is judged against a 3x budget (30s) rather
+# than the idle 10s. That is what keeps the budget meaningful on a runner shared
+# with another repository's pipeline, and why these entries can stay at the cost
+# of the work instead of climbing to cover the worst queue. The client
+# repository's gate scales the same way, from the same ``/proc/loadavg``
+# samples.
 #
 # The registry is enforced against the report: an entry whose test id does not
 # appear in any report fails the run (see ``main``), so an exemption can never
@@ -90,8 +144,13 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "child-interpreter import of the whole tree: 2.7s idle, 7.7s at 2x oversubscription, 15.7s at 3x",
     ),
     "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeConfigSetup::test_missing_config_fails_only_the_documented_way": (
-        10.0,
-        "child-interpreter import of the whole tree: 1.9s idle, 3.9s at 2x oversubscription, 6.9s at 3x",
+        20.0,
+        "child-interpreter import of the whole tree: 1.9s idle, 3.9s at 2x "
+        "oversubscription, 6.9s at 3x, 19.9s in pipeline #2082 while the client "
+        "repository's e2e job shared the box -- a single-threaded cold import is "
+        "hit harder by a neighbouring CPU-bound pipeline than its loadavg (1.84 "
+        "on 4 cores) suggests, so this budget carries the shared-box measurement "
+        "rather than the idle cost multiplied by the load factor",
     ),
     "src.tests.api.test_openapi_snowflake_ids::test_the_document_covers_the_api": (
         20.0,
@@ -170,18 +229,118 @@ def _parse_report(xml_path: str) -> Element:
     return root
 
 
+def load_room_factor(
+    lines: List[str], max_factor: float = MAX_LOAD_FACTOR
+) -> Optional[float]:
+    """The factor a busy box justifies, from its 1-minute load samples.
+
+    Each line is ``<load average> <cores>``, written by a test job's sampler
+    every couple of seconds while the suite ran (see ``test:pytest`` in
+    ``.gitlab-ci.yml``). The busiest sample wins: load 8 on 4 cores is a factor
+    of 2, which is what the two pipelines sharing this runner produced when
+    #2071 redded tests that cost half their measured time.
+
+    The load average counts every runnable task, not just this job's, which is
+    the part of a wall clock nothing inside the job can see. It is clamped to
+    ``[1, max_factor]``: a factor never tightens a ceiling (a test is never
+    judged by more than its registered budget), and a permanently loaded box
+    cannot buy more than the cap.
+
+    :param lines: The sampler's output, one ``LOAD CORES`` sample per line.
+    :param max_factor: The largest factor the samples may justify.
+    :returns: The factor, or ``None`` when no line parses (no sampler).
+    """
+    worst: Optional[float] = None
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            load = float(parts[0])
+            cores = int(parts[1])
+        except ValueError:
+            continue
+        if not math.isfinite(load) or load < 0 or cores < 1:
+            continue
+        ratio = load / cores
+        if worst is None or ratio > worst:
+            worst = ratio
+    if worst is None:
+        return None
+    return round(min(max(worst, 1.0), max_factor), 2)
+
+
+def load_factor_from_log(
+    path: str, max_factor: float = MAX_LOAD_FACTOR
+) -> Optional[float]:
+    """Read a job's load samples from disk, or ``None`` when there are none.
+
+    A job that predates the sampler (or a locally assembled report set) has no
+    log: the job is then held to its registered budget, which is not a reason
+    to refuse the run.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return load_room_factor(handle.read().splitlines(), max_factor)
+    except OSError as exc:
+        print(f"check_slow_tests: no load samples in {path}: {exc}", file=sys.stderr)
+        return None
+
+
+def _testcase_duration(case: Element) -> float:
+    """A testcase's own wall clock, or ``ValueError`` when it has none.
+
+    Reading a missing or malformed ``time`` as 0.0 used to make every such
+    testcase look instantaneous, which turned a reporter change (or a truncated
+    report) into a green gate. A duration nobody can read is not a fast test, so
+    the run is refused instead. A skipped testcase is not a counter-example: it
+    did not run, has no work to measure, and is the only case that may stand at
+    zero without a duration.
+    """
+    raw = case.get("time")
+    try:
+        duration = float(raw) if raw is not None else math.nan
+    except (TypeError, ValueError):
+        duration = math.nan
+    if math.isfinite(duration) and duration >= 0:
+        return duration
+    if case.find("skipped") is not None:
+        return 0.0
+    name = case.get("name") or "<unnamed>"
+    classname = case.get("classname") or "<unclassed>"
+    raise ValueError(
+        f"testcase {classname}::{name} has no usable time attribute "
+        f"({raw!r}); it did not run rather than run instantly, and a report "
+        f"without durations cannot be judged"
+    )
+
+
+def _did_not_run(case: Element) -> bool:
+    """Whether *case* describes a test the runner skipped rather than ran.
+
+    pytest writes ``<skipped>`` for a skipped test and for an xfail, even
+    though an xfail executes, so the ``type`` attribute is what tells them
+    apart. Calling an executed test unjudged would red a report that did its
+    work; see :func:`main`.
+    """
+    skipped = case.find("skipped")
+    if skipped is None:
+        return False
+    return skipped.get("type") != "pytest.xfail"
+
+
 def _scan_tests(root: Element) -> List[Tuple[float, str]]:
-    """Return ``(duration_seconds, test_id)`` for every testcase in the report.
+    """Return ``(duration_seconds, test_id)`` for every testcase.
 
     ``test_id`` prefers the file path attribute (pytest's ``junit_family=xunit2``
-    sets ``file``); it falls back to ``classname::name`` when absent.
+    sets ``file``); it falls back to ``classname::name`` when absent. The
+    duration is the report's own wall clock, which is the only thing the gate
+    judges; a testcase that reports no usable one raises ``ValueError`` (see
+    :func:`_testcase_duration`) rather than being counted as fast.
     """
     tests: List[Tuple[float, str]] = []
     for case in root.iter("testcase"):
-        try:
-            duration = float(case.get("time") or 0)
-        except (TypeError, ValueError):
-            duration = 0.0
+        duration = _testcase_duration(case)
         name = case.get("name") or "<unnamed>"
         file_path = case.get("file") or ""
         classname = case.get("classname") or ""
@@ -194,27 +353,33 @@ def slow_tests_from_root(
     root: Element,
     threshold: float,
     budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+    factor: float = 1.0,
 ) -> List[Tuple[float, str]]:
-    """Return ``(duration_seconds, test_id)`` for every testcase over its budget.
+    """Return ``(duration, test_id)`` for every testcase over its budget.
 
-    A testcase is slow when it exceeds its own registered budget, falling back
-    to the global *threshold* when it has none.
+    A testcase is slow when its wall clock exceeds its own registered budget,
+    falling back to the global *threshold* when it has none. *factor* is the
+    load allowance for the job the report came from (see
+    :func:`load_room_factor`): it multiplies the ceiling, so a slice of the
+    queue cannot red the job, while the duration reported is still the test's
+    own.
     """
     effective = SLOW_TEST_BUDGETS if budgets is None else budgets
-    return [
-        (d, tid)
-        for d, tid in _scan_tests(root)
-        if d > _budget_seconds(tid, threshold, effective)
-    ]
+    slow: List[Tuple[float, str]] = []
+    for duration, test_id in _scan_tests(root):
+        if duration > _budget_seconds(test_id, threshold, effective) * factor:
+            slow.append((duration, test_id))
+    return slow
 
 
 def find_slow_tests(
     xml_path: str,
     threshold: float,
     budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+    factor: float = 1.0,
 ) -> List[Tuple[float, str]]:
     """Parse a JUnit XML report file and return the slow tests in it."""
-    return slow_tests_from_root(_parse_report(xml_path), threshold, budgets)
+    return slow_tests_from_root(_parse_report(xml_path), threshold, budgets, factor)
 
 
 def metrics_from_root(
@@ -222,15 +387,18 @@ def metrics_from_root(
     job: str,
     threshold: float,
     budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+    factor: float = 1.0,
 ) -> Dict[str, object]:
     """Aggregate duration metrics from a parsed report root (feeds the CI trend)."""
     effective = SLOW_TEST_BUDGETS if budgets is None else budgets
     tests = _scan_tests(root)
     count = len(tests)
-    total = sum(d for d, _ in tests)
+    total = sum(duration for duration, _ in tests)
     worst_duration, worst_test = max(tests, default=(0.0, ""))
     slow_count = sum(
-        1 for d, tid in tests if d > _budget_seconds(tid, threshold, effective)
+        1
+        for duration, tid in tests
+        if duration > _budget_seconds(tid, threshold, effective) * factor
     )
     return {
         "job": job,
@@ -247,7 +415,11 @@ def metrics_from_root(
         "slow_count": slow_count,
         # The ceiling this job was actually judged by, so a run reads back as the
         # rule it was held to: the database suite's 15s is not test:pytest's 5s.
-        "ceiling_seconds": threshold,
+        "ceiling_seconds": round(threshold * factor, 3),
+        # The allowance its load samples bought, so a scaled ceiling can be read
+        # back later; the trend merges metric objects whole, so an extra key is
+        # harmless. 1 means the box was idle and the registered budget applied.
+        "load_factor": factor,
     }
 
 
@@ -256,9 +428,10 @@ def report_metrics(
     job: str,
     threshold: float,
     budgets: Optional[Dict[str, Tuple[float, str]]] = None,
+    factor: float = 1.0,
 ) -> Dict[str, object]:
     """Parse a JUnit report file and aggregate its duration metrics."""
-    return metrics_from_root(_parse_report(xml_path), job, threshold, budgets)
+    return metrics_from_root(_parse_report(xml_path), job, threshold, budgets, factor)
 
 
 def _job_label(idx: int, jobs: List[Tuple[str, Optional[float]]], xml_path: str) -> str:
@@ -337,24 +510,62 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--load-log",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "Load samples for each report, in order, as written by the test job "
+            "(repeatable; a report without one is held to its registered budget)"
+        ),
+    )
+    parser.add_argument(
         "--metrics-out",
         default=None,
         help="Write a per-job metrics JSON array to this path (for the CI trend)",
     )
     args = parser.parse_args(argv)
+    # A ceiling nobody can apply is not a ceiling: ``nan`` makes every
+    # comparison in this gate false (so a 15-minute test passes) and ``inf`` is
+    # the same hole, which is how a mistyped threshold turned the gate off.
+    # ``--job NAME=SECONDS`` already refuses both (see parse_job_spec); the
+    # global default did not.
+    if not math.isfinite(args.threshold) or args.threshold < 0:
+        parser.error(
+            f"--threshold {args.threshold!r}: the ceiling must be a finite, "
+            f"non-negative number of seconds"
+        )
+    # ``--metrics-out ""`` parses but is falsy, so the metrics file was never
+    # written while the invocation looked like it asked for one.
+    if args.metrics_out is not None and not args.metrics_out.strip():
+        parser.error("--metrics-out needs a path")
     try:
         job_specs = [parse_job_spec(spec) for spec in args.job]
     except ValueError as exc:
         # Exit 2, the same as an unreadable report: the request is wrong, and
         # judging anything under a ceiling that was not understood is worse.
         parser.error(str(exc))
+    if len(args.load_log) > len(args.xml_paths):
+        parser.error(
+            f"{len(args.load_log)} --load-log path(s) for "
+            f"{len(args.xml_paths)} report(s)"
+        )
+    # ``--job`` is paired positionally too, so a surplus one names no report at
+    # all: a ceiling written for a report that is not in this invocation is a
+    # configuration error, not something to drop.
+    if len(args.job) > len(args.xml_paths):
+        parser.error(
+            f"{len(args.job)} --job argument(s) for {len(args.xml_paths)} report(s)"
+        )
 
-    # Each offender carries the ceiling of the report it came from, so the
-    # printed budget is the one it was actually judged by.
-    slow: List[Tuple[float, str, float]] = []
+    # Each offender carries the ceiling of the report it came from, scaled by the
+    # load that report's job measured, so the printed budget is the one it was
+    # actually judged by. The duration is always the test's own wall clock: the
+    # load can only widen the ceiling, never red a test on its own.
+    slow: List[Tuple[float, str, float, float]] = []
     metrics: List[Dict[str, object]] = []
     seen_ids: set = set()
-    judged: List[Tuple[str, float]] = []
+    ceilings: List[Tuple[str, float, float]] = []
     for idx, xml_path in enumerate(args.xml_paths):
         # Parse each report exactly once and share the root between the slow
         # scan and the metrics pass (each was previously parsed separately).
@@ -364,15 +575,47 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
         job = _job_label(idx, job_specs, xml_path)
-        ceiling = _job_ceiling(idx, job_specs, args.threshold)
-        judged.append((job, ceiling))
-        seen_ids.update(tid for _, tid in _scan_tests(root))
-        slow.extend(
-            (duration, test_id, ceiling)
-            for duration, test_id in slow_tests_from_root(root, ceiling)
-        )
+        nominal = _job_ceiling(idx, job_specs, args.threshold)
+        factor = (
+            load_factor_from_log(args.load_log[idx])
+            if idx < len(args.load_log)
+            else None
+        ) or 1.0
+        ceilings.append((job, round(nominal * factor, 3), factor))
+        try:
+            tests = _scan_tests(root)
+        except ValueError as exc:
+            print(f"ERROR: {xml_path}: {exc}", file=sys.stderr)
+            return 2
+        # A report with nothing in it judges nothing, and "no test exceeded its
+        # budget" over it would be a green light for a suite that never ran.
+        if not tests:
+            print(
+                f"ERROR: {xml_path} contains no testcases; a report that judged "
+                f"nothing cannot pass a duration gate",
+                file=sys.stderr,
+            )
+            return 2
+        # A report can be non-empty and still have judged nothing: a run whose
+        # whole selection skipped (a missing backend, a platform guard, an
+        # xdist worker that never started) parses as a suite of 0-second
+        # testcases, and "no test exceeded its budget" over it is again a
+        # verdict nobody earned. xfail is the exception (see _did_not_run): it
+        # is written as a skip but the test did execute.
+        if all(_did_not_run(case) for case in root.iter("testcase")):
+            print(
+                f"ERROR: {xml_path} contains only skipped testcases; nothing "
+                f"ran, so the report cannot vouch for the suite's duration",
+                file=sys.stderr,
+            )
+            return 2
+        seen_ids.update(tid for _, tid in tests)
+        for duration, test_id in tests:
+            budget = _budget_seconds(test_id, nominal, SLOW_TEST_BUDGETS) * factor
+            if duration > budget:
+                slow.append((duration, test_id, budget, factor))
         if args.metrics_out:
-            metrics.append(metrics_from_root(root, job, ceiling))
+            metrics.append(metrics_from_root(root, job, nominal, factor=factor))
 
     # Fail closed on a budget that matches no testcase in any report: the test
     # was renamed or removed, so the exemption no longer applies to anything
@@ -387,24 +630,32 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         return 2
 
-    # How the ceiling is named in the verdict: one number when every report is
-    # held to the same one (the wording this gate has always used), and per job
-    # when they are not, so a reader can tell which ceiling binds which report.
-    if len({ceiling for _, ceiling in judged}) <= 1:
-        only = judged[0][1] if judged else args.threshold
-        where = (
-            f"default {only:g}s"
-            if only == args.threshold
-            else f"{only:g}s for every job"
-        )
-    else:
-        where = ", ".join(f"{job} {ceiling:g}s" for job, ceiling in judged)
+    def _scaled(ceiling: float, factor: float) -> str:
+        return f"{ceiling:g}s" + (f" x{factor:g} load factor" if factor != 1 else "")
 
-    for duration, test_id, ceiling in sorted(slow, reverse=True):
-        budget = _budget_seconds(test_id, ceiling, SLOW_TEST_BUDGETS)
+    # How the ceiling is named in the verdict: one description when every report
+    # is held to the same one (the wording this gate has always used), and per
+    # job when they are not, so a reader can tell which ceiling binds which
+    # report -- and which of them was scaled by a busy box.
+    if len({(ceiling, factor) for _, ceiling, factor in ceilings}) <= 1:
+        if ceilings:
+            only, only_factor = ceilings[0][1], ceilings[0][2]
+        else:
+            only, only_factor = args.threshold, 1.0
+        if only_factor == 1 and only == args.threshold:
+            where = f"default {_scaled(only, only_factor)}"
+        else:
+            where = f"{_scaled(only, only_factor)} for every job"
+    else:
+        where = ", ".join(
+            f"{job} {_scaled(ceiling, factor)}" for job, ceiling, factor in ceilings
+        )
+
+    for duration, test_id, budget, factor in sorted(slow, reverse=True):
         reason = SLOW_TEST_BUDGETS.get(test_id, (0.0, ""))[1]
         suffix = f"  [{reason}]" if reason else ""
-        print(f"SLOW TEST ({duration:.2f}s > {budget:g}s): {test_id}{suffix}")
+        scaled = f" x{factor:g} load factor" if factor != 1 else ""
+        print(f"SLOW TEST ({duration:.2f}s > {budget:g}s{scaled}): {test_id}{suffix}")
 
     # Metrics are written even when the gate trips: a red run's durations are
     # still worth recording (the artifact is uploaded with ``when: always``).

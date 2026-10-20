@@ -53,7 +53,7 @@ Useful commands:
 The server stores data in `~/.plexichat/` and exposes:
 
 * API at `http://127.0.0.1:8000/api/v1` (`api.api_prefix` in `src/config_defaults.py:130`)
-* WebSocket gateway at `ws://127.0.0.1:8000/gateway` (`src/api/websocket/gateway.py:261`)
+* WebSocket gateway at `ws://127.0.0.1:8000/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`))
 * Health probes at `http://127.0.0.1:8000/api/v1/ready` and `http://127.0.0.1:8000/api/v1/health` (`src/api/routes/health.py:18`, `src/api/routes/health.py:47`)
 * Interactive docs at `http://127.0.0.1:8000/docs`
 
@@ -81,7 +81,7 @@ If you set `PLEXICHAT_CONFIG`, it points directly to the file you want to use (s
 
 ### Rate limits
 
-Global defaults live in `src/config_defaults.py:272`:
+Global defaults live in `src/config_defaults.py:270`:
 
 | Scope | Requests per window | Window | Burst | Notes |
 |---|---|---|---|---|
@@ -240,7 +240,13 @@ For details, see `src/tests/README.md` and `docs/README.md`.
 
 ## Version
 
-Current version: `a.1.0-134` (Alpha), defined in `src/server/lifecycle.py:16`.
+Current version: `a.1.0-136` (Alpha), defined in `src/server/lifecycle.py:16`.
 
 `src.config_defaults.default_version()` reads that constant lazily, so a
 freshly generated config always advertises the build the process is running.
+
+Releases are cut by tagging a `dev` commit with this same string; the tag
+pipeline merges `dev` into `master`, and `master` then marks the merge as
+`<version>-build<pipeline id>` (`a.1.0-build<pipeline id>` today, since the tag
+is derived from this constant). See
+`docs/deployment/versioning.md#release-flow`.

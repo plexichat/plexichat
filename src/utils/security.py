@@ -13,7 +13,7 @@ import ipaddress
 import secrets
 import base64
 import utils.logger as logger
-from typing import Tuple, Optional, Set
+from typing import Any, Dict, Tuple, Optional, Set
 from urllib.parse import urlparse, urlunparse
 
 
@@ -38,6 +38,70 @@ def bracket_ip_literal(host: str) -> str:
     if host.startswith("["):
         return host
     return f"[{host}]"
+
+
+def pinned_request_target(
+    url: str, hostname: str, resolved_ip: str
+) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+    """Point ``url`` at the address ``URLValidator`` already cleared.
+
+    Validating a URL and then requesting it by *name* lets the HTTP client
+    resolve the host a second time, so a rebinding server can answer with a
+    public address for the check and a loopback/private one for the
+    connection. Callers that validate must therefore connect to the returned
+    ``resolved_ip`` instead of the original host.
+
+    The real hostname still has to be sent: RFC 7230 requires it in ``Host``
+    (bracketed for IPv6, with the port only when it is not the scheme
+    default) so virtual hosts route correctly, and HTTPS needs it as the TLS
+    SNI / certificate hostname or every certificate check fails against a
+    bare IP.
+
+    Rebuilding the authority from parts also drops any ``user:pass@``
+    userinfo embedded in the URL, so stored credentials are never re-sent.
+
+    Args:
+        url: The URL about to be requested.
+        hostname: Its hostname, as returned by the validator.
+        resolved_ip: The address the validator approved for it.
+
+    Returns:
+        ``(request_url, headers, extensions)``. Pass ``extensions`` to an
+        httpx request as-is; it is empty when the URL is plain HTTP.
+
+    Raises:
+        ValueError: When the URL has no usable host or its port is invalid.
+    """
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        raise ValueError(f"Invalid URL: {url!r} has no host")
+    scheme = (parsed.scheme or "").lower()
+    default_port = 80 if scheme == "http" else 443
+    try:
+        port = parsed.port or default_port
+    except ValueError as exc:
+        raise ValueError(f"invalid port in URL {url!r}: {exc}") from exc
+
+    request_url = urlunparse(
+        (
+            parsed.scheme,
+            f"{bracket_ip_literal(resolved_ip)}:{port}",
+            parsed.path or "/",
+            parsed.params,
+            parsed.query,
+            "",
+        )
+    )
+
+    host_header = bracket_ip_literal(hostname)
+    if port != default_port:
+        host_header = f"{host_header}:{port}"
+
+    headers = {"Host": host_header}
+    extensions: Dict[str, Any] = {}
+    if scheme == "https":
+        extensions["sni_hostname"] = hostname
+    return request_url, headers, extensions
 
 
 def generate_csp_nonce() -> str:

@@ -118,10 +118,6 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         1,
         "space two creates so millisecond timestamps order",
     ),
-    "test_database.py": (
-        2,
-        "settle GC before connection cleanup",
-    ),
     "test_database_load.py": (
         2,
         "sampler interval and inter-batch pause in a deselected load test",

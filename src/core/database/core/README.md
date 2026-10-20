@@ -95,9 +95,9 @@ Background worker pool:
 ## Key design decisions
 
 *   Use `?` placeholders everywhere. The compat layer converts them to `%s` for PostgreSQL — see `plexichat/src/core/database/core/compat.py`.
-*   Caching uses local memory (`OrderedDict` with TTL) and Valkey when available — see `plexichat/src/core/database/cache/` and `plexichat/src/config_defaults.py:111`.
+*   Caching uses local memory (`OrderedDict` with TTL) and Valkey when available — see `plexichat/src/core/database/cache/` and `plexichat/src/config_defaults.py:110`.
 *   All multi-table writes use transactions.
-*   Engine abstraction lets you switch between SQLite (development) and PostgreSQL (production) through `database.type` — see `plexichat/src/config_defaults.py:65`.
+*   Engine abstraction lets you switch between SQLite (development) and PostgreSQL (production) through `database.type` — see `plexichat/src/config_defaults.py:80`.
 
 ## Configuration
 
@@ -121,10 +121,10 @@ database:
 
 Global server keys use these paths — see `plexichat/src/config_defaults.py`:
 
-*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:54`. Do not use `api.host` or `api.port`.
-*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:131`. Do not use `api.prefix`.
-*   `tls` — see `plexichat/src/config_defaults.py:599`. Do not use `api.ssl`.
-*   `voice.sfu_backend` — default `aiortc` — see `plexichat/src/config_defaults.py:399`. Do not use `mediasoup`.
+*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:70`. Do not use `api.host` or `api.port`.
+*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:130`. Do not use `api.prefix`.
+*   `tls` — see `plexichat/src/config_defaults.py:618`. Do not use `api.ssl`.
+*   `voice.sfu_backend` — default `aiortc` — see `plexichat/src/config_defaults.py:396`. Do not use `mediasoup`.
 
 ## Gateway opcodes and intents
 

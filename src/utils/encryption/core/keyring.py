@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -32,6 +33,13 @@ class KeyringDecryptionError(RuntimeError):
 # Pepper ids double as password-hash envelope labels; keep the charset tight
 # (must match the envelope regex in `src.utils.encryption.pepper`).
 _PEPPER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
+
+# ``acquire_file_lock`` is non-blocking by contract, so a caller that needs
+# mutual exclusion has to retry. Writes are short, so a 30s contention timeout
+# only fires when a peer process is wedged mid-write (a hung writer, not a busy
+# one), and failing loudly beats writing without the lock.
+_LOCK_TIMEOUT_SECONDS = 30.0
+_LOCK_RETRY_SECONDS = 0.02
 
 
 class Keyring:
@@ -213,7 +221,20 @@ class Keyring:
         with self._thread_lock:
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.lock_path, "ab") as lock_file:
-                acquire_file_lock(lock_file, exclusive=True)
+                # ``acquire_file_lock`` reports contention rather than waiting
+                # for it, and the return value used to be ignored: a second
+                # process (an xdist worker, or two server processes) proceeded
+                # without the lock and both wrote the same temporary file, so
+                # one of them lost it between ``open`` and ``os.replace`` and
+                # raised FileNotFoundError. Wait for the lock instead.
+                deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+                while not acquire_file_lock(lock_file, exclusive=True):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"timed out after {_LOCK_TIMEOUT_SECONDS:g}s waiting for "
+                            f"the keyring lock {self.lock_path}"
+                        )
+                    time.sleep(_LOCK_RETRY_SECONDS)
                 try:
                     return func(*args, **kwargs)
                 finally:
@@ -366,18 +387,31 @@ class Keyring:
             "payload": base64.b64encode(payload).decode(),
         }
 
-        temp_path = self.path.with_suffix(".tmp")
-        with open(temp_path, "w") as f:
-            json.dump(final_data, f)
-
-        # Restrict permissions (Unix only, Windows ignores)
+        # A unique temporary file per write: a fixed `<name>.tmp` was shared by
+        # every process writing this keyring, so two concurrent saves could
+        # replace the same path and the slower one would find it already moved.
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f"{self.path.stem}.", suffix=".tmp", dir=str(self.path.parent)
+        )
+        temp_path = Path(temp_name)
         try:
-            os.chmod(temp_path, 0o600)
-        except (OSError, AttributeError):
-            pass
+            with os.fdopen(fd, "w") as f:
+                json.dump(final_data, f)
 
-        # Atomic swap
-        os.replace(temp_path, self.path)
+            # Restrict permissions (Unix only, Windows ignores)
+            try:
+                os.chmod(temp_path, 0o600)
+            except (OSError, AttributeError):
+                pass
+
+            # Atomic swap
+            os.replace(temp_path, self.path)
+        finally:
+            # Reached only if the swap did not happen (write/chmod failure).
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def get_or_create_pepper(self, pepper_id: str) -> bytes:
         """Return the 32-byte pepper for ``pepper_id``, generating it on first use.

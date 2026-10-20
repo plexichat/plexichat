@@ -38,7 +38,7 @@ You need:
 - `src.utils.encryption.EncryptionManager` — Hashes passwords with Argon2, encrypts data, and creates blind indexes.
 - `src.core.auth.models` — Defines `User`, `Session`, `TokenInfo`, `AuthResult`, `AuthStatus`, `AccountType`, and `AuditEventType`.
 - `src.core.auth.exceptions` — Defines all exceptions listed in [Handle errors](#handle-errors).
-- `src.core.auth.permissions` — Defines scopes in `PERMISSIONS` (`src/core/auth/permissions.py:42`) and helpers `has_permission`, `validate_permissions`, `merge_permissions`. Wildcard scopes such as `messages.*` are supported; the server-role layer rejects wildcards (`roles.py:201`).
+- `src.core.auth.permissions` — Defines scopes in `PERMISSIONS` (`src/core/auth/permissions.py:42`) and helpers `has_permission`, `validate_permissions`, `merge_permissions`. Wildcard scopes such as `messages.*` are supported; the server-role layer rejects wildcards (`src/api/routes/admin/roles.py:200`).
 - `src.core.auth.blacklist.BlacklistManager` — Blocks IPs.
 - `src.core.auth.deletion_log.DeletionLog` — Tracks account deletion events.
 - `src.core.auth.passkeys.PasskeyManager` — Implements WebAuthn/FIDO2.
@@ -162,7 +162,7 @@ Shared helpers (`_log_audit`, `_track_ip`, `_track_device`, `_encrypt_ua`, `_ua_
 - Do not import one mixin from another. Compose all mixins only in `base.py`.
 - Declare cross-mixin attributes in `protocol.py` (`AuthManagerProtocol`) so type checkers can resolve them without suppression comments.
 - Each mixin imports only what it needs from the parent `auth` package.
-- For server roles, do not send wildcard permissions such as `*` or `messages.*`. The roles API rejects them with `InvalidPermissionKey` (`src/api/routes/servers/roles.py:201`); use explicit scopes from `PERMISSIONS`.
+- For server roles, do not send wildcard permissions such as `*` or `messages.*`. The roles API rejects them with `InvalidPermissionKey` (`src/api/routes/servers/roles.py:200`); use explicit scopes from `PERMISSIONS`.
 
 ## Public API
 

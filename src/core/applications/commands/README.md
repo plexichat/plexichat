@@ -82,7 +82,7 @@ guild_cmd = registry.register_command(
 
 ### Handle duplicates and quotas
 
-The `app_commands` table enforces `UNIQUE(application_id, name, server_id)` in `schema.py:48`. Registration closes the time-of-check to time-of-use (TOCTOU) race by relying on the database constraint and converting a uniqueness violation into `CommandValidationError` in `registry.py:158`. The registry also checks the count against `max_commands_per_app` per scope (global when `server_id IS NULL`, guild when `server_id` is set) in `registry.py:94`.
+The `app_commands` table enforces `UNIQUE(application_id, name, server_id)` in `../schema.py:48`. Registration closes the time-of-check to time-of-use (TOCTOU) race by relying on the database constraint and converting a uniqueness violation into `CommandValidationError` in `registry.py:158`. The registry also checks the count against `max_commands_per_app` per scope (global when `server_id IS NULL`, guild when `server_id` is set) in `registry.py:94`.
 
 ### Look up and update commands
 

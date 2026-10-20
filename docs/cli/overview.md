@@ -74,7 +74,7 @@ The server does the following, in order:
 4. Validate configuration types.
 5. Initialize utilities, encryption, licensing, and keyrings.
 6. Initialize the database (with migrations), auth, messaging, and all core modules.
-7. Create the FastAPI application with all routes, including the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py:261`) and the API prefix `/api/v1` (`src/config_defaults.py:131`).
+7. Create the FastAPI application with all routes, including the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)) and the API prefix `/api/v1` (`src/config_defaults.py:130`).
 8. Listen on the configured host and port.
 
 ### `pre-flight`
@@ -135,7 +135,7 @@ Print the current server version and exit.
 
 ```bash
 python main.py version
-# Output: Plexichat Server a.1.0-134
+# Output: Plexichat Server a.1.0-136
 ```
 
 ### `rotate-secrets`

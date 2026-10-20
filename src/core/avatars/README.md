@@ -24,7 +24,7 @@ Storage is in the database as BLOBs — see `plexichat/src/core/avatars/schema.p
 
 ## Configuration
 
-Configure avatars under the `avatars` key — see `plexichat/src/config_defaults.py:788` and `plexichat/src/core/avatars/manager/setup.py:14`:
+Configure avatars under the `avatars` key — see `plexichat/src/config_defaults.py:790` and `plexichat/src/core/avatars/manager/setup.py:14`:
 
 ```yaml
 avatars:
@@ -46,9 +46,9 @@ avatars:
 
 Global server keys use these paths — see `plexichat/src/config_defaults.py`:
 
-*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:54`. Do not use `api.host` or `api.port`.
-*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:131`. Do not use `api.prefix`.
-*   `tls` — see `plexichat/src/config_defaults.py:599`. Do not use `api.ssl`.
+*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:70`. Do not use `api.host` or `api.port`.
+*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:130`. Do not use `api.prefix`.
+*   `tls` — see `plexichat/src/config_defaults.py:618`. Do not use `api.ssl`.
 
 Image-processing limits are also enforced in code — see `plexichat/src/core/avatars/manager/processing.py:54`:
 

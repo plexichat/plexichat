@@ -149,4 +149,4 @@ Each migration's logs are available through `MigrationTracker.get_migration_logs
 
 *   [Migration reference](migration-reference.md) — Authoritative list of migrations and schema modules.
 *   [Database configuration](deployment/configuration/config-database.md) — Connection pool and monitoring.
-*   [Admin migrations API](api/templates/admin/migrations.html) — UI for listing and running migrations.
+*   [Admin migrations API](../src/api/templates/admin/migrations.html) — UI for listing and running migrations.

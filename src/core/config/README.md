@@ -73,4 +73,4 @@ value = config.get("database.type")
 
 ## Related documentation
 
-- [Config utility README](../../../utils/common_utils/utils/config/README.md)
+- [Config utility README](../../utils/common_utils/utils/config/README.md)

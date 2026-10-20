@@ -112,34 +112,158 @@ def test_bridge_forward_skips_missing_artifact(monkeypatch):
     assert pj.traffic == []
 
 
+def _patch_resolution(monkeypatch, resolved_ip="203.0.113.7"):
+    """Stub only DNS; the pinned-target builder runs for real."""
+    from src.core.artifacts import federation as fed
+
+    resolutions = []
+
+    def _resolve(url):
+        resolutions.append(url)
+        return "peer.example", resolved_ip
+
+    monkeypatch.setattr(fed, "resolve_remote_target", _resolve)
+    return resolutions
+
+
+class _ScriptedClient:
+    """Stands in for httpx.Client and records every request it is given."""
+
+    def __init__(self, statuses=(200,)):
+        self.statuses = list(statuses)
+        self.calls = []
+
+    def __call__(self, timeout=5.0):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, content=None, headers=None, extensions=None):
+        self.calls.append(
+            {
+                "url": url,
+                "content": content,
+                "headers": headers,
+                "extensions": extensions,
+            }
+        )
+        status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+
+        class _Response:
+            status_code = status
+
+        return _Response()
+
+
+def test_http_transport_posts_to_the_validated_address(monkeypatch):
+    """Delivery must connect to the IP the validator cleared, not the name.
+
+    The stored URL is re-resolved by httpx if it is posted as-is, so a
+    rebinding peer passes validation as public and then answers with a
+    loopback address for the request. The Host header and the TLS SNI carry
+    the real name so virtual hosts and certificate checks still work.
+    """
+    pj = _FakePlexiJoin()
+    t = HttpFederationTransport(pj)
+    resolutions = _patch_resolution(monkeypatch)
+
+    client = _ScriptedClient()
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", client)
+
+    t._post_with_retry(
+        "https://peer.example",
+        "k1",
+        {"artifact_id": 1, "op": {"op_type": "edit"}},
+        "/api/v1/federation/artifact-op",
+    )
+
+    assert resolutions == ["https://peer.example/api/v1/federation/artifact-op"]
+    assert len(client.calls) == 1
+    sent = client.calls[0]
+    assert sent["url"] == "https://203.0.113.7:443/api/v1/federation/artifact-op"
+    assert sent["headers"]["Host"] == "peer.example"
+    assert sent["extensions"]["sni_hostname"] == "peer.example"
+
+
+def test_http_transport_refuses_a_blocked_remote(monkeypatch):
+    from src.core.artifacts import federation as fed
+
+    def _blocked(url):
+        raise fed.RemoteURLBlockedError("remote_url blocked: loopback")
+
+    monkeypatch.setattr(fed, "resolve_remote_target", _blocked)
+    client = _ScriptedClient()
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", client)
+
+    HttpFederationTransport(_FakePlexiJoin())._post_with_retry(
+        "https://127.0.0.1:8443",
+        "k1",
+        {"artifact_id": 1},
+        "/api/v1/federation/artifact-op",
+    )
+
+    assert client.calls == []
+
+
+def test_http_transport_retries_a_rejected_delivery(monkeypatch):
+    """A 5xx is not a delivery: it must retry, then report failure."""
+    from src.core.artifacts import federation as fed
+
+    _patch_resolution(monkeypatch)
+    client = _ScriptedClient(statuses=(503, 502, 500))
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", client)
+    monkeypatch.setattr(fed.time, "sleep", lambda _s: None)
+
+    HttpFederationTransport(_FakePlexiJoin(), max_retries=2)._post_with_retry(
+        "https://peer.example",
+        "k1",
+        {"artifact_id": 1},
+        "/api/v1/federation/artifact-op",
+    )
+
+    # max_retries=2 means three attempts, and it stops retrying a success.
+    assert len(client.calls) == 3
+
+
+def test_http_transport_stops_after_a_successful_retry(monkeypatch):
+    from src.core.artifacts import federation as fed
+
+    _patch_resolution(monkeypatch)
+    client = _ScriptedClient(statuses=(500, 200))
+    import httpx
+
+    monkeypatch.setattr(httpx, "Client", client)
+    monkeypatch.setattr(fed.time, "sleep", lambda _s: None)
+
+    HttpFederationTransport(_FakePlexiJoin(), max_retries=2)._post_with_retry(
+        "https://peer.example",
+        "k1",
+        {"artifact_id": 1},
+        "/api/v1/federation/artifact-op",
+    )
+
+    assert len(client.calls) == 2
+
+
 def test_http_transport_posts_signed_body(monkeypatch):
     pj = _FakePlexiJoin()
     t = HttpFederationTransport(pj)
+    _patch_resolution(monkeypatch)
 
-    captured = {}
-
-    class _FakeResponse:
-        status_code = 200
-
-    class _FakeClient:
-        def __init__(self, timeout=5.0):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def post(self, url, content=None, headers=None):
-            captured["url"] = url
-            captured["content"] = content
-            captured["headers"] = headers
-            return _FakeResponse()
-
+    client = _ScriptedClient()
     import httpx
 
-    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    monkeypatch.setattr(httpx, "Client", client)
 
     # Synchronously invoke the private retry loop (no background thread).
     t._post_with_retry(
@@ -149,7 +273,8 @@ def test_http_transport_posts_signed_body(monkeypatch):
         "/api/v1/federation/artifact-op",
     )
 
-    assert captured["url"] == "https://peer.example/api/v1/federation/artifact-op"
+    assert len(client.calls) == 1
+    captured = client.calls[0]
     body = captured["content"]
     assert json.loads(body.decode())["artifact_id"] == 1
     headers = captured["headers"]

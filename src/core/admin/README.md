@@ -20,7 +20,7 @@ Ensure you have:
 
 ### Permission scopes
 
-Permissions are dot-separated strings that are case-sensitive. The table lists all scopes that are defined in `permissions.py:42`.
+Permissions are dot-separated strings that are case-sensitive. The table lists all scopes that are defined in `src/core/admin/permissions.py:42`.
 
 | Scope | Description |
 |---|---|

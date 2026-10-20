@@ -387,8 +387,28 @@ test:pytest:
     # The database benchmarks are timing assertions -- ``median_ms < 10`` on a
     # single query, ``< 50`` on connection acquisition -- and pytest-benchmark
     # turns itself off under xdist, so they are not run beside the parallel
-    # suite. They are 1.2s on their own, so this costs the job nothing.
-    - python -m pytest -q src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+    # suite. ``-n0`` overrides pytest.ini's default ``-n auto`` to keep this
+    # job in one process; without it the benchmarks would silently no-op.
+    # They are 1.2s on their own, so this costs the job nothing.
+    #
+    # They get a load sampler of their own: the suite-level one below starts
+    # after they finish. On pipeline #2086 the benchmark ran 8.8s against a 5s
+    # ceiling while the client repository's e2e job shared the box -- while the
+    # query's own median stayed inside the 10ms target it asserts -- so the
+    # gate was measuring the queue, not the code. The samples let it scale this
+    # report by the load it actually ran behind, as it already does for the
+    # other two.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-benchmarks-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+      stop_sampler
+      trap - EXIT
     # Full unit + integration suite, four files at a time. Each file stays on
     # one worker (``--dist loadfile``), so a module's fixtures and module-level
     # state are still built once and in file order: pipeline #2057 ran the same
@@ -398,10 +418,28 @@ test:pytest:
     # from burning the whole 1h timeout listing failures; the default pytest.ini
     # addopts already deselect slow/performance/postgres tests. The JUnit
     # report feeds the performance:no_slow_tests gate in the next stage.
-    - >
-      python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25
-      --ignore=src/tests/test_database_benchmarks.py
-      --junitxml=test-results.xml
+    #
+    # Sample the box's load while the suite runs, one "<load> <cores>" line
+    # every couple of seconds. A wall clock measures the neighbours as much as
+    # the suite -- #2071 redded tests that cost half their measured time -- and
+    # the gate reads these samples to widen this job's ceiling by the queue it
+    # actually shared the box with (``--load-log`` in
+    # ci-tooling/check_slow_tests.py). The samples scale the ceiling only: the
+    # verdict stays the test's own duration, so a test is never red or green on
+    # how much CPU it used.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25 \
+        --ignore=src/tests/test_database_benchmarks.py \
+        --junitxml=test-results.xml
+      stop_sampler
+      trap - EXIT
   artifacts:
     when: always
     reports:
@@ -409,6 +447,8 @@ test:pytest:
     paths:
       - test-results.xml
       - test-results-benchmarks.xml
+      - test-results-load.log
+      - test-results-benchmarks-load.log
     expire_in: 1 week
 
 # The PlexiSum engine's cross-engine contract gets its own job.
@@ -479,7 +519,10 @@ test:shuffled_order_serial:
     SHUFFLE_SEED: "424242"
   script:
     - pip install --require-hashes -r requirements-dev.txt
-    - python -m pytest -q --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
+    # ``-n0`` overrides pytest.ini's default ``-n auto``: the whole point of
+    # this job is to run every file in ONE process so a leak from one file is
+    # visible to all the later ones.
+    - python -m pytest -q -n0 --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
   needs: []
   allow_failure: false
   rules:
@@ -522,10 +565,11 @@ test:timing_under_load:
       trap stop_burners EXIT
       # Serial on purpose: the burners supply the contention, and running in
       # one process keeps each file whole so the waits run where they live.
-      # The -m override relaxes pytest.ini's default deselect to include
-      # slow-marked timeout/reclaim tests -- the most clock-sensitive ones --
-      # while still excluding the duration-only performance suites.
-      python -m pytest -q --maxfail=20 --durations=25 \
+      # ``-n0`` overrides pytest.ini's default ``-n auto`` to hold this job to
+      # a single process. The -m override relaxes pytest.ini's default deselect
+      # to include slow-marked timeout/reclaim tests -- the most clock-sensitive
+      # ones -- while still excluding the duration-only performance suites.
+      python -m pytest -q -n0 --maxfail=20 --durations=25 \
         -m "not performance and not production_simulation and not multiprocess" \
         src/tests/ratelimit \
         src/tests/webhooks \
@@ -585,14 +629,29 @@ test:database_backends:
     # ``production_simulation`` cases (which are exactly the multi-worker
     # ones) run here. ``slow``/``performance`` stay out: they are duration
     # tests, not correctness ones, and have their own gate.
-    - >
-      python -m pytest -q -m "not slow and not performance"
-      --durations=25 --junitxml=test-results-db.xml
-      src/tests/test_postgres_docker.py
-      src/tests/test_transactions.py
-      src/tests/test_database.py
-      src/tests/test_production_simulation.py
-      src/tests/test_valkey_docker.py
+    # ``-n0`` overrides pytest.ini's default ``-n auto``: the multi-worker
+    # simulations already own the box's processes and must not share it with
+    # xdist workers.
+    # Same load sampling as test:pytest: this suite drives real Postgres and
+    # Valkey, so its wall clock is the box and the services together, and the
+    # gate scales its 15s ceiling by the queue the job measured.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-db-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n0 -m "not slow and not performance" \
+        --durations=25 --junitxml=test-results-db.xml \
+        src/tests/test_postgres_docker.py \
+        src/tests/test_transactions.py \
+        src/tests/test_database.py \
+        src/tests/test_production_simulation.py \
+        src/tests/test_valkey_docker.py
+      stop_sampler
+      trap - EXIT
     # These suites skip silently when a backend is missing. A skip here
     # means the services above did not come up, which must be a failure
     # rather than a green pipeline with no coverage.
@@ -607,6 +666,7 @@ test:database_backends:
       junit: test-results-db.xml
     paths:
       - test-results-db.xml
+      - test-results-db-load.log
     expire_in: 1 week
 
 # =========================================================
@@ -620,13 +680,22 @@ test:database_backends:
 # that pytest.ini deselects ``slow``/``performance``-marked tests from the run,
 # so this gate deliberately enforces only the fast suite that CI actually runs.
 #
-# Both jobs that emit a JUnit report are judged. ``test:database_backends``
-# used to be left out, which left the suites that drive real Postgres and
-# Valkey -- and the multi-worker simulations among them -- unwatched. Its tests
+# Every JUnit report is judged, including the benchmark module that
+# ``test:pytest`` runs before the main suite: its wall clock is mostly harness
+# and fixture, so it carries its own load sampler rather than being read as an
+# unloaded measurement of the query it asserts on.
+#
+# ``test:database_backends`` used to be left out, which left the suites that
+# drive real Postgres and Valkey -- and the multi-worker simulations among
+# them -- unwatched. Its tests
 # are wall-clock rather than CPU (worker restarts, lock TTLs), so it carries a
 # ceiling of its own: 15s against a heaviest measured test of 4.01s on an idle
 # box, which is thin headroom under a 5s default because the same tests cross
 # 5s on a busy runner with nothing wrong. ``test:pytest`` keeps the 5s.
+#
+# A ceiling is widened by the load its job measured (``--load-log``), never by
+# CPU time: how much CPU a test burns is not a verdict, only how long it took
+# is. On an idle box the samples are 1 and the ceilings above apply as written.
 performance:no_slow_tests:
   stage: performance
   image:
@@ -639,7 +708,14 @@ performance:no_slow_tests:
     # The metrics JSON (one entry per job, paired with the report order) is
     # uploaded alongside the gate verdict and feeds the metrics:trend job in
     # the next stage.
-    - python ci-tooling/check_slow_tests.py test-results.xml test-results-db.xml test-results-benchmarks.xml --threshold 5.0 --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks --metrics-out test-durations.json
+    - >
+      python ci-tooling/check_slow_tests.py
+      test-results.xml test-results-db.xml test-results-benchmarks.xml
+      --threshold 5.0
+      --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks
+      --load-log test-results-load.log --load-log test-results-db-load.log
+      --load-log test-results-benchmarks-load.log
+      --metrics-out test-durations.json
   artifacts:
     when: always
     paths:
@@ -1012,21 +1088,71 @@ create_merge_request:
     - if: $CI_COMMIT_BRANCH == "dev"
     - if: '$CI_COMMIT_TAG =~ /^[abcr]\.[0-9]+\.[0-9]+-[0-9]+$/'
 
+# Validate the master checkout, then mark it as a build.
+#
+# This job used to open with ``exit 0`` (added 2026-07-28): the validation never
+# ran and the tag was never created, so every master pipeline reported a green
+# "production validation suite" for a job that did nothing, and the repository
+# holds no build marker at all -- the newest tag of any kind is the ``a.1.0-131``
+# release from 07-30. The validation is now ``pre-flight`` -- it builds the
+# configuration, initialises every module against the real database layer and
+# exits without binding a port -- and the tag push is checked, so a job whose
+# product is the tag fails when the tag cannot be created. The master pipeline's
+# test stage is still the real gate; this proves the tree the tag points at
+# loads.
+#
+# The tag is a build marker (``<version prefix>-build<pipeline id>``), not a
+# release: it does not match the ``a.X.Y-N`` pattern the docker and release jobs
+# trigger on, and ``-o ci.skip`` keeps it from starting a pipeline of its own.
+# Releases stay deliberate -- merge a dev commit that carries an ``a.X.Y-N`` tag,
+# which is what ``create_merge_request`` requires (see
+# docs/deployment/versioning.md).
+#
+# The prefix is read from the tree rather than written here: ``VERSION`` in
+# ``src/server/lifecycle.py`` is what ``python main.py version``, the API and the
+# installer all report, so a release that bumps it moves the marker with it
+# instead of leaving ``a.1.0-build<n>`` on a ``a.2.0`` tree.
 validate_master_and_tag:
+  extends: .python_base
   stage: test-and-release
-  image: alpine:latest
-  before_script:
-    - apk add --no-cache git
+  timeout: 30m
+  cache:
+    policy: pull
   script:
+    - mkdir -p .plexichat
     - echo "Running production validation suite on master..."
-    - exit 0
-    - BUILD_TAG="a.1.0-build${CI_PIPELINE_IID}"
-    - COMMIT_MSG=$(git log -1 --pretty=%B)
-    - echo "All tests passed. Tagging commit as $BUILD_TAG"
-    - git config --global user.email "automerge@plexichat.com"
-    - git config --global user.name "Plexichat automerge dev into master"
-    - git tag -a "$BUILD_TAG" -m "$COMMIT_MSG"
-    - REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
-    - git push "$REPO_URL" "$BUILD_TAG" -o ci.skip
+    - python main.py pre-flight
+    - |
+      # "Plexichat Server a.1.0-136" -> a.1.0 -> a.1.0-build<pipeline id>.
+      VERSION="$(python main.py version | tail -1)"
+      VERSION="${VERSION##* }"
+      case "$VERSION" in
+        [abcr].[0-9]*.[0-9]*-[0-9]*) ;;
+        *)
+          echo "FAIL: could not read the server version (got '${VERSION}');" >&2
+          echo "refusing to tag master with a marker built from it." >&2
+          exit 1
+          ;;
+      esac
+      BUILD_TAG="${VERSION%-*}-build${CI_PIPELINE_IID}"
+      REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      # A retried job repeats its pipeline id, so the tag can already exist;
+      # that is the desired end state, not a failure.
+      if git ls-remote --tags "$REPO_URL" "refs/tags/${BUILD_TAG}" | grep -q .; then
+        echo "Tag ${BUILD_TAG} already exists; nothing to do"
+        exit 0
+      fi
+      git config user.email "automerge@plexichat.com"
+      git config user.name "Plexichat automerge dev into master"
+      git tag -a "$BUILD_TAG" -m "$(git log -1 --pretty=%B)"
+      if git push "$REPO_URL" "refs/tags/${BUILD_TAG}" -o ci.skip; then
+        echo "Tagged ${CI_COMMIT_SHA} as ${BUILD_TAG}"
+      else
+        echo "FAIL: could not push ${BUILD_TAG}." >&2
+        echo "Pushing over HTTP with the job token needs 'Allow Git push requests" >&2
+        echo "to the repository' enabled for this project; otherwise put a project" >&2
+        echo "access token with the 'api' scope in a masked variable and use it here." >&2
+        exit 1
+      fi
   rules:
     - if: $CI_COMMIT_BRANCH == "master"

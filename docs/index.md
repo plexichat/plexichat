@@ -31,7 +31,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 *   [Voice](deployment/configuration/config-voice.md) — WebRTC signaling, SFU backends, and STUN/TURN.
 *   [WebSocket](deployment/configuration/config-websocket.md) — Gateway settings, compression, rate limits, and allowed origins.
 *   [Search](deployment/configuration/config-search.md) — Search backends, indexing, and result limits.
-*   [Rate limiting](deployment/configuration/config-rate-limiting.md) — Global, user, IP, bot, and webhook rate limits. Defaults are defined in `src/config_defaults.py:273`.
+*   [Rate limiting](deployment/configuration/config-rate-limiting.md) — Global, user, IP, bot, and webhook rate limits. Defaults are defined in `src/config_defaults.py:270`.
 *   [API and server](deployment/configuration/config-api.md) — CORS, trusted proxies, debug mode, and TLS.
 *   [Email](deployment/configuration/config-email.md) — SMTP setup for verification and password reset.
 *   [Embeds and URL preview](deployment/configuration/config-embeds.md) — Embed limits and URL preview configuration.
@@ -45,7 +45,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 
 *   [Deployment](deployment/index.md) — Installation, security hardening, scaling, monitoring, and backup.
 *   **[Docker deployment](deployment/docker/index.md)** — Quick start, configuration, development, production setup, and troubleshooting.
-*   [Versioning and updates](deployment/versioning.md) — Version scheme `a.1.0-134`, update procedures, and rollback strategies.
+*   [Versioning and updates](deployment/versioning.md) — Version scheme `a.1.0-136`, update procedures, and rollback strategies.
 *   [SQLite to PostgreSQL migration](./deployment/postgres-migration.md) — Automated migration guide.
 *   [Security best practices](security.md) — Authentication security, encryption, and production checklist.
 *   [Performance tuning](performance.md) — Subsystem optimization and scaling recommendations.

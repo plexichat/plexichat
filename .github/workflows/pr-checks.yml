@@ -329,7 +329,10 @@ jobs:
             kill $burner_pids 2>/dev/null || true
           }
           trap stop_burners EXIT
-          python -m pytest -q --maxfail=20 --durations=25 \
+          # ``-n0`` overrides pytest.ini's default ``-n auto``: the burners
+          # supply the contention, and one process keeps each file whole so
+          # the waits run where they live.
+          python -m pytest -q -n0 --maxfail=20 --durations=25 \
             -m "not performance and not production_simulation and not multiprocess" \
             src/tests/ratelimit \
             src/tests/webhooks \

@@ -15,7 +15,7 @@ Plexichat provides multiple authentication layers:
 - **Account deletion** — GDPR-compliant deletion with grace period, content anonymization, and audit logging.
 - **OAuth login** — Google, GitHub, and Microsoft OAuth with PKCE protection.
 
-Configuration: [Authentication configuration](config-authentication.md) · API: [Authentication routes](api/authentication.md)
+Configuration: [Authentication configuration](deployment/configuration/config-authentication.md) · API: [Authentication routes](api/authentication.md)
 
 ### Users and profiles
 
@@ -94,14 +94,14 @@ API: [Presence routes](api/presence.md)
 - WebRTC-based voice channels with ICE server discovery and TURN credential generation (HMAC-SHA1, RFC 5389).
 - Signaling is relayed through the gateway. Media is peer-to-peer mesh by default; you can enable an SFU backend for larger channels.
 - Supported SFU backends (`src/core/voice/signaling/sfu/__init__.py:45`):
-  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py:399`).
+  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py:396`).
   - `mediasoup` — REST adapter for a custom mediasoup server.
   - `mediasoup-ws` — WebSocket adapter for mediasoup-demo.
   - `janus` — REST adapter for Janus Gateway.
 - STUN and TURN server configuration for NAT traversal.
 - Voice-channel lifecycle tied to channel occupancy (call starts when the first participant joins, ends when the last leaves).
 
-Configuration: [Voice configuration](config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: [Voice module](src/core/voice/README.md)
+Configuration: [Voice configuration](deployment/configuration/config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: [Voice module](../src/core/voice/README.md)
 
 ### Notifications
 
@@ -126,7 +126,7 @@ API: [Notifications routes](api/notifications.md)
 - Type-specific size limits (image: 10 MB, video: 100 MB, audio: 50 MB, document: 25 MB).
 - At-rest encryption for stored media.
 
-Configuration: [Media configuration](config-media.md) · API: [Media routes](api/media.md)
+Configuration: [Media configuration](deployment/configuration/config-media.md) · API: [Media routes](api/media.md)
 
 ### Search and discovery
 

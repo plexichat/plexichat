@@ -1,6 +1,6 @@
 # Email configuration
 
-This guide describes how to configure email for Plexichat. Plexichat uses email for verification during registration, password reset, and notification delivery. If you set `authentication.accounts.require_email_verification` to `true` or you use password reset, you must configure SMTP. All defaults in this guide come from `src/config_defaults.py:607`.
+This guide describes how to configure email for Plexichat. Plexichat uses email for verification during registration, password reset, and notification delivery. If you set `authentication.accounts.require_email_verification` to `true` or you use password reset, you must configure SMTP. All defaults in this guide come from `src/config_defaults.py:626`.
 
 ## Before you begin
 

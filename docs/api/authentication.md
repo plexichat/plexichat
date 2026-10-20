@@ -6,7 +6,7 @@ This guide covers registration, login, session management, two-factor authentica
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this guide are prefixed with `/api/v1/auth` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:131`).
+All endpoints in this guide are prefixed with `/api/v1/auth` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:130`).
 
 ## Register a new account
 
@@ -420,7 +420,7 @@ Authorization: Bearer <token>
 | `401` | Not authenticated |
 | `409` | No underlying interactive session |
 
-The WebSocket gateway is at `/gateway` (`src/api/websocket/gateway.py:261`).
+The WebSocket gateway is at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)).
 
 ## Manage two-factor authentication
 

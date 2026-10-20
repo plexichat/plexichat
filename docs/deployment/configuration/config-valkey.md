@@ -105,7 +105,7 @@ valkey:
   ssl: false   # Default is false. Set to true to use TLS. Defined in src/config_defaults.py:117
 ```
 
-There are no `ssl_cert_reqs` or `ssl_ca_certs` keys in `src/config_defaults.py:111` or `src/core/database/valkey_client/base.py:61`. When you set `ssl: true`, the client sets `use_tls: true` in the Glide client configuration:
+There are no `ssl_cert_reqs` or `ssl_ca_certs` keys in `src/config_defaults.py:110` or `src/core/database/valkey_client/base.py:61`. When you set `ssl: true`, the client sets `use_tls: true` in the Glide client configuration:
 
 *   `src/core/database/valkey_client/base.py:149` passes `use_tls: self.ssl` to `GlideClientConfiguration`.
 *   `src/api/websocket/__init__.py:487` does the same for the cross-worker pub/sub client: `use_tls = valkey_cfg.get("ssl", False)`.

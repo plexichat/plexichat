@@ -6,7 +6,7 @@ Use webhooks to create inbound integrations that post messages into Plexichat ch
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this guide are prefixed with `/api/v1/webhooks` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:131`).
+All endpoints in this guide are prefixed with `/api/v1/webhooks` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:130`).
 
 ## Error envelope
 

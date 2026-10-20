@@ -128,7 +128,7 @@ violation = am.trigger_violation(
 
 ## Configuration
 
-The manager reads `automod` from the app config — see `plexichat/src/config_defaults.py:668` and `plexichat/src/core/automod/manager/base.py:86`.
+The manager reads `automod` from the app config — see `plexichat/src/config_defaults.py:682` and `plexichat/src/core/automod/manager/base.py:86`.
 
 ```yaml
 automod:
@@ -173,10 +173,10 @@ The manager also supports `openai`, `perspective`, and `custom` adapters when th
 
 Global server config keys use these paths — see `plexichat/src/config_defaults.py`:
 
-*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:54`. Do not use `api.host` or `api.port`.
-*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:131`. Do not use `api.prefix` or `prefix`.
-*   `tls` — see `plexichat/src/config_defaults.py:599`. Do not use `api.ssl`.
-*   `voice.sfu_backend` — default `aiortc` — see `plexichat/src/config_defaults.py:399`. Do not use `mediasoup`.
+*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:70`. Do not use `api.host` or `api.port`.
+*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:130`. Do not use `api.prefix` or `prefix`.
+*   `tls` — see `plexichat/src/config_defaults.py:618`. Do not use `api.ssl`.
+*   `voice.sfu_backend` — default `aiortc` — see `plexichat/src/config_defaults.py:396`. Do not use `mediasoup`.
 
 ## Gateway opcodes and intents
 

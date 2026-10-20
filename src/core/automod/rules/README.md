@@ -88,9 +88,9 @@ automod:
 
 For server binding and API routing, use the correct global keys — see `plexichat/src/config_defaults.py`:
 
-*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:54`.
-*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:131`.
-*   `tls` — see `plexichat/src/config_defaults.py:599`.
+*   `server.host`, `server.port`, `server.reload` — see `plexichat/src/config_defaults.py:70`.
+*   `api.api_prefix` — default `/api/v1` — see `plexichat/src/config_defaults.py:130`.
+*   `tls` — see `plexichat/src/config_defaults.py:618`.
 
 ## Gateway opcodes and intents
 
