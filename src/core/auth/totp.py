@@ -89,16 +89,16 @@ class TOTPReplayCache:
                 )
                 return False
 
-    def _db_cleanup(self, now: int) -> None:
+    def _db_cleanup(self, now_ms: int) -> None:
         """Best-effort purge of expired claims (rate-limited to once per 5min)."""
-        if now - self._last_db_cleanup < 300:
+        if now_ms - self._last_db_cleanup < 300_000:
             return
-        self._last_db_cleanup = now
+        self._last_db_cleanup = now_ms
         db = self._db
         if db is None:
             return
         try:
-            db.execute("DELETE FROM auth_totp_replay WHERE expires_at <= ?", (now,))
+            db.execute("DELETE FROM auth_totp_replay WHERE expires_at <= ?", (now_ms,))
         except Exception:
             pass
 
@@ -117,20 +117,24 @@ class TOTPReplayCache:
         db = self._db
         if db is None or not self._ensure_db_table():
             return None
-        now = int(time.time())
-        expires = now + ttl_seconds
+        # Millisecond resolution: second-resolution expiry made the claim live
+        # anywhere from 0 to ttl seconds, so a claim made just before a second
+        # boundary was already expired for the replay that followed it. The
+        # column is INTEGER and holds milliseconds (see auth/schema.py).
+        now_ms = int(time.time() * 1000)
+        expires = now_ms + int(ttl_seconds * 1000)
         try:
             # Free an expired leftover first so a stale row cannot block a
             # legitimate new window; the conditional delete is atomic and the
             # subsequent insert is the actual single-winner claim.
             db.execute(
                 "DELETE FROM auth_totp_replay WHERE claim_key = ? AND expires_at <= ?",
-                (key, now),
+                (key, now_ms),
             )
             claimed = db.insert_or_ignore(
                 "auth_totp_replay", ["claim_key", "expires_at"], (key, expires)
             )
-            self._db_cleanup(now)
+            self._db_cleanup(now_ms)
             return bool(claimed)
         except Exception as e:
             logger.warning(f"TOTP replay cache: shared database fallback failed: {e}")

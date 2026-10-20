@@ -50,6 +50,34 @@ class TestTOTPReplaySharedDatabase:
             time.sleep(1.1)
             assert cache.check_and_mark(9, "111111", purpose="login") is True
 
+    def test_a_claim_lives_for_its_whole_ttl_across_a_second_boundary(self, db):
+        """The claim must survive the clock ticking a second.
+
+        With second-resolution expiry a code claimed at .99 into a second was
+        expired a hundredth of a second later, so the replay presented right
+        after the boundary was accepted. The claim has to last the TTL it was
+        granted, not however much of the current second was left.
+        """
+        cache = TOTPReplayCache(ttl_seconds=1)
+        cache.set_db(db)
+        with (
+            _no_shared_cache(),
+            patch("src.core.auth.totp.time.time", return_value=1000.99),
+        ):
+            assert cache.check_and_mark(11, "999999", purpose="login") is True
+        # 60ms later, on the other side of the second boundary.
+        with (
+            _no_shared_cache(),
+            patch("src.core.auth.totp.time.time", return_value=1001.05),
+        ):
+            assert cache.check_and_mark(11, "999999", purpose="login") is False
+        # Past the TTL the claim is stale and the code may be used again.
+        with (
+            _no_shared_cache(),
+            patch("src.core.auth.totp.time.time", return_value=1002.2),
+        ):
+            assert cache.check_and_mark(11, "999999", purpose="login") is True
+
     def test_falls_back_when_db_lacks_claim_support(self):
         """A DB without a working claim path degrades to the local cache."""
 

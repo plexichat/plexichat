@@ -453,6 +453,12 @@ def ensure_ws_tickets_table(db) -> None:
 # Cross-worker TOTP replay claims. The claim key is a PRIMARY KEY, which makes
 # the insert-or-ignore below an atomic claim shared by every worker using the
 # same database — the fallback used when no shared Valkey backend is present.
+#
+# ``expires_at`` is epoch MILLISECONDS. Seconds would make the claim live
+# anywhere from 0 to ttl seconds: a code claimed at .99 into a second is
+# expired a hundredth of a second later, so a replay presented immediately
+# after the boundary was accepted. The claim has to last at least the TTL it
+# was given.
 _TOTP_REPLAY_DDL = (
     """
     CREATE TABLE IF NOT EXISTS auth_totp_replay (
