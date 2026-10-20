@@ -44,7 +44,7 @@ By default the scripts prompt you for values. Use `--non-interactive` (or `-NonI
 2. Start the stack:
 
    ```bash
-   BACKEND_VERSION=a.1.0-136 CLIENT_VERSION=a.1.0-121 docker compose up -d
+   BACKEND_VERSION=a.1.0-138 CLIENT_VERSION=a.1.0-122 docker compose up -d
    ```
 
 ## Verify the deployment
