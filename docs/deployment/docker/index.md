@@ -166,7 +166,7 @@ All data lives in named Docker volumes:
 - `postgres_data` - PostgreSQL data
 - `valkey_data` - Valkey append-only file
 - `rustfs_data` - Media objects
-- `plexichat_home` - Application state at `/root/.plexichat` (config, keyrings, logs)
+- `plexichat_home` - Application state at `/home/plexichat/.plexichat` (config, keyrings, logs)
 - `certs` - TLS certificates
 - `backup_repo` - Restic repository
 - `clamav_db` - ClamAV signature database

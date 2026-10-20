@@ -50,7 +50,7 @@ Stores all application data.
 
 *   **Image:** `postgres:18-alpine`
 *   **Data:** User accounts, messages, servers, and media metadata.
-*   **Volume:** `postgres_data` (persistent) mounted at `/var/lib/postgresql/data`.
+*   **Volume:** `postgres_data` (persistent) mounted at `/var/lib/postgresql`. PostgreSQL 18 keeps the cluster in `/var/lib/postgresql/<major>/docker` and refuses to start when `/var/lib/postgresql/data` is itself a mount (`docker-library/postgres#1259`), so the parent directory is the mount point.
 *   **Environment:** `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (required). Compose fails fast if `POSTGRES_PASSWORD` is unset.
 *   **Network:** Default bridge network. Backend connects at `db:5432`.
 *   **Connection pooling:** 5 to 20 connections for development (the `.env.example` defaults), 20 to 100+ for production. See [Connection pooling](connection-pooling.md).
@@ -116,7 +116,7 @@ Core application logic.
 *   **Image:** `${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backend:${BACKEND_VERSION:-latest}` built from `plexichat/Dockerfile` (`python:3.14.8-slim-trixie`, non-root user `plexichat` UID 10001).
 *   **Services:** REST API at `/api/v1/*`, WebSocket gateway at `/gateway`, liveness probe at `GET /api/v1/ready`, deep health at `GET /api/v1/health` and `GET /health`, documentation at `/docs` and `/redoc`, admin UI at `/admin`.
 *   **Environment:** `PLEXICHAT_CONFIG=/app/config/docker-config.yaml`, `PLEXICHAT_PUBLIC_SERVER_URL`, `NO_STRICT_CONFIG=false`, `SCANNER_ENABLED=true`, `SCANNER_HOST=clamav`, `SCANNER_PORT=3310`, `SEARCH_BACKEND=sqlite_fts5` (default).
-*   **Volumes:** `./config/docker-config.yaml:/app/config/docker-config.yaml:ro` and `plexichat_home:/root/.plexichat`.
+*   **Volumes:** `./config:/app/config` (writable: the server persists env overrides and the generated `media.signing_key` there on every start) and `plexichat_home:/home/plexichat/.plexichat`.
 *   **Network:** Default bridge network.
     *   Database at `db:5432`
     *   Valkey at `valkey:6379`
@@ -183,7 +183,7 @@ Only `client` (80, 443) and, in single-replica mode, `backend` (8000/TCP and 300
 | `postgres_data` | PostgreSQL, Backup (ro) | Database files | Yes |
 | `valkey_data` | Valkey | Cache dump and AOF | Yes |
 | `rustfs_data` | RustFS, Backup (ro), rustfs-perms | Media objects | Yes |
-| `plexichat_home` | Backend, Backup (ro) | Application state at `/root/.plexichat` | Yes |
+| `plexichat_home` | Backend, Backup (ro) | Application state at `/home/plexichat/.plexichat` | Yes |
 | `certs` | Cert-Init, Client | TLS certificates | Yes |
 | `backup_repo` | Backup | Restic repository at `/repo` | Yes |
 | `clamav_db` | ClamAV, clamav-unofficial-sigs | ClamAV signatures | Yes |

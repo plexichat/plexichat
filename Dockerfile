@@ -25,15 +25,19 @@ COPY . /app
 #
 # Volume ownership notes:
 #   - The compose stack mounts the named volume plexichat_home at
-#     /root/.plexichat. Creating that directory owned by UID/GID 10001 in the
-#     image means the first-time named-volume population inherits correct
-#     ownership, so the app can write data/media/logs there.
+#     $HOME/.plexichat (/home/plexichat/.plexichat). Creating that directory
+#     owned by UID/GID 10001 in the image means the first-time named-volume
+#     population inherits correct ownership, so the app can write
+#     data/media/logs/temp there.
+#   - It must NOT live under /root: /root is mode 0700 owned by root, so this
+#     unprivileged user cannot traverse it, and the server dies on startup with
+#     PermissionError while creating /root/.plexichat/logs.
 #   - One-shot init steps intentionally stay root: cert-init is a separate
 #     container, and deploy tooling invokes config generation with
 #     `docker run --user 0` (it writes to host bind mounts).
 RUN useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin plexichat \
-    && mkdir -p /root/.plexichat \
-    && chown -R plexichat:plexichat /root/.plexichat /app
+    && mkdir -p /home/plexichat/.plexichat \
+    && chown -R plexichat:plexichat /home/plexichat /app
 
 USER plexichat
 

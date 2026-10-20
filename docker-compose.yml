@@ -55,7 +55,10 @@ services:
       # Fail fast on unset/empty password rather than starting with no auth.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # postgres:18 stores its cluster in /var/lib/postgresql/<major>/docker and
+      # hard-errors when /var/lib/postgresql/data is itself a mount
+      # (docker-library/postgres#1259). Mount the parent, not the old data dir.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -203,8 +206,14 @@ services:
       MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-}
       SEARCH_ELASTICSEARCH_HOSTS: ${SEARCH_ELASTICSEARCH_HOSTS:-http://elasticsearch:9200}
     volumes:
-      - ./config/docker-config.yaml:/app/config/docker-config.yaml:ro
-      - plexichat_home:/root/.plexichat
+      # The server REWRITES this file on every start: it applies the env
+      # overrides above through config.set() (which persists) and fills in
+      # media.signing_key on first boot. Mounting the file/dir read-only makes
+      # startup die with PermissionError, so the directory is mounted writable.
+      - ./config:/app/config
+      # The image runs as uid 10001 with HOME=/home/plexichat; /root is 0700
+      # root, so data must not live under /root.
+      - plexichat_home:/home/plexichat/.plexichat
     depends_on:
       db:
         condition: service_healthy
@@ -267,6 +276,11 @@ services:
 
   backup:
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat}/backup:${BACKEND_VERSION:-latest}
+    # supercronic takes PID 1 as its cue to enable process reaping, and on
+    # LXC/Docker hosts where /proc semantics differ it aborts with
+    # "Failed to fork exec: no such file or directory". Running it under tini
+    # (docker-init) keeps it off PID 1 and it schedules normally.
+    init: true
     env_file:
       - .env
     environment:

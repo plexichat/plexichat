@@ -182,7 +182,7 @@ docker run -d \
   -e POSTGRES_PASSWORD="your_db_password" \
   -e VALKEY_PASSWORD="your_valkey_password" \
   -v $(pwd)/plexichat/config:/app/config \
-  -v plexichat_home:/root/.plexichat \
+  -v plexichat_home:/home/plexichat/.plexichat \
   plexichat:latest
 ```
 
