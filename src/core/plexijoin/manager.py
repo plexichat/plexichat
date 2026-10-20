@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.admin.logging import AdminLogEntry
 
@@ -40,11 +40,14 @@ def _sign_payload(
     return _hmac.new(shared_key.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
 
-def validate_remote_url(remote_url: str) -> None:
+def resolve_remote_target(remote_url: str) -> Tuple[str, str]:
     """SSRF-validate a caller-supplied remote instance URL.
 
     Requires an https scheme and rejects URLs whose hostname resolves to a
     private/reserved IP using the shared URLValidator from utils.security.
+
+    Returns:
+        ``(hostname, resolved_ip)`` for the address the validator approved.
 
     Raises:
         RemoteURLBlockedError: when the URL is not acceptable.
@@ -57,11 +60,37 @@ def validate_remote_url(remote_url: str) -> None:
     try:
         from src.utils.security import URLValidator
 
-        URLValidator().validate_url_for_request(remote_url)
+        return URLValidator().validate_url_for_request(remote_url)
     except ImportError:  # pragma: no cover - security utils always present
         raise RemoteURLBlockedError("URL validator unavailable")
     except ValueError as e:
         raise RemoteURLBlockedError(f"remote_url blocked: {e}")
+
+
+def validate_remote_url(remote_url: str) -> None:
+    """SSRF-validate a remote instance URL, discarding the resolution.
+
+    Prefer :func:`resolve_remote_target`: a caller about to make a request
+    needs the IP the check approved, or the HTTP client resolves the name
+    again and a rebinding host can answer differently the second time.
+    """
+    resolve_remote_target(remote_url)
+
+
+def _pinned_target(
+    url: str, hostname: str, resolved_ip: str
+) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+    """Return ``(request_url, headers, extensions)`` aimed at ``resolved_ip``.
+
+    Thin wrapper over the shared builder so a malformed port surfaces as the
+    same blocked-URL error the rest of this module raises.
+    """
+    from src.utils.security import pinned_request_target
+
+    try:
+        return pinned_request_target(url, hostname, resolved_ip)
+    except ValueError as exc:
+        raise RemoteURLBlockedError(f"remote_url blocked: {exc}") from exc
 
 
 class PlexiJoinManager:
@@ -319,13 +348,23 @@ class PlexiJoinManager:
             return {"success": False, "error": "Connection not found"}
 
         try:
-            validate_remote_url(connection["remote_url"])
+            hostname, resolved_ip = resolve_remote_target(connection["remote_url"])
+            request_url, pin_headers, extensions = _pinned_target(
+                f"{connection['remote_url'].rstrip('/')}/api/v1/health",
+                hostname,
+                resolved_ip,
+            )
         except RemoteURLBlockedError as e:
             return {"success": False, "error": str(e)}
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{connection['remote_url']}/api/v1/health")
+                # Connect to the address the validator approved, not the
+                # hostname: a rebinding remote must not be able to answer with
+                # a different (internal) address for the actual request.
+                response = await client.get(
+                    request_url, headers=pin_headers, extensions=extensions
+                )
                 is_reachable = response.status_code == 200
 
                 if is_reachable and connection["status"] in ("pending", "broken"):
@@ -644,12 +683,16 @@ class PlexiJoinManager:
         """
         import httpx
 
-        validate_remote_url(remote_url)
+        hostname, resolved_ip = resolve_remote_target(remote_url)
+        request_url, pin_headers, extensions = _pinned_target(
+            remote_url.rstrip("/") + path, hostname, resolved_ip
+        )
 
         body = json.dumps(payload).encode("utf-8")
         timestamp = str(int(time.time()))
         nonce = secrets.token_urlsafe(24)
         headers = {
+            **pin_headers,
             "content-type": "application/json",
             "x-plexijoin-timestamp": timestamp,
             "x-plexijoin-nonce": nonce,
@@ -662,7 +705,10 @@ class PlexiJoinManager:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
-                    remote_url.rstrip("/") + path, content=body, headers=headers
+                    request_url,
+                    content=body,
+                    headers=headers,
+                    extensions=extensions,
                 )
             ok = 200 <= response.status_code < 300
             return {

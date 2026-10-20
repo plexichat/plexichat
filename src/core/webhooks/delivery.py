@@ -26,7 +26,6 @@ so concurrent workers can never double-deliver the same record).
 import threading
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
-from urllib.parse import urlparse, urlunparse
 
 import utils.logger as logger
 from src.core.webhooks.url_safety import redact_url, validate_delivery_endpoint
@@ -70,36 +69,17 @@ def pinned_request(
 
     Rebuilding the URL from parts also drops any ``user:pass@`` userinfo a
     stored endpoint might carry, so credentials are never re-sent.
+
+    The rebuild itself is shared with the other outbound fetchers; this
+    wrapper only turns its ``ValueError`` into the delivery error the retry
+    queue understands.
     """
-    from src.utils.security import bracket_ip_literal
+    from src.utils.security import pinned_request_target
 
-    parsed = urlparse(endpoint_url)
-    default_port = 80 if parsed.scheme == "http" else 443
     try:
-        port = parsed.port or default_port
+        return pinned_request_target(endpoint_url, hostname, resolved_ip)
     except ValueError as exc:
-        raise WebhookDeliveryError(f"endpoint URL has an invalid port: {exc}") from exc
-
-    request_url = urlunparse(
-        (
-            parsed.scheme,
-            f"{bracket_ip_literal(resolved_ip)}:{port}",
-            parsed.path or "/",
-            parsed.params,
-            parsed.query,
-            "",
-        )
-    )
-
-    host_header = bracket_ip_literal(hostname)
-    if port != default_port:
-        host_header = f"{host_header}:{port}"
-
-    headers = {"Host": host_header}
-    extensions: Dict[str, Any] = {}
-    if parsed.scheme == "https":
-        extensions["sni_hostname"] = hostname
-    return request_url, headers, extensions
+        raise WebhookDeliveryError(f"endpoint URL is unusable: {exc}") from exc
 
 
 class WebhookDeliverer:
