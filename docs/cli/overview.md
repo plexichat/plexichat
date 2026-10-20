@@ -135,7 +135,7 @@ Print the current server version and exit.
 
 ```bash
 python main.py version
-# Output: Plexichat Server a.1.0-134
+# Output: Plexichat Server a.1.0-135
 ```
 
 ### `rotate-secrets`
