@@ -12,6 +12,11 @@ state:
   attempt, or dead-letters once the attempt budget is exhausted)
 * transport errors   -> ``mark_failure`` with no status (same backoff)
 
+Every POST is sent to the IP the SSRF validator resolved (with the real
+hostname carried in ``Host`` and, for HTTPS, in the TLS SNI), so a DNS
+rebinding between validation and connect cannot redirect a delivery to an
+internal host.
+
 ``process_due_retries`` is the scheduler entry point; it is safe to run
 periodically from any worker (each due record is atomically claimed via
 a conditional ``UPDATE ... SET status='delivering'`` guarded by rowcount,
@@ -20,7 +25,8 @@ so concurrent workers can never double-deliver the same record).
 
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 import utils.logger as logger
 from src.core.webhooks.url_safety import redact_url, validate_delivery_endpoint
@@ -42,6 +48,58 @@ SIGNATURE_STALE_AFTER_MS = 5 * 60 * 1000
 
 class WebhookDeliveryError(Exception):
     """Raised when an outbound webhook delivery fails at the transport level."""
+
+
+def pinned_request(
+    endpoint_url: str, hostname: str, resolved_ip: str
+) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+    """Return ``(request_url, headers, extensions)`` for an IP-pinned POST.
+
+    ``URLValidator`` resolves the endpoint hostname once and hands back the
+    IP it approved. Posting the original URL would make the HTTP client
+    resolve the name *again*, so a DNS-rebinding server can answer with a
+    public address at validation time and a loopback/private one at connect
+    time -- the exact SSRF the validator exists to stop. The media proxy and
+    the link-preview service already connect to the resolved IP for this
+    reason; outbound webhooks must too.
+
+    The real hostname still has to travel: RFC 7230 requires it in ``Host``
+    (bracketed, with the port only when non-default) so virtual hosts route
+    correctly, and HTTPS needs it as the TLS SNI / certificate hostname or
+    every certificate check fails against a bare IP.
+
+    Rebuilding the URL from parts also drops any ``user:pass@`` userinfo a
+    stored endpoint might carry, so credentials are never re-sent.
+    """
+    from src.utils.security import bracket_ip_literal
+
+    parsed = urlparse(endpoint_url)
+    default_port = 80 if parsed.scheme == "http" else 443
+    try:
+        port = parsed.port or default_port
+    except ValueError as exc:
+        raise WebhookDeliveryError(f"endpoint URL has an invalid port: {exc}") from exc
+
+    request_url = urlunparse(
+        (
+            parsed.scheme,
+            f"{bracket_ip_literal(resolved_ip)}:{port}",
+            parsed.path or "/",
+            parsed.params,
+            parsed.query,
+            "",
+        )
+    )
+
+    host_header = bracket_ip_literal(hostname)
+    if port != default_port:
+        host_header = f"{host_header}:{port}"
+
+    headers = {"Host": host_header}
+    extensions: Dict[str, Any] = {}
+    if parsed.scheme == "https":
+        extensions["sni_hostname"] = hostname
+    return request_url, headers, extensions
 
 
 class WebhookDeliverer:
@@ -135,7 +193,7 @@ class WebhookDeliverer:
         # never reach an internal target. Fail closed on validation errors
         # so the record is marked failed/dead-letter instead of delivered.
         try:
-            validate_delivery_endpoint(
+            hostname, resolved_ip = validate_delivery_endpoint(
                 endpoint_url, allow_private_network=self._allow_private_network
             )
         except ValueError as exc:
@@ -147,7 +205,19 @@ class WebhookDeliverer:
                 "endpoint URL refused by SSRF validation"
             ) from exc
 
+        # Connect to the IP the validator approved: re-resolving the name
+        # here would reopen the DNS-rebinding window the check closes. The
+        # loopback test seam passes no IP, so it keeps posting the literal
+        # URL to the local server it bound.
+        request_url = endpoint_url
+        extensions: Dict[str, Any] = {}
         headers = {"Content-Type": "application/json"}
+        if resolved_ip:
+            request_url, pinned_headers, extensions = pinned_request(
+                endpoint_url, hostname, resolved_ip
+            )
+            headers.update(pinned_headers)
+
         metadata = record.get("metadata") or {}
         original = metadata.get("original_signing_headers") or {}
         effective = self._effective_signing_headers(
@@ -158,7 +228,15 @@ class WebhookDeliverer:
 
         session = self._session()
         try:
-            response = session.post(endpoint_url, json=payload, headers=headers)
+            if extensions:
+                response = session.post(
+                    request_url,
+                    json=payload,
+                    headers=headers,
+                    extensions=extensions,
+                )
+            else:
+                response = session.post(request_url, json=payload, headers=headers)
         except Exception as exc:
             # F6: redact credentials/query tokens before the URL hits logs.
             logger.warning(

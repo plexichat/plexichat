@@ -32,8 +32,15 @@ class _RecorderClient:
     def __init__(self):
         self.calls: list[Dict[str, Any]] = []
 
-    def post(self, url, json=None, headers=None):
-        self.calls.append({"url": url, "json": json, "headers": headers})
+    def post(self, url, json=None, headers=None, extensions=None):
+        self.calls.append(
+            {
+                "url": url,
+                "json": json,
+                "headers": headers,
+                "extensions": extensions,
+            }
+        )
         return _FakeResponse(200)
 
 
