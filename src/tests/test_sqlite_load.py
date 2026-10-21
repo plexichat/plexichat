@@ -31,15 +31,14 @@ def setup_module(tmp_path_factory):
 @pytest.fixture
 def sqlite_db(setup_module):
     """Create a fresh SQLite database for each test."""
-    import gc
-    import time
-
     temp_dir = setup_module
     config_path = str(temp_dir / "sqlite_load_config.yaml")
     db_path = str(temp_dir / "sqlite_load_test.db")
 
-    gc.collect()
-    time.sleep(0.1)
+    # Release the previous test's pool + monitor thread deterministically
+    # instead of a full ``gc.collect()`` and a guessed 100 ms sleep (the
+    # dominant per-test fixture cost in this file).
+    Database.reset()
 
     if os.path.exists(config_path):
         try:
@@ -92,8 +91,9 @@ def sqlite_db(setup_module):
 
     yield db
 
-    gc.collect()
-    time.sleep(0.1)
+    # Release the pool before unlinking the file (deterministic replacement
+    # for the old ``gc.collect()`` + 100 ms sleep).
+    Database.reset()
 
     for path in [db_path]:
         if os.path.exists(path):

@@ -36,14 +36,18 @@ def setup_module(tmp_path_factory):
 
 @pytest.fixture
 def db_config(setup_module):
-    import gc
-
     temp_dir = setup_module
     config_path = str(temp_dir / "config.yaml")
     db_path = str(temp_dir / "test_security.db")
 
-    gc.collect()
-    time.sleep(0.05)
+    # Close the previous test's pool + monitor thread deterministically
+    # before touching its files. This used to be a full ``gc.collect()``
+    # followed by a 50 ms sleep twice per test; the collection alone walked
+    # this worker's whole object graph (the suite's single most expensive
+    # fixture cost) and the sleep only guessed at when the monitor had let
+    # go. ``Database.reset()`` is the deterministic equivalent and is called
+    # again below once the fresh config is installed.
+    Database.reset()
 
     for path_to_clean in [config_path, db_path]:
         if os.path.exists(path_to_clean):
@@ -64,8 +68,9 @@ def db_config(setup_module):
 
     yield config_path
 
-    gc.collect()
-    time.sleep(0.05)
+    # Same deterministic teardown: release the pool before unlinking the
+    # file instead of collecting garbage and sleeping for the monitor.
+    Database.reset()
 
     for path in [db_path]:
         if os.path.exists(path):

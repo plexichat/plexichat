@@ -135,7 +135,7 @@ Direct backend access:
    To deploy a pinned version:
 
    ```bash
-   BACKEND_VERSION=a.1.0-138 CLIENT_VERSION=a.1.0-122 docker compose up -d
+   BACKEND_VERSION=a.1.0-143 CLIENT_VERSION=a.1.0-122 docker compose up -d
    ```
 
 3. Wait until `docker compose ps` shows `healthy` for `db`, `valkey`, `rustfs`, `clamav`, `backend`, and `client`.
@@ -166,7 +166,7 @@ All data lives in named Docker volumes:
 - `postgres_data` - PostgreSQL data
 - `valkey_data` - Valkey append-only file
 - `rustfs_data` - Media objects
-- `plexichat_home` - Application state at `/root/.plexichat` (config, keyrings, logs)
+- `plexichat_home` - Application state at `/home/plexichat/.plexichat` (config, keyrings, logs)
 - `certs` - TLS certificates
 - `backup_repo` - Restic repository
 - `clamav_db` - ClamAV signature database

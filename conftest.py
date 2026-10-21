@@ -23,6 +23,37 @@ for path in [project_root, src_path, utils_path]:
         sys.path.insert(0, path)
 
 
+def _available_cpu_count() -> int:
+    """CPUs this process may actually run on (affinity/cgroup aware)."""
+    try:
+        count = os.process_cpu_count()
+    except AttributeError:  # Python < 3.13
+        count = None
+    if not count:
+        try:
+            count = len(os.sched_getaffinity(0))
+        except AttributeError:  # Windows
+            count = os.cpu_count()
+    return max(1, count or 1)
+
+
+# pytest-xdist resolves ``-n auto`` through its own hook, which prefers
+# psutil's *host physical* core count. In a container/VM with CPU affinity or
+# a cgroup quota that is larger than the CPUs the process may use — this
+# 4-vCPU VM reports 10 host physical cores — so ``-n auto`` started ten
+# workers on four CPUs and oversubscribed the box (the loaded runner is where
+# timing-sensitive tests flake). Setting the env var that xdist's hook reads
+# first is the part conftest can guarantee is applied: this module is imported
+# before the xdist plugin resolves ``auto``. The hook below is the same policy
+# expressed natively, for callers that consult it directly.
+os.environ.setdefault("PYTEST_XDIST_AUTO_NUM_WORKERS", str(_available_cpu_count()))
+
+
+def pytest_xdist_auto_num_workers(config):
+    """Size ``-n auto`` to the CPUs this process may actually run on."""
+    return _available_cpu_count()
+
+
 def pytest_addoption(parser):
     """Pre-register the ``cache_dir`` ini option.
 
@@ -46,9 +77,10 @@ def pytest_addoption(parser):
         metavar="SEED",
         help=(
             "Run test files in a seeded random order (tests within a file keep "
-            "their order and stay together, so --dist loadfile still pins a "
-            "file to one worker). Any seed yields a reproducible order, so an "
-            "order-dependent failure can be replayed with the same seed. "
-            "Without this option the default collection order is used."
+            "their order and stay together in the submitted queue). Any seed "
+            "yields a reproducible order, so an order-dependent failure can "
+            "be replayed with the same seed; combine with --dist loadfile if "
+            "you need one file per worker. Without this option the default "
+            "collection order is used."
         ),
     )

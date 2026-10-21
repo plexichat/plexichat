@@ -133,10 +133,11 @@ def shuffle_test_order(items, seed):
     """Reorder ``items`` by shuffling whole files, deterministically by ``seed``.
 
     Tests from the same file keep their relative order and stay adjacent, so
-    ``pytest-xdist``'s ``--dist loadfile`` still hands each file to one worker;
-    only the order of the file groups changes. The same seed always yields the
-    same order, so an order-dependent failure is reproducible with
-    ``--shuffle-seed``.
+    the file grouping used by ``--dist loadfile`` (one file per worker) is
+    preserved; under the default ``--dist worksteal`` an idle worker may still
+    steal the tail of a group, but the submitted order itself is
+    deterministic. The same seed always yields the same order, so an
+    order-dependent failure is reproducible with ``--shuffle-seed``.
     """
     groups = {}
     keys = []
@@ -231,8 +232,9 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.unit)
 
     # Optional seeded shuffle, applied after the auto-markers so the
-    # reordered list keeps every marker. Grouping by file is preserved so
-    # ``--dist loadfile`` can still pin each file to a single xdist worker.
+    # reordered list keeps every marker. Grouping by file is preserved (the
+    # default ``--dist worksteal`` may split a group across workers, while
+    # ``--dist loadfile`` keeps it whole).
     seed = config.getoption("shuffle_seed", None)
     if seed is not None:
         items[:] = shuffle_test_order(items, seed)

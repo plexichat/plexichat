@@ -184,6 +184,19 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "inventories every route under src/api/routes: 1.25s idle, 15.2s at 3x "
         "oversubscription",
     ),
+    # Drives a real RTCPeerConnection, so the cost is the media stack rather
+    # than the assertion. ``apply_remote_offer`` waits up to 5s for ICE
+    # gathering to report complete; on the runner that wait expires every time
+    # (5.03s in pipeline #2133, twice, to the hundredth), while the same test
+    # takes 2.94s on the build box where gathering completes (call 0.04s,
+    # teardown 1.04s). The ceiling has to cover the fixed wait it can hit, and
+    # a real regression still lands well past it.
+    "src.tests.voice.test_sfu_aiortc_offer::test_apply_remote_offer_returns_a_real_answer": (
+        10.0,
+        "real aiortc offer/answer: 2.94s on the build box, 5.03s on the runner "
+        "(#2133) where ICE gathering never reports complete inside the adapter's "
+        "fixed 5s wait",
+    ),
 }
 
 

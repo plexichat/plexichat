@@ -332,16 +332,34 @@ def migrated_db_template():
 
     template_db.close()
 
+    # ``close()`` only releases the calling thread's connection; the pool
+    # still holds the ``min_connections`` handles it opened, and switching the
+    # journal mode for the page-size rebuild needs exclusive access ("database
+    # is locked" otherwise). Tear the singleton down so the file is quiescent
+    # before compacting; the function-scoped ``db`` fixture builds a fresh
+    # engine against its own per-test config below.
+    Database.reset()
+
     # Compact the template so per-test copies are fast. The migrated
-    # database is ~2.9MB mostly because of the 4KB default page size
+    # database is ~3MB mostly because of the 4KB default page size
     # (hundreds of tables/indexes each occupy at least one page); the
     # function-scoped ``db`` fixture copies this file for every test
     # (~4000+ copies per run). Rebuild it on 1KB pages via VACUUM, which
-    # typically shrinks the file ~4x and keeps identical content.
+    # shrinks the file ~3.4x (3096576 -> 923648 bytes) and keeps identical
+    # content.
+    #
+    # ``PRAGMA page_size`` has no effect while the database is in WAL mode:
+    # WAL only supports the existing page size, so the VACUUM would rebuild
+    # the file at 4096-byte pages and the previous code silently paid the
+    # VACUUM without shrinking anything. Switching the template's journal
+    # mode to DELETE first (no other connection is open) lets the page size
+    # change take effect; the per-test connections switch the copy back to
+    # WAL when the engine opens it.
     import sqlite3 as _sqlite3
 
     _compact_conn = _sqlite3.connect(template_path)
     try:
+        _compact_conn.execute("PRAGMA journal_mode=DELETE")
         _compact_conn.execute("PRAGMA page_size=1024")
         _compact_conn.execute("VACUUM")
     finally:

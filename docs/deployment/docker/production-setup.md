@@ -122,7 +122,7 @@ For internal RustFS debugging, add a temporary `ports` override as described in 
 
 ### 4. Run the backend as non-root
 
-The backend image runs as the unprivileged user `plexichat` (UID 10001) (`plexichat/Dockerfile:34`). The image creates and owns `/root/.plexichat` so the `plexichat_home` volume inherits correct ownership.
+The backend image runs as the unprivileged user `plexichat` (UID 10001) (`plexichat/Dockerfile:34`). The image creates and owns `/home/plexichat/.plexichat` (the user's `$HOME`) so the `plexichat_home` volume inherits correct ownership. It must not live under `/root`: that directory is mode `0700` owned by root, so UID 10001 cannot traverse it and the server exits with `PermissionError` while creating its logs directory.
 
 Verify the runtime user:
 

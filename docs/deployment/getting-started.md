@@ -182,7 +182,7 @@ docker run -d \
   -e POSTGRES_PASSWORD="your_db_password" \
   -e VALKEY_PASSWORD="your_valkey_password" \
   -v $(pwd)/plexichat/config:/app/config \
-  -v plexichat_home:/root/.plexichat \
+  -v plexichat_home:/home/plexichat/.plexichat \
   plexichat:latest
 ```
 
@@ -390,7 +390,7 @@ curl https://chat.example.com/api/v1/ready
 # {"status":"ready"}
 
 curl https://chat.example.com/api/v1/health
-# {"status":"healthy","version":"a.1.0-138",...}
+# {"status":"healthy","version":"a.1.0-143",...}
 
 curl https://chat.example.com/api/v1/status
 # Server state, version, uptime, maintenance info

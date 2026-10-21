@@ -25,6 +25,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _is_duplicate_column_error(exc: Exception) -> bool:
+    """Whether *exc* reports that the column already exists.
+
+    SQLite says "duplicate column name: is_temporary"; Postgres raises
+    SQLSTATE 42701 with ``column "is_temporary" of relation "srv_members"
+    already exists``. Matching only the SQLite wording made this migration
+    raise on every fresh Postgres install, where migration 000's servers
+    schema had already created the column.
+    """
+    message = str(exc).lower()
+    if "duplicate column" in message:
+        return True
+    return "42701" in message or ("already exists" in message and "column" in message)
+
+
 def up(db):
     """Add the is_temporary column to srv_members."""
     try:
@@ -36,7 +51,7 @@ def up(db):
         # Fresh installs create the table with is_temporary already present
         # (the module schema is authoritative); a duplicate-column error is
         # then expected.
-        if "duplicate column" not in str(e).lower():
+        if not _is_duplicate_column_error(e):
             raise
         logger.info(
             "Migration 003: srv_members.is_temporary already present; skipping ALTER"
@@ -49,6 +64,10 @@ def down(db):
         db.execute("ALTER TABLE srv_members DROP COLUMN is_temporary")
     except Exception as e:  # pragma: no cover - defensive
         lowered = str(e).lower()
-        if "no such column" in lowered or "duplicate column" in lowered:
+        if (
+            "no such column" in lowered
+            or "duplicate column" in lowered
+            or ("column" in lowered and "does not exist" in lowered)
+        ):
             return
         raise

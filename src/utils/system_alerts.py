@@ -37,15 +37,23 @@ def record_system_alert(
         import time
         import json as _json
         import src.api as _api
+        from src.utils.encryption import generate_snowflake_id
 
         db = _api.get_db()
         if db is None:
             return
+        # ``id`` is supplied explicitly: the schema is authored in SQLite,
+        # where ``INTEGER PRIMARY KEY`` auto-assigns a rowid, but the Postgres
+        # form is a plain ``BIGINT PRIMARY KEY`` with no default. Omitting it
+        # there failed every insert with
+        # ``null value in column "id" of relation "system_alerts"``, so the
+        # alert pipeline recorded nothing at all on a Postgres install.
         db.execute(
             "INSERT INTO system_alerts "
-            "(source, event_type, severity, details, target_path, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(id, source, event_type, severity, details, target_path, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
+                generate_snowflake_id(),
                 source,
                 event_type,
                 severity,

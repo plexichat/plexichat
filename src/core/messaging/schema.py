@@ -315,9 +315,29 @@ def _column_exists(db, table: str, column: str) -> Optional[bool]:
 
     Returns True/False when the backend answers, or None when the check
     cannot be performed (unknown dialect) so callers never misreport.
+
+    Postgres has no ``PRAGMA``, so the SQLite probe raised there and this
+    returned None -- which made the caller issue an ALTER for a column that
+    already existed. On Postgres that aborted the migration transaction and
+    rolled back every table created before it, so migration 000 died with
+    "relation auth_users does not exist" (messaging creates tables that
+    reference ``auth_users``).
     """
+    checker = getattr(db, "column_exists", None)
+    if callable(checker):
+        try:
+            return bool(checker(table, column))
+        except Exception:
+            return None
     try:
-        rows = db.fetch_all(f"PRAGMA table_info({table})")
+        if getattr(db, "type", None) == "postgres":
+            rows = db.fetch_all(
+                "SELECT column_name AS name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = ?",
+                (table,),
+            )
+        else:
+            rows = db.fetch_all(f"PRAGMA table_info({table})")
     except Exception:
         return None
     try:

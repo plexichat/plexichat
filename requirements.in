@@ -122,7 +122,7 @@ mistune==3.3.4
 click==8.3.3
 
 # Image Processing
-pillow==12.3.0
+pillow==13.0.0
 imagehash==4.3.2
 
 # Document Generation

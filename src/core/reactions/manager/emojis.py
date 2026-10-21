@@ -23,13 +23,21 @@ class EmojiOpsMixin(ReactionProtocol):
         # missing table means a fresh install whose schema is created later -
         # nothing to migrate and no misleading log. Non-sqlite dialects fall
         # back to the column check directly.
+        # ``sqlite_master`` does not exist in Postgres; querying it there
+        # raised on every startup (logged as a query failure). Use the
+        # database's portable existence check instead.
+        table_exists = getattr(self._db, "table_exists", None)
         try:
-            row = self._db.fetch_one(
-                "SELECT name FROM sqlite_master "
-                "WHERE type = 'table' AND name = 'react_custom_emoji'"
-            )
-            if not row:
-                return
+            if callable(table_exists):
+                if not table_exists("react_custom_emoji"):
+                    return
+            elif getattr(self._db, "type", None) != "postgres":
+                row = self._db.fetch_one(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'react_custom_emoji'"
+                )
+                if not row:
+                    return
         except Exception:
             pass
         try:
