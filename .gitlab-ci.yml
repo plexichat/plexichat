@@ -882,8 +882,11 @@ docker:build_and_push:
       # `^a.N.N-N$`), so retention never prunes it.
       CACHE_REF="${REGISTRY}/${CI_PROJECT_PATH}/backend:buildcache"
       retry login
-      docker buildx create --driver docker-container --name plexichat --use >/dev/null
-      docker buildx inspect --bootstrap >/dev/null
+      # Deliberately the default builder (the daemon's own BuildKit), not a
+      # docker-container one: `docker buildx create` refuses to run while the
+      # dind TLS variables are exported -- "could not create a builder
+      # instance with TLS data loaded from environment" -- and the default
+      # builder supports registry cache import/export all the same.
       retry docker buildx build \
         --cache-from "type=registry,ref=${CACHE_REF}" \
         --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
