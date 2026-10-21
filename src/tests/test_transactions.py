@@ -36,16 +36,15 @@ def setup_module(tmp_path_factory):
 @pytest.fixture
 def db_config(setup_module):
     """Sets up a fresh config and database for each test."""
-    import gc
-    import time
-
     temp_dir = setup_module
     config_path = str(temp_dir / "config.yaml")
     db_path = str(temp_dir / "test_transactions.db")
 
-    # Force garbage collection to close any lingering connections
-    gc.collect()
-    time.sleep(0.1)
+    # Close the previous test's pool + monitor thread deterministically
+    # before removing its files. This used to be ``gc.collect()`` plus a
+    # 100 ms sleep twice per test; the full collection was the dominant
+    # fixture cost and the sleep only guessed when the monitor finished.
+    Database.reset()
 
     # Ensure fresh config and db
     if os.path.exists(config_path):
@@ -83,9 +82,9 @@ def db_config(setup_module):
 
     yield config_path
 
-    # Force garbage collection before cleanup
-    gc.collect()
-    time.sleep(0.1)
+    # Release the pool before unlinking the file (deterministic replacement
+    # for the old ``gc.collect()`` + 100 ms sleep).
+    Database.reset()
 
     # Cleanup after test
     for path in [db_path]:

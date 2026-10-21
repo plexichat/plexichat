@@ -245,10 +245,14 @@ so a missing service can never masquerade as a green run.
 ### Parallel Execution
 
 ``pytest.ini`` runs the suite under ``pytest-xdist`` by default: ``-n auto``
-sizes the pool to the host's CPU count and ``--dist loadfile`` pins each test
-file to one worker, so a module's fixtures and module-level state are still
-built once per file. This is the same shape CI validates (``test:pytest`` uses
-``-n 4 --dist loadfile``).
+sizes the pool to the host's CPU count and ``--dist worksteal`` lets any idle
+worker steal tests from the tail of a busy one, so one long file cannot leave
+three workers idle at the end of the run. Tests are isolated per test (the
+autouse fixtures reset config, caches, the wired module graph and globals, and
+each database test copies the migrated template), so a file may span workers;
+module-scoped fixtures build once in each worker that receives part of it. CI
+keeps a second, stricter layout (``-n 4 --dist loadfile``, one file per worker)
+so both scheduling shapes stay exercised.
 
 ```bash
 # The default already runs in parallel; no flags needed.
@@ -256,6 +260,9 @@ pytest
 
 # Pin an explicit worker count (overrides the addopts default).
 pytest -n 4
+
+# One file per worker: the shape CI's test:pytest job validates.
+pytest -n 4 --dist loadfile
 
 # Force one process -- needed by the benchmark job, the serial
 # order-independence run, the timing-under-load gate, and anything that
@@ -274,12 +281,17 @@ later file -- until it fails on a different machine or worker split. Two
 pieces of tooling keep that honest:
 
 **Seeded shuffle.** `--shuffle-seed <n>` runs the files in a reproducible
-random order. Tests inside a file keep their order and stay together, so
-`--dist loadfile` still pins a file to a single xdist worker. Re-running with
-the same seed reproduces a failure exactly:
+random order. Tests inside a file keep their order and stay adjacent in the
+submitted queue, so a failure can be replayed with the same seed. Under the
+default `--dist worksteal` a worker may steal part of a file once its own
+queue drains; pass `--dist loadfile` when you need the stricter one-file-per-
+worker placement while bisecting:
 
 ```bash
 # Replay a CI order-dependence failure locally
+pytest -n auto --shuffle-seed 424242
+
+# Same order, one file per worker (the shape CI validates)
 pytest -n auto --dist loadfile --shuffle-seed 424242
 ```
 

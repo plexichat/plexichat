@@ -62,9 +62,9 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         "let the bounded checksum-cache TTL expire",
     ),
     "database/test_security.py": (
-        5,
-        "settle GC before cleanup; spin on a concurrent writer's event; "
-        "hold a transaction open; space worker writes",
+        3,
+        "spin on a concurrent writer's event; hold a transaction open; "
+        "space worker writes",
     ),
     "encryption/test_encryption.py": (
         2,
@@ -136,17 +136,13 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         "deselected simulation",
     ),
     "test_sqlite_load.py": (
-        3,
-        "settle GC before cleanup; let concurrent writer threads start",
+        1,
+        "let concurrent writer threads start",
     ),
     "test_sqlite_pool_reclaim.py": (
         13,
         "let leaked connections idle past the reclaim threshold; spin "
         "until worker threads exit",
-    ),
-    "test_transactions.py": (
-        2,
-        "settle GC before transaction cleanup",
     ),
     "test_valkey_docker.py": (
         2,
