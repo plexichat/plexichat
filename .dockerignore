@@ -14,3 +14,20 @@ media
 uploads
 config/config.yaml
 config/docker-config.yaml
+
+# CI scratch that lands inside the checkout ($CI_PROJECT_DIR). PIP_CACHE_DIR
+# points at $CI_PROJECT_DIR/.cache/pip, so without this the image carried a
+# ~370 MB pip wheel cache in its COPY layer -- bigger than the source tree and
+# different on every build, so no layer could ever be reused.
+.cache
+.schemathesis
+test_artifacts
+test-results.xml
+gl-*-report.json
+ci-metrics.jsonl
+htmlcov
+.coverage
+.mypy_cache
+.tox
+node_modules
+*.log
