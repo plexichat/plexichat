@@ -4,7 +4,7 @@ name: plexichat
 #
 # Compose ref pinning: this file is the canonical compose source. Operators
 # who fetch it remotely MUST pin a released tag (e.g.
-# BACKEND_VERSION=a.1.0-138) and verify the SHA256 sidecar / out-of-band
+# BACKEND_VERSION=a.1.0-139) and verify the SHA256 sidecar / out-of-band
 # digest before `docker compose up`. Fetching docker-compose.yml from the
 # unreleased `dev` branch is forbidden unless explicitly opted into with
 # ALLOW_DEV_COMPOSE=1, which the deploy script treats as tracking
@@ -255,10 +255,19 @@ services:
   client:
     restart: unless-stopped
     image: ${CI_REGISTRY_IMAGE:-gitlab.plexichat.com/plexichat/plexichat-client}/nginx:${CLIENT_VERSION:-latest}
-    # F8: no env_file here. The static nginx image reads no environment
-    # variables (its config is baked in and config.js is bind-mounted), so
-    # injecting the shared .env would expose DB/Valkey/S3/restic secrets to
-    # the perimeter service with the largest attack surface for zero benefit.
+    # F8: no env_file here. The only variable this container needs is the CSP
+    # connect-src list below (a public origin, never a secret), so injecting
+    # the shared .env would expose DB/Valkey/S3/restic secrets to the
+    # perimeter service with the largest attack surface for zero benefit.
+    #
+    # PLEXICHAT_CONNECT_SRC is rendered into the client image's CSP at
+    # container start. It MUST list every origin config.js points serverUrl
+    # at: with the default (`'self'`) a cross-origin API (e.g.
+    # https://api.example.com) is blocked by the browser, and sign-up / the
+    # capability probe fail with a connect-src violation. Images before
+    # a.1.0-124 bake in `connect-src 'self'` and ignore this variable.
+    environment:
+      PLEXICHAT_CONNECT_SRC: ${PLEXICHAT_CONNECT_SRC:-'self'}
     depends_on:
       backend:
         condition: service_started
