@@ -873,8 +873,21 @@ docker:build_and_push:
           docker login -u "$CI_REGISTRY_USER" --password-stdin "$REGISTRY"
       }
       echo "Building backend image for $CI_COMMIT_TAG from $REGISTRY"
-      docker build -t "$IMAGE" -t "$IMAGE_LATEST" .
+      # Build cache lives in the registry, not on the runner: every job gets a
+      # fresh dind with an empty image store, so a plain `docker build`
+      # re-compiled the apt layer (~855 MB) and the pip layer (~650 MB) with
+      # new digests on every release. Those blobs can never be reused, so each
+      # release permanently added gigabytes to the registry. The cache tag is
+      # deliberately NOT a release tag (the cleanup policy only matches
+      # `^a.N.N-N$`), so retention never prunes it.
+      CACHE_REF="${REGISTRY}/${CI_PROJECT_PATH}/backend:buildcache"
       retry login
+      docker buildx create --driver docker-container --name plexichat --use >/dev/null
+      docker buildx inspect --bootstrap >/dev/null
+      retry docker buildx build \
+        --cache-from "type=registry,ref=${CACHE_REF}" \
+        --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
+        --load -t "$IMAGE" -t "$IMAGE_LATEST" .
       retry docker push "$IMAGE"
       retry docker push "$IMAGE_LATEST"
       # Docker Hub is best-effort: missing credentials must not fail a
@@ -906,7 +919,7 @@ container_scanning:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   # Blocking: this is the only verdict on the image that actually ships. While
   # it was advisory, a release whose backend image carried known
-  # vulnerabilities went green and was published anyway (and on a.1.0-144 it
+  # vulnerabilities went green and was published anyway (and on a.1.0-146 it
   # failed on a full runner disk, which nobody had to look at because the
   # pipeline stayed green). A real finding now stops the release; so does a
   # scanner that cannot run, which is the point -- silence is not a pass.
@@ -973,57 +986,29 @@ docker:backup:
         echo "Skipping Docker Hub push: DOCKER_HUB_TOKEN or DOCKER_HUB_USER not set"
       fi
 
+# Retention for the release images. This job used to list `docker image ls` on
+# its own dinD daemon -- which never holds the images the build job pushed --
+# and split tags into alpha/beta buckets the `a.X.Y-<build>` scheme does not
+# have, so it could only ever print "Keeping all release tags" and exit 0 while
+# every release added gigabytes to the registry. It now deletes through the
+# registry API, with the same script the client project uses.
+#
+# Only tags matching the release pattern are candidates, so `latest` and the
+# `:buildcache` tag survive, and the newest $REGISTRY_KEEP are kept. The
+# GitLab-side cleanup policy (keep_n=5, older than 7d) is the backstop for
+# releases that never reach this job, and the registry's online GC is what
+# actually returns the deleted layers to the disk.
 docker:cleanup_old_images:
   stage: docker
-  image: docker:27
-  services:
-    - name: docker:27-dind
-      alias: docker
-      # HTTP-only registry; see docker:build_and_push.
-      command: ["--insecure-registry=registry.plexichat.com:80"]
+  image: node:22-slim
   variables:
-    # TLS for the dind socket (Agent 55 F22). With a non-empty
-    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
-    # certs, so builds never talk to an unauthenticated tcp://docker:2375
-    # socket that would be root-equivalent for anyone on the job network.
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_HOST: tcp://docker:2376
-    DOCKER_TLS_VERIFY: "1"
-    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+    REGISTRY_KEEP: "5"
+    CI_API_V4_URL: "http://gitlab.plexichat.com/api/v4"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   script:
-    - echo "Cleaning up old Docker images based on retention policy"
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "${CI_REGISTRY%:*}:80"
-    - |
-      # Get all tags for backend image
-      ALL_TAGS=$(docker image ls --format '{{.Tag}}' $CI_REGISTRY/$CI_PROJECT_PATH/backend | grep -E '^a\.[0-9]+\.[0-9]+-[0-9]+$' | sort -V || true)
-      
-      # Separate by version type
-      ALPHA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-alpha' || echo "")
-      BETA_TAGS=$(echo "$ALL_TAGS" | grep -E '\-beta' || echo "")
-      RELEASE_TAGS=$(echo "$ALL_TAGS" | grep -v -E '\-(alpha|beta)' || echo "")
-      
-      # Keep last 5 alpha builds
-      if [ -n "$ALPHA_TAGS" ]; then
-        ALPHA_TO_DELETE=$(echo "$ALPHA_TAGS" | head -n -5)
-        for tag in $ALPHA_TO_DELETE; do
-          echo "Deleting old alpha build: $tag"
-          docker rmi $CI_REGISTRY/$CI_PROJECT_PATH/backend:$tag || true
-        done
-      fi
-      
-      # Keep last 10 beta builds
-      if [ -n "$BETA_TAGS" ]; then
-        BETA_TO_DELETE=$(echo "$BETA_TAGS" | head -n -10)
-        for tag in $BETA_TO_DELETE; do
-          echo "Deleting old beta build: $tag"
-          docker rmi $CI_REGISTRY/$CI_PROJECT_PATH/backend:$tag || true
-        done
-      fi
-      
-      # Keep all releases (no deletion)
-      echo "Keeping all release tags: $RELEASE_TAGS"
+    - node scripts/registry-cleanup.cjs --keep "$REGISTRY_KEEP" --path "${CI_PROJECT_PATH}/backend"
+    - node scripts/registry-cleanup.cjs --keep "$REGISTRY_KEEP" --path "${CI_PROJECT_PATH}/backup"
   allow_failure: true
 
 create_merge_request:
@@ -1214,7 +1199,7 @@ validate_master_and_tag:
     - echo "Running production validation suite on master..."
     - python main.py pre-flight
     - |
-      # "Plexichat Server a.1.0-144" -> a.1.0 -> a.1.0-build<pipeline id>.
+      # "Plexichat Server a.1.0-146" -> a.1.0 -> a.1.0-build<pipeline id>.
       VERSION="$(python main.py version | tail -1)"
       VERSION="${VERSION##* }"
       case "$VERSION" in

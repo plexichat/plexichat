@@ -240,7 +240,7 @@ For details, see `src/tests/README.md` and `docs/README.md`.
 
 ## Version
 
-Current version: `a.1.0-144` (Alpha), defined in `src/server/lifecycle.py:16`.
+Current version: `a.1.0-146` (Alpha), defined in `src/server/lifecycle.py:16`.
 
 `src.config_defaults.default_version()` reads that constant lazily, so a
 freshly generated config always advertises the build the process is running.

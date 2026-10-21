@@ -19,8 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /app/requirements.txt
 
-COPY . /app
-
 # Run the internet-facing FastAPI process as a dedicated non-root user.
 #
 # Volume ownership notes:
@@ -35,9 +33,16 @@ COPY . /app
 #   - One-shot init steps intentionally stay root: cert-init is a separate
 #     container, and deploy tooling invokes config generation with
 #     `docker run --user 0` (it writes to host bind mounts).
+#
+# The user is created *before* the source copy on purpose: `COPY --chown`
+# below carries ownership in the layer it already writes. A trailing
+# `chown -R /app` instead rewrote the metadata of every file after the copy,
+# which stored a second full copy of the tree in its own ~400 MB layer.
 RUN useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin plexichat \
     && mkdir -p /home/plexichat/.plexichat \
-    && chown -R plexichat:plexichat /home/plexichat /app
+    && chown -R plexichat:plexichat /home/plexichat
+
+COPY --chown=10001:10001 . /app
 
 USER plexichat
 
