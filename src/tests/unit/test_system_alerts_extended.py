@@ -13,6 +13,16 @@ class FakeDb:
         self.calls.append((sql, params))
 
 
+def test_each_alert_gets_its_own_id(monkeypatch):
+    """Two alerts must not reuse an id (the column is the primary key)."""
+    db = FakeDb()
+    monkeypatch.setattr("src.api.get_db", lambda: db)
+    record_system_alert("connected")
+    record_system_alert("connected")
+    first, second = (call[1][0] for call in db.calls)
+    assert first != second
+
+
 def test_no_db_is_noop(monkeypatch):
     monkeypatch.setattr("src.api.get_db", lambda: None)
     # Must not raise, and returns None.
@@ -26,7 +36,13 @@ def test_inserts_alert_with_defaults(monkeypatch):
     assert len(db.calls) == 1
     sql, params = db.calls[0]
     assert "system_alerts" in sql
-    source, event_type, severity, details, target_path, created_at = params
+    # ``id`` is supplied by the helper: SQLite auto-assigns one for
+    # INTEGER PRIMARY KEY, but the Postgres column is a plain BIGINT PRIMARY
+    # KEY with no default, so an insert without it failed outright.
+    assert sql.lstrip().upper().startswith("INSERT INTO SYSTEM_ALERTS")
+    assert "id" in sql.split("(", 1)[1].split(")", 1)[0].replace(" ", "").split(",")
+    alert_id, source, event_type, severity, details, target_path, created_at = params
+    assert isinstance(alert_id, int) and alert_id > 0
     assert source == "valkey"
     assert event_type == "connected"
     assert severity == "error"
@@ -40,7 +56,7 @@ def test_inserts_with_target_path(monkeypatch):
     monkeypatch.setattr("src.api.get_db", lambda: db)
     record_system_alert("dead", target_path="/admin/alerts")
     _, params = db.calls[0]
-    assert params[4] == "/admin/alerts"
+    assert params[5] == "/admin/alerts"
 
 
 def test_none_details_stored_as_null(monkeypatch):
@@ -48,7 +64,7 @@ def test_none_details_stored_as_null(monkeypatch):
     monkeypatch.setattr("src.api.get_db", lambda: db)
     record_system_alert("connected")
     _, params = db.calls[0]
-    assert params[3] is None
+    assert params[4] is None
 
 
 @pytest.mark.parametrize(
@@ -68,11 +84,11 @@ def test_details_serialized(monkeypatch, details):
     record_system_alert("x", details)
     _, params = db.calls[0]
     if details is None:
-        assert params[3] is None
+        assert params[4] is None
     else:
         import json
 
-        assert json.loads(params[3]) == details
+        assert json.loads(params[4]) == details
 
 
 def test_db_execute_error_swallowed(monkeypatch, caplog):
@@ -109,8 +125,8 @@ def test_default_source_and_severity(monkeypatch):
     monkeypatch.setattr("src.api.get_db", lambda: db)
     record_system_alert("boot")
     _, params = db.calls[0]
-    assert params[0] == "cross_worker"
-    assert params[2] == "info"
+    assert params[1] == "cross_worker"
+    assert params[3] == "info"
 
 
 def test_success_path_logs_no_warning(monkeypatch, caplog):
