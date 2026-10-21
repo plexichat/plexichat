@@ -62,15 +62,13 @@ class PushManager:
     def _ensure_push_token_columns(self) -> None:
         """Add p256dh/auth/token_index columns for Web Push / encryption
         at rest if a pre-existing DB lacks them."""
-        try:
-            existing = {
-                row["name"]
-                for row in self._db.fetch_all("PRAGMA table_info(push_tokens)")
-            }
-        except Exception:
-            return
+        # ``PRAGMA table_info`` only exists in SQLite. Probing with it on
+        # Postgres raised, the handler returned early, and the columns were
+        # never added -- every registration then failed with
+        # ``column "p256dh" does not exist``. Use the database's portable
+        # column check when it has one, and fall back to a dialect probe.
         for column in ("p256dh", "auth", "token_index"):
-            if column in existing:
+            if self._has_push_token_column(column):
                 continue
             try:
                 self._db.execute(f"ALTER TABLE push_tokens ADD COLUMN {column} TEXT")
@@ -78,6 +76,26 @@ class PushManager:
                 # Another process may have added it concurrently, or the
                 # table does not exist yet — either way it is safe to ignore.
                 logger.debug(f"Push token column {column!r} not added: {e}")
+
+    def _has_push_token_column(self, column: str) -> bool:
+        """Whether ``push_tokens`` already has *column* on this dialect."""
+        checker = getattr(self._db, "column_exists", None)
+        if callable(checker):
+            try:
+                return bool(checker("push_tokens", column))
+            except Exception:
+                return False
+        try:
+            if getattr(self._db, "type", None) == "postgres":
+                rows = self._db.fetch_all(
+                    "SELECT column_name AS name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'push_tokens'"
+                )
+            else:
+                rows = self._db.fetch_all("PRAGMA table_info(push_tokens)")
+        except Exception:
+            return False
+        return column in {row["name"] for row in rows}
 
     def _migrate_legacy_token_rows(self) -> None:
         """Re-envelope legacy plaintext token rows (H3 hardening).

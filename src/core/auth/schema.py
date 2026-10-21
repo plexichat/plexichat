@@ -394,6 +394,28 @@ _TRUSTED_DEVICES_DDL = (
 )
 
 
+def _auth_devices_columns(db) -> set:
+    """Return the column names of ``auth_devices`` for the connected dialect.
+
+    Postgres has no ``PRAGMA``. The dialect probe used to test
+    ``hasattr(db, "dialect")`` -- an attribute ``Database`` never had -- so it
+    always sent ``PRAGMA table_info(auth_devices)`` to Postgres. That raised,
+    and the failure rolled the connection's open transaction back, discarding
+    every ``CREATE TABLE`` migration 000 had already executed in it; the next
+    ``CREATE TABLE auth_ws_tickets`` then failed on its ``REFERENCES
+    auth_users`` and migration 000 died with "relation auth_users does not
+    exist", so a fresh install could not start. Introspect portably instead.
+    """
+    if getattr(db, "type", None) == "postgres":
+        rows = db.fetch_all(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'auth_devices'"
+        )
+    else:
+        rows = db.fetch_all("PRAGMA table_info(auth_devices)")
+    return {r["name"] for r in rows}
+
+
 def ensure_trusted_devices_columns(db) -> None:
     """Add the trusted-device columns when they do not exist yet.
 
@@ -401,12 +423,7 @@ def ensure_trusted_devices_columns(db) -> None:
     definition and only issue the ALTER when the column is missing.
     """
     try:
-        rows = db.fetch_all(
-            "SELECT name FROM pragma_table_info('auth_devices') AS t"
-            if hasattr(db, "dialect") and getattr(db, "dialect", None) == "postgres"
-            else "PRAGMA table_info(auth_devices)"
-        )
-        existing = {r["name"] for r in rows}
+        existing = _auth_devices_columns(db)
     except Exception:
         # Cannot introspect (unusual driver): attempt the ALTERs and ignore
         # duplicate-column failures.

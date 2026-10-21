@@ -352,6 +352,27 @@ CREATE INDEX IF NOT EXISTS idx_srv_progress_user ON srv_onboarding_progress(user
 """
 
 
+def _server_member_column_exists(db, column: str) -> bool:
+    """Whether ``srv_members`` already has *column* on the connected dialect."""
+    checker = getattr(db, "column_exists", None)
+    if callable(checker):
+        try:
+            return bool(checker("srv_members", column))
+        except Exception:
+            return False
+    try:
+        if getattr(db, "type", None) == "postgres":
+            rows = db.fetch_all(
+                "SELECT column_name AS name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'srv_members'"
+            )
+        else:
+            rows = db.fetch_all("PRAGMA table_info(srv_members)")
+    except Exception:
+        return False
+    return column in {row["name"] for row in rows}
+
+
 def create_tables(db):
     """Create all server tables."""
     statements = split_sql_statements(SCHEMA)
@@ -371,11 +392,19 @@ def create_tables(db):
                 raise
 
     # Additive migration: ``CREATE TABLE IF NOT EXISTS`` does not add columns
-    # to pre-existing tables, so upgrade older databases explicitly. A
-    # duplicate-column error means the column already exists and is harmless.
-    try:
-        db.execute("ALTER TABLE srv_members ADD COLUMN is_temporary INTEGER DEFAULT 0")
-    except Exception as e:
-        logger.debug(f"srv_members.is_temporary migration skipped: {e}")
+    # to pre-existing tables, so upgrade older databases explicitly.
+    #
+    # The column is probed first because a duplicate-column ALTER is not
+    # harmless on Postgres: the driver rolls the statement's transaction back,
+    # which discards the ``CREATE TABLE``s this function has already executed
+    # in it. That used to surface far away, as migration 000 failing with
+    # "relation auth_users does not exist" on a fresh install.
+    if not _server_member_column_exists(db, "is_temporary"):
+        try:
+            db.execute(
+                "ALTER TABLE srv_members ADD COLUMN is_temporary INTEGER DEFAULT 0"
+            )
+        except Exception as e:
+            logger.debug(f"srv_members.is_temporary migration skipped: {e}")
 
     logger.info("Server tables created successfully")

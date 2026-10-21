@@ -57,10 +57,19 @@ def _ensure_require_signed_deliveries_column(db) -> None:
     """Add the require_signed_deliveries column to pre-existing tables.
 
     ``CREATE TABLE IF NOT EXISTS`` does not alter databases created by an
-    older schema; follow the codebase's defensive ALTER TABLE pattern
-    (try the portable form first, then the SQLite/Postgres
-    ``IF NOT EXISTS`` variant).
+    older schema, so existing databases get an additive ALTER.
+
+    The column is probed first: on a fresh install the module schema already
+    created it, and a duplicate-column ALTER on Postgres aborts the open
+    transaction, rolling back every table migration 000 had created in it.
     """
+    checker = getattr(db, "column_exists", None)
+    if callable(checker):
+        try:
+            if checker("webhook_webhooks", "require_signed_deliveries"):
+                return
+        except Exception:
+            pass
     statements = (
         "ALTER TABLE webhook_webhooks ADD COLUMN require_signed_deliveries "
         "INTEGER NOT NULL DEFAULT 0",

@@ -18,6 +18,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _is_duplicate_column_error(exc: Exception) -> bool:
+    """Whether *exc* reports that the column already exists.
+
+    SQLite says "duplicate column name: rev"; Postgres raises SQLSTATE 42701
+    with ``column "rev" of relation "artifacts" already exists``. Matching
+    only the SQLite wording made this migration fail on every fresh Postgres
+    install, where migration 000's module schema had already created the
+    column -- which then aborted the whole migration run.
+    """
+    message = str(exc).lower()
+    if "duplicate column" in message:
+        return True
+    return "42701" in message or ("already exists" in message and "column" in message)
+
+
 def _payload_rev(payload: object):
     """Return a numeric ``rev`` from a legacy payload string, or None."""
     if not isinstance(payload, str):
@@ -46,7 +61,7 @@ def up(db):
     except Exception as e:  # pragma: no cover - defensive
         # Fresh installs create the table with rev already present (the module
         # schema is authoritative); a duplicate-column error is then expected.
-        if "duplicate column" not in str(e).lower():
+        if not _is_duplicate_column_error(e):
             raise
         logger.info("Migration 002: artifacts.rev already present; skipping ALTER")
 
@@ -73,6 +88,10 @@ def down(db):
         db.execute("ALTER TABLE artifacts DROP COLUMN rev")
     except Exception as e:  # pragma: no cover - defensive
         lowered = str(e).lower()
-        if "no such column" in lowered or "duplicate column" in lowered:
+        if (
+            "no such column" in lowered
+            or "duplicate column" in lowered
+            or ("column" in lowered and "does not exist" in lowered)
+        ):
             return
         raise
