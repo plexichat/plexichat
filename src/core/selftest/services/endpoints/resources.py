@@ -264,15 +264,33 @@ class ResourceMixin(EndpointTesterBase):
             )
             return
 
-        # Check if password_reset_tokens table exists before inserting
+        # Check if password_reset_tokens table exists before inserting.
+        # ``sqlite_master`` does not exist in Postgres, so the probe used to
+        # raise there, be swallowed, and report the table as missing -- the
+        # self-test silently skipped its password-reset step on every
+        # Postgres install. Use the database's portable existence check.
         table_exists = False
-        try:
-            tbl = db.fetch_one(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='password_reset_tokens'"
-            )
-            table_exists = tbl is not None
-        except Exception:
-            pass
+        checker = getattr(db, "table_exists", None)
+        if callable(checker):
+            try:
+                table_exists = bool(checker("password_reset_tokens"))
+            except Exception:
+                table_exists = False
+        else:
+            try:
+                if getattr(db, "type", None) == "postgres":
+                    tbl = db.fetch_one(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_name = 'password_reset_tokens'"
+                    )
+                else:
+                    tbl = db.fetch_one(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name='password_reset_tokens'"
+                    )
+                table_exists = tbl is not None
+            except Exception:
+                table_exists = False
 
         if not table_exists:
             logger.debug(
