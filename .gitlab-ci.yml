@@ -1226,23 +1226,29 @@ validate_master_and_tag:
           ;;
       esac
       BUILD_TAG="${VERSION%-*}-build${CI_PIPELINE_IID}"
-      REPO_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      # Push through the remote this job was cloned from. Building the URL by
+      # hand used ``https://${CI_SERVER_HOST}``, but this GitLab serves plain
+      # HTTP on :80 and has no TLS listener at all, so that host refuses the
+      # connection in 0 ms: every master pipeline failed here with "Could not
+      # connect to gitlab.plexichat.com port 443" *after* its tests had passed.
+      # ``origin`` carries whatever scheme and credentials the runner actually
+      # used, and is the same remote ``ots:push_proofs`` pushes to.
       # A retried job repeats its pipeline id, so the tag can already exist;
       # that is the desired end state, not a failure.
-      if git ls-remote --tags "$REPO_URL" "refs/tags/${BUILD_TAG}" | grep -q .; then
+      if git ls-remote --tags origin "refs/tags/${BUILD_TAG}" | grep -q .; then
         echo "Tag ${BUILD_TAG} already exists; nothing to do"
         exit 0
       fi
       git config user.email "automerge@plexichat.com"
       git config user.name "Plexichat automerge dev into master"
       git tag -a "$BUILD_TAG" -m "$(git log -1 --pretty=%B)"
-      if git push "$REPO_URL" "refs/tags/${BUILD_TAG}" -o ci.skip; then
+      if git push origin "refs/tags/${BUILD_TAG}" -o ci.skip; then
         echo "Tagged ${CI_COMMIT_SHA} as ${BUILD_TAG}"
       else
         echo "FAIL: could not push ${BUILD_TAG}." >&2
-        echo "Pushing over HTTP with the job token needs 'Allow Git push requests" >&2
-        echo "to the repository' enabled for this project; otherwise put a project" >&2
-        echo "access token with the 'api' scope in a masked variable and use it here." >&2
+        echo "The tag goes to 'origin', the remote this job cloned from; if that" >&2
+        echo "is refused, the project needs 'Allow Git push requests to the" >&2
+        echo "repository' enabled for the job token." >&2
         exit 1
       fi
   rules:
