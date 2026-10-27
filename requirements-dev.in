@@ -25,8 +25,9 @@ pre-commit==4.6.0
 # regress it. Bumped to 21.14.9 for CVE-2026-113714, CVE-2026-113715,
 # CVE-2026-113717, CVE-2026-113718, CVE-2026-113720, CVE-2026-113722 and
 # CVE-2026-113723 (all flagged against 21.14.7), then to 21.14.10 for
-# CVE-2026-113713, which was flagged against 21.14.9.
-virtualenv==21.14.10
+# CVE-2026-113713 (flagged against 21.14.9) and to 21.14.13 for
+# GHSA-cx6f-vjhg-g3cc, which osv-scanner flagged against 21.14.10.
+virtualenv==21.14.13
 
 # filelock reaches the toolchain through cachecontrol, python-discovery and
 # virtualenv. 4.2.1 is the first release without CVE-2026-112907,
