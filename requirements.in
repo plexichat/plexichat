@@ -59,9 +59,10 @@ cryptography==50.0.0
 pyotp==2.10.0
 webauthn==3.0.0
 xxhash==3.8.1
-# authlib pinned to 1.9.0+ clears CVE-2026-96760 (pip-audit); earlier bumps
-# cleared PYSEC-2026-25 and PYSEC-2026-188.
-authlib==1.9.0
+# authlib pinned to 1.9.1+ clears CVE-2026-114616 (pip-audit; flagged against
+# 1.9.0); earlier bumps cleared CVE-2026-96760, PYSEC-2026-25 and
+# PYSEC-2026-188.
+authlib==1.9.1
 # SECURITY: defusedxml is required for safe SVG parsing in
 # Plexichat's media/SVG-XSS sanitizer. Stating it here makes
 # ``pip install plexichat`` pull it in transitively.
