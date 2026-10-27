@@ -29,6 +29,32 @@ return 1
 """
 
 
+def _cached_recent_payload(payload: Any) -> Optional[Message]:
+    """Return a cached recent-message payload as a ``Message``, else ``None``.
+
+    The recent-messages list holds ids only; the payloads live under
+    ``msg:obj:{id}`` as JSON and rebuild into models solely when their type is
+    registered for reconstruction. A payload that comes back as anything else
+    (a plain dict) must be treated as a cache MISS: every consumer reads
+    attributes off the returned messages, so handing back decoded dicts raises
+    ``AttributeError`` instead of returning the page.
+    """
+    if isinstance(payload, Message):
+        return payload
+    if not payload:
+        return None
+
+    try:
+        from src.core.database.cache.serialization import reconstruct_object
+
+        rebuilt = reconstruct_object(payload)
+    except Exception as e:
+        logger.debug(f"Failed to reconstruct cached message payload: {e}")
+        return None
+
+    return rebuilt if isinstance(rebuilt, Message) else None
+
+
 class RetrievalMixin(BaseService, MessageServiceProtocol):
     """Mixin providing message retrieval operations."""
 
@@ -93,8 +119,8 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                         messages = []
                         missing_ids = []
                         for mid in cached_ids:
-                            m_obj = cache_get(f"msg:obj:{mid}")
-                            if m_obj:
+                            m_obj = _cached_recent_payload(cache_get(f"msg:obj:{mid}"))
+                            if m_obj is not None:
                                 messages.append(m_obj)
                             else:
                                 missing_ids.append(mid)

@@ -18,10 +18,19 @@ from src.core.database.cache.serialization import (
 )
 
 from src.core.auth.models import AccountType, TokenInfo, User
+from src.core.messaging.models import (
+    Attachment,
+    Message,
+    MessageStatusType,
+    MessageType,
+)
 from src.core.servers.models import Channel, ChannelType, Member, Server
 
 # Idempotent safety net: these registrations also live at the definition
 # sites; re-registering here keeps this guard independent of import order.
+# Message/Attachment are deliberately NOT registered here: their guard test
+# must observe the registration that ships in the model module, and a
+# re-registration in this file would make it pass no matter what.
 register_reconstructable_type(Server, Channel, User, Member, TokenInfo)
 
 
@@ -39,6 +48,18 @@ def _assert_same_type(original, expected_type):
         "is it registered via register_reconstructable_type?"
     )
     return back
+
+
+def test_cached_messaging_models_are_registered_at_their_definition_site():
+    """Message/Attachment are cached on every send, so they must reconstruct.
+
+    Deliberately free of any registration of its own: this asserts the
+    registration that ships in ``src/core/messaging/models.py``.
+    """
+    for cls in (Message, Attachment):
+        name = f"{cls.__module__}.{cls.__qualname__}"
+        assert is_reconstructable(name), f"{name} not allowlisted"
+        assert get_type_from_name(name) is cls
 
 
 def test_allowlist_contains_cached_models():
@@ -108,6 +129,50 @@ def test_member_round_trips_as_dataclass():
     back = _assert_same_type(member, Member)
     assert back.user_id == 9
     assert back.roles == [3, 4]
+
+
+def test_message_round_trips_with_nested_attachment():
+    """Cached message payloads must rebuild as objects, not plain dicts.
+
+    Every sent message is written to ``msg:obj:{id}`` and its id pushed onto
+    the conversation's recent-messages list, so the NEXT page read serves the
+    payload straight from the cache. An unregistered Message reconstructs as a
+    plain dict and the first ``message.id`` read on that hit raises
+    AttributeError, which the channel listing route reports as an empty
+    channel — the message looks like it vanished on reload.
+    """
+    message = Message(
+        id=101,
+        conversation_id=7,
+        author_id=9,
+        content="hello",
+        created_at=1,
+        updated_at=2,
+        message_type=MessageType.TEXT,
+        status=MessageStatusType.SENT,
+        attachments=[
+            Attachment(
+                id=55,
+                message_id=101,
+                filename="clover.png",
+                content_type="image/png",
+                size=12,
+                url="/media/clover.png",
+                created_at=3,
+            )
+        ],
+    )
+
+    back = _assert_same_type(message, Message)
+    assert back.id == 101
+    assert back.content == "hello"
+    assert back.message_type is MessageType.TEXT
+    assert back.status is MessageStatusType.SENT
+    assert isinstance(back.attachments[0], Attachment), (
+        "nested attachments must rebuild as Attachment instances; attribute "
+        "reads on them are what the API response mapper performs"
+    )
+    assert back.attachments[0].filename == "clover.png"
 
 
 def test_token_info_round_trips_as_dataclass():

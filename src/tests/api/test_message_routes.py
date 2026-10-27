@@ -81,6 +81,50 @@ def test_embeds_only_message_accepted(
     assert body.get("embeds"), "embeds must round-trip on the created message"
 
 
+def test_sent_channel_message_is_returned_by_channel_listing(
+    test_client, modules, test_server, test_user_with_token
+):
+    """A message the send route accepted must come back from the listing.
+
+    The client renders the POST response optimistically, so a listing that
+    reports an empty channel looks like the message was deleted on reload.
+    This covers the whole HTTP round trip; the cache-hit failure mode that
+    used to break the listing is pinned down in
+    ``src/tests/messaging/test_messages.py`` and
+    ``src/tests/database/test_cache_reconstructable_models.py``.
+    """
+    server, _user = test_server
+    channel = _first_channel(modules, server)
+    token = test_user_with_token["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Mirror production wiring: the send path runs the automod fast check
+    # fail-closed, so the module must be initialized for server channels.
+    from src.core import automod
+
+    automod.setup(db=modules._db, servers_module=modules.servers)
+
+    sent = test_client.post(
+        f"/api/v1/channels/{channel.id}/messages",
+        headers=headers,
+        json={"content": "persisted-message-check"},
+    )
+    assert sent.status_code == 200, sent.text
+    message_id = sent.json()["id"]
+
+    listing = test_client.get(
+        f"/api/v1/channels/{channel.id}/messages",
+        headers=headers,
+    )
+    assert listing.status_code == 200, listing.text
+
+    returned = [m["id"] for m in listing.json()]
+    assert message_id in returned, (
+        "a message accepted by the send route must be returned by the channel "
+        f"listing; message {message_id} missing from {returned}"
+    )
+
+
 def test_ack_with_malformed_message_id_returns_400(
     test_client, modules, test_server, test_user_with_token
 ):
