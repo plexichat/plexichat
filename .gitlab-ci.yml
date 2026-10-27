@@ -916,7 +916,7 @@ container_scanning:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
   # Blocking: this is the only verdict on the image that actually ships. While
   # it was advisory, a release whose backend image carried known
-  # vulnerabilities went green and was published anyway (and on a.1.0-150 it
+  # vulnerabilities went green and was published anyway (and on a.1.0-152 it
   # failed on a full runner disk, which nobody had to look at because the
   # pipeline stayed green). A real finding now stops the release; so does a
   # scanner that cannot run, which is the point -- silence is not a pass.
@@ -1196,7 +1196,7 @@ validate_master_and_tag:
     - echo "Running production validation suite on master..."
     - python main.py pre-flight
     - |
-      # "Plexichat Server a.1.0-150" -> a.1.0 -> a.1.0-build<pipeline id>.
+      # "Plexichat Server a.1.0-155" -> a.1.0 -> a.1.0-build<pipeline id>.
       VERSION="$(python main.py version | tail -1)"
       VERSION="${VERSION##* }"
       case "$VERSION" in

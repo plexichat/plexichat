@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any
 from enum import Enum
 from src.core.base import SnowflakeID
+from src.core.database.cache.serialization import register_reconstructable_type
 
 
 class ConversationType(Enum):
@@ -149,6 +150,14 @@ class Attachment:
     metadata: Optional[Dict[str, Any]] = None
     checksum: Optional[str] = None
     deleted: bool = False
+
+
+# Message rows are cached per id (``msg:obj:{id}``) and the recent-message list
+# hands those payloads straight back to callers. Without a registration the
+# cached JSON reconstructs as a plain dict, so the first attribute read on a
+# cache hit raises AttributeError. Message and Attachment travel in the same
+# payload, so both must rebuild as real instances with coerced enum fields.
+register_reconstructable_type(Message, Attachment)
 
 
 @dataclass

@@ -45,8 +45,8 @@ a version tag in the scheme above is merged into `master`:
 ```bash
 git checkout dev
 git pull
-git tag -a a.1.0-150 -m "a.1.0-150"
-git push origin a.1.0-150
+git tag -a a.1.0-155 -m "a.1.0-155"
+git push origin a.1.0-155
 ```
 
 The tag pipeline runs `create_merge_request`, which merges `dev` into `master`
@@ -58,7 +58,7 @@ What each kind of tag does:
 
 | Tag | Pipeline |
 |---|---|
-| `<stage>.<major>.<minor>-<build>`, e.g. `a.1.0-150` | merges `dev` into `master`, then builds and pushes the backend and backup images, scans the image, and publishes the OpenTimestamp proof |
+| `<stage>.<major>.<minor>-<build>`, e.g. `a.1.0-155` | merges `dev` into `master`, then builds and pushes the backend and backup images, scans the image, and publishes the OpenTimestamp proof |
 | `<stage>.<major>.<minor>-build<N>`, e.g. `a.1.0-build<n>` | nothing: a marker cut on `master` by `validate_master_and_tag` with `-o ci.skip`, so it starts no pipeline of its own |
 
 Notes:

@@ -487,91 +487,64 @@ class DSARManager:
 
         Called from cancel, expiry, and any other path that
         transitions a request to a state where its export must no
-        longer exist on disk. We try to delete from the configured
-        storage backend (local, S3, or RustFS) and log the outcome.
+        longer exist on disk. We delete through the storage backend
+        that wrote the export (local, S3/RustFS, or database) and log
+        the outcome.
 
-        The ``storage_backend`` value is consumed below when we
-        decide between local-fallback (``os.remove``) and the
-        remote-object delete path (S3/RustFS via the configured
-        storage client). Reading the value up-front also lets the
-        operator inspect logs about which backend was used.
+        Deletion MUST go through the backend rather than straight at
+        the object it stored: ``dsar_requests.storage_path`` is the
+        backend-relative path, and S3/RustFS prepend their configured
+        ``path_prefix`` (the local backend its base directory) when
+        they write the object. Deleting the bare ``storage_path`` off
+        the S3 client missed the real key and left the export - full
+        PII - sitting in the bucket past its retention window.
         """
         storage_backend = request.get("storage_backend")
         storage_path = request.get("storage_path")
         if not storage_path:
             return
 
-        # Remote-object deletion attempt (S3/RustFS) is independent of
-        # the local fallback below: a failure importing the media/api
-        # module must never skip the local file removal.
-        if storage_backend in {"s3", "rustfs"}:
-            try:
-                import src.api as _dsar_api
-
-                media_mod = _dsar_api.get_media()
-                s3_client = None
-                if media_mod is not None and hasattr(media_mod, "get_s3_client"):
-                    s3_client = media_mod.get_s3_client()
-                elif media_mod is not None and hasattr(media_mod, "_s3_client"):
-                    s3_client = media_mod._s3_client
-                if s3_client is not None and hasattr(s3_client, "delete_object"):
-                    _bucket = None
-                    for _attr in (
-                        "bucket_name",
-                        "_s3_bucket",
-                        "_bucket",
-                    ):
-                        _candidate = getattr(media_mod, _attr, None)
-                        if _candidate:
-                            _bucket = _candidate
-                            break
-                    if (
-                        not _bucket
-                        and media_mod is not None
-                        and hasattr(media_mod, "get_bucket")
-                    ):
-                        try:
-                            _bucket = media_mod.get_bucket()
-                        except Exception:
-                            _bucket = None
-                    if _bucket:
-                        s3_client.delete_object(Bucket=_bucket, Key=storage_path)
-                    else:
-                        logger.warning(
-                            "DSAR: cannot scrub S3 export for "
-                            f"request {request.get('id')}: no "
-                            "bucket getter on media module"
-                        )
-                    logger.info(
-                        "DSAR: scrubbed remote export object for "
-                        f"request {request.get('id')} at {storage_path}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    "DSAR: failed to scrub remote export object "
-                    f"for request {request.get('id')}: {e}"
-                )
-
-        # Local-fallback removal: always attempted regardless of the
-        # configured backend or the health of the api/media modules.
+        # Backend-aware delete: ``ExportFormatGenerator`` builds the
+        # same backend (and therefore the same key layout) used to
+        # write the export. It reports failure instead of raising, but
+        # a construction failure (bad S3 credentials, boto3 missing)
+        # is still possible, so keep the local fallback below
+        # reachable regardless.
         try:
-            if os.path.exists(str(storage_path)):
-                os.remove(str(storage_path))
+            from .export_formats import ExportFormatGenerator
+
+            if ExportFormatGenerator(db=self._db).delete(str(storage_path)):
+                logger.info(
+                    f"DSAR: scrubbed export object for request "
+                    f"{request.get('id')} ({storage_backend}) at {storage_path}"
+                )
+            else:
+                logger.warning(
+                    f"DSAR: export object for request {request.get('id')} "
+                    f"({storage_backend}) at {storage_path} was not deleted; "
+                    "it may still exist in the storage backend"
+                )
+        except Exception as e:
+            logger.warning(
+                f"DSAR: failed to scrub export object for request "
+                f"{request.get('id')}: {e}"
+            )
+
+        # Local fallback for rows holding an absolute filesystem path
+        # (legacy rows written before export paths were backend-relative).
+        # The backend-relative delete above never matches those, and
+        # ``os.remove`` still can - the file must not survive just
+        # because its row predates the current layout.
+        try:
+            path = str(storage_path)
+            if os.path.isabs(path) and os.path.exists(path):
+                os.remove(path)
                 logger.info(
                     f"DSAR: scrubbed export file (local fallback) "
-                    f"for request {request.get('id')} at "
-                    f"{storage_path}"
-                )
-            elif storage_backend in {"s3", "rustfs", "remote"}:
-                logger.warning(
-                    "DSAR: remote storage_backend delete not "
-                    "yet implemented; object remains in remote "
-                    "store for request "
-                    f"{request.get('id')}"
+                    f"for request {request.get('id')} at {storage_path}"
                 )
         except Exception as e:
             logger.warning(
                 f"DSAR: local fallback delete failed for "
-                f"request {request.get('id')} at "
-                f"{storage_path}: {e}"
+                f"request {request.get('id')} at {storage_path}: {e}"
             )

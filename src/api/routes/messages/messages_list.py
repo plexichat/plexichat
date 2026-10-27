@@ -15,6 +15,9 @@ from src.api.schemas.common import ErrorResponse
 from src.core.servers.exceptions import (
     ServerNotFoundError,
     ChannelNotFoundError,
+    ChannelAccessDeniedError,
+    ChannelTypeError,
+    PermissionDeniedError,
 )
 from src.core.messaging.exceptions import (
     ConversationNotFoundError,
@@ -104,8 +107,23 @@ async def get_channel_messages(
                     before_id=before_id,
                     after_id=after_id,
                 )
-            except Exception:
-                # If not a server channel or no access, fall back to messaging
+            except (
+                ServerNotFoundError,
+                ChannelNotFoundError,
+                ChannelAccessDeniedError,
+                ChannelTypeError,
+                PermissionDeniedError,
+            ) as e:
+                # Expected for any id that is not a readable server text
+                # channel (a DM/group conversation id lands here as well), so
+                # fall back to the conversation lookup below. ONLY these
+                # outcomes fall back: catching everything here turned an
+                # internal read failure into a silently empty channel
+                # (200 []), which is indistinguishable from "no messages".
+                logger.debug(
+                    f"Channel {cid} is not a readable server channel "
+                    f"({type(e).__name__}); trying conversation lookup"
+                )
                 messages = None
 
         # Fallback to DM/Conversation
