@@ -59,8 +59,9 @@ cryptography==50.0.0
 pyotp==2.10.0
 webauthn==3.0.0
 xxhash==3.8.1
-# authlib pinned to 1.6.12+ clears PYSEC-2026-25, PYSEC-2026-188 (pip-audit)
-authlib==1.6.12
+# authlib pinned to 1.9.0+ clears CVE-2026-96760 (pip-audit); earlier bumps
+# cleared PYSEC-2026-25 and PYSEC-2026-188.
+authlib==1.9.0
 # SECURITY: defusedxml is required for safe SVG parsing in
 # Plexichat's media/SVG-XSS sanitizer. Stating it here makes
 # ``pip install plexichat`` pull it in transitively.
@@ -109,6 +110,10 @@ websocket-client==1.9.0
 
 # WebRTC / SFU
 aiortc==1.15.0
+# dnspython is a transitive dependency of aioice (aiortc's ICE layer) and of
+# email-validator; pinned to 2.9.0+ to clear CVE-2026-114605 (pip-audit) so a
+# later resolution cannot regress it.
+dnspython==2.9.0
 
 # Utilities
 # python-multipart pinned to 0.0.32 clears CVE-2026-53538, CVE-2026-53539,
@@ -146,8 +151,9 @@ boto3==1.43.56
 # PlexiSum container compression (zstd). Hard dependency — the container
 # encoder always zstd-compresses and never silently falls back to raw.
 zstandard==0.25.0
-# msgpack pinned to 1.2.1+ clears GHSA-xxxx (pip-audit)
-msgpack==1.2.1
+# msgpack pinned to 1.2.3+ clears CVE-2026-114613 (pip-audit); 1.2.1+ cleared
+# the earlier advisory.
+msgpack==1.2.3
 
 # Push notifications
 # PyJWT is required for token-based APNs HTTP/2 push delivery
