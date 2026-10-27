@@ -5,6 +5,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# ``libbrotli1`` is named explicitly rather than left to curl's dependency:
+# CVE-2026-111497 is an out-of-bounds write in the Brotli decoder, fixed for
+# trixie in the security update ``1.1.0-2+deb13u1``. Debian's main archive still
+# carries ``1.1.0-2+b7``, and apt only upgrades a package that is asked for by
+# name (or pulled in by a newer dependency), so an image built from a base that
+# already has the old library would keep it. Naming it installs the security
+# candidate; ``docker run --rm <image> dpkg -l libbrotli1`` should show
+# ``+deb13u1``.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -13,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus-dev \
     libsrtp2-dev \
     libvpx-dev \
+    libbrotli1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

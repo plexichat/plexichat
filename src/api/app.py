@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import utils.config as global_config
 import utils.logger as logger
 from .config import get_api_config
+from .middleware.compression import CompressionMiddleware
 from .routes import create_api_router, create_docs_router, is_docs_enabled
 from .routes.docs import get_docs_config
 from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page
@@ -455,6 +456,17 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         install_static_client_middleware(app)
     except Exception as e:
         logger.warning(f"Static client middleware not installed: {e}")
+
+    # Gzip responses for clients that ask for it. Registered AFTER the static
+    # client middleware, so this wraps it: the SPA bundle the backend serves
+    # directly (deployments without the nginx image) is compressed too. CORS,
+    # IP blocking and request logging stay outside, so they see the final
+    # Content-Encoding/Content-Length headers and still bound the whole stack.
+    #
+    # The middleware itself skips byte ranges, attachments, already-encoded
+    # bodies and non-text media, so this never re-encodes what nginx or a CDN
+    # already handled.
+    app.add_middleware(CompressionMiddleware)
 
     # Explicit OPTIONS preflight handler for local dev - catches any
     # preflight that slips through the CORSMiddleware. Implemented as a

@@ -28,6 +28,7 @@ Environment Variables:
 """
 
 import os
+import socket
 import time
 import logging
 from typing import Any, Dict, Generator, Optional
@@ -43,6 +44,34 @@ DEFAULT_IMAGE = "valkey/valkey:8-alpine"
 # never touch anything else that happens to share the server.
 TEST_KEY_PREFIX = "pytest:"
 
+# Upper bound on the cheap reachability probe below. A refused connection
+# returns immediately; this only caps the pathological case (a blackholed
+# address or a resolver that hangs), which the GLIDE probe would otherwise
+# sit on for the full request timeout.
+_TCP_PROBE_TIMEOUT_SECONDS = 1.0
+
+
+def _tcp_reachable(
+    host: str, port: int, timeout: float = _TCP_PROBE_TIMEOUT_SECONDS
+) -> bool:
+    """Return True when something accepts TCP connections at host:port.
+
+    This is a deliberately cheap pre-check for :func:`_ping`: with no server
+    running (the default state of a developer laptop and of most CI jobs)
+    GLIDE takes the whole request timeout to report that the connection was
+    refused. The Valkey-backed suites skip in that situation, so paying
+    ~2s per probe to learn "there is nothing to test" is pure latency. A TCP
+    accept is necessary-but-not-sufficient, so a reachable port still goes
+    through the real GLIDE PING below — this only short-circuits the
+    provably-unreachable case.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError as exc:
+        logger.debug(f"No TCP listener at {host}:{port}: {exc}")
+        return False
+
 
 def _ping(host: str, port: int, password: str = "", timeout: int = 2) -> bool:
     """Return True when a GLIDE client can reach and PING the server.
@@ -51,6 +80,9 @@ def _ping(host: str, port: int, password: str = "", timeout: int = 2) -> bool:
     reachable *for the code under test*, not merely that the TCP port
     accepts connections.
     """
+    if not _tcp_reachable(host, port):
+        return False
+
     try:
         from glide_sync import (
             BackoffStrategy,

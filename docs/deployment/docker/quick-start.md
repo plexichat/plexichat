@@ -43,7 +43,7 @@ BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
 To deploy a specific version:
 
 ```bash
-BACKEND_VERSION=a.1.0-147 CLIENT_VERSION=a.1.0-122 docker compose up -d
+BACKEND_VERSION=a.1.0-150 CLIENT_VERSION=a.1.0-122 docker compose up -d
 ```
 
 This command does the following:

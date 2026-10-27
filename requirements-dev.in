@@ -22,8 +22,18 @@ pre-commit==4.6.0
 # and CVE-2026-113725, CVE-2026-113726, CVE-2026-113732, CVE-2026-113776
 # (pip-audit; the last four were published after the 21.7.13 pin and reddened
 # every pipeline's lint stage). Pinned here so a later resolution cannot
-# regress it.
-virtualenv==21.14.7
+# regress it. Bumped to 21.14.9 for CVE-2026-113714, CVE-2026-113715,
+# CVE-2026-113717, CVE-2026-113718, CVE-2026-113720, CVE-2026-113722 and
+# CVE-2026-113723 (all flagged against 21.14.7), then to 21.14.10 for
+# CVE-2026-113713 (flagged against 21.14.9) and to 21.14.13 for
+# GHSA-cx6f-vjhg-g3cc, which osv-scanner flagged against 21.14.10.
+virtualenv==21.14.13
+
+# filelock reaches the toolchain through cachecontrol, python-discovery and
+# virtualenv. 4.2.1 is the first release without CVE-2026-112907,
+# CVE-2026-112913 and CVE-2026-112940; the previous pin (3.32.3) was flagged
+# by the pip-audit hook on the next run after those advisories were published.
+filelock==4.2.1
 
 # ruff + ruff-format: the ``ruff`` and ``ruff-format`` hooks.
 ruff==0.15.12
