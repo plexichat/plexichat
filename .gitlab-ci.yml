@@ -290,25 +290,6 @@ security:sast:
     expire_in: 30 days
   allow_failure: true
 
-# --- Base-image advisory watch ---
-#
-# The backend image ships libbrotli 1.1.0 from Debian trixie, which is inside
-# CVE-2026-111497's vulnerable range. Debian has published nothing newer, so
-# there is nothing to pin or upgrade to; the accepted risk expires the moment a
-# fixed package appears, and this job is how that gets noticed instead of
-# remembered. It exits 10 -- with the rebuild-and-release steps -- once trixie
-# moves past the version the image ships.
-#
-# allow_failure: true: the point is a visible signal in the pipeline, not a red
-# gate on unrelated commits. A lookup failure exits 2 rather than 0, so
-# "could not check" never reads as "nothing to do".
-security:libbrotli_watch:
-  extends: .python_base
-  stage: security
-  script:
-    - python ci-tooling/check_libbrotli.py
-  allow_failure: true
-
 # --- Dependency scanning (NOT in pre-commit, keep it) ---
 security:dependency_scanning:
   extends: .python_base
