@@ -45,7 +45,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 
 *   [Deployment](deployment/index.md) — Installation, security hardening, scaling, monitoring, and backup.
 *   **[Docker deployment](deployment/docker/index.md)** — Quick start, configuration, development, production setup, and troubleshooting.
-*   [Versioning and updates](deployment/versioning.md) — Version scheme `a.1.0-150`, update procedures, and rollback strategies.
+*   [Versioning and updates](deployment/versioning.md) — Version scheme `a.1.0-151`, update procedures, and rollback strategies.
 *   [SQLite to PostgreSQL migration](./deployment/postgres-migration.md) — Automated migration guide.
 *   [Security best practices](security.md) — Authentication security, encryption, and production checklist.
 *   [Performance tuning](performance.md) — Subsystem optimization and scaling recommendations.
