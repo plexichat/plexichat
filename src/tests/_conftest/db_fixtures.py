@@ -16,8 +16,20 @@ import utils.config as config
 # max_connections — API/route tests and the threaded race tests exercise
 # concurrent connections (test client + app + rate limiter + ...), so a
 # small max makes them exhaust the pool.
+#
+# ``min_connections`` is 1, not 2: the pool creates its ``min_size``
+# connections eagerly on construction, and opening a connection against the
+# migrated template (~730 schema objects) costs a full schema parse — the
+# single most expensive part of the per-test ``db`` fixture. The second
+# eager connection was never used by the vast majority of tests (they open
+# one connection from the pool at a time), yet every one of them paid for
+# it. ``max_connections`` is unchanged, so tests that really do use
+# concurrent connections (threaded races, API test client + rate limiter)
+# still grow the pool on demand exactly as before — the only difference is
+# that the extra handle is created when a second thread asks for it instead
+# of before the test starts.
 _TEST_DB_POOL_CONFIG = {
-    "min_connections": 2,
+    "min_connections": 1,
     "max_connections": 16,
     "connect_timeout": 10,
     "cache_size_kb": -1024,
@@ -383,10 +395,14 @@ def db(setup_config, migrated_db_template):
     import shutil
     from src.core.database import Database
 
-    # Create a temporary database file for this test from the template
+    # Create a temporary database file for this test from the template.
+    # ``copyfile`` rather than ``copy2``: the copy's timestamps/mode are
+    # irrelevant (it is an anonymous temp file that is deleted minutes
+    # later) and ``copy2`` pays an extra stat/chmod/utime round trip on
+    # every one of the thousands of per-test copies.
     temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
     temp_db.close()
-    shutil.copy2(migrated_db_template, temp_db.name)
+    shutil.copyfile(migrated_db_template, temp_db.name)
 
     # Point the live config at this test's database without a YAML write.
     # ``config.set()`` would dump the whole file per test; swapping the

@@ -1040,6 +1040,18 @@ class TestErrorHandling:
 class TestRealRedisIntegration:
     def test_real_connection(self, redis_config):
         from src.core.database.valkey_client import ValkeyClient, ValkeyConnectionError
+        from src.tests.fixtures.valkey_docker import _tcp_reachable
+
+        # Cheap reachability pre-check: with no server listening GLIDE takes
+        # its full request timeout to report the refusal, and the test then
+        # skips anyway. Refusing to start the connection is the same outcome,
+        # minus the ~2s wait.
+        redis_settings = config.get("redis") or {}
+        if not _tcp_reachable(
+            redis_settings.get("host", "localhost"),
+            int(redis_settings.get("port", 6379)),
+        ):
+            pytest.skip("Redis/Valkey server not available")
 
         client = ValkeyClient()
         try:
