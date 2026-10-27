@@ -80,6 +80,31 @@ async def test_internal_requests_never_count(limiter):
 
 
 @pytest.mark.asyncio
+async def test_middleware_route_charge_does_not_eat_the_daily_budget(limiter):
+    """The generic per-route bucket must not be the decorator's bucket.
+
+    ``RateLimitMiddleware`` charges ``<METHOD> <path>`` (as named by
+    ``extract_route_info``) before the handler runs. The decorator used that
+    exact string as its route, so one request recorded two hits in a single
+    sliding-window state: the middleware's generic cap passed, then the
+    1/day check found the budget spent and 429'd the user's very first
+    export. Worse, whichever window is shorter prunes the other's history,
+    so neither cap was trustworthy.
+    """
+    from src.core.ratelimit.middleware import extract_route_info
+
+    stub = _export_stub()
+    uid = _uid()
+    request = _make_request(uid, False)
+    middleware_route, _, _ = extract_route_info(request.url.path, request.method)
+
+    pre = await limiter.acheck_rate_limit(user_id=uid, route=middleware_route)
+    assert pre.allowed
+
+    assert await stub(_make_request(uid, False)) == {"ok": True}
+
+
+@pytest.mark.asyncio
 async def test_throttle_is_per_user(limiter):
     stub = _export_stub()
     assert await stub(_make_request(_uid(), False)) == {"ok": True}

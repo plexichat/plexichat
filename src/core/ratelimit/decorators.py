@@ -13,6 +13,18 @@ from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 _route_overrides: dict = {}
 
 
+# ``RateLimitMiddleware`` charges a generic per-route bucket named
+# ``<METHOD> <path>`` before the handler runs. A decorator sets its *own* cap
+# on that same route, but both used to write that single bucket, so the
+# middleware's hit for a request counted against the decorator's budget: a
+# ``requests=1, window_seconds=86400`` cap rejected the user's very first
+# request (the middleware's hit was already in the state), and whichever
+# window was shorter pruned the other's history, so neither cap held. The
+# namespace keeps each cap meaningful while both stay per-user-per-route.
+def _decorator_route(method: str, path: str) -> str:
+    return f"decorator:{method} {path}"
+
+
 def rate_limit(
     requests: int,
     window_seconds: float,
@@ -99,9 +111,7 @@ def rate_limit(
                         resource_id = int(resource_id)
                     except (ValueError, TypeError):
                         resource_id = None
-            method = request.method
-            path = request.url.path
-            route = f"{method} {path}"
+            route = _decorator_route(request.method, request.url.path)
             # Pass the decorator's config explicitly instead of publishing it
             # through the manager's shared ``_route_configs`` and popping it in
             # ``finally``: the async check reads that map after earlier awaits,
@@ -186,9 +196,7 @@ def custom_rate_limit(
             resource_id = None
             if get_resource_id:
                 resource_id = get_resource_id(request, kwargs)
-            method = request.method
-            path = request.url.path
-            route = f"{method} {path}"
+            route = _decorator_route(request.method, request.url.path)
             if get_bucket_key:
                 custom_key = get_bucket_key(request)
                 route = f"custom:{custom_key}"
