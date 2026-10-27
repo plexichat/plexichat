@@ -7,6 +7,7 @@ from .authentication import (
     get_current_user,
     get_optional_user,
 )
+from .compression import CompressionMiddleware
 from .error_handling import setup_exception_handlers, ErrorHandlingMiddleware
 from .logging import LoggingMiddleware
 from .security import SecurityHeadersMiddleware
@@ -20,6 +21,7 @@ from .database import DatabaseMiddleware
 
 __all__ = [
     "AuthenticationMiddleware",
+    "CompressionMiddleware",
     "get_current_user",
     "get_optional_user",
     "setup_exception_handlers",
