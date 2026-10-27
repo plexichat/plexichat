@@ -544,12 +544,23 @@ class AuthenticationMiddleware:
         if session_cookie_secure():
             parts.append("Secure")
         cookie_header = "; ".join(parts)
+        cookie_name = f"{SESSION_COOKIE_NAME}=".encode()
 
         async def wrapped_send(message) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
                 status = message.get("status", 500)
-                if 200 <= status < 400:
+                # Never shadow a session cookie the route already issued.
+                # /auth/refresh rotates the token and sets the NEW cookie;
+                # appending the presented (now rotated-away) token afterwards
+                # made the browser store the dead value — browsers honour the
+                # last Set-Cookie — so every later request 401'd until sign-in.
+                already_issued = any(
+                    key.lower() == b"set-cookie"
+                    and value.lstrip().startswith(cookie_name)
+                    for key, value in (message.get("headers") or [])
+                )
+                if 200 <= status < 400 and not already_issued:
                     headers.append("set-cookie", cookie_header)
             await send(message)
 

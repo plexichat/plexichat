@@ -375,6 +375,42 @@ class TestCookieAndOauthHttp:
         assert r3.status_code == 200
         assert r3.json().get("token")
 
+    def test_refresh_does_not_reissue_pre_rotation_cookie(self, test_client):
+        """Only the rotated cookie may be issued on /auth/refresh.
+
+        The rolling-cookie middleware re-issues a Set-Cookie for the token the
+        request PRESENTED. On refresh that token has just been rotated away,
+        and because a browser keeps the last Set-Cookie for a given name, the
+        stale value replaced the fresh one — so every later request 401'd and
+        the user was effectively signed out until they logged in again.
+        """
+        username = self._mk_user(test_client)
+        login = test_client.post(
+            "/api/v1/auth/login",
+            json={"username": username, "password": "TestPass123!"},
+        )
+        assert login.status_code == 200, login.text
+
+        r = test_client.post(
+            "/api/v1/auth/refresh", headers={"X-Plexichat-Request": "1"}
+        )
+        assert r.status_code == 200, r.text
+
+        issued = [
+            value
+            for value in r.headers.get_list("set-cookie")
+            if value.startswith("plexichat_token=")
+        ]
+        assert len(issued) == 1, issued
+
+        # The rotation itself still replaced the credential...
+        fresh = issued[0].split(";", 1)[0].split("=", 1)[1]
+        assert fresh
+        assert fresh not in r.text
+
+        # ...and the cookie the browser is left holding must still work.
+        assert test_client.get("/api/v1/users/@me").status_code == 200
+
     def test_ws_ticket_route_roundtrip(self, test_client):
         username = self._mk_user(test_client)
         r = test_client.post(
