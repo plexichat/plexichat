@@ -468,6 +468,72 @@ class AccountReaper:
             )
         return blob_paths
 
+    def _purge_dsar_data(self, user_id: int) -> list:
+        """Erase the user's DSAR rows and any export object they still hold.
+
+        ``dsar_requests`` has no foreign key to ``auth_users``, so the core
+        erasure below never reached it: after a purge the rows kept the
+        erased user id and, for any request still ``ready``, the backend
+        path of an export that is a full PII archive. This deletes each
+        export through the storage backend that wrote it (so S3/RustFS keys
+        keep their configured prefix), then the manifest and request rows.
+
+        Like the Suite sweep, this never vetoes the account erasure: a
+        backend failure is logged and the storage path is returned so the
+        caller can record an operator sweep on the PURGED audit event.
+        """
+        unswept: list = []
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM dsar_requests WHERE user_id = ?", (user_id,)
+            )
+        except Exception as exc:
+            logger.debug("Reaper: DSAR purge skipped (no rows readable): %s", exc)
+            return unswept
+
+        if rows:
+            from src.core.dsar.manager import DSARManager
+
+            manager = DSARManager(self._db)
+            for row in rows:
+                request = dict(row)
+                path = request.get("storage_path")
+                if not path:
+                    continue
+                try:
+                    if not manager._scrub_export_files(request):
+                        unswept.append(path)
+                except Exception as exc:
+                    logger.error(
+                        "Reaper: DSAR export scrub failed for request %s: %s",
+                        request.get("id"),
+                        exc,
+                    )
+                    unswept.append(path)
+
+        # Manifest rows are children of the request rows (ON DELETE CASCADE
+        # is not enforced on every engine/connection), so delete them first.
+        for query, params in (
+            (
+                "DELETE FROM dsar_export_manifest WHERE request_id IN "
+                "(SELECT id FROM dsar_requests WHERE user_id = ?)",
+                (user_id,),
+            ),
+            ("DELETE FROM dsar_requests WHERE user_id = ?", (user_id,)),
+        ):
+            try:
+                self._db.execute(query, params)
+            except Exception as exc:
+                logger.error("Reaper: DSAR row purge failed: %s", exc)
+
+        if rows:
+            logger.info(
+                "Reaper: erased %d DSAR request row(s) for user %s",
+                len(rows),
+                user_id,
+            )
+        return unswept
+
     def purge_user(self, user_id: int, username: str):
         """
         Performs a full idempotent erasure of a user account.
@@ -513,6 +579,7 @@ class AccountReaper:
             # (manager-unavailable fallback); they are recorded on the PURGED
             # audit event below so operators can sweep them.
             unswept_suite_blobs = self._purge_suite_data(user_id)
+            unswept_dsar_exports = self._purge_dsar_data(user_id)
             self._db.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
             self._db.execute("DELETE FROM auth_devices WHERE user_id = ?", (user_id,))
             self._db.execute(
@@ -599,6 +666,11 @@ class AccountReaper:
                 purged_metadata["suite_blobs_unswept"] = len(unswept_suite_blobs)
                 purged_metadata["suite_blob_paths"] = [
                     str(p) for p in unswept_suite_blobs[:50]
+                ]
+            if unswept_dsar_exports:
+                purged_metadata["dsar_exports_unswept"] = len(unswept_dsar_exports)
+                purged_metadata["dsar_export_paths"] = [
+                    str(p) for p in unswept_dsar_exports[:50]
                 ]
             self._log.log_event(user_id, "PURGED", f"user:{user_id}", purged_metadata)
 

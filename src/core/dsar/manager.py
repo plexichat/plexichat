@@ -482,7 +482,7 @@ class DSARManager:
         )
         return dict(request) if request else None
 
-    def _scrub_export_files(self, request: Dict[str, Any]) -> None:
+    def _scrub_export_files(self, request: Dict[str, Any]) -> bool:
         """Securely delete any generated export files for a request.
 
         Called from cancel, expiry, and any other path that
@@ -498,11 +498,18 @@ class DSARManager:
         they write the object. Deleting the bare ``storage_path`` off
         the S3 client missed the real key and left the export - full
         PII - sitting in the bucket past its retention window.
+
+        Returns True when the export is confirmed gone (or there was
+        nothing to delete). Callers that must account for leftovers - the
+        account erasure path records unswept paths for an operator - use
+        the False return; the retention paths ignore it.
         """
         storage_backend = request.get("storage_backend")
         storage_path = request.get("storage_path")
         if not storage_path:
-            return
+            return True
+
+        removed = False
 
         # Backend-aware delete: ``ExportFormatGenerator`` builds the
         # same backend (and therefore the same key layout) used to
@@ -514,6 +521,7 @@ class DSARManager:
             from .export_formats import ExportFormatGenerator
 
             if ExportFormatGenerator(db=self._db).delete(str(storage_path)):
+                removed = True
                 logger.info(
                     f"DSAR: scrubbed export object for request "
                     f"{request.get('id')} ({storage_backend}) at {storage_path}"
@@ -539,6 +547,7 @@ class DSARManager:
             path = str(storage_path)
             if os.path.isabs(path) and os.path.exists(path):
                 os.remove(path)
+                removed = True
                 logger.info(
                     f"DSAR: scrubbed export file (local fallback) "
                     f"for request {request.get('id')} at {storage_path}"
@@ -548,3 +557,5 @@ class DSARManager:
                 f"DSAR: local fallback delete failed for "
                 f"request {request.get('id')} at {storage_path}: {e}"
             )
+
+        return removed
