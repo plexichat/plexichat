@@ -32,6 +32,19 @@ def send_channel_message(
     )
 
 
+def check_channel_slowmode(
+    user_id: SnowflakeID, channel_id: SnowflakeID
+) -> Optional[float]:
+    """Return the seconds *user_id* must wait before posting, or None.
+
+    The REST send route reaches the servers manager through this module, so
+    the gate has to be proxied here as well as defined on the manager. When
+    only the manager had it, the route's ``getattr`` probe found nothing and
+    a member could post as fast as they liked in a slow channel.
+    """
+    return _get_manager().check_channel_slowmode(user_id, channel_id)
+
+
 def get_channel_messages(
     user_id: SnowflakeID,
     channel_id: SnowflakeID,

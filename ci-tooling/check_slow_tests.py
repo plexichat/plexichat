@@ -197,6 +197,16 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "(#2133) where ICE gathering never reports complete inside the adapter's "
         "fixed 5s wait",
     ),
+    # The same cost, on the other end of the call: the assertion is 0.07s, but
+    # standing up and tearing down a real ``RTCPeerConnection`` is not. Measured
+    # 6.9-7.0s on the build box (2.25s setup, 4.6s teardown closing ICE/DTLS)
+    # and 10.09s in pipeline #2213 -- over the 5.2s default even with the box
+    # idle, so the unregistered id was a pipeline that could never go green.
+    "src.tests.voice.test_voice_media_handshake_e2e::test_trickled_candidate_reaches_the_sfu_media_plane": (
+        15.0,
+        "real aiortc peer connection: 6.9-7.0s on the build box (2.25s setup, "
+        "0.07s call, 4.6s teardown), 10.09s on the runner in #2213",
+    ),
 }
 
 

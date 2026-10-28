@@ -116,6 +116,17 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             f"{config.max_worker_threads} concurrent worker threads"
         )
 
+        # A process only starts on a build, so every cached version payload
+        # belongs to the build this process replaced. ``/version`` caches its
+        # response for an hour, which meant an operator who upgraded and then
+        # checked the endpoint kept being told the previous tag was running.
+        try:
+            from src.core.database.cache import invalidate_pattern
+
+            invalidate_pattern("api_version*")
+        except Exception as e:
+            logger.debug(f"Version cache clear skipped: {e}")
+
         from src.static_client import (
             run_static_client_initial_install,
             start_static_client_service,

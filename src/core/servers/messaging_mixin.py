@@ -26,6 +26,19 @@ class MessagingMixin:
             user_id, channel_id, content, attachments, reply_to_id
         )
 
+    def check_channel_slowmode(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> Optional[float]:
+        """Return the seconds *user_id* must wait before posting, or None.
+
+        The public manager is what the API resolves, and the REST send route
+        probes it for this gate before publishing; without the proxy the
+        ``getattr`` came back empty and a member could ignore a slow channel
+        entirely. The interval and the staff exemptions come from the
+        sub-manager, so both send paths stay identical.
+        """
+        return self._manager.check_channel_slowmode(user_id, channel_id)
+
     def get_channel_messages(
         self,
         user_id: SnowflakeID,

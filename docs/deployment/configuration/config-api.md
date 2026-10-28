@@ -45,7 +45,7 @@ The `server` block has no `workers` key. To cap the thread pool for
 api:
   title: Plexichat API
   description: REST API for the Plexichat messaging platform
-  version: a.1.0-156
+  version: a.1.0-163
   api_prefix: /api/v1   # Route prefix for all REST endpoints. Do not use `prefix`.
   debug: false
   max_worker_threads: 16
