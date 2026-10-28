@@ -1196,7 +1196,7 @@ validate_master_and_tag:
     - echo "Running production validation suite on master..."
     - python main.py pre-flight
     - |
-      # "Plexichat Server a.1.0-156" -> a.1.0 -> a.1.0-build<pipeline id>.
+      # "Plexichat Server a.1.0-157" -> a.1.0 -> a.1.0-build<pipeline id>.
       VERSION="$(python main.py version | tail -1)"
       VERSION="${VERSION##* }"
       case "$VERSION" in
