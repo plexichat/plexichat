@@ -9,6 +9,7 @@ from src.api.schemas.common import ErrorResponse
 from src.core.media.exceptions import (
     FileSizeError,
     FileTypeError,
+    FileUploadError,
     MalwareDetectedError,
     ScannerUnavailableError,
 )
@@ -222,7 +223,7 @@ class ChannelAttachmentsMixin(ChannelBase):
                 )
             except HTTPException:
                 raise
-            except (FileSizeError, FileTypeError) as e:
+            except (FileSizeError, FileTypeError, FileUploadError) as e:
                 logger.warning(
                     f"Attachment rejected for user {current_user.user_id} in "
                     f"channel {cid}: {e}"
