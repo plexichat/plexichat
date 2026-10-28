@@ -4,7 +4,7 @@ name: plexichat
 #
 # Compose ref pinning: this file is the canonical compose source. Operators
 # who fetch it remotely MUST pin a released tag (e.g.
-# BACKEND_VERSION=a.1.0-155) and verify the SHA256 sidecar / out-of-band
+# BACKEND_VERSION=a.1.0-156) and verify the SHA256 sidecar / out-of-band
 # digest before `docker compose up`. Fetching docker-compose.yml from the
 # unreleased `dev` branch is forbidden unless explicitly opted into with
 # ALLOW_DEV_COMPOSE=1, which the deploy script treats as tracking
