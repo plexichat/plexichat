@@ -156,6 +156,17 @@ def get_friend_request(request_id: int) -> Optional[FriendRequest]:
     return _get_manager().get_friend_request(request_id)
 
 
+def _get_pending_request(sender_id: int, recipient_id: int):
+    """Direct lookup of a pending request from sender to recipient.
+
+    Modules call this as ``relationships._get_pending_request(...)`` (see the
+    DELETE /relationships/{user_id} route); it lives on the manager, so without
+    this delegation the call raised AttributeError and declining or cancelling
+    a request answered 500.
+    """
+    return _get_manager()._get_pending_request(sender_id, recipient_id)
+
+
 def get_pending_requests_incoming(
     user_id: int, limit: int = 100
 ) -> List[FriendRequest]:
