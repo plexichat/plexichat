@@ -128,6 +128,7 @@ from .invites import (
 )
 from .messages import (
     send_channel_message,
+    check_channel_slowmode,
     get_channel_messages,
     get_audit_log,
 )
@@ -237,6 +238,7 @@ __all__ = [
     "delete_invite",
     # Messaging
     "send_channel_message",
+    "check_channel_slowmode",
     "get_channel_messages",
     "get_audit_log",
     # Scheduled events
