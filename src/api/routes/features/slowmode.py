@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import utils.logger as logger
@@ -81,10 +81,20 @@ async def set_channel_slowmode(
     if not can_manage:
         raise_forbidden("Missing permission to manage this channel")
 
+    # Go through the manager rather than a bare UPDATE: it invalidates the
+    # cached Channel (srv_channel:{id}, 60s TTL) and emits the update event.
+    # Writing SQL directly left every reader of get_channel() -- including the
+    # send path that enforces slowmode -- serving slowmode_seconds=0 for up to
+    # a minute after the operator enabled it.
+    from src.core.servers.exceptions import (
+        ChannelNotFoundError,
+        InvalidChannelSettingError,
+        PermissionDeniedError,
+    )
+
     try:
-        db.execute(
-            "UPDATE srv_channels SET slowmode_seconds = ? WHERE id = ?",
-            (interval_seconds, cid),
+        servers_mod.update_channel(
+            current_user.user_id, cid, slowmode_seconds=interval_seconds
         )
         logger.info(
             f"Channel {cid} slowmode set to {interval_seconds}s by user {current_user.user_id}"
@@ -97,6 +107,14 @@ async def set_channel_slowmode(
             "channel_id": str(cid),
             "slowmode_seconds": interval_seconds,
         }
+    except HTTPException:
+        raise
+    except ChannelNotFoundError:
+        raise_not_found("Channel not found")
+    except PermissionDeniedError:
+        raise_forbidden("Missing permission to manage this channel")
+    except InvalidChannelSettingError as e:
+        raise_bad_request(str(e))
     except Exception as e:
         logger.error(f"Failed to set channel slowmode: {e}")
         raise_internal("Internal server error")

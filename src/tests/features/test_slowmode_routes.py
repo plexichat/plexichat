@@ -77,6 +77,36 @@ class TestChannelSlowmodeAuthorization:
         assert fetched.json()["channel_id"] == str(setup["channel"].id)
         assert isinstance(fetched.json()["channel_id"], str)
 
+    def test_setting_slowmode_invalidates_the_channel_cache(
+        self, test_client, channel_setup, server_manager
+    ):
+        """Readers of get_channel() must see the new interval immediately.
+
+        The route used to write SQL directly, leaving the cached Channel
+        (60s TTL) reporting slowmode_seconds=0 -- which is exactly what the
+        send path consults, so slowmode stayed unenforced after enabling it.
+        """
+        setup = channel_setup
+        channel_id = setup["channel"].id
+
+        # Warm the cache with the pre-change row.
+        assert (
+            server_manager.get_channel(channel_id, setup["owner"].id).slowmode_seconds
+            == 0
+        )
+
+        response = test_client.put(
+            SLOWMODE_URL.format(channel_id=channel_id),
+            json={"interval_ms": 5000},
+            headers={"Authorization": f"Bearer {setup['owner_token']}"},
+        )
+        assert response.status_code == 200, response.text
+
+        assert (
+            server_manager.get_channel(channel_id, setup["owner"].id).slowmode_seconds
+            == 5
+        )
+
     def test_plain_member_is_forbidden(self, test_client, channel_setup):
         setup = channel_setup
         url = SLOWMODE_URL.format(channel_id=setup["channel"].id)
