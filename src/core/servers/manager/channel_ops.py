@@ -2,7 +2,6 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from src.core.database import valkey_available
 
 from ..models import (
     ChannelType,
@@ -49,25 +48,14 @@ class ChannelOpsMixin(ServerProtocol):
                 "Missing messages.send permission", "messages.send"
             )
 
-        if channel.slowmode_seconds > 0:
-            can_bypass = (
-                check_permission(permissions, "messages.bypass_slowmode")
-                or check_permission(permissions, "messages.manage")
-                or check_permission(permissions, "channels.manage")
-                or check_permission(permissions, "administrator")
+        retry_after = self.check_channel_slowmode(user_id, channel_id)
+        if retry_after:
+            from src.core.ratelimit.exceptions import RateLimitError
+
+            raise RateLimitError(
+                f"Slowmode is enabled. Try again in {retry_after:.1f}s",
+                retry_after,
             )
-
-            if not can_bypass:
-                retry_after = self._check_slowmode(
-                    user_id, channel_id, channel.slowmode_seconds
-                )
-                if retry_after:
-                    from src.core.ratelimit.exceptions import RateLimitError
-
-                    raise RateLimitError(
-                        f"Slowmode is enabled. Try again in {retry_after:.1f}s",
-                        retry_after,
-                    )
 
         if not self._messaging:
             raise ServerError("Messaging module not available")
@@ -83,6 +71,45 @@ class ChannelOpsMixin(ServerProtocol):
             attachments=attachments,
         )
 
+    def check_channel_slowmode(
+        self, user_id: SnowflakeID, channel_id: SnowflakeID
+    ) -> Optional[float]:
+        """Return the seconds a user must wait before posting, or None.
+
+        Shared by the core send path and the REST send route so both enforce
+        the same interval with the same moderator exemptions.  Returns None
+        when the channel has no slowmode, the user may bypass it, or the
+        channel cannot be resolved (fails open, never blocks a send).
+        """
+        try:
+            channel = self.get_channel(channel_id, user_id)
+        except Exception as e:
+            logger.debug(f"Slowmode channel lookup failed for {channel_id}: {e}")
+            return None
+
+        slowmode_seconds = getattr(channel, "slowmode_seconds", 0) or 0
+        if slowmode_seconds <= 0:
+            return None
+
+        permissions = {}
+        server_id = getattr(channel, "server_id", None)
+        if server_id is not None:
+            try:
+                permissions = self.get_permissions(user_id, server_id, channel_id) or {}
+            except Exception as e:
+                logger.debug(f"Slowmode permission lookup failed for {channel_id}: {e}")
+
+        for bypass in (
+            "messages.bypass_slowmode",
+            "messages.manage",
+            "channels.manage",
+            "administrator",
+        ):
+            if check_permission(permissions, bypass):
+                return None
+
+        return self._check_slowmode(user_id, channel_id, slowmode_seconds)
+
     def _check_slowmode(
         self, user_id: SnowflakeID, channel_id: SnowflakeID, slowmode_seconds: int
     ) -> Optional[float]:
@@ -91,22 +118,23 @@ class ChannelOpsMixin(ServerProtocol):
             return None
 
         key = f"slowmode:{channel_id}:{user_id}"
-        if valkey_available():
-            try:
-                from src.core.database import cache_get, cache_set
+        try:
+            from src.core.database import cache_get, cache_set
 
-                last_msg_time = cache_get(key)
-                now = self._get_timestamp() / 1000.0
-                if last_msg_time:
-                    try:
-                        elapsed = now - float(last_msg_time)
-                        if elapsed < slowmode_seconds:
-                            return slowmode_seconds - elapsed
-                    except (ValueError, TypeError):
-                        pass
-                cache_set(key, str(now), ttl=slowmode_seconds)
-            except Exception as e:
-                logger.debug(f"Slowmode check failed (Valkey error): {e}")
+            last_msg_time = cache_get(key)
+            now = self._get_timestamp() / 1000.0
+            if last_msg_time:
+                try:
+                    elapsed = now - float(last_msg_time)
+                    if elapsed < slowmode_seconds:
+                        return slowmode_seconds - elapsed
+                except (ValueError, TypeError):
+                    pass
+            cache_set(key, str(now), ttl=slowmode_seconds)
+        except Exception as e:
+            # Slowmode is a politeness limit, not an authorization boundary:
+            # a cache outage must never stop messages from being delivered.
+            logger.debug(f"Slowmode check failed (cache error): {e}")
         return None
 
     def get_channel_messages(

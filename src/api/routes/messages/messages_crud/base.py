@@ -399,6 +399,47 @@ class MessagesCRUDBase:
                 known_codes.append(code)
         return known_codes
 
+    def _enforce_channel_slowmode(
+        self, channel_id: int, user_id: int, servers_mod: Any
+    ) -> None:
+        """Reject sends that violate the channel's slowmode interval.
+
+        The REST send path publishes straight through the messaging layer,
+        so it never passed the servers manager's own slowmode gate.  This
+        reuses that gate (same interval, same moderator exemptions) and
+        fails open on infrastructure errors so a limiter outage cannot
+        blackhole messages.
+        """
+        checker = getattr(servers_mod, "check_channel_slowmode", None)
+        if not servers_mod or checker is None:
+            return
+
+        try:
+            retry_after = checker(user_id, channel_id)
+        except Exception as e:
+            logger.warning(
+                f"Channel slowmode check failed for {channel_id} (failing open): {e}"
+            )
+            return
+
+        if not retry_after:
+            return
+
+        retry_after = float(retry_after)
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "code": 429,
+                    "message": (
+                        f"Slowmode is enabled. Try again in {retry_after:.1f}s"
+                    ),
+                    "retry_after_ms": int(retry_after * 1000),
+                }
+            },
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
     def _enforce_dm_spam_protection(
         self, channel_id: int, sender_id: int, content: str, messaging: Any
     ) -> None:
