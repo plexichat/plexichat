@@ -13,7 +13,7 @@ import utils.logger as logger
 import utils.config as config
 import utils.version as version
 
-VERSION = "a.1.0-161"
+VERSION = "a.1.0-162"
 
 
 class PlexichatServer:

@@ -412,6 +412,12 @@ class MessagesCRUDBase:
         """
         checker = getattr(servers_mod, "check_channel_slowmode", None)
         if not servers_mod or checker is None:
+            # A quiet skip here is how a missing proxy let a member ignore a
+            # slow channel in production without a single log line.
+            logger.warning(
+                "Channel slowmode gate unavailable on the servers module; "
+                f"sends to {channel_id} are not limited"
+            )
             return
 
         try:

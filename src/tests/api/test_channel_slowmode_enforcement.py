@@ -45,27 +45,41 @@ def test_member_is_limited_and_staff_bypass(slowmode_setup):
     assert servers.check_channel_slowmode(owner.id, channel.id) is None
 
 
-def test_servers_module_exposes_the_slowmode_gate(monkeypatch):
-    """The module facade the API is wired to must expose the gate.
+def test_public_manager_exposes_the_slowmode_gate():
+    """The object the API resolves must expose the gate itself.
 
-    ``src.api.get_servers()`` returns the ``src.core.servers`` *module* in a
-    live process, while the fixtures pass the manager object directly. The
-    gate existed only on the manager, so the send route's ``getattr`` probe
-    found nothing and skipped enforcement in production while every test
-    stayed green.
+    The fixtures hand the routes the internal sub-manager, which owns
+    ``check_channel_slowmode``. Production resolves the public composer
+    ``ServersManager``, which only had the mixins' proxies -- so the route's
+    ``getattr`` probe found nothing, skipped enforcement, and logged nothing
+    while every test stayed green.
     """
+    from src.core.servers.composer import ServersManager
+
+    assert hasattr(ServersManager, "check_channel_slowmode")
+
+    class _Inner:
+        def check_channel_slowmode(self, user_id, channel_id):
+            return 4.5
+
+    manager = ServersManager.__new__(ServersManager)
+    manager._manager = _Inner()
+    assert manager.check_channel_slowmode(1, 2) == 4.5
+
+
+def test_servers_module_exposes_the_slowmode_gate(monkeypatch):
+    """The module facade must expose it too (some wiring returns the module)."""
     import src.core.servers as servers_facade
     import src.core.servers.messages as servers_messages
 
     assert "check_channel_slowmode" in servers_facade.__all__
-    assert callable(getattr(servers_facade, "check_channel_slowmode", None))
 
     class _Stub:
         def check_channel_slowmode(self, user_id, channel_id):
-            return 4.5
+            return 3.5
 
     monkeypatch.setattr(servers_messages, "_manager", _Stub())
-    assert servers_facade.check_channel_slowmode(1, 2) == 4.5
+    assert servers_facade.check_channel_slowmode(1, 2) == 3.5
 
 
 def test_rest_send_rejects_slowmode_violation(
