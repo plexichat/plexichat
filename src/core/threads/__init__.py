@@ -156,10 +156,22 @@ def create_thread_from_message(
     name: str,
     thread_type: ThreadType = ThreadType.PUBLIC,
     auto_archive_duration: AutoArchiveDuration = AutoArchiveDuration.ONE_DAY,
+    expected_channel_id: Optional[int] = None,
 ) -> Thread:
-    """Create a thread from an existing message (reply thread)."""
+    """Create a thread from an existing message (reply thread).
+
+    ``expected_channel_id`` is the URL/body channel the caller addressed: the
+    manager rejects the request when the parent message does not belong to it.
+    The HTTP route passes it, so this wrapper has to forward it -- dropping it
+    here raised ``TypeError`` and turned every reply-thread creation into a 500.
+    """
     return _get_manager().create_thread_from_message(
-        user_id, message_id, name, thread_type, auto_archive_duration
+        user_id,
+        message_id,
+        name,
+        thread_type,
+        auto_archive_duration,
+        expected_channel_id,
     )
 
 
