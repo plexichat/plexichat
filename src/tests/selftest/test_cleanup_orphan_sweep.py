@@ -139,6 +139,67 @@ def test_sweep_leaves_a_live_users_data_alone(db, auth_manager, pii_gen, monkeyp
     assert db.fetch_one("SELECT id FROM media_files WHERE id = ?", (file_id,))
 
 
+def _thread_conversation(db, owner_id, keep_thread=True):
+    """A thread container, which never has ``msg_participants`` rows."""
+    conversation_id = generate_snowflake_id()
+    now = 1_700_000_000_000
+    db.execute(
+        "INSERT INTO msg_conversations "
+        "(id, conversation_type, name, created_at, updated_at) "
+        "VALUES (?, 'thread', 'live thread', ?, ?)",
+        (conversation_id, now, now),
+    )
+    thread_id = generate_snowflake_id()
+    if keep_thread:
+        db.execute(
+            "INSERT INTO thread_threads "
+            "(id, channel_id, server_id, owner_id, name, conversation_id, created_at) "
+            "VALUES (?, ?, ?, ?, 'live thread', ?, ?)",
+            (
+                thread_id,
+                generate_snowflake_id(),
+                generate_snowflake_id(),
+                int(owner_id),
+                conversation_id,
+                now,
+            ),
+        )
+    return conversation_id, thread_id
+
+
+def test_sweep_leaves_a_live_threads_conversation_alone(
+    db, auth_manager, pii_gen, monkeypatch
+):
+    monkeypatch.setattr("src.core.erasure._media_manager", lambda: None)
+    user = _register(auth_manager, pii_gen)
+    conversation_id, thread_id = _thread_conversation(db, user.id)
+
+    result = CleanupService(ctx=None).sweep_orphans(db)
+
+    assert conversation_id not in result["conversations"]
+    assert db.fetch_one(
+        "SELECT id FROM msg_conversations WHERE id = ?", (conversation_id,)
+    ), "a thread's conversation looks empty but is still in use"
+    assert db.fetch_one("SELECT id FROM thread_threads WHERE id = ?", (thread_id,))
+
+
+def test_sweep_removes_a_thread_container_whose_thread_is_gone(db, monkeypatch):
+    monkeypatch.setattr("src.core.erasure._media_manager", lambda: None)
+    conversation_id, _thread_id = _thread_conversation(
+        db, MISSING_USER, keep_thread=False
+    )
+
+    result = CleanupService(ctx=None).sweep_orphans(db)
+
+    assert conversation_id in result["conversations"]
+    assert (
+        db.fetch_one(
+            "SELECT id FROM msg_conversations WHERE id = ?", (conversation_id,)
+        )
+        is None
+    )
+
+
 def test_delete_all_for_user_erases_uploads_too(db, auth_manager, pii_gen, monkeypatch):
     monkeypatch.setattr("src.core.erasure._media_manager", lambda: None)
     user = _register(auth_manager, pii_gen)

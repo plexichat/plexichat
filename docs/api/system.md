@@ -37,7 +37,7 @@ Returns basic API metadata. Mounted at the app root (`plexichat/src/api/app.py:5
 ```json
 {
   "name": "Plexichat API",
-  "version": "a.1.0-164",
+  "version": "a.1.0-165",
   "docs": "/docs",
   "api": "/api/v1",
   "api_docs": "/docs/api"
@@ -61,7 +61,7 @@ Checks API health and returns advisory diagnostics. This endpoint never takes do
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-164",
+  "version": "a.1.0-165",
   "events_metrics": {
     "dropped_count": 0,
     "subscriber_count": 12,
@@ -122,7 +122,7 @@ Returns the current version and the minimum supported client version. Cached for
     "major": 1,
     "minor": 0,
     "build": 157,
-    "string": "a.1.0-164"
+    "string": "a.1.0-165"
   },
   "min_supported_version": {
     "stage": "a",
@@ -167,13 +167,13 @@ Check whether a client version is compatible with the server.
 ```json
 {
   "compatible": true,
-  "server_version": { "stage": "a", "major": 1, "minor": 0, "build": 157, "string": "a.1.0-164" },
+  "server_version": { "stage": "a", "major": 1, "minor": 0, "build": 157, "string": "a.1.0-165" },
   "client_version": { "stage": "a", "major": 1, "minor": 0, "build": 125, "string": "a.1.0-125" },
   "min_supported_version": { "stage": "a", "major": 1, "minor": 0, "build": 100, "string": "a.1.0-100" },
   "update_required": false,
   "update_recommended": true,
   "update_url": null,
-  "message": "A newer version (a.1.0-164) is available. Consider updating for the latest features and fixes."
+  "message": "A newer version (a.1.0-165) is available. Consider updating for the latest features and fixes."
 }
 ```
 
@@ -198,7 +198,7 @@ Returns operational state, version, uptime, and any maintenance announcement. Ca
 ```json
 {
   "state": "running",
-  "version": { "stage": "a", "major": 1, "minor": 0, "build": 157, "string": "a.1.0-164" },
+  "version": { "stage": "a", "major": 1, "minor": 0, "build": 157, "string": "a.1.0-165" },
   "uptime_seconds": 86400,
   "maintenance_message": null,
   "estimated_downtime_seconds": null,

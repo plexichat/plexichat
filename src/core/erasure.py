@@ -212,6 +212,10 @@ def purge_user_conversations(db: Any, user_id: int) -> List[int]:
         )
     ]
     owned_threads = _owned_thread_ids(db, uid)
+    # Thread containers have no ``msg_participants`` rows -- access runs through
+    # ``thread_members`` -- so they never appear in ``conversation_ids`` and
+    # have to be collected from the threads themselves.
+    owned_thread_conversations = _owned_thread_conversation_ids(db, uid)
     _execute(db, "DELETE FROM msg_participants WHERE user_id = ?", (uid,))
     _execute(db, "DELETE FROM thread_members WHERE user_id = ?", (uid,))
     for thread_id in owned_threads:
@@ -220,8 +224,11 @@ def purge_user_conversations(db: Any, user_id: int) -> List[int]:
         _execute(db, "DELETE FROM thread_threads WHERE id = ?", (thread_id,))
 
     removed: List[int] = []
+    for cid in owned_thread_conversations:
+        delete_conversation(db, cid)
+        removed.append(cid)
     for cid in conversation_ids:
-        if has_other_participants(db, cid, uid):
+        if cid in removed or has_other_participants(db, cid, uid):
             continue
         delete_conversation(db, cid)
         removed.append(cid)
@@ -240,16 +247,50 @@ def _owned_thread_ids(db: Any, user_id: int) -> List[int]:
         return []
 
 
+def _owned_thread_conversation_ids(db: Any, user_id: int) -> List[int]:
+    """Conversation ids of the thread containers this user started."""
+    try:
+        return [
+            int(row["conversation_id"])
+            for row in _rows(
+                db,
+                "SELECT conversation_id FROM thread_threads "
+                "WHERE owner_id = ? AND conversation_id IS NOT NULL",
+                (int(user_id),),
+            )
+        ]
+    except Exception:
+        return []
+
+
+_ORPHANED_CONVERSATIONS = (
+    "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
+    "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id) "
+    "AND NOT EXISTS "
+    "(SELECT 1 FROM thread_threads t WHERE t.conversation_id = c.id)"
+)
+
+# Thread tables are optional; without them nothing has to be excluded.
+_ORPHANED_CONVERSATIONS_NO_THREADS = (
+    "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
+    "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id)"
+)
+
+
 def purge_orphaned_conversations(db: Any) -> List[int]:
-    """Delete conversations that no user participates in any more."""
-    ids = [
-        int(row["id"])
-        for row in _rows(
-            db,
-            "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
-            "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id)",
-        )
-    ]
+    """Delete conversations that no user participates in any more.
+
+    A thread's conversation is created without ``msg_participants`` rows -- the
+    thread's access is tracked in ``thread_members`` -- so a live thread looks
+    "empty" to a participant count. Conversations a thread still points at are
+    therefore left alone; a container whose thread row is gone is swept like
+    any other orphan.
+    """
+    try:
+        rows = _rows(db, _ORPHANED_CONVERSATIONS)
+    except Exception:
+        rows = _rows(db, _ORPHANED_CONVERSATIONS_NO_THREADS)
+    ids = [int(row["id"]) for row in rows]
     for cid in ids:
         delete_conversation(db, cid)
     return ids

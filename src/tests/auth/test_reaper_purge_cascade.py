@@ -93,6 +93,42 @@ def _solo_conversation(db, user_id, body="notes to self"):
     return conversation_id, message_id
 
 
+def _owned_thread(db, user_id, body="a line in a thread"):
+    """A thread container: no participants, ownership in ``thread_threads``."""
+    from src.utils.encryption import generate_snowflake_id
+
+    conversation_id = generate_snowflake_id()
+    thread_id = generate_snowflake_id()
+    message_id = generate_snowflake_id()
+    now = 1_700_000_000_000
+    db.execute(
+        "INSERT INTO msg_conversations "
+        "(id, conversation_type, name, created_at, updated_at) "
+        "VALUES (?, 'thread', 'a thread', ?, ?)",
+        (conversation_id, now, now),
+    )
+    db.execute(
+        "INSERT INTO thread_threads "
+        "(id, channel_id, server_id, owner_id, name, conversation_id, created_at) "
+        "VALUES (?, ?, ?, ?, 'a thread', ?, ?)",
+        (
+            thread_id,
+            generate_snowflake_id(),
+            generate_snowflake_id(),
+            int(user_id),
+            conversation_id,
+            now,
+        ),
+    )
+    db.execute(
+        "INSERT INTO msg_messages "
+        "(id, conversation_id, author_id, content, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (message_id, conversation_id, int(user_id), body, now, now),
+    )
+    return conversation_id, thread_id, message_id
+
+
 class TestOwnedServers:
     def test_purge_erases_the_server_the_account_owned(self, env, server_manager):
         db, _auth, user, _survivor, reaper, _ = env
@@ -201,6 +237,29 @@ class TestConversations:
             )
             is None
         )
+        assert (
+            db.fetch_one("SELECT id FROM msg_messages WHERE id = ?", (message_id,))
+            is None
+        )
+
+
+class TestThreads:
+    def test_thread_owned_by_the_account_is_erased_with_its_conversation(self, env):
+        db, _auth, user, _survivor, reaper, _ = env
+        conversation_id, thread_id, message_id = _owned_thread(db, user.id)
+
+        reaper.purge_user(user.id, user.username)
+
+        assert (
+            db.fetch_one("SELECT id FROM thread_threads WHERE id = ?", (thread_id,))
+            is None
+        ), "the thread row belongs to the account"
+        assert (
+            db.fetch_one(
+                "SELECT id FROM msg_conversations WHERE id = ?", (conversation_id,)
+            )
+            is None
+        ), "the thread's conversation must not survive as an orphan"
         assert (
             db.fetch_one("SELECT id FROM msg_messages WHERE id = ?", (message_id,))
             is None
