@@ -93,6 +93,42 @@ def temp_db():
         pass
 
 
+class _FakePostgresCursor:
+    """Minimal DB-API cursor that records the statement it was given."""
+
+    def __init__(self, row):
+        self.executed = []
+        self.rowcount = 1
+        self._row = row
+        self.closed = False
+
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params))
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        self.closed = True
+
+
+class _FakePostgresConnection:
+    """Connection stand-in for the PostgreSQL branch of the builder."""
+
+    def __init__(self, row=None):
+        self.cursor_obj = _FakePostgresCursor(row)
+        self.commits = 0
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        pass
+
+
 @pytest.fixture
 def builder(temp_db):
     """Create a QueryBuilder instance."""
@@ -164,6 +200,42 @@ class TestInsertQuery:
         assert row is not None
         assert row["username"] == "alice"
         assert row["email"] == "alice@example.com"
+
+    def test_insert_returns_new_row_id_on_postgres(self):
+        """The builder hands back the new row's id, not a row count.
+
+        It used to return ``cursor.rowcount`` (always 1) on PostgreSQL, and
+        callers read that as the id of the row they just wrote: a created
+        federation connection was looked up as row 1 of its table, which was
+        somebody else's row pointing at another host.
+        """
+        connection = _FakePostgresConnection(row={"id": 42, "username": "alice"})
+        builder = QueryBuilder(
+            connection, db_type="postgres", enable_schema_validation=False
+        )
+
+        result = builder.table("users").insert({"username": "alice"}).execute()
+
+        assert result == 42
+        sql, params = connection.cursor_obj.executed[-1]
+        assert sql.endswith("RETURNING *")
+        assert "%s" in sql  # placeholders converted for the pg driver
+        assert params == ["alice"]
+
+    def test_insert_returns_zero_when_table_has_no_id(self):
+        """A table without an ``id`` column still inserts; the id is 0.
+
+        ``RETURNING *`` rather than ``RETURNING id`` is what keeps this path
+        working for join tables, which have no id to ask for.
+        """
+        connection = _FakePostgresConnection(row={"left_id": 1, "right_id": 2})
+        builder = QueryBuilder(
+            connection, db_type="postgres", enable_schema_validation=False
+        )
+
+        result = builder.table("links").insert({"left_id": 1, "right_id": 2}).execute()
+
+        assert result == 0
 
     def test_insert_with_validation(self, builder, temp_db):
         """Test INSERT with Pydantic model validation."""
