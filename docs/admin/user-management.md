@@ -152,7 +152,7 @@ Required permission: `users.force_purge`. This action typically requires approva
 
 Endpoint: `POST <admin-base>/users/{user_id}/force-purge`.
 
-The purge erases what the account owned as well as the account row: the servers it owned (with their channels, messages and conversations), conversations left with no other participant, and uploaded media metadata plus its stored objects. A media object whose content is shared with another user's upload stays in storage, but the purged user's metadata and reference are removed. Objects the storage backend refuses to delete are recorded on the `PURGED` audit event as `media_object_paths` for an operator to sweep, the same way unswept DSAR exports are.
+The purge erases what the account owned as well as the account row: the servers it owned (with their channels, messages and conversations), conversations left with no other participant (including the conversations of threads it started), and uploaded media metadata plus its stored objects. A media object whose content is shared with another user's upload stays in storage, but the purged user's metadata and reference are removed. Objects the storage backend refuses to delete are recorded on the `PURGED` audit event as `media_object_paths` for an operator to sweep, the same way unswept DSAR exports are.
 
 ### Delete an account directly
 
