@@ -13,7 +13,7 @@ Usage:
     result = media.upload_file(user_id=1, file_data=data, filename="image.jpg")
 """
 
-from typing import Optional, Dict, Any, BinaryIO, Tuple
+from typing import Optional, Dict, Any, BinaryIO, Tuple, List
 
 from .manager import MediaManager
 
@@ -387,6 +387,11 @@ def delete_file(user_id: int, file_id: int) -> bool:
 def delete_file_permanently(user_id: int, file_id: int) -> bool:
     """Permanently delete an owned file and its underlying storage object."""
     return _get_manager().delete_file_permanently(user_id, file_id)
+
+
+def delete_files_for_user(user_id: int) -> List[str]:
+    """Erase all of a user's uploads; returns storage paths left behind."""
+    return _get_manager().delete_files_for_user(user_id)
 
 
 def can_delete_file_permanently(file_id: int) -> bool:

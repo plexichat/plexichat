@@ -6,7 +6,7 @@ File retrieval, deletion, and access-check methods mixed into MediaManager.
 import os
 import time
 import logging
-from typing import Optional, Dict, List, Tuple, BinaryIO
+from typing import Any, Optional, Dict, List, Tuple, BinaryIO
 
 from .models import MediaFile
 from .exceptions import MediaError, PermissionDeniedError
@@ -444,6 +444,84 @@ class _FilesMixin:
 
         logger.info("Permanently deleted media file %s", file_id)
         return True
+
+    def delete_files_for_user(self, user_id: int) -> List[str]:
+        """Erase every file a user uploaded, including storage objects.
+
+        Account erasure cannot go through ``delete_file_permanently``: that
+        defers while any reference remains, and a file whose content was
+        deduplicated against the same user's other uploads keeps a reference
+        count above one, so every single call would be refused and the account
+        would be left owning its media for ever. The user's files are grouped
+        by checksum here, so the dedup counter is released once per row and the
+        object is removed only when no other user's file shares it -- the
+        metadata of this user's copy still goes in that case.
+
+        Returns the storage paths that could not be removed, for the caller to
+        record on its audit event.
+        """
+        uid = int(user_id)
+        rows = [
+            dict(row)
+            for row in self._db.fetch_all(
+                "SELECT id, checksum, storage_backend, storage_path "
+                "FROM media_files WHERE uploaded_by = ? ORDER BY id",
+                (uid,),
+            )
+        ]
+        groups: Dict[Optional[str], List[Dict[str, Any]]] = {}
+        for row in rows:
+            groups.setdefault(row.get("checksum"), []).append(row)
+
+        unswept: List[str] = []
+        for checksum, files in groups.items():
+            shared = False
+            if checksum:
+                other = self._db.fetch_one(
+                    "SELECT COUNT(*) AS count FROM media_files "
+                    "WHERE checksum = ? AND uploaded_by != ?",
+                    (checksum, uid),
+                )
+                if other:
+                    shared = (
+                        int(other["count"] if isinstance(other, dict) else other[0]) > 0
+                    )
+
+            deleted_paths: set = set()
+            for file_row in files:
+                file_id = int(file_row["id"])
+                backend = str(file_row.get("storage_backend") or "s3")
+                path = file_row.get("storage_path")
+                if not shared and path and path not in deleted_paths:
+                    try:
+                        storage = self._get_storage_by_backend(backend)
+                        if storage.exists(path) and not storage.delete(path):
+                            unswept.append(str(path))
+                    except Exception as exc:
+                        logger.warning(
+                            "Erase: media object %s could not be deleted: %s",
+                            path,
+                            exc,
+                        )
+                        unswept.append(str(path))
+                    deleted_paths.add(path)
+
+                self._db.execute(
+                    "DELETE FROM media_file_deletion_locks WHERE media_file_id = ?",
+                    (file_id,),
+                )
+                self._db.execute(
+                    "DELETE FROM media_file_deletion_tombstones "
+                    "WHERE media_file_id = ?",
+                    (file_id,),
+                )
+                self._db.execute("DELETE FROM media_files WHERE id = ?", (file_id,))
+                if checksum and self._dedup_manager is not None:
+                    self._dedup_manager.decrement_reference(str(checksum))
+
+        if rows:
+            logger.info("Erased %d media file(s) for user %s", len(rows), uid)
+        return unswept
 
     # ── access control ─────────────────────────────────────────────────────────
 

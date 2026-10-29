@@ -573,6 +573,24 @@ class AccountReaper:
                     f"Reaper: Failed to scrub artifact data for {user_id}: {ae}"
                 )
 
+            # 2c. Erase what the account owned beyond its own row: servers (with
+            # their channels, conversations and messages), conversations left
+            # with no participant, and uploaded media in object storage. Without
+            # this the account's data stayed behind owned by a user id that no
+            # longer exists, where nobody could administer or erase it.
+            unswept_media: list = []
+            try:
+                from src.core.erasure import erase_user_residue
+
+                residue = erase_user_residue(self._db, user_id)
+                unswept_media = residue.get("media_unswept") or []
+            except Exception as ee:
+                logger.warning(
+                    f"Reaper: Failed to erase owned servers/conversations/media "
+                    f"for {user_id}: {ee}",
+                    exc_info=True,
+                )
+
             # 3. Final Database Erasure
             # Order matters: child tables before parent tables to respect FK constraints.
             # The Suite sweep returns external blob paths it could not delete
@@ -671,6 +689,11 @@ class AccountReaper:
                 purged_metadata["dsar_exports_unswept"] = len(unswept_dsar_exports)
                 purged_metadata["dsar_export_paths"] = [
                     str(p) for p in unswept_dsar_exports[:50]
+                ]
+            if unswept_media:
+                purged_metadata["media_objects_unswept"] = len(unswept_media)
+                purged_metadata["media_object_paths"] = [
+                    str(p) for p in unswept_media[:50]
                 ]
             self._log.log_event(user_id, "PURGED", f"user:{user_id}", purged_metadata)
 

@@ -68,6 +68,8 @@ class CleanupService:
                 uid = row["id"] if isinstance(row, dict) else row[0]
                 self._purge_sum_for_user(db, uid)
 
+            self.sweep_orphans(db)
+
             db.begin_transaction()
 
             try:
@@ -317,10 +319,11 @@ class CleanupService:
         except Exception:
             pass
 
-        srv_rows = db.fetch_all("SELECT id FROM srv_servers WHERE owner_id = ?", (uid,))
-        for s_row in srv_rows:
-            sid = s_row["id"] if isinstance(s_row, dict) else s_row[0]
-            self.delete_server_recursive(db, sid)
+        from src.core.erasure import purge_owned_servers, purge_user_media
+
+        purge_owned_servers(db, uid)
+        # Uploaded media would otherwise outlive the account it belongs to.
+        purge_user_media(db, uid)
 
         db.execute(
             "DELETE FROM srv_member_roles WHERE member_id IN (SELECT id FROM srv_members WHERE user_id = ?)",
@@ -333,73 +336,40 @@ class CleanupService:
         db.execute("DELETE FROM auth_users WHERE id = ?", (uid,))
 
     def delete_server_recursive(self, db: Any, sid: int) -> None:
-        db.execute(
-            "DELETE FROM srv_member_roles WHERE member_id IN (SELECT id FROM srv_members WHERE server_id = ?)",
-            (sid,),
-        )
-        db.execute("DELETE FROM srv_members WHERE server_id = ?", (sid,))
-        db.execute(
-            "DELETE FROM srv_channel_overrides WHERE channel_id IN (SELECT id FROM srv_channels WHERE server_id = ?)",
-            (sid,),
-        )
-        db.execute("DELETE FROM srv_invites WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_bans WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_categories WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_audit_log WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_scheduled_events WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_templates WHERE source_server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_welcome_screens WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_onboarding_steps WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_onboarding_progress WHERE server_id = ?", (sid,))
+        """Delete a server and everything hanging off it.
 
-        conv_ids = db.fetch_all(
-            "SELECT conversation_id FROM srv_channels WHERE server_id = ? AND conversation_id IS NOT NULL",
-            (sid,),
-        )
-        for row in conv_ids:
-            cid = row["conversation_id"] if isinstance(row, dict) else row[0]
-            db.execute(
-                "DELETE FROM msg_message_status WHERE message_id IN (SELECT id FROM msg_messages WHERE conversation_id = ?)",
-                (cid,),
+        Delegates to ``src.core.erasure`` so the self-test and the account
+        reaper cannot drift: erasure of a server means the same rows in both.
+        """
+        from src.core.erasure import purge_server_recursive
+
+        purge_server_recursive(db, sid)
+
+    def sweep_orphans(self, db: Any) -> dict:
+        """Remove residue left by account erasures that predate the cascade.
+
+        Account deletion now erases the servers, participant-less
+        conversations and uploaded media an account owned, but a deployment
+        can still carry rows from an earlier release (and a crash mid-purge
+        leaves a partial one). Only rows whose owning account no longer exists
+        are touched, so live data is never in scope.
+        """
+        try:
+            from src.core.erasure import sweep_orphans as _sweep
+
+            result = _sweep(db)
+        except Exception as exc:
+            logger.warning("Pre-test cleanup: orphan sweep skipped: %s", exc)
+            return {}
+        if any(result.get(k) for k in ("servers", "conversations", "media_unswept")):
+            logger.info(
+                "Pre-test cleanup: swept %s orphan server(s), %s orphan "
+                "conversation(s), %s unswept media object(s)",
+                len(result.get("servers") or []),
+                len(result.get("conversations") or []),
+                len(result.get("media_unswept") or []),
             )
-            db.execute("DELETE FROM msg_pinned WHERE conversation_id = ?", (cid,))
-            db.execute(
-                "DELETE FROM msg_attachments WHERE message_id IN (SELECT id FROM msg_messages WHERE conversation_id = ?)",
-                (cid,),
-            )
-            db.execute("DELETE FROM msg_messages WHERE conversation_id = ?", (cid,))
-            db.execute("DELETE FROM msg_participants WHERE conversation_id = ?", (cid,))
-
-            try:
-                db.execute(
-                    "DELETE FROM thread_members WHERE thread_id IN (SELECT id FROM thread_threads WHERE conversation_id = ?)",
-                    (cid,),
-                )
-                db.execute(
-                    "DELETE FROM thread_threads WHERE conversation_id = ?", (cid,)
-                )
-            except Exception:
-                pass
-
-            db.execute("DELETE FROM msg_conversations WHERE id = ?", (cid,))
-
-        db.execute("DELETE FROM srv_channels WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM srv_roles WHERE server_id = ?", (sid,))
-
-        db.execute(
-            "DELETE FROM webhook_messages WHERE webhook_id IN (SELECT id FROM webhook_webhooks WHERE server_id = ?)",
-            (sid,),
-        )
-        db.execute("DELETE FROM webhook_webhooks WHERE server_id = ?", (sid,))
-
-        db.execute("DELETE FROM automod_rules WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM automod_violations WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM automod_audit WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM automod_reputation WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM automod_exemptions WHERE server_id = ?", (sid,))
-        db.execute("DELETE FROM automod_rate_tracking WHERE server_id = ?", (sid,))
-
-        db.execute("DELETE FROM srv_servers WHERE id = ?", (sid,))
+        return result
 
     def cleanup_test_data(self) -> None:
         logger.info("Cleaning up test data via API...")
