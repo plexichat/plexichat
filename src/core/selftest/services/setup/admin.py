@@ -110,15 +110,37 @@ class AdminSetupMixin(SetupServiceBase):
             import src.utils.encryption as _setup_enc
 
             _actual_hash = _setup_enc.hash_password(password)
-            db.execute(
-                "INSERT OR REPLACE INTO admin_users (id, username, password_hash, email, created_at, must_setup_otp) VALUES (?, ?, ?, ?, ?, 0)",
+            # Cross-backend upsert: ``INSERT OR REPLACE`` is SQLite-only and the
+            # dialect layer only rewrites ``INSERT OR IGNORE``, so on PostgreSQL
+            # this statement was a syntax error at "OR" -- swallowed by the
+            # except below, which left the self-test admin identity without an
+            # admin_users row on every Postgres deployment.
+            db.upsert(
+                "admin_users",
+                [
+                    "id",
+                    "username",
+                    "password_hash",
+                    "email",
+                    "created_at",
+                    "must_setup_otp",
+                ],
                 (
                     user_id,
                     username,
                     _actual_hash,
                     email,
                     int(time.time()),
+                    0,
                 ),
+                conflict_columns=["id"],
+                update_columns=[
+                    "username",
+                    "password_hash",
+                    "email",
+                    "created_at",
+                    "must_setup_otp",
+                ],
             )
             logger.debug(f"Synced user in admin_users table: {user_id}")
         except Exception as e:

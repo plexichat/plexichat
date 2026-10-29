@@ -319,6 +319,19 @@ def purge_user_media(db: Any, user_id: int, media: Optional[Any] = None) -> List
     are reported for an operator to sweep, mirroring the DSAR purge.
     """
     uid = int(user_id)
+    # PostgreSQL's media guard refuses to delete a ``media_files`` row while a
+    # ``msg_attachments`` row still references it. The purge removes the
+    # metadata first, so on PostgreSQL every attachment the account had sent
+    # blocked its own erasure: the media domain raised, the metadata fallback
+    # raised, and the account's uploads stayed behind. The purged user's own
+    # attachment rows point at media that is going away either way, so they go
+    # first.
+    _execute(
+        db,
+        "DELETE FROM msg_attachments WHERE message_id IN "
+        "(SELECT id FROM msg_messages WHERE author_id = ?)",
+        (uid,),
+    )
     manager = media if media is not None else _media_manager()
     if manager is not None:
         try:
