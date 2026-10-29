@@ -147,6 +147,7 @@ __all__ = [
     "delete_blob",
     "blob_exists",
     "get_blob_size",
+    "storage_object_exists",
 ]
 
 _manager = None
@@ -247,6 +248,19 @@ def blob_exists(path: str) -> bool:
 def get_blob_size(path: str) -> int:
     """Return a stored blob's size in bytes."""
     return _get_manager().get_blob_size(path)
+
+
+def storage_object_exists(backend: str, path: str) -> bool:
+    """Return whether a media object is still present in its backend.
+
+    The ``media_files`` row is not evidence on its own: erasure removes the
+    stored object too, so a caller proving an upload is gone (the self-test's
+    purge-residue check, an operator sweeping leftovers) has to ask storage.
+    Pass the row's own ``storage_backend`` and ``storage_path`` -- both are
+    read back from the database and are therefore useless once the row has
+    been deleted.
+    """
+    return _get_manager().storage_object_exists(backend, path)
 
 
 # === File Operations ===

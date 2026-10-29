@@ -200,6 +200,18 @@ class _StorageSetupMixin:
 
     # -- path / checksum helpers -------------------------------------------------
 
+    def storage_object_exists(self, backend: str, path: str) -> bool:
+        """Whether an object is still present in the backend that holds it.
+
+        Used where a row is not enough evidence: erasure removes the stored
+        object as well as the ``media_files`` row, and a caller that needs to
+        prove the object is gone has to ask storage, not the database. Storage
+        errors propagate -- an unreachable backend is not a removed object.
+        """
+        if not path:
+            return False
+        return bool(self._get_storage_by_backend(backend).exists(path))
+
     def _generate_storage_path(self, filename: str, media_type: MediaType) -> str:
         ext = os.path.splitext(filename)[1].lower() or ".bin"
         unique_id = uuid.uuid4().hex[:16]

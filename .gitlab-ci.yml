@@ -822,6 +822,27 @@ test:self_test:
       fi
     - python main.py self-test
 
+# Opt-in account-purge check, in a job of its own so `test:self_test` (and
+# every ordinary run of the suite) never purges an account. It runs beside
+# the other test jobs on branch pipelines: same ephemeral server, same
+# selftest_% fixtures, but on its own port so it can share a runner host with
+# test:self_test instead of failing on a busy 127.0.0.1:8000.
+#
+# The check purges a throwaway account through the real admin endpoint and
+# reads the database back: a purge that only deletes the auth_users row --
+# leaving the account's server, channel, conversation or upload behind --
+# fails here. Without it, the suites' pre-test orphan sweep would quietly
+# remove that residue and the run would stay green.
+test:purge_residue:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  script:
+    - mkdir -p .plexichat
+    - python main.py --port 8100 self-test --purge-residue
+
 docker:build_and_push:
   stage: docker
   image: docker:27

@@ -22,6 +22,7 @@ You need the following to use the admin panel:
 | [Data export (DSAR)](data-export.md) | Manage GDPR data subject access requests. |
 | [Security best practices](security.md) | Harden authentication, sessions, and access control. |
 | [User management](user-management.md) | Manage user lifecycles and account states. |
+| [Account-purge residue check](purge-residue-check.md) | Prove that a purged account leaves no rows or stored objects behind. |
 | [Server management](server-management.md) | Manage servers, members, and moderation. |
 | [Operations](operations.md) | Run day-to-day maintenance tasks. |
 | [Troubleshooting](troubleshooting.md) | Diagnose and resolve common issues. |

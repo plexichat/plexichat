@@ -106,6 +106,7 @@ Start the server on `127.0.0.1`, run the automated API self-test suite, then shu
 ```bash
 python main.py self-test
 python main.py self-test --unlicensed
+python main.py self-test --purge-residue
 ```
 
 The suite starts uvicorn in a background thread, runs every test in the self-test runner, and exits with `0` on success or `1` on failure.
@@ -113,6 +114,7 @@ The suite starts uvicorn in a background thread, runs every test in the self-tes
 | Flag | Description |
 |---|---|
 | `--unlicensed` | Run in unlicensed mode: exclude license-gated endpoints (for example, `/api/v1/admin/plexijoin/*`) that return `403` without a valid license. The flag is opt-in and the server never infers it from local license state (`src/cli/main.py:236`). Without it those routes stay in the run; on a free-tier install a `403` from a license-gated route is recorded as an **expected denial** (the feature gate working, not a failure), while a licensed install must still answer `2xx`. |
+| `--purge-residue` | Run only the account-purge residue check and exit: purge a throwaway account through the admin endpoint, then read the database and storage back to prove its server, channel, conversation, rows and stored upload went with it. Opt-in and never part of the default suite, because the check deletes an account. See [Account-purge residue check](../admin/purge-residue-check.md). |
 
 ### `create-config`
 

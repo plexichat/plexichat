@@ -42,6 +42,16 @@ To run the suite without license-gated PlexiJoin tests, pass the `--unlicensed` 
 python main.py self-test --unlicensed
 ```
 
+The account-purge residue check is opt-in and runs on its own:
+
+```bash
+python main.py self-test --purge-residue
+```
+
+It purges a throwaway account through the admin force-purge endpoint and then
+reads the database back, so it never runs as part of the default suite. CI runs
+it as its own job (`test:purge_residue`) beside `test:self_test`.
+
 You can also instantiate the runner programmatically:
 
 ```python
