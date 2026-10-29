@@ -55,15 +55,25 @@ def _payload_rev(payload: object):
 
 def up(db):
     """Add the rev column and backfill it from payload.rev."""
-    try:
-        db.execute("ALTER TABLE artifacts ADD COLUMN rev INTEGER NOT NULL DEFAULT 0")
-        logger.info("Migration 002: added artifacts.rev column")
-    except Exception as e:  # pragma: no cover - defensive
-        # Fresh installs create the table with rev already present (the module
-        # schema is authoritative); a duplicate-column error is then expected.
-        if not _is_duplicate_column_error(e):
-            raise
+    # Fresh installs create the table with rev already present (the module
+    # schema is authoritative). Ask the schema instead of running the ALTER
+    # and catching its failure: the database layer logs every failed statement
+    # as an error, so the old path made a healthy startup look broken. The
+    # duplicate-column handler stays for the concurrent-migration race, when
+    # the column can appear between this check and the ALTER.
+    column_exists = getattr(db, "column_exists", None)
+    if column_exists is not None and column_exists("artifacts", "rev"):
         logger.info("Migration 002: artifacts.rev already present; skipping ALTER")
+    else:
+        try:
+            db.execute(
+                "ALTER TABLE artifacts ADD COLUMN rev INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.info("Migration 002: added artifacts.rev column")
+        except Exception as e:  # pragma: no cover - concurrent migration
+            if not _is_duplicate_column_error(e):
+                raise
+            logger.info("Migration 002: artifacts.rev already present; skipping ALTER")
 
     # Backfill: seed the column from the legacy payload.rev chain so existing
     # editors continue from their last revision instead of restarting at 0.

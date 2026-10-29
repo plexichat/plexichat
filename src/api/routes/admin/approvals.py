@@ -468,7 +468,10 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
                 updated_at = ?
             WHERE id = ?
               AND status = 'pending'
-              AND (approved_by = ? OR (approved_by IS NULL AND ? IS NULL))
+              AND (
+                    approved_by = ?
+                    OR (approved_by IS NULL AND CAST(? AS TEXT) IS NULL)
+                  )
         """,
             (new_approved_by, now, approval_id, raw_approved_by, raw_approved_by),
         )

@@ -333,9 +333,14 @@ def _build_where(filters: Dict[str, Any]) -> tuple[str, List[Any]]:
     if artifact_type is not None:
         if isinstance(artifact_type, (list, tuple, set)):
             items = [t.value if hasattr(t, "value") else t for t in artifact_type]
-            placeholders = ", ".join("?" for _ in items)
-            clauses.append(f"a.artifact_type IN ({placeholders})")
-            params.extend(items)
+            if not items:
+                # ``IN ()`` is accepted by SQLite but is a syntax error on
+                # PostgreSQL; an empty type filter must match nothing.
+                clauses.append("1 = 0")
+            else:
+                placeholders = ", ".join("?" for _ in items)
+                clauses.append(f"a.artifact_type IN ({placeholders})")
+                params.extend(items)
         else:
             value = (
                 artifact_type.value

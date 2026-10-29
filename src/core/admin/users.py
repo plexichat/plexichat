@@ -205,9 +205,12 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
 
 def force_username_change(db: Any, user_id: int, forced: bool = True) -> bool:
     """Force a user to change their username on next login."""
+    # Store 1/0, not a Python bool: SQLite accepts ``True`` in an INTEGER
+    # column, but PostgreSQL refuses it (``invalid input syntax for type
+    # bigint: \"true\"``) and the admin endpoint answered 500.
     db.execute(
         "UPDATE auth_users SET force_username_change = ? WHERE id = ?",
-        (forced, user_id),
+        (1 if forced else 0, user_id),
     )
     invalidate_pattern("token_verify:*")
     return True

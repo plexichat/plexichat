@@ -6,6 +6,7 @@ with special handling for irreversible migrations and emergency overrides.
 """
 
 import re
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
 from pydantic import BaseModel
@@ -48,6 +49,20 @@ class MigrationListResponse(BaseModel):
     applied_count: int
     pending_count: int
     failed_count: int
+
+
+def _applied_at(value: Any) -> Optional[str]:
+    """Render a tracker timestamp as an ISO 8601 string.
+
+    SQLite hands back the stored text, PostgreSQL a ``datetime``. The response
+    model takes a string, so a native datetime used to fail validation and turn
+    ``GET /admin/migrations/{version}`` into a 500 on PostgreSQL only.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 class MigrationDetailResponse(BaseModel):
@@ -176,7 +191,7 @@ async def list_migrations(
                     is_irreversible=is_irreversible,
                     can_run=can_run,
                     can_run_reason=can_run_reason,
-                    applied_at=record.get("applied_at"),
+                    applied_at=_applied_at(record.get("applied_at")),
                     depends_on=metadata.get("depends_on"),
                     metadata=metadata,
                 )
@@ -332,7 +347,7 @@ async def get_migration_details(
             is_irreversible=metadata.get("irreversible", False),
             can_run=can_run,
             can_run_reason=can_run_reason,
-            applied_at=record.get("applied_at"),
+            applied_at=_applied_at(record.get("applied_at")),
             execution_time_ms=record.get("execution_time_ms"),
             depends_on=metadata.get("depends_on"),
             metadata=metadata,
