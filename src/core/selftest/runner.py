@@ -48,6 +48,7 @@ class SelfTestRunner:
         standalone_mode: bool = True,
         unlicensed: bool = False,
         status_only: bool = False,
+        purge_residue: bool = False,
     ):
         if requests is None:
             raise RuntimeError("requests dependency is required for selftest runner")
@@ -56,6 +57,9 @@ class SelfTestRunner:
         # deployment): no config lookups here.
         selftest_cfg = {} if status_only else config.get("selftest", {})
         self.status_only = status_only
+        # Opt-in check, run on its own (``run_purge_residue``) rather than as
+        # part of the default suite: it purges an account.
+        self.purge_residue = purge_residue
         self.ctx = SelfTestContext(
             base_url=base_url,
             config=selftest_cfg,
@@ -63,6 +67,7 @@ class SelfTestRunner:
             standalone_mode=standalone_mode,
             unlicensed=unlicensed,
             status_only=status_only,
+            purge_residue=purge_residue,
         )
         self.ctx.journal = ArtifactJournal(selftest_cfg.get("journal_path"))
 
@@ -178,6 +183,46 @@ class SelfTestRunner:
         except Exception:
             pass
         return False
+
+    def run_purge_residue(self) -> bool:
+        """Run only the account-purge residue check.
+
+        Opt-in: ``main.py self-test --purge-residue``. The check erases a
+        throwaway account, so it is deliberately absent from the default
+        suite. It needs the admin identity and a database handle, which is
+        what the setup phase below provides; the endpoint sweep is skipped so
+        the dedicated job pays for the check and nothing else.
+        """
+        if not self.purge_residue:
+            raise RuntimeError("run_purge_residue requires purge_residue=True")
+        if self.status_only:
+            raise RuntimeError("run_purge_residue cannot run in status mode")
+
+        self.ctx.start_time = time.time()
+        self.ram_monitor.start()
+        logger.info("=" * 60)
+        logger.info("ACCOUNT-PURGE RESIDUE CHECK (opt-in)")
+        logger.info(f"Target: {self.ctx.base_url}")
+        logger.info("=" * 60)
+        try:
+            self.cleanup.pre_test_cleanup()
+            self.setup.setup_security_headers()
+            self.setup._ensure_password()
+            if not self.setup.create_main_user():
+                logger.error("Purge-residue check: could not create the test user")
+                return False
+            if not self.setup.grant_admin_permissions():
+                logger.error("Purge-residue check: could not grant admin to test user")
+                return False
+            self.setup.setup_admin_user_and_roles()
+            if not self.setup.login_main_user():
+                logger.error("Purge-residue check: admin login failed")
+                return False
+            self.endpoints.test_purge_residue()
+            self.cleanup.cleanup_test_data()
+            return self.report.report_summary()
+        finally:
+            self.ram_monitor.stop()
 
     def run_all(self) -> bool:
         """Run all discovered API tests (or the status subset)."""

@@ -87,8 +87,12 @@ class InsertQuery(TableQuery):
     def execute(self) -> int:
         """Execute the INSERT query and return the last inserted row ID.
 
-        For SQLite, returns cursor.lastrowid. For PostgreSQL, returns 1 (row count)
-        since lastrowid is not directly available without RETURNING clause.
+        Both backends return the new row's id, not a row count. SQLite gets
+        it from ``cursor.lastrowid``; PostgreSQL has no such attribute, so the
+        statement asks for the row back (``RETURNING *``) and reads ``id`` off
+        it. Returning PostgreSQL's ``rowcount`` here — which was ``1`` on every
+        insert — made callers that treat the result as an id fetch row 1 of the
+        table instead of the row they just wrote.
         """
         sql, params = self.build()
 
@@ -124,18 +128,27 @@ class InsertQuery(TableQuery):
                     from .. import dialect
 
                     pg_sql = dialect.convert_placeholders(sql, self.db_type)
+                    # ``RETURNING *`` rather than ``RETURNING id`` because not
+                    # every table this builder writes to has an ``id`` column,
+                    # and asking for one that is absent would fail the INSERT.
+                    pg_sql = f"{pg_sql} RETURNING *"
                     self._mark_pool_in_flight(self.connection, True)
                     try:
                         cursor.execute(pg_sql, param_values)
+                        row = cursor.fetchone()
                     finally:
                         self._mark_pool_in_flight(self.connection, False)
+                    new_id = 0
+                    if row is not None:
+                        try:
+                            new_id = int(row.get("id") or 0)
+                        except (TypeError, ValueError, AttributeError):
+                            new_id = 0
                     if self._should_autocommit():
                         self.connection.commit()
-                    row_count = cursor.rowcount
-                    cursor.close()
                     self._invalidate_database_query_cache()
-                    logger.debug(f"INSERT affected {row_count} rows")
-                    return row_count
+                    logger.debug(f"INSERT returned id: {new_id}")
+                    return new_id
                 finally:
                     cursor.close()
         except Exception as e:

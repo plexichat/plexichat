@@ -253,6 +253,15 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "against a live deployment on a schedule. Exit 0 when all pass.",
     )
     st_parser.add_argument(
+        "--purge-residue",
+        action="store_true",
+        help="Run only the account-purge residue check and exit. Purges a "
+        "throwaway account through the admin endpoint, then reads the "
+        "database back to prove its server, channel, conversation and "
+        "upload went with it. Opt-in and never part of the default suite: "
+        "the check deletes an account.",
+    )
+    st_parser.add_argument(
         "--base-url",
         default=None,
         help="Status-mode target, e.g. https://example.com. Only valid with "
@@ -580,8 +589,12 @@ def _cmd_migrate_kek(args: argparse.Namespace) -> None:
 def _cmd_self_test(args: argparse.Namespace) -> None:
     status_only = getattr(args, "status", False)
     base_url = getattr(args, "base_url", None)
+    purge_residue = getattr(args, "purge_residue", False)
     if base_url and not status_only:
         logger.error("--base-url requires --status")
+        sys.exit(2)
+    if purge_residue and status_only:
+        logger.error("--purge-residue cannot be combined with --status")
         sys.exit(2)
     if base_url:
         # Remote status mode: no local server, no app init. The status
@@ -603,6 +616,7 @@ def _cmd_self_test(args: argparse.Namespace) -> None:
         port,
         unlicensed=getattr(args, "unlicensed", False),
         status_only=status_only,
+        purge_residue=purge_residue,
     )
 
 

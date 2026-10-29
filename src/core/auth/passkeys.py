@@ -284,19 +284,23 @@ class PasskeyManager:
             "CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_expires ON auth_passkey_challenges(expires_at)"
         )
 
-        try:
-            self._db.execute(
-                "ALTER TABLE auth_users ADD COLUMN passkey_enabled INTEGER DEFAULT 0"
-            )
-        except Exception:  # nosec B110
-            pass
-
-        try:
-            self._db.execute(
-                "ALTER TABLE auth_users ADD COLUMN webauthn_user_handle TEXT"
-            )
-        except Exception:  # nosec B110
-            pass
+        # Additive columns for installations whose auth_users predates
+        # passkeys. Check the catalogue first: running the ALTER and swallowing
+        # its failure logs an error on every startup (the database layer logs
+        # each failed statement), which made a healthy boot look broken.
+        column_exists = getattr(self._db, "column_exists", None)
+        for column, definition in (
+            ("passkey_enabled", "INTEGER DEFAULT 0"),
+            ("webauthn_user_handle", "TEXT"),
+        ):
+            if column_exists is not None and column_exists("auth_users", column):
+                continue
+            try:
+                self._db.execute(
+                    f"ALTER TABLE auth_users ADD COLUMN {column} {definition}"
+                )
+            except Exception:  # nosec B110
+                pass
 
     def generate_registration_options(
         self,

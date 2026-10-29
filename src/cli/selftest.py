@@ -47,6 +47,7 @@ def handle_selftest(
     unlicensed: bool = False,
     status_only: bool = False,
     base_url: str | None = None,
+    purge_residue: bool = False,
 ) -> None:
     if base_url:
         # Remote status mode: probe a live deployment with read-only
@@ -100,8 +101,11 @@ def handle_selftest(
             base_url=f"http://{host}:{port}",
             unlicensed=unlicensed,
             status_only=status_only,
+            purge_residue=purge_residue,
         )
-        success = runner.run_all()
+        # The residue check runs on its own (``--purge-residue``): it purges
+        # an account, so it is never part of the default suite.
+        success = runner.run_purge_residue() if purge_residue else runner.run_all()
         exit_code = 0 if success else 1
     except Exception as e:
         logger.error(f"Self-test execution failed: {e}", exc_info=True)

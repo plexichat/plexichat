@@ -284,6 +284,45 @@ class CleanupService:
         db.execute("DELETE FROM msg_user_settings WHERE user_id = ?", (uid,))
         db.execute("DELETE FROM msg_content_filters WHERE user_id = ?", (uid,))
 
+        # SQLite cleanup switches foreign keys off; PostgreSQL enforces them.
+        # Rows that point at what is deleted below have to go first: a
+        # notification about one of this account's messages would block the
+        # conversation purge, and an admin panel session would block the
+        # admin_users row (both are created by the suite's own admin flows).
+        try:
+            db.execute(
+                "DELETE FROM notif_notifications WHERE user_id = ? "
+                "OR message_id IN (SELECT id FROM msg_messages WHERE author_id = ?)",
+                (uid, uid),
+            )
+        except Exception as exc:
+            logger.debug("Notification cleanup skipped: %s", exc)
+        try:
+            db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (uid,))
+        except Exception as exc:
+            logger.debug("Admin session cleanup skipped: %s", exc)
+        # Banned-username patterns this run created (the endpoint sweep posts
+        # one) outlived the run and made the next run's POST fail on the UNIQUE
+        # constraint. The reserved '^selftest' pattern is setup's, not test
+        # residue, so it stays.
+        try:
+            db.execute(
+                "DELETE FROM username_blacklist WHERE created_by = ? "
+                "AND pattern != '^selftest'",
+                (uid,),
+            )
+        except Exception as exc:
+            logger.debug("Username blacklist cleanup skipped: %s", exc)
+
+        # PostgreSQL refuses to delete a media_files row while a msg_attachments
+        # row still references it, and this account's own attachment rows are
+        # exactly that: they are dropped first (their messages go later) so the
+        # media delete below does not trip the guard on every Postgres cleanup.
+        db.execute(
+            "DELETE FROM msg_attachments WHERE message_id IN "
+            "(SELECT id FROM msg_messages WHERE author_id = ?)",
+            (uid,),
+        )
         db.execute("DELETE FROM media_files WHERE uploaded_by = ?", (uid,))
         try:
             db.execute("DELETE FROM media_upload_sessions WHERE user_id = ?", (uid,))

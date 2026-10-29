@@ -35,6 +35,9 @@ CLI options (full details in ``python main.py -h`` and
     python main.py                       Start server normally
     python main.py --config x.yaml       Use custom config (defaults to start)
     python main.py self-test             Run API self-test suite
+    python main.py self-test --purge-residue
+                                         Run only the opt-in account-purge
+                                         residue check (deletes an account)
     python main.py pre-flight            Validate config and modules
     python main.py migrate-db --dry-run  Validate migrations without applying
 """

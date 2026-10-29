@@ -15,7 +15,7 @@ class TestManager:
         assert pending == []
 
     def test_get_migration_status(self, migration_manager):
-        """Status reflects the four template migrations as applied."""
+        """Status reflects the six template migrations as applied."""
         from src.core.database import invalidate_pattern
 
         # get_migration_status is @cached with a manager-agnostic key, so a
@@ -23,10 +23,17 @@ class TestManager:
         # describe a different test's database.
         invalidate_pattern("migration_status:*")
         status = migration_manager.get_migration_status()
-        assert status["applied_count"] == 4
+        assert status["applied_count"] == 6
         assert status["pending_count"] == 0
         assert status["failed_count"] == 0
-        assert set(status["applied_migrations"]) == {"000", "001", "002", "003"}
+        assert set(status["applied_migrations"]) == {
+            "000",
+            "001",
+            "002",
+            "003",
+            "004",
+            "005",
+        }
         assert status["pending_migrations"] == []
         assert status["failed_migrations"] == []
 
@@ -82,7 +89,7 @@ class TestManager:
         """All template migrations pass integrity with matching checksums."""
         result = migration_manager.validate_migration_integrity()
         assert result["valid"] is True
-        assert result["checked"] == 4  # 000 + 001 + 002 + 003 completed records
+        assert result["checked"] == 6  # 000-005 completed records
         assert result["mismatches"] == []
 
     def test_migration_dataclass(self):

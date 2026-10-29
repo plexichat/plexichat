@@ -822,6 +822,75 @@ test:self_test:
       fi
     - python main.py self-test
 
+# The same self-test suite as `test:self_test`, against PostgreSQL.
+#
+# `test:self_test` runs on SQLite, where the app's two backends differ in ways
+# that hide real breakage: an INTEGER primary key without identity still takes
+# an implicit rowid, a JSON list can be stored in an INTEGER column, and a
+# VARCHAR date compares as text. A run against PostgreSQL found twelve
+# failing endpoints and two silently dead write paths (admin audit logging and
+# approval votes) while the SQLite run was green, so the backend the deployment
+# actually uses is exercised here rather than only in its own narrow suites.
+#
+# `test:database_backends` is not a substitute: it runs the database-layer
+# tests, not the application's endpoints. This one boots the real server on
+# 8100 (so it can share a runner host with `test:self_test`'s 8000) with
+# ``DATABASE_URL`` pointing at the service, the same variable the server reads
+# in production, and runs every endpoint check against it.
+test:self_test_postgres:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  services:
+    # Pinned to the image `test:database_backends` uses, not to whatever is
+    # newest: this job's job is to prove the code, and a moving database
+    # version would make its verdict change without a commit.
+    - name: postgres:15-alpine
+      alias: postgres
+      variables:
+        POSTGRES_USER: postgres
+        # Throwaway service container credentials, not a real secret.
+        POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        POSTGRES_DB: test_db
+  variables:
+    # ``sslmode=disable`` because the service container has no TLS listener;
+    # the default ``prefer`` would spend a failed handshake on every
+    # connection before falling back.
+    # The same throwaway service credentials as the ``services`` block above,
+    # not a real secret.
+    DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/test_db?sslmode=disable"  # pragma: allowlist secret
+  script:
+    - mkdir -p .plexichat
+    # Same licensing as `test:self_test`: a protected branch provides a real
+    # key, every other branch gets the provisional test license, so the
+    # licensed-only endpoints are exercised for real rather than skipped.
+    - |
+      if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+        python ci-tooling/write_test_license.py
+      fi
+    - python main.py --port 8100 self-test
+
+# Opt-in account-purge check, in a job of its own so `test:self_test` (and
+# every ordinary run of the suite) never purges an account. It runs beside
+# the other test jobs on branch pipelines: same ephemeral server, same
+# selftest_% fixtures, but on its own port so it can share a runner host with
+# test:self_test instead of failing on a busy 127.0.0.1:8000.
+#
+# The check purges a throwaway account through the real admin endpoint and
+# reads the database back: a purge that only deletes the auth_users row --
+# leaving the account's server, channel, conversation or upload behind --
+# fails here. Without it, the suites' pre-test orphan sweep would quietly
+# remove that residue and the run would stay green.
+test:purge_residue:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  script:
+    - mkdir -p .plexichat
+    - python main.py --port 8100 self-test --purge-residue
+
 docker:build_and_push:
   stage: docker
   image: docker:27
@@ -1196,7 +1265,7 @@ validate_master_and_tag:
     - echo "Running production validation suite on master..."
     - python main.py pre-flight
     - |
-      # "Plexichat Server a.1.0-165" -> a.1.0 -> a.1.0-build<pipeline id>.
+      # "Plexichat Server a.1.0-166" -> a.1.0 -> a.1.0-build<pipeline id>.
       VERSION="$(python main.py version | tail -1)"
       VERSION="${VERSION##* }"
       case "$VERSION" in

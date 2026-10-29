@@ -190,7 +190,11 @@ class PlexiJoinManager:
 
         query += " ORDER BY created_at DESC"
 
-        count_query = f"SELECT COUNT(*) as total FROM ({query})"
+        # The alias is not optional: PostgreSQL rejects a derived table
+        # without one ("subquery in FROM must have an alias"), and this
+        # query backs both the admin list endpoint and the connection lookup
+        # every signed inbound request authenticates through.
+        count_query = f"SELECT COUNT(*) as total FROM ({query}) AS sub"
         total = self.db.fetch_one(count_query, params)["total"]
 
         query += " LIMIT ? OFFSET ?"
@@ -422,7 +426,8 @@ class PlexiJoinManager:
 
         query += " ORDER BY requested_at DESC"
 
-        count_query = f"SELECT COUNT(*) as total FROM ({query})"
+        # Alias required on PostgreSQL; see ``list_connections``.
+        count_query = f"SELECT COUNT(*) as total FROM ({query}) AS sub"
         total = self.db.fetch_one(count_query, params)["total"]
 
         query += " LIMIT ? OFFSET ?"
