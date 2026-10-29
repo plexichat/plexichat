@@ -42,20 +42,31 @@ def _is_duplicate_column_error(exc: Exception) -> bool:
 
 def up(db):
     """Add the is_temporary column to srv_members."""
-    try:
-        db.execute(
-            "ALTER TABLE srv_members ADD COLUMN is_temporary INTEGER NOT NULL DEFAULT 0"
-        )
-        logger.info("Migration 003: added srv_members.is_temporary column")
-    except Exception as e:  # pragma: no cover - defensive
-        # Fresh installs create the table with is_temporary already present
-        # (the module schema is authoritative); a duplicate-column error is
-        # then expected.
-        if not _is_duplicate_column_error(e):
-            raise
+    # Fresh installs create the table with is_temporary already present (the
+    # module schema is authoritative). Ask the schema instead of running the
+    # ALTER and catching its failure: the database layer logs every failed
+    # statement as an error, so the old path made a healthy startup look
+    # broken. The duplicate-column handler stays for the concurrent-migration
+    # race, when the column can appear between this check and the ALTER.
+    column_exists = getattr(db, "column_exists", None)
+    if column_exists is not None and column_exists("srv_members", "is_temporary"):
         logger.info(
             "Migration 003: srv_members.is_temporary already present; skipping ALTER"
         )
+    else:
+        try:
+            db.execute(
+                "ALTER TABLE srv_members "
+                "ADD COLUMN is_temporary INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.info("Migration 003: added srv_members.is_temporary column")
+        except Exception as e:  # pragma: no cover - concurrent migration
+            if not _is_duplicate_column_error(e):
+                raise
+            logger.info(
+                "Migration 003: srv_members.is_temporary already present; "
+                "skipping ALTER"
+            )
 
 
 def down(db):

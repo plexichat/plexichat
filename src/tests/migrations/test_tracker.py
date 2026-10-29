@@ -18,7 +18,7 @@ class TestTracker:
         """The template DB has all migrations recorded as applied."""
         migration_manager.tracker.ensure_table_exists()
         applied = migration_manager.tracker.get_applied_migrations()
-        assert applied == ["000", "001", "002", "003"]
+        assert applied == ["000", "001", "002", "003", "004", "005"]
 
     def test_record_migration_start(self, migration_manager):
         """Test recording migration start."""

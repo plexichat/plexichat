@@ -127,7 +127,11 @@ CREATE TABLE IF NOT EXISTS admin_approvals (
     status TEXT NOT NULL DEFAULT 'pending',
     required_approvals INTEGER NOT NULL DEFAULT 2,
     current_approvals INTEGER NOT NULL DEFAULT 0,
-    approved_by INTEGER,
+    -- JSON list of admin ids that voted (see api/routes/admin/approvals.py).
+    -- TEXT, not INTEGER: SQLite stored the JSON in an INTEGER column because it
+    -- does not enforce the declared type, while PostgreSQL rejected every vote
+    -- with "invalid input syntax for type bigint".
+    approved_by TEXT,
     rejected_by INTEGER,
     rejection_reason TEXT,
     expires_at INTEGER,

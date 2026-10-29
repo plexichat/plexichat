@@ -19,11 +19,15 @@ class SelfTestContext:
         standalone_mode: bool = True,
         unlicensed: bool = False,
         status_only: bool = False,
+        purge_residue: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.config = config
         self.requests_module = requests_module
         self.standalone_mode = standalone_mode
+        # Opt-in (``self-test --purge-residue``): the residue check ends by
+        # purging an account, so it never runs in the default suite.
+        self.purge_residue = purge_residue
         # True when the operator passed ``--unlicensed`` to the self-test
         # command. Free-tier detection (no license file on this machine) is
         # handled separately via discovery.plexijoin_expected_statuses().
