@@ -816,8 +816,20 @@ test:self_test:
     # location so the licensed-only PlexiJoin/federation endpoints are
     # exercised for real instead of being skipped. The self-test is never
     # run with --unlicensed here: a license file is always present.
+    #
+    # "Is set" is not "is usable": a stale or corrupt secret still wins the
+    # licensing module's precedence (the env var outranks the on-disk file),
+    # fails signature verification, and drops the server to free tier. Every
+    # gated route then answers 403 and the suite records an EXPECTED DENIAL,
+    # so the licensed paths never run -- that is how a PostgreSQL-only defect
+    # in them reached pipeline 2234 green. Ask the licensing module itself
+    # whether the effective licence grants PlexiJoin, and fall back (dropping
+    # the env var first) when it does not.
     - |
-      if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+      if python ci-tooling/check_self_test_license.py; then
+        echo "Using the CI license for this run"
+      else
+        unset PLEXICHAT_LICENSE
         python ci-tooling/write_test_license.py
       fi
     - python main.py self-test
@@ -861,11 +873,17 @@ test:self_test_postgres:
     DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/test_db?sslmode=disable"  # pragma: allowlist secret
   script:
     - mkdir -p .plexichat
-    # Same licensing as `test:self_test`: a protected branch provides a real
-    # key, every other branch gets the provisional test license, so the
-    # licensed-only endpoints are exercised for real rather than skipped.
+    # Same licensing as `test:self_test`: a usable CI key is kept, anything
+    # else is replaced by the provisional test license (after unsetting the
+    # env var, which would otherwise outrank the file), so the licensed-only
+    # endpoints are exercised for real rather than skipped. This is the job
+    # the licensed PostgreSQL paths depend on, so it must never settle for
+    # an expected-403 run.
     - |
-      if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+      if python ci-tooling/check_self_test_license.py; then
+        echo "Using the CI license for this run"
+      else
+        unset PLEXICHAT_LICENSE
         python ci-tooling/write_test_license.py
       fi
     - python main.py --port 8100 self-test
