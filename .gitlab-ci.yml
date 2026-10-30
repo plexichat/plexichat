@@ -816,8 +816,20 @@ test:self_test:
     # location so the licensed-only PlexiJoin/federation endpoints are
     # exercised for real instead of being skipped. The self-test is never
     # run with --unlicensed here: a license file is always present.
+    #
+    # "Is set" is not "is usable": a stale or corrupt secret still wins the
+    # licensing module's precedence (the env var outranks the on-disk file),
+    # fails signature verification, and drops the server to free tier. Every
+    # gated route then answers 403 and the suite records an EXPECTED DENIAL,
+    # so the licensed paths never run -- that is how a PostgreSQL-only defect
+    # in them reached pipeline 2234 green. Ask the licensing module itself
+    # whether the effective licence grants PlexiJoin, and fall back (dropping
+    # the env var first) when it does not.
     - |
-      if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+      if python ci-tooling/check_self_test_license.py; then
+        echo "Using the CI license for this run"
+      else
+        unset PLEXICHAT_LICENSE
         python ci-tooling/write_test_license.py
       fi
     - python main.py self-test
@@ -861,11 +873,17 @@ test:self_test_postgres:
     DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/test_db?sslmode=disable"  # pragma: allowlist secret
   script:
     - mkdir -p .plexichat
-    # Same licensing as `test:self_test`: a protected branch provides a real
-    # key, every other branch gets the provisional test license, so the
-    # licensed-only endpoints are exercised for real rather than skipped.
+    # Same licensing as `test:self_test`: a usable CI key is kept, anything
+    # else is replaced by the provisional test license (after unsetting the
+    # env var, which would otherwise outrank the file), so the licensed-only
+    # endpoints are exercised for real rather than skipped. This is the job
+    # the licensed PostgreSQL paths depend on, so it must never settle for
+    # an expected-403 run.
     - |
-      if [ -z "${PLEXICHAT_LICENSE:-}" ]; then
+      if python ci-tooling/check_self_test_license.py; then
+        echo "Using the CI license for this run"
+      else
+        unset PLEXICHAT_LICENSE
         python ci-tooling/write_test_license.py
       fi
     - python main.py --port 8100 self-test
@@ -1249,6 +1267,36 @@ create_merge_request:
 # Releases stay deliberate -- merge a dev commit that carries an ``a.X.Y-N`` tag,
 # which is what ``create_merge_request`` requires (see
 # docs/deployment/versioning.md).
+# Post-deploy smoke gate: the curl suite in ci-tooling/live-smoke.sh, run
+# against a live deployment after it is updated (manual, so a release is not
+# blocked while the deploy itself is still rolling out). It exercises the real
+# HTTP surface the client uses -- auth, profiles, relationships, servers,
+# messaging, bookmarks by channel id, threads, DMs, search -- and deletes the
+# throwaway accounts it creates.
+#
+# Point it at the deployment with PLEXICHAT_BASE_URL. Registration and login
+# are rate limited per client IP, so a runner that shares an egress IP with
+# other traffic should pre-provision and set SMOKE_USER_A/B/C (with
+# SMOKE_PASSWORD) or SMOKE_TOKEN_A/B/C as masked CI/CD variables; the suite
+# picks those up from the environment and skips registration/login.
+live_smoke:
+  stage: test-and-release
+  image: alpine:3.20
+  needs: []
+  variables:
+    PLEXICHAT_BASE_URL: "https://api.plexichat.com/api/v1"
+  before_script:
+    - apk add --no-cache bash curl jq
+  script:
+    - bash ci-tooling/live-smoke.sh
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+      when: manual
+      allow_failure: false
+  environment:
+    name: production
+    url: https://plexichat.com
+
 #
 # The prefix is read from the tree rather than written here: ``VERSION`` in
 # ``src/server/lifecycle.py`` is what ``python main.py version``, the API and the
@@ -1265,7 +1313,7 @@ validate_master_and_tag:
     - echo "Running production validation suite on master..."
     - python main.py pre-flight
     - |
-      # "Plexichat Server a.1.0-166" -> a.1.0 -> a.1.0-build<pipeline id>.
+      # "Plexichat Server a.1.0-167" -> a.1.0 -> a.1.0-build<pipeline id>.
       VERSION="$(python main.py version | tail -1)"
       VERSION="${VERSION##* }"
       case "$VERSION" in

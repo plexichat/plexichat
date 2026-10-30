@@ -20,6 +20,28 @@ from .session_mixin import SessionMixin
 from .password_mixin import PasswordMixin
 
 
+def _stored_hash_is_argon2(password_hash: Any) -> bool:
+    """True when a stored admin credential is an Argon2 hash.
+
+    A peppered credential is an envelope around the PHC string
+    (``$plexichat$pepper-v1$pid=v1$$argon2id$...``), so the algorithm has to be
+    read from the inner hash. Comparing the envelope itself rejected every
+    peppered admin credential: admin login answered ``Insecure password hash on
+    file; contact operator`` for a valid password on any build that hashes with
+    a pepper (found on the live a.1.0-166 deployment).
+    """
+    if not isinstance(password_hash, str) or not password_hash:
+        return False
+    try:
+        from src.utils.encryption.pepper import parse_envelope
+
+        envelope = parse_envelope(password_hash)
+    except Exception:
+        return False
+    inner = envelope[1] if envelope else password_hash
+    return inner.startswith("$argon2")
+
+
 class AuthenticationMixin(SessionMixin, PasswordMixin):
     _db: Any
 
@@ -96,10 +118,10 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
 
         # Passwords stored outside Argon2 are legacy credentials and are not
         # accepted. This prevents a leaked unsalted digest from becoming a
-        # usable login credential.
-        if not isinstance(password_hash, str) or not password_hash.startswith(
-            "$argon2"
-        ):
+        # usable login credential. A peppered hash stores its Argon2 PHC inside
+        # the envelope, so the check unwraps it first (see
+        # _stored_hash_is_argon2).
+        if not _stored_hash_is_argon2(password_hash):
             import utils.logger as auth_logger
 
             auth_logger.critical(

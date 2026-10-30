@@ -236,3 +236,68 @@ class TestRouteOracle:
         source = inspect.getsource(bookmarks_route)
         assert "str(e)" not in source
         assert "message=str(" not in source
+
+
+# ---------------------------------------------------------------------------
+# Server-channel targets: the client only holds the channel id
+# ---------------------------------------------------------------------------
+
+
+class TestChannelTargetBookmark:
+    """A channel message is addressed by its channel id, stored by conversation id.
+
+    Regression: ``_ensure_bookmark_access`` compared the two literally, so
+    bookmarking any server-channel message answered 404 while the same message
+    was fully readable in the channel.
+    """
+
+    def test_channel_id_bookmarks_channel_message(
+        self, test_client, server_manager, trio
+    ):
+        alice, alice_tok = trio["alice"]
+        unique = uuid.uuid4().hex[:6]
+        server = server_manager.create_server(owner_id=alice.id, name=f"bm-{unique}")
+        channel = server_manager.create_channel(alice.id, server.id, f"bm-{unique}")
+        conv_id = server_manager.get_channel_conversation_id(channel.id)
+        assert int(conv_id) != int(channel.id), "fixture must model distinct ids"
+        msg = server_manager.send_channel_message(alice.id, channel.id, "bookmark me")
+
+        resp = test_client.post(
+            BOOKMARK_URL,
+            json={"message_id": str(msg.id), "conversation_id": str(channel.id)},
+            headers=_headers(alice_tok),
+        )
+        assert resp.status_code == 200, resp.text
+        # Stored under the client-facing channel id so the UI can jump back.
+        assert int(resp.json()["bookmark"]["conversation_id"]) == int(channel.id)
+
+    def test_other_channel_id_still_404(self, test_client, server_manager, trio):
+        alice, alice_tok = trio["alice"]
+        unique = uuid.uuid4().hex[:6]
+        server = server_manager.create_server(owner_id=alice.id, name=f"bm2-{unique}")
+        channel = server_manager.create_channel(alice.id, server.id, f"one-{unique}")
+        other = server_manager.create_channel(alice.id, server.id, f"two-{unique}")
+        msg = server_manager.send_channel_message(alice.id, channel.id, "secret")
+
+        resp = test_client.post(
+            BOOKMARK_URL,
+            json={"message_id": str(msg.id), "conversation_id": str(other.id)},
+            headers=_headers(alice_tok),
+        )
+        assert resp.status_code == 404, resp.text
+        assert resp.json() == {"error": {"code": 404, "message": "Message not found"}}
+
+    def test_non_member_channel_id_still_404(self, test_client, server_manager, trio):
+        alice, _ = trio["alice"]
+        _mallory, mallory_tok = trio["mallory"]
+        unique = uuid.uuid4().hex[:6]
+        server = server_manager.create_server(owner_id=alice.id, name=f"bm3-{unique}")
+        channel = server_manager.create_channel(alice.id, server.id, f"priv-{unique}")
+        msg = server_manager.send_channel_message(alice.id, channel.id, "members only")
+
+        resp = test_client.post(
+            BOOKMARK_URL,
+            json={"message_id": str(msg.id), "conversation_id": str(channel.id)},
+            headers=_headers(mallory_tok),
+        )
+        assert resp.status_code == 404, resp.text
