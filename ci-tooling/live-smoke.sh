@@ -78,11 +78,16 @@ req() {
     # used it failed too -- a dozen FAILs from one dropped POST. Back off
     # further so a blip cannot fail the gate, and keep curl's own message in
     # the trace so a real outage stays distinguishable from a retried blip.
-    local err
+    local err out
     for attempt in 1 2 3 4 5 6; do
         step
-        err="$(curl "${args[@]}" 2>&1 >/dev/null)" || STATUS=000
+        # curl's http_code goes to stdout and its diagnostics to stderr; both
+        # are kept, and the status comes from the file so a retry cannot leave
+        # a stale 000 behind.
+        out="$(curl "${args[@]}" 2>"$TMP/curl.err")" || true
+        STATUS="${out:-000}"
         [ "$STATUS" != "000" ] && break
+        err="$(cat "$TMP/curl.err" 2>/dev/null)"
         [ "$attempt" -lt 6 ] || break
         printf '        (request did not complete: %s; retry %s/5)\n' \
             "${err:-no response}" "$attempt"
@@ -98,11 +103,27 @@ JAR_ANON="$TMP/jar_anon"
 declare -A JAR_TOKEN=()
 
 register() { # register LABEL USERNAME
-    req POST /auth/register "$JAR_ANON" \
-        "{\"username\":\"$2\",\"email\":\"$2@example.com\",\"password\":\"$PASSWORD\"}"
+    # The registration limit is per client IP, and a CI runner usually shares
+    # its egress address. The 429 body carries how long to wait, so wait it
+    # out and try again instead of skipping the account and aborting the run.
+    local attempt wait
+    for attempt in 1 2 3 4; do
+        req POST /auth/register "$JAR_ANON" \
+            "{\"username\":\"$2\",\"email\":\"$2@example.com\",\"password\":\"$PASSWORD\"}"
+        [ "$STATUS" != "429" ] && break
+        [ "$attempt" -lt 4 ] || break
+        wait="$(jq -r '.retry_after // empty' "$TMP/body.json" 2>/dev/null || true)"
+        case "$wait" in ''|null|*[!0-9.]*) wait=2 ;; esac
+        # A limit measured in minutes is not something a gate should sit
+        # through: fall back to the SMOKE_USER_*/SMOKE_TOKEN_* escape hatch.
+        awk -v w="$wait" 'BEGIN { exit !(w > 20) }' && break
+        awk -v w="$wait" 'BEGIN { exit !(w < 1) }' && wait=1
+        printf '        (registration rate limited; waiting %ss)\n' "$wait"
+        sleep "$wait"
+    done
     case "$STATUS" in
         200|201) ok "register $1 ($2)" ;;
-        429) skip "register $1" "rate limited per IP; retry later or pass SMOKE_USER_A/B/C" ;;
+        429) skip "register $1" "still rate limited per IP; pass SMOKE_USER_A/B/C" ;;
         *) bad "register $1" "-> $STATUS ${BODY:0:200}" ;;
     esac
 }
