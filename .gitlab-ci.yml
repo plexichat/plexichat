@@ -1275,10 +1275,13 @@ create_merge_request:
 # throwaway accounts it creates.
 #
 # Point it at the deployment with PLEXICHAT_BASE_URL. Registration and login
-# are rate limited per client IP, so a runner that shares an egress IP with
-# other traffic should pre-provision and set SMOKE_USER_A/B/C (with
-# SMOKE_PASSWORD) or SMOKE_TOKEN_A/B/C as masked CI/CD variables; the suite
-# picks those up from the environment and skips registration/login.
+# are rate limited per client IP (3/minute, 10/hour, 20/day for register) and a
+# runner shares its egress address, so the suite keeps its own
+# `smoke_gate_{a,b}` accounts: it registers them once and logs in on every later
+# run. A deployment whose IP has already spent that budget is seeded once with
+# ci-tooling/seed-smoke-accounts.sh from the host. SMOKE_USER_A/B (+ 
+# SMOKE_PASSWORD) and SMOKE_TOKEN_A/B are still accepted as overrides, but no CI
+# variable is needed for the job to run.
 live_smoke:
   stage: test-and-release
   image: alpine:3.20

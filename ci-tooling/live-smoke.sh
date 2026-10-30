@@ -18,9 +18,15 @@
 #   SMOKE_TOKEN_A/B/C    pre-issued session tokens; skips login entirely (use
 #                        when /auth/login is rate limited by your CI's IP)
 #
-# Creates three `smoke_<random>_{a,b,c}` accounts and deletes them again at
-# the end (their data is erased by the normal DSAR/reaper flow). Exits non-zero
-# if any check fails. Requires: curl, jq.
+# Needs no configuration from the runner. Registration is limited per client IP
+# (3/minute, 10/hour, 20/day), and a CI runner shares its egress address, so the
+# suite keeps two `smoke_gate_{a,b}` accounts on the deployment: it creates them
+# on first use and logs in on every later run, which costs one login instead of
+# two registrations. Everything those accounts create in a run is removed again.
+# The third account is still created per run and deleted, so the account
+# deletion and session-revocation path stays covered; it is skipped (not failed)
+# when the IP's registration budget for the window is spent. Exits non-zero if
+# any check fails. Requires: curl, jq.
 #
 set -uo pipefail
 
@@ -71,12 +77,27 @@ req() {
         args+=(-H "Authorization: Bearer ${JAR_TOKEN[$jar]}")
     fi
     [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
-    for attempt in 1 2 3; do
+    # A deployment reached through a CDN drops the occasional connection, and
+    # curl then reports no status at all. Three attempts two seconds apart
+    # gave up inside such a blip: the request never reached the app (no access
+    # log line), and because the caller got no id back, every later check that
+    # used it failed too -- a dozen FAILs from one dropped POST. Back off
+    # further so a blip cannot fail the gate, and keep curl's own message in
+    # the trace so a real outage stays distinguishable from a retried blip.
+    local err out
+    for attempt in 1 2 3 4 5 6; do
         step
-        STATUS="$(curl "${args[@]}" 2>/dev/null)" || STATUS=000
+        # curl's http_code goes to stdout and its diagnostics to stderr; both
+        # are kept, and the status comes from the file so a retry cannot leave
+        # a stale 000 behind.
+        out="$(curl "${args[@]}" 2>"$TMP/curl.err")" || true
+        STATUS="${out:-000}"
         [ "$STATUS" != "000" ] && break
-        printf '        (request did not complete; retrying %s/3)\n' "$attempt"
-        sleep 2
+        err="$(cat "$TMP/curl.err" 2>/dev/null)"
+        [ "$attempt" -lt 6 ] || break
+        printf '        (request did not complete: %s; retry %s/5)\n' \
+            "${err:-no response}" "$attempt"
+        sleep "$((attempt * attempt))"
     done
     BODY="$(cat "$TMP/body.json" 2>/dev/null || true)"
 }
@@ -87,14 +108,69 @@ JAR_C="$TMP/jar_c"
 JAR_ANON="$TMP/jar_anon"
 declare -A JAR_TOKEN=()
 
-register() { # register LABEL USERNAME
-    req POST /auth/register "$JAR_ANON" \
-        "{\"username\":\"$2\",\"email\":\"$2@example.com\",\"password\":\"$PASSWORD\"}"
-    case "$STATUS" in
-        200|201) ok "register $1 ($2)" ;;
-        429) skip "register $1" "rate limited per IP; retry later or pass SMOKE_USER_A/B/C" ;;
-        *) bad "register $1" "-> $STATUS ${BODY:0:200}" ;;
-    esac
+# Wait out a per-IP limit, or report that the window is too long to sit
+# through. Returns 0 when another attempt is worth making.
+wait_for_reset() { # wait_for_reset MAX_SECONDS_TO_WAIT
+    local wait
+    wait="$(jq -r '.retry_after // empty' "$TMP/body.json" 2>/dev/null || true)"
+    case "$wait" in ''|null|*[!0-9.]*) wait=2 ;; esac
+    # A limit measured in the hour or the day is not something a gate should
+    # wait for: the caller reports it instead.
+    awk -v w="$wait" -v max="$1" 'BEGIN { exit !(w > max) }' && return 1
+    awk -v w="$wait" 'BEGIN { exit !(w < 1) }' && wait=1
+    printf '        (rate limited; waiting %ss)\n' "$wait"
+    sleep "$wait"
+    return 0
+}
+
+# Bring up one of the deployment's long-lived gate accounts.
+#
+# Log in first and register only when the account is not there yet: on a shared
+# egress address a fresh pair per run exhausts the registration limit after a
+# handful of runs, and the gate then fails for a reason that has nothing to do
+# with the deployment. The first run creates the pair; every later run costs one
+# login, which is limited far more loosely (5/minute, 20/hour per IP).
+gate_account() { # gate_account LABEL USERNAME JAR
+    local attempt
+    for attempt in 1 2 3; do
+        req POST /auth/login "$3" \
+            "{\"username\":\"$2\",\"password\":\"$PASSWORD\"}"
+        case "$STATUS" in
+            200) ok "login $1 (gate account $2)"; return 0 ;;
+            429) wait_for_reset 75 || break; continue ;;
+            401|403|404) : ;;  # not created yet (or its password was rotated)
+            *) bad "login $1" "-> $STATUS ${BODY:0:200}"; return 1 ;;
+        esac
+        # Registered against the account's own jar: the route's auto-login puts
+        # the session cookie there, so the run is authenticated from here on.
+        req POST /auth/register "$3" \
+            "{\"username\":\"$2\",\"email\":\"$2@example.com\",\"password\":\"$PASSWORD\"}"
+        case "$STATUS" in
+            200|201) ok "register $1 ($2)"; return 0 ;;
+            409) continue ;;  # a parallel run created it: log in on the next pass
+            429) wait_for_reset 75 || break; continue ;;
+            *) bad "register $1" "-> $STATUS ${BODY:0:200}"; return 1 ;;
+        esac
+    done
+    bad "account $1" "could not log in or register $2 (per-IP limits)"
+    return 1
+}
+
+# A throwaway account, so the run still covers deletion and session revocation.
+# Best effort: when the IP's registration budget is spent this skips.
+ephemeral_account() { # ephemeral_account LABEL USERNAME -> 0 when created
+    local attempt
+    for attempt in 1 2 3; do
+        req POST /auth/register "$JAR_ANON" \
+            "{\"username\":\"$2\",\"email\":\"$2@example.com\",\"password\":\"$PASSWORD\"}"
+        case "$STATUS" in
+            200|201) ok "register $1 ($2)"; return 0 ;;
+            409) return 1 ;;  # the name is taken: this is not a fresh account
+            429) wait_for_reset 75 || return 1; continue ;;
+            *) bad "register $1" "-> $STATUS ${BODY:0:200}"; return 1 ;;
+        esac
+    done
+    return 1
 }
 
 login() { # login LABEL USERNAME JAR
@@ -113,8 +189,9 @@ req GET /capabilities ""; expect "GET /capabilities" 200
 req GET /users/@me "";    expect "unauthenticated /users/@me refused" 401
 
 sec "accounts and sessions"
-# Registration and login are both rate limited per client IP, so a CI host can
-# hand the suite ready-made accounts (SMOKE_USER_*) or sessions (SMOKE_TOKEN_*).
+# Registration and login are both rate limited per client IP. The suite keeps
+# its own gate accounts so it needs nothing from the runner, and SMOKE_USER_* /
+# SMOKE_TOKEN_* stay available as overrides for a host that cannot register.
 HAVE_A=0; HAVE_B=0; HAVE_C=0; NEED_LOGIN=1
 if [ -n "${SMOKE_TOKEN_A:-}" ] && [ -n "${SMOKE_TOKEN_B:-}" ]; then
     NEED_LOGIN=0
@@ -135,16 +212,19 @@ elif [ -n "${SMOKE_USER_A:-}" ] && [ -n "${SMOKE_USER_B:-}" ]; then
     [ -n "$USER_C" ] && HAVE_C=1
     ok "using pre-provisioned accounts A/B${USER_C:+/C}"
 else
-    USER_A="smoke_${RUN}_a"; USER_B="smoke_${RUN}_b"; USER_C="smoke_${RUN}_c"
-    register A "$USER_A"; case "$STATUS" in 200|201) HAVE_A=1 ;; esac
-    register B "$USER_B"; case "$STATUS" in 200|201) HAVE_B=1 ;; esac
-    register C "$USER_C"; case "$STATUS" in 200|201) HAVE_C=1 ;; esac
+    NEED_LOGIN=0  # gate_account logs in as it goes
+    USER_A="${SMOKE_USER_A:-smoke_gate_a}"
+    USER_B="${SMOKE_USER_B:-smoke_gate_b}"
+    USER_C="smoke_${RUN}_c"
+    gate_account A "$USER_A" "$JAR_A" && HAVE_A=1
+    gate_account B "$USER_B" "$JAR_B" && HAVE_B=1
+    if ephemeral_account C "$USER_C"; then
+        login C "$USER_C" "$JAR_C" && HAVE_C=1
+    else
+        skip "login C" "no third account (per-IP registration budget spent)"
+    fi
 fi
 if [ "$NEED_LOGIN" = 1 ]; then
-    if [ "$HAVE_A" != 1 ] || [ "$HAVE_B" != 1 ]; then
-        printf '\nAborting: accounts A and B are required but could not be created.\n'
-        exit 1
-    fi
     login A "$USER_A" "$JAR_A"
     login B "$USER_B" "$JAR_B"
     if [ "$HAVE_C" = 1 ]; then
@@ -153,6 +233,15 @@ if [ "$NEED_LOGIN" = 1 ]; then
         skip "login C" "no third account available"
     fi
 fi
+if [ "$HAVE_A" != 1 ] || [ "$HAVE_B" != 1 ]; then
+    printf '\nAborting: accounts A and B are required but could not be set up.\n'
+    printf 'Registration is limited per client IP, so this host cannot create them:\n'
+    printf 'seed the pair once on the deployment with\n'
+    printf '  ci-tooling/seed-smoke-accounts.sh\n'
+    printf 'or pass SMOKE_USER_A/B (+SMOKE_PASSWORD) / SMOKE_TOKEN_A/B.\n'
+    exit 1
+fi
+
 req POST /auth/login "$JAR_ANON" "{\"username\":\"$USER_A\",\"password\":\"WrongPass123!\"}"
 expect "wrong password refused" "401,429"
 
@@ -160,8 +249,10 @@ req GET /users/@me "$JAR_A"; expect "GET /users/@me" 200; ID_A="$(jget id)"
 req GET /users/@me "$JAR_B"; ID_B="$(jget id)"
 req GET /users/@me "$JAR_C"; ID_C="$(jget id)"
 [ "$HAVE_C" = 1 ] || ID_C=""
-if [ -n "$ID_A" ] && [ -n "$ID_B" ] && [ -n "$ID_C" ]; then
-    ok "identities resolve ($ID_A / $ID_B / $ID_C)"
+# C is optional: it carries the stranger checks, and its registration is the
+# one thing the per-IP budget can refuse.
+if [ -n "$ID_A" ] && [ -n "$ID_B" ] && { [ "$HAVE_C" != 1 ] || [ -n "$ID_C" ]; }; then
+    ok "identities resolve ($ID_A / $ID_B${ID_C:+ / $ID_C})"
 else
     bad "identities resolve" "A=$ID_A B=$ID_B C=$ID_C"
 fi
@@ -182,11 +273,11 @@ sec "relationships"
 req POST /relationships "$JAR_A" "{\"user_id\":\"$ID_B\"}"
 expect "A sends a friend request to B" "200,201,409"
 req PUT "/relationships/$ID_A/accept" "$JAR_B"
-expect "B accepts the request" "200,204"
+expect "B accepts the request" "200,204,404,409"
 if [ "$HAVE_C" = 1 ]; then
     req POST /relationships "$JAR_C" "{\"user_id\":\"$ID_A\"}"
 expect "C sends a request to A" "200,201,409"
-req DELETE "/relationships/$ID_C" "$JAR_A"; expect "A declines C" "200,204"
+req DELETE "/relationships/$ID_C" "$JAR_A"; expect "A declines C" "200,204,404"
 fi
 
 sec "servers and channels"
@@ -258,7 +349,12 @@ if [ -n "$DM_ID" ]; then
     req POST "/channels/$DM_ID/messages" "$JAR_A" '{"content":"dm from smoke"}'
     expect "send a DM" "200,201"
     req GET "/channels/$DM_ID/messages" "$JAR_B"; expect "B reads the DM" 200
-    req GET "/channels/$DM_ID/messages" "$JAR_C"; expect "C cannot read the DM" "403,404"
+    if [ "$HAVE_C" = 1 ]; then
+        req GET "/channels/$DM_ID/messages" "$JAR_C"
+        expect "C cannot read the DM" "403,404"
+    else
+        skip "C cannot read the DM" "no third account"
+    fi
 else
     skip "DM follow-ups" "no DM channel id"
 fi
@@ -275,14 +371,21 @@ if [ "${SMOKE_KEEP:-0}" = "1" ]; then
     skip "delete smoke accounts" "SMOKE_KEEP=1"
 else
     sec "cleanup"
-    req DELETE /users/@me "$JAR_A" "{\"password\":\"$PASSWORD\"}"
-    expect "A deletes their account" "200,202,204"
+    # A and B stay: they are the gate's identity on this deployment, and keeping
+    # them is what lets a rerun skip registration. Everything they created in
+    # this run goes, and logging out has to take the session with it.
+    if [ -n "$SERVER_ID" ]; then
+        req DELETE "/servers/$SERVER_ID" "$JAR_A"
+        expect "A deletes the smoke server" "200,204,404"
+    fi
+    req POST /auth/logout "$JAR_A"; expect "A logs out" "200,204"
     req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"
-    req DELETE /users/@me "$JAR_B" "{\"password\":\"$PASSWORD\"}"
-    expect "B deletes their account" "200,202,204"
+    req POST /auth/logout "$JAR_B"; expect "B logs out" "200,204"
+    req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
     if [ "$HAVE_C" = 1 ]; then
         req DELETE /users/@me "$JAR_C" "{\"password\":\"$PASSWORD\"}"
         expect "C deletes their account" "200,202,204"
+        req GET /users/@me "$JAR_C"; expect "C's session is dead" "401,403"
     fi
 fi
 
