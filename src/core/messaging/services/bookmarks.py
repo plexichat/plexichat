@@ -28,10 +28,32 @@ class BookmarkService:
     def _generate_id(self) -> int:
         return generate_snowflake_id()
 
+    def _channel_owns_conversation(self, channel_id: int, conversation_id: int) -> bool:
+        """Return True when ``channel_id`` is a channel backed by ``conversation_id``.
+
+        Server-channel messages are addressed by their *channel* id on the
+        client (that is the only id the UI holds) while ``msg_messages``
+        stores the channel's separate ``conversation_id``. Both forms are
+        accepted, but only for an id that actually maps to where the message
+        lives, so this cannot be used to cross conversations.
+        """
+        try:
+            row = self._db.fetch_one(
+                "SELECT 1 FROM srv_channels WHERE id = ? AND conversation_id = ?",
+                (channel_id, conversation_id),
+            )
+        except Exception:
+            return False
+        return row is not None
+
     def _ensure_bookmark_access(
         self, user_id: int, message_id: int, conversation_id: int
     ) -> None:
         """Validate message existence, conversation match, and membership.
+
+        ``conversation_id`` may be either the message's real conversation id
+        (DM, group) or, for server-channel messages, the channel id that
+        fronts that conversation.
 
         Raises ``ValueError`` when the message does not exist (or lives in a
         different conversation than claimed) and ``PermissionError`` when the
@@ -51,26 +73,32 @@ class BookmarkService:
         )
         if not msg_row:
             raise ValueError("Message not found")
-        message_conversation_id = (
+        message_conversation_id = int(
             msg_row["conversation_id"] if isinstance(msg_row, dict) else msg_row[0]
         )
-        if int(message_conversation_id) != int(conversation_id):
+        claimed_id = int(conversation_id)
+        if (
+            claimed_id != message_conversation_id
+            and not self._channel_owns_conversation(claimed_id, message_conversation_id)
+        ):
             raise PermissionError("Message is not in the specified conversation")
 
+        # Authorize against the conversation the message really lives in, not
+        # the claimed id, so a channel-id target cannot widen the check.
         participant_svc = (
             getattr(self._messaging, "_participant_svc", None)
             if self._messaging
             else None
         )
         if participant_svc is not None:
-            allowed = participant_svc.is_participant(conversation_id, user_id)
+            allowed = participant_svc.is_participant(message_conversation_id, user_id)
         else:
             # Fallback when the messaging module is unavailable: direct
             # participant-table probe so the check can never fail open.
             row = self._db.fetch_one(
                 "SELECT 1 FROM msg_participants WHERE conversation_id = ? "
                 "AND user_id = ?",
-                (conversation_id, user_id),
+                (message_conversation_id, user_id),
             )
             allowed = row is not None
         if not allowed:
