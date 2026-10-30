@@ -71,12 +71,22 @@ req() {
         args+=(-H "Authorization: Bearer ${JAR_TOKEN[$jar]}")
     fi
     [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
-    for attempt in 1 2 3; do
+    # A deployment reached through a CDN drops the occasional connection, and
+    # curl then reports no status at all. Three attempts two seconds apart
+    # gave up inside such a blip: the request never reached the app (no access
+    # log line), and because the caller got no id back, every later check that
+    # used it failed too -- a dozen FAILs from one dropped POST. Back off
+    # further so a blip cannot fail the gate, and keep curl's own message in
+    # the trace so a real outage stays distinguishable from a retried blip.
+    local err
+    for attempt in 1 2 3 4 5 6; do
         step
-        STATUS="$(curl "${args[@]}" 2>/dev/null)" || STATUS=000
+        err="$(curl "${args[@]}" 2>&1 >/dev/null)" || STATUS=000
         [ "$STATUS" != "000" ] && break
-        printf '        (request did not complete; retrying %s/3)\n' "$attempt"
-        sleep 2
+        [ "$attempt" -lt 6 ] || break
+        printf '        (request did not complete: %s; retry %s/5)\n' \
+            "${err:-no response}" "$attempt"
+        sleep "$((attempt * attempt))"
     done
     BODY="$(cat "$TMP/body.json" 2>/dev/null || true)"
 }
