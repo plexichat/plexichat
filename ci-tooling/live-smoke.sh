@@ -17,6 +17,9 @@
 #                        registering (+ SMOKE_PASSWORD, default SmokeTest123!)
 #   SMOKE_TOKEN_A/B/C    pre-issued session tokens; skips login entirely (use
 #                        when /auth/login is rate limited by your CI's IP)
+#   SMOKE_DELETION_ACCOUNTS
+#                        the ring of deletion subjects the run may freeze,
+#                        comma separated (default smoke_delete_1..4)
 #
 # Needs no configuration from the runner. Registration is limited per client IP
 # (3/minute, 10/hour, 20/day), and a CI runner shares its egress address, so the
@@ -28,9 +31,20 @@
 # C carries the stranger checks (it may not read A's channel or DM), so it is a
 # long-lived account too: registering a fresh one every run made those checks
 # depend on the runner's registration budget, and on a shared egress they simply
-# skipped. Account deletion and session revocation are still covered, by a
-# throwaway account created per run and deleted at the end; that one is skipped
-# (not failed) when the budget is spent, because nothing else depends on it.
+# skipped.
+#
+# Deletion is covered on a seeded ring (`smoke_delete_1..4`) rather than on an
+# account registered per run, and the reason is that DELETE /users/@me is not
+# final: it schedules deletion with a grace period, freezing the account and
+# killing its sessions. A frozen account cannot authenticate, so it cannot undo
+# that either -- the account that witnesses the freeze is spent by doing so.
+# Registering a fresh one per run is exactly the thing a shared CI egress cannot
+# afford (3/minute, 10/hour, 20/day, per IP), and registering is the step that
+# skipped. The ring is seeded from the deployment with
+# ci-tooling/seed-smoke-accounts.sh, which also restores the members an earlier
+# run froze; a run freezes the first member that still logs in, and falls back
+# to self-registration (then to a skip, naming that command) when the ring is
+# spent.
 # Exits non-zero if any check fails. Requires: curl, jq.
 #
 set -uo pipefail
@@ -39,6 +53,9 @@ BASE="${PLEXICHAT_BASE_URL:-https://api.plexichat.com/api/v1}"
 BASE="${BASE%/}"
 PACE="${SMOKE_PACE:-0.4}"
 PASSWORD="${SMOKE_PASSWORD:-SmokeTest123!}"
+# Keep in step with ci-tooling/seed-smoke-accounts.sh, which seeds and restores
+# exactly this ring.
+DELETION_RING="${SMOKE_DELETION_ACCOUNTS:-smoke_delete_1,smoke_delete_2,smoke_delete_3,smoke_delete_4}"
 RUN="$(date +%s)$RANDOM"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -172,8 +189,30 @@ gate_account() { # gate_account LABEL USERNAME JAR
     return 1
 }
 
-# A throwaway account, so the run still covers deletion and session revocation.
-# Best effort: when the IP's registration budget is spent this skips.
+# The deletion subject: the first seeded ring account that still logs in.
+#
+# 200 is a member this run may freeze. 403 is a member an earlier run already
+# froze -- still correct, just not usable as this run's subject, and the seed
+# script restores it. 401/404 mean it was never seeded. Anything else is the
+# deployment misbehaving and is reported rather than walked past.
+ring_account() {
+    local name
+    for name in ${DELETION_RING//,/ }; do
+        req POST /auth/login "$JAR_D" \
+            "{\"username\":\"$name\",\"password\":\"$PASSWORD\"}"
+        case "$STATUS" in
+            200) DELETION_ACCOUNT="$name"; ok "login D (deletion account $name)"; return 0 ;;
+            403|401|404) : ;;
+            429) wait_for_reset 75 || return 1; continue ;;
+            *) bad "login D ($name)" "-> $STATUS ${BODY:0:200}"; return 1 ;;
+        esac
+    done
+    return 1
+}
+
+# Fallback when the ring is exhausted or not seeded on this deployment: a
+# throwaway account registered per run. Best effort -- when the IP's
+# registration budget is spent this returns 1.
 ephemeral_account() { # ephemeral_account LABEL USERNAME -> 0 when created
     local attempt
     for attempt in 1 2 3; do
@@ -235,16 +274,20 @@ else
     gate_account A "$USER_A" "$JAR_A" && HAVE_A=1
     gate_account B "$USER_B" "$JAR_B" && HAVE_B=1
     gate_account C "$USER_C" "$JAR_C" && HAVE_C=1
-    # Deletion coverage, with a throwaway rather than C: deleting the gate's own
-    # stranger would undo the pin that keeps the checks above running on a host
-    # with no registration budget left.
-    #
-    # The registration goes through the anon jar, so its auto-login lands there:
-    # D needs a session of its own before it can delete itself (the delete is
-    # authenticated), which is the same second step C used to take.
-    USER_D="smoke_${RUN}_d"
-    if ephemeral_account D "$USER_D"; then
-        login D "$USER_D" "$JAR_D" && HAVE_D=1
+    # Deletion coverage, on a dedicated subject rather than on C: freezing the
+    # gate's own stranger would undo the pin that keeps the checks above running
+    # on a host with no registration budget left.
+    DELETION_ACCOUNT=""
+    if ring_account; then
+        HAVE_D=1
+    else
+        # The registration goes through the anon jar, so its auto-login lands
+        # there: D needs a session of its own before it can schedule its
+        # deletion (that request is authenticated).
+        EPHEMERAL="smoke_${RUN}_d"
+        if ephemeral_account D "$EPHEMERAL" && login D "$EPHEMERAL" "$JAR_D"; then
+            HAVE_D=1; DELETION_ACCOUNT="$EPHEMERAL"
+        fi
     fi
 fi
 if [ "$NEED_LOGIN" = 1 ]; then
@@ -407,10 +450,16 @@ else
     req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
     if [ "$HAVE_D" = 1 ]; then
         req DELETE /users/@me "$JAR_D" "{\"password\":\"$PASSWORD\"}"
-        expect "the throwaway account deletes itself" "200,202,204"
+        expect "the deletion account schedules its own deletion" "200,202,204"
         req GET /users/@me "$JAR_D"; expect "its session is dead" "401,403"
+        # The grace period is the point: the account still exists, and the freeze
+        # is what must stop it coming back in. Logging in again is the check.
+        req POST /auth/login "$JAR_ANON" \
+            "{\"username\":\"$DELETION_ACCOUNT\",\"password\":\"$PASSWORD\"}"
+        expect "a deletion-scheduled account can no longer log in" "401,403"
     else
-        skip "delete a throwaway account" "per-IP registration budget spent"
+        skip "delete a throwaway account" \
+            "no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
     fi
 fi
 
