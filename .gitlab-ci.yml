@@ -1271,29 +1271,66 @@ create_merge_request:
 # against a live deployment after it is updated (manual, so a release is not
 # blocked while the deploy itself is still rolling out). It exercises the real
 # HTTP surface the client uses -- auth, profiles, relationships, servers,
-# messaging, bookmarks by channel id, threads, DMs, search -- and deletes the
-# throwaway accounts it creates.
+# messaging, bookmarks by channel id, threads, DMs, search -- and covers account
+# deletion by freezing a member of the deployment's seeded deletion ring.
 #
 # Point it at the deployment with PLEXICHAT_BASE_URL. Registration and login
 # are rate limited per client IP (3/minute, 10/hour, 20/day for register) and a
 # runner shares its egress address, so the suite keeps its own
-# `smoke_gate_{a,b}` accounts: it registers them once and logs in on every later
-# run. A deployment whose IP has already spent that budget is seeded once with
-# ci-tooling/seed-smoke-accounts.sh from the host. SMOKE_USER_A/B (+ 
-# SMOKE_PASSWORD) and SMOKE_TOKEN_A/B are still accepted as overrides, but no CI
-# variable is needed for the job to run.
+# `smoke_gate_{a,b,c}` accounts: it registers them once and logs in on every
+# later run. C is the stranger whose isolation is checked, so it is a gate
+# account too rather than a per-run registration -- that was the check that
+# skipped whenever this runner's IP had no registration budget left. A
+# deployment that has never seen the gate is seeded once with
+# ci-tooling/seed-smoke-accounts.sh from the host.
+#
+# Deletion coverage does not register anything either: DELETE /users/@me only
+# schedules deletion (a grace period), freezing the account and killing its
+# sessions, and a frozen account cannot authenticate, so the run that watches a
+# freeze spends the account it watched. The deployment therefore carries a small
+# ring of deletion subjects (`smoke_delete_1..4`, seeded with the gate accounts
+# by the same script); a run freezes the first member that still logs in. Running
+# that script again restores the members already frozen. SMOKE_USER_A/B/C (+ 
+# SMOKE_PASSWORD) and SMOKE_TOKEN_A/B/C are still accepted as overrides, but no
+# CI variable is needed for the job to run.
 live_smoke:
   stage: test-and-release
   image: alpine:3.20
   needs: []
   variables:
     PLEXICHAT_BASE_URL: "https://api.plexichat.com/api/v1"
+    # The gate is a test harness, not a shipped artifact: run the suite from the
+    # integration branch so a fix to the suite reaches the next gate run instead
+    # of waiting for a release tag to carry it (a gate that can only change at
+    # release time cannot be fixed while a release is what it is blocking). The
+    # deployment under test is still whatever PLEXICHAT_BASE_URL names.
+    SMOKE_SCRIPT_REF: "dev"
   before_script:
     - apk add --no-cache bash curl jq
   script:
-    - bash ci-tooling/live-smoke.sh
+    # The runner reaches this GitLab over plain http (its git config rewrites
+    # https://gitlab.plexichat.com/ to http://), so CI_PROJECT_URL's https form
+    # may be unreachable from a job: keep it as the first try and fall back to
+    # the same URL over http.
+    - |
+      set -eu
+      ref="${SMOKE_SCRIPT_REF:-dev}"
+      fetch() {
+          curl -sSLf --max-time 30 -o /tmp/live-smoke.sh \
+              "$1/-/raw/${ref}/ci-tooling/live-smoke.sh"
+      }
+      http_url="$(printf '%s' "$CI_PROJECT_URL" | sed 's|^https://|http://|')"
+      fetch "$CI_PROJECT_URL" || fetch "$http_url"
+      bash /tmp/live-smoke.sh
   rules:
     - if: '$CI_COMMIT_TAG =~ /^a\.\d+\.\d+-\d+$/'
+      when: manual
+      allow_failure: false
+    # The gate can also be run from dev on demand. A tag-only trigger meant the
+    # suite could not be checked against the deployment after a fix to the suite
+    # itself without cutting a release first -- and this is the job whose verdict
+    # a release waits on.
+    - if: '$CI_COMMIT_BRANCH == "dev"'
       when: manual
       allow_failure: false
   environment:
