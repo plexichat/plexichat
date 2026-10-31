@@ -143,7 +143,7 @@ def _download(url: str, dest: str) -> None:
             # The scheme was checked above; nosec B310 is the generic warning
             # about urlopen being handed an unvalidated URL.
             with (
-                urllib.request.urlopen(url, timeout=120) as response,
+                urllib.request.urlopen(url, timeout=120) as response,  # nosec: B310
                 open(dest, "wb") as out,
             ):  # nosec: B310
                 shutil.copyfileobj(response, out)
