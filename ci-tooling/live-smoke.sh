@@ -113,12 +113,17 @@ req() {
     # the run that replayed this against a restarting backend failed only
     # `GET /version` and passed the other 49 checks. A status the app itself
     # returns is never retried, and six exhausted attempts still fail the gate.
-    local err out why
-    for attempt in 1 2 3 4 5 6; do
+    local out why nap
+    for attempt in 1 2 3 4 5 6 7 8; do
         step
+        # Drop the previous attempt's body first. curl only writes that file
+        # when it gets a response, so a failed attempt (000) would otherwise
+        # leave the body of the request before it -- and a caller that reads a
+        # field without checking the status would then assert on another
+        # request's data instead of failing.
+        rm -f "$TMP/body.json"
         # curl's http_code goes to stdout and its diagnostics to stderr; both
-        # are kept, and the status comes from the file so a retry cannot leave
-        # a stale 000 behind.
+        # are kept, and a status we did not parse counts as "no response".
         out="$(curl "${args[@]}" 2>"$TMP/curl.err")" || true
         STATUS="${out:-000}"
         why=""
@@ -127,9 +132,18 @@ req() {
             502|503|504) why="upstream ${STATUS} (edge answered, backend not serving yet)" ;;
             *) break ;;
         esac
-        [ "$attempt" -lt 6 ] || break
-        printf '        (%s; retry %s/5)\n' "$why" "$attempt"
-        sleep "$((attempt * attempt))"
+        [ "$attempt" -lt 8 ] || break
+        printf '        (%s; retry %s/7)\n' "$why" "$attempt"
+        # Back off far enough to outlast connection churn. A runner that drops
+        # TCP handshakes in bursts -- every other job on the same egress is
+        # talking to the same host -- failed three gate runs in a row on
+        # `Could not connect` while the API itself answered 200 from elsewhere;
+        # the old 1/4/9/16/25s ladder gave up inside one of those bursts. The
+        # wait is capped so eight exhausted attempts still fail in about two
+        # minutes rather than hanging the pipeline.
+        nap=$((attempt * attempt))
+        [ "$nap" -gt 30 ] && nap=30
+        sleep "$nap"
     done
     BODY="$(cat "$TMP/body.json" 2>/dev/null || true)"
 }
@@ -454,9 +468,29 @@ else
         req GET /users/@me "$JAR_D"; expect "its session is dead" "401,403"
         # The grace period is the point: the account still exists, and the freeze
         # is what must stop it coming back in. Logging in again is the check.
-        req POST /auth/login "$JAR_ANON" \
-            "{\"username\":\"$DELETION_ACCOUNT\",\"password\":\"$PASSWORD\"}"
-        expect "a deletion-scheduled account can no longer log in" "401,403"
+        #
+        # It costs a login, and login is limited per client IP (20/hour), which a
+        # gate run spends seven or eight of: a deployment gate fired shortly
+        # after two CI runs was answered "429 rate limited" instead of "403
+        # frozen", and the gate went red for saying nothing about the freeze.
+        # Wait out a short window and ask again; if the window is long, report
+        # the check as skipped rather than failed, because the schedule and the
+        # dead session above already ran and this is the extra assertion.
+        freeze_status=""
+        for freeze_attempt in 1 2; do
+            req POST /auth/login "$JAR_ANON" \
+                "{\"username\":\"$DELETION_ACCOUNT\",\"password\":\"$PASSWORD\"}"
+            freeze_status="$STATUS"
+            [ "$freeze_status" = 429 ] || break
+            wait_for_reset 150 || break
+        done
+        case "$freeze_status" in
+            401|403) ok "a deletion-scheduled account can no longer log in" ;;
+            429) skip "a deletion-scheduled account can no longer log in" \
+                     "per-IP login limit still open (retry_after $(jq -r '.retry_after // "?"' "$TMP/body.json" 2>/dev/null))" ;;
+            *) bad "a deletion-scheduled account can no longer log in" \
+                   "-> $freeze_status ${BODY:0:200}" ;;
+        esac
     else
         skip "delete a throwaway account" \
             "no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
