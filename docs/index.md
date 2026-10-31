@@ -72,10 +72,10 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 | `{{BASE_URL}}` | — | REST API base (default `http://localhost:8000/api/v1`). |
 | `{{WEBSOCKET_URL}}` | — | WebSocket gateway (default `ws://localhost:8000/gateway`). |
 | `/api/v1/ready` | `GET` | Readiness probe. Returns as soon as HTTP is bound. |
-| `/api/v1/health` | `GET` | Health check. Covers database, events, and cross-worker listener. |
+| `/api/v1/health` | `GET` | Health check. Covers database, events, and cross-worker listener. Also served at `/health`, as is `/ready`. |
 | `/api/v1/version` | `GET` | Current server version and minimum supported client version. |
 | `/api/v1/version/negotiate` | `POST` | Version compatibility check for a given `client_version`. |
 | `/api/v1/status` | `GET` | Server state, version, and uptime. |
 | `/api/v1/capabilities` | `GET` | Public constants without authentication. |
 
-Version endpoints are implemented in `src/api/routes/version.py:64` and use the version utility in `src/utils/common_utils/utils/version/__init__.py:1`.
+Version endpoints are implemented in `src/api/routes/version.py` and use the version utility in `src/utils/common_utils/utils/version/`. `/api/v1/version` reports the running build (currently `a.1.0-175`), the minimum supported client, and `api_version`.

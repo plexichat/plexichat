@@ -6,7 +6,7 @@ This guide walks you through connecting to a Plexichat server, authenticating, a
 
 Before you make any requests, collect three URLs from your server administrator:
 
-*   **REST API:** `http://localhost:8000/api/v1` — All REST operations. The prefix is `api.api_prefix` (`src/config_defaults.py:133`).
+*   **REST API:** `http://localhost:8000/api/v1` — All REST operations. The prefix is `api.api_prefix` (`src/config_defaults.py:130`).
 *   **WebSocket gateway:** `ws://localhost:8000/gateway` — Real-time events.
 *   **Documentation:** `http://localhost:8000/docs/api` — This portal. The path is `docs.path` (default `/docs/api`).
 
@@ -54,7 +54,7 @@ curl http://localhost:8000/api/v1/users/@me \
 
 ### OAuth login
 
-When the server has OAuth providers configured (`oauth.google`, `oauth.github`, `oauth.microsoft`, `oauth.gitlab` in `src/config_defaults.py:460`), users can authenticate with an external account. The supported providers are defined in `src/api/routes/auth/oauth_config.py:1`: `google`, `github`, `microsoft`, and `gitlab`.
+When the server has OAuth providers configured (`oauth.google`, `oauth.github`, `oauth.microsoft`, `oauth.gitlab` in `src/config_defaults.py:442`), users can authenticate with an external account. The supported providers are defined in `src/api/routes/auth/oauth_config.py:1`: `google`, `github`, `microsoft`, and `gitlab`.
 
 OAuth uses PKCE with `S256` and a short-lived, `HttpOnly` state cookie that binds the flow to the browser that started it.
 

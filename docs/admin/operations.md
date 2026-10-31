@@ -193,7 +193,7 @@ Outbound webhook deliveries use a persistent retry queue with exponential backof
 
 - When the first delivery attempt fails (non-`2xx` response or transport error), the system enqueues the delivery in `webhook_retry_queue`.
 - The `WebhookDeliveryJob` worker drains due records every `webhooks.delivery_interval_seconds` (default `30`; set to `<= 0` to disable). The server initializer starts the worker automatically after webhook setup.
-- The system retries with exponential backoff and jitter (`1s`, `2s`, `4s`, ... capped at `60s`). After `webhooks.max_retries` (default `5`) failures, the delivery moves to the dead-letter queue (`status = 'dead_letter'`) and is no longer retried automatically.
+- The system retries with exponential backoff and jitter: `WebhookRetryQueue.BASE_DELAY_MS` (`1s`) doubles per attempt, capped at `MAX_DELAY_MS` (`60s`), plus up to `JITTER_MS` (`500 ms`) of random jitter. After `WebhookRetryQueue.MAX_RETRIES` (`5`) failed attempts, or once the 24-hour retry window has passed, the delivery moves to the dead-letter queue (`status = 'dead_letter'`) and is no longer retried automatically. Those values are code constants in `src/core/webhooks/retry.py`; there is no `webhooks.max_retries` config key.
 - Successful deliveries are recorded as `status = 'delivered'` with the HTTP status.
 - You can retry dead-letter entries manually through the retry-queue API. The system cleans up delivered and dead-letter records after the retention window.
 

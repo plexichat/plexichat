@@ -128,6 +128,6 @@ Schema files use `db.convert_schema()` to handle dialect differences:
 
 ## Check migration status
 
-1.  Open the admin panel at `/api/v1/admin/ui-migrations`.
+1.  Open the admin panel at `/api/v1/admin/migrations`.
 2.  Review the migration list and check which migrations are applied, pending, or failed.
 3.  Select **Details** on any migration to see logs and metadata.

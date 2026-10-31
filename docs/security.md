@@ -288,7 +288,7 @@ api:
 
 *   The key is `cors_origins`, not `allow_origins`. The default is an explicit list, not `["*"]`.
 *   When `cors_allow_credentials` is `true`, browsers reject wildcard origins.
-*   List only domains that host your web client. See `src/config_defaults.py:133`.
+*   List only domains that host your web client. See `api.cors_origins` in `src/config_defaults.py:130`.
 
 ## Admin UI
 

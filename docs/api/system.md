@@ -30,7 +30,7 @@ All paths in this document are prefixed with `/api/v1/` unless noted. Routes mar
 GET /
 ```
 
-Returns basic API metadata. Mounted at the app root (`plexichat/src/api/app.py:544`), not under `/api/v1`.
+Returns basic API metadata. Mounted at the app root (`src/api/app.py`), not under `/api/v1`.
 
 **Response** `200 OK`
 
