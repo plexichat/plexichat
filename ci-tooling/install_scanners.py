@@ -164,7 +164,8 @@ def _download(url: str, dest: str) -> None:
                 file=sys.stderr,
             )
             time.sleep(RETRY_DELAY_SECONDS)
-    assert last is not None
+    if last is None:  # pragma: no cover - the loop records every failure
+        raise InstallError(f"could not download {url}")
     raise last
 
 
