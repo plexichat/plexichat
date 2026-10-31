@@ -30,7 +30,7 @@ The version pin policies are defined in `src/config_defaults.py` and `src/static
 ```text
 ~/.plexichat/client/
 ├── current_version          # Single-line file with the active version string
-├── a.1.0-181/               # Unpacked dist for this version
+├── a.1.0-182/               # Unpacked dist for this version
 │   ├── index.html
 │   ├── app.html
 │   ├── config.js            # Written by the backend after install
