@@ -137,7 +137,7 @@ admin_ui:
 - Prefer specific scopes over broad families. For example, grant `reports.action` to allow reviewing reports rather than a non-existent `reports.resolve`, and grant `users.force_username_change` rather than a non-existent `users.force_password_change`.
 - Remove unused roles and permissions.
 
-Valid scopes are defined in `src/core/admin/permissions.py:42` (`PERMISSION_SCOPES`). Common mistakes include:
+Valid scopes are defined in `src/core/admin/permissions.py` (`PERMISSION_SCOPES`). Common mistakes include:
 
 | Incorrect (does not exist) | Use instead |
 |----------------------------|-------------|
@@ -163,7 +163,7 @@ Review regularly:
 - Recent permission changes (query `GET /api/v1/admin/audit/logs? action_family=admin` or `action_family=role` with `admin.audit.read`).
 - Unusual assignments.
 
-The audit log endpoints are `GET /api/v1/admin/audit/logs`, `GET /api/v1/admin/audit/logs/stats`, and `GET /api/v1/admin/audit/logs/export`. The path is `/audit/logs`, not `/audit-log`. See `src/api/routes/admin/audit.py:34`.
+The audit log endpoints are `GET /api/v1/admin/audit/logs`, `GET /api/v1/admin/audit/logs/stats`, and `GET /api/v1/admin/audit/logs/export`. The path is `/audit/logs`, not `/audit-log`. See `src/api/routes/admin/audit.py`.
 
 ## Protect data
 

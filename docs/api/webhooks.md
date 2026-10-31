@@ -6,11 +6,11 @@ Use webhooks to create inbound integrations that post messages into Plexichat ch
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this guide are prefixed with `/api/v1/webhooks` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:130`).
+All endpoints in this guide are prefixed with `/api/v1/webhooks` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py`).
 
 ## Error envelope
 
-All errors use the standard envelope (`src/api/schemas/common.py:58`):
+All errors use the standard envelope (`src/api/schemas/common.py`):
 
 ```json
 {
@@ -46,11 +46,11 @@ All errors use the standard envelope (`src/api/schemas/common.py:58`):
 | `channel_id` | string | Channel that owns the webhook |
 | `server_id` | string | Server that owns the channel |
 | `creator_id` | string | User who created the webhook |
-| `name` | string | 1–80 characters (`src/api/schemas/webhooks.py:17`) |
+| `name` | string | 1–80 characters (`src/api/schemas/webhooks.py`) |
 | `avatar_url` | string or null | Valid URL or null |
-| `token` | string or null | Returned only on create and on token regeneration (`src/api/routes/webhooks.py:41`) |
+| `token` | string or null | Returned only on create and on token regeneration (`src/api/routes/webhooks.py`) |
 | `url` | string or null | Full execution URL, returned only with the token |
-| `require_signed_deliveries` | boolean | When `true`, executions without a valid Ed25519 signature are rejected even with a valid token (`src/api/schemas/webhooks.py:19`) |
+| `require_signed_deliveries` | boolean | When `true`, executions without a valid Ed25519 signature are rejected even with a valid token (`src/api/schemas/webhooks.py`) |
 | `created_at` | integer | Unix timestamp |
 
 ## Create a webhook
@@ -148,7 +148,7 @@ Authorization: Bearer <token>
 
 ### PATCH /api/v1/webhooks/{webhook_id}
 
-Change the webhook name, avatar, channel, or signed-delivery requirement (`src/api/routes/webhooks.py:287`).
+Change the webhook name, avatar, channel, or signed-delivery requirement (`src/api/routes/webhooks.py`).
 
 **Headers**
 
@@ -167,7 +167,7 @@ Authorization: Bearer <token>
 
 **Response `200 OK`**
 
-Returns the updated `WebhookResponse` without the token. The update also emits a `WEBHOOKS_UPDATE` gateway event (`src/api/routes/webhooks.py:344`).
+Returns the updated `WebhookResponse` without the token. The update also emits a `WEBHOOKS_UPDATE` gateway event (`src/api/routes/webhooks.py`).
 
 **Error responses**
 
@@ -181,7 +181,7 @@ Returns the updated `WebhookResponse` without the token. The update also emits a
 
 ### POST /api/v1/webhooks/{webhook_id}/regenerate-token
 
-Rotate the token. The old token is invalidated and the updated webhook with the new token is returned (`src/api/routes/webhooks.py:59`).
+Rotate the token. The old token is invalidated and the updated webhook with the new token is returned (`src/api/routes/webhooks.py`).
 
 **Headers**
 
@@ -256,7 +256,7 @@ Send a message through the webhook. No `Authorization` header is required when t
 | `X-Plexichat-Signature` | Only when `require_signed_deliveries` is `true` or when you want verification | Ed25519 signature of the payload |
 | `X-Plexichat-Timestamp` | Only with `X-Plexichat-Signature` | Timestamp used in the signature |
 
-When `require_signed_deliveries` is `true`, unsigned requests are rejected with `401` even if the token is valid (`src/api/routes/webhooks.py:540`).
+When `require_signed_deliveries` is `true`, unsigned requests are rejected with `401` even if the token is valid (`src/api/routes/webhooks.py`).
 
 **Request body**
 

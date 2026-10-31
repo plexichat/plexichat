@@ -6,7 +6,7 @@ Ingest client-side operational signals — response-time measurements and Conten
 
 For development, use `http://localhost:8000/api/v1`.
 
-Both endpoints are mounted under `/telemetry` (`src/api/routes/telemetry.py:21`). The full paths are `/api/v1/telemetry/response-times` and `/api/v1/telemetry/csp-report` when the API prefix is `/api/v1` (`src/config_defaults.py:132`).
+Both endpoints are mounted under `/telemetry` (`src/api/routes/telemetry.py`). The full paths are `/api/v1/telemetry/response-times` and `/api/v1/telemetry/csp-report` when the API prefix is `/api/v1` (`src/config_defaults.py`).
 
 Telemetry is optional and privacy-preserving. Don't include tokens, secrets, or message content.
 
@@ -17,7 +17,7 @@ Telemetry is optional and privacy-preserving. Don't include tokens, secrets, or 
 | `POST` | `/api/v1/telemetry/response-times` | Optional | Submit batches of client-observed response times |
 | `POST` | `/api/v1/telemetry/csp-report` | None (browser callback) | Submit a CSP violation report |
 
-Telemetry is disabled by default (`telemetry.enabled: false` in `src/config_defaults.py:832`). When disabled or not yet initialized, submissions are accepted but dropped quietly with `accepted: 0` — the server logs at `DEBUG`, not `ERROR`.
+Telemetry is disabled by default (`telemetry.enabled: false` in `src/config_defaults.py`). When disabled or not yet initialized, submissions are accepted but dropped quietly with `accepted: 0` — the server logs at `DEBUG`, not `ERROR`.
 
 ## Submit response times
 
@@ -29,7 +29,7 @@ Records client-perceived performance measurements for analysis. The endpoint is 
 
 ### Authentication
 
-Optional. If you send `Authorization: Bearer <token>`, the server hashes your user ID with a per-install salt and stores `anon_<hex>` instead of the raw ID (`src/api/routes/telemetry.py:32`):
+Optional. If you send `Authorization: Bearer <token>`, the server hashes your user ID with a per-install salt and stores `anon_<hex>` instead of the raw ID (`src/api/routes/telemetry.py`):
 
 ```
 client_id = "anon_" + SHA256(salt + ":" + user_id)[:32]
@@ -39,19 +39,19 @@ The salt comes from `telemetry.client_hash_salt`. If you don't authenticate, `cl
 
 ### Rate limiting
 
-The route calls `ratelimit.check_rate_limit` with `route="POST /telemetry"` and the client's IP (`src/api/routes/telemetry.py:64`). Limits come from `telemetry.rate_limit.max_per_minute` (default 10).
+The route calls `ratelimit.check_rate_limit` with `route="POST /telemetry"` and the client's IP (`src/api/routes/telemetry.py`). Limits come from `telemetry.rate_limit.max_per_minute` (default 10).
 
 If the limit is exceeded, the server returns `429 Telemetry submission rate limit exceeded`.
 
 ### Request body
 
-`TelemetrySubmission` (`src/api/schemas/telemetry.py:30`)
+`TelemetrySubmission` (`src/api/schemas/telemetry.py`)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `entries` | array | Yes | 1–100 entries (`max_length=100`). Each entry is a `ResponseTimeEntry`. |
 
-`ResponseTimeEntry` (`src/api/schemas/telemetry.py:5`):
+`ResponseTimeEntry` (`src/api/schemas/telemetry.py`):
 
 | Field | Type | Required | Constraints | Description |
 |-------|------|----------|-------------|-------------|
@@ -89,7 +89,7 @@ Set `timestamp` only when you have a reliable clock. Omit it if you don't — th
 }
 ```
 
-The server maps entries to the core format before storing and leaves out `timestamp` when it's `null` so the core can default it (`src/api/routes/telemetry.py:115`).
+The server maps entries to the core format before storing and leaves out `timestamp` when it's `null` so the core can default it (`src/api/routes/telemetry.py`).
 
 ### Response
 
@@ -116,7 +116,7 @@ When telemetry is disabled or not initialized, the server returns:
 }
 ```
 
-Failures during recording are logged with `exc_info` but the response still returns `200` with `accepted: 0` — telemetry delivery is best-effort and doesn't break the client app (`src/api/routes/telemetry.py:139`).
+Failures during recording are logged with `exc_info` but the response still returns `200` with `accepted: 0` — telemetry delivery is best-effort and doesn't break the client app (`src/api/routes/telemetry.py`).
 
 ### Errors
 
@@ -131,7 +131,7 @@ Failures during recording are logged with `exc_info` but the response still retu
 - `telemetry.max_distinct_endpoints` (default 500) caps how many distinct endpoint strings are tracked.
 - `telemetry.max_total_rows` (default 100,000) caps total stored rows.
 - `telemetry.percentile_sample_rows` (default 25,000) caps percentile calculations.
-- `telemetry.retention_days` (default 30) controls the periodic cleanup sweep (`src/api/app.py:151`).
+- `telemetry.retention_days` (default 30) controls the periodic cleanup sweep (`src/api/app.py`).
 
 ## Submit CSP violation report
 
@@ -143,11 +143,11 @@ Handles browser-sent Content Security Policy violation reports. The endpoint is 
 
 ### Request body
 
-Any JSON object. The server reads the raw body with a hard cap because `Content-Length` can be missing or forged with chunked encoding (`src/api/routes/telemetry.py:192`).
+Any JSON object. The server reads the raw body with a hard cap because `Content-Length` can be missing or forged with chunked encoding (`src/api/routes/telemetry.py`).
 
 | Constraint | Value |
 |------------|-------|
-| Max body size | 64 KiB (`_MAX_CSP_REPORT_BYTES` in `src/api/routes/telemetry.py:25`) |
+| Max body size | 64 KiB (`_MAX_CSP_REPORT_BYTES` in `src/api/routes/telemetry.py`) |
 | Log cap | 4,096 characters (`_MAX_CSP_LOG_CHARS`) |
 | Per-string cap in logs | 512 characters (`_MAX_CSP_URI_CHARS`) |
 
@@ -157,7 +157,7 @@ If the body isn't valid JSON, it's stored as `{"raw": "<decoded body>"}`.
 
 ### Redaction and logging
 
-Before logging, the server redacts attacker-controlled values (`src/api/routes/telemetry.py:153`):
+Before logging, the server redacts attacker-controlled values (`src/api/routes/telemetry.py`):
 
 - Any field whose key ends with `-uri` or equals `referrer` has its query string stripped and is truncated to 512 characters (`_redact_uri`).
 - All string values are truncated to 512 characters.

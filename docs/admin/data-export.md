@@ -6,10 +6,10 @@ Provide users with a machine-readable export of their personal data in response 
 
 You need:
 
-* An admin account with `data_export.read` to view requests and `data_export.process` to approve, deny, or generate exports. See `src/core/admin/permissions.py:89`.
+* An admin account with `data_export.read` to view requests and `data_export.process` to approve, deny, or generate exports. See `src/core/admin/permissions.py`.
 * Access to `dsar` settings in your configuration file.
 
-The data-export admin API is in `src/api/routes/admin/data_export.py`. The full set of valid permission scopes is in `src/core/admin/permissions.py:42`.
+The data-export admin API is in `src/api/routes/admin/data_export.py`. The full set of valid permission scopes is in `src/core/admin/permissions.py`.
 
 ## Understand the workflow
 
@@ -151,7 +151,7 @@ You can cancel a request while it is `pending` or `approved`. You cannot cancel 
 
 ## Use the admin API
 
-All admin DSAR endpoints are defined in `src/api/routes/admin/data_export.py:6`. Required permissions are `data_export.read` or `data_export.process`.
+All admin DSAR endpoints are defined in `src/api/routes/admin/data_export.py`. Required permissions are `data_export.read` or `data_export.process`.
 
 ### List all requests
 
@@ -187,7 +187,7 @@ Response:
 }
 ```
 
-Note: Rows from `dsar_requests` are never serialized verbatim. Columns such as `storage_path` are excluded by `REQUEST_RESPONSE_COLUMNS` in `src/api/routes/admin/data_export.py:38` to avoid leaking filesystem layout.
+Note: Rows from `dsar_requests` are never serialized verbatim. Columns such as `storage_path` are excluded by `REQUEST_RESPONSE_COLUMNS` in `src/api/routes/admin/data_export.py` to avoid leaking filesystem layout.
 
 ### Get request details
 
@@ -224,7 +224,7 @@ Requires `data_export.process`. `reason` must be 1 to 500 characters.
 POST /api/v1/admin/data-export/{request_id}/generate
 ```
 
-Requires `data_export.process`. Use this when the harvester is disabled or you need immediate processing. It runs `generate_manual` in a worker thread. See `src/api/routes/admin/data_export.py:177`.
+Requires `data_export.process`. Use this when the harvester is disabled or you need immediate processing. It runs `generate_manual` in a worker thread. See `src/api/routes/admin/data_export.py`.
 
 ## Understand request statuses
 

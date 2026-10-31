@@ -2,7 +2,7 @@
 
 The gateway delivers real-time updates as `DISPATCH` payloads (`op: 0`). Each
 payload wraps a typed event in `t` and `d`. This page lists every event type
-defined in `src/core/events/types.py:8` and how you handle it.
+defined in `src/core/events/types.py` and how you handle it.
 
 ## Dispatch envelope
 
@@ -26,8 +26,8 @@ bag.
 ## Event catalog
 
 All event names are the string values of `EventType` in
-`src/core/events/types.py:8`. Required intents come from
-`src/core/events/router.py:13` and `src/api/websocket/intents.py:102`.
+`src/core/events/types.py`. Required intents come from
+`src/core/events/router.py` and `src/api/websocket/intents.py`.
 
 ### Session and error
 
@@ -137,7 +137,7 @@ All event names are the string values of `EventType` in
 ### Artifacts and workbooks
 
 These events back the real-time fabric opcodes `60`–`67` in
-`src/api/websocket/opcodes.py:43`. They require fabric intents.
+`src/api/websocket/opcodes.py`. They require fabric intents.
 
 | Event | Description | Required intent |
 |-------|-------------|-----------------|

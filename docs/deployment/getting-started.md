@@ -35,10 +35,10 @@ Install, configure, and run Plexichat in production. For subsystem-specific opti
 
 ### Service dependencies
 
-- Database: PostgreSQL 18 (`postgres:18-alpine` in `plexichat/docker-compose.yml:25`) or SQLite for small and development deployments only
-- Cache: Valkey 9.1 (`valkey/valkey:9.1.1-alpine` in `plexichat/docker-compose.yml:43`), required for production and for multi-worker scaling
+- Database: PostgreSQL 18 (`postgres:18-alpine` in `plexichat/docker-compose.yml`) or SQLite for small and development deployments only
+- Cache: Valkey 9.1 (`valkey/valkey:9.1.1-alpine` in `plexichat/docker-compose.yml`), required for production and for multi-worker scaling
 - Reverse proxy: Nginx (bundled as `client` at `plexichat-client/Dockerfile:9`), or Caddy, Apache, or Traefik for TLS termination
-- Optional: S3-compatible storage (RustFS 1.0 at `plexichat/docker-compose.yml:72`, AWS S3, or similar) for media
+- Optional: S3-compatible storage (RustFS 1.0 at `plexichat/docker-compose.yml`, AWS S3, or similar) for media
 
 For detailed requirements, see [System requirements](requirements.md).
 
@@ -190,7 +190,7 @@ The image exposes `8000/TCP` and `30000-30100/UDP` for voice media (`plexichat/D
 
 ### Docker Compose (recommended)
 
-Use the canonical `plexichat/docker-compose.yml:1`. Do not hand-write a minimal `compose.yml` unless you understand the required dependencies (`db`, `valkey`, `rustfs`, `rustfs-init`, `clamav`, `backend`, `client`).
+Use the canonical `plexichat/docker-compose.yml`. Do not hand-write a minimal `compose.yml` unless you understand the required dependencies (`db`, `valkey`, `rustfs`, `rustfs-init`, `clamav`, `backend`, `client`).
 
 Create your `.env` from `plexichat/.env.example:1`, then start:
 
@@ -200,10 +200,10 @@ BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose -f plexichat/docker-
 
 What the Compose file provides:
 
-- `backend` on `8000/TCP` and `30000-30100/UDP` (`plexichat/docker-compose.yml:205`), health check `curl -sf http://localhost:8000/api/v1/ready` (`plexichat/docker-compose.yml:194`)
-- `client` Nginx on `80` and `443` (`plexichat/docker-compose.yml:236`), proxying `/api/`, `/gateway`, `/docs`, and `/openapi.json` to `backend:8000` (`plexichat-client/docker/nginx/default.conf:12`)
+- `backend` on `8000/TCP` and `30000-30100/UDP` (`plexichat/docker-compose.yml`), health check `curl -sf http://localhost:8000/api/v1/ready` (`plexichat/docker-compose.yml`)
+- `client` Nginx on `80` and `443` (`plexichat/docker-compose.yml`), proxying `/api/`, `/gateway`, `/docs`, and `/openapi.json` to `backend:8000` (`plexichat-client/docker/nginx/default.conf:12`)
 - `db` on internal `5432`, `valkey` on internal `6379`, `rustfs` on internal `9000/9001` (exposed, not published), `clamav` on internal `3310`
-- `backup` with restic, supercronic scheduling, and `/scripts/healthcheck.sh` liveness (`plexichat/docker-compose.yml:274`)
+- `backup` with restic, supercronic scheduling, and `/scripts/healthcheck.sh` liveness (`plexichat/docker-compose.yml`)
 
 To override ports or add host mounts, create `docker-compose.override.yml` next to `plexichat/docker-compose.yml`.
 
@@ -244,7 +244,7 @@ docker compose -f plexichat/docker-compose.yml exec backup /scripts/backup.sh ru
 
 ### Health checks
 
-The Docker setup includes health checks for core services (`plexichat/docker-compose.yml:35`, `plexichat/docker-compose.yml:194`):
+The Docker setup includes health checks for core services (`plexichat/docker-compose.yml`, `plexichat/docker-compose.yml`):
 
 ```yaml
 backend:
@@ -256,7 +256,7 @@ backend:
     start_period: 10s
 ```
 
-Use `/api/v1/ready` for readiness (returns `{"status":"ready"}` at `src/api/routes/health.py:17`) and `/api/v1/health` for deep health including `cross_worker_listener` status.
+Use `/api/v1/ready` for readiness (returns `{"status":"ready"}` at `src/api/routes/health.py`) and `/api/v1/health` for deep health including `cross_worker_listener` status.
 
 ---
 
@@ -521,7 +521,7 @@ docker compose -f plexichat/docker-compose.yml exec backup /scripts/backup.sh li
 
 - **Local storage**: `rsync -av /home/plexichat/.plexichat/media/ /backups/media/`
 - **S3 or RustFS**: Enable versioning and lifecycle policies in the bucket
-- **Docker**: The `backup` service includes `plexichat_home` and `rustfs_data` when `BACKUP_INCLUDE_HOME=true` and `BACKUP_INCLUDE_MEDIA=true` (`plexichat/docker-compose.yml:240`)
+- **Docker**: The `backup` service includes `plexichat_home` and `rustfs_data` when `BACKUP_INCLUDE_HOME=true` and `BACKUP_INCLUDE_MEDIA=true` (`plexichat/docker-compose.yml`)
 
 ### Configuration backups
 

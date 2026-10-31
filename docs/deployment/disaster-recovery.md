@@ -474,7 +474,7 @@ Expected response:
 }
 ```
 
-The version comes from `src/config_defaults.py:21`.
+The version comes from `src/config_defaults.py`.
 
 ### Monitoring metrics
 

@@ -20,7 +20,7 @@ static_client:
 *   When `enabled` is `false`, Plexichat does not fetch releases and does not install middleware.
 *   When `serve` is `false`, Plexichat can still manage installs in the background without serving files. Use this to warm the cache.
 
-The default `install_dir` is `~/.plexichat/client` (`src/config_defaults.py:846`). The typed loader in `src/static_client/config.py:120` expands `~` and falls back to that path if the configured value is not absolute.
+The default `install_dir` is `~/.plexichat/client` (`src/config_defaults.py`). The typed loader in `src/static_client/config.py` expands `~` and falls back to that path if the configured value is not absolute.
 
 ### Version pin
 
@@ -31,11 +31,11 @@ static_client:
 
 `version_pin` controls which release Plexichat installs:
 
-*   `match_server` (default): Installs the highest build with the same stage (alpha, beta, release), major version, and minor version as the server. This is the safest option. Defined in `src/config_defaults.py:848`.
+*   `match_server` (default): Installs the highest build with the same stage (alpha, beta, release), major version, and minor version as the server. This is the safest option. Defined in `src/config_defaults.py`.
 *   `latest`: Installs the latest release for the same stage and major version, regardless of minor version or build number.
 *   Explicit version such as `a.1.0-84`: Pins the install to that exact release.
 
-> **Note:** The typed config in `src/static_client/config.py:206` falls back to `latest` when the key is missing at runtime. The canonical default in `src/config_defaults.py` is `match_server`. Set `version_pin` explicitly to avoid ambiguity.
+> **Note:** The typed config in `src/static_client/config.py` falls back to `latest` when the key is missing at runtime. The canonical default in `src/config_defaults.py` is `match_server`. Set `version_pin` explicitly to avoid ambiguity.
 
 ## Update behavior
 
@@ -50,7 +50,7 @@ When you set `auto_update` to `true`, a background task runs at `auto_update_che
 
 Plexichat keeps only the active version and prunes older installs.
 
-The runtime type `src/static_client/config.py:103` defaults `auto_update` to `true` when the key is absent. The canonical default in `src/config_defaults.py:849` is `false`. Declare the value explicitly in `config.yaml`.
+The runtime type `src/static_client/config.py` defaults `auto_update` to `true` when the key is absent. The canonical default in `src/config_defaults.py` is `false`. Declare the value explicitly in `config.yaml`.
 
 ## GitLab source
 
@@ -73,7 +73,7 @@ static_client:
     export PLEXICHAT_GITLAB_TOKEN="glpat-xxxxxxxxxxxxxxxxxxxx"
     ```
 
-The loader in `src/static_client/config.py:28` reads the token with `os.environ.get(private_token_env)`.
+The loader in `src/static_client/config.py` reads the token with `os.environ.get(private_token_env)`.
 
 ## Cache-Control
 
@@ -87,7 +87,7 @@ static_client:
     other:        "public, max-age=300"                    # Everything else
 ```
 
-Defaults are defined in `src/config_defaults.py:859` and in `src/static_client/config.py:37`.
+Defaults are defined in `src/config_defaults.py` and in `src/static_client/config.py`.
 
 ## Security headers
 
@@ -103,9 +103,9 @@ static_client:
     content_security_policy: "default-src 'self'; ..."
 ```
 
-The default CSP in `src/config_defaults.py:869` allows scripts from `self` and `https://cdn.jsdelivr.net` and fonts from `https://fonts.googleapis.com`. Update the CSP if you load external resources.
+The default CSP in `src/config_defaults.py` allows scripts from `self` and `https://cdn.jsdelivr.net` and fonts from `https://fonts.googleapis.com`. Update the CSP if you load external resources.
 
-The typed config in `src/static_client/config.py:56` uses a shorter default CSP that allows `wss:` for WebSocket connections. Plexichat uses `src/config_defaults.py:869` when you install from defaults.
+The typed config in `src/static_client/config.py` uses a shorter default CSP that allows `wss:` for WebSocket connections. Plexichat uses `src/config_defaults.py` when you install from defaults.
 
 ## Rate limiting
 
@@ -113,7 +113,7 @@ Plexichat rate-limits static responses per client IP.
 
 Two layers apply:
 
-1.  **Static client middleware** — `static_client.rate_limit` in `src/config_defaults.py:871` and `src/static_client/config.py:74`:
+1.  **Static client middleware** — `static_client.rate_limit` in `src/config_defaults.py` and `src/static_client/config.py`:
 
     ```yaml
     static_client:
@@ -123,7 +123,7 @@ Two layers apply:
         assets: { requests: 1200, window_seconds: 60, burst: 120 }  # Hashed assets
     ```
 
-2.  **Global rate limiter** — `rate_limiting.routes` in `src/config_defaults.py:291`:
+2.  **Global rate limiter** — `rate_limiting.routes` in `src/config_defaults.py`:
 
     ```yaml
     rate_limiting:
@@ -146,7 +146,7 @@ Requests from `127.0.0.1` or `::1` that include a valid `X-Plexichat-Internal-Se
 
 ## SPA routes
 
-Plexichat serves an SPA fallback for unknown paths. Configure the fallback in `src/config_defaults.py:877`:
+Plexichat serves an SPA fallback for unknown paths. Configure the fallback in `src/config_defaults.py`:
 
 ```yaml
 static_client:
@@ -164,7 +164,7 @@ static_client:
 *   If the request path starts with a configured prefix, Plexichat serves the mapped HTML file.
 *   For any other unknown path that is not an API prefix, Plexichat serves `index.html` and lets the client router handle navigation.
 
-The loader in `src/static_client/config.py:127` sorts routes by longest prefix first and normalizes prefixes to start with `/`.
+The loader in `src/static_client/config.py` sorts routes by longest prefix first and normalizes prefixes to start with `/`.
 
 ## Config injection
 
@@ -182,7 +182,7 @@ static_client:
 
 *   When `public_server_url` is empty (the default), Plexichat derives `serverUrl` from the request `Host` or `Origin` header. The same instance works on any hostname without extra configuration.
 *   Set `public_server_url` only when you must pin a specific origin, for example when a proxy rewrites `Host`.
-*   In Docker, set the environment variable `PLEXICHAT_PUBLIC_SERVER_URL` (for example `https://chat.example.com`). The compose file forwards that variable to the container and `src/static_client/config.py:195` prefers it over the YAML value.
+*   In Docker, set the environment variable `PLEXICHAT_PUBLIC_SERVER_URL` (for example `https://chat.example.com`). The compose file forwards that variable to the container and `src/static_client/config.py` prefers it over the YAML value.
 *   Placeholders `{origin}` and `{version}` in `content` are replaced at install time.
 *   Set `enabled: false` if you ship your own `config.js` and do not want Plexichat to overwrite it.
 
@@ -199,7 +199,7 @@ When `invite_redirect` is `true`, a request to `/invite/{code}` returns a `302` 
 
 ```yaml
 static_client:
-  max_zip_size_bytes: 104857600   # 100 MiB. Defined in src/config_defaults.py:876
+  max_zip_size_bytes: 104857600   # 100 MiB. Defined in src/config_defaults.py
 ```
 
 Plexichat rejects the download if the remote `Content-Length` header exceeds this value and caps the in-memory buffer to the same size.

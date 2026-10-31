@@ -4,7 +4,7 @@ This guide describes how to configure the WebSocket gateway for Plexichat in pro
 
 ## Configuration location
 
-Add WebSocket settings to your `config.yaml` file under the `websocket` key (`src/config_defaults.py:161`):
+Add WebSocket settings to your `config.yaml` file under the `websocket` key (`src/config_defaults.py`):
 
 ```yaml
 websocket:
@@ -27,7 +27,7 @@ websocket:
   allowed_origins: []
 ```
 
-Defaults are defined in `src/config_defaults.py:161`. The gateway uses them in `src/api/websocket/__init__.py:141`.
+Defaults are defined in `src/config_defaults.py`. The gateway uses them in `src/api/websocket/__init__.py`.
 
 ### Deployment considerations
 
@@ -65,8 +65,8 @@ Defaults are defined in `src/config_defaults.py:161`. The gateway uses them in `
 
 ```yaml
 websocket:
-  max_message_size: 65536      # 64 KB. Defined in src/config_defaults.py:169
-  max_decompressed_size: 262144  # 256 KB. Defined in src/config_defaults.py:170
+  max_message_size: 65536      # 64 KB. Defined in src/config_defaults.py
+  max_decompressed_size: 262144  # 256 KB. Defined in src/config_defaults.py
 ```
 
 ### Deployment considerations
@@ -90,7 +90,7 @@ websocket:
 
 ```yaml
 websocket:
-  compression_enabled: true   # Default in src/config_defaults.py:171
+  compression_enabled: true   # Default in src/config_defaults.py
 ```
 
 ### Deployment considerations
@@ -108,7 +108,7 @@ websocket:
 
 ```yaml
 websocket:
-  allowed_origins: []   # Default is empty (allow all). Defined in src/config_defaults.py:172
+  allowed_origins: []   # Default is empty (allow all). Defined in src/config_defaults.py
 ```
 
 ### Deployment considerations
@@ -130,7 +130,7 @@ The gateway validates the `Origin` header in `src/api/websocket/gateway.py`.
 
 ## Cross-worker scaling with Valkey
 
-When you run multiple gateway workers, enable Valkey (`valkey.enabled: true`). The gateway starts a dedicated pub/sub listener on `{key_prefix}events:cross_worker` (`src/api/websocket/__init__.py:342`). The listener uses exponential backoff and you can inspect its health at `src/api/websocket/__init__.py:100` with `cross_worker_listener_status()`.
+When you run multiple gateway workers, enable Valkey (`valkey.enabled: true`). The gateway starts a dedicated pub/sub listener on `{key_prefix}events:cross_worker` (`src/api/websocket/__init__.py`). The listener uses exponential backoff and you can inspect its health at `src/api/websocket/__init__.py` with `cross_worker_listener_status()`.
 
 Without Valkey, presence and events are limited to a single worker.
 
@@ -156,10 +156,10 @@ The following keys use milliseconds and have smaller defaults than some older do
 
 | Outdated key or value | Correct key and default | Source |
 | --- | --- | --- |
-| `heartbeat_interval_seconds` | `heartbeat_interval_ms: 45000` | `src/config_defaults.py:162` |
-| `heartbeat_timeout_seconds` | `session_timeout_ms: 60000` | `src/config_defaults.py:163` |
-| `max_message_size: 1048576` (1 MB) | `max_message_size: 65536` (64 KB) | `src/config_defaults.py:169` |
-| `max_decompressed_size: 10485760` (10 MB) | `max_decompressed_size: 262144` (256 KB) | `src/config_defaults.py:170` |
+| `heartbeat_interval_seconds` | `heartbeat_interval_ms: 45000` | `src/config_defaults.py` |
+| `heartbeat_timeout_seconds` | `session_timeout_ms: 60000` | `src/config_defaults.py` |
+| `max_message_size: 1048576` (1 MB) | `max_message_size: 65536` (64 KB) | `src/config_defaults.py` |
+| `max_decompressed_size: 10485760` (10 MB) | `max_decompressed_size: 262144` (256 KB) | `src/config_defaults.py` |
 
 ## Related documentation
 

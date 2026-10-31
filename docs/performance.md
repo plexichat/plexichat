@@ -4,7 +4,7 @@ This guide helps you tune Plexichat for your deployment size. It identifies perf
 
 ## Before you begin
 
-All settings in this guide live in `config.yaml`. Defaults come from `src/config_defaults.py:48`. Change one subsystem at a time and measure the result before tuning another.
+All settings in this guide live in `config.yaml`. Defaults come from `src/config_defaults.py`. Change one subsystem at a time and measure the result before tuning another.
 
 ## Message creation and event fanout
 

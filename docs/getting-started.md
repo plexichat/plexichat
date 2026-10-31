@@ -6,7 +6,7 @@ This guide walks you through connecting to a Plexichat server, authenticating, a
 
 Before you make any requests, collect three URLs from your server administrator:
 
-*   **REST API:** `http://localhost:8000/api/v1` — All REST operations. The prefix is `api.api_prefix` (`src/config_defaults.py:130`).
+*   **REST API:** `http://localhost:8000/api/v1` — All REST operations. The prefix is `api.api_prefix` (`src/config_defaults.py`).
 *   **WebSocket gateway:** `ws://localhost:8000/gateway` — Real-time events.
 *   **Documentation:** `http://localhost:8000/docs/api` — This portal. The path is `docs.path` (default `/docs/api`).
 
@@ -32,7 +32,7 @@ curl http://localhost:8000/api/v1/capabilities
 curl http://localhost:8000/api/v1/status
 ```
 
-The version format is `[stage].[major].[minor]-[build]` where stage is `a` (alpha), `b` (beta), `c` (candidate), or `r` (release). For example, `a.1.0-177` (`src/utils/common_utils/utils/version/core.py:60`, `src/server/lifecycle.py:16`). The `POST /api/v1/version/negotiate` endpoint (`src/api/routes/version.py:94`) returns `compatible`, `update_required`, and `update_recommended` fields. It returns `426 Upgrade Required` when the client version is below the minimum. Use `/capabilities` to adapt your client to server configuration such as maximum avatar size and whether the access-token gate is enabled.
+The version format is `[stage].[major].[minor]-[build]` where stage is `a` (alpha), `b` (beta), `c` (candidate), or `r` (release). For example, `a.1.0-177` (`src/utils/common_utils/utils/version/core.py`, `src/server/lifecycle.py`). The `POST /api/v1/version/negotiate` endpoint (`src/api/routes/version.py`) returns `compatible`, `update_required`, and `update_recommended` fields. It returns `426 Upgrade Required` when the client version is below the minimum. Use `/capabilities` to adapt your client to server configuration such as maximum avatar size and whether the access-token gate is enabled.
 
 ## 3. Authenticate
 
@@ -54,13 +54,13 @@ curl http://localhost:8000/api/v1/users/@me \
 
 ### OAuth login
 
-When the server has OAuth providers configured (`oauth.google`, `oauth.github`, `oauth.microsoft`, `oauth.gitlab` in `src/config_defaults.py:442`), users can authenticate with an external account. The supported providers are defined in `src/api/routes/auth/oauth_config.py:1`: `google`, `github`, `microsoft`, and `gitlab`.
+When the server has OAuth providers configured (`oauth.google`, `oauth.github`, `oauth.microsoft`, `oauth.gitlab` in `src/config_defaults.py`), users can authenticate with an external account. The supported providers are defined in `src/api/routes/auth/oauth_config.py`: `google`, `github`, `microsoft`, and `gitlab`.
 
 OAuth uses PKCE with `S256` and a short-lived, `HttpOnly` state cookie that binds the flow to the browser that started it.
 
 **Step 1: Initiate the login**
 
-Call `GET /api/v1/auth/oauth/{provider}/login` with the required query parameters (`src/api/routes/auth/oauth.py:111`):
+Call `GET /api/v1/auth/oauth/{provider}/login` with the required query parameters (`src/api/routes/auth/oauth.py`):
 
 ```bash
 # Initiate Google login (PKCE S256 is required)
@@ -72,11 +72,11 @@ curl "http://localhost:8000/api/v1/auth/oauth/github/login?redirect_uri=https://
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `redirect_uri` | Yes | Must match an entry in `oauth.<provider>.allowed_redirect_uris`. The check is an exact match (`src/api/routes/auth/oauth.py:68`). |
+| `redirect_uri` | Yes | Must match an entry in `oauth.<provider>.allowed_redirect_uris`. The check is an exact match (`src/api/routes/auth/oauth.py`). |
 | `code_challenge` | Yes for PKCE providers | `43–128` characters matching `^[A-Za-z0-9\-._~]{43,128}$`. Required when `oauth.pkce_enabled` is `true` and the provider supports PKCE. |
 | `code_challenge_method` | No | Only `S256` is supported. |
 
-The response contains `url` (the provider authorization URL) and `state`. The server also sets the `plexichat_oauth_state` cookie (`src/api/routes/auth/oauth.py:91`) when `oauth.state_cookie_required` is `true` (the default).
+The response contains `url` (the provider authorization URL) and `state`. The server also sets the `plexichat_oauth_state` cookie (`src/api/routes/auth/oauth.py`) when `oauth.state_cookie_required` is `true` (the default).
 
 **Step 2: Redirect the user**
 
@@ -84,7 +84,7 @@ Redirect the user to the `url` from the previous response. The user authorizes a
 
 **Step 3: Complete the callback**
 
-Exchange the code for a session by calling `POST /api/v1/auth/oauth/{provider}/callback` (`src/api/routes/auth/oauth.py:304`):
+Exchange the code for a session by calling `POST /api/v1/auth/oauth/{provider}/callback` (`src/api/routes/auth/oauth.py`):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/oauth/microsoft/callback \
@@ -250,7 +250,7 @@ See [WebSocket Configuration](deployment/configuration/config-websocket.md) for 
 
 ## 6. Understand rate limits
 
-The server enforces rate limits at multiple levels. Defaults are defined in `src/config_defaults.py:270`.
+The server enforces rate limits at multiple levels. Defaults are defined in `src/config_defaults.py`.
 
 | Scope | Requests per 60 s | Burst | Hourly limit | Daily limit |
 | --- | --- | --- | --- | --- |

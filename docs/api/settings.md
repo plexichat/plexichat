@@ -14,19 +14,19 @@ Settings sync across devices. Use this API for preferences such as theme, notifi
 
 | Constraint | Value | Notes |
 |------------|-------|-------|
-| Max settings per user | 100 | `SettingsConfig.max_settings_per_user` (`src/core/settings/models.py:13`) |
+| Max settings per user | 100 | `SettingsConfig.max_settings_per_user` (`src/core/settings/models.py`) |
 | Max key length | 100 characters | |
 | Max value length | 10,000 characters | |
 | Key charset | `[A-Za-z0-9_-]` | Case-insensitive. Empty or whitespace-only keys are rejected. |
 | Reserved prefixes | `_`, `__internal` | User writes to these prefixes are rejected. See server-managed keys below. |
-| Bulk max entries | 50 per request | `max_bulk_entries` (`src/core/settings/models.py:27`) |
-| Bulk max payload | 100,000 bytes | Sum of `len(key) + len(value)` after serialization (`src/api/routes/settings.py:199`) |
+| Bulk max entries | 50 per request | `max_bulk_entries` (`src/core/settings/models.py`) |
+| Bulk max payload | 100,000 bytes | Sum of `len(key) + len(value)` after serialization (`src/api/routes/settings.py`) |
 
 Legacy keys that don't match the charset are hidden on reads instead of returning an error. The server counts only readable keys toward your limits.
 
 ### Server-managed keys
 
-Keys in the single-underscore namespace are reserved for the server. The only recognized server key is `_focused_channel` (`src/core/settings/models.py:23`). You can write it through the dedicated path (`PUT /users/@me/settings/_focused_channel` or through the bulk endpoint), but you can't write arbitrary `_`-prefixed keys and you can't delete them through `DELETE /users/@me/settings/{key}`. When bulk includes a server key, it's handled outside the atomic batch and counted separately.
+Keys in the single-underscore namespace are reserved for the server. The only recognized server key is `_focused_channel` (`src/core/settings/models.py`). You can write it through the dedicated path (`PUT /users/@me/settings/_focused_channel` or through the bulk endpoint), but you can't write arbitrary `_`-prefixed keys and you can't delete them through `DELETE /users/@me/settings/{key}`. When bulk includes a server key, it's handled outside the atomic batch and counted separately.
 
 `_focused_channel` expects a JSON string such as `{"channel_id":"123","server_id":"456"}`. The server parses it, calls `presence.set_focused_channel`, and persists the raw value so `GET /_focused_channel` stays consistent with `PUT`.
 
@@ -44,7 +44,7 @@ Returns all readable key-value pairs for the current user. The response is cache
 
 ### Response
 
-`200 OK` (`SettingsResponse` in `src/api/schemas/settings.py:22`)
+`200 OK` (`SettingsResponse` in `src/api/schemas/settings.py`)
 
 ```json
 {
@@ -121,7 +121,7 @@ Creates or updates a setting.
 
 ### Request body
 
-`SettingValue` (`src/api/schemas/settings.py:5`)
+`SettingValue` (`src/api/schemas/settings.py`)
 
 | Field | Type | Required | Constraints |
 |-------|------|----------|-------------|
@@ -163,7 +163,7 @@ DELETE /api/v1/users/@me/settings/{key}
 |-----------|------|-------------|
 | `key` | string | Setting key. |
 
-Keys starting with `_` are rejected with `400` — they're server-managed and can't be deleted through the generic endpoint (`src/api/routes/settings.py:501`).
+Keys starting with `_` are rejected with `400` — they're server-managed and can't be deleted through the generic endpoint (`src/api/routes/settings.py`).
 
 ### Response
 
@@ -192,13 +192,13 @@ PUT /api/v1/users/@me/settings/bulk
 
 Updates many settings at once. The batch is capped by entry count and payload size and committed atomically for standard keys: either every standard key in the batch lands or none does. Server-managed keys in the same request are handled separately and still counted toward `updated`.
 
-- Declared in `src/api/routes/settings.py:147`.
-- Full path is `/api/v1/users/@me/settings/bulk` because the router is mounted with prefix `/users/@me/settings` in `src/api/routes/__init__.py:78`.
+- Declared in `src/api/routes/settings.py`.
+- Full path is `/api/v1/users/@me/settings/bulk` because the router is mounted with prefix `/users/@me/settings` in `src/api/routes/__init__.py`.
 - Register the route before `/{key}` so `/bulk` isn't captured as a key.
 
 ### Request body
 
-A JSON object of key-value pairs. Non-string values are serialized with `json.dumps` so booleans, numbers, null, and objects round-trip correctly (`src/api/routes/settings.py:196`).
+A JSON object of key-value pairs. Non-string values are serialized with `json.dumps` so booleans, numbers, null, and objects round-trip correctly (`src/api/routes/settings.py`).
 
 ```json
 {
@@ -214,11 +214,11 @@ The example above stores `compact_mode` as the string `"true"`.
 
 1. If the number of entries exceeds `max_bulk_entries` (50), the server returns `400` before any write.
 2. The server serializes values, then sums `len(key) + len(value)` for all entries. If the total exceeds `max_bulk_payload_bytes` (100,000), it returns `400`.
-3. Each standard key is validated against the charset, length, reserved prefix, and per-user limit inside a single transaction (`src/core/settings/manager.py:313`). If any key fails, the whole batch rolls back and each standard key gets the same failure message in `failures`. Server-managed keys don't participate in that transaction.
+3. Each standard key is validated against the charset, length, reserved prefix, and per-user limit inside a single transaction (`src/core/settings/manager.py`). If any key fails, the whole batch rolls back and each standard key gets the same failure message in `failures`. Server-managed keys don't participate in that transaction.
 
 ### Response
 
-`200 OK` (`BulkSettingsResponse` in `src/api/schemas/settings.py:32`)
+`200 OK` (`BulkSettingsResponse` in `src/api/schemas/settings.py`)
 
 ```json
 {

@@ -34,9 +34,9 @@ Place these options before the subcommand. They apply to all subcommands.
 
 | Option | Description |
 |---|---|
-| `--config PATH` | Path to a custom YAML configuration file. If you omit this flag, the server auto-detects `~/.plexichat/config/config.yaml` first, then `./config/config.yaml` (`src/server/config_loader.py:440`). |
-| `--host HOST` | Override the server bind address. Default `127.0.0.1` from `server.host` (`src/config_defaults.py:70`). |
-| `--port PORT` | Override the server port. Default `8000` from `server.port` (`src/config_defaults.py:70`). |
+| `--config PATH` | Path to a custom YAML configuration file. If you omit this flag, the server auto-detects `~/.plexichat/config/config.yaml` first, then `./config/config.yaml` (`src/server/config_loader.py`). |
+| `--host HOST` | Override the server bind address. Default `127.0.0.1` from `server.host` (`src/config_defaults.py`). |
+| `--port PORT` | Override the server port. Default `8000` from `server.port` (`src/config_defaults.py`). |
 
 Environment variable alternatives:
 
@@ -74,7 +74,7 @@ The server does the following, in order:
 4. Validate configuration types.
 5. Initialize utilities, encryption, licensing, and keyrings.
 6. Initialize the database (with migrations), auth, messaging, and all core modules.
-7. Create the FastAPI application with all routes, including the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)) and the API prefix `/api/v1` (`src/config_defaults.py:130`).
+7. Create the FastAPI application with all routes, including the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)) and the API prefix `/api/v1` (`src/config_defaults.py`).
 8. Listen on the configured host and port.
 
 ### `pre-flight`
@@ -113,7 +113,7 @@ The suite starts uvicorn in a background thread, runs every test in the self-tes
 
 | Flag | Description |
 |---|---|
-| `--unlicensed` | Run in unlicensed mode: exclude license-gated endpoints (for example, `/api/v1/admin/plexijoin/*`) that return `403` without a valid license. The flag is opt-in and the server never infers it from local license state (`src/cli/main.py:236`). Without it those routes stay in the run; on a free-tier install a `403` from a license-gated route is recorded as an **expected denial** (the feature gate working, not a failure), while a licensed install must still answer `2xx`. |
+| `--unlicensed` | Run in unlicensed mode: exclude license-gated endpoints (for example, `/api/v1/admin/plexijoin/*`) that return `403` without a valid license. The flag is opt-in and the server never infers it from local license state (`src/cli/main.py`). Without it those routes stay in the run; on a free-tier install a `403` from a license-gated route is recorded as an **expected denial** (the feature gate working, not a failure), while a licensed install must still answer `2xx`. |
 | `--purge-residue` | Run only the account-purge residue check and exit: purge a throwaway account through the admin endpoint, then read the database and storage back to prove its server, channel, conversation, rows and stored upload went with it. Opt-in and never part of the default suite, because the check deletes an account. See [Account-purge residue check](../admin/purge-residue-check.md). |
 
 ### `create-config`
@@ -129,7 +129,7 @@ The command writes to the first writable location in the search order:
 1. `~/.plexichat/config/config.yaml` (preferred)
 2. `<project_root>/config/config.yaml` (fallback)
 
-If a file already exists at the chosen location, the command does nothing and reports the existing path (`src/cli/main.py:532`).
+If a file already exists at the chosen location, the command does nothing and reports the existing path (`src/cli/main.py`).
 
 ### `version`
 
@@ -149,7 +149,7 @@ python main.py rotate-secrets
 python main.py rotate-secrets --config config/production.yaml
 ```
 
-The command updates the file in place. Back up the file before you run this in production. The new value is `secrets.token_hex(32)` (`src/cli/main.py:562`).
+The command updates the file in place. Back up the file before you run this in production. The new value is `secrets.token_hex(32)` (`src/cli/main.py`).
 
 ### `migrate-db`
 
@@ -162,7 +162,7 @@ python main.py migrate-db --dry-run
 
 | Flag | Description |
 |---|---|
-| `--dry-run` | Simulate migration without writing changes. Default `false` (`src/cli/main.py:300`). |
+| `--dry-run` | Simulate migration without writing changes. Default `false` (`src/cli/main.py`). |
 
 Exits with `0` on success or `1` if any migration fails.
 
@@ -201,11 +201,11 @@ The CLI and `config.yaml` use the keys defined in `src/config_defaults.py`. Comm
 
 | Wrong key | Correct key | Notes |
 |---|---|---|
-| `api.host`, `api.port`, `api.workers` | `server.host`, `server.port`, `server.reload` | Server binding is under `server` (`src/config_defaults.py:70`) |
-| `api.prefix` | `api_prefix` | Nested under `api` as `api.api_prefix` (`src/config_defaults.py:130`) |
-| Nested `cors.*` object | Flat `cors_*` keys | For example, `api.cors_origins`, `api.cors_allow_methods` (`src/config_defaults.py:132`) |
-| `api.ssl` | `tls` | TLS is a top-level `tls` block (`src/config_defaults.py:618`) |
-| `mediasoup` assumed default | `aiortc` | Default SFU is `aiortc`; `mediasoup` and `janus` are opt-in (`src/config_defaults.py:396`) |
+| `api.host`, `api.port`, `api.workers` | `server.host`, `server.port`, `server.reload` | Server binding is under `server` (`src/config_defaults.py`) |
+| `api.prefix` | `api_prefix` | Nested under `api` as `api.api_prefix` (`src/config_defaults.py`) |
+| Nested `cors.*` object | Flat `cors_*` keys | For example, `api.cors_origins`, `api.cors_allow_methods` (`src/config_defaults.py`) |
+| `api.ssl` | `tls` | TLS is a top-level `tls` block (`src/config_defaults.py`) |
+| `mediasoup` assumed default | `aiortc` | Default SFU is `aiortc`; `mediasoup` and `janus` are opt-in (`src/config_defaults.py`) |
 
 Before you change the server config, open `src/config_defaults.py` and confirm the key name.
 

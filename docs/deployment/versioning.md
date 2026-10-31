@@ -92,7 +92,7 @@ The API prefix is `/api/v1` by default.
 curl https://your-server.com/api/v1/version
 ```
 
-Response (`ServerVersionResponse` in `src/api/schemas/version.py:34`):
+Response (`ServerVersionResponse` in `src/api/schemas/version.py`):
 
 ```json
 {
@@ -114,14 +114,14 @@ Response (`ServerVersionResponse` in `src/api/schemas/version.py:34`):
 }
 ```
 
-- `version` is a `VersionInfo` object with `stage`, `major`, `minor`, `build`, and `string` (`src/api/schemas/version.py:19`).
+- `version` is a `VersionInfo` object with `stage`, `major`, `minor`, `build`, and `string` (`src/api/schemas/version.py`).
 - `min_supported_version` is `null` if no minimum is configured.
 - `api_version` is the API prefix version, currently `v1`.
 
 Other endpoints:
 
-- `POST /api/v1/version/negotiate` — Check whether a client version is compatible. Send `{"client_version": "a.1.0-1"}`. Returns `compatible`, `update_required`, and `update_recommended`, or HTTP 400 for an invalid format and HTTP 426 when an update is required (`src/api/routes/version.py:94`).
-- `GET /api/v1/status` — Get server state, uptime, and maintenance information (`src/api/routes/version.py:230`).
+- `POST /api/v1/version/negotiate` — Check whether a client version is compatible. Send `{"client_version": "a.1.0-1"}`. Returns `compatible`, `update_required`, and `update_recommended`, or HTTP 400 for an invalid format and HTTP 426 when an update is required (`src/api/routes/version.py`).
+- `GET /api/v1/status` — Get server state, uptime, and maintenance information (`src/api/routes/version.py`).
 
 You can also view the version in the admin panel and in the server logs at startup.
 

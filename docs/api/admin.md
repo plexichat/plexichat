@@ -1,6 +1,6 @@
 # Admin API
 
-The Plexichat backend exposes an operator-only admin surface in addition to the public REST API. This guide covers the base path, access model, and all route groups mounted by `src/api/routes/admin/__init__.py:13`.
+The Plexichat backend exposes an operator-only admin surface in addition to the public REST API. This guide covers the base path, access model, and all route groups mounted by `src/api/routes/admin/__init__.py`.
 
 ## Base path
 
@@ -15,9 +15,9 @@ Both `api.api_prefix` and `admin_ui.path` are configurable in `src/config_defaul
 ## Access model
 
 - Most JSON routes require administrator credentials or an admin session token (`Authorization: Bearer <admin-token>`).
-- Host restrictions are enforced before handlers run. See `admin_ui.host_restriction` in `src/config_defaults.py:565`.
+- Host restrictions are enforced before handlers run. See `admin_ui.host_restriction` in `src/config_defaults.py`.
 - Some UI routes return HTML and are intentionally excluded from the OpenAPI schema.
-- Permissions are checked against `PERMISSION_SCOPES` in `src/core/admin/permissions.py:42`. The role endpoints reject wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py:200`). Do not document `users.force_password_change`, `servers.ban`, or `reports.resolve`; use `users.force_username_change`, `servers.edit`, and `reports.action` instead.
+- Permissions are checked against `PERMISSION_SCOPES` in `src/core/admin/permissions.py`. The role endpoints reject wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py`). Do not document `users.force_password_change`, `servers.ban`, or `reports.resolve`; use `users.force_username_change`, `servers.edit`, and `reports.action` instead.
 - Destructive actions may require approval when `admin_ui.approval_workflows.enabled` is `true`. By default `users.force_purge`, `users.delete`, and `servers.delete` require approval.
 
 ## Route groups
@@ -111,7 +111,7 @@ Router: `users/admin_users.py`. Role hierarchy is enforced: you can only manage 
 | `POST` | `<admin-base>/approvals/{approval_id}/approve` | Approve a request |
 | `POST` | `<admin-base>/approvals/{approval_id}/reject` | Reject a request |
 
-Routers: `roles`, `approvals`. Valid scopes are defined in `src/core/admin/permissions.py:42`.
+Routers: `roles`, `approvals`. Valid scopes are defined in `src/core/admin/permissions.py`.
 
 ### Data export (DSAR)
 

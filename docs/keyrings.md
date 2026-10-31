@@ -12,13 +12,13 @@ Plexichat stores three keyrings in `~/.plexichat/data/`:
 | `message_keyring.json` | Encrypted message-at-rest keys | `PLEXICHAT_MESSAGE_KEY` |
 | `file_keyring.json` | Avatars, attachments, and other media keys | `PLEXICHAT_MEDIA_KEY` |
 
-The keyring implementation is in `src/utils/encryption/core/keyring.py:42` and the default KEK selection is in `src/utils/encryption/core/keyring.py:94`.
+The keyring implementation is in `src/utils/encryption/core/keyring.py` and the default KEK selection is in `src/utils/encryption/core/keyring.py`.
 
 If the KEK changes without re-encrypting the keyring, the application fails closed rather than decrypting with the wrong key.
 
 ## KEK source order
 
-The vault resolves the KEK in the following order (`src/utils/encryption/vault.py:19`):
+The vault resolves the KEK in the following order (`src/utils/encryption/vault.py`):
 
 1. **Dedicated environment variable** — `PLEXICHAT_SYSTEM_KEY`, `PLEXICHAT_MESSAGE_KEY`, or `PLEXICHAT_MEDIA_KEY`.
 2. **HSM (PKCS#11)** — When `encryption.hsm.enabled` is `true` and the library, slot, and PIN are configured.
@@ -29,7 +29,7 @@ In production, use dedicated environment variables or hardware-backed KEKs. The 
 
 ### Environment variables
 
-*   `PLEXICHAT_SYSTEM_KEY` — 32-byte key as 64-character hex or Base64. The vault tries hex first, then Base64 (`src/utils/encryption/vault.py:192`).
+*   `PLEXICHAT_SYSTEM_KEY` — 32-byte key as 64-character hex or Base64. The vault tries hex first, then Base64 (`src/utils/encryption/vault.py`).
 *   `PLEXICHAT_MESSAGE_KEY` — Dedicated KEK for `message_keyring.json`.
 *   `PLEXICHAT_MEDIA_KEY` — Dedicated KEK for `file_keyring.json`.
 
@@ -37,7 +37,7 @@ Each variable must decode to exactly 32 bytes. The vault logs the variable name,
 
 ## Startup behavior
 
-The server validates keyrings during startup so a KEK mismatch is visible immediately. The keyring loader tries the dedicated KEK first and, for non-system keyrings, falls back to `PLEXICHAT_SYSTEM_KEY` only as a recovery path for pre-migration keyrings (`src/utils/encryption/core/keyring.py:211`). After migration, each keyring validates with its dedicated KEK.
+The server validates keyrings during startup so a KEK mismatch is visible immediately. The keyring loader tries the dedicated KEK first and, for non-system keyrings, falls back to `PLEXICHAT_SYSTEM_KEY` only as a recovery path for pre-migration keyrings (`src/utils/encryption/core/keyring.py`). After migration, each keyring validates with its dedicated KEK.
 
 When `authentication.encryption.require_secure_source` is enabled and the runtime falls back to the machine-local file, startup fails. This prevents the server from booting with a weaker root of trust than the deployment expects.
 
@@ -51,7 +51,7 @@ print(vault.get_source())           # "env", "hsm", "tpm", or "local"
 print(vault.is_using_secure_source())  # True when source is env, hsm, or tpm
 ```
 
-The source detection logic is in `src/utils/encryption/vault.py:404` and `src/utils/encryption/core/keyring.py:104`.
+The source detection logic is in `src/utils/encryption/vault.py` and `src/utils/encryption/core/keyring.py`.
 
 ## Migration workflow
 
@@ -100,7 +100,7 @@ new_version = keyring.rotate()  # Generates a new 256-bit key
 print(f"Rotated to version {new_version}")
 ```
 
-The rotation logic is in `src/utils/encryption/core/keyring.py:388`. The current version and all previous versions remain readable for decrypting existing data. Wrap and unwrap helpers use the `ENC:{version}:{base64(nonce||ct||tag)}` envelope (`src/utils/encryption/core/keyring.py:404`).
+The rotation logic is in `src/utils/encryption/core/keyring.py`. The current version and all previous versions remain readable for decrypting existing data. Wrap and unwrap helpers use the `ENC:{version}:{base64(nonce||ct||tag)}` envelope (`src/utils/encryption/core/keyring.py`).
 
 ## Recovery
 
@@ -118,7 +118,7 @@ To recover:
 4.  Run `python main.py migrate-kek --kek-validate --kek-all`.
 5.  Restart only after validation succeeds.
 
-The keyring loader logs a critical message with the expected file paths when decryption fails (`src/utils/encryption/core/keyring.py:261`) and invalidates cached keys.
+The keyring loader logs a critical message with the expected file paths when decryption fails (`src/utils/encryption/core/keyring.py`) and invalidates cached keys.
 
 ## Logging
 

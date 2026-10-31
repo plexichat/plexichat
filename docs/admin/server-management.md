@@ -85,7 +85,7 @@ Required permission: `servers.edit`.
 
 Required permission: `admin.moderation.bans`.
 
-There is no `servers.ban` scope. Server member bans are managed under platform-wide moderation. The API is `POST /api/v1/admin/blocked-users` and requires `admin.moderation.bans` (`src/api/routes/admin/moderation.py` and `src/core/admin/permissions.py:42`). The same scope is required to unban.
+There is no `servers.ban` scope. Server member bans are managed under platform-wide moderation. The API is `POST /api/v1/admin/blocked-users` and requires `admin.moderation.bans` (`src/api/routes/admin/moderation.py` and `src/core/admin/permissions.py`). The same scope is required to unban.
 
 ### Unban a member
 
@@ -123,7 +123,7 @@ View and handle moderation items:
 
 Required permission: `reports.action`.
 
-There is no `reports.resolve` scope. Use `reports.action` to review hash reports (`POST /api/v1/admin/hash-reports/{id}/review`), message reports (`POST /api/v1/admin/message-reports/{id}/review`), and user reports (`POST /api/v1/admin/user-reports/{id}/review`) — see `src/api/routes/admin/moderation.py` and `src/core/admin/permissions.py:42`.
+There is no `reports.resolve` scope. Use `reports.action` to review hash reports (`POST /api/v1/admin/hash-reports/{id}/review`), message reports (`POST /api/v1/admin/message-reports/{id}/review`), and user reports (`POST /api/v1/admin/user-reports/{id}/review`) — see `src/api/routes/admin/moderation.py` and `src/core/admin/permissions.py`.
 
 ### Manage AutoMod
 
@@ -161,7 +161,7 @@ Required permission: `servers.read` or `metrics.read` for system-wide metrics.
 
 Required permission: `servers.read`.
 
-To export audit evidence for server actions, use `GET /api/v1/admin/audit/logs?target_type=server` or `GET /api/v1/admin/audit/logs/export?format=csv` with `admin.audit.read`. The path is `/audit/logs`, not `/audit-log` (`src/api/routes/admin/audit.py:34`).
+To export audit evidence for server actions, use `GET /api/v1/admin/audit/logs?target_type=server` or `GET /api/v1/admin/audit/logs/export?format=csv` with `admin.audit.read`. The path is `/audit/logs`, not `/audit-log` (`src/api/routes/admin/audit.py`).
 
 ## Troubleshoot
 

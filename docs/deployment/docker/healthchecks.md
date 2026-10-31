@@ -46,8 +46,8 @@ Status colors:
 
 The backend defines the same probe in `plexichat/Dockerfile` and `docker-compose.yml`.
 
-*   **Liveness probe:** `GET /api/v1/ready` (`src/api/routes/health.py:18`). Returns `200` and `{"status": "ready"}` as soon as the HTTP server is bound. No database, Valkey, or filesystem check. Docker uses this probe.
-*   **Deep health:** `GET /api/v1/health` and `GET /health` (`src/api/routes/health.py:46` and `src/api/app.py:575`). Returns `status`, `version`, `events_metrics`, `is_queue_recreate_pending`, and `cross_worker_listener`. Each metric is advisory and wrapped in `try/except`.
+*   **Liveness probe:** `GET /api/v1/ready` (`src/api/routes/health.py`). Returns `200` and `{"status": "ready"}` as soon as the HTTP server is bound. No database, Valkey, or filesystem check. Docker uses this probe.
+*   **Deep health:** `GET /api/v1/health` and `GET /health` (`src/api/routes/health.py` and `src/api/app.py`). Returns `status`, `version`, `events_metrics`, `is_queue_recreate_pending`, and `cross_worker_listener`. Each metric is advisory and wrapped in `try/except`.
 
 **Docker healthcheck:**
 

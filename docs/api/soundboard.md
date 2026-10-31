@@ -11,20 +11,20 @@ All paths below are prefixed with `/api/v1` unless noted. All endpoints require 
 | Capability | Who can do it | Permission check |
 |------------|---------------|------------------|
 | List sounds, get a sound | Members of the server | Membership check in the core manager |
-| Upload, delete, update metadata, set role permissions | Managers | `server.soundboard.manage` or `server.manage` (`src/api/routes/soundboard.py:139`) |
+| Upload, delete, update metadata, set role permissions | Managers | `server.soundboard.manage` or `server.manage` (`src/api/routes/soundboard.py`) |
 | Play a sound | Any member allowed by the sound's role rules | Checked in the core manager; per-user cooldown is enforced atomically |
 
 Uploads are validated with magic-byte container detection against the configured allow-list. Client-declared `url`, `size`, and `duration` are never trusted — the media pipeline derives them.
 
 ### Storage and validation
 
-- Allowed containers by default: `audio/mpeg`, `audio/ogg`, `audio/wav`, `audio/webm` (from `soundboard.allowed_formats` in `src/config_defaults.py:651`). The detector inspects bytes, not filenames.
+- Allowed containers by default: `audio/mpeg`, `audio/ogg`, `audio/wav`, `audio/webm` (from `soundboard.allowed_formats` in `src/config_defaults.py`). The detector inspects bytes, not filenames.
 - Size limit: `soundboard.max_sound_size`, default 2 MiB (2,097,152 bytes). The route checks both the declared `UploadFile.size` and the actual bytes. Larger requests get `413`.
-- HTTP upload ceiling: 10 MiB (`_HTTP_UPLOAD_CEILING_BYTES` in `src/api/routes/soundboard.py:48`). Requests that exceed the ceiling before reaching the manager also get `413`.
+- HTTP upload ceiling: 10 MiB (`_HTTP_UPLOAD_CEILING_BYTES` in `src/api/routes/soundboard.py`). Requests that exceed the ceiling before reaching the manager also get `413`.
 - Volume is clamped to `0.0–1.0` on upload and on playback.
 - Duration hint is clamped to `soundboard.max_sound_duration_seconds` (default 10 seconds) and `max_cooldown_seconds` (default 30 seconds).
 
-If the soundboard or servers module isn't initialized, manage checks and reads return `503` instead of leaking a stack trace (`src/api/routes/soundboard.py:84`).
+If the soundboard or servers module isn't initialized, manage checks and reads return `503` instead of leaking a stack trace (`src/api/routes/soundboard.py`).
 
 ## Endpoints
 
@@ -90,7 +90,7 @@ curl -X POST https://api.plexichat.com/api/v1/servers/987654321098765432/soundbo
 
 **Behavior**:
 
-1. The route checks `server.soundboard.manage` at the HTTP layer and the manager re-checks. If the servers module is missing, the check fails with `503` instead of passing silently (`src/api/routes/soundboard.py:118`).
+1. The route checks `server.soundboard.manage` at the HTTP layer and the manager re-checks. If the servers module is missing, the check fails with `503` instead of passing silently (`src/api/routes/soundboard.py`).
 2. If the declared or actual size exceeds `soundboard.max_sound_size`, the server returns `413 Sound file is too large`.
 3. Bytes are read fully into memory, checked against the HTTP ceiling, then passed to `soundboard.create_sound_from_upload` with a clamped volume. The returned `url` and `size` come from the media pipeline.
 
@@ -125,7 +125,7 @@ PATCH /api/v1/servers/{server_id}/soundboard/{sound_id}
 
 Updates editable fields. All fields are optional.
 
-**Body** (`SoundUpdateRequest` in `src/api/schemas/soundboard.py:40`):
+**Body** (`SoundUpdateRequest` in `src/api/schemas/soundboard.py`):
 
 ```json
 {
@@ -201,7 +201,7 @@ POST /api/v1/servers/{server_id}/soundboard/{sound_id}/play
 
 Records playback of a sound in one of the caller's voice channels. Per-user cooldowns are enforced atomically — an immediate replay returns `429`.
 
-**Body** (`SoundPlayRequest` in `src/api/schemas/soundboard.py:55`):
+**Body** (`SoundPlayRequest` in `src/api/schemas/soundboard.py`):
 
 ```json
 {
@@ -262,7 +262,7 @@ Failures use the standard error envelope:
 }
 ```
 
-Core soundboard errors are translated in `src/api/routes/soundboard.py:154`:
+Core soundboard errors are translated in `src/api/routes/soundboard.py`:
 
 | Core error | HTTP status | Message |
 |------------|-------------|---------|

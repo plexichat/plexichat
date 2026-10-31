@@ -6,7 +6,7 @@ Manage user profiles, Direct Messages, and GDPR data exports.
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this document are mounted under `/users` (`src/api/routes/__init__.py:65`). Full paths are shown as `/api/v1/users/...`.
+All endpoints in this document are mounted under `/users` (`src/api/routes/__init__.py`). Full paths are shown as `/api/v1/users/...`.
 
 All endpoints require `Authorization: Bearer <token>` unless noted.
 
@@ -52,7 +52,7 @@ Returns the private profile for the authenticated user or bot. This endpoint is 
 | `deletion_status` | string | Account deletion state. |
 | `deletion_at` | integer? | Deletion scheduling timestamp. |
 
-Bots are returned with `email: null`, `email_verified: false`, and `badges: []` (`src/api/routes/users/profile.py:44`).
+Bots are returned with `email: null`, `email_verified: false`, and `badges: []` (`src/api/routes/users/profile.py`).
 
 ### Errors
 
@@ -91,11 +91,11 @@ Updates the current user's profile.
 #### Password and email changes
 
 - To change `password`, you must send `current_password`. The server calls `auth.change_password` and returns `403 Incorrect current password` on failure. The `password` fields are removed before the generic profile update.
-- To change `email`, you must also send `current_password` unless you already verified a password in the same request (for example, when changing both `password` and `email` together). The server verifies with `auth.verify_user_password` and the auth manager resets `email_verified` to `false` so the new address must be verified (`src/api/routes/users/profile.py:145`).
+- To change `email`, you must also send `current_password` unless you already verified a password in the same request (for example, when changing both `password` and `email` together). The server verifies with `auth.verify_user_password` and the auth manager resets `email_verified` to `false` so the new address must be verified (`src/api/routes/users/profile.py`).
 
 #### Avatar URL validation
 
-`avatar_url` is not a free-form URL. It must be the canonical path `/api/v1/avatars/users/{user_id}` and the user must have an uploaded avatar row (`avatars.get_user_avatar`). Arbitrary external URLs are rejected with `400` (`src/api/routes/users/profile.py:300`).
+`avatar_url` is not a free-form URL. It must be the canonical path `/api/v1/avatars/users/{user_id}` and the user must have an uploaded avatar row (`avatars.get_user_avatar`). Arbitrary external URLs are rejected with `400` (`src/api/routes/users/profile.py`).
 
 ### Example request
 
@@ -395,9 +395,9 @@ Schedules the current account for deletion. Requires password and optionally a T
 
 ## Data exports (DSAR - GDPR Article 20)
 
-Endpoints for the right to data portability. All paths are under `/users/@me/data-export` (`src/api/routes/users/composer.py:182`). Each request is rate-limited to one per 24 hours per user.
+Endpoints for the right to data portability. All paths are under `/users/@me/data-export` (`src/api/routes/users/composer.py`). Each request is rate-limited to one per 24 hours per user.
 
-The server verifies the password by checking the `password_hash` directly from `auth_users` when the `User` object doesn't carry it, so the verification works without a prior login in the same process (`src/api/routes/users/dsar.py:50`). Password verification uses `src.utils.encryption.verify_password`.
+The server verifies the password by checking the `password_hash` directly from `auth_users` when the `User` object doesn't carry it, so the verification works without a prior login in the same process (`src/api/routes/users/dsar.py`). Password verification uses `src.utils.encryption.verify_password`.
 
 ### Request a data export
 
@@ -407,7 +407,7 @@ POST /api/v1/users/@me/data-export
 
 Starts a new export job.
 
-**Request body** (`DSARRequestBody` in `src/api/schemas/dsar.py:9`):
+**Request body** (`DSARRequestBody` in `src/api/schemas/dsar.py`):
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -424,7 +424,7 @@ Starts a new export job.
 **Behavior**:
 
 1. Verifies the password. On failure, returns `403 Incorrect password`.
-2. Checks the rate limit with key `dsar:user:{user_id}` — one request per 86,400 seconds (`src/api/routes/users/dsar.py:75`). If exceeded, returns `429` with `Data export request limit exceeded. Please wait 24 hours between requests.`
+2. Checks the rate limit with key `dsar:user:{user_id}` — one request per 86,400 seconds (`src/api/routes/users/dsar.py`). If exceeded, returns `429` with `Data export request limit exceeded. Please wait 24 hours between requests.`
 3. Calls `dsar.request_data_export(user_id, format)` and logs the request.
 
 **Response** `200 OK`
@@ -508,7 +508,7 @@ Returns one request by ID. `request_id` must be an integer string; non-numeric v
 DELETE /api/v1/users/@me/data-export/{request_id}
 ```
 
-Cancels a pending, approved, or generating request. The generation worker's conditional status updates ensure a cancelled row isn't resurrected by an in-flight generation (`src/api/routes/users/dsar.py:235`).
+Cancels a pending, approved, or generating request. The generation worker's conditional status updates ensure a cancelled row isn't resurrected by an in-flight generation (`src/api/routes/users/dsar.py`).
 
 **Errors**:
 
@@ -534,13 +534,13 @@ Cancels a pending, approved, or generating request. The generation worker's cond
 GET /api/v1/users/@me/data-export/{request_id}/download
 ```
 
-Streams the export file. This endpoint uses `StreamingResponse` and has no JSON `response_model` (`src/api/routes/users/composer.py:238`).
+Streams the export file. This endpoint uses `StreamingResponse` and has no JSON `response_model` (`src/api/routes/users/composer.py`).
 
 **Preconditions**:
 
-- The request status must be `ready` or `downloaded`. The manager deliberately allows `downloaded` so you can download again within the retention window (`src/api/routes/users/dsar.py:296`).
+- The request status must be `ready` or `downloaded`. The manager deliberately allows `downloaded` so you can download again within the retention window (`src/api/routes/users/dsar.py`).
 - The `expires_at` timestamp must be in the future. Expired requests return `410 Download link has expired`.
-- The storage path must exist. The server constructs an `ExportFormatGenerator` with the live DB handle so the `database` storage backend works (`src/api/routes/users/dsar.py:346`). If the stream can't be opened, the server returns `500 Failed to read export from storage`.
+- The storage path must exist. The server constructs an `ExportFormatGenerator` with the live DB handle so the `database` storage backend works (`src/api/routes/users/dsar.py`). If the stream can't be opened, the server returns `500 Failed to read export from storage`.
 
 **Response** `200 OK` — binary stream.
 
@@ -561,7 +561,7 @@ curl -OJ http://localhost:8000/api/v1/users/@me/data-export/123/download \
 
 **One-shot marker behavior**:
 
-The server marks the export as `downloaded` only after all bytes have been sent (`src/api/routes/users/dsar.py:382`). If the client disconnects mid-stream, the generator is closed with `GeneratorExit`, the `mark_export_downloaded` call is skipped, and the export stays re-downloadable. Failures to mark downloaded are logged at `WARNING` but don't fail the download.
+The server marks the export as `downloaded` only after all bytes have been sent (`src/api/routes/users/dsar.py`). If the client disconnects mid-stream, the generator is closed with `GeneratorExit`, the `mark_export_downloaded` call is skipped, and the export stays re-downloadable. Failures to mark downloaded are logged at `WARNING` but don't fail the download.
 
 **Errors**:
 

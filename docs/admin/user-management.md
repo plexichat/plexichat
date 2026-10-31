@@ -19,7 +19,7 @@ See `admin_ui.approval_workflows` in `src/config_defaults.py`.
 
 ## Before you begin
 
-You need an admin session authenticated at `<admin-base>` (default `/api/v1/admin`) and a role that contains the permission listed for each action. See [Admin permissions](../admin/rbac.md) and `src/core/admin/permissions.py:42` for the full `PERMISSION_SCOPES` list.
+You need an admin session authenticated at `<admin-base>` (default `/api/v1/admin`) and a role that contains the permission listed for each action. See [Admin permissions](../admin/rbac.md) and `src/core/admin/permissions.py` for the full `PERMISSION_SCOPES` list.
 
 Common scopes:
 
@@ -35,7 +35,7 @@ Common scopes:
 | `users.delete` | Delete accounts immediately |
 | `users.force_purge` | Immediately purge scheduled deletions |
 
-Caution: Do not document `users.force_password_change`. This scope does not exist. Use `users.force_username_change` for forced account and credential changes. The role API rejects wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py:200`).
+Caution: Do not document `users.force_password_change`. This scope does not exist. Use `users.force_username_change` for forced account and credential changes. The role API rejects wildcard scopes such as `*` or `users.*` with `400` (`src/api/routes/admin/roles.py`).
 
 ## Search and view users
 
@@ -169,7 +169,7 @@ Required permission: `users.delete` (typically requires approval).
 
 ### View tiers
 
-Tiers determine capabilities and limits. The current tiers are `standard`, `alpha`, `premium`, and `staff` as defined in `src/config_defaults.py:331`. The `available_badges` list is also defined there.
+Tiers determine capabilities and limits. The current tiers are `standard`, `alpha`, `premium`, and `staff` as defined in `src/config_defaults.py`. The `available_badges` list is also defined there.
 
 ### Change a tier
 

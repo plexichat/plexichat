@@ -4,7 +4,7 @@ Artifacts are persistent, shareable content attached to Plexichat conversations:
 
 ## License features
 
-The Artifacts system uses license feature flags checked at runtime with `utils.licensing.has_feature(name)`. The flags are defined in `ARTIFACTS_LICENSE_FEATURES` (`src/config_defaults.py:24`).
+The Artifacts system uses license feature flags checked at runtime with `utils.licensing.has_feature(name)`. The flags are defined in `ARTIFACTS_LICENSE_FEATURES` (`src/config_defaults.py`).
 
 | Feature | What it gates |
 | --- | --- |
@@ -18,7 +18,7 @@ The Artifacts system uses license feature flags checked at runtime with `utils.l
 
 ## Configuration
 
-All settings are nested under the top-level `artifacts` key. Defaults are defined in `get_artifacts_defaults` (`src/config_defaults_artifacts.py:12`).
+All settings are nested under the top-level `artifacts` key. Defaults are defined in `get_artifacts_defaults` (`src/config_defaults_artifacts.py`).
 
 ```yaml
 artifacts:
@@ -40,7 +40,7 @@ artifacts:
     max_file_size_kb: 2048
     max_participants: 50
     allowed_languages: [python, javascript, typescript, json, markdown, go, rust, sql, yaml, html, css]
-    # Full language and extension lists are in src/config_defaults_artifacts.py:40
+    # Full language and extension lists are in src/config_defaults_artifacts.py
   plexistash:
     enabled: true
     licensed_feature: plexistash
@@ -101,7 +101,7 @@ Requires the `plexiscribe` license feature (or evaluation mode).
 
 ### Plexiscript
 
-Requires the `plexiscript` license feature (or evaluation mode). The editor language and extension allow-lists are defined in `src/config_defaults_artifacts.py:40`.
+Requires the `plexiscript` license feature (or evaluation mode). The editor language and extension allow-lists are defined in `src/config_defaults_artifacts.py`.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ Requires the `voice_transcription` license feature. Transcription is off until y
 | `whisper_probe_on_startup` | `true` | Probe for a working Whisper install at startup. |
 | `openai_api_key` | `${OPENAI_API_KEY:-}` | API key for the OpenAI provider. |
 | `azure_key` | `${AZURE_SPEECH_KEY:-}` | API key for the Azure Speech provider. |
-| `max_audio_minutes` | `120` | Maximum audio length accepted for transcription. Calls longer than this are skipped with a warning (`src/core/artifacts/transcription/worker.py:1`). |
+| `max_audio_minutes` | `120` | Maximum audio length accepted for transcription. Calls longer than this are skipped with a warning (`src/core/artifacts/transcription/worker.py`). |
 
 #### Transcription framework
 
@@ -168,7 +168,7 @@ The `transcription/` subpackage is documented in `src/core/artifacts/transcripti
 
 #### Cleanup job
 
-`RetentionCleanupJob` (`src/core/artifacts/retention.py:1`) is a daemon-thread worker started at boot. It runs only when `run_cleanup_interval_minutes > 0`. Each cycle calls `run_once(db)`, which:
+`RetentionCleanupJob` (`src/core/artifacts/retention.py`) is a daemon-thread worker started at boot. It runs only when `run_cleanup_interval_minutes > 0`. Each cycle calls `run_once(db)`, which:
 
 1. Applies retention windows — sets `expires_at = created_at + retention_days` for any artifact that has a `retention_policy` but no `expires_at` yet.
 2. Purges expired rows when `purge_expired` is `true`.
@@ -186,7 +186,7 @@ Retention is resolved with this priority:
 
 ## Database schema
 
-The tables are created by migration `047_add_artifacts_tables.py` (`src/core/artifacts/schema.py:1`).
+The tables are created by migration `047_add_artifacts_tables.py` (`src/core/artifacts/schema.py`).
 
 - **`artifacts`** — Central record for every artifact. Key columns: `id` (Snowflake INTEGER PK), `conversation_id`, `channel_id`, `server_id`, `author_id`, `artifact_type` (`voice_call`, `whiteboard`, `upload`, `file`, `transcript`, `future`), `title`, `summary`, `status` (`live`, `completed`, `archived`), `recorded` (0/1), `has_transcript` (0/1), `payload` (JSON TEXT), `retention_policy`, `expires_at`, `license_feature`, `created_at`, `updated_at`. Indexed on `conversation_id`, `server_id`, `author_id`, `artifact_type`, `created_at`.
 - **`voice_calls`** — Call metadata linked to `artifacts` by `artifact_id`. Columns include `initiator_id`, `started_at`, `ended_at`, `duration_seconds`, `recorded` (0/1), `transcript_artifact_id`, `consented_participants` (JSON TEXT), `participant_count`. Indexed on `artifact_id`, `conversation_id`, `server_id`.
@@ -196,7 +196,7 @@ See `src/core/artifacts/README.md` for the full reference.
 
 ## Capabilities
 
-Several artifacts features can be unavailable for different reasons. The capability service (`src/core/artifacts/capabilities.py:1`) resolves each feature to a single availability state.
+Several artifacts features can be unavailable for different reasons. The capability service (`src/core/artifacts/capabilities.py`) resolves each feature to a single availability state.
 
 | Feature | Note |
 | --- | --- |
@@ -296,12 +296,12 @@ Defined in `src/api/websocket/opcodes.GatewayOpcode:1`:
 
 ### Event types and intents
 
-- `src/core/events/types.py:86` — `ARTIFACT_CREATE`, `ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`.
-- `src/core/events/types.py:120` — `GatewayIntent.ARTIFACTS = 1 << 20` gates delivery of those events and is part of both `default_intents()` and `all_intents()` (`src/core/events/types.py:124`). See [Gateway intents](../websocket/intents.md) for the full intent catalog.
+- `src/core/events/types.py` — `ARTIFACT_CREATE`, `ARTIFACT_UPDATE`, `ARTIFACT_DELETE`, `ARTIFACT_OP`.
+- `src/core/events/types.py` — `GatewayIntent.ARTIFACTS = 1 << 20` gates delivery of those events and is part of both `default_intents()` and `all_intents()` (`src/core/events/types.py`). See [Gateway intents](../websocket/intents.md) for the full intent catalog.
 
 ### Relay helpers
 
-`src/api/websocket/artifacts.py:1` owns the in-memory subscription registry (`ArtifactSubscriptionRegistry`: `subscribe`, `unsubscribe`, `get_subscribers`, `unsubscribe_all`) and two helpers used by the opcode handlers:
+`src/api/websocket/artifacts.py` owns the in-memory subscription registry (`ArtifactSubscriptionRegistry`: `subscribe`, `unsubscribe`, `get_subscribers`, `unsubscribe_all`) and two helpers used by the opcode handlers:
 
 - `relay_artifact_op(dispatcher, artifact_id, op, actor_id, exclude_user_id)` — Fans an `ARTIFACT_OP` to every other subscriber of an artifact. This function only relays; persistence is handled elsewhere.
 - `send_artifact_sync(connection, artifact_id, snapshot)` — Sends an `ARTIFACT_SYNC` full snapshot to a single connection (late-joiner bootstrap).
@@ -310,10 +310,10 @@ Both reuse the existing dispatcher send path and the per-connection rate limit.
 
 ## Federation (PlexiJoin)
 
-When two Plexichat instances are federated through PlexiJoin, artifacts owned by a federated server can share live operations and artifact-level events across the link. The integration is at the manager level in `src/core/artifacts/federation.py:1` (`FederationArtifactBridge`) and does not build a cross-instance real-time transport (that layer lives outside this repo).
+When two Plexichat instances are federated through PlexiJoin, artifacts owned by a federated server can share live operations and artifact-level events across the link. The integration is at the manager level in `src/core/artifacts/federation.py` (`FederationArtifactBridge`) and does not build a cross-instance real-time transport (that layer lives outside this repo).
 
 - **Server-to-link resolution** — The bridge resolves an artifact's `server_id` and maps it to active federation connections where `plexijoin_connections.remote_instance_id == server_id`.
-- **Operation forwarding** — `relay_artifact_op` in `src/api/websocket/artifacts.py:1` calls `bridge.forward_artifact_op(artifact_id, op, actor_id)` immediately after the local fan-out. The call is wrapped in `try/except` so federation failures never break local relay.
+- **Operation forwarding** — `relay_artifact_op` in `src/api/websocket/artifacts.py` calls `bridge.forward_artifact_op(artifact_id, op, actor_id)` immediately after the local fan-out. The call is wrapped in `try/except` so federation failures never break local relay.
 - **Event forwarding** — `forward_artifact_event(event_type, artifact)` shares artifact create, update, and delete events to matching links.
 - **Traffic accounting** — Every forwarded operation and event is recorded with `PlexiJoinManager.record_traffic`.
 - **Visibility** — `get_federated_artifact_visibility(server_id)` returns whether artifacts on that server can be shared cross-instance (at least one active link exists).
@@ -330,7 +330,7 @@ Artifacts, voice-call records, and transcripts are personal data and are covered
 
 ### Export
 
-The DSAR collector (`src/core/dsar/collector.py:1`) includes, in the `voice` category:
+The DSAR collector (`src/core/dsar/collector.py`) includes, in the `voice` category:
 
 - The user's `voice_states`.
 - `voice_calls` that the user initiated or consented to (`consented_participants`).
@@ -340,7 +340,7 @@ Transcript text is included inline as `transcript_text` (extracted from `payload
 
 ### Deletion and anonymization
 
-On account purge, `anonymize_user_artifacts(db, user_id, config)` (`src/core/artifacts/privacy.py:1`), called from `AccountReaper.purge_user`, applies the same `anonymize_content` policy used for messages:
+On account purge, `anonymize_user_artifacts(db, user_id, config)` (`src/core/artifacts/privacy.py`), called from `AccountReaper.purge_user`, applies the same `anonymize_content` policy used for messages:
 
 - `anonymize_content=True` (default) — Rows are kept but identifiable links are removed: `author_id` becomes the sentinel anonymized ID, inline transcript text is stripped from `payload`, the user is removed from `consented_participants` on calls they only consented to, and `artifact_ops` rows where `actor_id` matches the user are deleted. Calls they initiated are anonymized (`initiator_id` becomes the sentinel) rather than removed.
 - `anonymize_content=False` — Artifacts the user authored, their linked `artifact_ops`, and `voice_calls` rows they initiated are deleted; consented-participant entries are removed from calls they did not start.
@@ -414,7 +414,7 @@ $env:ARTIFACTS_LICENSE_FEATURES = "artifacts,artifacts_whiteboard,voice_transcri
 .\deploy.ps1 install -RunNow
 ```
 
-When a variable is unset or empty, the server uses the compiled-in default from `src/config_defaults_artifacts.py:12` and `src/config_defaults.py:36`.
+When a variable is unset or empty, the server uses the compiled-in default from `src/config_defaults_artifacts.py` and `src/config_defaults.py`.
 
 ## Related documentation
 

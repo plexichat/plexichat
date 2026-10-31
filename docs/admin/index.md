@@ -53,7 +53,7 @@ The admin panel is a server-rendered UI and a set of REST endpoints under `/api/
 The API prefix is `/api/v1` by default. This is controlled by `api.api_prefix` in your configuration. Health and readiness endpoints for monitoring are:
 
 * `GET /health`
-* `GET /api/v1/ready` — readiness check defined in `health.py:18`
+* `GET /api/v1/ready` — readiness check defined in `health.py`
 * `GET /api/v1/status` — detailed status
 * `GET /gateway` — WebSocket gateway defined in `gateway.py` (`gateway_endpoint`)
 

@@ -6,7 +6,7 @@ This document describes the database migrations in Plexichat and the schema modu
 
 All tables are defined in schema module files under `src/core/*/schema.py`. Each module exposes a `create_tables(db)` function that uses `CREATE TABLE IF NOT EXISTS` and is idempotent. Migration `000` imports and calls every schema module to create the full schema on a fresh database. Migration `001` is a self-test no-op that verifies the migration apply and rollback endpoints.
 
-The authoritative migration implementations are in `src/core/migrations/migrations/000_initial_schema.py:59` and `src/core/migrations/migrations/001_selftest_noop.py`.
+The authoritative migration implementations are in `src/core/migrations/migrations/000_initial_schema.py` and `src/core/migrations/migrations/001_selftest_noop.py`.
 
 ## Migration index
 
@@ -64,7 +64,7 @@ The authoritative migration implementations are in `src/core/migrations/migratio
 | `src/core/suite/stash/schema.py` | `stash_collections`, `stash_items`, `stash_item_text`, `stash_versions`, `stash_grants`, `stash_collection_grants`, `stash_share_links`, `stash_download_tickets` |
 | `src/core/suite/sum/schema.py` | `sum_workbooks`, `sum_operations`, `sum_snapshots`, `sum_revision_blobs`, `sum_grants`, `sum_features`, `sum_range_permissions`, `suite_audit_log` |
 
-**Rollback:** The `down(db)` function is destructive and guarded. It drops only tables in `ROLLBACK_TABLE_ALLOWLIST` (`src/core/migrations/migrations/000_initial_schema.py:129`) and never drops migration-tracking tables such as `migrations_history`, `migration_logs`, or `migration_lock`. The rollback refuses to run unless you set `MIGRATIONS_ALLOW_DESTRUCTIVE_ROLLBACK=1` in the environment. On PostgreSQL it uses `DROP TABLE ... CASCADE`; on SQLite it orders tables children-first to satisfy foreign keys. Use the rollback only on disposable databases.
+**Rollback:** The `down(db)` function is destructive and guarded. It drops only tables in `ROLLBACK_TABLE_ALLOWLIST` (`src/core/migrations/migrations/000_initial_schema.py`) and never drops migration-tracking tables such as `migrations_history`, `migration_logs`, or `migration_lock`. The rollback refuses to run unless you set `MIGRATIONS_ALLOW_DESTRUCTIVE_ROLLBACK=1` in the environment. On PostgreSQL it uses `DROP TABLE ... CASCADE`; on SQLite it orders tables children-first to satisfy foreign keys. Use the rollback only on disposable databases.
 
 ### 001 — Self-test no-op
 

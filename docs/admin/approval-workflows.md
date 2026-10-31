@@ -9,7 +9,7 @@ You need:
 * An admin account with `admin.approvals` permission. See [RBAC](rbac.md).
 * `admin_ui.approval_workflows.enabled` set to `true` in your configuration.
 
-All enforcement logic is in `src/core/admin/permissions.py:213` and `src/core/admin/logging.py:300`.
+All enforcement logic is in `src/core/admin/permissions.py` and `src/core/admin/logging.py`.
 
 ## Configure approval workflows
 
@@ -40,7 +40,7 @@ admin_ui:
 | `approval_timeout_hours` | integer | `48` | Hours before a pending request expires. |
 | `auto_approve_after_hours` | integer | `72` | Hours after which the system can auto-approve, if that feature is enabled in your deployment. |
 
-You can add any action from the approval list in `src/core/admin/permissions.py:122` to `require_approval_for`, including `config.security`, `admin.roles`, `migrations.run`, `search.reindex`, and `artifacts.force_delete`.
+You can add any action from the approval list in `src/core/admin/permissions.py` to `require_approval_for`, including `config.security`, `admin.roles`, `migrations.run`, `search.reindex`, and `artifacts.force_delete`.
 
 ## Understand actions that require approval
 
@@ -70,9 +70,9 @@ admin_ui:
 When an admin attempts a sensitive action:
 
 1. The system checks whether `enabled` is `true` and whether the action is in `require_approval_for`.
-2. If `single_admin_bypass` is `true` and only one row exists in `admin_users`, the action bypasses approval and executes immediately. See `src/core/admin/permissions.py:238`.
+2. If `single_admin_bypass` is `true` and only one row exists in `admin_users`, the action bypasses approval and executes immediately. See `src/core/admin/permissions.py`.
 3. Otherwise, the system inserts a row into `admin_approvals` with `status = 'pending'` and notifies other admins.
-4. Super-admin holders of `*` bypass approval checks. See `src/core/admin/permissions.py:250`.
+4. Super-admin holders of `*` bypass approval checks. See `src/core/admin/permissions.py`.
 
 The original action does not execute until the request reaches `approved`.
 
@@ -230,7 +230,7 @@ This keeps single-admin deployments operable. For multi-admin deployments, keep 
 
 | Rule | How it is enforced |
 |---|---|
-| View and manage approvals | Requires `admin.approvals`. See `src/core/admin/permissions.py:87` in `PERMISSION_SCOPES`. |
+| View and manage approvals | Requires `admin.approvals`. See `src/core/admin/permissions.py` in `PERMISSION_SCOPES`. |
 | No self-approval | The requester cannot count toward `current_approvals`. |
 | One approval per admin | `approved_by` tracks distinct admin IDs. |
 | Timeout handling | Requests with `expires_at` in the past transition to `expired` on the next check. |

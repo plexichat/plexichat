@@ -73,7 +73,7 @@ This guide helps you diagnose and fix common issues with the Plexichat admin pan
 **Try this:**
 
 1.  Check your assigned roles at `GET /api/v1/admin/admins/{id}/roles`.
-2.  Verify the required scope for the action. Check `src/core/admin/permissions.py:42` (`PERMISSION_SCOPES`) and do not use non-existent scopes such as those in the following table:
+2.  Verify the required scope for the action. Check `src/core/admin/permissions.py` (`PERMISSION_SCOPES`) and do not use non-existent scopes such as those in the following table:
 
     | Incorrect (does not exist) | Use instead |
     |----------------------------|-------------|
@@ -83,7 +83,7 @@ This guide helps you diagnose and fix common issues with the Plexichat admin pan
 
 3.  Verify that `admin_ui.rbac.enabled` is `true`.
 4.  Check whether the action requires approval (`admin.approvals`).
-5.  Review the audit log at `GET /api/v1/admin/audit/logs` (requires `admin.audit.read`; the path is `/audit/logs`, not `/audit-log` — see `src/api/routes/admin/audit.py:34`).
+5.  Review the audit log at `GET /api/v1/admin/audit/logs` (requires `admin.audit.read`; the path is `/audit/logs`, not `/audit-log` — see `src/api/routes/admin/audit.py`).
 
 ### You cannot access a section
 
@@ -262,7 +262,7 @@ curl "/api/v1/admin/audit/logs/export?format=csv" \
   -H "Authorization: Bearer <token>" -o audit_logs.csv
 ```
 
-Required permission: `admin.audit.read`. For endpoint details, see `src/api/routes/admin/audit.py:34`.
+Required permission: `admin.audit.read`. For endpoint details, see `src/api/routes/admin/audit.py`.
 
 ## Fix approval-workflow issues
 

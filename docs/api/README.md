@@ -9,7 +9,7 @@ This directory contains narrative documentation for the Plexichat REST API. Use 
 | Production | `https://api.plexichat.com/api/v1` |
 | Development | `http://localhost:8000/api/v1` |
 
-The API prefix is configurable as `api.api_prefix` (default `/api/v1`) in `src/config_defaults.py:130`. The server host and port are `server.host` and `server.port` (`src/config_defaults.py:70`), not `api.host` or `api.port`.
+The API prefix is configurable as `api.api_prefix` (default `/api/v1`) in `src/config_defaults.py`. The server host and port are `server.host` and `server.port` (`src/config_defaults.py`), not `api.host` or `api.port`.
 
 All paths in the `docs/api/` guides are relative to the API prefix unless noted.
 
@@ -27,7 +27,7 @@ For details, see [Authentication](authentication.md), [Admin API](admin.md), and
 
 Rate limiting is enabled by default (`rate_limiting.enabled`) and enforced in the application and optionally in Nginx. Do not rely on hard-coded values from older docs.
 
-Real defaults are defined in `src/config_defaults.py:270`:
+Real defaults are defined in `src/config_defaults.py`:
 
 | Scope | Requests | Window | Burst | Notes |
 |---|---|---|---|---|
@@ -49,13 +49,13 @@ The WebSocket gateway is at `/gateway`, not `/ws`.
 - Implementation: `src/api/websocket/gateway.py` (`gateway_endpoint`) (`@router.websocket("/gateway")`)
 - Dev proxy: `vite.config.js` forwards `/api` and `/gateway` to `http://127.0.0.1:5411`
 
-See [Gateway and WebSocket](../websocket/index.md) and [Opcodes](../websocket/opcodes.md). Required opcodes include `50 RATCHET_UPDATE`, `60-67 ARTIFACT_*` and `SUM_*`, and `68 ARTIFACT_OP_REJECTED` (`src/api/websocket/opcodes.py:40`).
+See [Gateway and WebSocket](../websocket/index.md) and [Opcodes](../websocket/opcodes.md). Required opcodes include `50 RATCHET_UPDATE`, `60-67 ARTIFACT_*` and `SUM_*`, and `68 ARTIFACT_OP_REJECTED` (`src/api/websocket/opcodes.py`).
 
 ## Health checks
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/ready` | Readiness probe for orchestrators. Returns `200` when the HTTP server is bound. No database checks. (`src/api/routes/health.py:18`) |
+| `GET /api/v1/ready` | Readiness probe for orchestrators. Returns `200` when the HTTP server is bound. No database checks. (`src/api/routes/health.py`) |
 | `GET /api/v1/health` | Deep health check. Returns `status`, `version`, `events_metrics`, and `cross_worker_listener` status. May return `500` if the check itself fails. |
 
 ## Core reference pages
@@ -65,12 +65,12 @@ See [Gateway and WebSocket](../websocket/index.md) and [Opcodes](../websocket/op
 | [Authentication](authentication.md) | Registration, login, sessions, 2FA, OAuth, and passkeys |
 | [Users](users.md) | User profiles and settings |
 | [Settings](settings.md) | User settings, including `PUT /settings/bulk` |
-| [Servers](servers.md) | Servers, members, roles, and invites. Channel field is `channel_type` (`src/api/schemas/servers.py:85`) |
+| [Servers](servers.md) | Servers, members, roles, and invites. Channel field is `channel_type` (`src/api/schemas/servers.py`) |
 | [Channels](channels.md) | Channel management |
-| [Messages](messages.md) | Messages, `read_by` as `ReaderInfo` objects (`src/api/schemas/messages.py:94`), `deleted`, `mentions`, and polls |
+| [Messages](messages.md) | Messages, `read_by` as `ReaderInfo` objects (`src/api/schemas/messages.py`), `deleted`, `mentions`, and polls |
 | [Reactions](reactions.md) | Message reactions |
 | [Relationships](relationships.md) | Friends and blocks |
-| [Presence](presence.md) | Presence updates. `GET /users/{id}/presence` returns `404` when not visible (`src/api/routes/presence.py:379`) |
+| [Presence](presence.md) | Presence updates. `GET /users/{id}/presence` returns `404` when not visible (`src/api/routes/presence.py`) |
 | [Webhooks](webhooks.md) | Webhooks, including `PATCH /webhooks/{id}` and `POST /webhooks/{id}/regenerate` |
 | [Avatars](avatars.md) | User avatars and server icons |
 | [Emojis](emojis.md) | Custom emojis |
@@ -83,7 +83,7 @@ See [Gateway and WebSocket](../websocket/index.md) and [Opcodes](../websocket/op
 | [Search](search.md) | Full-text search |
 | [Notifications](notifications.md) | Notifications |
 | [Polls](polls.md) | Polls |
-| [Voice](voice.md) | Voice and SFU. Default backend is `aiortc` (`src/config_defaults.py:396`), not `mediasoup` |
+| [Voice](voice.md) | Voice and SFU. Default backend is `aiortc` (`src/config_defaults.py`), not `mediasoup` |
 | [Media](media.md) | Uploads, `GET /media/proxy`, and `GET /api/v1/media/attachments/{filename}` |
 | [Reports](reports.md) | User and message reports |
 | [Feedback](feedback.md) | User feedback |
@@ -97,7 +97,7 @@ See [Gateway and WebSocket](../websocket/index.md) and [Opcodes](../websocket/op
 - Snowflake IDs are encoded as strings in JSON.
 - Errors use the `ErrorResponse` model with `{ "error": { "code": <http-status>, "message": "<message>" } }`.
 - Configuration keys are verified against `src/config_defaults.py`. Common corrections: use `server.host`/`server.port`/`server.reload`, `api.api_prefix`, `tls` (not `api.ssl`), and flat `cors_*` keys.
-- Infrastructure versions: Postgres `18-alpine` and Python `3.14` (`docker-compose.yml:25` and `Dockerfile`). Valkey `9.1.1`.
+- Infrastructure versions: Postgres `18-alpine` and Python `3.14` (`docker-compose.yml` and `Dockerfile`). Valkey `9.1.1`.
 
 ## Generated reference
 

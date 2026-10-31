@@ -4,14 +4,14 @@ Gateway intents let you declare which event families you want to receive on a
 WebSocket connection. You pass a bitmask in `IDENTIFY` (`op: 2`). The gateway
 then filters dispatch events before delivery.
 
-The source of truth is `GatewayIntent` in `src/core/events/types.py:97` and
-validation in `src/api/websocket/intents.py:15`.
+The source of truth is `GatewayIntent` in `src/core/events/types.py` and
+validation in `src/api/websocket/intents.py`.
 
 ## How intents work
 
 *   Each intent is one bit (`1<<n`). You combine intents with bitwise OR.
 *   The gateway delivers an event only if you set the intent that covers it.
-    For the per-event mapping, see `src/core/events/router.py:13` and
+    For the per-event mapping, see `src/core/events/router.py` and
     [Gateway events](events.md).
 *   Guild messages need `GUILD_MESSAGES`; direct messages need
     `DIRECT_MESSAGES`. Attach `MESSAGE_CONTENT` if you need raw content.
@@ -22,9 +22,9 @@ validation in `src/api/websocket/intents.py:15`.
 
 | Setting | Value | How it is derived |
 |---------|-------|-------------------|
-| Default intents | `3178237` | `GatewayIntent.default_intents()` in `src/core/events/types.py:137` |
-| All intents | `4194303` | `GatewayIntent.all_intents()` in `src/core/events/types.py:124` (`(1<<22)-1`) |
-| Privileged intents | `33026` | `GatewayIntent.privileged_intents()` in `src/core/events/types.py:158` |
+| Default intents | `3178237` | `GatewayIntent.default_intents()` in `src/core/events/types.py` |
+| All intents | `4194303` | `GatewayIntent.all_intents()` in `src/core/events/types.py` (`(1<<22)-1`) |
+| Privileged intents | `33026` | `GatewayIntent.privileged_intents()` in `src/core/events/types.py` |
 
 Privileged intents require approval: `GUILD_MEMBERS` (`1<<1`),
 `GUILD_PRESENCES` (`1<<8`), and `MESSAGE_CONTENT` (`1<<15`). The default
