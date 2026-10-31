@@ -1277,11 +1277,14 @@ create_merge_request:
 # Point it at the deployment with PLEXICHAT_BASE_URL. Registration and login
 # are rate limited per client IP (3/minute, 10/hour, 20/day for register) and a
 # runner shares its egress address, so the suite keeps its own
-# `smoke_gate_{a,b}` accounts: it registers them once and logs in on every later
-# run. A deployment whose IP has already spent that budget is seeded once with
-# ci-tooling/seed-smoke-accounts.sh from the host. SMOKE_USER_A/B (+ 
-# SMOKE_PASSWORD) and SMOKE_TOKEN_A/B are still accepted as overrides, but no CI
-# variable is needed for the job to run.
+# `smoke_gate_{a,b,c}` accounts: it registers them once and logs in on every
+# later run. C is the stranger whose isolation is checked, so it is a gate
+# account too rather than a per-run registration -- that was the check that
+# skipped whenever this runner's IP had no registration budget left. A
+# deployment that has never seen the gate is seeded once with
+# ci-tooling/seed-smoke-accounts.sh from the host. SMOKE_USER_A/B/C (+ 
+# SMOKE_PASSWORD) and SMOKE_TOKEN_A/B/C are still accepted as overrides, but no
+# CI variable is needed for the job to run.
 live_smoke:
   stage: test-and-release
   image: alpine:3.20

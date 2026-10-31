@@ -3,14 +3,16 @@
 # Seed the two accounts ci-tooling/live-smoke.sh keeps, from inside the
 # deployment.
 #
-# The gate logs in to `smoke_gate_a` and `smoke_gate_b` and only registers them
-# when they are missing, so a rerun costs a login instead of two registrations
-# against a per-IP limit (3/minute, 10/hour, 20/day). The first run normally
-# creates the pair itself. When the IP the gate runs from has already spent that
-# budget -- a shared CI egress, or a gate run a few times in an hour -- it cannot
-# do even that first step, and this creates the pair through the app's own auth
-# manager instead: one command on the deployment, once, and every later gate run
-# is login-only.
+# The gate logs in to `smoke_gate_a`, `smoke_gate_b` and `smoke_gate_c` and only
+# registers them when they are missing, so a rerun costs three logins instead of
+# three registrations against a per-IP limit (3/minute, 10/hour, 20/day). The
+# first run normally creates them itself. When the IP the gate runs from has
+# already spent that budget -- a shared CI egress, or a gate run a few times in
+# an hour -- it cannot do even that first step, and this creates them through the
+# app's own auth manager (which is not rate limited) instead: one command on the
+# deployment, once, and every later gate run is login-only. `smoke_gate_c` is
+# the run's stranger -- the account that must NOT be able to read A's channel or
+# DM -- so seeding it is what keeps those checks from skipping.
 #
 # Usage, on the deployment host:
 #   bash ci-tooling/seed-smoke-accounts.sh
@@ -117,7 +119,7 @@ run_python() {
         "$CONTAINER" python - || return $?
 }
 
-NAMES="${SMOKE_GATE_ACCOUNTS:-smoke_gate_a,smoke_gate_b}"
+NAMES="${SMOKE_GATE_ACCOUNTS:-smoke_gate_a,smoke_gate_b,smoke_gate_c}"
 
 echo "== seeding the live gate's accounts (${NAMES}) =="
 printf '%s\n' "$PYTHON_CODE" | run_python

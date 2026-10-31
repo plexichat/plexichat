@@ -20,13 +20,18 @@
 #
 # Needs no configuration from the runner. Registration is limited per client IP
 # (3/minute, 10/hour, 20/day), and a CI runner shares its egress address, so the
-# suite keeps two `smoke_gate_{a,b}` accounts on the deployment: it creates them
-# on first use and logs in on every later run, which costs one login instead of
-# two registrations. Everything those accounts create in a run is removed again.
-# The third account is still created per run and deleted, so the account
-# deletion and session-revocation path stays covered; it is skipped (not failed)
-# when the IP's registration budget for the window is spent. Exits non-zero if
-# any check fails. Requires: curl, jq.
+# suite keeps three `smoke_gate_{a,b,c}` accounts on the deployment: it creates
+# them on first use and logs in on every later run, which costs one login each
+# instead of three registrations. Everything those accounts create in a run is
+# removed again.
+#
+# C carries the stranger checks (it may not read A's channel or DM), so it is a
+# long-lived account too: registering a fresh one every run made those checks
+# depend on the runner's registration budget, and on a shared egress they simply
+# skipped. Account deletion and session revocation are still covered, by a
+# throwaway account created per run and deleted at the end; that one is skipped
+# (not failed) when the budget is spent, because nothing else depends on it.
+# Exits non-zero if any check fails. Requires: curl, jq.
 #
 set -uo pipefail
 
@@ -115,6 +120,7 @@ req() {
 JAR_A="$TMP/jar_a"
 JAR_B="$TMP/jar_b"
 JAR_C="$TMP/jar_c"
+JAR_D="$TMP/jar_d"
 JAR_ANON="$TMP/jar_anon"
 declare -A JAR_TOKEN=()
 
@@ -202,7 +208,7 @@ sec "accounts and sessions"
 # Registration and login are both rate limited per client IP. The suite keeps
 # its own gate accounts so it needs nothing from the runner, and SMOKE_USER_* /
 # SMOKE_TOKEN_* stay available as overrides for a host that cannot register.
-HAVE_A=0; HAVE_B=0; HAVE_C=0; NEED_LOGIN=1
+HAVE_A=0; HAVE_B=0; HAVE_C=0; HAVE_D=0; NEED_LOGIN=1
 if [ -n "${SMOKE_TOKEN_A:-}" ] && [ -n "${SMOKE_TOKEN_B:-}" ]; then
     NEED_LOGIN=0
     JAR_TOKEN["$JAR_A"]="$SMOKE_TOKEN_A"
@@ -225,14 +231,15 @@ else
     NEED_LOGIN=0  # gate_account logs in as it goes
     USER_A="${SMOKE_USER_A:-smoke_gate_a}"
     USER_B="${SMOKE_USER_B:-smoke_gate_b}"
-    USER_C="smoke_${RUN}_c"
+    USER_C="${SMOKE_USER_C:-smoke_gate_c}"
     gate_account A "$USER_A" "$JAR_A" && HAVE_A=1
     gate_account B "$USER_B" "$JAR_B" && HAVE_B=1
-    if ephemeral_account C "$USER_C"; then
-        login C "$USER_C" "$JAR_C" && HAVE_C=1
-    else
-        skip "login C" "no third account (per-IP registration budget spent)"
-    fi
+    gate_account C "$USER_C" "$JAR_C" && HAVE_C=1
+    # Deletion coverage, with a throwaway rather than C: deleting the gate's own
+    # stranger would undo the pin that keeps the checks above running on a host
+    # with no registration budget left.
+    USER_D="smoke_${RUN}_d"
+    ephemeral_account D "$USER_D" && HAVE_D=1
 fi
 if [ "$NEED_LOGIN" = 1 ]; then
     login A "$USER_A" "$JAR_A"
@@ -248,7 +255,7 @@ if [ "$HAVE_A" != 1 ] || [ "$HAVE_B" != 1 ]; then
     printf 'Registration is limited per client IP, so this host cannot create them:\n'
     printf 'seed the pair once on the deployment with\n'
     printf '  ci-tooling/seed-smoke-accounts.sh\n'
-    printf 'or pass SMOKE_USER_A/B (+SMOKE_PASSWORD) / SMOKE_TOKEN_A/B.\n'
+    printf 'or pass SMOKE_USER_A/B/C (+SMOKE_PASSWORD) / SMOKE_TOKEN_A/B/C.\n'
     exit 1
 fi
 
@@ -392,10 +399,12 @@ else
     req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"
     req POST /auth/logout "$JAR_B"; expect "B logs out" "200,204"
     req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
-    if [ "$HAVE_C" = 1 ]; then
-        req DELETE /users/@me "$JAR_C" "{\"password\":\"$PASSWORD\"}"
-        expect "C deletes their account" "200,202,204"
-        req GET /users/@me "$JAR_C"; expect "C's session is dead" "401,403"
+    if [ "$HAVE_D" = 1 ]; then
+        req DELETE /users/@me "$JAR_D" "{\"password\":\"$PASSWORD\"}"
+        expect "the throwaway account deletes itself" "200,202,204"
+        req GET /users/@me "$JAR_D"; expect "its session is dead" "401,403"
+    else
+        skip "delete a throwaway account" "per-IP registration budget spent"
     fi
 fi
 
