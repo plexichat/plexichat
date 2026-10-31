@@ -84,7 +84,14 @@ req() {
     # used it failed too -- a dozen FAILs from one dropped POST. Back off
     # further so a blip cannot fail the gate, and keep curl's own message in
     # the trace so a real outage stays distinguishable from a retried blip.
-    local err out
+    #
+    # The edge's own 502/503/504 belongs in the same bucket: the proxy answers
+    # while the backend container behind it is still starting (a deploy landed
+    # moments before the gate ran), which is a warm-up, not a broken route --
+    # the run that replayed this against a restarting backend failed only
+    # `GET /version` and passed the other 49 checks. A status the app itself
+    # returns is never retried, and six exhausted attempts still fail the gate.
+    local err out why
     for attempt in 1 2 3 4 5 6; do
         step
         # curl's http_code goes to stdout and its diagnostics to stderr; both
@@ -92,11 +99,14 @@ req() {
         # a stale 000 behind.
         out="$(curl "${args[@]}" 2>"$TMP/curl.err")" || true
         STATUS="${out:-000}"
-        [ "$STATUS" != "000" ] && break
-        err="$(cat "$TMP/curl.err" 2>/dev/null)"
+        why=""
+        case "$STATUS" in
+            000) why="request did not complete: $(cat "$TMP/curl.err" 2>/dev/null)"; why="${why%: }"; why="${why:-request did not complete: no response}" ;;
+            502|503|504) why="upstream ${STATUS} (edge answered, backend not serving yet)" ;;
+            *) break ;;
+        esac
         [ "$attempt" -lt 6 ] || break
-        printf '        (request did not complete: %s; retry %s/5)\n' \
-            "${err:-no response}" "$attempt"
+        printf '        (%s; retry %s/5)\n' "$why" "$attempt"
         sleep "$((attempt * attempt))"
     done
     BODY="$(cat "$TMP/body.json" 2>/dev/null || true)"
