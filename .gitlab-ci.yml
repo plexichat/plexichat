@@ -294,7 +294,7 @@ security:sast:
 security:dependency_scanning:
   extends: .python_base
   stage: security
-  # Pipeline 2304 (a.1.0-178) failed this job on `Temporary failure in name
+  # Pipeline 2304 (a.1.0-177) failed this job on `Temporary failure in name
   # resolution` while fetching osv-scanner from GitHub. That is resolver
   # flakiness, not a finding -- and because this stage precedes `test` and
   # `docker`, the single red job skipped every test and the image build, so no

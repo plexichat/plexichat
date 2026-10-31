@@ -76,7 +76,7 @@ TOOLS = {
 
 # A release download is the one step here that depends on something outside
 # this repository, and it is fetched from a public CDN on every run. Pipeline
-# 2304 (a.1.0-178) redded on `Temporary failure in name resolution` inside
+# 2304 (a.1.0-177) redded on `Temporary failure in name resolution` inside
 # urlopen -- a resolver blip, not a finding -- and because the job sits in the
 # `security` stage, every later stage (all of the tests, then docker) was
 # skipped and no image was ever built. Retrying the fetch keeps a transient DNS
