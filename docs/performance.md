@@ -111,13 +111,20 @@ media:
 database:
   type: "sqlite"              # Use SQLite for small deployments, PostgreSQL for large
   connection_pool:
-    min_connections: 2
-    max_connections: 20
+    min_connections: 5
+    max_connections: 100
     connect_timeout: 10
-  monitoring:
-    slow_query_threshold_ms: 1000
-    alert_on_slow_queries: true
 ```
+
+Slow-query alerting lives under `monitoring`, not `database`. The only slow-query setting is a threshold on total query time:
+
+```yaml
+monitoring:
+  alert_thresholds:
+    query_time_ms: 5000
+```
+
+There is no `database.monitoring` block and no `slow_query_threshold_ms` key; setting one has no effect.
 
 ### SQLite
 
