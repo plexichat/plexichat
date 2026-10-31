@@ -75,6 +75,38 @@ def test_a_pinned_release_is_installed_executable(scanners, tmp_path, monkeypatc
     assert os.access(installed, os.X_OK)
 
 
+def test_a_transient_transport_failure_is_retried(scanners, tmp_path, monkeypatch):
+    """A resolver blip must not be reported as a dependency finding.
+
+    Pipeline 2304 failed the whole release on
+    ``[Errno -3] Temporary failure in name resolution`` while fetching the
+    pinned scanner; the download now retries and only a failure that survives
+    every attempt reaches the job.
+    """
+    payload = b"#!/bin/sh\necho scanner\n"
+    uri = _write(tmp_path / "osv-scanner_linux_amd64", payload)
+    monkeypatch.setitem(scanners.TOOLS["osv-scanner"], "sha256", _digest(payload))
+    monkeypatch.setattr(scanners.time, "sleep", lambda _seconds: None)
+
+    real_urlopen = scanners.urllib.request.urlopen
+    calls = {"count": 0}
+
+    def flaky(url, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise scanners.urllib.error.URLError(
+                "[Errno -3] Temporary failure in name resolution"
+            )
+        return real_urlopen(url, *args, **kwargs)
+
+    monkeypatch.setattr(scanners.urllib.request, "urlopen", flaky)
+
+    installed = scanners.install_tool("osv-scanner", str(tmp_path / "bin"), url=uri)
+
+    assert calls["count"] == 3, "two failures then a success should install"
+    assert Path(installed).read_bytes() == payload
+
+
 def test_a_digest_mismatch_installs_nothing(scanners, tmp_path):
     """The bytes that arrive are not the bytes that were asked for."""
     uri = _write(tmp_path / "osv-scanner_linux_amd64", b"not what was pinned")

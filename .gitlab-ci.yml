@@ -294,6 +294,20 @@ security:sast:
 security:dependency_scanning:
   extends: .python_base
   stage: security
+  # Pipeline 2304 (a.1.0-177) failed this job on `Temporary failure in name
+  # resolution` while fetching osv-scanner from GitHub. That is resolver
+  # flakiness, not a finding -- and because this stage precedes `test` and
+  # `docker`, the single red job skipped every test and the image build, so no
+  # release could be cut. The fetch retries inside install_scanners.py; this
+  # retries the job itself for failures that happen outside it (a dropped
+  # runner, a network cut mid-scan). A real advisory still fails on the first
+  # attempt, since a finding is not a transient error.
+  retry:
+    max: 2
+    when:
+      - script_failure
+      - runner_system_failure
+      - stuck_or_timeout_failure
   script:
     - pip-audit -r requirements.txt --format json > pip-audit-report.json
     - pip-audit -r requirements.txt

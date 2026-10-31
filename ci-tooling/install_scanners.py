@@ -39,6 +39,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -70,6 +72,18 @@ TOOLS = {
         "member": "trivy",
     },
 }
+
+
+# A release download is the one step here that depends on something outside
+# this repository, and it is fetched from a public CDN on every run. Pipeline
+# 2304 (a.1.0-177) redded on `Temporary failure in name resolution` inside
+# urlopen -- a resolver blip, not a finding -- and because the job sits in the
+# `security` stage, every later stage (all of the tests, then docker) was
+# skipped and no image was ever built. Retrying the fetch keeps a transient DNS
+# or TLS failure from being reported as a dependency problem; the digest is
+# still verified on whatever actually arrives.
+DOWNLOAD_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5.0
 
 
 class InstallError(RuntimeError):
@@ -111,12 +125,47 @@ def _check_scheme(url: str) -> None:
 
 
 def _download(url: str, dest: str) -> None:
-    """Fetch ``url`` to ``dest``, failing on a non-2xx response."""
+    """Fetch ``url`` to ``dest``, retrying transient network failures.
+
+    Only transport-level errors are retried (DNS, refused connections, TLS
+    handshakes, timeouts). An HTTP error response is not retried: a 404 for the
+    pinned asset will not fix itself, and retrying it three times only delays
+    the report.
+
+    Raises:
+        urllib.error.URLError: the last transport failure, once retries are
+            exhausted.
+    """
     _check_scheme(url)
-    # The scheme was checked above; nosec B310 is the generic warning about
-    # urlopen being handed an unvalidated URL.
-    with urllib.request.urlopen(url, timeout=120) as response, open(dest, "wb") as out:  # nosec: B310
-        shutil.copyfileobj(response, out)
+    last: urllib.error.URLError | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            # The scheme was checked above; nosec B310 is the generic warning
+            # about urlopen being handed an unvalidated URL.
+            with (
+                urllib.request.urlopen(url, timeout=120) as response,
+                open(dest, "wb") as out,
+            ):  # nosec: B310
+                shutil.copyfileobj(response, out)
+            return
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last = (
+                exc
+                if isinstance(exc, urllib.error.URLError)
+                else urllib.error.URLError(exc)
+            )
+            if attempt == DOWNLOAD_ATTEMPTS:
+                break
+            print(
+                f"download attempt {attempt}/{DOWNLOAD_ATTEMPTS} failed ({exc}); "
+                f"retrying in {RETRY_DELAY_SECONDS:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(RETRY_DELAY_SECONDS)
+    assert last is not None
+    raise last
 
 
 def tool_url(tool: str) -> str:
