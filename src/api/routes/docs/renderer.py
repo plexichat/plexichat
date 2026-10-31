@@ -280,11 +280,23 @@ def resolve_doc_link(
         return f"#{anchor}" if anchor else None
 
     # Relative prefixes from a repository path, and the .md the file carries.
-    while path.startswith("./") or path.startswith("../") or path.startswith("/"):
-        path = path[2:] if path.startswith(("./", "../")) else path[1:]
+    # ``..`` walks out of the page's directory before the path is resolved: a
+    # link to "../disaster-recovery.md" from docs/deployment/docker/ means
+    # docs/deployment/disaster-recovery.md, not a sibling in docker/.
+    directory = [part for part in source_dir.strip("/").split("/") if part]
+    while path.startswith("./") or path.startswith("../"):
+        # "./../x" is a real form in these pages: normalise both, and only walk
+        # out of the directory on "..".
+        if path.startswith("../") and directory:
+            directory.pop()
+        path = path[3:] if path.startswith("../") else path[2:]
+    if path.startswith("/"):
+        path = path[1:]
+        directory = []
     if path.endswith(".md"):
         path = path[:-3]
     path = path.strip("/")
+    source_dir = "/".join(directory)
     if not path:
         return "/"
 
