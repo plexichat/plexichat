@@ -73,13 +73,11 @@ This guide helps you diagnose and fix common issues with the Plexichat admin pan
 **Try this:**
 
 1.  Check your assigned roles at `GET /api/v1/admin/admins/{id}/roles`.
-2.  Verify the required scope for the action. Check `src/core/admin/permissions.py` (`PERMISSION_SCOPES`) and do not use non-existent scopes such as those in the following table:
+2.  Verify the required scope for the action. Check `PERMISSION_SCOPES` in `src/core/admin/permissions.py`, and do not use a scope that does not exist there:
 
-    | Incorrect (does not exist) | Use instead |
-    |----------------------------|-------------|
-    | `users.force_password_change` | `users.force_username_change` or `admin.security.sessions` |
-    | `servers.ban` | `admin.moderation.bans` |
-    | `reports.resolve` | `reports.action` |
+    *   `users.force_password_change` does not exist. Use `users.force_username_change` or `admin.security.sessions`.
+    *   `servers.ban` does not exist. Use `admin.moderation.bans`.
+    *   `reports.resolve` does not exist. Use `reports.action`.
 
 3.  Verify that `admin_ui.rbac.enabled` is `true`.
 4.  Check whether the action requires approval (`admin.approvals`).

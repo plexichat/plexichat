@@ -82,7 +82,7 @@ If heartbeats stop being acknowledged, reconnect. Do not queue heartbeats faster
 If the connection drops and the close code is resumable (see [Close codes](close-codes.md)), you can resume.
 
 1.  Reconnect to the gateway and wait for `HELLO` (`op: 10`).
-2.  Send `RESUME` (`op: 6`):
+2.  Send `RESUME` (`op: 6`) with three required fields:
 
     ```json
     {
@@ -95,11 +95,9 @@ If the connection drops and the close code is resumable (see [Close codes](close
     }
     ```
 
-    | Field | Required | Description |
-    |-------|----------|-------------|
-    | `token` | Yes | The same token you used to identify. |
-    | `session_id` | Yes | The `session_id` from the `READY` payload. |
-    | `seq` | Yes | The last sequence number you received. Must be an integer `>= 0` and not a boolean. |
+    *   `token` — the same token you used to identify.
+    *   `session_id` — the `session_id` from the `READY` payload.
+    *   `seq` — the last sequence number you received, as an integer `>= 0` (not a boolean).
 
 3.  If resume succeeds, the server sends `DISPATCH` with `t: RESUMED` and replays missed events:
 
