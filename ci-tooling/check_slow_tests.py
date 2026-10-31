@@ -207,6 +207,23 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
         "real aiortc peer connection: 6.9-7.0s on the build box (2.25s setup, "
         "0.07s call, 4.6s teardown), 10.09s on the runner in #2213",
     ),
+    # The same cost again, on both halves of the media plane: the assertion is
+    # 0.2s, but the ICE/DTLS handshake and a real RTP frame (VP8-encoded for the
+    # video case) are not. Measured 5.18s/5.20s in pipeline #2314 against the 5s
+    # default while the box was shared, 0.20s of call and 1.2-1.3s of teardown
+    # on an idle build box -- so the ceiling is the media stack's, and it is the
+    # budget the two aiortc entries above already carry.
+    "src.tests.voice.test_sfu_aiortc_media::test_media_flows_from_client_to_the_aiortc_sfu": (
+        10.0,
+        "real aiortc client-to-SFU call: 0.20s of assertion and 1.18s of teardown "
+        "on the build box, 5.18s on the shared runner in #2314",
+    ),
+    "src.tests.voice.test_sfu_aiortc_degraded_media::test_a_degraded_peer_still_receives_video_over_rtp": (
+        10.0,
+        "real aiortc receiver plus VP8 video over RTP, before and after the "
+        "hint: 0.21s of assertion and 1.33s of teardown on the build box, 5.20s "
+        "on the shared runner in #2314",
+    ),
 }
 
 
