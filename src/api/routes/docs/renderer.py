@@ -5,6 +5,8 @@ This module handles all markdown rendering with proper syntax highlighting.
 """
 
 import re
+from typing import List, Optional
+
 from .config import DocsConfig
 from .dynamic import (
     get_api_rate_limits,
@@ -23,15 +25,9 @@ from .dynamic import (
 
 try:
     import mistune
-    from mistune.plugins import (
-        plugin_strikethrough,
-        plugin_footnotes,
-        plugin_table,
-        plugin_task_lists,
-    )
 
     MISTUNE_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercises the fallback renderer only
     MISTUNE_AVAILABLE = False
 
 
@@ -144,6 +140,11 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
         link_text = match.group(1)
         link_url = match.group(2)
 
+        if link_url.startswith((f"{conf.path}/", f"{conf.path}#")):
+            # Already resolved by _rewrite_doc_links, which runs first; adding
+            # the prefix again produced /docs/api/docs/api/... links.
+            return f'<a href="{link_url}">{link_text}</a>'
+
         if link_url.startswith(("http://", "https://", "#", "mailto:")):
             return f'<a href="{link_url}">{link_text}</a>'
 
@@ -237,6 +238,110 @@ def _demote_title_heading(text: str) -> str:
     return "\n".join(lines)
 
 
+LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
+
+def _known_doc_routes() -> set[str]:
+    """Paths the docs router actually serves, or empty when unavailable."""
+    try:
+        from .router import router as docs_router
+    except Exception:  # the renderer must stay usable without the router
+        return set()
+    return {
+        route.path
+        for route in getattr(docs_router, "routes", [])
+        if getattr(route, "path", "").startswith("/")
+    }
+
+
+def resolve_doc_link(
+    link_url: str, known_routes: Optional[set[str]] = None
+) -> Optional[str]:
+    """Map a repository-relative markdown link onto a served docs route.
+
+    The pages are written as markdown files in the repository, so they link to
+    each other as `[x](deployment/configuration/config-api.md)`. The served
+    routes are flat (`/config-api`), and the link was rendered verbatim: 19 of
+    the 53 sidebar links 404'd, and every "see also" in the prose with them.
+
+    Returns the path to link to (without the docs prefix), or None when no
+    served route matches -- plain text reads better than a dead link.
+    """
+    if not link_url:
+        return None
+    if link_url.startswith(("http://", "https://", "mailto:", "tel:", "#")):
+        return link_url
+
+    path, _, anchor = link_url.partition("#")
+    path = path.split("?", 1)[0].strip()
+    if not path:
+        return f"#{anchor}" if anchor else None
+
+    # Relative prefixes from a repository path, and the .md the file carries.
+    while path.startswith("./") or path.startswith("../") or path.startswith("/"):
+        path = path[2:] if path.startswith(("./", "../")) else path[1:]
+    if path.endswith(".md"):
+        path = path[:-3]
+    path = path.strip("/")
+    if not path:
+        return "/"
+
+    routes = _known_doc_routes() if known_routes is None else known_routes
+    segments = path.split("/")
+    candidates: List[str] = []
+    # The configuration pages are served flat, whatever directory they live in.
+    if path.startswith("deployment/configuration/"):
+        candidates.append("/" + segments[-1])
+    # A directory's own landing page is that directory's route.
+    if segments[-1] == "index":
+        directory = "/".join(segments[:-1])
+        candidates.append("/" + directory if directory else "/")
+    if path.startswith("api/"):
+        candidates.append("/reference/" + path[4:])
+    if path.startswith("websocket/"):
+        candidates.append("/websocket/" + path[10:])
+    candidates.append("/" + path)
+    candidates.append("/" + segments[-1])
+
+    for candidate in candidates:
+        if candidate in routes:
+            return candidate + (f"#{anchor}" if anchor else "")
+    return None
+
+
+def _rewrite_doc_links(text: str, conf: DocsConfig) -> str:
+    """Point every in-page link at a route the docs server serves.
+
+    Fenced code is left alone: `[x](y)` inside a snippet is example text, not
+    navigation. The *URL* is rewritten and the markdown link is kept --
+    injecting an anchor here would be escaped by mistune (it renders the page
+    as text, not trusted HTML), which is how the first attempt turned every
+    cross-reference into literal `&lt;a href=...` on the page.
+    """
+    lines = text.split("\n")
+    in_fence = False
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence or "](" not in line:
+            continue
+
+        def replace(match: "re.Match[str]") -> str:
+            label, url = match.group(1), match.group(2)
+            resolved = resolve_doc_link(url)
+            if resolved is None:
+                # Nothing serves this target: keep the words, drop the link.
+                return label
+            if resolved.startswith(("http://", "https://", "mailto:", "tel:", "#")):
+                return f"[{label}]({resolved})"
+            return f"[{label}]({conf.path}{resolved})"
+
+        lines[index] = LINK_RE.sub(replace, line)
+    return "\n".join(lines)
+
+
 def markdown_to_html(
     markdown_content: str, title: str, conf: DocsConfig, current_path: str = ""
 ) -> str:
@@ -244,19 +349,24 @@ def markdown_to_html(
     # Replace dynamic placeholders first (before rendering)
     markdown_content = _replace_dynamic_placeholders(markdown_content, conf)
     markdown_content = _demote_title_heading(markdown_content)
+    markdown_content = _rewrite_doc_links(markdown_content, conf)
 
     if MISTUNE_AVAILABLE:
         assert mistune is not None
-        # Use mistune with plugins for better rendering
-        renderer = mistune.HTMLRenderer()
-        markdown = mistune.Markdown(
-            renderer=renderer,
-            plugins=[
-                plugin_strikethrough,
-                plugin_footnotes,
-                plugin_table,
-                plugin_task_lists,
-            ],
+        # Plugins by documented *name*, not imported callables.
+        #
+        # This module used to `from mistune.plugins import
+        # plugin_strikethrough, ...`, which no longer exists in mistune 3.x.
+        # The ImportError was caught by the same handler as "mistune is not
+        # installed", so MISTUNE_AVAILABLE was False on every deployment that
+        # shipped mistune 3 -- and every page rendered through the crude
+        # fallback below (no thead/tbody, no language classes, escaped HTML)
+        # while looking like a styling problem. create_markdown accepts these
+        # string names and raises on an unknown one, so this cannot fail
+        # silently again.
+        markdown = mistune.create_markdown(
+            escape=False,  # pages embed generated HTML rows
+            plugins=["strikethrough", "footnotes", "table", "task_lists"],
         )
         html_content = markdown(markdown_content)
     else:
