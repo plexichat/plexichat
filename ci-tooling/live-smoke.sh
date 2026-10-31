@@ -238,8 +238,14 @@ else
     # Deletion coverage, with a throwaway rather than C: deleting the gate's own
     # stranger would undo the pin that keeps the checks above running on a host
     # with no registration budget left.
+    #
+    # The registration goes through the anon jar, so its auto-login lands there:
+    # D needs a session of its own before it can delete itself (the delete is
+    # authenticated), which is the same second step C used to take.
     USER_D="smoke_${RUN}_d"
-    ephemeral_account D "$USER_D" && HAVE_D=1
+    if ephemeral_account D "$USER_D"; then
+        login D "$USER_D" "$JAR_D" && HAVE_D=1
+    fi
 fi
 if [ "$NEED_LOGIN" = 1 ]; then
     login A "$USER_A" "$JAR_A"
