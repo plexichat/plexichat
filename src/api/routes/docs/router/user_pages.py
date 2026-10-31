@@ -6,6 +6,14 @@ from fastapi import Request
 
 
 class UserPagesMixin:
+    async def docs_end_user_acoustic_defense(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("end-user/acoustic-defense.md"),
+            "Acoustic Eavesdropping Defense",
+            "/end-user/acoustic-defense",
+        )
+
     async def docs_end_user_getting_started(self, request: Request):
         return await self._serve_page(
             request,

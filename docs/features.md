@@ -101,7 +101,7 @@ API: [Presence routes](api/presence.md)
 - STUN and TURN server configuration for NAT traversal.
 - Voice-channel lifecycle tied to channel occupancy (call starts when the first participant joins, ends when the last leaves).
 
-Configuration: [Voice configuration](deployment/configuration/config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: [Voice module](../src/core/voice/README.md)
+Configuration: [Voice configuration](deployment/configuration/config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: `src/core/voice/README.md`
 
 ### Notifications
 

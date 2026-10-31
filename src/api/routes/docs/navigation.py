@@ -45,6 +45,8 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Server Management", "/admin/server-management"),
             NavItem("Operations", "/admin/operations"),
             NavItem("Security", "/admin/security"),
+            NavItem("Data Export (DSAR)", "/admin/data-export"),
+            NavItem("Purge Residue Check", "/admin/purge-residue-check"),
             NavItem("Troubleshooting", "/admin/troubleshooting"),
         ],
         "Database": [

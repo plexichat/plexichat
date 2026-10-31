@@ -44,6 +44,7 @@ class DocsRouter(
         router.get("/deployment", include_in_schema=False)(self.docs_deployment)
         router.get("/configuration", include_in_schema=False)(self.docs_configuration)
         router.get("/features", include_in_schema=False)(self.docs_features)
+        router.get("/features/{page}", include_in_schema=False)(self.docs_features_page)
         router.get("/permissions", include_in_schema=False)(self.docs_permissions)
         router.get("/security", include_in_schema=False)(self.docs_security)
         router.get("/keyrings", include_in_schema=False)(self.docs_keyrings)
@@ -58,6 +59,7 @@ class DocsRouter(
         )
 
         router.get("/rate-limits", include_in_schema=False)(self.docs_rate_limits)
+        router.get("/oauth-scopes", include_in_schema=False)(self.docs_oauth_scopes)
         router.get("/errors", include_in_schema=False)(self.docs_errors)
 
         router.get("/security-logout", include_in_schema=False)(
@@ -87,6 +89,9 @@ class DocsRouter(
         router.get("/config-api", include_in_schema=False)(self.docs_config_api)
         router.get("/config-email", include_in_schema=False)(self.docs_config_email)
         router.get("/config-embeds", include_in_schema=False)(self.docs_config_embeds)
+        router.get("/config-static-client", include_in_schema=False)(
+            self.docs_config_static_client
+        )
 
         router.get("/end-user/getting-started", include_in_schema=False)(
             self.docs_end_user_getting_started
@@ -110,8 +115,23 @@ class DocsRouter(
         router.get("/deployment/versioning", include_in_schema=False)(
             self.docs_deployment_versioning
         )
+        router.get("/deployment/docker", include_in_schema=False)(
+            self.docs_deployment_docker
+        )
+        router.get("/deployment/docker/{page}", include_in_schema=False)(
+            self.docs_deployment_docker_page
+        )
+        router.get("/deployment/licensing", include_in_schema=False)(
+            self.docs_deployment_licensing
+        )
+        router.get("/deployment/disaster-recovery", include_in_schema=False)(
+            self.docs_deployment_disaster_recovery
+        )
 
         router.get("/migrations", include_in_schema=False)(self.docs_migrations)
+        router.get("/troubleshooting/client-troubleshooting", include_in_schema=False)(
+            self.docs_client_troubleshooting
+        )
         router.get("/migration-reference", include_in_schema=False)(
             self.docs_migration_reference
         )
@@ -155,6 +175,9 @@ class DocsRouter(
         router.get("/client-development/websocket", include_in_schema=False)(
             self.docs_client_websocket
         )
+        router.get("/client-development/oauth-integration", include_in_schema=False)(
+            self.docs_client_oauth_integration
+        )
 
         router.get("/end-user", include_in_schema=False)(self.docs_end_user_index)
         router.get("/end-user/passkeys", include_in_schema=False)(
@@ -168,6 +191,9 @@ class DocsRouter(
         )
         router.get("/end-user/two-factor-authentication", include_in_schema=False)(
             self.docs_end_user_2fa
+        )
+        router.get("/end-user/acoustic-defense", include_in_schema=False)(
+            self.docs_end_user_acoustic_defense
         )
 
         router.get("/reference/notifications", include_in_schema=False)(

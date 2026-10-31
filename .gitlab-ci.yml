@@ -357,6 +357,21 @@ pip-licenses:
     expire_in: 30 days
 
 # =========================================================
+# DOCS PORTAL LINK INTEGRITY
+# =========================================================
+
+# The renderer deliberately keeps the words and drops the link when a target has
+# no served route, so a broken cross-reference is invisible in the HTML: the
+# page still renders, it just stops being navigable. Two published admin guides
+# were linked from docs/admin/index.md and served by nobody. This fails the
+# pipeline on any in-repository docs link that resolves to no route.
+docs:links:
+  extends: .python_base
+  stage: test
+  script:
+    - python ci-tooling/check_docs_links.py
+
+# =========================================================
 # TEST STAGE (Unit/Integration + API Self-Test)
 # =========================================================
 

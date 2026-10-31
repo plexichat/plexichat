@@ -142,7 +142,7 @@ Include the following in your monthly report:
 
 ## Back up and restore
 
-The Docker Compose stack includes a `backup` service that uses restic and runs on a schedule (default: daily at 02:00). For full configuration options, see [`docker/README.md`](../../docker/README.md).
+The Docker Compose stack includes a `backup` service that uses restic and runs on a schedule (default: daily at 02:00). For full configuration options, see `docker/README.md`.
 
 ### Schedule and retention
 

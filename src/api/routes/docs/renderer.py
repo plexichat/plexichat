@@ -291,12 +291,42 @@ def resolve_doc_link(
     routes = _known_doc_routes() if known_routes is None else known_routes
     segments = path.split("/")
     candidates: List[str] = []
+    # The reference and gateway pages are served by one dynamic route each
+    # ("/reference/{page}"), so an exact set membership test rejects every
+    # cross-reference between them and the link is dropped to plain text.
+    templates = [
+        re.compile(
+            "".join(
+                "[^/]+" if part.startswith("{") else re.escape(part)
+                for part in re.split(r"(\{[^}]+\})", route)
+            )
+        )
+        for route in routes
+        if "{" in route
+    ]
+
+    def served(candidate: str) -> bool:
+        return candidate in routes or any(
+            template.fullmatch(candidate) for template in templates
+        )
+
     # A sibling link ("security.md" from docs/admin/index.md) is relative to
     # the page's own directory, which only the caller knows. Without this the
     # target had no served route and the link was dropped to plain text --
     # every cross-reference inside a directory lost its link silently.
-    if source_dir and "/" not in path:
-        candidates.append(f"/{source_dir.strip('/')}/{path}")
+    # Relative links are written from the page's own directory, whether they are
+    # bare siblings ("rbac.md") or carry a subdirectory ("docker/quick-start.md"
+    # from docs/deployment/), so resolve both against it.
+    if source_dir:
+        base = source_dir.strip("/")
+        if not path.startswith(base + "/"):
+            candidates.append(f"/{base}/{path}")
+        # Two directories are served under a different prefix than they live in:
+        # docs/api/*.md is the API reference ("/reference/<page>") and
+        # docs/websocket/*.md is the gateway guide ("/websocket/<page>").
+        served_prefix = {"api": "/reference", "websocket": "/websocket"}.get(base)
+        if served_prefix and not path.startswith(("api/", "websocket/")):
+            candidates.insert(0, f"{served_prefix}/{path}")
     # The configuration pages are served flat, whatever directory they live in.
     if path.startswith("deployment/configuration/"):
         candidates.append("/" + segments[-1])
@@ -312,7 +342,7 @@ def resolve_doc_link(
     candidates.append("/" + segments[-1])
 
     for candidate in candidates:
-        if candidate in routes:
+        if served(candidate):
             return candidate + (f"#{anchor}" if anchor else "")
     return None
 
@@ -338,13 +368,19 @@ def _rewrite_doc_links(text: str, conf: DocsConfig, source_dir: str = "") -> str
 
         def replace(match: "re.Match[str]") -> str:
             label, url = match.group(1), match.group(2)
-            resolved = resolve_doc_link(url, None, source_dir)
+            # A link that already names its full served path ("/docs/api/...")
+            # must not be re-resolved as a repository path and re-prefixed.
+            prefix = conf.path.rstrip("/")
+            target = url
+            if prefix and url.startswith(prefix + "/"):
+                target = url[len(prefix) + 1 :]
+            resolved = resolve_doc_link(target, None, source_dir)
             if resolved is None:
                 # Nothing serves this target: keep the words, drop the link.
                 return label
             if resolved.startswith(("http://", "https://", "mailto:", "tel:", "#")):
                 return f"[{label}]({resolved})"
-            return f"[{label}]({conf.path}{resolved})"
+            return f"[{label}]({conf.path}{resolved.lstrip('/') if not resolved.startswith('/') else resolved})"
 
         lines[index] = LINK_RE.sub(replace, line)
     return "\n".join(lines)
