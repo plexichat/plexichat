@@ -116,7 +116,7 @@ database:
     sslmode: prefer
 ```
 
-Alternatively, keep using environment variable interpolation as in `plexichat/src/config_defaults.py:73`:
+Alternatively, keep using environment variable interpolation as in `src/config_defaults.py:73`:
 
 ```yaml
 database:
@@ -152,7 +152,7 @@ The `migrate_to_postgres` command performs these steps:
 4. **Sequence correction** — Resets PostgreSQL `SERIAL` sequences so new IDs don't collide.
 5. **Search initialization** — Creates PostgreSQL full-text search triggers and GIN indexes.
 
-For implementation details, see `plexichat/src/core/migrations/cli.py:376` and `plexichat/src/core/migrations/cloner.py`.
+For implementation details, see `src/core/migrations/cli.py:376` and `src/core/migrations/cloner.py`.
 
 ## Troubleshooting
 

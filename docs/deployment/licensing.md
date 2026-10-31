@@ -91,6 +91,6 @@ Contact `sales@plexichat.com` or visit `https://plexichat.com`.
 
 ## Related code
 
-- `plexichat/src/utils/common_utils/utils/licensing/__init__.py:135` — `setup()`, load priority, and public key.
-- `plexichat/src/utils/common_utils/utils/licensing/core.py` — `LicenseManager` verification and feature gating.
-- `plexichat/src/api/routes/admin/licensing.py:21` — Admin endpoints under `/license`.
+- `src/utils/common_utils/utils/licensing/__init__.py:135` — `setup()`, load priority, and public key.
+- `src/utils/common_utils/utils/licensing/core.py` — `LicenseManager` verification and feature gating.
+- `src/api/routes/admin/licensing.py:21` — Admin endpoints under `/license`.

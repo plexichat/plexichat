@@ -220,7 +220,7 @@ When you scale to more than one replica, comment out the `ports` section on `bac
 Monitor worker health:
 
 - **Admin Panel > Dashboard** - Shows the **Cross-Worker Event Dispatch** card with listener status (`connected`, `reconnecting`, `disconnected`), backoff, and poll count.
-- `GET /api/v1/health` - Returns `cross_worker_listener` with the same fields plus `enabled` (`plexichat/src/api/routes/health.py:46`).
+- `GET /api/v1/health` - Returns `cross_worker_listener` with the same fields plus `enabled` (`src/api/routes/health.py:46`).
 - `GET /api/v1/admin/dashboard` - Includes `worker_health`.
 
 ### Single-host deployment (recommended for Proxmox)

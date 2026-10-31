@@ -12,7 +12,7 @@ Every ID in Plexichat is a Snowflake: a 64-bit integer serialized as a string in
 
 ### Layout
 
-Plexichat uses a Twitter-style Snowflake. The format is defined in `plexichat/src/utils/encryption/core/snowflake.py`.
+Plexichat uses a Twitter-style Snowflake. The format is defined in `src/utils/encryption/core/snowflake.py`.
 
 ```
  63  62                  22 21     17 16     12 11          0

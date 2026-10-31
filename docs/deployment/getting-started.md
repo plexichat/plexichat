@@ -256,7 +256,7 @@ backend:
     start_period: 10s
 ```
 
-Use `/api/v1/ready` for readiness (returns `{"status":"ready"}` at `plexichat/src/api/routes/health.py:17`) and `/api/v1/health` for deep health including `cross_worker_listener` status.
+Use `/api/v1/ready` for readiness (returns `{"status":"ready"}` at `src/api/routes/health.py:17`) and `/api/v1/health` for deep health including `cross_worker_listener` status.
 
 ---
 

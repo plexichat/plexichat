@@ -42,14 +42,16 @@ If you need the live route list, inspect `src/api/app.py:515`, which mounts ever
 
 ## Configuration discovery
 
-Plexichat loads config in this order:
+Plexichat resolves the config file path in this order (`setup_config` in `src/server/config_loader.py`):
 
-1. `config/config.yaml` in the checkout
-2. `~/.plexichat/config/config.yaml`
-3. File pointed to by `PLEXICHAT_CONFIG` (see `docker-compose.yml:167`)
-4. Environment variable overrides (for example `POSTGRES_PASSWORD`, `VALKEY_PASSWORD`, `PLEXICHAT_SYSTEM_KEY`)
+1. `--config PATH` on the command line
+2. `PLEXICHAT_CONFIG` environment variable
+3. `~/.plexichat/config/config.yaml`
+4. `config/config.yaml` in the checkout
 
-Values from later sources override earlier ones.
+The first two are explicit and take precedence over the auto-detection search. If neither auto-detected file exists, the home-directory path is used as the default (and written there). Home is searched before the checkout, so a stale home file overrides the one in the repository.
+
+Environment variable overrides (for example `POSTGRES_PASSWORD`, `VALKEY_PASSWORD`, `PLEXICHAT_SYSTEM_KEY`) are applied after the file loads, so they win over both the file and the built-in defaults.
 
 ## Documentation rules
 

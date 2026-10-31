@@ -44,7 +44,7 @@ Returns basic API metadata. Mounted at the app root (`src/api/app.py`), not unde
 }
 ```
 
-`api_docs` is present only when docs are enabled (`docs.enabled` in `plexichat/src/config_defaults.py:754`).
+`api_docs` is present only when docs are enabled (`docs.enabled` in `src/config_defaults.py:754`).
 
 ## Health checks
 
@@ -54,7 +54,7 @@ Returns basic API metadata. Mounted at the app root (`src/api/app.py`), not unde
 GET /api/v1/health
 ```
 
-Checks API health and returns advisory diagnostics. This endpoint never takes down the health check if optional subsystems fail — each metric is wrapped in `try/except` and logged at `DEBUG` (`plexichat/src/api/routes/health.py:46`).
+Checks API health and returns advisory diagnostics. This endpoint never takes down the health check if optional subsystems fail — each metric is wrapped in `try/except` and logged at `DEBUG` (`src/api/routes/health.py:46`).
 
 **Response** `200 OK` (`HealthResponse`)
 
@@ -91,7 +91,7 @@ If the endpoint itself fails, it returns `500 Internal server error`.
 GET /api/v1/ready
 ```
 
-Minimal probe for load balancers and container orchestrators. It returns as soon as the HTTP server is bound and doesn't check the database or Valkey (`plexichat/src/api/routes/health.py:18`).
+Minimal probe for load balancers and container orchestrators. It returns as soon as the HTTP server is bound and doesn't check the database or Valkey (`src/api/routes/health.py:18`).
 
 **Response** `200 OK`
 
@@ -111,7 +111,7 @@ Use `/ready` for routing decisions and `/health` for diagnostics.
 GET /api/v1/version
 ```
 
-Returns the current version and the minimum supported client version. Cached for one hour (`@cached(ttl=3600)` in `plexichat/src/api/routes/version.py:67`).
+Returns the current version and the minimum supported client version. Cached for one hour (`@cached(ttl=3600)` in `src/api/routes/version.py:67`).
 
 **Response** `200 OK` (`ServerVersionResponse`)
 
@@ -155,7 +155,7 @@ Check whether a client version is compatible with the server.
 |-------|------|----------|-------------|
 | `client_version` | string | Yes | Client version string. Must parse with `utils.version.parse`. |
 
-**Compatibility logic** (`plexichat/src/api/routes/version.py:104`):
+**Compatibility logic** (`src/api/routes/version.py:104`):
 
 1. If the version doesn't parse, the server returns `400 INVALID_VERSION_FORMAT`.
 2. If the version is older than `min_supported`, the server returns `426 VERSION_OUTDATED` with `update_required: true`.
@@ -191,7 +191,7 @@ Check whether a client version is compatible with the server.
 GET /api/v1/status
 ```
 
-Returns operational state, version, uptime, and any maintenance announcement. Cached for 10 seconds (`plexichat/src/api/routes/version.py:231`).
+Returns operational state, version, uptime, and any maintenance announcement. Cached for 10 seconds (`src/api/routes/version.py:231`).
 
 **Response** `200 OK` (`ServerStatusResponse`)
 
@@ -225,8 +225,8 @@ GET /api/v1/capabilities/artifacts
 
 Returns per-feature availability for artifacts. Use this instead of hardcoding feature flags.
 
-- **Auth**: Requires `Authorization: Bearer <token>` (`get_current_user` in `plexichat/src/api/routes/capabilities.py:32`).
-- **Prefix**: `/capabilities/artifacts` (`plexichat/src/api/routes/__init__.py:62` — the sub-router is mounted without an extra `/api/v1` prefix duplication; the full path is `/api/v1/capabilities/artifacts`).
+- **Auth**: Requires `Authorization: Bearer <token>` (`get_current_user` in `src/api/routes/capabilities.py:32`).
+- **Prefix**: `/capabilities/artifacts` (`src/api/routes/__init__.py:62` — the sub-router is mounted without an extra `/api/v1` prefix duplication; the full path is `/api/v1/capabilities/artifacts`).
 
 **Response** `200 OK` — map of feature to capability object:
 
@@ -238,7 +238,7 @@ Returns per-feature availability for artifacts. Use this instead of hardcoding f
 }
 ```
 
-The server builds this from `get_artifact_capabilities()` and `capability_to_dict` in `plexichat/src/core/artifacts/capabilities.py:15`.
+The server builds this from `get_artifact_capabilities()` and `capability_to_dict` in `src/core/artifacts/capabilities.py:15`.
 
 **Errors**:
 
@@ -259,7 +259,7 @@ GET /api/v1/help/security-logout
 
 Explains forced-logout reasons (admin invalidation, session reset, policy change).
 
-- **Response**: `200 OK` with `text/html`. Rendered from `_get_help_style` in `plexichat/src/api/routes/help.py:61`.
+- **Response**: `200 OK` with `text/html`. Rendered from `_get_help_style` in `src/api/routes/help.py:61`.
 
 ### Access blocked help
 
@@ -277,7 +277,7 @@ Explains IP blocks (terms violations, abuse detection, manual block).
 GET /robots.txt
 ```
 
-Serves `static/robots.txt` from the working directory. Mounted at the app root without the `/api/v1` prefix and excluded from the OpenAPI schema (`plexichat/src/api/routes/help.py:12`).
+Serves `static/robots.txt` from the working directory. Mounted at the app root without the `/api/v1` prefix and excluded from the OpenAPI schema (`src/api/routes/help.py:12`).
 
 ## QR code generation
 
@@ -286,7 +286,7 @@ GET /api/v1/qr
 GET /qr
 ```
 
-Generates a QR code image locally (no external service). Both paths are valid — the router is mounted at `/qr` in `plexichat/src/api/routes/__init__.py:103` and `/api/v1/qr` via the `api_prefix`.
+Generates a QR code image locally (no external service). Both paths are valid — the router is mounted at `/qr` in `src/api/routes/__init__.py:103` and `/api/v1/qr` via the `api_prefix`.
 
 ### Query parameters
 

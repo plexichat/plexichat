@@ -129,7 +129,7 @@ Check the deep health endpoint:
 curl http://localhost:8000/api/v1/health
 ```
 
-Expected fields include `status`, `version`, and `cross_worker_listener` (`plexichat/src/api/routes/health.py:46`).
+Expected fields include `status`, `version`, and `cross_worker_listener` (`src/api/routes/health.py:46`).
 
 ## Step 6: Run the self-test
 

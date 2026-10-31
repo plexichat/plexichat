@@ -59,7 +59,7 @@ flowchart TB
 
 1. **Backend server (`plexichat`)** — Python 3.11+ and FastAPI app that serves the REST API and WebSocket gateway.
 2. **Client (`plexichat-client`)** — Vite web app served by Nginx.
-3. **Shared utilities (`common_utils`)** — Internal Python helpers at `plexichat/src/utils/common_utils/` used only by the server. The web client lives in a separate repository and does not share this package.
+3. **Shared utilities (`common_utils`)** — Internal Python helpers at `src/utils/common_utils/` used only by the server. The web client lives in a separate repository and does not share this package.
 4. **Database** — PostgreSQL 18 (recommended) or SQLite (development only).
 5. **Cache** — Valkey 9.1.1 (recommended for production).
 6. **Storage** — Local filesystem or S3-compatible storage (RustFS `1.0.0-rc.3` in Docker, AWS S3 in production) for media attachments.
