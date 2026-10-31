@@ -140,6 +140,14 @@ class DocsRouter(
             self.docs_admin_user_management
         )
         router.get("/admin/security", include_in_schema=False)(self.docs_admin_security)
+        # Both pages are linked from docs/admin/index.md; without a route the
+        # renderer has no target and silently demotes those links to plain text.
+        router.get("/admin/data-export", include_in_schema=False)(
+            self.docs_admin_data_export
+        )
+        router.get("/admin/purge-residue-check", include_in_schema=False)(
+            self.docs_admin_purge_residue_check
+        )
 
         router.get("/client-development", include_in_schema=False)(
             self.docs_client_development

@@ -255,7 +255,9 @@ def _known_doc_routes() -> set[str]:
 
 
 def resolve_doc_link(
-    link_url: str, known_routes: Optional[set[str]] = None
+    link_url: str,
+    known_routes: Optional[set[str]] = None,
+    source_dir: str = "",
 ) -> Optional[str]:
     """Map a repository-relative markdown link onto a served docs route.
 
@@ -289,6 +291,12 @@ def resolve_doc_link(
     routes = _known_doc_routes() if known_routes is None else known_routes
     segments = path.split("/")
     candidates: List[str] = []
+    # A sibling link ("security.md" from docs/admin/index.md) is relative to
+    # the page's own directory, which only the caller knows. Without this the
+    # target had no served route and the link was dropped to plain text --
+    # every cross-reference inside a directory lost its link silently.
+    if source_dir and "/" not in path:
+        candidates.append(f"/{source_dir.strip('/')}/{path}")
     # The configuration pages are served flat, whatever directory they live in.
     if path.startswith("deployment/configuration/"):
         candidates.append("/" + segments[-1])
@@ -309,7 +317,7 @@ def resolve_doc_link(
     return None
 
 
-def _rewrite_doc_links(text: str, conf: DocsConfig) -> str:
+def _rewrite_doc_links(text: str, conf: DocsConfig, source_dir: str = "") -> str:
     """Point every in-page link at a route the docs server serves.
 
     Fenced code is left alone: `[x](y)` inside a snippet is example text, not
@@ -330,7 +338,7 @@ def _rewrite_doc_links(text: str, conf: DocsConfig) -> str:
 
         def replace(match: "re.Match[str]") -> str:
             label, url = match.group(1), match.group(2)
-            resolved = resolve_doc_link(url)
+            resolved = resolve_doc_link(url, None, source_dir)
             if resolved is None:
                 # Nothing serves this target: keep the words, drop the link.
                 return label
@@ -343,13 +351,17 @@ def _rewrite_doc_links(text: str, conf: DocsConfig) -> str:
 
 
 def markdown_to_html(
-    markdown_content: str, title: str, conf: DocsConfig, current_path: str = ""
+    markdown_content: str,
+    title: str,
+    conf: DocsConfig,
+    current_path: str = "",
+    source_dir: str = "",
 ) -> str:
     """Convert markdown to HTML with modern styling using mistune."""
     # Replace dynamic placeholders first (before rendering)
     markdown_content = _replace_dynamic_placeholders(markdown_content, conf)
     markdown_content = _demote_title_heading(markdown_content)
-    markdown_content = _rewrite_doc_links(markdown_content, conf)
+    markdown_content = _rewrite_doc_links(markdown_content, conf, source_dir)
 
     if MISTUNE_AVAILABLE:
         assert mistune is not None

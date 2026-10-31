@@ -55,8 +55,17 @@ class ServingMixin:
         if not content:
             raise HTTPException(404, detail="Page not found")
 
+        # Sibling cross-references in the markdown ("security.md") are relative
+        # to this file's directory, so the renderer needs it to resolve them.
+        try:
+            source_dir = file_path.parent.relative_to(self.DOCS_ROOT).as_posix()
+        except ValueError:
+            source_dir = ""
+        if source_dir == ".":
+            source_dir = ""
+
         html_content = markdown_to_html(
-            content, f"{title} - {conf.title}", conf, current_path
+            content, f"{title} - {conf.title}", conf, current_path, source_dir
         )
         sidebar_html = build_sidebar_html(conf, current_path)
         footer_html = build_footer_html(conf)

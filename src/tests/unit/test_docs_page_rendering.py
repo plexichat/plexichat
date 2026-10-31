@@ -110,3 +110,43 @@ def test_link_rewrite_leaves_code_fences_alone():
     assert 'href="/docs/api/config-api"' in html
     # The example link inside the fence is not navigation.
     assert 'href="/docs/api/missing' not in html
+
+
+def test_sibling_links_resolve_with_the_page_directory():
+    """274 links in docs/ are written as siblings ("rbac.md").
+
+    Without the page's own directory the target had no served route and the
+    renderer dropped the link, keeping the words -- so cross-references inside
+    a directory silently stopped being links at all.
+    """
+    routes = {"/admin/rbac", "/admin/data-export"}
+
+    assert resolve_doc_link("rbac.md", routes, "admin") == "/admin/rbac"
+    assert resolve_doc_link("data-export.md", routes, "admin") == "/admin/data-export"
+    # An explicit path still wins over the directory guess.
+    assert resolve_doc_link("admin/rbac.md", routes, "admin") == "/admin/rbac"
+    # And without that context there is nothing honest to link to.
+    assert resolve_doc_link("rbac.md", routes) is None
+
+
+def test_admin_index_guide_links_resolve_to_served_routes():
+    """docs/admin/index.md links two guides that had no route at all.
+
+    With no matching route the renderer deliberately drops the link and keeps
+    the words, so both table entries silently lost their link on the live site.
+    """
+    from pathlib import Path
+
+    from src.api.routes.docs.renderer import _known_doc_routes
+
+    routes = _known_doc_routes()
+    assert "/admin/data-export" in routes
+    assert "/admin/purge-residue-check" in routes
+
+    docs_root = Path(__file__).resolve().parents[3] / "docs"
+    index = (docs_root / "admin" / "index.md").read_text(encoding="utf-8")
+    # serving.py passes the page's directory so sibling links resolve.
+    html = markdown_to_html(index, "Admin", DocsConfig(), "/admin", "admin")
+
+    assert 'href="/docs/api/admin/data-export"' in html
+    assert 'href="/docs/api/admin/purge-residue-check"' in html
