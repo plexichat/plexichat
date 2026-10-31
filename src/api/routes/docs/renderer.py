@@ -208,12 +208,42 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
     return re.sub(link_pattern, replace_link, text)
 
 
+def _demote_title_heading(text: str) -> str:
+    """Turn the document's own `# Title` into `## Title`, outside code fences.
+
+    Every page opens with an `# ...` heading, and the page shell already emits
+    the page title as the single <h1>. Rendering both put two <h1> elements on
+    every docs page, which flattens the document outline that screen readers
+    and "jump to heading" lists depend on.
+
+    Only the first top-level heading is demoted -- later `#` lines are real
+    sections of a split document -- and fence state is tracked, so a `#`
+    comment inside a shell snippet stays exactly as written. Replacing on the
+    raw markdown (rather than patching the HTML) keeps this true for both the
+    mistune path and the fallback renderer.
+    """
+    lines = text.split("\n")
+    in_fence = False
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if stripped.startswith("# "):
+            lines[index] = line.replace("# ", "## ", 1)
+            break
+    return "\n".join(lines)
+
+
 def markdown_to_html(
     markdown_content: str, title: str, conf: DocsConfig, current_path: str = ""
 ) -> str:
     """Convert markdown to HTML with modern styling using mistune."""
     # Replace dynamic placeholders first (before rendering)
     markdown_content = _replace_dynamic_placeholders(markdown_content, conf)
+    markdown_content = _demote_title_heading(markdown_content)
 
     if MISTUNE_AVAILABLE:
         assert mistune is not None

@@ -13,7 +13,7 @@ import utils.logger as logger
 import utils.config as config
 import utils.version as version
 
-VERSION = "a.1.0-170"
+VERSION = "a.1.0-171"
 
 
 class PlexichatServer:
@@ -191,12 +191,28 @@ class PlexichatServer:
         plexi_level = config.get("logging", {}).get("level", "info").lower()
         uvi_level = plexi_level if plexi_level not in ("debug", "trace") else "info"
 
+        # Honour X-Forwarded-Proto / X-Forwarded-For from the reverse proxy.
+        #
+        # Without this, every request behind a TLS-terminating proxy looks like
+        # plain http to the app: generated absolute URLs came out wrong -- the
+        # /docs/ trailing-slash redirect pointed at http://, and the docs pages
+        # advertised "REST http://..." and "Gateway ws://..." to copy from.
+        #
+        # Only a peer in api.trusted_proxies may set those headers, and it is
+        # the same list get_client_ip already trusts, so a client cannot spoof
+        # its own scheme or address through them.
+        api_config = config.get("api", {})
+        trusted_proxies = api_config.get("trusted_proxies") or []
+        forwarded_allow_ips = ",".join(str(proxy) for proxy in trusted_proxies)
+
         uvi_config = uvicorn.Config(
             self.app,
             host=host,
             port=port,
             log_level=uvi_level,
             loop="asyncio",
+            proxy_headers=True,
+            forwarded_allow_ips=forwarded_allow_ips or "127.0.0.1",
             **ssl_config,
         )
 

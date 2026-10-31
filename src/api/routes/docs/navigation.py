@@ -19,7 +19,8 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Security", "/security"),
             NavItem("Keyrings & KEKs", "/keyrings"),
             NavItem("Performance", "/performance"),
-            NavItem("Configuration", "/configuration"),
+            # Configuration is its own section below; listing it here too put
+            # two identical links to the same page in the sidebar.
         ],
         "Reference": [
             NavItem("API Routes", "/reference"),
