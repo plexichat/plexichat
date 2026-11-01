@@ -663,7 +663,7 @@ async def block_user(block_request: BlockUserRequest, request: Request):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def unblock_user(user_id: str, request: Request):
+async def unblock_user(user_id: SnowflakeIDParam, request: Request):
     """
     Lift a block or ban from a specific user.
     """
@@ -723,7 +723,7 @@ def _rule_to_response(rule) -> AutomodRuleResponse:
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_automod_rules(request: Request, server_id: str):
+async def get_automod_rules(request: Request, server_id: SnowflakeIDParam):
     """
     Retrieve the list of AutoMod rules configured for a specific server.
     """
