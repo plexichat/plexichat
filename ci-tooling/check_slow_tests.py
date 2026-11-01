@@ -209,20 +209,33 @@ SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
     ),
     # The same cost again, on both halves of the media plane: the assertion is
     # 0.2s, but the ICE/DTLS handshake and a real RTP frame (VP8-encoded for the
-    # video case) are not. Measured 5.18s/5.20s in pipeline #2314 against the 5s
-    # default while the box was shared, 0.20s of call and 1.2-1.3s of teardown
-    # on an idle build box -- so the ceiling is the media stack's, and it is the
-    # budget the two aiortc entries above already carry.
+    # video case) are not -- and the teardown that closes them is the rest.
+    # Neither id is a regression that got slower: a.1.0-180 passed this gate in
+    # #2313 and failed it in #2314, the two pipelines one second apart on the
+    # same commit, and #2313's own report shows the slowest test at 5.58s (the
+    # import sweep, on its 20s budget) with these two under 5s in that run.
+    # The load samples cannot explain the difference either: that job's sampler
+    # reports load 5.4 on the 8 cpus it sees (0.63-0.72 load/cores over both
+    # pipelines), so the load factor stayed at 1.0 and held a 5s ceiling -- yet
+    # the same tests cost 5.18s. What the sampler cannot see is cgroup CPU-quota
+    # throttling, which stalls the process without raising /proc/loadavg, and
+    # crypto/ICE syscalls on a virtualised box are what these tests mostly do.
+    # So the ceiling is the media stack's, not the assertions': 0.26s of call
+    # and 3.5s of teardown measured here, against 5.18s/5.20s in #2314, which is
+    # the budget the two aiortc entries above already carry. A real regression
+    # still fails on the assertions (never connected, only N frames) rather than
+    # on the wall clock.
     "src.tests.voice.test_sfu_aiortc_media::test_media_flows_from_client_to_the_aiortc_sfu": (
         10.0,
-        "real aiortc client-to-SFU call: 0.20s of assertion and 1.18s of teardown "
-        "on the build box, 5.18s on the shared runner in #2314",
+        "real aiortc client-to-SFU call: 0.26s of assertion and 3.5s of teardown "
+        "(closing ICE/DTLS), 5.18s on the runner in #2314 while the same commit "
+        "passed in #2313",
     ),
     "src.tests.voice.test_sfu_aiortc_degraded_media::test_a_degraded_peer_still_receives_video_over_rtp": (
         10.0,
         "real aiortc receiver plus VP8 video over RTP, before and after the "
-        "hint: 0.21s of assertion and 1.33s of teardown on the build box, 5.20s "
-        "on the shared runner in #2314",
+        "hint: 0.26s of assertion and 3.5s of teardown, 5.20s on the runner in "
+        "#2314 while the same commit passed in #2313",
     ),
 }
 
