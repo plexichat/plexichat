@@ -82,6 +82,17 @@ There is no per-user `POST <admin-base>/users/{user_id}/logout-all`. To revoke s
 
 Routers: `tickets`, `users`.
 
+### User features, tiers, and badges
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `<admin-base>/badges` | List the badges an operator can grant |
+| `GET` | `<admin-base>/tiers` | List the configured rate-limit tiers and their limits |
+| `GET` | `<admin-base>/users/{user_id}/features` | Get a user's tier, badges, and feature flags |
+| `PUT` | `<admin-base>/users/{user_id}/features` | Update a user's tier, badges, and feature flags |
+
+Router: `src/api/routes/features/tier_features.py`. These four routes are mounted under the admin prefix but authenticate through `get_admin_access`, which accepts **either** a dedicated admin session bearer **or** a normal user token whose permissions include `administrator`, `admin.*`, or `*`. The rest of the admin surface accepts only the admin session token.
+
 ### Admin account management
 
 | Method | Path | Description |
@@ -108,8 +119,15 @@ Router: `users/admin_users.py`. Role hierarchy is enforced: you can only manage 
 | `DELETE` | `<admin-base>/roles/{admin_id}/{role_id}` | Revoke a role |
 | `GET` | `<admin-base>/admins/{admin_id}/roles` | List an admin's roles |
 | `GET` | `<admin-base>/approvals` | List approval requests |
+| `POST` | `<admin-base>/approvals/request` | Create an approval request for a gated action |
+| `GET` | `<admin-base>/approvals/{approval_id}` | Get one request |
+| `DELETE` | `<admin-base>/approvals/{approval_id}` | Cancel a pending request |
 | `POST` | `<admin-base>/approvals/{approval_id}/approve` | Approve a request |
 | `POST` | `<admin-base>/approvals/{approval_id}/reject` | Reject a request |
+| `GET` | `<admin-base>/approvals/{approval_id}/comments` | List the comment thread on a request |
+| `POST` | `<admin-base>/approvals/{approval_id}/comments` | Add a comment to a request |
+
+Every approvals route requires `admin.approvals`. An approved request is consumed by the gated action it authorises (single use), so one approval covers exactly one execution.
 
 Routers: `roles`, `approvals`. Valid scopes are defined in `src/core/admin/permissions.py`.
 
@@ -192,6 +210,7 @@ Router: `moderation`.
 | `POST` | `<admin-base>/search/reindex/standalone` | Rebuild the index in a standalone worker | `admin.data.reindex` |
 | `POST` | `<admin-base>/search/reindex/cancel` | Cancel a running reindex | `admin.data.reindex` |
 | `GET` | `<admin-base>/search/reindex/status` | Get reindex status | `admin.data.reindex` or `admin.read` |
+| `POST` | `<admin-base>/search/reindex/conversation/{conversation_id}` | Reindex one conversation (`{ "force": true }` rebuilds instead of updating) | `admin.data.reindex` |
 | `GET` | `<admin-base>/migrations` | List migrations | `admin.migrations.execute` / `config.read` |
 | `GET` | `<admin-base>/migrations/status` | Migration system status and integrity | `admin.migrations.execute` / `config.read` |
 | `GET` | `<admin-base>/migrations/{version}` | Get one migration | `admin.migrations.execute` / `config.read` |
@@ -199,6 +218,7 @@ Router: `moderation`.
 | `POST` | `<admin-base>/migrations/{version}/rollback` | Roll back a migration | `admin.migrations.execute` |
 | `POST` | `<admin-base>/migrations/emergency-override` | Emergency migration override | `admin.migrations.execute` |
 | `GET` | `<admin-base>/database/migrations/status` | Database migration status | `maintenance` |
+| `GET` | `<admin-base>/database/migrations/integrity` | Verify applied migrations against their recorded checksums | `maintenance` |
 | `POST` | `<admin-base>/database/migrations/apply-all` | Apply all pending migrations | `maintenance` / `admin.migrations.execute` |
 | `POST` | `<admin-base>/database/migrations/apply/{version}` | Apply one migration | `maintenance` / `admin.migrations.execute` |
 | `POST` | `<admin-base>/database/migrations/rollback/{version}` | Roll back one migration | `maintenance` / `admin.migrations.execute` |
@@ -259,6 +279,9 @@ Routers: `plexijoin`, `capabilities`, `telemetry`.
 | `GET` | `<admin-base>/login` | Login page (HTML) |
 | `GET` | `<admin-base>/ui` | Admin UI (HTML) |
 | `GET` | `<admin-base>/ui-dashboard` | UI dashboard (HTML) |
+| `GET` | `<admin-base>/ui-migrations` | Migrations page (HTML) |
+| `GET` | `<admin-base>/static/dashboard.css` | Dashboard stylesheet |
+| `GET` | `<admin-base>/static/dashboard.js` | Dashboard script |
 
 Router: `ui`. These routes serve HTML and redirect helpers; all other admin routes return JSON.
 
