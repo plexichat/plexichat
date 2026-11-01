@@ -193,7 +193,7 @@ Evidence URLs are validated as public `http` or `https` URLs. The server rejects
 ### Example request
 
 ```bash
-curl -X POST https://api.plexichat.com/api/v1/reports/enhanced \
+curl -X POST https://api.plexichat.com/api/v1/features/reports/enhanced \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
