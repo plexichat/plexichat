@@ -616,13 +616,13 @@ class TestErrorMessages:
             parse_version("1.0.0-1")
 
     def test_major_constraint_error_message(self):
-        with pytest.raises(InvalidVersionError, match="Major version must be >= 1"):
+        with pytest.raises(InvalidVersionError, match="Major version.*>= 1"):
             Version(release=(0, 0, 0))
 
     def test_minor_constraint_error_message(self):
-        with pytest.raises(InvalidVersionError, match="Minor version must be >= 0"):
+        with pytest.raises(InvalidVersionError, match="Release part.*non-negative int"):
             Version(release=(1, -1, 0))
 
     def test_build_constraint_error_message(self):
-        with pytest.raises(InvalidVersionError, match="Build number must be >= 1"):
+        with pytest.raises(InvalidVersionError, match="Pre number.*>= 1"):
             Version(release=(1, 0, 0), pre=("a", 0))

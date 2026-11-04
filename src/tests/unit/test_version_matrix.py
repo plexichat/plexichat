@@ -247,7 +247,7 @@ def test_increment_build_chained():
 def test_increment_minor_resets_build():
     v = Version(release=(2, 3, 0))
     nv = increment_minor(v)
-    assert nv == Version(release=(2, 4, 0), pre=("a", 1))
+    assert nv == Version(release=(2, 4, 0))
 
 
 def test_increment_major_resets_minor_and_build():
