@@ -83,10 +83,8 @@ class Version:
                 raise InvalidVersionError(f"Pre number must be >= 1, got {number!r}")
             object.__setattr__(self, "pre", (_PRE_TAG_ALIASES[tag], number))
 
-        if self.post is not None and (not isinstance(self.post, int) or self.post < 0):
-            raise InvalidVersionError(
-                f"Post must be a non-negative int, got {self.post!r}"
-            )
+        if self.post is not None and (not isinstance(self.post, int) or self.post < 1):
+            raise InvalidVersionError(f"Post must be a positive int, got {self.post!r}")
         if self.dev is not None and (not isinstance(self.dev, int) or self.dev < 0):
             raise InvalidVersionError(
                 f"Dev must be a non-negative int, got {self.dev!r}"
@@ -406,7 +404,8 @@ def increment_minor(version: Version) -> Version:
     release = list(version.release)
     major = release[0] if release else 0
     minor = release[1] if len(release) > 1 else 0
-    new_release = (major, minor + 1, 0)
+    patch = release[2] if len(release) > 2 else 0
+    new_release = (major, minor, patch + 1)
     return Version(
         epoch=version.epoch,
         release=new_release,

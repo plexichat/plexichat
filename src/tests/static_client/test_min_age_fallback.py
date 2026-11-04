@@ -79,7 +79,7 @@ def test_min_age_falls_back_to_older_release():
             with patch.object(
                 StaticClientManager,
                 "_should_fetch",
-                side_effect=lambda a, v, n: v.build < 60,
+                side_effect=lambda a, v, n: v.pre[1] < 60 if v.pre else 0,
             ) as should:
                 with patch.object(
                     StaticClientManager,
@@ -90,7 +90,7 @@ def test_min_age_falls_back_to_older_release():
                 ) as fetch:
                     result = mgr.ensure_active()
                     assert fetch.call_count == 1
-                    assert fetch.call_args[0][0].build == 59
+                    assert fetch.call_args[0][0].pre[1] == 59
                     assert result.installed_version == "1.0.0a59"
                     assert should.call_count == 2
 
@@ -165,7 +165,7 @@ def test_older_candidates_are_skipped():
                     ) as fetch:
                         result = mgr.ensure_active()
                         assert fetch.call_count == 1
-                        assert fetch.call_args[0][0].build == 60
+                        assert fetch.call_args[0][0].pre[1] == 60
                         assert should.call_count == 1
                         assert result.installed_version == "1.0.0a60"
 
