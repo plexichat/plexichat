@@ -62,34 +62,34 @@ def _install_version(install_dir, version):
 
 
 def test_prune_keeps_active_and_recent(tmp_path):
-    for v in ["a.1.0-50", "a.1.0-51", "a.1.0-52", "a.1.0-53", "a.1.0-54", "a.1.0-55"]:
+    for v in ["1.0.0a50", "1.0.0a51", "1.0.0a52", "1.0.0a53", "1.0.0a54", "1.0.0a55"]:
         _install_version(tmp_path, v)
 
-    removed = prune_old_versions(tmp_path, keep=["a.1.0-55"], max_total=3)
+    removed = prune_old_versions(tmp_path, keep=["1.0.0a55"], max_total=3)
 
-    assert set(removed) == {"a.1.0-50", "a.1.0-51", "a.1.0-52"}
+    assert set(removed) == {"1.0.0a50", "1.0.0a51", "1.0.0a52"}
     remaining = {iv.version for iv in list_installed_versions(tmp_path)}
-    assert remaining == {"a.1.0-53", "a.1.0-54", "a.1.0-55"}
+    assert remaining == {"1.0.0a53", "1.0.0a54", "1.0.0a55"}
 
 
 def test_prune_honors_max_total(tmp_path):
-    for v in ["a.1.0-50", "a.1.0-51", "a.1.0-52", "a.1.0-53", "a.1.0-54", "a.1.0-55"]:
+    for v in ["1.0.0a50", "1.0.0a51", "1.0.0a52", "1.0.0a53", "1.0.0a54", "1.0.0a55"]:
         _install_version(tmp_path, v)
 
-    removed = prune_old_versions(tmp_path, keep=["a.1.0-55"], max_total=5)
+    removed = prune_old_versions(tmp_path, keep=["1.0.0a55"], max_total=5)
 
-    assert removed == ["a.1.0-50"]
+    assert removed == ["1.0.0a50"]
     remaining = {iv.version for iv in list_installed_versions(tmp_path)}
-    assert remaining == {"a.1.0-51", "a.1.0-52", "a.1.0-53", "a.1.0-54", "a.1.0-55"}
+    assert remaining == {"1.0.0a51", "1.0.0a52", "1.0.0a53", "1.0.0a54", "1.0.0a55"}
 
 
 def test_prune_never_deletes_keep(tmp_path):
-    _install_version(tmp_path, "a.1.0-54")
-    _install_version(tmp_path, "a.1.0-55")
+    _install_version(tmp_path, "1.0.0a54")
+    _install_version(tmp_path, "1.0.0a55")
 
     # ``keep`` takes priority even when it would exceed ``max_total``.
-    removed = prune_old_versions(tmp_path, keep=["a.1.0-54"], max_total=1)
+    removed = prune_old_versions(tmp_path, keep=["1.0.0a54"], max_total=1)
 
-    assert set(removed) == {"a.1.0-55"}
+    assert set(removed) == {"1.0.0a55"}
     remaining = {iv.version for iv in list_installed_versions(tmp_path)}
-    assert remaining == {"a.1.0-54"}
+    assert remaining == {"1.0.0a54"}
