@@ -37,7 +37,7 @@ app_config.setup(
     config_path=os.path.join(_tmpdir, "config.yaml"),
     default_config={"version": {"current": "r.1.0-1", "min_client": "a.1.0-1"}},
 )
-app_version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+app_version.setup(current_version="1.0.0", min_supported_version="1.0.0a1")
 
 from src.api.routes.docs.config import DocsConfig  # noqa: E402
 from src.api.routes.docs.navigation import build_sidebar_html  # noqa: E402
