@@ -17,9 +17,9 @@ A lightweight version parsing and comparison utility for applications using a st
 
 ### Examples
 
-- `a.1.0-1` - Alpha, first major version, first build
-- `b.2.3-15` - Beta, second major, third minor, 15th build
-- `r.1.0-1` - Release version 1.0, first build
+- `1.0.0a1` - Alpha, first major version, first build
+- `2.3.0b15` - Beta, second major, third minor, 15th build
+- `1.0.0` - Release version 1.0, first build
 
 ### Version Ordering
 
@@ -32,10 +32,10 @@ Stage ordering (lowest to highest):
 4. `r` (Release)
 
 Example comparisons:
-- `a.1.0-1` < `b.1.0-1` (beta > alpha)
-- `r.1.0-1` < `r.2.0-1` (major 2 > major 1)
-- `r.1.1-1` < `r.1.2-1` (minor 2 > minor 1)
-- `r.1.0-1` < `r.1.0-2` (build 2 > build 1)
+- `1.0.0a1` < `1.0.0b1` (beta > alpha)
+- `1.0.0` < `2.0.0` (major 2 > major 1)
+- `1.0.1` < `1.0.2` (minor 2 > minor 1)
+- `1.0.0` < `1.0.0.post1` (build 2 > build 1)
 
 ## Setup
 
@@ -44,8 +44,8 @@ import utils.version as version
 
 # Configure once in main.py
 version.setup(
-    current_version="a.1.0-1",
-    min_supported_version="a.1.0-1"  # Optional: minimum client version
+    current_version="1.0.0a1",
+    min_supported_version="1.0.0a1"  # Optional: minimum client version
 )
 ```
 
@@ -56,25 +56,25 @@ import utils.version as version
 
 # Get current version
 ver = version.current()
-ver_str = version.current_string()  # "a.1.0-1"
+ver_str = version.current_string()  # "1.0.0a1"
 
 # Parse a version string
-parsed = version.parse("b.2.3-15")
+parsed = version.parse("2.3.0b15")
 print(parsed.stage)  # VersionStage.BETA
 print(parsed.major)  # 2
 print(parsed.minor)  # 3
 print(parsed.build)  # 15
 
 # Compare versions
-result = version.compare("r.1.0-1", "a.1.0-1")
-# Returns: 1 (r.1.0-1 is greater)
+result = version.compare("1.0.0", "1.0.0a1")
+# Returns: 1 (1.0.0 is greater)
 
 # Check client compatibility
-is_ok = version.is_client_compatible("a.1.0-1")
+is_ok = version.is_client_compatible("1.0.0a1")
 
 # Convert to dictionary (useful for API responses)
 ver_dict = version.to_dict(parsed)
-# {"stage": "b", "major": 2, "minor": 3, "build": 15, "string": "b.2.3-15"}
+# {"stage": "b", "major": 2, "minor": 3, "build": 15, "string": "2.3.0b15"}
 ```
 
 ## Advanced Usage
@@ -91,23 +91,23 @@ from utils.version import (
 )
 
 # Parse and manipulate versions
-ver = parse_version("a.1.0-1")
+ver = parse_version("1.0.0a1")
 
-# Increment build: a.1.0-1 -> a.1.0-2
+# Increment build: 1.0.0a1 -> 1.0.0a2
 new_ver = increment_build(ver)
 
-# Increment minor (build resets): a.1.0-1 -> a.1.1-1
+# Increment minor (build resets): 1.0.0a1 -> 1.0.1a1
 new_ver = increment_minor(ver)
 
-# Increment major (minor and build reset): a.1.0-1 -> a.2.0-1
+# Increment major (minor and build reset): 1.0.0a1 -> 1.1.0a1
 new_ver = increment_major(ver)
 
-# Change stage (build resets): a.1.0-1 -> b.1.0-1
+# Change stage (build resets): 1.0.0a1 -> 1.0.0b1
 new_ver = change_stage(ver, VersionStage.BETA)
 
 # Check if versions are on same release line
 from utils.version.core import is_same_release_line
-is_same = is_same_release_line("r.1.0-1", "r.1.5-10")  # True (same stage + major)
+is_same = is_same_release_line("1.0.0", "1.5.0")  # True (same stage + major)
 ```
 
 ## Error Handling

@@ -6,7 +6,7 @@ credential is an envelope around the PHC string
 (``$plexichat$pepper-v1$pid=v1$$argon2id$...``), and the guard compared the
 *envelope* to ``$argon2…``. Every admin hash is peppered, so a valid password was
 answered with ``Insecure password hash on file; contact operator`` and the admin
-panel could not be used at all (found on the live a.1.0-166 deployment).
+panel could not be used at all (found on the live 1.0.0a166 deployment).
 """
 
 from __future__ import annotations

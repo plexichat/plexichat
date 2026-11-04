@@ -207,7 +207,7 @@ def test_admin_param_accepts_decimal_string(label, module_path, method, path):
 # declared the id as a plain ``str`` and cast it with ``int()`` inside the
 # handler, so ``?server_id=`` (and any non-numeric value) raised ValueError and
 # the deployment answered 500 Internal Server Error instead of rejecting the
-# request (found on live a.1.0-183).
+# request (found on live 1.0.0a183).
 MALFORMED = [
     (
         "automod_rules_get",

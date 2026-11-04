@@ -28,7 +28,7 @@ def _stored_hash_is_argon2(password_hash: Any) -> bool:
     read from the inner hash. Comparing the envelope itself rejected every
     peppered admin credential: admin login answered ``Insecure password hash on
     file; contact operator`` for a valid password on any build that hashes with
-    a pepper (found on the live a.1.0-166 deployment).
+    a pepper (found on the live 1.0.0a166 deployment).
     """
     if not isinstance(password_hash, str) or not password_hash:
         return False
