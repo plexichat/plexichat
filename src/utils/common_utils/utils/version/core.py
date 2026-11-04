@@ -79,10 +79,8 @@ class Version:
                 raise InvalidVersionError(
                     f"Pre tag must be one of {sorted(_PRE_TAG_ALIASES)}, got {tag!r}"
                 )
-            if not isinstance(number, int) or number < 0:
-                raise InvalidVersionError(
-                    f"Pre number must be a non-negative int, got {number!r}"
-                )
+            if not isinstance(number, int) or number < 1:
+                raise InvalidVersionError(f"Pre number must be >= 1, got {number!r}")
             object.__setattr__(self, "pre", (_PRE_TAG_ALIASES[tag], number))
 
         if self.post is not None and (not isinstance(self.post, int) or self.post < 0):
@@ -128,7 +126,7 @@ def parse_version(version_string: Optional[str]) -> Version:
             "Version string cannot contain newlines or null bytes"
         )
 
-    version_string = version_string.strip()
+    version_string = version_string.strip().lower()
 
     match = VERSION_PATTERN.match(version_string)
     if not match:
@@ -335,19 +333,25 @@ def is_compatible(client_version: str, min_version: str) -> bool:
 
 def is_same_release_line(version1: str, version2: str) -> bool:
     """
-    Check if two versions are on the same release line (same epoch and major).
+    Check if two versions are on the same release line (same epoch, major,
+    and pre-release presence).
 
     Args:
         version1: First version string
         version2: Second version string
 
     Returns:
-        True if same epoch and same major version (first release segment)
+        True if same epoch, same major, and both have (or both lack) a
+        pre-release segment
     """
     v1 = parse_version(version1)
     v2 = parse_version(version2)
 
-    return v1.epoch == v2.epoch and v1.release[0] == v2.release[0]
+    return (
+        v1.epoch == v2.epoch
+        and v1.release[0] == v2.release[0]
+        and (v1.pre is None) == (v2.pre is None)
+    )
 
 
 def increment_build(version: Version) -> Version:

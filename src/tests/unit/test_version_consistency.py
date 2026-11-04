@@ -90,7 +90,7 @@ PUBLISHED_CLAIMS: list[tuple[str, str, str]] = [
     ),
     (
         "docs/getting-started.md",
-        rf"For example, `({VERSION_TAG})`",
+        rf"e.g\. `({VERSION_TAG})`",
         "version format example",
     ),
 ]
