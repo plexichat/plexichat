@@ -404,8 +404,7 @@ def increment_minor(version: Version) -> Version:
     release = list(version.release)
     major = release[0] if release else 0
     minor = release[1] if len(release) > 1 else 0
-    patch = release[2] if len(release) > 2 else 0
-    new_release = (major, minor, patch + 1)
+    new_release = (major, minor + 1, 0)
     return Version(
         epoch=version.epoch,
         release=new_release,

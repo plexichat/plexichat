@@ -118,9 +118,9 @@ class TestVersionParsingErrors:
         with pytest.raises(InvalidVersionError, match="Invalid version format"):
             parse_version("a.1.0--1")
 
-    def test_semver_format_rejected(self):
+    def test_semver_hyphen_build_rejected(self):
         with pytest.raises(InvalidVersionError):
-            parse_version("1.0.0")
+            parse_version("1.0.0-1")
 
     def test_random_string(self):
         with pytest.raises(InvalidVersionError):

@@ -65,7 +65,7 @@ def test_parse_fields(text, release, pre):
     [
         "1.0.0A1  ",  # whitespace + case are tolerated
         "2.0.0RC3  ",  # whitespace + case are tolerated
-        "B.1.1-1",
+        "1.1.0B1  ",  # whitespace + case are tolerated
     ],
 )
 def test_parse_normalizes_case_and_space(text):
