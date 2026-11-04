@@ -17,18 +17,24 @@ class ServerState(str, Enum):
 
 
 class VersionInfo(BaseModel):
-    """Version information."""
+    """Version information following PEP 440."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    stage: str = Field(
-        ...,
-        description="Version stage: a (alpha), b (beta), c (candidate), r (release)",
+    release: List[int] = Field(..., description="Release segment (e.g. [1, 0, 0])")
+    pre: Optional[List[Union[str, int]]] = Field(
+        None, description="Pre-release segment (e.g. ['a', 184]) or None"
     )
-    major: int = Field(..., description="Major version number")
-    minor: int = Field(..., description="Minor version number")
-    build: int = Field(..., description="Build number")
-    string: str = Field(..., description="Full version string (e.g., 'a.1.0-1')")
+    post: Optional[int] = Field(
+        None, description="Post-release segment (e.g. 1) or None"
+    )
+    dev: Optional[int] = Field(
+        None, description="Development release segment (e.g. None)"
+    )
+    local: Optional[str] = Field(None, description="Local version segment (e.g. None)")
+    string: str = Field(
+        ..., description="Full canonical PEP 440 version string (e.g., '1.0.0a184')"
+    )
 
 
 class ServerVersionResponse(BaseModel):

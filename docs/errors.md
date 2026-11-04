@@ -111,10 +111,10 @@ Version errors include extra fields for client update logic:
 {
   "error": {
     "code": "VERSION_OUTDATED",
-    "message": "Client version a.0.9-1 is no longer supported",
-    "client_version": "a.0.9-1",
-    "min_version": "a.1.0-1",
-    "server_version": "a.1.0-1",
+    "message": "Client version 0.9.0a1 is no longer supported",
+    "client_version": "0.9.0a1",
+    "min_version": "1.0.0a1",
+    "server_version": "1.0.0a1",
     "update_url": "https://..."
   }
 }

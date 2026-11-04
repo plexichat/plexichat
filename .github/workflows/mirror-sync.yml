@@ -88,4 +88,4 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **dev**: $(git rev-parse --short gitlab/dev 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
           echo "- **master**: $(git rev-parse --short gitlab/master 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tags**: $(git tag -l 'a.*' | wc -l) version tags" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tags**: $(git tag -l '[0-9]*' | wc -l) version tags" >> $GITHUB_STEP_SUMMARY

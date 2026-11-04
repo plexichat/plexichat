@@ -25,8 +25,8 @@ def test_converting_a_version_does_not_poison_the_server_cache():
     *minimum supported* version silently replaced the cached *server* version.
     ``/status`` then reported whatever version was converted last.
     """
-    server = version_routes.version_util.parse("r.1.2-3")
-    client = version_routes.version_util.parse("a.9.9-99")
+    server = version_routes.version_util.parse("1.2.0")
+    client = version_routes.version_util.parse("9.9.0a99")
 
     version_routes._cached_version_info = None
 
@@ -38,8 +38,8 @@ def test_converting_a_version_does_not_poison_the_server_cache():
     assert version_routes._cached_version_info is None
 
     # And the converted objects themselves are still correct.
-    assert server_info.string == "r.1.2-3"
-    assert client_info.string == "a.9.9-99"
+    assert server_info.string == "1.2.0"
+    assert client_info.string == "9.9.0a99"
 
 
 def test_status_reports_the_server_version_after_negotiation():
@@ -49,7 +49,7 @@ def test_status_reports_the_server_version_after_negotiation():
     version_routes._cached_version_info = None
     try:
         # Simulate a negotiate call having converted some other version.
-        version_routes._version_to_info(version_routes.version_util.parse("a.1.0-1"))
+        version_routes._version_to_info(version_routes.version_util.parse("1.0.0a1"))
         status = version_routes.get_server_status()
         assert status.version.string == server
     finally:

@@ -191,25 +191,27 @@ async function fetchAllMessages(channelId) {
 
 ## Version string
 
-Plexichat uses a stage-based version scheme:
+Plexichat uses PEP 440 version strings:
 
 ```
-[stage].[major].[minor]-[build]
+[epoch!]X.Y.Z[.devN][aN|bN|rcN][.postN][+local]
 ```
 
 | Component | Values | Description |
 | --- | --- | --- |
-| `stage` | `a`, `b`, `c`, `r` | Alpha, Beta, Candidate, Release. |
-| `major` | `1`+ | Breaking changes. |
-| `minor` | `0`+ | New features. |
-| `build` | `1`+ | Build number within the stage. |
+| `epoch` | `0`+ | Epoch segment. |
+| `release` | `X.Y.Z` | Major.minor.patch release. |
+| `pre` | `aN`, `bN`, `rcN` | Alpha, beta, release candidate. |
+| `post` | `.postN` | Post-release. |
+| `dev` | `.devN` | Development release. |
+| `local` | `+local` | Local version segment. |
 
-Examples: `a.1.0-1` (Alpha 1.0, build 1), `b.2.3-15` (Beta 2.3, build 15), `r.1.0-1` (Release 1.0, build 1).
+Examples: `1.0.0a1` (Alpha 1.0), `2.3.0b15` (Beta 2.3), `1.0.0` (Release 1.0).
 
-Versions sort by `stage`, then `major`, `minor`, then `build`:
+Versions sort by epoch, then release, then pre, then post, then dev:
 
 ```python
-# a.1.0-1 < a.1.0-2 < a.1.1-1 < a.2.0-1 < b.1.0-1 < r.1.0-1
+# 1.0.0a1 < 1.0.0a2 < 1.1.0a1 < 2.0.0a1 < 1.0.0b1 < 1.0.0
 ```
 
 ## Boolean values

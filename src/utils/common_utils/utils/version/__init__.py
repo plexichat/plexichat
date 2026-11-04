@@ -1,30 +1,31 @@
 """
 Version utility module - Zero-friction version parsing and comparison for Python applications.
 
-Version Format: [stage].[major].[minor]-[build]
-- stage: a (alpha), b (beta), c (candidate), r (release)
-- major: Major version number (1+)
-- minor: Minor version number (0+)
-- build: Build number, resets on minor version change (1+)
+Version Format: PEP 440
+- epoch: optional epoch segment (e.g. ``1!``)
+- release: ``major.minor.patch`` series of non-negative integers
+- pre: pre-release tag and number, one of ``a``/``alpha``, ``b``/``beta``, ``rc``/``candidate``
+- post: post-release number (``.postN``)
+- dev: development release number (``.devN``)
+- local: local version segment (``+local``)
 
-Examples: a.1.0-1, b.2.3-15, r.1.0-1
+Examples: ``1.0.0a184``, ``1.0.0``, ``2.1.0rc3``, ``1.0.0.post1``
 
 Usage:
     # In main.py (setup once)
     import utils.version as version
-    version.setup(current_version="a.1.0-1")
+    version.setup(current_version="1.0.0a1")
 
     # In any other file (no setup needed)
     import utils.version as version
     ver = version.current()
-    is_newer = version.compare("r.1.0-1", "a.1.0-1") > 0
-    parsed = version.parse("b.2.3-15")
+    is_newer = version.compare("1.0.0", "1.0.0a1") > 0
+    parsed = version.parse("2.1.0rc3")
 """
 
-from typing import Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from .core import (
     Version,
-    VersionStage,
     parse_version,
     compare_versions,
     compare_version_objects,
@@ -51,7 +52,7 @@ def setup(
     Setup the version utility. Should be called once in your main application file.
 
     Args:
-        current_version: Current application version string (e.g., "a.1.0-1")
+        current_version: Current application version string (e.g., "1.0.0a1")
         min_supported_version: Minimum client version supported (optional)
     """
     global _current_version, _min_supported_version, _setup_called
@@ -87,7 +88,7 @@ def current_string() -> str:
     Get the current application version as a string.
 
     Returns:
-        Version string (e.g., "a.1.0-1")
+        PEP 440 version string (e.g., "1.0.0a1")
     """
     _ensure_setup()
     assert _current_version is not None
@@ -110,7 +111,7 @@ def parse(version_string: str) -> Version:
     Parse a version string into a Version object.
 
     Args:
-        version_string: Version string to parse (e.g., "a.1.0-1")
+        version_string: PEP 440 version string to parse (e.g., "1.0.0a1")
 
     Returns:
         Version object.
@@ -161,20 +162,29 @@ def to_dict(version: Version) -> Dict[str, Any]:
         version: Version object
 
     Returns:
-        Dictionary representation of the version.
+        Dictionary representation of the version with PEP 440 segments:
+        ``{"epoch", "release", "pre", "post", "dev", "local", "string"}``
+        where ``release`` is a list of ints and ``pre`` is ``[str, int]`` or None.
     """
+    pre: Optional[List[Any]]
+    if version.pre is None:
+        pre = None
+    else:
+        pre = [version.pre[0], version.pre[1]]
+
     return {
-        "stage": version.stage.value,
-        "major": version.major,
-        "minor": version.minor,
-        "build": version.build,
+        "epoch": version.epoch,
+        "release": list(version.release),
+        "pre": pre,
+        "post": version.post,
+        "dev": version.dev,
+        "local": version.local,
         "string": format_version(version),
     }
 
 
 __all__ = [
     "Version",
-    "VersionStage",
     "InvalidVersionError",
     "setup",
     "current",

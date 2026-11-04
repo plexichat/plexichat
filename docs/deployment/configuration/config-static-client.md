@@ -33,7 +33,7 @@ static_client:
 
 *   `match_server` (default): Installs the highest build with the same stage (alpha, beta, release), major version, and minor version as the server. This is the safest option. Defined in `src/config_defaults.py`.
 *   `latest`: Installs the latest release for the same stage and major version, regardless of minor version or build number.
-*   Explicit version such as `a.1.0-84`: Pins the install to that exact release.
+*   Explicit version such as `1.0.0a84`: Pins the install to that exact release.
 
 > **Note:** The typed config in `src/static_client/config.py` falls back to `latest` when the key is missing at runtime. The canonical default in `src/config_defaults.py` is `match_server`. Set `version_pin` explicitly to avoid ambiguity.
 

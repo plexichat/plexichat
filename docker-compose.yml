@@ -4,7 +4,7 @@ name: plexichat
 #
 # Compose ref pinning: this file is the canonical compose source. Operators
 # who fetch it remotely MUST pin a released tag (e.g.
-# BACKEND_VERSION=a.1.0-184) and verify the SHA256 sidecar / out-of-band
+# BACKEND_VERSION=1.0.0a184) and verify the SHA256 sidecar / out-of-band
 # digest before `docker compose up`. Fetching docker-compose.yml from the
 # unreleased `dev` branch is forbidden unless explicitly opted into with
 # ALLOW_DEV_COMPOSE=1, which the deploy script treats as tracking
@@ -24,7 +24,7 @@ name: plexichat
 # Postgres/Valkey/S3/restic secrets. Create it with `umask 077` and keep it
 # `chmod 600` at all times; never commit it to version control.
 
-# Version to deploy (e.g., a.1.0-55)
+# Version to deploy (e.g., 1.0.0a55)
 # Set via: BACKEND_VERSION=X CLIENT_VERSION=Y docker compose up -d
 # Defaults to latest if not specified
 #
@@ -265,7 +265,7 @@ services:
     # at: with the default (`'self'`) a cross-origin API (e.g.
     # https://api.example.com) is blocked by the browser, and sign-up / the
     # capability probe fail with a connect-src violation. Images before
-    # a.1.0-124 bake in `connect-src 'self'` and ignore this variable.
+    # 1.0.0a124 bake in `connect-src 'self'` and ignore this variable.
     environment:
       PLEXICHAT_CONNECT_SRC: ${PLEXICHAT_CONNECT_SRC:-'self'}
     depends_on:

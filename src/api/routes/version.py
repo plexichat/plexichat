@@ -44,19 +44,21 @@ def _version_to_info(ver) -> VersionInfo:
     """Convert Version object to VersionInfo schema."""
     try:
         return VersionInfo(
-            stage=ver.stage.value,
-            major=ver.major,
-            minor=ver.minor,
-            build=ver.build,
+            release=list(ver.release),
+            pre=list(ver.pre) if ver.pre else None,
+            post=ver.post,
+            dev=ver.dev,
+            local=ver.local,
             string=version_util.format_version(ver),
         )
     except Exception as e:
         logger.error(f"Error converting version object: {e}")
         return VersionInfo(
-            stage="unknown",
-            major=0,
-            minor=0,
-            build=0,
+            release=[0, 0, 0],
+            pre=None,
+            post=None,
+            dev=None,
+            local=None,
             string="0.0.0",
         )
 

@@ -175,7 +175,9 @@ class StaticClientManager:
 
         client = GitLabReleaseClient(self._cfg.git_lab)
         return client.list_release_assets_for_version(
-            server_ver.stage, server_ver.major, server_ver.minor
+            server_ver.release[0] if len(server_ver.release) > 0 else 1,
+            server_ver.release[1] if len(server_ver.release) > 1 else 0,
+            server_ver.release[2] if len(server_ver.release) > 2 else 0,
         )
 
     def desired_release_target(

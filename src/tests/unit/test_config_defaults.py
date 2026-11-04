@@ -19,7 +19,7 @@ def test_default_config_version_matches_the_running_server():
     assert config["application"]["version"] == VERSION
     assert config["versioning"]["min_supported_version"] == VERSION
     # Callers that pin a version (deployment tooling, tests) still win.
-    assert get_default_config(version="a.1.0-1")["application"]["version"] == "a.1.0-1"
+    assert get_default_config(version="1.0.0a1")["application"]["version"] == "1.0.0a1"
 
 
 def test_default_config_uses_expected_branding_and_paths():

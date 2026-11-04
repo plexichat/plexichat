@@ -25,7 +25,7 @@ import pytest
 
 from src.server.lifecycle import VERSION
 
-VERSION_TAG = r"a\.\d+\.\d+-\d+"
+VERSION_TAG = r"\d+\.\d+\.\d+(?:[abrc]\d+)?"
 
 # (path, pattern, note). The pattern must match the file's claim about the
 # CURRENT server build; historical or illustrative versions are deliberately
@@ -133,7 +133,7 @@ def test_every_pinned_claim_file_still_exists() -> None:
 def test_deployment_docs_do_not_advertise_a_stale_backend_tag() -> None:
     """Catch a stale tag in *any* doc, even one not pinned above.
 
-    ``a.1.0-<build>`` appears legitimately as the client version and as the
+    ``1.0.0a<build>`` appears legitimately as the client version and as the
     minimum supported version, so this only looks at tags used as a
     BACKEND_VERSION argument or in a ``Server:`` claim — the two places a
     missed bump lets an operator pull the wrong backend image.

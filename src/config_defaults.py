@@ -38,7 +38,7 @@ def default_version() -> str:
     in at module scope would initialize it too early.
 
     Returns:
-        The current application version string (e.g. "a.1.0-184").
+        The current application version string (e.g. "1.0.0a184").
     """
     from src.server.lifecycle import VERSION
 

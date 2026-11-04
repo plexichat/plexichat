@@ -23,14 +23,14 @@ The version pin policies are defined in `src/config_defaults.py` and `src/static
 
 *   `match_server` (canonical default): Install the highest build with the same stage, major version, and minor version as the server. This is the safest option.
 *   `latest`: Install the latest release for the same stage and major version, regardless of minor version.
-*   Explicit version such as `a.1.0-84`: Pin to that exact release.
+*   Explicit version such as `1.0.0a84`: Pin to that exact release.
 
 ## File layout
 
 ```text
 ~/.plexichat/client/
 ├── current_version          # Single-line file with the active version string
-├── a.1.0-184/               # Unpacked dist for this version
+├── 1.0.0a184/               # Unpacked dist for this version
 │   ├── index.html
 │   ├── app.html
 │   ├── config.js            # Written by the backend after install

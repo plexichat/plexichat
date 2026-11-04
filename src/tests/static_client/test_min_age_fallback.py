@@ -68,8 +68,8 @@ def test_min_age_falls_back_to_older_release():
     """When the newest release is below min_age, the manager picks the
     next-newer release instead of giving up."""
     with tempfile.TemporaryDirectory() as tmp:
-        fresh = _make_asset("a.1.0-60")
-        stale = _make_asset("a.1.0-59")
+        fresh = _make_asset("1.0.0a60")
+        stale = _make_asset("1.0.0a59")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -85,13 +85,13 @@ def test_min_age_falls_back_to_older_release():
                     StaticClientManager,
                     "_fetch_and_install",
                     return_value=InstallResult(
-                        installed_version="a.1.0-59", already_current=False
+                        installed_version="1.0.0a59", already_current=False
                     ),
                 ) as fetch:
                     result = mgr.ensure_active()
                     assert fetch.call_count == 1
                     assert fetch.call_args[0][0].build == 59
-                    assert result.installed_version == "a.1.0-59"
+                    assert result.installed_version == "1.0.0a59"
                     assert should.call_count == 2
 
 
@@ -99,8 +99,8 @@ def test_below_min_age_returns_error_when_all_too_new():
     """If every newer release fails min_age, return below_min_age without
     installing anything."""
     with tempfile.TemporaryDirectory() as tmp:
-        fresh = _make_asset("a.1.0-60")
-        fresher = _make_asset("a.1.0-59")
+        fresh = _make_asset("1.0.0a60")
+        fresher = _make_asset("1.0.0a59")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -119,7 +119,7 @@ def test_already_on_newest_returns_current():
     """If the installed version matches the newest release, return
     already_current without any fetch attempt."""
     with tempfile.TemporaryDirectory() as tmp:
-        newer = _make_asset("a.1.0-60")
+        newer = _make_asset("1.0.0a60")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -127,7 +127,7 @@ def test_already_on_newest_returns_current():
             StaticClientManager, "_candidate_releases", return_value=[newer]
         ):
             with patch.object(
-                StaticClientManager, "current_version", return_value="a.1.0-60"
+                StaticClientManager, "current_version", return_value="1.0.0a60"
             ):
                 with patch.object(StaticClientManager, "_fetch_and_install") as fetch:
                     result = mgr.ensure_active()
@@ -140,8 +140,8 @@ def test_older_candidates_are_skipped():
     """Releases older than the installed version must be skipped so the
     manager does not downgrade."""
     with tempfile.TemporaryDirectory() as tmp:
-        newer = _make_asset("a.1.0-60")
-        older = _make_asset("a.1.0-58")
+        newer = _make_asset("1.0.0a60")
+        older = _make_asset("1.0.0a58")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -149,7 +149,7 @@ def test_older_candidates_are_skipped():
             StaticClientManager, "_candidate_releases", return_value=[newer, older]
         ):
             with patch.object(
-                StaticClientManager, "current_version", return_value="a.1.0-59"
+                StaticClientManager, "current_version", return_value="1.0.0a59"
             ):
                 with patch.object(
                     StaticClientManager,
@@ -160,14 +160,14 @@ def test_older_candidates_are_skipped():
                         StaticClientManager,
                         "_fetch_and_install",
                         return_value=InstallResult(
-                            installed_version="a.1.0-60", already_current=False
+                            installed_version="1.0.0a60", already_current=False
                         ),
                     ) as fetch:
                         result = mgr.ensure_active()
                         assert fetch.call_count == 1
                         assert fetch.call_args[0][0].build == 60
                         assert should.call_count == 1
-                        assert result.installed_version == "a.1.0-60"
+                        assert result.installed_version == "1.0.0a60"
 
 
 def test_config_template_does_not_raise_keyerror():
@@ -177,11 +177,11 @@ def test_config_template_does_not_raise_keyerror():
 
     cfg = get_static_client_config()
     out = cfg.config_injection.content.format(
-        origin="https://plexichat.example", version="a.1.0-60"
+        origin="https://plexichat.example", version="1.0.0a60"
     )
     assert "serverUrl" in out
     assert "https://plexichat.example" in out
-    assert "a.1.0-60" in out
+    assert "1.0.0a60" in out
     assert "{origin}" not in out
     assert "{version}" not in out
 
@@ -264,7 +264,7 @@ def test_render_config_js_escapes_host_header_injection():
     template = (
         'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", version: "{version}" }};'
     )
-    out = _render_config_js(template, 'http://x";alert(1)//', "a.1.0-60")
+    out = _render_config_js(template, 'http://x";alert(1)//', "1.0.0a60")
     # The raw unescaped breakout never appears verbatim...
     assert 'http://x";alert(1)' not in out
     # ...the quote is escaped, so the string literal never closes...

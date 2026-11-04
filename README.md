@@ -240,13 +240,13 @@ For details, see `src/tests/README.md` and `docs/README.md`.
 
 ## Version
 
-Current version: `a.1.0-184` (Alpha), defined in `src/server/lifecycle.py:16`.
+Current version: `1.0.0a184` (Alpha), defined in `src/server/lifecycle.py:16`.
 
 `src.config_defaults.default_version()` reads that constant lazily, so a
 freshly generated config always advertises the build the process is running.
 
 Releases are cut by tagging a `dev` commit with this same string; the tag
 pipeline merges `dev` into `master`, and `master` then marks the merge as
-`<version>-build<pipeline id>` (`a.1.0-build<pipeline id>` today, since the tag
+`<version>-build<pipeline id>` (`1.0.0-build<pipeline id>` today, since the tag
 is derived from this constant). See
 `docs/deployment/versioning.md#release-flow`.
