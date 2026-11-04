@@ -63,7 +63,7 @@ def test_parse_fields(text, release, pre):
 @pytest.mark.parametrize(
     "text",
     [
-        " A.1.0-1  ",  # whitespace + case are tolerated
+        "1.0.0A1  ",  # whitespace + case are tolerated
         "R.2.0-3",
         "B.1.1-1",
     ],

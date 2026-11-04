@@ -53,7 +53,7 @@ class Version:
     local: Optional[str] = None
 
     def __post_init__(self):
-        # Validate release: non-empty tuple of non-negative ints
+        # Validate release: non-empty tuple of non-negative ints, major >= 1
         if not isinstance(self.release, tuple) or len(self.release) == 0:
             raise InvalidVersionError(
                 f"Release must be a non-empty tuple of ints, got {self.release!r}"
@@ -63,6 +63,10 @@ class Version:
                 raise InvalidVersionError(
                     f"Release part {index} must be a non-negative int, got {part!r}"
                 )
+        if self.release[0] < 1:
+            raise InvalidVersionError(
+                f"Major version (first release segment) must be >= 1, got {self.release[0]}"
+            )
 
         # Canonicalize and validate pre-release tag
         if self.pre is not None:
@@ -331,19 +335,19 @@ def is_compatible(client_version: str, min_version: str) -> bool:
 
 def is_same_release_line(version1: str, version2: str) -> bool:
     """
-    Check if two versions are on the same release line (same epoch and release).
+    Check if two versions are on the same release line (same epoch and major).
 
     Args:
         version1: First version string
         version2: Second version string
 
     Returns:
-        True if same epoch and release tuple (major.minor.patch)
+        True if same epoch and same major version (first release segment)
     """
     v1 = parse_version(version1)
     v2 = parse_version(version2)
 
-    return v1.epoch == v2.epoch and v1.release == v2.release
+    return v1.epoch == v2.epoch and v1.release[0] == v2.release[0]
 
 
 def increment_build(version: Version) -> Version:
