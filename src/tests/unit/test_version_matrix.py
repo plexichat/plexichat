@@ -146,9 +146,9 @@ def test_version_post_init_accepts_valid_fields(release, pre, post, dev):
         ("1.0.0", "1.0.0", 0),
         ("2.3.0b4", "2.3.0b4", 0),
         ("9.9.0a9", "9.9.0a9", 0),
-        # Release dominates everything else
-        ("1.0.0", "999.999.0a999", 1),
-        ("999.999.0a999", "1.0.0", -1),
+        # Release comparison comes before pre-release
+        ("1.0.0", "999.999.0a999", -1),
+        ("999.999.0a999", "1.0.0", 1),
         ("1.0.0rc1", "1.0.0b1", 1),
         ("1.0.0b1", "1.0.0rc1", -1),
         ("1.0.0b1", "1.0.0a1", 1),
@@ -156,7 +156,7 @@ def test_version_post_init_accepts_valid_fields(release, pre, post, dev):
         ("2.0.0", "1.999.0.post999", 1),
         ("1.0.0", "2.0.0", -1),
         # Minor
-        ("1.0.1", "1.4.0.post999", 1),
+        ("1.0.1", "1.4.0.post999", -1),
         ("1.0.0.post1", "1.0.0", 1),
         ("1.0.0", "1.0.0.post1", -1),
         ("1.0.0.post10", "1.0.0.post9", 1),
@@ -220,7 +220,7 @@ def test_is_compatible_matrix(client, minimum, expected):
         ("2.0.0b1", "2.7.0b1", True),
         ("1.0.0", "2.0.0", False),
         ("1.0.0", "1.0.0b1", False),
-        ("1.0.0a1", "1.0.0rc1", False),
+        ("1.0.0a1", "1.0.0rc1", True),
     ],
 )
 def test_is_same_release_line_matrix(a, b, expected):

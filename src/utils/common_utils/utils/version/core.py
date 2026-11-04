@@ -391,24 +391,30 @@ def increment_minor(version: Version) -> Version:
     """
     Create a new version with the minor release number incremented.
 
-    The release tuple becomes ``(major, minor + 1, 0)`` and a fresh alpha
-    pre-release segment is added (e.g. ``1.0.0a184`` → ``1.1.0a1``). Any
-    existing pre/post/dev segments are replaced.
+    The release tuple becomes ``(major, minor + 1, 0)``. If the version had a
+    pre-release segment, its tag is preserved with counter reset to 1 (e.g.
+    ``1.0.0a50`` → ``1.1.0a1``). If it was a plain release, no pre segment is
+    added (e.g. ``5.0.0`` → ``5.1.0``). Any existing post/dev segments are
+    replaced.
 
     Args:
         version: Current version
 
     Returns:
-        New Version with minor + 1 and a fresh ``a1`` pre-release
+        New Version with minor + 1
     """
     release = list(version.release)
     major = release[0] if release else 0
     minor = release[1] if len(release) > 1 else 0
     new_release = (major, minor + 1, 0)
+    if version.pre is not None:
+        new_pre = (version.pre[0], 1)
+    else:
+        new_pre = None
     return Version(
         epoch=version.epoch,
         release=new_release,
-        pre=("a", 1),
+        pre=new_pre,
         post=None,
         dev=None,
         local=version.local,
@@ -419,22 +425,26 @@ def increment_major(version: Version) -> Version:
     """
     Create a new version with the major release number incremented.
 
-    The release tuple becomes ``(major + 1, 0, 0)`` and a fresh alpha
-    pre-release segment is added (e.g. ``1.0.0a1`` → ``2.0.0a1``). Any
-    existing pre/post/dev segments are replaced.
+    The release tuple becomes ``(major + 1, 0, 0)``. Any existing pre-release
+    tag type is preserved with its counter reset to 1 (e.g. ``3.7.0b100`` →
+    ``4.0.0b1``). Any existing post/dev segments are replaced.
 
     Args:
         version: Current version
 
     Returns:
-        New Version with major + 1, minor = 0, patch = 0, pre = ("a", 1)
+        New Version with major + 1, minor = 0, patch = 0
     """
     major = version.release[0] if version.release else 0
     new_release = (major + 1, 0, 0)
+    if version.pre is not None:
+        new_pre = (version.pre[0], 1)
+    else:
+        new_pre = ("a", 1)
     return Version(
         epoch=version.epoch,
         release=new_release,
-        pre=("a", 1),
+        pre=new_pre,
         post=None,
         dev=None,
         local=version.local,

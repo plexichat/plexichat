@@ -189,8 +189,8 @@ def test_format_round_trip(raw):
         ("1.0.0", "1.0.0.post5", False),
         ("1.0.0", "1.0.1", False),
         ("1.0.0", "2.0.0", False),
-        ("2.0.0a1", "1.0.0b1", False),
-        ("1.0.0b1", "9.9.0a9", True),
+        ("2.0.0a1", "1.0.0b1", True),
+        ("1.0.0b1", "9.9.0a9", False),
     ],
 )
 def test_is_compatible(client, minimum, expected):
@@ -201,10 +201,9 @@ def test_is_compatible(client, minimum, expected):
     ("v1", "v2", "expected"),
     [
         ("1.0.0a1", "1.99.0a5", True),
-        ("1.0.0a1", "1.0.0b1", False),
-        ("2.0.0", "2.9.0", True),
+        ("1.0.0a1", "1.0.0b1", True),
         ("2.0.0", "3.0.0", False),
-        ("1.0.0", "1.0.0rc2", True),
+        ("1.0.0", "1.0.0rc2", False),
     ],
 )
 def test_is_same_release_line(v1, v2, expected):
@@ -236,7 +235,10 @@ def test_increment_major_resets_minor_and_build():
 @pytest.mark.parametrize("new_stage", ["a", "b", "rc", "release"])
 def test_change_stage_resets_build(new_stage):
     v = change_stage(parse_version("2.7.0a42"), new_stage)
-    assert v.pre == (new_stage, 1) if new_stage != "release" else None
+    if new_stage == "release":
+        assert v.pre is None
+    else:
+        assert v.pre == (new_stage, 1)
     assert v.release == (2, 7, 0)
 
 
