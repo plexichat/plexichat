@@ -77,7 +77,7 @@ def _make_asset(tag: str):
 
 
 def test_m2_tampered_file_is_quarantined_not_resigned(caplog):
-    tag = "a.1.0-60"
+    tag = "1.0.0a60"
     with tempfile.TemporaryDirectory() as tmp:
         mgr = StaticClientManager(_make_cfg(tmp))
         target = Path(tmp) / tag
@@ -168,7 +168,7 @@ def test_m2_tamper_fail_closed_when_redownload_fails():
     Fail-closed: a failed re-download must not restore or re-trust the
     tampered install, and the manifest must not be re-signed.
     """
-    tag = "a.1.0-60"
+    tag = "1.0.0a60"
     with tempfile.TemporaryDirectory() as tmp:
         mgr = StaticClientManager(_make_cfg(tmp))
         target = Path(tmp) / tag
@@ -222,7 +222,7 @@ def test_m2_tamper_fail_closed_when_redownload_fails():
 
 
 def test_m2_valid_install_stays_trusted_no_redownload():
-    tag = "a.1.0-60"
+    tag = "1.0.0a60"
     with tempfile.TemporaryDirectory() as tmp:
         mgr = StaticClientManager(_make_cfg(tmp))
         target = Path(tmp) / tag
