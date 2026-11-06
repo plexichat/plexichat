@@ -207,6 +207,7 @@ class LicenseManager:
         self._public_key = public_key_bytes
         self._license: Optional[License] = None
         self._license_source: Optional[str] = None
+        self._raw_license_data: Optional[Dict[str, Any]] = None
         self._validation_result: Optional[LicenseValidationResult] = None
 
     def snapshot(self) -> tuple:
@@ -321,6 +322,11 @@ class LicenseManager:
                 allowed_hosts=list(data.get("allowed_hosts", []) or []),
                 signature=data.get("signature"),
             )
+            # Keep a copy of the raw signed data (minus the signature field)
+            # so signature verification canonicalizes exactly what was signed,
+            # including only fields that were actually present.
+            raw = {k: v for k, v in data.items() if k != "signature"}
+            self._raw_license_data = raw
             self._license = license_obj
             return license_obj
         except (TypeError, KeyError) as e:
@@ -426,22 +432,13 @@ class LicenseManager:
             public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
 
             # Canonical payload shared with ``sign_license`` -- see
-            # ``canonical_license_payload``. Rebuilding it from the parsed
-            # License object (rather than the raw mapping) is what keeps
-            # ``type`` and ``allowed_hosts`` inside the covered set, so a
-            # license whose entitlements were rewritten after signing no
-            # longer verifies.
+            # ``canonical_license_payload``. We rebuild it from the raw
+            # signed data (not the License object, which always carries
+            # defaults for ``type`` and ``allowed_hosts``) so that a
+            # vendor-signed license that omits those fields verifies
+            # against exactly what was signed.
             message = _canonical_message(
-                {
-                    "version": self._license.version,
-                    "type": self._license.type,
-                    "instance_id": self._license.instance_id,
-                    "issued_at": self._license.issued_at,
-                    "expires_at": self._license.expires_at,
-                    "features": self._license.features,
-                    "limits": self._license.limits,
-                    "allowed_hosts": self._license.allowed_hosts,
-                }
+                canonical_license_payload(self._raw_license_data or {})
             )
 
             signature_bytes = base64.b64decode(self._license.signature)
