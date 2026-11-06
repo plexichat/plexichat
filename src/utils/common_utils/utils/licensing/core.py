@@ -128,36 +128,35 @@ def canonical_license_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
     signature covers, or the two sides of the same check disagree:
 
     * :func:`sign_license` signs whatever mapping it is handed -- i.e. the
-      license JSON as documented above, which carries ``type`` and
-      ``allowed_hosts``.
-    * ``_verify_signature`` used to rebuild the payload from six fields only.
+      license JSON as documented above, which may or may not carry ``type``
+      and ``allowed_hosts``.
+    * ``_verify_signature`` rebuilds the payload from the parsed License
+      object, mirroring exactly how ``LicenseManager._parse_license_data``
+      reads each key out of the raw mapping.
+
+    Only fields actually present in the signed data are included. Fields
+    that were never part of the signed payload (e.g. ``type`` and
+    ``allowed_hosts`` on older vendor-signed licenses) are omitted rather
+    than defaulted, so the canonical view matches what was signed.
+    ``signature`` itself is never included.
 
     Every field the parser accepts and that influences what the license
-    grants is therefore listed here, and ``signature`` never is. Each entry
-    mirrors exactly how ``LicenseManager._parse_license_data`` reads the same
-    key out of the raw mapping, including the defaults, so both sides
-    canonicalize to identical JSON.
-
-    The two fields that used to be missing mattered most:
-
-    * A vendor-signed license that followed the documented format failed
-      verification outright and silently demoted the instance to free tier.
-    * ``type`` was unprotected, so rewriting ``"type": "standard"`` to
-      ``"type": "test"`` in an otherwise valid license kept the signature
-      valid while turning every premium feature on -- ``has_feature``
-      short-circuits on ``type == "test"``. ``allowed_hosts`` was equally
-      rewritable on a provisional license.
+    grants is listed here, mirroring the defaults in
+    ``LicenseManager._parse_license_data`` for fields that are present.
     """
-    return {
+    result: Dict[str, Any] = {
         "version": data.get("version", "1.0"),
-        "type": data.get("type", "standard"),
         "instance_id": data.get("instance_id", ""),
         "issued_at": data.get("issued_at", 0),
         "expires_at": data.get("expires_at"),
         "features": data.get("features", {}),
         "limits": data.get("limits", {}),
-        "allowed_hosts": list(data.get("allowed_hosts", []) or []),
     }
+    if "type" in data:
+        result["type"] = data["type"]
+    if "allowed_hosts" in data:
+        result["allowed_hosts"] = list(data["allowed_hosts"] or [])
+    return result
 
 
 def _canonical_message(data: Mapping[str, Any]) -> bytes:
