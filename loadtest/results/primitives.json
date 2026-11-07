@@ -1,0 +1,49 @@
+{
+  "kind": "primitive_microbench",
+  "host": {
+    "platform": "Linux-7.0.14-26-pve-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "python": "3.14.6",
+    "cpu_count": 4
+  },
+  "measured_at": 1794078181.1077547,
+  "caveat": "Primitives only (CPU/crypto/codec/local-sqlite). NOT end-to-end Plexichat stack throughput; excludes Postgres network/txn, FTS via Postgres, Valkey, permission checks, asyncio/uvicorn overhead, ClamAV, and fanout socket I/O.",
+  "argon2": {
+    "time_cost": 3,
+    "memory_cost_kib": 65536,
+    "parallelism": 2,
+    "runs": 5,
+    "verify_ms": [
+      688.07,
+      551.3,
+      506.39,
+      546.37,
+      482.82
+    ],
+    "verify_mean_ms": 554.99,
+    "verify_p95_ms": 551.3,
+    "single_process_max_verify_per_s": 1.8
+  },
+  "message_crypto": {
+    "msg_chars": 240,
+    "token_count": 40,
+    "n": 2000,
+    "aesgcm_encrypt_us": 11.97,
+    "whole_blind_index_us": 2.48,
+    "per_token_index_us": 1.61,
+    "all_tokens_index_us": 64.37
+  },
+  "fanout_encode": {
+    "payload_bytes": 491,
+    "compressed_frame_bytes": 12,
+    "json_dumps_us": 9.36,
+    "json_plus_zlib_us": 24.04,
+    "per_recipient_conn_encode_us_est": 24.04
+  },
+  "sqlite_patterns": {
+    "note": "local sqlite3 file, NOT the production Postgres/Valkey path; shows relative op cost only",
+    "n": 500,
+    "fts_delete_insert_us": 258.88,
+    "token_rows25_delete_insert_us": 671.56
+  }
+}

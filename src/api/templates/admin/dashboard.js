@@ -132,6 +132,16 @@ document.addEventListener('keydown', e => {
         const toast = document.body.querySelector('.toast');
         if (toast) toast.querySelector('.toast-dismiss')?.click();
     }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-click]')) {
+        e.preventDefault();
+        e.target.closest('[data-click]').click();
+    }
+});
+
+// === ALERTS FILTER CHANGE ===
+document.addEventListener('change', e => {
+    const target = e.target.closest('#alerts-source-filter, #alerts-severity-filter, #alerts-hours-filter');
+    if (target) refreshAlerts();
 });
 
 // === EVENT DELEGATION ===
@@ -199,6 +209,8 @@ const actionHandlers = new Map([
     ['removeAccessTokenScope', removeAccessTokenScope],
     ['removeBan', removeBan],
     ['removeUserBadge', removeUserBadge],
+    ['filterAlertsSource', filterAlertsSource],
+    ['resetAlertsFilter', resetAlertsFilter],
     ['resetAutomodRule', resetAutomodRule],
     ['resetTelemetry', resetTelemetry],
     ['reviewHashReport', reviewHashReport],
@@ -228,6 +240,7 @@ const actionHandlers = new Map([
     ['toggleAdminUserStatus', toggleAdminUserStatus],
     ['toggleAutomodRule', toggleAutomodRule],
     ['toggleSidebar', toggleSidebar],
+    ['toggleSummary', toggleSummary],
     ['triggerCopy', triggerCopy],
     ['triggerDownload', triggerDownload],
     ['unblockHash', unblockHash],
@@ -606,6 +619,28 @@ async function refreshAlerts() {
     await loadSystemAlerts({ source, severity, hours });
 }
 
+function resetAlertsFilter() {
+    const el = document.getElementById('alerts-hours-filter');
+    if (el) el.value = '168';
+    refreshAlerts();
+}
+
+function filterAlertsSource(btn) {
+    const s = document.getElementById('alerts-source-filter');
+    if (s && btn.dataset.source) s.value = btn.dataset.source;
+    refreshAlerts();
+}
+
+function toggleSummary(btn) {
+    const n = btn.nextElementSibling;
+    if (n) {
+        n.hidden = !n.hidden;
+        btn.textContent = (n.hidden ? '▶' : '▼') + ' Summary (' + btn.dataset.summaryLabel + ')';
+        btn.setAttribute('aria-expanded', n.hidden ? 'false' : 'true');
+        sessionStorage.setItem('plexichat-summary-collapsed', n.hidden ? '1' : '0');
+    }
+}
+
 async function loadSystemAlerts(opts = {}) {
     const list = document.getElementById('alerts-full-list') || document.getElementById('system-alerts-list');
     if (!list) return;
@@ -633,7 +668,7 @@ async function loadSystemAlerts(opts = {}) {
                 .sort((a, b) => b[1] - a[1])
                 .map(([k, v]) => {
                     const srcColor = { cross_worker: 'var(--destructive, #ef4444)', valkey: 'var(--warning, #f59e0b)', db_pool: 'var(--warning, #f59e0b)', approvals: 'var(--success, #22c55e)', admin: 'var(--primary, #6366f1)' }[k] || 'inherit';
-                    return `<span class="source-count-chip" role="button" tabindex="0" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;color:${srcColor};" onclick="var s=document.getElementById('alerts-source-filter');if(s){s.value='${esc(k)}';refreshAlerts();}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Filter to ${esc(k)}">${esc(k)}: ${v}</span>`;
+                    return `<span class="source-count-chip" role="button" tabindex="0" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;color:${srcColor};" data-click="filterAlertsSource" data-source="${esc(k)}" title="Filter to ${esc(k)}">${esc(k)}: ${v}</span>`;
                 });
             sourceCountsEl.innerHTML = parts.length ? parts.join('  ·  ') : '';
         }
@@ -689,7 +724,7 @@ async function loadSystemAlerts(opts = {}) {
             })
             .join(', ');
         const summaryHtml = `<div class="text-xs" style="padding:6px 0;margin-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;">
-            <span class="summary-toggle" role="button" tabindex="0" aria-expanded="true" style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="var n=this.nextElementSibling;n.hidden=!n.hidden;this.textContent=(n.hidden?'▶':'▼')+' Summary (${sinceLabel})';this.setAttribute('aria-expanded',n.hidden?'false':'true');sessionStorage.setItem('plexichat-summary-collapsed',n.hidden?'1':'0');" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Toggle summary">▼ Summary (${sinceLabel})</span>
+            <span class="summary-toggle" role="button" tabindex="0" aria-expanded="true" style="cursor:pointer;user-select:none;white-space:nowrap;" data-click="toggleSummary" data-summary-label="${esc(sinceLabel)}" title="Toggle summary">▼ Summary (${sinceLabel})</span>
             <span class="summary-items" style="color:var(--muted-foreground);">${summary}</span>
         </div>`;
 

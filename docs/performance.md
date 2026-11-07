@@ -334,6 +334,7 @@ monitoring:
 
 ## Related documentation
 
+*   [Load testing and capacity](deployment/load-testing.md) — load-test scaffold, component measurements, and estimated/measured capacity guidance.
 *   [Database configuration](deployment/configuration/config-database.md) — PostgreSQL and SQLite setup and connection pooling.
 *   [Valkey configuration](deployment/configuration/config-valkey.md) — Caching, session storage, and scaling.
 *   [WebSocket configuration](deployment/configuration/config-websocket.md) — Gateway tuning for concurrent connections.
