@@ -2,14 +2,15 @@
 Plexichat CLI — Subcommand-based argument parsing and dispatch.
 
 Subcommands:
-  start           Start the server (default when no subcommand given)
-  pre-flight      Validate configuration, initialize all modules, then exit
-  self-test       Start server and run API self-test suite, then exit
-  create-config   Generate default config/config.yaml and exit
-  version         Show version string and exit
-  rotate-secrets  Rotate webhook signature secrets
-  migrate-db      Run pending database migrations and exit
-  migrate-kek     Enter KEK key migration mode (see subcommand help)
+  start                 Start the server (default when no subcommand given)
+  pre-flight            Validate configuration, initialize all modules, then exit
+  self-test             Start server and run API self-test suite, then exit
+  create-config         Generate default config/config.yaml and exit
+  version               Show version string and exit
+  rotate-secrets        Rotate webhook signature secrets
+  reset-admin-password  Regenerate the admin user password and exit
+  migrate-db            Run pending database migrations and exit
+  migrate-kek           Enter KEK key migration mode (see subcommand help)
 """
 
 import os
@@ -295,6 +296,17 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "config file to modify.",
     ).set_defaults(handler="_cmd_rotate_secrets")
 
+    # reset-admin-password
+    _add(
+        "reset-admin-password",
+        help="Regenerate the admin user password and exit",
+        description="Delete the existing admin user (if any), create a new "
+        "one with a fresh random password, print it to stdout once, and "
+        "write it to ~/.plexichat/admin_credentials.txt (mode 0600). Use "
+        "this when the bootstrap password has been lost. OTP setup is "
+        "required on first login with the new password.",
+    ).set_defaults(handler="_cmd_reset_admin_password")
+
     # migrate-db (with dry-run)
     mdb_parser = _add(
         "migrate-db",
@@ -578,6 +590,22 @@ def _cmd_rotate_secrets(args: argparse.Namespace) -> None:
     print("Successfully rotated applications.webhook_signature_secret")
 
 
+def _cmd_reset_admin_password(args: argparse.Namespace) -> None:
+    """Regenerate the admin user password and exit.
+
+    Deletes the existing admin user (if any), creates a new one with a fresh
+    random password, prints it to stdout once, and writes it to
+    ~/.plexichat/admin_credentials.txt (mode 0600). OTP setup is required
+    on first login with the new password.
+    """
+    server, _, _, _ = _run_startup(args, project_root)
+    db = server.db
+
+    from src.core.admin.auth import ensure_admin_user as _ensure_admin_user
+
+    _ensure_admin_user(db, force=True)
+
+
 def _cmd_migrate_db(args: argparse.Namespace) -> None:
     handle_migrate_db(project_root, dry_run=getattr(args, "dry_run", False))
 
@@ -651,6 +679,7 @@ _HANDLERS = {
     "_cmd_version": _cmd_version,
     "_cmd_create_config": _cmd_create_config,
     "_cmd_rotate_secrets": _cmd_rotate_secrets,
+    "_cmd_reset_admin_password": _cmd_reset_admin_password,
     "_cmd_migrate_db": _cmd_migrate_db,
     "_cmd_migrate_kek": _cmd_migrate_kek,
     "_cmd_pre_flight": _cmd_pre_flight,

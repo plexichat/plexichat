@@ -133,20 +133,21 @@ def _verify_admin_password(
 def _save_admin_credentials(password: str) -> None:
     """Hand the generated bootstrap admin password to the operator.
 
-    SECURITY: the plaintext password is NEVER written to disk by default.
-    A plaintext credential file at rest survives reboots, leaks through
-    backups, crash dumps and anything that reads the operator's home
-    directory — it is the classic first-boot credential exposure. Instead
-    the password is printed ONCE to the operator console (stdout) at the
-    moment of generation; it exists nowhere else but the password hash.
+    The plaintext password is written to a credential file at rest
+    (~/.plexichat/admin_credentials.txt, mode 0600, atomic write) so it
+    survives container recreation and operator reboots. The write path is
+    hardened: mkstemp with 0600 + atomic replace, and any failure is FATAL
+    (raises) so first boot can never silently fall back to an unknown
+    password.
 
-    For headless installs that cannot read the console, operators may set
-    PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1 to explicitly opt in to the
-    (0600, atomic-write) credential file. The write path is hardened:
-    mkstemp with 0600 + atomic replace, and any failure is FATAL (raises)
-    so first boot can never silently fall back to an unknown password.
+    The password is also printed ONCE to the operator console (stdout) at
+    the moment of generation so interactive operators can capture it
+    directly.
+
+    Set PLEXICHAT_NO_SAVE_ADMIN_CREDENTIALS=1 to disable the disk write
+    (console output is always emitted).
     """
-    opt_in = os.environ.get("PLEXICHAT_SAVE_ADMIN_CREDENTIALS", "") == "1"
+    opt_out = os.environ.get("PLEXICHAT_NO_SAVE_ADMIN_CREDENTIALS", "") == "1"
 
     # Always surface the password exactly once on the console.
     print(
@@ -155,16 +156,15 @@ def _save_admin_credentials(password: str) -> None:
         + "\nPLEXICHAT FIRST BOOT: generated admin credentials"
         + "\n  Username: admin"
         + f"\n  Password: {password}"
-        + "\n  Store this password NOW - it is not shown again and"
-        + "\n  is not written to disk unless you opted in via"
-        + "\n  PLEXICHAT_SAVE_ADMIN_CREDENTIALS=1."
+        + "\n  Saved to ~/.plexichat/admin_credentials.txt (mode 0600)"
+        + "\n  Set PLEXICHAT_NO_SAVE_ADMIN_CREDENTIALS=1 to disable disk write."
         + "\n"
         + "=" * 60
         + "\n",
         flush=True,
     )
 
-    if not opt_in:
+    if opt_out:
         return
 
     home_dir = Path.home() / ".plexichat"
@@ -181,8 +181,7 @@ Email: admin@example.com (change this in admin settings)
 IMPORTANT:
 - Change this password after first login
 - Set up 2FA (required on first login)
-- Delete this file after noting the credentials
-- Keep these credentials secure!
+- Protect this file (mode 0600); anyone who reads it can sign in as admin
 
 Login URL: https://<your-server>:8000/admin
 """
