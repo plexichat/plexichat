@@ -407,7 +407,9 @@ def _inject_default_subcommand(argv: list) -> list:
 # ──────────────────────────────────────────────
 
 
-def _run_startup(args: argparse.Namespace, project_root: str, check_port: bool = True) -> tuple:
+def _run_startup(
+    args: argparse.Namespace, project_root: str, check_port: bool = True
+) -> tuple:
     """
     Run the common server startup sequence.
 

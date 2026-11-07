@@ -60,9 +60,7 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
         if row and not force:
             return
         if row and force:
-            db.execute(
-                "DELETE FROM admin_sessions WHERE admin_id = ?", (row["id"],)
-            )
+            db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (row["id"],))
             db.execute("DELETE FROM admin_users WHERE username = ?", ("admin",))
         password = _generate_password()
         import src.utils.encryption as encryption

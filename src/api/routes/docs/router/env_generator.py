@@ -45,8 +45,8 @@ class EnvGeneratorMixin:
 
         <div class="form-group">
             <label for="version">Version to Deploy:</label>
-            <input type="text" id="version" value="latest" placeholder="e.g., a.1.0-53">
-            <small>Use 'latest' for the most recent version, or specify a version tag like 'a.1.0-53'</small>
+            <input type="text" id="version" value="latest" placeholder="e.g., 1.0.0a53">
+            <small>Use 'latest' for the most recent version, or specify a version tag like '1.0.0a53'</small>
         </div>
 
         <div class="buttons">
@@ -69,7 +69,7 @@ class EnvGeneratorMixin:
         <ol>
             <li>Generate configuration using the button above</li>
             <li>Copy to clipboard and save as <code>.env.generated</code> on your server</li>
-            <li>Run: <code>VERSION=a.1.0-84 docker compose up -d</code></li>
+            <li>Run: <code>VERSION=1.0.0a84 docker compose up -d</code></li>
         </ol>
     </div>
 
@@ -87,8 +87,8 @@ class EnvGeneratorMixin:
 # Generated securely on ${new Date().toISOString()}
 # DO NOT commit this file to version control
 
-# Version to deploy (e.g., a.1.0-84)
-# Set via: VERSION=a.1.0-84 docker compose up -d
+# Version to deploy (e.g., 1.0.0a84)
+# Set via: VERSION=1.0.0a84 docker compose up -d
 VERSION=${version}
 
 POSTGRES_DBNAME=plexichat
