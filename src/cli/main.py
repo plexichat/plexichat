@@ -106,6 +106,7 @@ _SUBCOMMANDS = frozenset(
         "create-config",
         "version",
         "rotate-secrets",
+        "reset-admin-password",
         "migrate-db",
         "migrate-kek",
     }
