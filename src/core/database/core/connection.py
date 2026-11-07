@@ -455,12 +455,15 @@ class DatabaseConnectionMixin:
 
             last_used = metadata.get("last_used", 0)
             idle_time = current_time - last_used
+            created_at = metadata.get("created_at", 0)
+            age_seconds = current_time - created_at
 
             is_current_thread_conn = (
                 hasattr(self._local, "connection")
                 and id(self._local.connection) == conn_id
             )
 
+            # Reap idle connections past the idle threshold.
             if idle_time > self._max_idle_time and not is_current_thread_conn:
                 conn = metadata["connection"]
                 logger.warning(
@@ -471,6 +474,27 @@ class DatabaseConnectionMixin:
                     reaped_count += 1
                 except Exception as e:
                     logger.error(f"Error reaping connection {conn_id}: {e}")
+                finally:
+                    self.monitor.remove_connection_metadata(conn_id)
+                continue
+
+            # Reap long-lived connections past the max connection age so the
+            # monitor does not keep warning about them every tick without ever
+            # closing them.
+            if (
+                self._max_connection_age_seconds > 0
+                and age_seconds > self._max_connection_age_seconds
+                and not is_current_thread_conn
+            ):
+                conn = metadata["connection"]
+                logger.warning(
+                    f"Reaping long-lived connection {conn_id} (age {age_seconds:.1f}s)"
+                )
+                try:
+                    self.engine.close_connection(conn, self._pool, {"close": True})
+                    reaped_count += 1
+                except Exception as e:
+                    logger.error(f"Error reaping long-lived connection {conn_id}: {e}")
                 finally:
                     self.monitor.remove_connection_metadata(conn_id)
 
