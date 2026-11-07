@@ -58,20 +58,20 @@ ots:push_proofs:
       echo "Publishing $(stat -c%s "$PROOF") bytes from $PROOF"
     - git config user.email "ci@plexichat.com"
     - git config user.name "Plexichat CI"
-    - git fetch origin ots-proofs:refs/remotes/origin/ots-proofs || true
+    - git fetch origin ci-output:refs/remotes/origin/ci-output || true
     - |
       # The runner reuses this build directory across pipelines, so a previous
-      # attempt can leave an ``ots-proofs`` branch behind. Both checkout paths
+      # attempt can leave a ``ci-output`` branch behind. Both checkout paths
       # below refuse to run while it exists (``--orphan`` included: "a branch
-      # named 'ots-proofs' already exists"), and the retry then fails before it
+      # named 'ci-output' already exists"), and the retry then fails before it
       # reaches the push it was meant to test. Drop the stale local branch
       # first -- the remote one, when there is one, is fetched above and is the
       # only copy that matters.
-      git branch -D ots-proofs >/dev/null 2>&1 || true
-      if git rev-parse --verify origin/ots-proofs >/dev/null 2>&1; then
-        git checkout -B ots-proofs origin/ots-proofs
+      git branch -D ci-output >/dev/null 2>&1 || true
+      if git rev-parse --verify origin/ci-output >/dev/null 2>&1; then
+        git checkout -B ci-output origin/ci-output
       else
-        git checkout --orphan ots-proofs
+        git checkout --orphan ci-output
         git rm -rf . 2>/dev/null || true
       fi
     - git add ots-proofs/
@@ -84,15 +84,15 @@ ots:push_proofs:
         # behind until someone noticed; retry onto the remote branch.
         PUSHED=0
         for attempt in 1 2 3; do
-          if git push origin ots-proofs 2>/dev/null; then
+          if git push origin ci-output 2>/dev/null; then
             PUSHED=1
             break
           fi
           echo "push attempt $attempt failed; rebasing onto remote"
-          git pull --rebase origin ots-proofs 2>/dev/null || true
+          git pull --rebase origin ci-output 2>/dev/null || true
         done
         if [ "$PUSHED" != "1" ]; then
-          echo "FAIL: could not push the proof to the ots-proofs branch." >&2
+          echo "FAIL: could not push the proof to the ci-output branch." >&2
           echo "Pushing over HTTP with the job token needs 'Allow Git push requests" >&2
           echo "to the repository' enabled for this project." >&2
           exit 1
@@ -769,7 +769,7 @@ performance:no_slow_tests:
 # =========================================================
 
 # Accumulates the per-job test durations from the performance gate on the
-# ``ci-metrics`` branch (JSONL history + rendered index.html) so regressions
+# ``ci-output`` branch (JSONL history + rendered index.html) so regressions
 # show over time. Mirrors the ots:push_proofs pattern: fetch the branch,
 # append, render, push back. allow_failure keeps a transient push race from
 # reddening the pipeline; the next run catches the branch up.
@@ -785,23 +785,23 @@ metrics:trend:
   needs:
     - performance:no_slow_tests
   script:
-    # The ci-metrics branch only tracks ci-metrics.jsonl + index.html, so
+    # The ci-output branch only tracks ci-metrics.jsonl + index.html, so
     # checking it out would delete ci-tooling/ from the worktree.  Copy the
     # publish script to /tmp first, and fetch the branch (CI only checks
-    # out the pipeline ref by default, so ci-metrics is not local).
+    # out the pipeline ref by default, so ci-output is not local).
     - cp ci-tooling/trend_publish.py /tmp/trend_publish.py
-    - git fetch origin ci-metrics || true
+    - git fetch origin ci-output || true
     - |
-      if git rev-parse --verify origin/ci-metrics >/dev/null 2>&1; then
-        git checkout -B ci-metrics origin/ci-metrics
+      if git rev-parse --verify origin/ci-output >/dev/null 2>&1; then
+        git checkout -B ci-output origin/ci-output
       else
         # The runner reuses the build directory between pipelines, so a previous
-        # run can leave a local ci-metrics branch behind -- and --orphan refuses
+        # run can leave a local ci-output branch behind -- and --orphan refuses
         # to switch to a branch that already exists, which failed this job with
-        # "fatal: a branch named 'ci-metrics' already exists" while the remote
+        # "fatal: a branch named 'ci-output' already exists" while the remote
         # had none. Drop the stale branch first.
-        git branch -D ci-metrics 2>/dev/null || true
-        git checkout --orphan ci-metrics
+        git branch -D ci-output 2>/dev/null || true
+        git checkout --orphan ci-output
         git rm -rf . 2>/dev/null || true
       fi
     - python /tmp/trend_publish.py merge --metrics test-durations.json --history ci-metrics.jsonl --out ci-metrics.jsonl
@@ -814,15 +814,15 @@ metrics:trend:
         git commit -m "CI metrics: $CI_COMMIT_SHORT_SHA"
         PUSHED=0
         for attempt in 1 2 3; do
-          if git push origin ci-metrics 2>/dev/null; then
+          if git push origin ci-output 2>/dev/null; then
             PUSHED=1
             break
           fi
           echo "push attempt $attempt failed; rebasing onto remote"
-          git pull --rebase origin ci-metrics 2>/dev/null || true
+          git pull --rebase origin ci-output 2>/dev/null || true
         done
         if [ "$PUSHED" != "1" ]; then
-          echo "WARN: ci-metrics push failed after retries (trend catches up next run)"
+          echo "WARN: ci-output push failed after retries (trend catches up next run)"
         fi
       fi
   artifacts:
