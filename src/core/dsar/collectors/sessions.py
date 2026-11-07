@@ -31,8 +31,8 @@ class SessionsCollector(BaseCollector):
         try:
             rows = self._db.fetch_all(
                 """
-                SELECT id, device_id, ip_encrypted, ua_encrypted, created_at,
-                       expires_at, last_activity, revoked
+                SELECT id, device_id, token_hash, ip_encrypted, ua_encrypted,
+                       created_at, expires_at, last_activity, revoked
                 FROM auth_sessions WHERE user_id = ?
                 """,
                 (user_id,),

@@ -190,20 +190,20 @@ class Keyring:
         """
         from ..vault import HardwareVault
 
-        # Try dedicated KEK first
-        try:
-            vault_instance = HardwareVault(kek_env_var=self.kek_env_var)
-            kek = vault_instance.get_kek()
-            if kek:
-                return kek
-        except Exception as e:
-            if not fallback:
+        # A fallback request means the caller has already tried (and failed to
+        # decrypt with) this keyring's dedicated KEK. Retrying that same KEK
+        # here would return the wrong key and turn the recovery read into a
+        # second InvalidTag; go straight to the system KEK instead.
+        if not fallback:
+            try:
+                vault_instance = HardwareVault(kek_env_var=self.kek_env_var)
+                kek = vault_instance.get_kek()
+                if kek:
+                    return kek
+            except Exception as e:
                 raise KeyringDecryptionError(
                     f"Failed to get KEK from {self.kek_env_var}: {e}"
                 )
-            logger.warning(
-                f"Failed to get KEK from {self.kek_env_var}, trying fallback: {e}"
-            )
 
         # Fallback to system KEK if enabled
         if fallback and self.kek_env_var != "PLEXICHAT_SYSTEM_KEY":

@@ -19,7 +19,15 @@ import pytest
 
 
 def _png(size: int = 64) -> bytes:
-    return b"\x89PNG\r\n\x1a\n" + b"\x00" * (size - 8)
+    """A real PNG: the media pipeline runs it through Pillow, so a bare magic
+    header fails metadata extraction before the upload checks are reached."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (size, size), (220, 40, 40)).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +38,7 @@ def _png(size: int = 64) -> bytes:
 @pytest.mark.integration
 class TestIdorCoreBoundaries:
     def test_non_member_cannot_get_server_channel(self, server_with_members):
-        server, owner, _admin, _member, _mod, _role, servers = server_with_members
+        owner, _member1, _member2, server, servers = server_with_members
         channel = servers.create_channel(owner.id, server.id, "private-hardened")
         outsider = servers._auth.register(
             username="idor_outsider_ch",
@@ -40,7 +48,7 @@ class TestIdorCoreBoundaries:
         assert servers.get_channel(channel.id, outsider.id) is None
 
     def test_non_member_cannot_list_server_channels(self, server_with_members):
-        server, _owner, _admin, _member, _mod, _role, servers = server_with_members
+        _owner, _member1, _member2, server, servers = server_with_members
         outsider = servers._auth.register(
             username="idor_outsider_list",
             email="idor_outsider_list@example.com",
