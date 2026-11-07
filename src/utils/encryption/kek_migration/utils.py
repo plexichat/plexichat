@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List
 
 
-def decode_env_key(env_value: str) -> bytes:
+def decode_env_key(env_value: str, *, validate_quality: bool = False) -> bytes:
     """
     Decode environment variable key (supports hex and Base64).
 
@@ -16,6 +16,9 @@ def decode_env_key(env_value: str) -> bytes:
 
     Args:
         env_value: The environment variable value
+        validate_quality: When True, enforce KEK strength/entropy/pattern rules
+            (production-safe). Migration tooling may keep this False when working
+            with legacy material under operator control.
 
     Returns:
         The decoded 32-byte key
@@ -23,25 +26,34 @@ def decode_env_key(env_value: str) -> bytes:
     Raises:
         ValueError: If the key cannot be decoded or is not 32 bytes
     """
+    decoded = None
     # Try hex first (standard Plexichat production format: 64 hex chars = 32 bytes)
     try:
         key = bytes.fromhex(env_value)
         if len(key) == 32:
-            return key
+            decoded = key
     except Exception:
         pass
 
     # Try Base64 (alternative format)
-    try:
-        key = base64.b64decode(env_value)
-        if len(key) == 32:
-            return key
-    except Exception:
-        pass
+    if decoded is None:
+        try:
+            key = base64.b64decode(env_value)
+            if len(key) == 32:
+                decoded = key
+        except Exception:
+            pass
 
-    raise ValueError(
-        f"Environment variable must be a 32-byte key (hex or Base64 encoded), got {len(env_value)} characters"
-    )
+    if decoded is None:
+        raise ValueError(
+            f"Environment variable must be a 32-byte key (hex or Base64 encoded), got {len(env_value)} characters"
+        )
+
+    if validate_quality:
+        from src.utils.encryption.kek_validation import validate_kek
+
+        decoded = validate_kek(decoded, source="env", context="migration")
+    return decoded
 
 
 def get_keyring_paths() -> List[Path]:

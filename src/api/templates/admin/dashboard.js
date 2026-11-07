@@ -1,13 +1,18 @@
-Chart.defaults.color = '#999';
-Chart.defaults.borderColor = 'oklch(0.22 0.005 240)';
-Chart.defaults.plugins.legend.display = true;
-Chart.defaults.plugins.legend.position = 'top';
-Chart.defaults.plugins.legend.align = 'end';
-Chart.defaults.plugins.legend.labels.boxWidth = 12;
-Chart.defaults.plugins.legend.labels.font = { size: 10 };
-Chart.defaults.elements.line.borderWidth = 2;
-Chart.defaults.elements.point.radius = 3;
-Chart.defaults.elements.point.hoverRadius = 5;
+// Chart.js is vendored and served locally. Guard every use so a missing or
+// blocked chart bundle degrades to an empty panel instead of throwing at the
+// top of this script and taking the rest of the dashboard down with it.
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.color = '#999';
+    Chart.defaults.borderColor = 'oklch(0.22 0.005 240)';
+    Chart.defaults.plugins.legend.display = true;
+    Chart.defaults.plugins.legend.position = 'top';
+    Chart.defaults.plugins.legend.align = 'end';
+    Chart.defaults.plugins.legend.labels.boxWidth = 12;
+    Chart.defaults.plugins.legend.labels.font = { size: 10 };
+    Chart.defaults.elements.line.borderWidth = 2;
+    Chart.defaults.elements.point.radius = 3;
+    Chart.defaults.elements.point.hoverRadius = 5;
+}
 
 const C = {
     blue: 'oklch(0.65 0.18 250)',
@@ -57,6 +62,7 @@ const pageTitles = {
 };
 
 // === TAB SYSTEM ===
+let _handlingHashChange = false;
 const showTab = n => {
     // Handle compound hashes like 'approval-{id}' and 'user-{id}' —
     // navigate to the parent tab and schedule a scroll-to after data loads.
@@ -418,6 +424,7 @@ function showToast(message, type = 'info') {
 }
 
 function renderChart(canvasId, type, data, options) {
+    if (typeof Chart === 'undefined') return;
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     if (charts[canvasId]) charts[canvasId].destroy();
@@ -1149,6 +1156,8 @@ async function loadAccessTokenDetail(btn) {
 }
 
 function closeAccessTokenDetail() { selectedAccessTokenId = null; document.getElementById('access-token-detail').classList.add('hidden'); }
+
+function closeCreateTokenModal() { document.getElementById('create-token-modal').classList.add('hidden'); }
 
 async function refreshAccessTokenDetail() { if (selectedAccessTokenId) loadAccessTokenDetail(selectedAccessTokenId); }
 
@@ -2297,7 +2306,6 @@ async function saveServerRetention(e) {
 }
 
 // === HASH-BASED NAVIGATION (back/forward buttons + bookmarks) ===
-let _handlingHashChange = false;
 window.addEventListener('hashchange', () => {
     if (_handlingHashChange) return;
     const hash = window.location.hash.slice(1);
@@ -2330,4 +2338,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('user-report-status')?.addEventListener('change', loadUserReports);
     document.getElementById('approval-status-filter')?.addEventListener('change', loadApprovals);
     document.getElementById('dash-time-range')?.addEventListener('change', refreshMetrics);
+
+    // Mandatory-2FA guard: login already forces setup, but a session minted
+    // before the requirement (or before the setup was completed) must not be
+    // usable on the dashboard. Send it back through the login flow.
+    api('/api/v1/admin/auth/security-status')
+        .then(sec => { if (sec.must_setup_otp) window.location.replace('/api/v1/admin/login'); })
+        .catch(() => {});
 });

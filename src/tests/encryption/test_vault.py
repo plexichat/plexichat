@@ -6,6 +6,7 @@ decoding (hex vs base64), dedicated keyring key files, HSM/TPM init
 paths, and the machine-key file loader.
 """
 
+import base64
 import os
 import stat
 import sys
@@ -15,8 +16,11 @@ import pytest
 from src.utils.encryption import vault as vault_module
 from src.utils.encryption.vault import HardwareVault
 
-_HEX_KEY = "ab" * 32  # 64 hex chars -> 32 bytes
-_B64_KEY = os.urandom(32)
+# Deterministic high-entropy 32-byte keys (KEK validation rejects weak material).
+_HEX_KEY = "76f1a9aeb10f30f7ac17f40aa642f8f57a001e2fbbf3b8cacc6662e678d190e5"
+_B64_KEY = bytes.fromhex(
+    "c7b8f755cae0c3cbbb3b9336b92b5de5a0db54bad212a4ac9d8fa719628af758"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +48,7 @@ class TestDecodeEnvKey:
         )
 
     def test_base64_key_decodes_to_32_bytes(self):
-        encoded = __import__("base64").b64encode(_B64_KEY).decode()
+        encoded = base64.b64encode(_B64_KEY).decode()
         assert HardwareVault()._decode_env_key(encoded) == _B64_KEY
 
     def test_hex_takes_precedence_over_base64(self):
@@ -53,12 +57,12 @@ class TestDecodeEnvKey:
         assert HardwareVault()._decode_env_key(_HEX_KEY) == bytes.fromhex(_HEX_KEY)
 
     def test_invalid_key_raises(self):
-        with pytest.raises(ValueError, match="32-byte key"):
+        with pytest.raises(ValueError, match="32-64 byte key"):
             HardwareVault()._decode_env_key("not-a-key")
 
     def test_wrong_length_hex_falls_through_and_raises(self):
         # 62 hex chars -> 31 bytes as hex, 46 bytes as base64: both wrong.
-        with pytest.raises(ValueError, match="32-byte key"):
+        with pytest.raises(ValueError, match="32-64 byte key"):
             HardwareVault()._decode_env_key("ab" * 31)
 
 
@@ -71,7 +75,7 @@ class TestGetKek:
         assert vault.is_using_secure_source() is True
 
     def test_env_base64_source(self, monkeypatch):
-        encoded = __import__("base64").b64encode(_B64_KEY).decode()
+        encoded = base64.b64encode(_B64_KEY).decode()
         monkeypatch.setenv("PLEXICHAT_SYSTEM_KEY", encoded)
         vault = HardwareVault()
         assert vault.get_kek() == _B64_KEY
@@ -85,7 +89,7 @@ class TestGetKek:
         assert vault.get_kek() == first  # cached in _master_key
 
     def test_machine_key_fallback(self, monkeypatch):
-        fixed = b"m" * 32
+        fixed = bytes.fromhex(_HEX_KEY)
         monkeypatch.setattr(vault_module, "_load_machine_key_cached", lambda p: fixed)
         vault = HardwareVault()
         assert vault.get_kek() == fixed

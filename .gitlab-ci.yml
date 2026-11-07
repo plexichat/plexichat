@@ -513,6 +513,42 @@ test:formula_parity:
   needs: []
   allow_failure: false
 
+# Blocking gate for the security-critical surface. These suites cover
+# src/core/auth, src/utils/encryption (incl. ratchet), permissions/fanout,
+# DSAR, and WebSocket security; a regression here must be visible as its own
+# failed job, not buried in the wider test:pytest run. The selection overlaps
+# test:pytest by design (defense in depth) and stays within the fast suite by
+# honoring pytest.ini's default slow/performance/multiprocess deselects.
+test:security_surface:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q -n 4 --dist loadfile --maxfail=30
+      src/tests/auth
+      src/tests/encryption
+      src/tests/security
+      src/tests/api/security
+      src/tests/dsar
+      src/tests/websocket
+      src/tests/auth/test_permissions.py
+      src/tests/reactions/test_permissions.py
+      src/tests/search/test_permissions.py
+      src/tests/servers/test_permission_cache_invalidation.py
+      src/tests/servers/test_permissions.py
+      src/tests/soundboard/test_permissions.py
+      src/tests/suite/test_stash_permissions.py
+      src/tests/suite/test_sum_permissions.py
+      src/tests/threads/test_permissions.py
+      src/tests/voice/test_permissions.py
+      src/tests/webhooks/test_permissions.py
+      src/tests/voice/test_sfu_fanout.py
+      src/tests/voice/test_sfu_aiortc_fanout_media.py
+  needs: []
+  allow_failure: false
+
 # Order-independence gate. The suite is required to pass in any file order,
 # and the only way to keep that true is to actually run it in a different
 # one. A fixed seed makes the order -- and any failure it exposes --

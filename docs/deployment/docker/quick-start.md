@@ -34,16 +34,18 @@ The Compose file fails fast if any required password is empty (`plexichat/docker
 
 ## Step 2: Start services
 
-From the `plexichat/` directory, run:
+From the `plexichat/` directory, set pinned release tags and run:
 
 ```bash
-BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
+export BACKEND_VERSION=1.0.0a184 CLIENT_VERSION=1.0.0a133
+docker compose up -d
 ```
 
-To deploy a specific version:
+`BACKEND_VERSION` and `CLIENT_VERSION` are required by default (compose uses `:?` and supply-chain verification refuses `latest`/`dev`/floating tags). Use audited non-production overrides only when you explicitly understand the risk:
 
 ```bash
-BACKEND_VERSION=1.0.0a184 CLIENT_VERSION=1.0.0a133 docker compose up -d
+# NOT for production: explicit audited override
+ALLOW_UNPINNED_IMAGES=1 BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
 ```
 
 This command does the following:

@@ -94,14 +94,7 @@ class HardwareVault:
 
         Honors ``encryption.tpm.enabled`` (default True for backwards
         compat: previously TPM was auto-detected with no config knob).
-        The body is inlined (no nested def) so the outer method actually runs.
         """
-        # Every notice below is best-effort: the module-level ``vault``
-        # instance is constructed at import time, which can happen before
-        # ``logger.setup()``. An unconfigured logger raises
-        # ``RuntimeError``, so an unguarded call would make importing this
-        # module fail on any host without TPM hardware. Same guard as
-        # ``_init_hsm``.
         self._tpm_config = self._tpm_config_dict()
         self._tpm_enabled = bool(self._tpm_config.get("enabled", True))
         if not self._tpm_enabled:
@@ -110,6 +103,17 @@ class HardwareVault:
             except RuntimeError:
                 pass  # Logger not configured yet
             return
+        require_hw = False
+        try:
+            import utils.config as config
+
+            enc_sec = config.get("authentication", {}).get("encryption", {}) or {}
+            hw = enc_sec.get("hardware_root_of_trust", {}) or {}
+            require_hw = bool(hw.get("require_hardware", False)) or str(
+                hw.get("mode", "")
+            ).lower() in ("require", "required", "hardware", "tpm", "hsm")
+        except Exception:
+            require_hw = False
         try:
             tpm2_pytss = cast(Any, importlib.import_module("tpm2_pytss"))
             if tpm2_pytss is None:
@@ -125,9 +129,15 @@ class HardwareVault:
                         logger.info("TPM 2.0 hardware detected and available")
                     except RuntimeError:
                         pass  # Logger not configured yet
-        except (ImportError, Exception):
+        except (ImportError, Exception) as exc:
             try:
-                logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
+                if require_hw:
+                    logger.error(
+                        "TPM 2.0 required by hardware_root_of_trust policy but unavailable: %s",
+                        exc,
+                    )
+                else:
+                    logger.debug("TPM 2.0 not available or tpm2-pytss not installed")
             except RuntimeError:
                 pass  # Logger not configured yet
 
@@ -136,10 +146,22 @@ class HardwareVault:
         try:
             import utils.config as config
 
-            hsm_config = config.get("encryption", {}).get("hsm", {})
+            enc_cfg = config.get("encryption", {}) or {}
+            hsm_config = enc_cfg.get("hsm", {})
+            enc_sec = config.get("authentication", {}).get("encryption", {}) or {}
+            hw = enc_sec.get("hardware_root_of_trust", {}) or {}
+            require_hardware = bool(hw.get("require_hardware", False)) or str(
+                hw.get("mode", "")
+            ).lower() in ("require", "required", "hardware", "tpm", "hsm")
             if not hsm_config.get("enabled", False):
                 try:
-                    logger.debug("HSM support disabled in configuration")
+                    if require_hardware:
+                        logger.warning(
+                            "HSM disabled while hardware_root_of_trust requires hardware; "
+                            "TPM may still satisfy the policy if available"
+                        )
+                    else:
+                        logger.debug("HSM support disabled in configuration")
                 except RuntimeError:
                     pass  # Logger not configured yet
                 return
@@ -271,8 +293,13 @@ class HardwareVault:
         # 2. Try HSM (PKCS#11)
         if self._hsm_available:
             try:
-                self._master_key = self._get_hsm_key()
-                if self._master_key:
+                hsm_key = self._get_hsm_key()
+                if hsm_key:
+                    from .kek_validation import validate_kek
+
+                    self._master_key = validate_kek(
+                        hsm_key, source="hsm", context=self._kek_env_var
+                    )
                     self._source = "hsm"
                     logger.info("Using HSM (PKCS#11) derived encryption key")
                     return self._master_key
@@ -282,8 +309,13 @@ class HardwareVault:
         # 3. Try TPM 2.0
         if self._tpm_available:
             try:
-                self._master_key = self._get_tpm_key()
-                if self._master_key:
+                tpm_key = self._get_tpm_key()
+                if tpm_key:
+                    from .kek_validation import validate_kek
+
+                    self._master_key = validate_kek(
+                        tpm_key, source="tpm", context=self._kek_env_var
+                    )
                     self._source = "tpm"
                     logger.info("Using TPM-derived hardware encryption key")
                     return self._master_key
@@ -294,7 +326,12 @@ class HardwareVault:
         # The actual disk read is cached at module level so the three keyrings
         # (system, file, message) share a single load.
         key_file = self._get_machine_key_path()
-        self._master_key = _load_machine_key_cached(str(key_file))
+        local_key = _load_machine_key_cached(str(key_file))
+        from .kek_validation import validate_kek
+
+        self._master_key = validate_kek(
+            local_key, source="local", context=str(key_file)
+        )
         self._source = "local"
         return self._master_key
 
@@ -319,30 +356,39 @@ class HardwareVault:
         """
         import base64
 
+        from .kek_validation import validate_kek
+
         # Try hex first (standard Plexichat production format: 64 hex chars = 32 bytes)
         try:
             key = bytes.fromhex(env_value)
-            if len(key) == 32:
-                return key
+            if len(key) in (32, 48, 64):
+                return validate_kek(key, source="env", context=self._kek_env_var)
             logger.debug(
-                f"Environment variable {self._kek_env_var} decoded as hex but yielded {len(key)} bytes (expected 32)"
+                f"Environment variable {self._kek_env_var} decoded as hex but yielded {len(key)} bytes (expected 32-64)"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # ValueError from validation must propagate with a clear message.
+            from .kek_validation import KekValidationError
+
+            if isinstance(exc, KekValidationError):
+                raise
 
         # Try Base64 (alternative format)
         try:
             key = base64.b64decode(env_value)
-            if len(key) == 32:
-                return key
+            if len(key) in (32, 48, 64):
+                return validate_kek(key, source="env", context=self._kek_env_var)
             logger.debug(
-                f"Environment variable {self._kek_env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32)"
+                f"Environment variable {self._kek_env_var} decoded as Base64 but yielded {len(key)} bytes (expected 32-64)"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            from .kek_validation import KekValidationError
+
+            if isinstance(exc, KekValidationError):
+                raise
 
         raise ValueError(
-            f"Environment variable {self._kek_env_var} must be a 32-byte key (hex or Base64 encoded)"
+            f"Environment variable {self._kek_env_var} must be a 32-64 byte key (hex or Base64 encoded)"
         )
 
     def _hsm_pin(self) -> str:
@@ -924,11 +970,24 @@ class HardwareVault:
             self.get_kek()
         return self._source in ("env", "hsm", "tpm")
 
+    def is_using_hardware_source(self) -> bool:
+        """True when KEK is rooted in TPM or HSM hardware (not env/local)."""
+        if not self._master_key:
+            self.get_kek()
+        return self._source in ("hsm", "tpm")
+
     def get_source(self) -> str:
         """Get the current KEK source."""
         if not self._master_key:
             self.get_kek()
         return self._source
+
+    def describe_source_policy(self) -> Dict[str, Any]:
+        """Resolved KEK source and policy-relevant hardware status (no secrets)."""
+        status = self.get_hardware_status()
+        status["secure_source"] = self.is_using_secure_source()
+        status["hardware_rooted"] = self.is_using_hardware_source()
+        return status
 
 
 def _load_machine_key_impl(key_path: str) -> bytes:

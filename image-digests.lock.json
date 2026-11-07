@@ -1,0 +1,5 @@
+{
+  "format": "plexichat/image-digests-lock/v1",
+  "note": "Populate/refresh with `python scripts/generate_sbom.py --no-image-sbom` or `docker buildx imagetools inspect`. Digest pins are environment/registry-specific; verify before production deploy.",
+  "images": {}
+}

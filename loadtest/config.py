@@ -1,6 +1,7 @@
 """Shared config for Plexichat load tests.
 Reads env vars; defaults target a local default compose (backend :8000 direct or via nginx).
 """
+
 import os
 
 BASE_URL = os.environ.get("PL_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")

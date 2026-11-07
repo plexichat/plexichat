@@ -1,6 +1,6 @@
 # Rate limits
 
-Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions. All defaults in this document come from `src/config_defaults.py` and `src/core/ratelimit/config.py`.
+Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions. The values below are **configurable defaults**; the single source of truth for documented defaults is `src/config_defaults.py` (`rate_limiting`), which is merged into runtime config at startup. Enforcement reads from runtime config (`src/core/ratelimit/*`), and `src/core/ratelimit/config.py` fallbacks are kept aligned with `config_defaults.py`. Operators may tune any limit in `config.yaml`.
 
 ## Default limits
 

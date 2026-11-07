@@ -296,6 +296,28 @@
             <div class="error" id="verify-error"></div>
         </div>
 
+        <div id="password-change" class="otp-setup">
+            <h1>Change your password</h1>
+            <p class="login-subtitle">This account must set a new password before it can use the admin panel.</p>
+            <div class="warning">Choose a new password now. The current password stops working immediately.</div>
+            <form id="password-change-form">
+                <div class="form-group">
+                    <label for="change-current-password">Current password</label>
+                    <input type="password" id="change-current-password" required autocomplete="current-password">
+                </div>
+                <div class="form-group">
+                    <label for="change-new-password">New password</label>
+                    <input type="password" id="change-new-password" required minlength="12" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label for="change-confirm-password">Confirm new password</label>
+                    <input type="password" id="change-confirm-password" required minlength="12" autocomplete="new-password">
+                </div>
+                <button type="submit" class="btn btn-primary">Update password</button>
+            </form>
+            <div class="error" id="password-change-error"></div>
+        </div>
+
     </div>
 
     <script nonce="{{ csp_nonce }}">
@@ -312,6 +334,23 @@
             console.log("Admin login page loaded, attaching listeners...");
             let adminId = null;
             let challengeToken = null;
+            let pendingToken = null;
+
+            // A successful password/OTP step does not always end at the
+            // dashboard: accounts flagged for a mandatory password change must
+            // complete that first, with the freshly issued token.
+            function completeLogin(data) {
+                if (data.requires_password_change) {
+                    pendingToken = data.token;
+                    document.getElementById('login-form-container').style.display = 'none';
+                    document.getElementById('otp-setup').style.display = 'none';
+                    document.getElementById('otp-verify').style.display = 'none';
+                    document.getElementById('password-change').style.display = 'block';
+                    return;
+                }
+                sessionStorage.setItem('plexichat-admin-token', data.token);
+                window.location.href = '/api/v1/admin/ui-dashboard';
+            }
 
             async function login(e) {
                 e.preventDefault();
@@ -366,8 +405,7 @@
                         document.getElementById('otp-verify').style.display = 'block';
                     } else if (data.token) {
                         console.log("Login successful, token received");
-                        sessionStorage.setItem('plexichat-admin-token', data.token);
-                        window.location.href = '/api/v1/admin/ui-dashboard';
+                        completeLogin(data);
                     } else {
                         throw new Error("Invalid response from server: " + JSON.stringify(data));
                     }
@@ -404,10 +442,45 @@
                         })
                     });
                     const data = await res.json();
-                    if (!res.ok) throw new Error(data.detail || 'Verification failed');
-                    sessionStorage.setItem('plexichat-admin-token', data.token);
-                    window.location.href = '/api/v1/admin/ui-dashboard';
+                    if (!res.ok) throw new Error(data.detail?.error?.message || data.detail || 'Verification failed');
+                    completeLogin(data);
                 } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+            }
+
+            async function changePassword(e) {
+                e.preventDefault();
+                const err = document.getElementById('password-change-error');
+                err.style.display = 'none';
+                if (!pendingToken) {
+                    err.textContent = 'Session missing. Please log in again.';
+                    err.style.display = 'block';
+                    return;
+                }
+                const current = document.getElementById('change-current-password').value;
+                const next = document.getElementById('change-new-password').value;
+                const confirm = document.getElementById('change-confirm-password').value;
+                if (next !== confirm) {
+                    err.textContent = 'The new passwords do not match.';
+                    err.style.display = 'block';
+                    return;
+                }
+                try {
+                    const res = await fetch('/api/v1/admin/auth/change-password', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + pendingToken
+                        },
+                        body: JSON.stringify({ current_password: current, new_password: next })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail?.error?.message || data.detail || 'Password change failed');
+                    sessionStorage.setItem('plexichat-admin-token', pendingToken);
+                    window.location.href = '/api/v1/admin/ui-dashboard';
+                } catch (e) {
+                    err.textContent = e.message;
+                    err.style.display = 'block';
+                }
             }
 
             const loginForm = document.getElementById('login-form');
@@ -423,6 +496,9 @@
 
             const otpVerifyForm = document.getElementById('otp-verify-form');
             if (otpVerifyForm) otpVerifyForm.addEventListener('submit', (e) => handleOTP(e, false));
+
+            const passwordChangeForm = document.getElementById('password-change-form');
+            if (passwordChangeForm) passwordChangeForm.addEventListener('submit', changePassword);
 
             const token = sessionStorage.getItem('plexichat-admin-token');
             if (token) {

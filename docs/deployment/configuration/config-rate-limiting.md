@@ -1,6 +1,6 @@
 # Rate limiting configuration
 
-This guide describes how to configure rate limiting for Plexichat. Rate limiting protects the server from abuse, ensures fair resource allocation, and keeps the service available under load. All defaults in this guide come from `src/config_defaults.py`.
+This guide describes how to configure rate limiting for Plexichat. Rate limiting protects the server from abuse, ensures fair resource allocation, and keeps the service available under load. The values below are **configurable defaults**; the single source of truth for documented defaults is `src/config_defaults.py` (`rate_limiting`), merged into runtime config at startup (enforcement: `src/core/ratelimit/*`, fallbacks aligned with `config_defaults.py`).
 
 ## Before you begin
 

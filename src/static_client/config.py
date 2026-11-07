@@ -49,8 +49,8 @@ class SecurityHeadersConfig:
     permissions_policy: str = "geolocation=(), microphone=(self), camera=()"
     content_security_policy: str = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' data:; "
         "img-src 'self' data: blob:; media-src 'self' blob: data:; "
         "worker-src blob:; connect-src 'self' wss:; "
         "manifest-src 'self'; frame-ancestors 'none';"

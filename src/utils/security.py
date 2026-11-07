@@ -126,7 +126,9 @@ def build_admin_csp_header(nonce: str) -> str:
     """
     return (
         f"default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+        # Chart.js is vendored at /api/v1/admin/static/chart.umd.min.js, so
+        # the admin surface does not need any third-party script origin.
+        f"script-src 'self' 'nonce-{nonce}'; "
         f"style-src 'self' 'unsafe-inline'; "
         f"img-src 'self' data:; "
         f"connect-src 'self'; "

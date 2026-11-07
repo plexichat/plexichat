@@ -35,3 +35,10 @@ data_file = "test_artifacts/coverage/.coverage"
 
 [tool.ruff]
 cache-dir = "test_artifacts/ruff"
+# Throughput benchmark scripts use deliberate dense one-liners; keep them out
+# of the production-source lint gate (they are not imported by the server).
+extend-exclude = ["loadtest"]
+
+[tool.pyright]
+# Benchmark tooling uses environment-driven config, not the server package.
+exclude = ["loadtest"]

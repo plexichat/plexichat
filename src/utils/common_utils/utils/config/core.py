@@ -267,7 +267,11 @@ class ConfigLoader:
                 and isinstance(value, dict)
             ):
                 result[key] = self._deep_merge(result[key], value)
-            elif key in result and isinstance(result[key], list) and isinstance(value, list):
+            elif (
+                key in result
+                and isinstance(result[key], list)
+                and isinstance(value, list)
+            ):
                 # Concatenate lists, deduplicating while preserving order.
                 merged = list(result[key])
                 for item in value:

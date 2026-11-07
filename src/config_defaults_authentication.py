@@ -22,6 +22,20 @@ def get_authentication_defaults(home_dir: Path) -> Dict[str, Any]:
         "encryption": {
             "require_secure_source": True,
             "media_key": "${PLEXICHAT_MEDIA_KEY:-}",
+            "hardware_root_of_trust": {
+                # mode: "any_secure" (default, env/TPM/HSM all satisfy require_secure_source),
+                #       "require_hardware" (TPM or HSM required when provisioned/enforced),
+                #       "prefer_hardware" (use hardware when available; env/local allowed).
+                "mode": "any_secure",
+                # When True, boot refuses unless KEK is TPM/HSM-rooted (production; CI/selftest bypass applies).
+                "require_hardware": False,
+                # When True with require_hardware, env-sourced KEKs do not satisfy the hardware policy.
+                "allow_env_fallback": True,
+            },
+            "kek_validation": {
+                "enabled": True,
+                "min_entropy_bits_per_byte": 7.0,
+            },
         },
         "account_deletion": {
             "enabled": True,
@@ -62,6 +76,11 @@ def get_authentication_defaults(home_dir: Path) -> Dict[str, Any]:
             "retention_days": 7,
             "pending_expiry_days": 30,
             "local_path": str(home_dir / "data" / "exports" / "dsar"),
+            "s3_path_prefix": "dsar-exports",
+            "rate_limit": {
+                "requests": 1,
+                "window_seconds": 86400,
+            },
             "audit_log": {
                 "file_path": str(home_dir / "data" / "dsar_audit_log.jsonl"),
                 "hash_chain_enabled": True,
@@ -74,6 +93,8 @@ def get_authentication_defaults(home_dir: Path) -> Dict[str, Any]:
                 "interval_hours": 24,
                 "boot_check_enabled": True,
                 "batch_size": 20,
+                "require_admin_review": True,
+                "retention_days": 7,
             },
         },
         "email_validation": {

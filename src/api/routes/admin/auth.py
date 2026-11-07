@@ -203,7 +203,11 @@ async def admin_change_password(request: Request, body: AdminChangePasswordReque
     Requires verification of the current password before applying the new one.
     """
     check_host_restriction(request)
-    admin_id = require_admin_permission(request, "admin.edit")
+    # Any authenticated admin may change their *own* password; requiring
+    # ``admin.edit`` here locked out accounts that were flagged
+    # force_password_change on first login but do not hold that scope. The
+    # current password is still verified by ``admin.change_password``.
+    admin_id = get_admin_from_token(request)
     from src.core import admin
 
     success, message = admin.change_password(

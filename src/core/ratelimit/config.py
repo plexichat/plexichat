@@ -1,8 +1,15 @@
 """
 Rate limit configuration - Default configurations and route limits.
 
-Configuration is loaded from config.yaml under 'rate_limiting' key.
-Defaults are used if config is not available.
+Single source of truth for documented *defaults* is
+``src/config_defaults.py`` (``rate_limiting``). These values are merged into
+runtime config at startup; all enforcement paths read from
+``utils.config`` (``app_config``).
+
+The ``app_config.get(..., <fallback>)`` fallbacks below MUST stay aligned with
+``src/config_defaults.py`` so that a missing/unmerged key never silently
+enforces stale legacy limits. Treat ``src/config_defaults.py`` as the
+authoritative definition and update both together.
 """
 
 from typing import Dict, Optional, Any
@@ -11,11 +18,11 @@ from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 
 
 def _build_global_limit() -> RateLimitConfig:
-    """Build global rate limit from config."""
+    """Build global rate limit from config (fallbacks: config_defaults)."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.global.requests", 50),
-        window_seconds=app_config.get("rate_limiting.global.window_seconds", 1.0),
-        burst=app_config.get("rate_limiting.global.burst", 10),
+        requests=app_config.get("rate_limiting.global.requests", 25000),
+        window_seconds=app_config.get("rate_limiting.global.window_seconds", 60.0),
+        burst=app_config.get("rate_limiting.global.burst", 5000),
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.GLOBAL,
         include_in_global=False,
@@ -23,28 +30,28 @@ def _build_global_limit() -> RateLimitConfig:
 
 
 def _build_user_limit() -> RateLimitConfig:
-    """Build user rate limit from config."""
+    """Build user rate limit from config (fallbacks: config_defaults)."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.user.requests", 200),
+        requests=app_config.get("rate_limiting.user.requests", 10000),
         window_seconds=app_config.get("rate_limiting.user.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.user.burst", 40),
+        burst=app_config.get("rate_limiting.user.burst", 2500),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.USER,
-        hourly_limit=app_config.get("rate_limiting.user.hourly_limit", 3600),
-        daily_limit=app_config.get("rate_limiting.user.daily_limit", 50000),
+        hourly_limit=app_config.get("rate_limiting.user.hourly_limit", 300000),
+        daily_limit=app_config.get("rate_limiting.user.daily_limit", 5000000),
     )
 
 
 def _build_ip_limit() -> RateLimitConfig:
-    """Build IP rate limit from config."""
+    """Build IP rate limit from config (fallbacks: config_defaults)."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.ip.requests", 100),
+        requests=app_config.get("rate_limiting.ip.requests", 5000),
         window_seconds=app_config.get("rate_limiting.ip.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.ip.burst", 20),
+        burst=app_config.get("rate_limiting.ip.burst", 1500),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.IP,
-        hourly_limit=app_config.get("rate_limiting.ip.hourly_limit", 1800),
-        daily_limit=app_config.get("rate_limiting.ip.daily_limit", 10000),
+        hourly_limit=app_config.get("rate_limiting.ip.hourly_limit", 150000),
+        daily_limit=app_config.get("rate_limiting.ip.daily_limit", 1000000),
     )
 
 
@@ -614,29 +621,31 @@ DEFAULT_ROUTE_LIMITS: Dict[str, RateLimitConfig] = {
         scope=BucketType.USER,
     ),
     "static_client:html": RateLimitConfig(
-        requests=app_config.get("rate_limiting.routes.static_client_html.requests", 60),
+        requests=app_config.get(
+            "rate_limiting.routes.static_client_html.requests", 300
+        ),
         window_seconds=app_config.get(
             "rate_limiting.routes.static_client_html.window_seconds", 60.0
         ),
-        burst=app_config.get("rate_limiting.routes.static_client_html.burst", 20),
+        burst=app_config.get("rate_limiting.routes.static_client_html.burst", 100),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.IP,
         hourly_limit=app_config.get(
-            "rate_limiting.routes.static_client_html.hourly_limit", 1200
+            "rate_limiting.routes.static_client_html.hourly_limit", 6000
         ),
     ),
     "static_client:assets": RateLimitConfig(
         requests=app_config.get(
-            "rate_limiting.routes.static_client_assets.requests", 1000
+            "rate_limiting.routes.static_client_assets.requests", 5000
         ),
         window_seconds=app_config.get(
             "rate_limiting.routes.static_client_assets.window_seconds", 60.0
         ),
-        burst=app_config.get("rate_limiting.routes.static_client_assets.burst", 200),
+        burst=app_config.get("rate_limiting.routes.static_client_assets.burst", 1000),
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.IP,
         hourly_limit=app_config.get(
-            "rate_limiting.routes.static_client_assets.hourly_limit", 36000
+            "rate_limiting.routes.static_client_assets.hourly_limit", 180000
         ),
     ),
 }

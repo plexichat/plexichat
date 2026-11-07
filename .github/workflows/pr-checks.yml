@@ -281,6 +281,59 @@ jobs:
           # blocking check on its own rather than one line of a larger suite.
           python -m pytest -q src/tests/suite/test_sum_formula_parity.py src/tests/suite/test_sum_formulas.py
 
+  server-security-surface:
+    name: "Server: Security/Auth/Encryption/Permissions/DSAR/WS (blocking)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install --require-hashes -r requirements-dev.txt
+
+      - name: Run security-critical test subset
+        run: |
+          source .venv/bin/activate
+          # Blocking gate for src/core/auth, src/utils/encryption (incl. ratchet),
+          # permissions/fanout, DSAR, and WebSocket security. Overlaps the wider
+          # suite by design so regressions in these paths fail a named job.
+          python -m pytest -q -n 4 --dist loadfile --maxfail=30 \
+            src/tests/auth \
+            src/tests/encryption \
+            src/tests/security \
+            src/tests/api/security \
+            src/tests/dsar \
+            src/tests/websocket \
+            src/tests/auth/test_permissions.py \
+            src/tests/reactions/test_permissions.py \
+            src/tests/search/test_permissions.py \
+            src/tests/servers/test_permission_cache_invalidation.py \
+            src/tests/servers/test_permissions.py \
+            src/tests/soundboard/test_permissions.py \
+            src/tests/suite/test_stash_permissions.py \
+            src/tests/suite/test_sum_permissions.py \
+            src/tests/threads/test_permissions.py \
+            src/tests/voice/test_permissions.py \
+            src/tests/webhooks/test_permissions.py \
+            src/tests/voice/test_sfu_fanout.py \
+            src/tests/voice/test_sfu_aiortc_fanout_media.py
+
   server-timing-under-load:
     name: "Server: Timing under CPU load"
     runs-on: ubuntu-latest

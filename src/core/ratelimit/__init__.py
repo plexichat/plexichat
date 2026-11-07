@@ -89,7 +89,7 @@ def setup(
     global_config: Optional[RateLimitConfig] = None,
     user_config: Optional[RateLimitConfig] = None,
     ip_config: Optional[RateLimitConfig] = None,
-    bot_multiplier: float = 1.2,
+    bot_multiplier: float = 1.5,
     webhook_multiplier: float = 1.0,
     bypass_check: Optional[Callable[..., bool]] = None,
     enable_global_limit: bool = True,

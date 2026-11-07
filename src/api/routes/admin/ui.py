@@ -3,7 +3,7 @@ Admin UI routes serving HTML templates and static assets.
 """
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .utils import check_host_restriction, load_admin_template
 from src.utils.security import generate_csp_nonce, build_admin_csp_header
 from pathlib import Path
@@ -71,6 +71,34 @@ async def admin_migrations_page(request: Request):
     nonce = generate_csp_nonce()
     content = load_admin_template("migrations.html", csp_nonce=nonce)
     return HTMLResponse(content=content, headers=_security_headers(nonce))
+
+
+@router.get("/static/chart.umd.min.js", include_in_schema=False)
+async def admin_chart_js(request: Request):
+    """
+    Serve the vendored Chart.js bundle.
+
+    The dashboard used to load Chart.js from a public CDN. That made the admin
+    panel depend on a third-party origin (and its SRI hash drifted), so the
+    bundle is now shipped with the server and served from this origin.
+    """
+    check_host_restriction(request)
+    nonce = generate_csp_nonce()
+
+    template_dir = Path(__file__).parent.parent.parent / "templates" / "admin"
+    js_path = template_dir / "vendor" / "chart.umd.min.js"
+    if not js_path.exists():
+        return HTMLResponse(content="/* JS file not found */", status_code=404)
+
+    with open(js_path, "rb") as f:
+        js_content = f.read()
+
+    headers = {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Content-Security-Policy": build_admin_csp_header(nonce),
+        "Cache-Control": "public, max-age=31536000, immutable",
+    }
+    return Response(content=js_content, headers=headers)
 
 
 @router.get("/static/dashboard.css", include_in_schema=False)

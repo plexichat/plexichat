@@ -92,9 +92,10 @@ docker compose up -d
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `BACKEND_VERSION` | `latest` | Tag for `backend` and `backup` images |
-| `CLIENT_VERSION` | `latest` | Tag for the `client` Nginx image |
+| `BACKEND_VERSION` | Required (no default) | Pinned tag/digest ref for `backend` and `backup` images; `latest`/`dev` refused unless `ALLOW_UNPINNED_IMAGES=1` |
+| `CLIENT_VERSION` | Required (no default) | Pinned tag/digest ref for the `client` Nginx image; same policy as backend |
 | `CI_REGISTRY_IMAGE` | `gitlab.plexichat.com/plexichat/plexichat` | Registry prefix for backend and backup images |
+| `ALLOW_UNPINNED_IMAGES` | `0` | Audited explicit override allowing unpinned/mutable tags for non-production use only |
 
 The Dockerfiles pin base images: `python:3.14.8-slim-trixie` for the backend, `nginx:stable-alpine` for the client, `postgres:18-alpine` for the database, `valkey/valkey:9.1.1-alpine` for Valkey, `rustfs/rustfs:1.0.0-rc.3` for storage, `rustfs/rc:v0.1.30` for bucket init, `clamav/clamav:1.5.4` for scanning, and `alpine:3.24` for cert generation.
 
