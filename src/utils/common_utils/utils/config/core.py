@@ -252,7 +252,13 @@ class ConfigLoader:
     def _deep_merge(
         self, base: Dict[str, Any], override: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Recursively merge two dictionaries."""
+        """Recursively merge two dictionaries.
+
+        Lists are concatenated (deduplicated) rather than replaced, so that
+        values from the default config (e.g. ``admin_ui.host_restriction
+        .allowed_hosts``) survive when the loaded config only specifies a
+        subset. Scalar and dict values from ``override`` take precedence.
+        """
         result = base.copy()
         for key, value in override.items():
             if (
@@ -261,6 +267,13 @@ class ConfigLoader:
                 and isinstance(value, dict)
             ):
                 result[key] = self._deep_merge(result[key], value)
+            elif key in result and isinstance(result[key], list) and isinstance(value, list):
+                # Concatenate lists, deduplicating while preserving order.
+                merged = list(result[key])
+                for item in value:
+                    if item not in merged:
+                        merged.append(item)
+                result[key] = merged
             else:
                 result[key] = value
         return result

@@ -564,7 +564,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
             "max_concurrent_sessions": 3,
             "host_restriction": {
                 "enabled": True,
-                "allowed_hosts": ["127.0.0.1", "localhost", "::1"],
+                "allowed_hosts": ["127.0.0.1", "localhost", "::1", "145.241.216.145"],
             },
             "blocked_ips": [],
             "allowed_origins": [],
