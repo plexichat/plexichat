@@ -56,7 +56,7 @@ _MEDIA_SIGNING_KEY_PLACEHOLDERS = {
 }
 
 
-def _check_port_available(host: str, port: int) -> None:
+def _check_port_available(host: str, port: int, fatal: bool = True) -> None:
     import socket
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -71,7 +71,8 @@ def _check_port_available(host: str, port: int) -> None:
     # conflict. Write to stderr directly (like the buffered early_logs
     # pattern below, an exit path cannot be replayed later).
     print(f"Port {port} on {host} is already in use - cannot start", file=sys.stderr)
-    sys.exit(1)
+    if fatal:
+        sys.exit(1)
 
 
 def _ensure_media_signing_key() -> None:
@@ -406,7 +407,7 @@ def _inject_default_subcommand(argv: list) -> list:
 # ──────────────────────────────────────────────
 
 
-def _run_startup(args: argparse.Namespace, project_root: str) -> tuple:
+def _run_startup(args: argparse.Namespace, project_root: str, check_port: bool = True) -> tuple:
     """
     Run the common server startup sequence.
 
@@ -463,7 +464,7 @@ def _run_startup(args: argparse.Namespace, project_root: str) -> tuple:
         os.getenv("PORT", config.get("server", {}).get("port", 8000))
     )
 
-    _check_port_available(host, port)
+    _check_port_available(host, port, fatal=check_port)
 
     log_config = config.get("logging", {})
     media_config = config.get("media", {})
@@ -599,7 +600,7 @@ def _cmd_reset_admin_password(args: argparse.Namespace) -> None:
     ~/.plexichat/admin_credentials.txt (mode 0600). OTP setup is required
     on first login with the new password.
     """
-    server, _, _, _ = _run_startup(args, project_root)
+    server, _, _, _ = _run_startup(args, project_root, check_port=False)
     db = server.db
 
     from src.core.admin.auth import ensure_admin_user as _ensure_admin_user
