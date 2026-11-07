@@ -106,4 +106,16 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
                 # All reported hops were trusted proxies: fall back to peer.
                 return direct_ip
 
+        # Cloudflare sets CF-Connecting-IP to the real client IP. When behind
+        # trusted proxies, use it as the authoritative client address rather
+        # than the direct peer (which is the last proxy in the chain).
+        cf_connecting_ip = get_header("CF-Connecting-IP")
+        if cf_connecting_ip:
+            cf_ip = cf_connecting_ip.strip()
+            try:
+                ipaddress.ip_address(cf_ip)
+                return cf_ip
+            except ValueError:
+                pass  # Malformed CF-Connecting-IP — fall through to direct_ip
+
     return direct_ip
