@@ -48,6 +48,16 @@ class TestRequestExport:
         assert isinstance(rows, list)
         assert any(r["user_id"] == user.id for r in rows)
 
+    def test_auto_approve_immediately_when_policy_zero(self, dsar_manager):
+        db, user, _admin = dsar_manager
+        from unittest.mock import patch
+        from src.core.dsar import request_data_export
+
+        with patch("src.core.dsar.manager.auto_approve_after_hours", return_value=0):
+            result = request_data_export(user.id, format="json")
+        assert result is not None
+        assert result["status"] == "approved"
+
     def test_approve_request(self, dsar_manager):
         db, user, admin = dsar_manager
         from src.core.dsar import (

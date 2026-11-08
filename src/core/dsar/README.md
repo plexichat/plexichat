@@ -153,6 +153,7 @@ Configure the module in `config.json`:
 | `interval_hours` | How often the harvester checks for work. |
 | `batch_size` | Maximum requests processed per harvester tick. |
 | `require_admin_review` | Whether exports require admin approval before generation. |
+| `auto_approve_after_hours` | `0` approves immediately, `-1` never auto-approves, and a positive value approves still-pending requests after that many hours. Unset follows `require_admin_review`. |
 | `retention_days` | Days before a ready export expires. |
 | `max_export_size_mb` | Maximum export file size. |
 | `export_formats` | Allowed formats (`json`, `zip`). |

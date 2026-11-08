@@ -6,6 +6,7 @@ import utils.config as config
 import utils.logger as logger
 from .collector import DataCollector
 from .export_formats import ExportFormatGenerator
+from .config import get_dsar_config
 
 
 class DSARHarvester:
@@ -131,7 +132,15 @@ class DSARHarvester:
 
         self._cleanup_expired()
 
+        policy = self._auto_approve_policy()
+        if policy is not None:
+            self._auto_approve_due(policy)
+
         require_admin = self._harvester_config.get("require_admin_review", True)
+        # An explicit policy replaces the legacy boolean: pending requests are
+        # only auto-approved by _auto_approve_due() above.
+        if policy is not None:
+            require_admin = True
 
         if require_admin:
             requests = self._db.fetch_all(
@@ -187,6 +196,44 @@ class DSARHarvester:
                     "UPDATE dsar_requests SET status = 'failed', error_message = ? WHERE id = ?",
                     (str(e), req["id"]),
                 )
+
+    def _auto_approve_policy(self) -> Optional[int]:
+        """Return the explicit DSAR auto-approval policy, if one is set."""
+        try:
+            value = get_dsar_config(self._config).get("auto_approve_after_hours")
+        except Exception:
+            return None
+        if value is None:
+            return None
+        try:
+            hours = int(value)
+        except (TypeError, ValueError):
+            return None
+        return -1 if hours < -1 else hours
+
+    def _auto_approve_due(self, policy: int) -> int:
+        """Approve pending requests that are due under the policy."""
+        if policy < 0:
+            return 0
+        if policy == 0:
+            cursor = self._db.execute(
+                "UPDATE dsar_requests SET status = 'approved' WHERE status = 'pending'"
+            )
+        else:
+            cutoff = int(time.time()) - (policy * 3600)
+            cursor = self._db.execute(
+                "UPDATE dsar_requests SET status = 'approved' "
+                "WHERE status = 'pending' AND requested_at <= ?",
+                (cutoff,),
+            )
+        count = getattr(cursor, "rowcount", 0)
+        if count:
+            logger.info(
+                "Harvester: auto-approved %s DSAR request(s) under policy %ss",
+                count,
+                policy,
+            )
+        return count
 
     def _cleanup_expired(self):
         """Expire ready requests whose retention window has passed.
