@@ -88,7 +88,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                 AdminUserResponse(
                     id=str(_row_value(row, "id", 0)),
                     username=_required_row_value(row, "username", 1, str),
-                    email="[Encrypted]",
+                    email=_row_value(row, "email", 2, "") or "",
                     role=_row_value(row, "role", 6, "unassigned"),
                     is_active=not bool(_row_value(row, "account_locked", 5, 0)),
                     created_at=_required_row_value(row, "created_at", 3, int),
@@ -121,7 +121,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
             return AdminUserResponse(
                 id=str(_row_value(row, "id", 0)),
                 username=_required_row_value(row, "username", 1, str),
-                email="[Encrypted]",
+                email=_row_value(row, "email", 2, "") or "",
                 role=_row_value(row, "role", 6, "unassigned"),
                 is_active=not bool(_row_value(row, "account_locked", 5, 0)),
                 created_at=_required_row_value(row, "created_at", 3, int),

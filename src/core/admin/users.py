@@ -19,6 +19,25 @@ from src.core.database import invalidate_pattern
 MAX_PAGE_SIZE = 200
 
 
+def _decrypt_email(user_id: Any, encrypted: Any) -> Optional[str]:
+    """Return a user's decrypted email for admin-only views.
+
+    Admin lists previously selected ``email_index`` (the blind-index hash) and
+    rendered the literal ``[Encrypted]``. The actual address lives in
+    ``email_encrypted`` and is bound to the user id as AAD.
+    """
+    if not encrypted:
+        return None
+    try:
+        from src.utils.encryption import decrypt_data
+
+        email = decrypt_data(str(encrypted), context=str(user_id))
+        return email if isinstance(email, str) and email else None
+    except Exception as exc:
+        logger.warning("Could not decrypt email for user %s: %s", user_id, exc)
+        return None
+
+
 @dataclass
 class AdminUserDetail:
     """Detailed user information for admin view."""
@@ -61,7 +80,7 @@ def search_users(
     try:
         user_id = int(q)
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
+            """SELECT u.id, u.username, u.email_encrypted, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.id = ? LIMIT ? OFFSET ?""",
@@ -73,7 +92,7 @@ def search_users(
         escaped_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped_q}%"
         rows = db.fetch_all(
-            """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
+            """SELECT u.id, u.username, u.email_encrypted, f.rate_limit_tier as tier, f.badges, u.created_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
                FROM auth_users u
                LEFT JOIN user_features f ON u.id = f.user_id
                WHERE u.username LIKE ? ESCAPE '\\' OR u.email_index LIKE ? ESCAPE '\\' LIMIT ? OFFSET ?""",
@@ -92,7 +111,7 @@ def search_users(
                 )
             except Exception:
                 badges = []
-            email_display = "[Encrypted]" if row.get("email_index") else None
+            email_display = _decrypt_email(row["id"], row.get("email_encrypted"))
             users.append(
                 AdminUserDetail(
                     id=row["id"],
@@ -119,7 +138,7 @@ def search_users(
                 )
             except Exception:
                 badges = []
-            email_display = "[Encrypted]" if row[2] else None
+            email_display = _decrypt_email(row[0], row[2])
             users.append(
                 AdminUserDetail(
                     id=row[0],
@@ -142,7 +161,7 @@ def search_users(
 def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
     """Get full user details by ID."""
     row = db.fetch_one(
-        """SELECT u.id, u.username, u.email_index, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
+        """SELECT u.id, u.username, u.email_encrypted, f.rate_limit_tier as tier, f.badges, u.created_at, u.last_login_at, u.account_locked, u.locked_until, u.force_username_change, u.deletion_status, u.deletion_at
            FROM auth_users u
            LEFT JOIN user_features f ON u.id = f.user_id
            WHERE u.id = ?""",
@@ -161,7 +180,7 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
             )
         except Exception:
             badges = []
-        email_display = "[Encrypted]" if row.get("email_index") else None
+        email_display = _decrypt_email(row["id"], row.get("email_encrypted"))
         return AdminUserDetail(
             id=row["id"],
             username=row["username"],
@@ -186,7 +205,7 @@ def get_user_details(db: Any, user_id: int) -> Optional[AdminUserDetail]:
             )
         except Exception:
             badges = []
-        email_display = "[Encrypted]" if row[2] else None
+        email_display = _decrypt_email(row[0], row[2])
         return AdminUserDetail(
             id=row[0],
             username=row[1],
