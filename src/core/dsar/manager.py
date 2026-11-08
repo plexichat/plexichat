@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
+from .config import auto_approve_after_hours
 
 
 # Hard upper bound for the admin listing endpoint. Mirrors the ``le=200``
@@ -81,6 +82,14 @@ class DSARManager:
 
         self._invalidate_cache("dsar_request:*")
 
+        policy = auto_approve_after_hours()
+        if policy == 0:
+            self._db.execute(
+                "UPDATE dsar_requests SET status = 'approved' "
+                "WHERE id = ? AND status = 'pending'",
+                (request_id,),
+            )
+
         audit_log = self._get_audit_log()
         audit_log.log_event(
             user_id,
@@ -88,6 +97,13 @@ class DSARManager:
             f"user:{user_id}",
             {"request_id": request_id, "format": format},
         )
+        if policy == 0:
+            audit_log.log_event(
+                user_id,
+                "AUTO_APPROVED",
+                f"user:{user_id}",
+                {"request_id": request_id, "policy": "immediate"},
+            )
 
         logger.info(f"DSAR: Created export request {request_id} for user {user_id}")
 

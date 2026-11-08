@@ -38,6 +38,7 @@ from .features import features_router, feature_expansion_router
 from .voice import router as voice_router
 from .avatars import router as avatars_router
 from .media import router as media_router
+from .storage import router as storage_router
 from .reports import router as reports_router
 from .qr import router as qr_router
 from .help import router as help_router, robots_router
@@ -96,6 +97,9 @@ def create_api_router() -> APIRouter:
 
     # Include media router
     api_router.include_router(media_router)
+
+    # Per-user storage usage and quota (Plexichat uploads + PlexiSuite).
+    api_router.include_router(storage_router)
 
     # Include reports router
     api_router.include_router(reports_router)

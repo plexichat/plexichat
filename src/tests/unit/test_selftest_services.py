@@ -97,6 +97,31 @@ class TestRateLimitSelfTest:
 
 
 @pytest.mark.unit
+class TestAdminStorageOverrideBody:
+    """PUT /admin/users/{id}/storage must exercise the override write.
+
+    Regression: the route intentionally accepts a free-form body, so the
+    OpenAPI-driven generator produced {} and the self-test always hit the
+    400 required-field guard.
+    """
+
+    _BODY = {
+        "content": {
+            "application/json": {
+                "schema": {"type": "object", "additionalProperties": True}
+            }
+        }
+    }
+    _PATH = "/api/v1/admin/users/123/storage"
+
+    def test_override_body_supplies_a_concrete_limit(self):
+        from src.core.selftest.services.data import DataGenerator
+
+        ctx = SimpleNamespace(_test_password="selftest-pw", config={})
+        body = DataGenerator(ctx).get_minimal_body(self._BODY, self._PATH, "PUT")
+        assert body["limit_bytes"] == 10 * 1024 * 1024 * 1024
+
+
 class TestTransferOwnershipBody:
     """POST /servers/{id}/transfer must target a real member.
 

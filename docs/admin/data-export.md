@@ -64,7 +64,8 @@ dsar:
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Enable or disable the entire DSAR system. |
-| `require_admin_review` | boolean | `true` | Require admin approval before the harvester processes a request. If `false`, pending requests are auto-approved. |
+| `require_admin_review` | boolean | `true` | Require admin approval before the harvester processes a request. If `false`, pending requests are auto-approved. Ignored when `auto_approve_after_hours` is set. |
+| `auto_approve_after_hours` | integer or null | `null` | Explicit auto-approval policy: `0` approves immediately, `-1` never auto-approves, and a positive value approves a still-pending request after that many hours. `null` keeps the legacy `require_admin_review` behavior. |
 | `default_format` | string | `"json"` | Format to use when the user does not specify one. |
 | `export_formats` | array | `["json", "zip"]` | Allowed export formats. |
 | `max_export_size_mb` | integer | `500` | Approximate maximum size of a generated export. |

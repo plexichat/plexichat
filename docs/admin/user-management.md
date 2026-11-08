@@ -30,6 +30,7 @@ Common scopes:
 | `users.lock` | Lock and unlock accounts |
 | `users.force_username_change` | Force username changes and credential resets |
 | `users.tier` | Change account tiers |
+| `users.storage` | Set or clear per-user storage-quota overrides |
 | `users.badges` | Add or remove badges |
 | `users.notes` | Add, view, and edit internal notes |
 | `users.delete` | Delete accounts immediately |

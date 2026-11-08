@@ -25,6 +25,9 @@ class TierLimitsResponse(BaseModel):
     max_video_minutes_per_day: int = Field(..., description="Max video minutes per day")
     max_file_uploads_per_day: int = Field(..., description="Max file uploads per day")
     max_file_size_mb: int = Field(..., description="Max file size in MB")
+    max_storage_mb: int = Field(
+        default=0, description="Max retained storage in MB (-1 = unlimited)"
+    )
     max_servers: int = Field(..., description="Max servers user can join")
     max_message_length: int = Field(..., description="Max characters per message")
     max_reactions_per_message: int = Field(..., description="Max reactions per message")

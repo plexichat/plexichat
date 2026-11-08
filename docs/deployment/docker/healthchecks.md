@@ -72,7 +72,7 @@ curl -f http://localhost:8000/health | python3 -m json.tool
 # Expected excerpt:
 # {
 #   "status": "healthy",
-#   "version": "1.0.0a210",
+#   "version": "1.0.0a212",
 #   "events_metrics": {},
 #   "is_queue_recreate_pending": false,
 #   "cross_worker_listener": {}

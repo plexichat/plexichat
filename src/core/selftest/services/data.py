@@ -403,6 +403,17 @@ class DataGenerator:
                 if "email" in body:
                     body["email"] = f"test_{random.randint(10000, 99999)}@example.com"
 
+            # The admin storage-override route intentionally accepts a
+            # free-form body, so OpenAPI-driven generation produces {}. Supply
+            # a concrete quota so the self-test exercises the write path
+            # instead of tripping the route's required-field guard.
+            if (
+                "/admin/users/" in path
+                and path.endswith("/storage")
+                and method == "PUT"
+            ):
+                body["limit_bytes"] = 10 * 1024 * 1024 * 1024
+
             if "users/@me" in path and method == "PATCH":
                 if "current_password" in body:
                     body["current_password"] = test_pass

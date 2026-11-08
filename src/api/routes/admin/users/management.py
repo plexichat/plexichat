@@ -54,6 +54,95 @@ class ManagementMixin(AdminUsersRouterProtocol):
                 detail={"error": {"code": 400, "message": "Invalid user ID"}},
             )
 
+    async def get_user_storage(self, request: Request, user_id: str):
+        """Return a user's storage usage and effective quota/override."""
+        check_host_restriction(request)
+        require_admin_permission(request, "users.read")
+
+        from src.core.storage_quota import get_manager
+
+        try:
+            uid = self._parse_user_id(user_id)
+            manager = get_manager(self._get_db())
+            status = manager.get_status(uid)
+            return {
+                "user_id": str(uid),
+                **status,
+                "override": manager.get_override(uid),
+            }
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}},
+            )
+
+    async def update_user_storage(self, request: Request, user_id: str, update: dict):
+        """Set or clear an administrator storage-quota override."""
+        check_host_restriction(request)
+        admin_id = require_admin_permission(request, "users.storage")
+
+        from src.core.storage_quota import get_manager
+
+        try:
+            uid = self._parse_user_id(user_id)
+            manager = get_manager(self._get_db())
+            if update.get("clear"):
+                status = manager.clear_override(uid)
+            else:
+                unlimited = bool(update.get("unlimited"))
+                limit_bytes = update.get("limit_bytes")
+                if not unlimited:
+                    if not isinstance(limit_bytes, (int, str)):
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": 400,
+                                    "message": "limit_bytes must be a non-negative integer",
+                                }
+                            },
+                        )
+                    try:
+                        limit_bytes = int(limit_bytes)
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": 400,
+                                    "message": "limit_bytes must be a non-negative integer",
+                                }
+                            },
+                        )
+                    if limit_bytes < 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": 400,
+                                    "message": "limit_bytes must be non-negative",
+                                }
+                            },
+                        )
+                status = manager.set_override(
+                    uid,
+                    limit_bytes=limit_bytes,
+                    unlimited=unlimited,
+                    note=update.get("note"),
+                    updated_by=admin_id,
+                )
+            return {
+                "success": True,
+                "user_id": str(uid),
+                **status,
+                "override": manager.get_override(uid),
+            }
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid user ID"}},
+            )
+
     async def update_user_tier(
         self, request: Request, user_id: str, update: UserTierUpdate
     ):

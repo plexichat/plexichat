@@ -117,6 +117,8 @@ class TierLimits:
     # File limits
     max_file_uploads_per_day: int = 50
     max_file_size_mb: int = 10
+    # Total retained storage for this tier. -1 means unlimited.
+    max_storage_mb: int = 5 * 1024
 
     # Server limits
     max_servers: int = 100
@@ -138,6 +140,7 @@ class TierLimits:
             "max_video_minutes_per_day": self.max_video_minutes_per_day,
             "max_file_uploads_per_day": self.max_file_uploads_per_day,
             "max_file_size_mb": self.max_file_size_mb,
+            "max_storage_mb": self.max_storage_mb,
             "max_servers": self.max_servers,
             "max_message_length": self.max_message_length,
             "max_reactions_per_message": self.max_reactions_per_message,
@@ -155,6 +158,7 @@ DEFAULT_TIER_LIMITS = {
         max_video_minutes_per_day=60,
         max_file_uploads_per_day=50,
         max_file_size_mb=10,
+        max_storage_mb=5 * 1024,
         max_servers=100,
     ),
     "alpha": TierLimits(
@@ -164,6 +168,7 @@ DEFAULT_TIER_LIMITS = {
         max_video_minutes_per_day=240,
         max_file_uploads_per_day=200,
         max_file_size_mb=25,
+        max_storage_mb=10 * 1024,
         max_servers=200,
     ),
     "premium": TierLimits(
@@ -173,6 +178,7 @@ DEFAULT_TIER_LIMITS = {
         max_video_minutes_per_day=-1,
         max_file_uploads_per_day=500,
         max_file_size_mb=100,
+        max_storage_mb=50 * 1024,
         max_servers=500,
     ),
 }

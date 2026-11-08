@@ -9,7 +9,7 @@ and ``offset`` to ``>= 0``.
 
 from unittest.mock import MagicMock
 
-from src.core.admin.users import MAX_PAGE_SIZE, search_users
+from src.core.admin.users import MAX_PAGE_SIZE, get_user_details, search_users
 
 
 def _fetch_call_kwargs(db):
@@ -54,3 +54,18 @@ class TestAdminUserSearchNegativeLimitClamp:
         search_users(db, "someone", limit=20, offset=-5)
 
         assert _fetch_call_kwargs(db)[-2:] == (20, 0)
+
+
+class TestAdminUserEmail:
+    def test_search_and_details_return_decrypted_email(self, db, registered_user):
+        """Admin views must show the address, not the blind-index placeholder."""
+        user, auth, username = registered_user
+        expected = auth.get_user(user.id).email
+        assert expected
+
+        results = search_users(db, username, limit=10, offset=0)
+        assert results[0].email == expected
+
+        details = get_user_details(db, user.id)
+        assert details is not None
+        assert details.email == expected

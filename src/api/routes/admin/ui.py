@@ -73,6 +73,24 @@ async def admin_migrations_page(request: Request):
     return HTMLResponse(content=content, headers=_security_headers(nonce))
 
 
+@router.get("/static/favicon.svg", include_in_schema=False)
+async def admin_favicon(request: Request):
+    """Serve the Plexichat icon used by the admin panel."""
+    check_host_restriction(request)
+    icon_path = (
+        Path(__file__).parent.parent.parent / "templates" / "admin" / "favicon.svg"
+    )
+    if not icon_path.exists():
+        return HTMLResponse(content="<!-- icon not found -->", status_code=404)
+    with open(icon_path, "rb") as f:
+        icon_content = f.read()
+    return Response(
+        content=icon_content,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @router.get("/static/chart.umd.min.js", include_in_schema=False)
 async def admin_chart_js(request: Request):
     """

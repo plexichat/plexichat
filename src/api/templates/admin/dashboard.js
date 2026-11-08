@@ -26,7 +26,7 @@ const C = {
 };
 
 let currentTab = 'dashboard', charts = {}, metricData = [], historicalData = {};
-let selectedUserId = null, selectedTicketId = null, selectedTicketStatus = null, selectedAccessTokenId = null, adminOtpSetupChallenge = null;
+let selectedUserId = null, selectedTicketId = null, selectedTicketStatus = null, selectedAccessTokenId = null, adminOtpSetupChallenge = null, selectedDataExportId = null;
 let adminUsersCache = [], currentMigration = null, migrations = [];
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -57,7 +57,7 @@ const pageTitles = {
     moderation:'Content Moderation', security:'Security', telemetry:'Telemetry & Performance',
     logs:'System Logs', database:'Database Management', approvals:'Approval Workflows',
     audit:'Audit Log', automod:'AutoMod', bots:'Bots', artifacts:'Artifacts', migrations:'Database Migrations',
-    alerts:'System Alerts',
+    alerts:'System Alerts', 'data-exports':'Data Exports',
     plexijoin:'PlexiJoin Federation', license:'License', account:'My Account'
 };
 
@@ -91,7 +91,7 @@ const showTab = n => {
     }
 
     const loads = {
-        dashboard:'refreshMetrics', tickets:'loadTickets', users:'loadUsers', admins:'loadAdminUsers',
+        dashboard:'refreshMetrics', tickets:'loadTickets', 'data-exports':'loadDataExports', users:'loadUsers', admins:'loadAdminUsers',
         moderation:'loadModeration', security:'loadSecurity', telemetry:'refreshTelemetryStats',
         logs:'loadLogs', database:'refreshDatabase', approvals:'loadApprovals', audit:'loadAuditLog',
         automod:'loadAutomodConfig', bots:'refreshAdminBots', artifacts:'renderArtifacts', migrations:'refreshMigrations',
@@ -229,6 +229,8 @@ const actionHandlers = new Map([
     ['saveAdminUser', saveAdminUser],
     ['saveAutomodConfig', saveAutomodConfig],
     ['saveAutomodRule', saveAutomodRule],
+    ['saveUserStorage', saveUserStorage],
+    ['clearUserStorage', clearUserStorage],
     ['saveUserNotes', saveUserNotes],
     ['scrollLogBottom', scrollLogBottom],
     ['scrollLogTop', scrollLogTop],
@@ -262,6 +264,12 @@ const actionHandlers = new Map([
     ['automodPresetDelete', automodPresetDelete],
     ['automodPresetTimeout', automodPresetTimeout],
     ['refreshArtifacts', refreshArtifacts],
+    ['approveDataExport', approveDataExport],
+    ['closeDenyDataExport', closeDenyDataExport],
+    ['confirmDenyDataExport', confirmDenyDataExport],
+    ['denyDataExport', denyDataExport],
+    ['generateDataExport', generateDataExport],
+    ['refreshDataExports', refreshDataExports],
     ['runRetentionPurge', runRetentionPurge],
     ['saveServerRetention', saveServerRetention],
     ['forceDeleteArtifact', forceDeleteArtifact],
@@ -868,6 +876,120 @@ async function loadTickets() {
 }
 function refreshTickets() { loadTickets(); }
 
+// === DATA EXPORTS (DSAR) ===
+const DSAR_STATUS_TONES = {
+    pending: 'warning', approved: 'info', generating: 'info', ready: 'success',
+    failed: 'danger', denied: 'danger', expired: 'muted', cancelled: 'muted'
+};
+
+const dsarTs = t => {
+    if (!t) return '-';
+    const n = Number(t);
+    return new Date(n < 1e12 ? n * 1000 : n).toLocaleString();
+};
+
+const formatBytes = n => {
+    const value = Number(n);
+    if (!Number.isFinite(value) || value <= 0) return '-';
+    if (value < 1024) return `${value} B`;
+    if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`;
+    if (value < 1073741824) return `${(value / 1048576).toFixed(1)} MB`;
+    return `${(value / 1073741824).toFixed(1)} GB`;
+};
+
+async function loadDataExports() {
+    const tbody = document.getElementById('data-exports-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="text-muted">Loading...</td></tr>';
+    try {
+        const status = document.getElementById('data-export-status-filter')?.value || '';
+        const query = status ? `?status=${encodeURIComponent(status)}&limit=100` : '?limit=100';
+        const data = await api(`/api/v1/admin/data-export${query}`);
+        const items = data.items || [];
+        if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No data export requests.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = items.map(x => {
+            const tone = DSAR_STATUS_TONES[x.status] || 'muted';
+            const actions = [];
+            if (x.status === 'pending') {
+                actions.push(`<button class="btn btn-primary btn-sm" data-click="approveDataExport" data-id="${esc(x.id)}">Approve</button>`);
+                actions.push(`<button class="btn btn-danger btn-sm" data-click="denyDataExport" data-id="${esc(x.id)}">Deny</button>`);
+            }
+            if (x.status === 'pending' || x.status === 'approved') {
+                actions.push(`<button class="btn btn-secondary btn-sm" data-click="generateDataExport" data-id="${esc(x.id)}">Generate</button>`);
+            }
+            const reason = x.denial_reason || x.error_message || '';
+            return `<tr>
+                <td class="font-mono">${esc(x.id)}</td>
+                <td class="font-mono">${esc(x.user_id)}</td>
+                <td><span class="badge badge-${tone}" title="${esc(reason)}">${esc(x.status)}</span></td>
+                <td class="text-muted">${dsarTs(x.requested_at)}</td>
+                <td>${esc((x.format || 'json').toUpperCase())}</td>
+                <td>${formatBytes(x.file_size_bytes)}</td>
+                <td class="text-muted">${dsarTs(x.expires_at)}</td>
+                <td class="text-right"><div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;">${actions.join('') || '<span class="text-muted text-xs">-</span>'}</div></td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-muted">Could not load data exports.</td></tr>';
+        showToast('Could not load data exports', 'error');
+    }
+}
+
+function refreshDataExports() { loadDataExports(); }
+
+async function approveDataExport(btn) {
+    const id = btn?.dataset?.id;
+    if (!id || !confirm('Approve this data export request?')) return;
+    try {
+        await api(`/api/v1/admin/data-export/${id}/approve`, { method: 'POST' });
+        showToast('Data export approved', 'success');
+        loadDataExports();
+    } catch (e) { showToast(e.message || 'Could not approve request', 'error'); }
+}
+
+function denyDataExport(btn) {
+    const id = btn?.dataset?.id;
+    if (!id) return;
+    selectedDataExportId = id;
+    const summary = document.getElementById('data-export-deny-summary');
+    if (summary) summary.textContent = `Request ${id} will be denied. The user will not receive an export.`;
+    const reason = document.getElementById('data-export-deny-reason');
+    if (reason) reason.value = '';
+    document.getElementById('data-export-deny-modal')?.classList.add('active');
+}
+
+function closeDenyDataExport() {
+    document.getElementById('data-export-deny-modal')?.classList.remove('active');
+    selectedDataExportId = null;
+}
+
+async function confirmDenyDataExport() {
+    const reason = document.getElementById('data-export-deny-reason')?.value?.trim() || '';
+    if (!selectedDataExportId) return;
+    if (!reason) { showToast('A denial reason is required', 'error'); return; }
+    try {
+        await api(`/api/v1/admin/data-export/${selectedDataExportId}/deny`, {
+            method: 'POST', body: JSON.stringify({ reason })
+        });
+        showToast('Data export denied', 'success');
+        closeDenyDataExport();
+        loadDataExports();
+    } catch (e) { showToast(e.message || 'Could not deny request', 'error'); }
+}
+
+async function generateDataExport(btn) {
+    const id = btn?.dataset?.id;
+    if (!id || !confirm('Generate this data export now? This may take a while.')) return;
+    try {
+        await api(`/api/v1/admin/data-export/${id}/generate`, { method: 'POST' });
+        showToast('Data export generated', 'success');
+        loadDataExports();
+    } catch (e) { showToast(e.message || 'Could not generate export', 'error'); }
+}
+
 async function viewTicket(btn) {
     const id = btn.dataset ? btn.dataset.id : btn;
     try {
@@ -970,11 +1092,12 @@ async function manageUser(btn) {
                 <div class="card-header"><span class="card-title">${esc(u.username)}</span><button class="btn btn-outline btn-sm" data-click="closeUserDetail">Close</button></div>
                 <div class="card-content">
                     <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                        <img src="/api/v1/avatars/users/${esc(u.id)}" style="width:80px;height:80px;border-radius:6px;background:var(--secondary);object-fit:cover;" alt="Avatar" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22oklch(0.18 0.005 240)%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2265%22 text-anchor=%22middle%22 font-size=%2240%22 fill=%22%23999%22>${esc((u.username||'?')[0].toUpperCase())}</text></svg>'">
+                        <img id="admin-user-avatar" src="/api/v1/avatars/users/${esc(u.id)}" style="width:80px;height:80px;border-radius:6px;background:var(--secondary);object-fit:cover;" alt="Avatar">
                         <div style="flex:1;">
                             <p class="font-mono text-sm text-muted">ID: ${esc(u.id)}</p>
                             <div class="grid-2" style="display:grid;gap:12px;margin-top:16px;">
                                 <div><label>Tier</label><div style="display:flex;gap:8px;"><select id="user-tier-select" style="flex:1;"><option value="free">Free</option><option value="alpha">Alpha</option><option value="beta">Beta</option><option value="premium">Premium</option><option value="staff">Staff</option></select><button class="btn btn-primary btn-sm" data-click="updateUserTier">Set</button></div></div>
+                                <div><label>Storage quota</label><div id="user-storage-panel" class="text-sm text-muted">Loading...</div></div>
                                 <div><label>Badges</label><div id="user-badges-list" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">${(u.badges||[]).map(b => `<span class="badge badge-primary" style="display:flex;align-items:center;gap:4px;">${esc(b)}<span style="cursor:pointer;" data-click="removeUserBadge" data-val="${esc(b)}">×</span></span>`).join('')}</div><div style="display:flex;gap:8px;"><input type="text" id="new-badge-input" list="available-badges-list" placeholder="Select badge..." style="flex:1;"><datalist id="available-badges-list"></datalist><button class="btn btn-secondary btn-sm" data-click="addUserBadge">Add</button></div></div>
                                 <div><label>Actions</label><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"><button class="btn btn-secondary btn-sm" data-click="killUserSessions">Kill Sessions</button><button class="btn btn-danger btn-sm" id="suspend-btn" data-click="suspendUser">${u.account_locked ? 'Unlock' : 'Suspend'}</button><button class="btn btn-outline btn-sm" data-click="forceUserRename">Force Rename</button></div></div>
                                 <div><label>Notes</label><textarea id="user-notes-input" rows="3" style="width:100%;resize:vertical;" placeholder="Internal notes...">${esc(notes.notes||'')}</textarea><button class="btn btn-primary btn-sm" style="margin-top:8px;" data-click="saveUserNotes">Save Notes</button></div>
@@ -988,7 +1111,16 @@ async function manageUser(btn) {
             </div>
         `;
         document.getElementById('user-tier-select').value = u.tier || 'free';
+        const avatar = document.getElementById('admin-user-avatar');
+        if (avatar) {
+            avatar.addEventListener('error', () => {
+                const initial = String(u.username || '?').replace(/[^a-z0-9]/gi, '').charAt(0).toUpperCase() || '?';
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="#1c1c24" width="100" height="100"/><text x="50" y="65" text-anchor="middle" font-size="40" fill="#999">${initial}</text></svg>`;
+                avatar.src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+            }, { once: true });
+        }
         loadTierCatalog();
+        loadUserStorage();
     } catch(e) { showToast('Failed to load user', 'error'); }
 }
 
@@ -1004,7 +1136,77 @@ async function loadTierCatalog() {
 async function updateUserTier() {
     if (!selectedUserId) return;
     const tier = document.getElementById('user-tier-select').value;
-    try { await api(`/api/v1/admin/users/${selectedUserId}/tier`, {method:'PUT', body:JSON.stringify({tier})}); showToast('Tier updated', 'success'); } catch(e) { showToast('Failed: '+e.message, 'error'); }
+    try {
+        await api(`/api/v1/admin/users/${selectedUserId}/tier`, {method:'PUT', body:JSON.stringify({tier})});
+        showToast('Tier updated', 'success');
+        loadUserStorage();
+    } catch(e) { showToast('Failed: '+e.message, 'error'); }
+}
+
+function formatQuotaBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return 'Unlimited';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+async function loadUserStorage() {
+    if (!selectedUserId) return;
+    const panel = document.getElementById('user-storage-panel');
+    if (!panel) return;
+    try {
+        const status = await api(`/api/v1/admin/users/${selectedUserId}/storage`);
+        const limit = status.unlimited ? 'Unlimited' : formatQuotaBytes(status.limit_bytes);
+        const used = formatQuotaBytes(status.used_bytes);
+        const tierDefault = status.tier_limit_bytes == null ? 'Unlimited' : formatQuotaBytes(status.tier_limit_bytes);
+        const globalDefault = status.default_limit_bytes == null ? 'Unlimited' : formatQuotaBytes(status.default_limit_bytes);
+        const source = status.source === 'override' ? 'Admin override' : (status.source === 'tier' ? `Tier default (${esc(status.tier || 'standard')})` : 'Global default');
+        panel.innerHTML = `
+            <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><span>Used <strong>${esc(used)}</strong> of <strong>${esc(limit)}</strong></span><span class="text-xs text-muted">${esc(source)}</span></div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Tier ${esc(status.tier || 'standard')}: ${esc(tierDefault)} · Global default: ${esc(globalDefault)}</div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                <input id="user-storage-mb" type="number" min="0" step="1" style="width:110px;" placeholder="Limit (MB)" value="${status.unlimited ? '' : Math.round(Number(status.limit_bytes) / 1048576)}" ${status.unlimited ? 'disabled' : ''}>
+                <span class="text-xs text-muted">MB</span>
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;font-weight:normal;"><input id="user-storage-unlimited" type="checkbox" ${status.unlimited ? 'checked' : ''}> Unlimited</label>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                <button class="btn btn-primary btn-sm" data-click="saveUserStorage">Save override</button>
+                <button class="btn btn-outline btn-sm" data-click="clearUserStorage" ${status.source === 'override' ? '' : 'disabled'}>Use tier default</button>
+            </div>
+        `;
+        const unlimited = document.getElementById('user-storage-unlimited');
+        const mbInput = document.getElementById('user-storage-mb');
+        unlimited?.addEventListener('change', () => { if (mbInput) mbInput.disabled = unlimited.checked; });
+    } catch (e) {
+        panel.innerHTML = '<span class="text-xs text-danger">Storage quota unavailable</span>';
+    }
+}
+
+async function saveUserStorage() {
+    if (!selectedUserId) return;
+    const unlimited = Boolean(document.getElementById('user-storage-unlimited')?.checked);
+    const raw = document.getElementById('user-storage-mb')?.value;
+    const mb = Number(raw);
+    if (!unlimited && (!raw || !Number.isFinite(mb) || mb < 0)) {
+        showToast('Enter a non-negative limit in MB, or choose Unlimited', 'warning');
+        return;
+    }
+    const body = unlimited ? {unlimited: true} : {limit_bytes: Math.round(mb * 1048576)};
+    try {
+        await api(`/api/v1/admin/users/${selectedUserId}/storage`, {method:'PUT', body:JSON.stringify(body)});
+        showToast('Storage quota updated', 'success');
+        loadUserStorage();
+    } catch (e) { showToast('Failed: '+e.message, 'error'); }
+}
+
+async function clearUserStorage() {
+    if (!selectedUserId) return;
+    try {
+        await api(`/api/v1/admin/users/${selectedUserId}/storage`, {method:'PUT', body:JSON.stringify({clear:true})});
+        showToast('Storage override cleared', 'success');
+        loadUserStorage();
+    } catch (e) { showToast('Failed: '+e.message, 'error'); }
 }
 
 async function addUserBadge() {
@@ -2383,13 +2585,17 @@ window.addEventListener('hashchange', () => {
     }
 });
 
-// === SIDEBAR TOGGLE INIT ===
-document.addEventListener('DOMContentLoaded', () => {
+// === DASHBOARD INIT ===
+// Run after the page's load event.  Chart.js sizes its canvases from computed
+// styles, and doing that while stylesheets/fonts are still loading forces a
+// synchronous layout (Firefox: "Layout was forced before the page was fully
+// loaded").  showTab() already loads the active tab, so calling refreshMetrics()
+// again here duplicated every dashboard API request and rebuilt every chart.
+const initDashboard = () => {
     const hash = window.location.hash.slice(1);
     const isKnownTab = hash && (pageTitles[hash] || hash.startsWith('approval-') || hash.startsWith('user-'));
     if (isKnownTab) showTab(hash);
     else showTab('dashboard');
-    refreshMetrics();
 
     document.getElementById('metric-hours')?.addEventListener('change', refreshMetrics);
     document.getElementById('endpoint-filter')?.addEventListener('input', renderEndpointTable);
@@ -2397,6 +2603,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('log-search')?.addEventListener('input', () => { const s = document.getElementById('log-file-select'); if (s && s.value) loadLogFile(s.value); });
     document.getElementById('user-search-input')?.addEventListener('input', loadUsers);
     document.getElementById('ticket-status-filter')?.addEventListener('change', loadTickets);
+    document.getElementById('data-export-status-filter')?.addEventListener('change', loadDataExports);
     document.getElementById('hash-report-status')?.addEventListener('change', loadModeration);
     document.getElementById('message-report-status')?.addEventListener('change', loadMessageReports);
     document.getElementById('user-report-status')?.addEventListener('change', loadUserReports);
@@ -2409,4 +2616,7 @@ document.addEventListener('DOMContentLoaded', () => {
     api('/api/v1/admin/auth/security-status')
         .then(sec => { if (sec.must_setup_otp) window.location.replace('/api/v1/admin/login'); })
         .catch(() => {});
-});
+};
+
+if (document.readyState === 'complete') initDashboard();
+else window.addEventListener('load', initDashboard, { once: true });

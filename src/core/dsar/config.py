@@ -71,6 +71,26 @@ def default_export_format() -> str:
     return default if default in allowed else allowed[0]
 
 
+def auto_approve_after_hours() -> Optional[int]:
+    """Resolve the DSAR auto-approval policy.
+
+    ``None`` means no explicit policy was set; callers should fall back to the
+    legacy ``require_admin_review`` behavior. ``0`` approves immediately,
+    ``-1`` never auto-approves, and any positive value is the number of hours
+    a pending request may wait before it is auto-approved.
+    """
+    value = get_dsar_config().get("auto_approve_after_hours")
+    if value is None:
+        return None
+    try:
+        hours = int(value)
+    except (TypeError, ValueError):
+        return None
+    if hours < -1:
+        return -1
+    return hours
+
+
 def harvester_config() -> Dict[str, Any]:
     cfg = get_dsar_config().get("harvester", {}) or {}
     return cfg if isinstance(cfg, dict) else {}

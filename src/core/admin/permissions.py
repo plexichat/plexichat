@@ -46,6 +46,7 @@ PERMISSION_SCOPES = {
     "users.delete": "Delete user accounts",
     "users.force_purge": "Immediately purge user accounts (dangerous)",
     "users.tier": "Modify user account tiers",
+    "users.storage": "Manage per-user storage quotas",
     "users.badges": "Manage user badges",
     "users.notes": "View and edit internal admin notes",
     "users.lock": "Lock/unlock user accounts",

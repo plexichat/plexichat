@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -59,6 +61,37 @@ class TestHarvesterFlow:
             "SELECT status FROM dsar_requests WHERE user_id = ?", (user.id,)
         )
         assert all(r["status"] in ("pending", "approved", "ready") for r in rows)
+
+    def test_auto_approve_after_cutoff(self, harvester_fixtures):
+        harvester, user, _admin, db = harvester_fixtures
+        from src.core.dsar import request_data_export
+
+        req = request_data_export(user.id)
+        db.execute(
+            "UPDATE dsar_requests SET requested_at = ? WHERE id = ?",
+            (int(time.time()) - 7200, req["id"]),
+        )
+        harvester._config["auto_approve_after_hours"] = 1
+        harvester._process_request = lambda request: None
+        harvester.harvest()
+        row = db.fetch_one(
+            "SELECT status FROM dsar_requests WHERE id = ?", (req["id"],)
+        )
+        assert row["status"] == "approved"
+
+    def test_never_auto_approve_overrides_legacy_boolean(self, harvester_fixtures):
+        harvester, user, _admin, db = harvester_fixtures
+        from src.core.dsar import request_data_export
+
+        req = request_data_export(user.id)
+        harvester._config["auto_approve_after_hours"] = -1
+        harvester._harvester_config["require_admin_review"] = False
+        harvester._process_request = lambda request: None
+        harvester.harvest()
+        row = db.fetch_one(
+            "SELECT status FROM dsar_requests WHERE id = ?", (req["id"],)
+        )
+        assert row["status"] == "pending"
 
     def test_stop_method_safe(self, harvester_fixtures):
         harvester, *_ = harvester_fixtures

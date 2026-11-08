@@ -20,10 +20,10 @@ Verify the server version and capabilities before you rely on feature-specific b
 # Get the server version and minimum supported client version
 curl http://localhost:8000/api/v1/version
 
-# Negotiate compatibility for your client version (format: 1.0.0a210)
+# Negotiate compatibility for your client version (format: 1.0.0a212)
 curl -X POST http://localhost:8000/api/v1/version/negotiate \
   -H "Content-Type: application/json" \
-  -d '{"client_version":"1.0.0a210"}'
+  -d '{"client_version":"1.0.0a212"}'
 
 # Discover public capabilities without authentication
 curl http://localhost:8000/api/v1/capabilities
@@ -32,7 +32,7 @@ curl http://localhost:8000/api/v1/capabilities
 curl http://localhost:8000/api/v1/status
 ```
 
-The version format is PEP 440 (`X.Y.Z[.devN][aN|bN|rcN][.postN]`, e.g. `1.0.0a210`) (`src/utils/common_utils/utils/version/core.py`, `src/server/lifecycle.py`). The `POST /api/v1/version/negotiate` endpoint (`src/api/routes/version.py`) returns `compatible`, `update_required`, and `update_recommended` fields. It returns `426 Upgrade Required` when the client version is below the minimum. Use `/capabilities` to adapt your client to server configuration such as maximum avatar size and whether the access-token gate is enabled.
+The version format is PEP 440 (`X.Y.Z[.devN][aN|bN|rcN][.postN]`, e.g. `1.0.0a212`) (`src/utils/common_utils/utils/version/core.py`, `src/server/lifecycle.py`). The `POST /api/v1/version/negotiate` endpoint (`src/api/routes/version.py`) returns `compatible`, `update_required`, and `update_recommended` fields. It returns `426 Upgrade Required` when the client version is below the minimum. Use `/capabilities` to adapt your client to server configuration such as maximum avatar size and whether the access-token gate is enabled.
 
 ## 3. Authenticate
 

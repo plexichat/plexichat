@@ -534,6 +534,29 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
     setup_exception_handlers(app)
 
+    # Quota failures must surface as an actionable 413 everywhere, including
+    # upload routes (avatars/emoji/stickers/sounds) that only catch their own
+    # domain errors. FileUploadError remains the fallback for generic callers.
+    from fastapi.responses import JSONResponse
+    from src.core.media.exceptions import StorageQuotaExceededError
+
+    @app.exception_handler(StorageQuotaExceededError)
+    async def _storage_quota_handler(request: Request, exc: StorageQuotaExceededError):
+        return JSONResponse(
+            status_code=413,
+            content={
+                "detail": {
+                    "error": {
+                        "code": 413,
+                        "message": str(exc),
+                        "used_bytes": exc.used_bytes,
+                        "limit_bytes": exc.limit_bytes,
+                        "requested_bytes": exc.requested_bytes,
+                    }
+                }
+            },
+        )
+
     api_router = create_api_router()
     app.include_router(api_router, prefix=config.api_prefix)
 
