@@ -1,15 +1,4 @@
-"""
-Artifact routes - REST API for the Artifacts feature.
-
-Implements CRUD + listing for artifacts plus inline transcript emission.
-Permission checks defer to the server RBAC layer (`artifact.view/create/
-edit/delete/manage_retention`); for DM/group conversations (no server) the
-caller must be a participant/owner of the conversation.
-
-Shared helpers live in ``artifacts_helpers.py`` and export renderers in
-``artifacts_export.py``; they are re-exported here so the historical import
-path ``src.api.routes.artifacts`` keeps exposing every public name.
-"""
+"""Artifact route handlers (hardened)."""
 
 import json
 from typing import Any, Dict, List, Optional
@@ -37,7 +26,7 @@ from src.api.schemas.artifacts import (
 
 # Re-exported helpers: stable import surface for tests and sibling modules
 # (e.g. ``src.api.routes.suite.registry``). ``__all__`` marks them as used.
-from src.api.routes.artifacts_helpers import (
+from ..artifacts_helpers import (
     _artifact_response,
     _author_profile_cache,
     _authorize_scope,
@@ -54,7 +43,7 @@ from src.api.routes.artifacts_helpers import (
     payload_revision,
     stale_payload_write,
 )
-from src.api.routes.artifacts_export import (
+from ..artifacts_export import (
     _artifact_board_text,
     _artifact_export_html,
     _artifact_export_markdown,
@@ -102,41 +91,19 @@ __all__ = [
     "stale_payload_write",
 ]
 
-router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
+from .constants import EXPORT_MIME_MAP
+from .validation import (
+    parse_snowflake_id,
+    safe_download_filename,
+    validate_export_format,
+)
 
-ARTIFACT_ICON = config.get("artifacts", {}).get("inline_icon", "📎")
+router = APIRouter(prefix="/artifacts", tags=["Artifacts"])
 
 
 def _parse_optional_id(value: Optional[str], field: str) -> Optional[int]:
-    """Parse an optional client-supplied ID, failing with 400 not 500.
-
-    List filters arrive as raw query strings (``Optional[str]``), so a value
-    like ``?conversation_id=abc`` would previously raise a bare ``ValueError``
-    from ``int()`` and collapse into a generic 500 via the route's
-    ``except Exception`` handler. Validate explicitly to match the single-ID
-    routes below, which return 400 for the same input.
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text.isdecimal():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
-        )
-    try:
-        parsed = int(text)
-    except (TypeError, ValueError, OverflowError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
-        )
-    if parsed <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
-        )
-    return parsed
+    """Parse an optional client-supplied ID (compat wrapper)."""
+    return parse_snowflake_id(value, field)
 
 
 # === Routes ===
@@ -615,26 +582,7 @@ async def _export_artifact_impl(
                 detail={"error": {"code": 400, "message": "Invalid artifact ID"}},
             )
 
-        valid_formats = {
-            "html",
-            "pdf",
-            "md",
-            "odt",
-            "txt",
-            "plexiscribe",
-            "plexiscript",
-            "plexiboard",
-        }
-        if export_format not in valid_formats:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": {
-                        "code": 400,
-                        "message": f"Unsupported format '{export_format}'. Supported: {', '.join(sorted(valid_formats))}",
-                    }
-                },
-            )
+        export_format = validate_export_format(export_format)
 
         manager = _get_manager()
         artifact = manager.get(aid)
@@ -653,27 +601,9 @@ async def _export_artifact_impl(
         )
         _require_artifact_capability(artifact.artifact_type)
 
-        mime_map = {
-            "html": "text/html",
-            "pdf": "application/pdf",
-            "md": "text/markdown",
-            "odt": "application/vnd.oasis.opendocument.text",
-            "txt": "text/plain",
-            "plexiscribe": "application/vnd.plexichat.plexiscribe",
-            "plexiscript": "application/vnd.plexichat.plexiscript",
-            "plexiboard": "application/vnd.plexichat.plexiboard",
-        }
-
-        title_slug = (
-            artifact.title.lower().replace(" ", "-")[:50]
-            if artifact.title
-            else "export"
+        ascii_filename, utf8_filename = safe_download_filename(
+            artifact.title, export_format
         )
-        # Ensure the slug is filesystem-safe (strip anything that isn't
-        # alphanumeric, dash, or underscore so the Content-Disposition filename
-        # is valid across platforms).
-        safe_slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in title_slug)
-        filename = f"{safe_slug}.{export_format}"
 
         payload = artifact.payload or {}
         artifact_type_value = artifact.artifact_type.value
@@ -711,10 +641,8 @@ async def _export_artifact_impl(
         else:
             data = str(payload).encode("utf-8", "replace")
 
-        content_type = mime_map.get(export_format, "application/octet-stream")
-        # ASCII-safe fallback filename for the disposition header, plus a
-        # UTF-8 ``filename*`` parameter so non-ASCII titles still resolve.
-        ascii_filename = filename.encode("ascii", "ignore").decode("ascii") or filename
+        content_type = EXPORT_MIME_MAP.get(export_format, "application/octet-stream")
+        disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{utf8_filename}"
 
         def _chunk_iter() -> Any:
             yield data
@@ -723,10 +651,8 @@ async def _export_artifact_impl(
             _chunk_iter(),
             media_type=content_type,
             headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{ascii_filename}"; '
-                    f"filename*=UTF-8''{filename}"
-                ),
+                "Content-Disposition": disposition,
+                "X-Content-Type-Options": "nosniff",
             },
         )
     except HTTPException:
