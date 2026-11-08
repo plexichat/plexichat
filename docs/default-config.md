@@ -18,7 +18,7 @@ Use this file as your starting point. Copy it to `config/config.yaml` or
 # Copy to config/config.yaml or ~/.plexichat/config/config.yaml
 application:
   name: Plexichat
-  version: 1.0.0a211
+  version: 1.0.0a212
   environment: development
 server:
   host: 127.0.0.1
@@ -176,7 +176,7 @@ authentication:
 api:
   title: Plexichat API
   description: REST API for the Plexichat messaging platform
-  version: 1.0.0a211
+  version: 1.0.0a212
   api_prefix: /api/v1
   debug: true
   cors_origins:
@@ -786,7 +786,7 @@ bots:
   max_requests_pending_per_user: 10
 versioning:
   # Defaults to the server's own version at startup (src/config_defaults.py).
-  min_supported_version: 1.0.0a211
+  min_supported_version: 1.0.0a212
   update_url: null
 docs:
   enabled: true

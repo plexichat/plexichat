@@ -61,6 +61,9 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
             return
         if row and force:
             db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (row["id"],))
+            db.execute(
+                "DELETE FROM admin_role_assignments WHERE admin_id = ?", (row["id"],)
+            )
             db.execute("DELETE FROM admin_users WHERE username = ?", ("admin",))
         password = _generate_password()
         import src.utils.encryption as encryption
@@ -212,7 +215,14 @@ def _seed_default_admin_roles(db, admin_id: int, now: int) -> None:
         else (existing[0] if existing else 0)
     )
 
-    if not count:
+    super_admin = db.fetch_one(
+        "SELECT id FROM admin_roles WHERE name = ?", ("super_admin",)
+    )
+    if super_admin:
+        super_admin_id = (
+            super_admin.get("id") if isinstance(super_admin, dict) else super_admin[0]
+        )
+    else:
         super_admin_id = generate_snowflake_id()
         db.execute(
             """INSERT INTO admin_roles
@@ -220,12 +230,24 @@ def _seed_default_admin_roles(db, admin_id: int, now: int) -> None:
                VALUES (?, 'super_admin', 'Full system access with all permissions', ?, ?, ?, 1, 100)""",
             (super_admin_id, json.dumps({"*": True}), now, admin_id),
         )
+
+    # A forced reset deletes the admin row but leaves the system roles in
+    # place. Previously the assignment was only written when the roles table
+    # was empty, so resetting an existing install recreated ``admin`` with no
+    # role at all and every permission-gated endpoint answered 403 while login
+    # still succeeded. Always ensure the built-in account is tied to the
+    # existing super-admin role.
+    assigned = db.fetch_one(
+        """SELECT 1 AS assigned FROM admin_role_assignments
+           WHERE admin_id = ? AND role_id = ?""",
+        (admin_id, super_admin_id),
+    )
+    if not assigned:
         db.execute(
             """INSERT INTO admin_role_assignments (admin_id, role_id, assigned_at, assigned_by)
                VALUES (?, ?, ?, ?)""",
             (admin_id, super_admin_id, now, admin_id),
         )
-        count = 1
 
     # Keep a non-system role available for delegated administrators. Existing
     # installations may have only the original super_admin seed.

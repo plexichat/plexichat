@@ -4,7 +4,7 @@ name: plexichat
 #
 # Compose ref pinning: this file is the canonical compose source. Operators
 # who fetch it remotely MUST pin a released tag (e.g.
-# BACKEND_VERSION=1.0.0a211) and verify the SHA256 sidecar / out-of-band
+# BACKEND_VERSION=1.0.0a212) and verify the SHA256 sidecar / out-of-band
 # digest before `docker compose up`. Fetching docker-compose.yml from the
 # unreleased `dev` branch is forbidden unless explicitly opted into with
 # ALLOW_DEV_COMPOSE=1, which the deploy script treats as tracking
@@ -29,7 +29,7 @@ name: plexichat
 # Postgres/Valkey/S3/restic secrets. Create it with `umask 077` and keep it
 # `chmod 600` at all times; never commit it to version control.
 
-# Version to deploy (e.g., 1.0.0a211). REQUIRED by default.
+# Version to deploy (e.g., 1.0.0a212). REQUIRED by default.
 # Set via: BACKEND_VERSION=X CLIENT_VERSION=Y docker compose up -d
 # `latest`/`dev` are refused by deploy/config verification unless
 # ALLOW_UNPINNED_IMAGES=1 is explicitly set for audited non-production use.

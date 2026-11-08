@@ -81,7 +81,7 @@ def check_version_value(name: str, value: str, source: str, errors: list[str]) -
             return  # digest ref is pinned
         errors.append(
             f"{source}: {name}={v!r} is unpinned/unsafe by default; "
-            "use an immutable release tag (e.g. 1.0.0a211) or set "
+            "use an immutable release tag (e.g. 1.0.0a212) or set "
             "ALLOW_UNPINNED_IMAGES=1 for explicit audited dev use"
         )
 
