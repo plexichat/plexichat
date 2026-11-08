@@ -9,7 +9,7 @@ Version Format: PEP 440
 - dev: development release number (``.devN``)
 - local: local version segment (``+local``)
 
-Examples: ``1.0.0a208``, ``1.0.0``, ``2.1.0rc3``, ``1.0.0.post1``
+Examples: ``1.0.0a210``, ``1.0.0``, ``2.1.0rc3``, ``1.0.0.post1``
 
 Usage:
     # In main.py (setup once)
