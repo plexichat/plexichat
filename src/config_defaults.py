@@ -178,6 +178,10 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
             "dm_auto_create": True,
             "message_preview_length": 100,
         },
+        "storage": {
+            "default_quota_mb": 5120,
+            "reservation_ttl_seconds": 900,
+        },
         "media": {
             "data_dir": str(home_dir / "data"),
             "logs_dir": str(home_dir / "logs"),
@@ -350,6 +354,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                     "max_video_minutes_per_day": 60,
                     "max_file_uploads_per_day": 50,
                     "max_file_size_mb": 50,
+                    "max_storage_mb": 5120,
                     "max_servers": 100,
                     "max_message_length": 2000,
                     "max_reactions_per_message": 20,
@@ -362,6 +367,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                     "max_video_minutes_per_day": 240,
                     "max_file_uploads_per_day": 200,
                     "max_file_size_mb": 25,
+                    "max_storage_mb": 10240,
                     "max_servers": 200,
                     "max_message_length": 4000,
                     "max_reactions_per_message": 50,
@@ -374,6 +380,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                     "max_video_minutes_per_day": -1,
                     "max_file_uploads_per_day": 500,
                     "max_file_size_mb": 100,
+                    "max_storage_mb": 51200,
                     "max_servers": 500,
                     "max_message_length": 4000,
                     "max_reactions_per_message": 100,
@@ -386,6 +393,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                     "max_video_minutes_per_day": -1,
                     "max_file_uploads_per_day": -1,
                     "max_file_size_mb": 500,
+                    "max_storage_mb": -1,
                     "max_servers": -1,
                     "max_message_length": 8000,
                     "max_reactions_per_message": -1,
@@ -852,6 +860,10 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
         "dsar": {
             "enabled": True,
             "require_admin_review": True,
+            # None preserves the legacy require_admin_review behavior.
+            # 0 = approve immediately, -1 = never auto-approve, >0 = approve
+            # pending requests after this many hours without admin action.
+            "auto_approve_after_hours": None,
             "default_format": "json",
             "export_formats": ["json", "zip"],
             "max_export_size_mb": 500,
