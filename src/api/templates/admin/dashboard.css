@@ -1361,3 +1361,17 @@ input[type="checkbox"] {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* Plexichat brand icon in the admin sidebar */
+.sidebar-logo-img {
+    width: 28px;
+    height: 28px;
+    display: block;
+    border-radius: 6px;
+}
+
+.badge-muted {
+    background: var(--secondary);
+    color: var(--muted-foreground);
+    border: 1px solid var(--border);
+}
