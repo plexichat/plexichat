@@ -189,6 +189,7 @@ lint:pre-commit:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   variables:
     PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
     NODE_OPTIONS: "--max-old-space-size=2048"
@@ -265,6 +266,7 @@ security:secret_detection:  # pragma: allowlist secret
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest  # pragma: allowlist secret
   variables:
     GIT_DEPTH: 100
@@ -287,6 +289,7 @@ security:sast:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
   variables:
     SAST_EXCLUDED_PATHS: ".venv/,venv/,tests/,.cache/,build/,dist/"
@@ -311,6 +314,7 @@ security:dependency_scanning:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   # Pipeline 2304 (a.1.0-177) failed this job on `Temporary failure in name
   # resolution` while fetching osv-scanner from GitHub. That is resolver
   # flakiness, not a finding -- and because this stage precedes `test` and
@@ -379,6 +383,7 @@ pip-licenses:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   script:
     # Floor-pinned (not hashed): audit tooling follows the same precedent as
     # `pip install pip-audit safety` in .python_base — latest 4.x+ keeps the
@@ -408,6 +413,7 @@ docs:links:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   script:
     - python ci-tooling/check_docs_links.py
 
@@ -437,6 +443,7 @@ test:pytest:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   # Pipeline #2104 (a.1.0-136) lost this job to a worker that vanished at 99%
   # -- xdist printed "node down: Not properly terminated" and then sat silent
   # until the 1h limit, so no image was ever built. The box is shared with the
@@ -537,6 +544,7 @@ test:formula_parity:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   script:
     - pip install --require-hashes -r requirements-dev.txt
     - >
@@ -559,6 +567,7 @@ test:security_surface:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   script:
     - pip install --require-hashes -r requirements-dev.txt
     - >
@@ -656,6 +665,7 @@ test:timing_under_load:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   # Same resource group as test:pytest: the burners this job runs are exactly
   # the load a duration gate must not be measuring.
   resource_group: pytest-suite
@@ -723,6 +733,7 @@ test:database_backends:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   services:
     - name: postgres:15-alpine
       alias: postgres
@@ -820,6 +831,7 @@ performance:no_slow_tests:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   image:
     name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
@@ -859,6 +871,7 @@ metrics:trend:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   image:
     name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
@@ -925,6 +938,7 @@ test:self_test:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   script:
     - mkdir -p .plexichat
     # Every run is licensed. Protected branches (master, etc.) set a real
@@ -974,6 +988,7 @@ test:self_test_postgres:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - when: on_success
   services:
     # Pinned to the image `test:database_backends` uses, not to whatever is
     # newest: this job's job is to prove the code, and a moving database
