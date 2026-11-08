@@ -72,6 +72,10 @@ _ALLOWED_FREEFORM_REQUEST_BODIES: dict[tuple[str, str], str] = {
         "post",
         "/api/v1/admin/artifacts/features/{feature}",
     ): "feature settings map; server_id accepted as int|str (int()-coerced)",
+    (
+        "put",
+        "/api/v1/admin/users/{user_id}/storage",
+    ): "quota override body: clear/unlimited/limit_bytes; path user_id is typed",
 }
 
 _ALLOWED_FREEFORM_RESPONSES: dict[tuple[str, str], str] = {
@@ -131,6 +135,8 @@ _ALLOWED_FREEFORM_RESPONSES: dict[tuple[str, str], str] = {
     ("get", "/public/license/challenge"): "license challenge: no ids",
     ("get", "/public/license/export"): "license document: no snowflakes",
     ("get", "/public/license/info"): "license info: no snowflakes",
+    ("get", "/api/v1/storage/quota"): "quota summary for the session user: no ids",
+    ("get", "/api/v1/storage/usage"): "alias of the session user's quota: no ids",
 }
 
 
