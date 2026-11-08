@@ -1020,11 +1020,11 @@
                 <div style="margin-bottom:12px;"><label>Token Name</label><input type="text" id="create-token-name" placeholder="My API Token"></div>
                 <div style="margin-bottom:12px;"><label>Description</label><input type="text" id="create-token-description" placeholder="What is this used for?"></div>
                 <div class="grid-2" style="display:grid;gap:12px;">
-                    <div><label>Scope Mode</label><select id="create-token-scope-mode"><option value="none">No IP restriction</option><option value="allowlist">IP Allowlist</option><option value="denylist">IP Denylist</option></select></div>
+                    <div><label>Scope Mode</label><select id="create-token-scope-mode"><option value="none">No IP restriction</option><option value="monitor">Monitor (log only)</option><option value="enforce">Enforce allowlist</option></select></div>
                     <div><label>Expires In</label><select id="create-token-expires"><option value="30d">30 Days</option><option value="90d">90 Days</option><option value="1y">1 Year</option><option value="never">Never</option></select></div>
                 </div>
                 <div style="margin-bottom:12px;"><label>IP / CIDR Scopes</label><input type="text" id="create-token-scopes" placeholder="10.0.0.0/8, 192.168.1.100 (comma separated)" class="font-mono"></div>
-                <div><label>Custom Token (optional)</label><input type="text" id="create-token-custom" placeholder="Leave blank to auto-generate" class="font-mono"></div>
+                <div><label>Token value</label><div class="text-muted text-sm">Generated server-side and shown once after creation.</div></div>
             </div>
             <div class="modal-footer"><button class="btn btn-secondary" data-click="closeCreateTokenModal">Cancel</button><button class="btn btn-primary" data-click="confirmCreateToken">Create Token</button></div>
         </div>

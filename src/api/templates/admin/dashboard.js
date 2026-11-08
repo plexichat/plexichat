@@ -199,6 +199,7 @@ const actionHandlers = new Map([
     ['manageUser', manageUser],
     ['openExport', openExport],
     ['refreshAccessTokenDetail', refreshAccessTokenDetail],
+    ['refreshAlerts', refreshAlerts],
     ['refreshApprovals', refreshApprovals],
     ['refreshAuditLog', refreshAuditLog],
     ['refreshHashReports', refreshHashReports],
@@ -1157,7 +1158,70 @@ async function loadAccessTokenDetail(btn) {
 
 function closeAccessTokenDetail() { selectedAccessTokenId = null; document.getElementById('access-token-detail').classList.add('hidden'); }
 
-function closeCreateTokenModal() { document.getElementById('create-token-modal').classList.add('hidden'); }
+function showCreateTokenModal() {
+    document.getElementById('create-token-name').value = '';
+    document.getElementById('create-token-description').value = '';
+    document.getElementById('create-token-scope-mode').value = 'none';
+    document.getElementById('create-token-expires').value = '30d';
+    document.getElementById('create-token-scopes').value = '';
+    const modal = document.getElementById('create-token-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('active');
+    document.getElementById('create-token-name').focus();
+}
+
+function closeCreateTokenModal() {
+    const modal = document.getElementById('create-token-modal');
+    modal.classList.remove('active');
+    modal.classList.add('hidden');
+}
+
+async function confirmCreateToken() {
+    const nameInput = document.getElementById('create-token-name');
+    const name = nameInput.value.trim();
+    if (!name) {
+        showToast('Token name is required', 'warning');
+        nameInput.focus();
+        return;
+    }
+
+    const expiry = document.getElementById('create-token-expires').value;
+    const expirySeconds = {'30d': 30 * 86400, '90d': 90 * 86400, '1y': 365 * 86400}[expiry];
+    const body = {
+        name,
+        description: document.getElementById('create-token-description').value.trim(),
+        scope_mode: document.getElementById('create-token-scope-mode').value,
+    };
+    if (expirySeconds) body.expires_at = Math.floor(Date.now() / 1000) + expirySeconds;
+
+    try {
+        const created = await api('/api/v1/admin/security/access-tokens', {method:'POST', body:JSON.stringify(body)});
+        const tokenId = created.access_token?.id;
+        const scopes = document.getElementById('create-token-scopes').value
+            .split(',').map(v => v.trim()).filter(Boolean);
+        const failedScopes = [];
+        if (tokenId) {
+            for (const value of scopes) {
+                try {
+                    await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(tokenId)}/scopes`, {
+                        method:'POST',
+                        body:JSON.stringify({scope_type: value.includes('/') ? 'cidr' : 'ip', value}),
+                    });
+                } catch (e) {
+                    failedScopes.push(value);
+                }
+            }
+        }
+        closeCreateTokenModal();
+        loadSecurity();
+        const warning = failedScopes.length
+            ? ` (scopes failed: ${failedScopes.join(', ')})`
+            : '';
+        showToast(`Token created. Copy it now: ${created.token}${warning}`, failedScopes.length ? 'warning' : 'success');
+    } catch (e) {
+        showToast('Failed to create token: ' + e.message, 'error');
+    }
+}
 
 async function refreshAccessTokenDetail() { if (selectedAccessTokenId) loadAccessTokenDetail(selectedAccessTokenId); }
 
