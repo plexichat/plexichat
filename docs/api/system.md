@@ -37,7 +37,7 @@ Returns basic API metadata. Mounted at the app root (`src/api/app.py`), not unde
 ```json
 {
   "name": "Plexichat API",
-  "version": "1.0.0a210",
+  "version": "1.0.0a211",
   "docs": "/docs",
   "api": "/api/v1",
   "api_docs": "/docs/api"
@@ -61,7 +61,7 @@ Checks API health and returns advisory diagnostics. This endpoint never takes do
 ```json
 {
   "status": "healthy",
-  "version": "1.0.0a210",
+  "version": "1.0.0a211",
   "events_metrics": {
     "dropped_count": 0,
     "subscriber_count": 12,
@@ -120,8 +120,8 @@ Returns the current version and the minimum supported client version. Cached for
   "version": {
     "epoch": 0,
     "release": [1, 0, 0],
-    "pre": { "kind": "a", "n": 210 },
-    "string": "1.0.0a210"
+    "pre": { "kind": "a", "n": 211 },
+    "string": "1.0.0a211"
   },
   "min_supported_version": {
     "epoch": 0,
@@ -165,13 +165,13 @@ Check whether a client version is compatible with the server.
 ```json
 {
   "compatible": true,
-  "server_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 210 }, "string": "1.0.0a210" },
+  "server_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 211 }, "string": "1.0.0a211" },
   "client_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 125 }, "string": "1.0.0a125" },
   "min_supported_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 100 }, "string": "1.0.0a100" },
   "update_required": false,
   "update_recommended": true,
   "update_url": null,
-  "message": "A newer version (1.0.0a210) is available. Consider updating for the latest features and fixes."
+  "message": "A newer version (1.0.0a211) is available. Consider updating for the latest features and fixes."
 }
 ```
 
@@ -196,7 +196,7 @@ Returns operational state, version, uptime, and any maintenance announcement. Ca
 ```json
 {
   "state": "running",
-  "version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 210 }, "string": "1.0.0a210" },
+  "version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 211 }, "string": "1.0.0a211" },
   "uptime_seconds": 86400,
   "maintenance_message": null,
   "estimated_downtime_seconds": null,
