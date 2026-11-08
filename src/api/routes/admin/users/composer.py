@@ -101,6 +101,38 @@ class AdminUsersRouter(
             },
         )(self.update_user_tier)
 
+        # Storage quota (admin override; tier/default applies when cleared)
+        router.get(
+            "/users/{user_id}/storage",
+            responses={
+                400: {"model": ErrorResponse, "description": "Invalid user ID"},
+                401: {
+                    "model": ErrorResponse,
+                    "description": "Invalid or expired token",
+                },
+                403: {
+                    "model": ErrorResponse,
+                    "description": "Insufficient permissions",
+                },
+                404: {"model": ErrorResponse, "description": "User not found"},
+            },
+        )(self.get_user_storage)
+        router.put(
+            "/users/{user_id}/storage",
+            responses={
+                400: {"model": ErrorResponse, "description": "Invalid request data"},
+                401: {
+                    "model": ErrorResponse,
+                    "description": "Invalid or expired token",
+                },
+                403: {
+                    "model": ErrorResponse,
+                    "description": "Insufficient permissions",
+                },
+                404: {"model": ErrorResponse, "description": "User not found"},
+            },
+        )(self.update_user_storage)
+
         # Badges
         router.post(
             "/users/{user_id}/badges/{badge}",

@@ -69,6 +69,8 @@ Routers: `dashboard`, `logs`, `database`.
 | `GET` | `<admin-base>/users/scheduled-deletions` | List scheduled deletions |
 | `GET` | `<admin-base>/users/{user_id}` | Get a user profile |
 | `PUT` | `<admin-base>/users/{user_id}/tier` | Change a user's tier (`users.tier`) |
+| `GET` | `<admin-base>/users/{user_id}/storage` | Get usage and effective storage quota (`users.read`) |
+| `PUT` | `<admin-base>/users/{user_id}/storage` | Set/clear a storage override (`users.storage`) |
 | `POST` | `<admin-base>/users/{user_id}/badges/{badge}` | Add a badge (`users.badges`) |
 | `DELETE` | `<admin-base>/users/{user_id}/badges/{badge}` | Remove a badge (`users.badges`) |
 | `GET` | `<admin-base>/users/{user_id}/notes` | List internal notes (`users.notes`) |
