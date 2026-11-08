@@ -76,7 +76,7 @@ The gateway provides persistent, real-time communication with a heartbeat and di
 - **Connection flow** — Connect, then `HELLO`, then `IDENTIFY`, then heartbeat and events.
 - **Resume support** — Reconnect and resume missed events without a full re-sync.
 - **Dispatch events** — `MESSAGE_CREATE`, `PRESENCE_UPDATE`, `TYPING_START`, and others. See [Gateway events](websocket/events.md) for the full list.
-- **Gateway intents** — Subscribe to specific event categories. See [Gateway intents](websocket/intents.md). Default intents include `ARTIFACTS` (`1<<20`) and `SUMS` (`1<<21`); privileged intents are `GUILD_MEMBERS` (`1<<1`), `GUILD_PRESENCES` (`1<<8`), and `MESSAGE_CONTENT` (`1<<15`) (`src/core/events/types.py:97`).
+- **Gateway intents** — Subscribe to specific event categories. See [Gateway intents](websocket/intents.md). Default intents include `ARTIFACTS` (`1<<20`) and `SUMS` (`1<<21`); privileged intents are `GUILD_MEMBERS` (`1<<1`), `GUILD_PRESENCES` (`1<<8`), and `MESSAGE_CONTENT` (`1<<15`) (`src/core/events/types.py`).
 - **Compression** — Per-message deflate (RFC 7692).
 
 Configuration: [WebSocket configuration](deployment/configuration/config-websocket.md) · Docs: [Gateway overview](websocket/index.md) · [Events](websocket/events.md) · [Intents](websocket/intents.md)
@@ -93,15 +93,15 @@ API: [Presence routes](api/presence.md)
 
 - WebRTC-based voice channels with ICE server discovery and TURN credential generation (HMAC-SHA1, RFC 5389).
 - Signaling is relayed through the gateway. Media is peer-to-peer mesh by default; you can enable an SFU backend for larger channels.
-- Supported SFU backends (`src/core/voice/signaling/sfu/__init__.py:45`):
-  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py:396`).
+- Supported SFU backends (`src/core/voice/signaling/sfu/__init__.py`):
+  - `aiortc` — In-process Python SFU. This is the default (`voice.sfu_backend` in `src/config_defaults.py`).
   - `mediasoup` — REST adapter for a custom mediasoup server.
   - `mediasoup-ws` — WebSocket adapter for mediasoup-demo.
   - `janus` — REST adapter for Janus Gateway.
 - STUN and TURN server configuration for NAT traversal.
 - Voice-channel lifecycle tied to channel occupancy (call starts when the first participant joins, ends when the last leaves).
 
-Configuration: [Voice configuration](deployment/configuration/config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: [Voice module](../src/core/voice/README.md)
+Configuration: [Voice configuration](deployment/configuration/config-voice.md) · API: [Voice routes](api/voice.md) · Module docs: `src/core/voice/README.md`
 
 ### Notifications
 

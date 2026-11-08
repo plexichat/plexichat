@@ -1,7 +1,7 @@
 """Dense matrix tests for version parsing, comparison, and mutation.
 
 Every row in these tables pins a concrete, documented behavior of the
-Version utility (stage -> major -> minor -> build precedence, strict
+Version utility (release -> pre -> post -> dev precedence, strict
 format validation, release-line and compatibility semantics).
 """
 
@@ -9,7 +9,6 @@ import pytest
 
 from utils.version import (
     Version,
-    VersionStage,
     InvalidVersionError,
     parse_version,
     format_version,
@@ -32,14 +31,14 @@ from utils.version import (
 @pytest.mark.parametrize(
     "text",
     [
-        "a.1.0-1",
-        "b.1.0-1",
-        "c.1.0-1",
-        "r.1.0-1",
-        "a.9.27-123",
-        "r.2.0-9999",
-        "c.3.4-5",
-        "b.10.11-12",
+        "1.0.0a1",
+        "1.0.0b1",
+        "1.0.0rc1",
+        "1.0.0",
+        "9.27.0a123",
+        "2.0.0.post9999",
+        "3.4.0rc5",
+        "10.11.0b12",
     ],
 )
 def test_parse_format_round_trip(text):
@@ -47,28 +46,26 @@ def test_parse_format_round_trip(text):
 
 
 @pytest.mark.parametrize(
-    ("text", "stage", "major", "minor", "build"),
+    ("text", "release", "pre"),
     [
-        ("a.1.0-1", VersionStage.ALPHA, 1, 0, 1),
-        ("b.2.3-4", VersionStage.BETA, 2, 3, 4),
-        ("c.5.6-7", VersionStage.CANDIDATE, 5, 6, 7),
-        ("r.8.9-10", VersionStage.RELEASE, 8, 9, 10),
+        ("1.0.0a1", (1, 0, 0), ("a", 1)),
+        ("2.3.0b4", (2, 3, 0), ("b", 4)),
+        ("5.6.0rc7", (5, 6, 0), ("rc", 7)),
+        ("8.9.0", (8, 9, 0), None),
     ],
 )
-def test_parse_fields(text, stage, major, minor, build):
+def test_parse_fields(text, release, pre):
     v = parse_version(text)
-    assert v.stage is stage
-    assert v.major == major
-    assert v.minor == minor
-    assert v.build == build
+    assert v.release == release
+    assert v.pre == pre
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        " A.1.0-1  ",  # whitespace + case are tolerated
-        "R.2.0-3",
-        "B.1.1-1",
+        "1.0.0A1  ",  # whitespace + case are tolerated
+        "2.0.0RC3  ",  # whitespace + case are tolerated
+        "1.1.0B1  ",  # whitespace + case are tolerated
     ],
 )
 def test_parse_normalizes_case_and_space(text):
@@ -85,22 +82,21 @@ def test_parse_normalizes_case_and_space(text):
     [
         "",
         None,
-        "1.0.0",
         "1.0.0-1",
         "r.1.0",
         "r.1-0-1",
         "r.1.0.1",
-        "r.1.0-1-2",
+        "1.0.0.post1-2",
         "x.1.0-1",
         "r.x.0-1",
         "r.1.x-1",
         "r.1.0-x",
-        "r.1.0-1\n",
-        "r.1.0-1\r",
-        "r.1.0-1\x00",
-        "a.1.0-1\nr.2.0-3",
-        "r.0.0-1",  # major must be >= 1
-        "r.1.0-0",  # build must be >= 1
+        "1.0.0\n",
+        "1.0.0\r",
+        "1.0.0\x00",
+        "1.0.0a1\n2.0.0.post3",
+        "0.0.0",  # major must be >= 1
+        "1.0.0.post0",  # post must be >= 1
         "r.1.-1-1",  # negative minor
         "-1.1.0-1",
     ],
@@ -111,31 +107,35 @@ def test_invalid_versions_rejected(text):
 
 
 @pytest.mark.parametrize(
-    ("major", "minor", "build"),
+    ("release", "pre", "post", "dev"),
     [
-        (0, 0, 1),
-        (-1, 0, 1),
-        (1, -1, 1),
-        (1, 0, 0),
-        (1, 0, -3),
+        ((0, 0, 0), None, None, None),
+        ((-1, 0, 0), None, None, None),
+        ((1, -1, 0), None, None, None),
+        ((1, 0, 0), ("a", 0), None, None),
+        ((1, 0, 0), ("a", -3), None, None),
     ],
 )
-def test_version_post_init_rejects_bad_fields(major, minor, build):
+def test_version_post_init_rejects_bad_fields(release, pre, post, dev):
     with pytest.raises(InvalidVersionError):
-        Version(stage=VersionStage.RELEASE, major=major, minor=minor, build=build)
+        Version(release=release, pre=pre, post=post, dev=dev)
 
 
 @pytest.mark.parametrize(
-    ("major", "minor", "build"),
-    [(1, 0, 1), (2, 15, 100), (100, 0, 1)],
+    ("release", "pre", "post", "dev"),
+    [
+        ((1, 0, 1), None, None, None),
+        ((2, 15, 0), None, None, None),
+        ((100, 0, 0), None, None, None),
+    ],
 )
-def test_version_post_init_accepts_valid_fields(major, minor, build):
-    v = Version(stage=VersionStage.BETA, major=major, minor=minor, build=build)
-    assert v.major == major
+def test_version_post_init_accepts_valid_fields(release, pre, post, dev):
+    v = Version(release=release, pre=pre, post=post, dev=dev)
+    assert v.release == release
 
 
 # ---------------------------------------------------------------------------
-# Comparison precedence: stage > major > minor > build
+# Comparison precedence: release > pre > post > dev > local
 # ---------------------------------------------------------------------------
 
 
@@ -143,25 +143,23 @@ def test_version_post_init_accepts_valid_fields(major, minor, build):
     ("a", "b", "expected"),
     [
         # Equality
-        ("r.1.0-1", "r.1.0-1", 0),
-        ("b.2.3-4", "b.2.3-4", 0),
-        ("a.9.9-9", "a.9.9-9", 0),
-        # Stage beats everything else
-        ("r.1.0-1", "a.999.999-999", 1),
-        ("a.999.999-999", "r.1.0-1", -1),
-        ("c.1.0-1", "b.1.0-1", 1),
-        ("b.1.0-1", "c.1.0-1", -1),
-        ("b.1.0-1", "a.1.0-1", 1),
+        ("1.0.0", "1.0.0", 0),
+        ("2.3.0b4", "2.3.0b4", 0),
+        ("9.9.0a9", "9.9.0a9", 0),
+        # Release comparison comes before pre-release
+        ("1.0.0", "999.999.0a999", -1),
+        ("999.999.0a999", "1.0.0", 1),
+        ("1.0.0rc1", "1.0.0b1", 1),
+        ("1.0.0b1", "1.0.0rc1", -1),
+        ("1.0.0b1", "1.0.0a1", 1),
         # Major
-        ("r.2.0-1", "r.1.999-999", 1),
-        ("r.1.0-1", "r.2.0-1", -1),
+        ("2.0.0", "1.999.0.post999", 1),
+        ("1.0.0", "2.0.0", -1),
         # Minor
-        ("r.1.5-1", "r.1.4-999", 1),
-        ("r.1.3-1", "r.1.4-1", -1),
-        # Build
-        ("r.1.0-2", "r.1.0-1", 1),
-        ("r.1.0-1", "r.1.0-2", -1),
-        ("r.1.0-10", "r.1.0-9", 1),
+        ("1.0.1", "1.4.0.post999", -1),
+        ("1.0.0.post1", "1.0.0", 1),
+        ("1.0.0", "1.0.0.post1", -1),
+        ("1.0.0.post10", "1.0.0.post9", 1),
     ],
 )
 def test_compare_versions_matrix(a, b, expected):
@@ -171,8 +169,8 @@ def test_compare_versions_matrix(a, b, expected):
 @pytest.mark.parametrize(
     ("a", "b"),
     [
-        ("r.1.0-1", "r.1.0-1"),
-        ("a.1.0-1", "a.1.0-1"),
+        ("1.0.0", "1.0.0"),
+        ("1.0.0a1", "1.0.0a1"),
     ],
 )
 def test_compare_objects_equality(a, b):
@@ -180,7 +178,7 @@ def test_compare_objects_equality(a, b):
 
 
 def test_compare_objects_matches_string_compare():
-    pairs = [("r.1.0-1", "r.1.0-2"), ("a.1.0-1", "b.1.0-1"), ("r.2.0-1", "r.1.0-1")]
+    pairs = [("1.0.0", "1.0.0.post1"), ("1.0.0a1", "1.0.0b1"), ("2.0.0", "1.0.0")]
     for a, b in pairs:
         assert compare_version_objects(
             parse_version(a), parse_version(b)
@@ -195,14 +193,14 @@ def test_compare_objects_matches_string_compare():
 @pytest.mark.parametrize(
     ("client", "minimum", "expected"),
     [
-        ("r.1.0-1", "r.1.0-1", True),
-        ("r.1.0-2", "r.1.0-1", True),
-        ("r.2.0-1", "r.1.9-3", True),
-        ("r.1.0-1", "r.2.0-1", False),
-        ("b.1.0-1", "r.1.0-1", False),  # prerelease never satisfies a release minimum
-        ("r.1.0-1", "b.1.0-1", True),
-        ("a.1.0-1", "a.1.0-1", True),
-        ("b.1.0-1", "b.1.0-2", False),
+        ("1.0.0", "1.0.0", True),
+        ("1.0.0.post1", "1.0.0", True),
+        ("2.0.0", "1.9.0.post3", True),
+        ("1.0.0", "2.0.0", False),
+        ("1.0.0b1", "1.0.0", False),  # prerelease never satisfies a release minimum
+        ("1.0.0", "1.0.0b1", True),
+        ("1.0.0a1", "1.0.0a1", True),
+        ("1.0.0b1", "1.0.0b2", False),
     ],
 )
 def test_is_compatible_matrix(client, minimum, expected):
@@ -210,19 +208,19 @@ def test_is_compatible_matrix(client, minimum, expected):
 
 
 # ---------------------------------------------------------------------------
-# is_same_release_line (same stage + same major)
+# is_same_release_line (same release tuple)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("a", "b", "expected"),
     [
-        ("r.1.0-1", "r.1.99-5", True),
-        ("r.1.0-1", "r.1.0-1", True),
-        ("b.2.0-1", "b.2.7-1", True),
-        ("r.1.0-1", "r.2.0-1", False),
-        ("r.1.0-1", "b.1.0-1", False),
-        ("a.1.0-1", "c.1.0-1", False),
+        ("1.0.0", "1.99.0.post5", True),
+        ("1.0.0", "1.0.0", True),
+        ("2.0.0b1", "2.7.0b1", True),
+        ("1.0.0", "2.0.0", False),
+        ("1.0.0", "1.0.0b1", False),
+        ("1.0.0a1", "1.0.0rc1", True),
     ],
 )
 def test_is_same_release_line_matrix(a, b, expected):
@@ -235,41 +233,40 @@ def test_is_same_release_line_matrix(a, b, expected):
 
 
 def test_increment_build():
-    v = Version(VersionStage.BETA, 1, 0, 1)
+    v = Version(release=(1, 0, 0), pre=("b", 1))
     nv = increment_build(v)
-    assert nv == Version(VersionStage.BETA, 1, 0, 2)
-    assert v.build == 1  # immutability preserved
+    assert nv == Version(release=(1, 0, 0), pre=("b", 2))
+    assert v.pre == ("b", 1)  # immutability preserved
 
 
 def test_increment_build_chained():
-    v = Version(VersionStage.RELEASE, 2, 3, 4)
-    assert increment_build(increment_build(v)).build == 6
+    v = Version(release=(2, 3, 0))
+    assert increment_build(increment_build(v)).post == 2
 
 
 def test_increment_minor_resets_build():
-    v = Version(VersionStage.RELEASE, 2, 3, 9)
+    v = Version(release=(2, 3, 0))
     nv = increment_minor(v)
-    assert nv == Version(VersionStage.RELEASE, 2, 4, 1)
+    assert nv == Version(release=(2, 4, 0))
 
 
 def test_increment_major_resets_minor_and_build():
-    v = Version(VersionStage.RELEASE, 2, 5, 9)
+    v = Version(release=(2, 5, 0))
     nv = increment_major(v)
-    assert nv == Version(VersionStage.RELEASE, 3, 0, 1)
+    assert nv == Version(release=(3, 0, 0), pre=("a", 1))
 
 
 def test_change_stage_resets_build():
-    v = Version(VersionStage.BETA, 2, 3, 7)
-    nv = change_stage(v, VersionStage.RELEASE)
-    assert nv.stage is VersionStage.RELEASE
-    assert nv.build == 1
-    assert nv.minor == 3
+    v = Version(release=(2, 3, 0), pre=("b", 7))
+    nv = change_stage(v, "release")
+    assert nv.pre is None
+    assert nv.release == (2, 3, 0)
 
 
 @pytest.mark.parametrize(
     "stage",
-    list(VersionStage),
+    ["a", "b", "rc", "release"],
 )
 def test_change_stage_round_trips_each_stage(stage):
-    v = Version(VersionStage.ALPHA, 1, 0, 1)
-    assert change_stage(v, stage).stage is stage
+    v = Version(release=(1, 0, 0), pre=("a", 1))
+    assert change_stage(v, stage).pre == ((stage, 1) if stage != "release" else None)

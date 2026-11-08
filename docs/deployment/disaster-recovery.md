@@ -470,11 +470,11 @@ Expected response:
   "status": "healthy",
   "database": "connected",
   "valkey": "connected",
-  "version": "a.1.0-170"
+  "version": "1.0.0a210"
 }
 ```
 
-The version comes from `src/config_defaults.py:21`.
+The version comes from `src/config_defaults.py`.
 
 ### Monitoring metrics
 

@@ -4,7 +4,7 @@ This guide describes how to configure voice and video for Plexichat. Voice setti
 
 ## Configuration location
 
-Add voice settings to your `config.yaml` file under the `voice` key (`src/config_defaults.py:394`):
+Add voice settings to your `config.yaml` file under the `voice` key (`src/config_defaults.py`):
 
 ```yaml
 voice:
@@ -20,10 +20,10 @@ Choose the SFU backend that routes voice and video streams between participants.
 ```yaml
 voice:
   enabled: true
-  sfu_backend: "aiortc"   # Default is aiortc. Defined in src/config_defaults.py:396
+  sfu_backend: "aiortc"   # Default is aiortc. Defined in src/config_defaults.py
 ```
 
-Plexichat supports four backend values in `src/core/voice/signaling/sfu/__init__.py:45` and `src/core/voice/signaling/manager/base.py:32`:
+Plexichat supports four backend values in `src/core/voice/signaling/sfu/__init__.py` and `src/core/voice/signaling/manager/base.py`:
 
 | Value | Implementation | Transport |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ Plexichat supports four backend values in `src/core/voice/signaling/sfu/__init__
 | `mediasoup` | REST adapter in `src/core/voice/signaling/sfu/mediasoup.py` | `https://` or `http://` |
 | `janus` | REST adapter in `src/core/voice/signaling/sfu/janus.py` | `http://` or `https://` |
 
-> **Note:** The fallback in `src/core/voice/signaling/manager/base.py:32` is `aiortc` when `sfu_backend` is absent. Use `mediasoup-ws` when your mediasoup server exposes the `mediasoup-demo` WebSocket API.
+> **Note:** The fallback in `src/core/voice/signaling/manager/base.py` is `aiortc` when `sfu_backend` is absent. Use `mediasoup-ws` when your mediasoup server exposes the `mediasoup-demo` WebSocket API.
 
 ### Deployment considerations
 
@@ -75,7 +75,7 @@ voice:
   sfu_backend: "aiortc"
 ```
 
-The adapter is `src/core/voice/signaling/sfu/aiortc_adapter.py:110`. It raises `SFUConnectionError` at startup if the `aiortc` package is not installed.
+The adapter is `src/core/voice/signaling/sfu/aiortc_adapter.py`. It raises `SFUConnectionError` at startup if the `aiortc` package is not installed.
 
 Optional settings forwarded to the adapter:
 
@@ -92,7 +92,7 @@ voice:
     enabled: false
 ```
 
-In `src/core/voice/signaling/manager/base.py:72`, Plexichat converts `stun_urls` and `turn_urls` to the `ice_servers` list that `AiortcAdapter` expects.
+In `src/core/voice/signaling/manager/base.py`, Plexichat converts `stun_urls` and `turn_urls` to the `ice_servers` list that `AiortcAdapter` expects.
 
 ### Deployment considerations
 
@@ -111,9 +111,9 @@ voice:
   mediasoup_url: "https://localhost:4443"
 ```
 
-*   `mediasoup_url` is defined in `src/config_defaults.py:400`.
-*   The manager in `src/core/voice/signaling/manager/base.py:95` converts `https://` to `wss://` and `http://` to `ws://` when `sfu_backend` is `mediasoup-ws`.
-*   The internal config also includes `mediasoup_origin` (default `https://localhost` in `src/core/voice/signaling/manager/base.py:34`), which is sent as the `Origin` header for CORS on WebSocket connections. It is not a top-level key in `config.yaml`.
+*   `mediasoup_url` is defined in `src/config_defaults.py`.
+*   The manager in `src/core/voice/signaling/manager/base.py` converts `https://` to `wss://` and `http://` to `ws://` when `sfu_backend` is `mediasoup-ws`.
+*   The internal config also includes `mediasoup_origin` (default `https://localhost` in `src/core/voice/signaling/manager/base.py`), which is sent as the `Origin` header for CORS on WebSocket connections. It is not a top-level key in `config.yaml`.
 
 ### Deployment considerations
 
@@ -144,7 +144,7 @@ voice:
 voice:
   enabled: true
   sfu_backend: "janus"
-  janus_url: "http://localhost:8088/janus"   # Defined in src/config_defaults.py:401
+  janus_url: "http://localhost:8088/janus"   # Defined in src/config_defaults.py
 ```
 
 ### Deployment considerations
@@ -173,7 +173,7 @@ voice:
   turn_credential: ""
 ```
 
-Defaults are in `src/config_defaults.py:402`. The ICE server builder `src/core/voice/signaling/turn.py` (via `src/core/voice/signaling/manager/base.py:119`) turns these values into the ICE servers that Plexichat returns to clients.
+Defaults are in `src/config_defaults.py`. The ICE server builder `src/core/voice/signaling/turn.py` (via `src/core/voice/signaling/manager/base.py`) turns these values into the ICE servers that Plexichat returns to clients.
 
 ### Deployment considerations
 
@@ -215,7 +215,7 @@ voice:
   turn_ttl: 86400
 ```
 
-The signaling manager in `src/core/voice/signaling/manager/base.py:76` includes TURN URLs with static credentials when `turn_username` and `turn_credential` are both set, and includes bare TURN URLs when `turn_secret` is set.
+The signaling manager in `src/core/voice/signaling/manager/base.py` includes TURN URLs with static credentials when `turn_username` and `turn_credential` are both set, and includes bare TURN URLs when `turn_secret` is set.
 
 ## Acoustic defense
 
@@ -240,7 +240,7 @@ voice:
     transient_ratio: 0.3
 ```
 
-The defaults are in `src/config_defaults.py:414` and the dataclass is in `src/core/voice/signaling/sfu/base.py:27`. When `enabled` is `true`, the SFU wraps audio tracks with `src/core/voice/signaling/sfu/acoustic_defense.py:AudioProcessingTrack`.
+The defaults are in `src/config_defaults.py` and the dataclass is in `src/core/voice/signaling/sfu/base.py`. When `enabled` is `true`, the SFU wraps audio tracks with `src/core/voice/signaling/sfu/acoustic_defense.py:AudioProcessingTrack`.
 
 ## Bitrate and participant limits
 
@@ -250,12 +250,12 @@ The defaults are in `src/config_defaults.py:414` and the dataclass is in `src/co
 # Plexichat has no max_bitrate or max_participants_per_channel keys.
 # Configure bitrate and room size in your SFU server, not in config.yaml.
 # Participant limits per tier are in user_features.rate_limit_tiers
-# (src/config_defaults.py:345).
+# (src/config_defaults.py).
 ```
 
 Bitrate is negotiated between clients and the SFU. To enforce a cap, configure the limit in your `mediasoup` or `Janus` server.
 
-For limits per tier, see `src/config_defaults.py:345`. For example, the `standard` tier allows `max_voice_minutes_per_day: 120` and the `premium` tier allows unlimited minutes. These values control how long a user can stay in voice, not how many users can join a channel.
+For limits per tier, see `src/config_defaults.py`. For example, the `standard` tier allows `max_voice_minutes_per_day: 120` and the `premium` tier allows unlimited minutes. These values control how long a user can stay in voice, not how many users can join a channel.
 
 ### Deployment considerations
 

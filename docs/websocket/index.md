@@ -50,7 +50,7 @@ You use sequence numbers to detect gaps. If you disconnect, you pass the last
 
 ## Opcode families
 
-The gateway defines its opcodes in `src/api/websocket/opcodes.py:8`. You use
+The gateway defines its opcodes in `src/api/websocket/opcodes.py`. You use
 these families:
 
 *   **Core lifecycle** — `HELLO` (`10`), `IDENTIFY` (`2`), `HEARTBEAT` (`1`),

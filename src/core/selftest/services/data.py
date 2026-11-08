@@ -440,7 +440,7 @@ class DataGenerator:
                     body.pop("token", None)
 
             if "version/negotiate" in path:
-                body["client_version"] = "r.1.0-999"
+                body["client_version"] = "1.0.0.post999"
 
             if "reports/users" in path and method == "POST":
                 if self.ctx.test_other_user_id:
@@ -961,7 +961,7 @@ class DataGenerator:
                 if "hash" in pn:
                     return "a" * 64
                 if "version" in pn:
-                    return "a.1.0-1"
+                    return "1.0.0a1"
                 if "method" in pn:
                     return "GET"
                 if "question" in pn:

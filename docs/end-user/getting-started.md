@@ -74,7 +74,7 @@ You can format messages with Markdown:
 
 ### Attach files
 
-Click the attachment button or drag and drop files into the message input. Limits depend on server configuration. Defaults are defined in `src/config_defaults.py:210`:
+Click the attachment button or drag and drop files into the message input. Limits depend on server configuration. Defaults are defined in `src/config_defaults.py`:
 
 - Images — Up to 10 MB (JPEG, PNG, GIF, WebP)
 - Video — Up to 100 MB (MP4, WebM, QuickTime)

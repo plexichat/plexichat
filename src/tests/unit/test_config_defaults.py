@@ -8,8 +8,8 @@ def test_default_config_version_matches_the_running_server():
 
     Regression: build 132 bumped ``VERSION`` in src/server/lifecycle.py in a
     commit that did not touch this module's own version literal, so the two
-    drifted and every generated config claimed a.1.0-131 while the running
-    process (and /api/v1/version) reported a.1.0-132.
+    drifted and every generated config claimed 1.0.0a131 while the running
+    process (and /api/v1/version) reported 1.0.0a132.
     """
     from src.config_defaults import get_default_config
     from src.server.lifecycle import VERSION
@@ -19,7 +19,7 @@ def test_default_config_version_matches_the_running_server():
     assert config["application"]["version"] == VERSION
     assert config["versioning"]["min_supported_version"] == VERSION
     # Callers that pin a version (deployment tooling, tests) still win.
-    assert get_default_config(version="a.1.0-1")["application"]["version"] == "a.1.0-1"
+    assert get_default_config(version="1.0.0a1")["application"]["version"] == "1.0.0a1"
 
 
 def test_default_config_uses_expected_branding_and_paths():

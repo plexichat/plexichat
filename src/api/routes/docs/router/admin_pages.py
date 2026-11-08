@@ -14,6 +14,14 @@ class AdminPagesMixin:
             "/admin",
         )
 
+    async def docs_admin_hardening(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("admin-hardening.md"),
+            "Admin Hardening",
+            "/admin-hardening",
+        )
+
     async def docs_admin_getting_started(self, request: Request):
         return await self._serve_page(
             request,
@@ -84,4 +92,20 @@ class AdminPagesMixin:
             self._doc_path("admin/security.md"),
             "Admin Security",
             "/admin/security",
+        )
+
+    async def docs_admin_data_export(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("admin/data-export.md"),
+            "Data Export (DSAR)",
+            "/admin/data-export",
+        )
+
+    async def docs_admin_purge_residue_check(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("admin/purge-residue-check.md"),
+            "Account-Purge Residue Check",
+            "/admin/purge-residue-check",
         )

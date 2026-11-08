@@ -1,0 +1,62 @@
+# Hardened Docker Compose override for FI-like deployments.
+#
+# Usage (from plexichat/):
+#   cp docs/deployment/hardened/.env.hardened.example .env
+#   # edit .env - fill every CHANGE_ME / set strong secrets, set real origins/hosts
+#   umask 077 && chmod 600 .env
+#   docker compose -f docker-compose.yml -f docs/deployment/hardened/docker-compose.hardened.yml up -d
+#
+# This override:
+# - points the backend at the hardened config overlay (config/hardened.yaml)
+# - binds backend/admin ports to loopback only (edge proxy publishes 80/443)
+# - mounts a hardened TLS nginx config (real certs, HSTS, no self-signed default)
+# - requires ClamAV healthy (scanner_enabled in hardened config)
+# - keeps least-privilege defaults explicit; never put secrets in this file
+#
+# Secrets live in .env (chmod 600, never committed). See hardened.md.
+
+services:
+  backend:
+    environment:
+      PLEXICHAT_CONFIG: /app/config/hardened.yaml
+      NO_STRICT_CONFIG: "false"
+      SCANNER_ENABLED: "true"
+      # Public origin used by the server where applicable (set in .env)
+      PLEXICHAT_PUBLIC_SERVER_URL: ${PLEXICHAT_PUBLIC_SERVER_URL:?PLEXICHAT_PUBLIC_SERVER_URL must be set}
+    # Do not publish backend directly on a public interface in hardened mode.
+    # The edge nginx proxies /api, /gateway, /admin, /docs as needed.
+    ports:
+      - "127.0.0.1:8000:8000"
+      # RTP/UDP for WebRTC (aiortc/SFU) — restrict at firewall to required peers/TURN relays.
+      - "127.0.0.1:30000-30100:30000-30100/udp"
+    volumes:
+      - ./config:/app/config
+      - plexichat_home:/home/plexichat/.plexichat
+
+  client:
+    volumes:
+      - certs:/etc/nginx/certs
+      - ./docker/runtime/client-config.js:/usr/share/nginx/html/config.js:ro
+      # Replace the default template with a hardened TLS/proxy config.
+      # The image entrypoint renders *.template; mount as the active template path
+      # used by the image (see client image docs) or bind the rendered conf.
+      - ./docs/deployment/hardened/nginx.hardened.conf:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "80:80"
+      - "443:443"
+
+  rustfs:
+    # S3/RustFS console and API must not be exposed publicly; backend reaches them
+    # on the internal network. Remove host exposure entirely in hardened mode.
+    ports: []
+    expose:
+      - "9000"
+      - "9001"
+
+  clamav:
+    # Keep signature DB fresh; limits tuned for large uploads — adjust to policy.
+    environment:
+      CLAMD_CONF_StreamMaxLength: "100M"
+      CLAMD_CONF_MaxScanSize: "100M"
+      CLAMD_CONF_MaxFileSize: "100M"
+      CLAMD_CONF_MaxScanTime: "120000"

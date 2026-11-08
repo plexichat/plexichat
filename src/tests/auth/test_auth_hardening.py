@@ -475,8 +475,22 @@ class TestCookieAndOauthHttp:
         )
         assert r_bad.status_code == 400
 
-        # Well-formed challenge accepted; no verifier returned; state cookie set.
+        # Verifier must never be sent at the login/init step (PKCE: client
+        # keeps it secret until the callback token exchange).
         good = "a" * 43
+        r_verifier = test_client.get(
+            "/api/v1/auth/oauth/google/login",
+            params={
+                **base_params,
+                "code_challenge": good,
+                "code_challenge_method": "S256",
+                "code_verifier": "b" * 43,
+            },
+        )
+        assert r_verifier.status_code == 400, r_verifier.text
+        assert "code_verifier" in r_verifier.json()["error"]["message"]
+
+        # Well-formed challenge accepted; no verifier returned; state cookie set.
         r_ok = test_client.get(
             "/api/v1/auth/oauth/google/login",
             params={
@@ -521,6 +535,46 @@ class TestCookieAndOauthHttp:
         assert "state cookie" in r_cb2.json()["error"]["message"], r_cb2.json()[
             "error"
         ]["message"]
+
+    def test_oauth_login_rejects_code_verifier(self, test_client, monkeypatch):
+        """RFC 7636: code_verifier is a client secret and must not be sent to
+        the server at the authorization (login/init) step."""
+        from src.api.routes.auth import oauth as oauth_mod
+
+        monkeypatch.setattr(
+            oauth_mod.config_util,
+            "get",
+            lambda key, default=None: (
+                {
+                    "google": {"client_id": "test-client"},
+                    "allow_localhost_redirects": True,
+                }
+                if key == "oauth"
+                else default
+            ),
+        )
+
+        good = "a" * 43
+        base = {
+            "redirect_uri": "http://localhost:8000",
+            "code_challenge": good,
+            "code_challenge_method": "S256",
+        }
+
+        r = test_client.get(
+            "/api/v1/auth/oauth/google/login",
+            params={**base, "code_verifier": "verifier-secret-" + "x" * 30},
+        )
+        assert r.status_code == 400, r.text
+        assert "code_verifier" in r.json()["error"]["message"]
+
+        # Whitespace-only verifier is not a meaningful leak; valid flow still works.
+        r_ws = test_client.get(
+            "/api/v1/auth/oauth/google/login",
+            params={**base, "code_verifier": "   "},
+        )
+        assert r_ws.status_code == 200, r_ws.text
+        assert "code_verifier" not in r_ws.json()
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ All endpoints in this guide are prefixed with `/api/v1/avatars` unless noted. Th
 
 ## Configuration
 
-Configure avatars in `config.yaml` or `src/config_defaults.py:790`:
+Configure avatars in `config.yaml` or `src/config_defaults.py`:
 
 ```yaml
 avatars:
@@ -36,7 +36,7 @@ avatars:
     - image/webp
 ```
 
-Related `media` limits for other upload types are in `src/config_defaults.py:184`.
+Related `media` limits for other upload types are in `src/config_defaults.py`.
 
 ## Authentication
 
@@ -73,7 +73,7 @@ GET /api/v1/avatars/users/{user_id}
 | `Access-Control-Allow-Origin` | `*` |
 | `Cross-Origin-Resource-Policy` | `cross-origin` |
 
-Supports `If-None-Match` for conditional requests. When the checksum matches, the server returns `304 Not Modified` without a body (`src/api/routes/avatars.py:130`).
+Supports `If-None-Match` for conditional requests. When the checksum matches, the server returns `304 Not Modified` without a body (`src/api/routes/avatars.py`).
 
 **Errors**
 
@@ -114,7 +114,7 @@ POST /api/v1/avatars/users/@me
 }
 ```
 
-Schema: `src/api/schemas/avatars.py:8` (`AvatarUploadResponse`). On success the server invalidates the avatar checksum cache and emits a `USER_UPDATE` gateway event.
+Schema: `src/api/schemas/avatars.py` (`AvatarUploadResponse`). On success the server invalidates the avatar checksum cache and emits a `USER_UPDATE` gateway event.
 
 **Errors**
 
@@ -156,7 +156,7 @@ GET /api/v1/avatars/servers/{server_id}
 
 **Response**: Binary image data with the same caching headers as user avatars.
 
-Supports `If-None-Match` → `304 Not Modified` (`src/api/routes/avatars.py:487`).
+Supports `If-None-Match` → `304 Not Modified` (`src/api/routes/avatars.py`).
 
 **Errors**
 
@@ -174,7 +174,7 @@ Upload or replace a server's icon.
 POST /api/v1/avatars/servers/{server_id}
 ```
 
-**Authentication**: Required. Must be the server owner or have `server.manage` permission (`src/api/routes/avatars.py:650`).
+**Authentication**: Required. Must be the server owner or have `server.manage` permission (`src/api/routes/avatars.py`).
 
 **Content-Type**: `multipart/form-data`
 
@@ -197,7 +197,7 @@ POST /api/v1/avatars/servers/{server_id}
 }
 ```
 
-Schema: `src/api/schemas/avatars.py:21` (`IconUploadResponse`). On success the server emits a `GUILD_UPDATE` gateway event (`src/api/routes/avatars.py:728`).
+Schema: `src/api/schemas/avatars.py` (`IconUploadResponse`). On success the server emits a `GUILD_UPDATE` gateway event (`src/api/routes/avatars.py`).
 
 **Errors**
 
@@ -288,5 +288,5 @@ Checksum caches are stored in-process (capped at 4096 entries) and in Valkey und
 ## Caching and gateway behavior
 
 - Successful `GET` responses include `ETag` and `Cache-Control`. Clients should send `If-None-Match` to avoid re-downloading unchanged images.
-- Uploads and deletions invalidate both the in-process and Valkey checksum caches (`src/api/routes/avatars.py:48`).
+- Uploads and deletions invalidate both the in-process and Valkey checksum caches (`src/api/routes/avatars.py`).
 - Avatar changes emit `USER_UPDATE`; server icon changes emit `GUILD_UPDATE` so connected clients can update without a full refetch.

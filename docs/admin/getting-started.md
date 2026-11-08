@@ -65,7 +65,7 @@ admin_ui:
     lockout_seconds: 900
 ```
 
-Global API rate limits are defined separately in `src/config_defaults.py:270`:
+Global API rate limits are defined separately in `src/config_defaults.py`:
 
 * Global: 25,000 requests per 60 seconds, burst 5,000
 * Per user: 10,000 requests per 60 seconds, burst 2,500
@@ -144,7 +144,7 @@ You can also manage roles through the API. See [RBAC](rbac.md#role-assignment) f
 Health endpoints for monitoring:
 
 * `GET /health`
-* `GET /api/v1/ready` — defined in `health.py:18`
+* `GET /api/v1/ready` — defined in `health.py`
 * `GET /api/v1/status`
 
 ### Configure notifications
@@ -170,7 +170,7 @@ Search for users, edit profiles, manage account status, and add internal notes.
 
 ### Server management
 
-View servers, edit settings, manage members, and handle moderation. Channel configuration uses `channel_type` as documented in `src/api/schemas/servers.py:87`.
+View servers, edit settings, manage members, and handle moderation. Channel configuration uses `channel_type` as documented in `src/api/schemas/servers.py`.
 
 ## Follow security best practices
 

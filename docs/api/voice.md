@@ -6,13 +6,13 @@ Use the Voice API to discover WebRTC ICE servers and to fetch voice-channel conn
 
 For development, use `http://localhost:8000/api/v1`.
 
-All endpoints in this guide are prefixed with `/api/v1/voice` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py:130`).
+All endpoints in this guide are prefixed with `/api/v1/voice` unless noted. The API prefix `api.api_prefix` defaults to `/api/v1` (`src/config_defaults.py`).
 
 You must authenticate with `Authorization: Bearer <token>` for all Voice endpoints.
 
 ## Error envelope
 
-All errors use the standard envelope (`src/api/schemas/common.py:58`):
+All errors use the standard envelope (`src/api/schemas/common.py`):
 
 ```json
 {
@@ -29,7 +29,7 @@ All errors use the standard envelope (`src/api/schemas/common.py:58`):
 
 ### GET /api/v1/voice/ice-servers
 
-Return STUN and TURN servers with credentials for WebRTC negotiation. The server builds the list from your deployment's configured `voice` settings (`src/api/routes/voice.py:50`).
+Return STUN and TURN servers with credentials for WebRTC negotiation. The server builds the list from your deployment's configured `voice` settings (`src/api/routes/voice.py`).
 
 **Headers**
 
@@ -58,12 +58,12 @@ Authorization: Bearer <token>
 
 | Field | Type | Description |
 |---|---|---|
-| `ice_servers` | array | List of `ICEServerConfig` objects (`src/api/schemas/voice.py:5`) |
+| `ice_servers` | array | List of `ICEServerConfig` objects (`src/api/schemas/voice.py`) |
 | `ice_servers[].urls` | string[] | STUN or TURN URLs |
 | `ice_servers[].username` | string or null | TURN username, if configured |
 | `ice_servers[].credential` | string or null | TURN credential, if configured |
 
-The endpoint is cached for 300 seconds. If the signaling module is not initialized, the server returns public STUN defaults so clients can still attempt peer-to-peer connections. Other failures surface as real errors and are not masked (`src/api/routes/voice.py:63`).
+The endpoint is cached for 300 seconds. If the signaling module is not initialized, the server returns public STUN defaults so clients can still attempt peer-to-peer connections. Other failures surface as real errors and are not masked (`src/api/routes/voice.py`).
 
 **Error responses**
 
@@ -83,7 +83,7 @@ curl -X GET http://localhost:8000/api/v1/voice/ice-servers \
 
 ### GET /api/v1/voice/channels/{channel_id}/info
 
-Return connection metadata for a specific voice channel, including the session ID, recommended bitrate, and ICE servers for that channel (`src/api/schemas/voice.py:25`).
+Return connection metadata for a specific voice channel, including the session ID, recommended bitrate, and ICE servers for that channel (`src/api/schemas/voice.py`).
 
 **Path parameters**
 
@@ -127,7 +127,7 @@ Authorization: Bearer <token>
 |---|---|---|
 | `400` | `{"error":{"code":400,"message":"Invalid channel ID"}}` | `channel_id` is not numeric |
 | `401` | `{"error":{"code":401,"message":"Invalid or expired token"}}` | Not authenticated |
-| `403` | `{"error":{"code":403,"message":"Internal server error"}}` | Not connected to the voice channel or lacking `voice.connect` permission (`src/api/routes/voice.py:171`) |
+| `403` | `{"error":{"code":403,"message":"Internal server error"}}` | Not connected to the voice channel or lacking `voice.connect` permission (`src/api/routes/voice.py`) |
 | `404` | `{"error":{"code":404,"message":"Channel not found"}}` | Voice channel does not exist |
 | `500` | `{"error":{"code":500,"message":"Internal server error"}}` | Unexpected error |
 | `503` | `{"error":{"code":503,"message":"Voice signaling service currently unavailable"}}` | Signaling service not initialized |
@@ -145,17 +145,17 @@ Plexichat routes media through a Selective Forwarding Unit (SFU).
 
 | Backend | Description | Config key |
 |---|---|---|
-| `aiortc` | Pure-Python WebRTC that runs in-process. Default for development and lightweight deployments (`src/config_defaults.py:396`) | `voice.sfu_backend` |
+| `aiortc` | Pure-Python WebRTC that runs in-process. Default for development and lightweight deployments (`src/config_defaults.py`) | `voice.sfu_backend` |
 | `mediasoup` | Native C++ SFU via an external REST API. High performance and independently scalable | `voice.sfu_backend` |
 | `janus` | REST adapter for Janus Gateway | `voice.sfu_backend` |
 
-Configure the backend with `voice.sfu_backend` (default: `aiortc`). Other voice keys include `voice.stun_urls`, `voice.turn_urls`, `voice.turn_username`, and `voice.turn_credential` (`src/config_defaults.py:394`).
+Configure the backend with `voice.sfu_backend` (default: `aiortc`). Other voice keys include `voice.stun_urls`, `voice.turn_urls`, `voice.turn_username`, and `voice.turn_credential` (`src/config_defaults.py`).
 
 ## Gateway voice signaling
 
 Actual media transport is negotiated outside these REST endpoints. Voice signaling uses the WebSocket gateway at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)).
 
-Relevant gateway opcodes (`src/api/websocket/opcodes.py:25`):
+Relevant gateway opcodes (`src/api/websocket/opcodes.py`):
 
 | Opcode | Name | Purpose |
 |---|---|---|

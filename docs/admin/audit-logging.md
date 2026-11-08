@@ -9,7 +9,7 @@ Verify that you have:
 * An admin account with the `admin.audit.read` permission. See [RBAC](rbac.md).
 * Access to `admin_ui.audit` settings in your configuration file or admin panel.
 
-Audit logging is implemented in `src/core/admin/logging.py` and `src/core/admin/permissions.py:459`. The query and export API is in `src/api/routes/admin/audit.py`.
+Audit logging is implemented in `src/core/admin/logging.py` and `src/core/admin/permissions.py`. The query and export API is in `src/api/routes/admin/audit.py`.
 
 ## Configure audit logging
 
@@ -33,7 +33,7 @@ admin_ui:
 | `sensitive_actions_always_db` | boolean | `true` | Always write sensitive actions to the database, even if `log_to_database` is `false`. |
 | `retention_days` | integer | `365` | How long to retain database rows before cleanup. |
 
-Sensitive actions that always go to the database include `users.force_purge`, `users.delete`, `servers.delete`, and `config.modify`. See `src/core/admin/permissions.py:489`.
+Sensitive actions that always go to the database include `users.force_purge`, `users.delete`, `servers.delete`, and `config.modify`. See `src/core/admin/permissions.py`.
 
 Note: The file logger uses the standard Python `logging` package. Configure rotation with `logging.max_bytes`, `logging.backup_count`, and `logging.rotate` at the top level of your config.
 
@@ -62,7 +62,7 @@ CREATE TABLE admin_audit_log (
 * `target_type` describes what was acted on, for example `user`, `server`, or `approval`.
 * `target_user_id` is populated when the entry relates to a user, either from `metadata.target_user_id` or from `target_type = 'user'`.
 
-The write path is in `src/core/admin/logging.py:124` and handles both the legacy schema without `target_user_id` and the current schema with it.
+The write path is in `src/core/admin/logging.py` and handles both the legacy schema without `target_user_id` and the current schema with it.
 
 ## Review logged actions
 
@@ -92,7 +92,7 @@ The system logs the following families of actions:
 
 ### Using the admin API
 
-You need `admin.audit.read` to call these endpoints. They are defined in `src/api/routes/admin/audit.py:34`.
+You need `admin.audit.read` to call these endpoints. They are defined in `src/api/routes/admin/audit.py`.
 
 List logs with filters:
 
@@ -151,7 +151,7 @@ GET /api/v1/admin/audit/logs/export?format=csv&action_family=user&date_from=1704
 GET /api/v1/admin/audit/logs/export?format=json&status=failed
 ```
 
-The export endpoint is defined in `src/api/routes/admin/audit.py:209` and returns `text/csv` or `application/json` with a `Content-Disposition: attachment` header.
+The export endpoint is defined in `src/api/routes/admin/audit.py` and returns `text/csv` or `application/json` with a `Content-Disposition: attachment` header.
 
 ### Using the admin panel
 
@@ -188,7 +188,7 @@ Replace `?` with the start timestamp in milliseconds.
 File logs are managed by the system logger:
 
 * Rotate based on `logging.max_bytes` and `logging.backup_count`.
-* Compress old logs when `logging.zip_logs` is `true`.
+* Compress old logs with zstd when `logging.zip_logs` is `true`.
 
 ### Database logs
 
@@ -213,7 +213,7 @@ Caution: Deleting audit rows is irreversible. Export data before you run cleanup
 
 ### Complete trail
 
-Every sensitive action records the admin ID, action, target, timestamp with millisecond precision, IP address, user agent, and success or failure status. See `src/core/admin/logging.py:18` for the `AdminLogEntry` structure.
+Every sensitive action records the admin ID, action, target, timestamp with millisecond precision, IP address, user agent, and success or failure status. See `src/core/admin/logging.py` for the `AdminLogEntry` structure.
 
 ### Exports
 
@@ -240,7 +240,7 @@ Use the export endpoints for analysis and reporting:
 ### Sensitive actions are missing
 
 * Confirm `sensitive_actions_always_db` is `true`.
-* Verify the action is in the sensitive list in `src/core/admin/permissions.py:498`.
+* Verify the action is in the sensitive list in `src/core/admin/permissions.py`.
 
 ### Database grows too large
 

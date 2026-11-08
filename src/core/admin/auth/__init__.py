@@ -27,11 +27,15 @@ def init_auth(db: Any) -> None:
     _auth_instance = AdminAuth(db)
 
 
-def ensure_admin_user(db: Optional[Any] = None) -> None:
-    """Ensure admin user exists, create with random password if not."""
+def ensure_admin_user(db: Optional[Any] = None, force: bool = False) -> None:
+    """Ensure admin user exists, create with random password if not.
+
+    If ``force`` is True and an admin user already exists, the existing
+    row is deleted first and a fresh random password is generated.
+    """
     if db is not None:
         init_auth(db)
-    _get_auth().ensure_admin_user()
+    _get_auth().ensure_admin_user(force=force)
 
 
 def authenticate_admin(

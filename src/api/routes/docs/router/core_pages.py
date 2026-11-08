@@ -6,6 +6,14 @@ from fastapi import Request
 
 
 class CorePagesMixin:
+    async def docs_client_troubleshooting(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("troubleshooting/client-troubleshooting.md"),
+            "Client Troubleshooting",
+            "/troubleshooting/client-troubleshooting",
+        )
+
     async def docs_index(self, request: Request):
         return await self._serve_page(request, self._doc_path("index.md"), "Home", "/")
 

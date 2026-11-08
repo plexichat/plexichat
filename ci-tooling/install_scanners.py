@@ -39,6 +39,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -55,6 +57,13 @@ TOOLS = {
         "url": (
             "https://github.com/google/osv-scanner/releases/download/{version}/{asset}"
         ),
+        # GitHub's release-download endpoint intermittently returns 504 while
+        # the API and asset CDN are healthy (seen on 2026-11-08, which blocked
+        # every release build). The asset API serves the same bytes and is
+        # digest-checked below, so it is a safe fallback rather than a bypass.
+        "fallback_urls": (
+            "https://api.github.com/repos/google/osv-scanner/releases/assets/632251666",
+        ),
         "sha256": "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b",  # pragma: allowlist secret
         "binary": "osv-scanner",
     },
@@ -70,6 +79,18 @@ TOOLS = {
         "member": "trivy",
     },
 }
+
+
+# A release download is the one step here that depends on something outside
+# this repository, and it is fetched from a public CDN on every run. Pipeline
+# 2304 (a.1.0-177) redded on `Temporary failure in name resolution` inside
+# urlopen -- a resolver blip, not a finding -- and because the job sits in the
+# `security` stage, every later stage (all of the tests, then docker) was
+# skipped and no image was ever built. Retrying the fetch keeps a transient DNS
+# or TLS failure from being reported as a dependency problem; the digest is
+# still verified on whatever actually arrives.
+DOWNLOAD_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5.0
 
 
 class InstallError(RuntimeError):
@@ -111,18 +132,65 @@ def _check_scheme(url: str) -> None:
 
 
 def _download(url: str, dest: str) -> None:
-    """Fetch ``url`` to ``dest``, failing on a non-2xx response."""
+    """Fetch ``url`` to ``dest``, retrying transient network failures.
+
+    Only transport-level errors are retried (DNS, refused connections, TLS
+    handshakes, timeouts). An HTTP error response is not retried: a 404 for the
+    pinned asset will not fix itself, and retrying it three times only delays
+    the report.
+
+    Raises:
+        urllib.error.URLError: the last transport failure, once retries are
+            exhausted.
+    """
     _check_scheme(url)
-    # The scheme was checked above; nosec B310 is the generic warning about
-    # urlopen being handed an unvalidated URL.
-    with urllib.request.urlopen(url, timeout=120) as response, open(dest, "wb") as out:  # nosec: B310
-        shutil.copyfileobj(response, out)
+    last: urllib.error.URLError | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            # The scheme was checked above; nosec B310 is the generic warning
+            # about urlopen being handed an unvalidated URL.
+            # The GitHub asset API redirects to its CDN only when it is asked
+            # for the binary explicitly; the header is harmless elsewhere.
+            request = urllib.request.Request(
+                url, headers={"Accept": "application/octet-stream"}
+            )
+            with (
+                urllib.request.urlopen(request, timeout=120) as response,  # nosec: B310
+                open(dest, "wb") as out,
+            ):  # nosec: B310
+                shutil.copyfileobj(response, out)
+            return
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last = (
+                exc
+                if isinstance(exc, urllib.error.URLError)
+                else urllib.error.URLError(exc)
+            )
+            if attempt == DOWNLOAD_ATTEMPTS:
+                break
+            print(
+                f"download attempt {attempt}/{DOWNLOAD_ATTEMPTS} failed ({exc}); "
+                f"retrying in {RETRY_DELAY_SECONDS:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the loop records every failure
+        raise InstallError(f"could not download {url}")
+    raise last
 
 
 def tool_url(tool: str) -> str:
     """The pinned release URL for a scanner."""
     spec = TOOLS[tool]
     return spec["url"].format(version=spec["version"], asset=spec["asset"])
+
+
+def tool_urls(tool: str) -> list[str]:
+    """Pinned download sources for a scanner, in preference order."""
+    spec = TOOLS[tool]
+    return [tool_url(tool), *spec.get("fallback_urls", ())]
 
 
 def install_tool(tool: str, bin_dir: str, url: str | None = None) -> str:
@@ -150,16 +218,27 @@ def install_tool(tool: str, bin_dir: str, url: str | None = None) -> str:
         raise InstallError(
             f"unknown scanner {tool!r}; known: {', '.join(sorted(TOOLS))}"
         )
-    source = url or tool_url(tool)
+    sources = [url] if url else tool_urls(tool)
     os.makedirs(bin_dir, exist_ok=True)
     target = os.path.join(bin_dir, spec["binary"])
 
     with tempfile.TemporaryDirectory(dir=bin_dir) as scratch:
         download = os.path.join(scratch, spec["asset"])
-        try:
-            _download(source, download)
-        except Exception as exc:  # urllib raises a family of these
-            raise InstallError(f"could not download {source}: {exc}") from exc
+        last_error: Exception | None = None
+        for source in sources:
+            try:
+                _download(source, download)
+                break
+            except Exception as exc:  # urllib raises a family of these
+                last_error = exc
+                print(
+                    f"download failed for {source} ({exc})",
+                    file=sys.stderr,
+                )
+        else:
+            raise InstallError(
+                f"could not download {tool} from any pinned source: {last_error}"
+            ) from last_error
 
         actual = sha256_of(download)
         if actual != spec["sha256"]:

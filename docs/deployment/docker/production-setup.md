@@ -66,13 +66,13 @@ S3_SECRET_KEY=<random-secret-key>
 BACKUP_RESTIC_PASSWORD=<random-restic-password>
 ```
 
-The Compose file enforces required secrets and fails fast if they are empty (`plexichat/docker-compose.yml:32`, `plexichat/docker-compose.yml:48`, `plexichat/docker-compose.yml:248`).
+The Compose file enforces required secrets and fails fast if they are empty (`plexichat/docker-compose.yml`, `plexichat/docker-compose.yml`, `plexichat/docker-compose.yml`).
 
 Never commit `.env` to Git. Store secrets in a secret manager.
 
 ### 2. Configure TLS and HTTPS
 
-The `cert-init` service (`plexichat/docker-compose.yml:118`) generates a self-signed certificate in the `certs` volume on first boot. Nginx uses it at `/etc/nginx/certs/fullchain.pem` and `/etc/nginx/certs/privkey.pem` (`plexichat-client/docker/nginx/default.conf:21`).
+The `cert-init` service (`plexichat/docker-compose.yml`) generates a self-signed certificate in the `certs` volume on first boot. Nginx uses it at `/etc/nginx/certs/fullchain.pem` and `/etc/nginx/certs/privkey.pem` (`plexichat-client/docker/nginx/default.conf:21`).
 
 For production, replace it with a valid certificate:
 
@@ -102,8 +102,8 @@ HTTP on port 80 redirects to HTTPS (`plexichat-client/docker/nginx/default.conf:
 
 All services share `plexichat_default`. Only these host ports are published by default:
 
-- `client`: 80/TCP, 443/TCP (`plexichat/docker-compose.yml:236`)
-- `backend`: 8000/TCP, 30000–30100/UDP (`plexichat/docker-compose.yml:205`)
+- `client`: 80/TCP, 443/TCP (`plexichat/docker-compose.yml`)
+- `backend`: 8000/TCP, 30000–30100/UDP (`plexichat/docker-compose.yml`)
 
 The following services are internal-only and use `expose` instead of `ports`:
 
@@ -201,7 +201,7 @@ How it works:
 
 Prerequisites for multi-worker scaling:
 
-- Valkey must be enabled. Set `valkey.enabled: true` in `plexichat/config/docker-config.yaml:12` and ensure the `valkey` service is `healthy`.
+- Valkey must be enabled. Set `valkey.enabled: true` in `plexichat/config/docker-config.yaml` and ensure the `valkey` service is `healthy`.
 - Rate limiting must use Valkey or database storage. In-memory limiters have independent counters per worker and allow bypass. The server logs a warning if it detects this.
 - Snowflake IDs use `worker_id` (0–31) and `datacenter_id` to generate globally unique, time-sortable IDs.
 
@@ -215,12 +215,12 @@ uvicorn src.api.app:create_app --host 0.0.0.0 --port 8000 --workers 4
 docker compose up --scale backend=4 -d
 ```
 
-When you scale to more than one replica, comment out the `ports` section on `backend` (`plexichat/docker-compose.yml:205`). Host ports 8000/TCP and 30000–30100/UDP can bind only once. Nginx at `:443` load-balances to `backend:8000` with `ip_hash` for sticky WebSocket sessions (`plexichat-client/docker/nginx/default.conf:12`).
+When you scale to more than one replica, comment out the `ports` section on `backend` (`plexichat/docker-compose.yml`). Host ports 8000/TCP and 30000–30100/UDP can bind only once. Nginx at `:443` load-balances to `backend:8000` with `ip_hash` for sticky WebSocket sessions (`plexichat-client/docker/nginx/default.conf:12`).
 
 Monitor worker health:
 
 - **Admin Panel > Dashboard** - Shows the **Cross-Worker Event Dispatch** card with listener status (`connected`, `reconnecting`, `disconnected`), backoff, and poll count.
-- `GET /api/v1/health` - Returns `cross_worker_listener` with the same fields plus `enabled` (`plexichat/src/api/routes/health.py:46`).
+- `GET /api/v1/health` - Returns `cross_worker_listener` with the same fields plus `enabled` (`src/api/routes/health.py`).
 - `GET /api/v1/admin/dashboard` - Includes `worker_health`.
 
 ### Single-host deployment (recommended for Proxmox)
@@ -282,9 +282,9 @@ Adjust based on concurrent WebSocket connections, request rate, and query comple
 
 ### Backups
 
-The `backup` service (`plexichat/docker-compose.yml:240`) uses restic for daily, encrypted, deduplicated snapshots at 02:00 by default. It backs up the PostgreSQL dump, `plexichat_home`, and RustFS data.
+The `backup` service (`plexichat/docker-compose.yml`) uses restic for daily, encrypted, deduplicated snapshots at 02:00 by default. It backs up the PostgreSQL dump, `plexichat_home`, and RustFS data.
 
-Configure backups in `plexichat/.env` (see `docker/README.md:96`):
+Configure backups in `plexichat/.env` (see `docker/README.md`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -364,7 +364,7 @@ Set `BACKUP_SECONDARY_REPO` to replicate snapshots to S3, SFTP, or B2.
 
 ### Built-in health
 
-Check the readiness probe (Docker health check at `plexichat/docker-compose.yml:194` and `plexichat/Dockerfile:43`):
+Check the readiness probe (Docker health check at `plexichat/docker-compose.yml` and `plexichat/Dockerfile:43`):
 
 ```bash
 curl -sf http://localhost:8000/api/v1/ready
@@ -394,7 +394,7 @@ scrape_configs:
     metrics_path: '/api/v1/health'
 ```
 
-**Backup health**: The `backup` service reports liveness through `/scripts/healthcheck.sh` (`plexichat/docker-compose.yml:274`). Check `docker compose ps backup`.
+**Backup health**: The `backup` service reports liveness through `/scripts/healthcheck.sh` (`plexichat/docker-compose.yml`). Check `docker compose ps backup`.
 
 ## Next steps
 

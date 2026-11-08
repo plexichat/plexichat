@@ -10,6 +10,45 @@ import utils.version as version
 
 from src.server.lifecycle import VERSION
 
+_ALLOW_INSECURE_ENV = "PLEXICHAT_ALLOW_INSECURE_SECRETS"
+
+
+def _truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_pipeline_context() -> bool:
+    return (
+        os.getenv("CI") is not None
+        or os.getenv("GITLAB_CI") is not None
+        or bool(config.get("selftest.enabled", False))
+        or os.getenv("PLEXICHAT_SELF_TEST") is not None
+    )
+
+
+def _in_container() -> bool:
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", "r", encoding="utf-8") as f:
+            data = f.read()
+        return "docker" in data or "kubepods" in data or "containerd" in data
+    except OSError:
+        return False
+
+
+def _is_production_deployment() -> bool:
+    if _is_pipeline_context():
+        return False
+    env_type = (
+        str(config.get("application.environment", "development") or "").strip().lower()
+    )
+    if env_type == "production":
+        return True
+    if _in_container() and env_type not in {"development", "dev", "test", "testing"}:
+        return True
+    return False
+
 
 def setup_utilities() -> None:
     validator.setup()
@@ -32,24 +71,36 @@ def setup_utilities() -> None:
         from src.utils.encryption.vault import vault
 
         if not vault.is_using_secure_source():
-            is_pipeline = (
-                os.getenv("CI") is not None
-                or os.getenv("GITLAB_CI") is not None
-                or config.get("selftest.enabled", False)
-                or os.getenv("PLEXICHAT_SELF_TEST") is not None
-            )
+            is_pipeline = _is_pipeline_context()
+            production = _is_production_deployment()
+            allow_insecure = _truthy(os.getenv(_ALLOW_INSECURE_ENV))
             if is_pipeline:
                 logger.warning(
                     "CI/selftest mode detected — bypassing secure source check. "
                     "Set PLEXICHAT_SYSTEM_KEY for production."
                 )
+            elif production and allow_insecure:
+                logger.warning(
+                    "INSECURE OVERRIDE ACTIVE: %s is set while require_secure_source is "
+                    "enabled in a production deployment — bypassing secure source check. "
+                    "This is UNSAFE for real deployments.",
+                    _ALLOW_INSECURE_ENV,
+                )
+            elif not production and not enc_security.get("require_secure_source", True):
+                # unreachable given outer if, kept for clarity
+                pass
             else:
+                # In production, never allow an insecure local fallback.
+                # In explicit development (non-production, non-pipeline), still enforce
+                # by default unless require_secure_source is disabled in config.
                 error_msg = (
-                    "CRITICAL SECURITY ERROR: Application is configured to require a secure "
-                    "encryption key source (TPM, HSM, or Environment Variable), but none was found. "
-                    "The application has fallen back to an insecure local key file. "
-                    "To fix: Set PLEXICHAT_SYSTEM_KEY env var or ensure TPM/HSM is accessible. "
-                    "To bypass (DEV ONLY): Set authentication.encryption.require_secure_source to False."
+                    "CRITICAL SECURITY ERROR: Application requires a secure encryption key "
+                    "source (TPM, HSM, or Environment Variable), but none was found. "
+                    "An insecure local key fallback is not permitted. "
+                    "Fix: set PLEXICHAT_SYSTEM_KEY or configure TPM/HSM. "
+                    "DEV ONLY: set authentication.encryption.require_secure_source=false "
+                    f"or {_ALLOW_INSECURE_ENV}=true for an explicit temporary override "
+                    "(never for real deployments)."
                 )
                 logger.critical(error_msg)
                 raise RuntimeError(error_msg)

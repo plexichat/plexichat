@@ -14,9 +14,9 @@ A bot is an automated user account that can:
 
 The gateway is at `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)). In development, connect to `ws://localhost:8000/gateway`. In production, use `wss://your-host/gateway`.
 
-All REST endpoints in this guide are prefixed with `/api/v1` unless noted. The API prefix defaults to `/api/v1` (`src/config_defaults.py:130`).
+All REST endpoints in this guide are prefixed with `/api/v1` unless noted. The API prefix defaults to `/api/v1` (`src/config_defaults.py`).
 
-Errors use the standard envelope (`src/api/schemas/common.py:58`):
+Errors use the standard envelope (`src/api/schemas/common.py`):
 
 ```json
 {
@@ -187,8 +187,8 @@ Intents declare which events your bot receives. Calculate the bitfield as a bitw
 | 17 | `1 << 17` | `THREADS` | Threads |
 | 18 | `1 << 18` | `AUTOMOD` | Auto-moderation events |
 | 19 | `1 << 19` | `AUDIT_LOG` | Audit log entries |
-| 20 | `1 << 20` | `ARTIFACTS` | Artifact fabric events (`src/core/events/types.py:120`) |
-| 21 | `1 << 21` | `SUMS` | PlexiSum workbook events (`src/core/events/types.py:120`) |
+| 20 | `1 << 20` | `ARTIFACTS` | Artifact fabric events (`src/core/events/types.py`) |
+| 21 | `1 << 21` | `SUMS` | PlexiSum workbook events (`src/core/events/types.py`) |
 
 Privileged intents require approval: `GUILD_MEMBERS` (`2`), `GUILD_PRESENCES` (`256`), and `MESSAGE_CONTENT` (`32768`). Request them from the server administrator.
 
@@ -225,7 +225,7 @@ const intents = Intents.GUILDS | Intents.GUILD_MESSAGES | Intents.ARTIFACTS | In
 
 ## Handle gateway opcodes
 
-The gateway uses the opcodes in `src/api/websocket/opcodes.py:40`.
+The gateway uses the opcodes in `src/api/websocket/opcodes.py`.
 
 | Opcode | Name | Direction |
 |---|---|---|
@@ -387,14 +387,14 @@ The API and gateway enforce rate limits to prevent abuse.
 | Hourly (user) | 300,000 | 3,600 seconds | — |
 | Daily (user) | 5,000,000 | 86,400 seconds | — |
 
-Defaults are from `src/config_defaults.py:270`. Do not rely on hard-coded values in older docs. Override them in `config.yaml` and in Nginx if you change them.
+Defaults are from `src/config_defaults.py`. Do not rely on hard-coded values in older docs. Override them in `config.yaml` and in Nginx if you change them.
 
 Gateway-specific limits:
 
 - Identify: 1 per 5 seconds per token.
 - Resume: no limit.
-- Other gateway payloads: 120 per 60 seconds (`src/config_defaults.py:165`).
-- Bot requests: multiplied by `1.5` (`src/config_defaults.py:301`).
+- Other gateway payloads: 120 per 60 seconds (`src/config_defaults.py`).
+- Bot requests: multiplied by `1.5` (`src/config_defaults.py`).
 
 Check `X-RateLimit-Remaining` and `X-RateLimit-Reset`. When you receive `429`, read `Retry-After` and retry after that delay. Error bodies use `{"error":{"code":429,"message":"Too many requests"}}`.
 
@@ -557,7 +557,7 @@ Server admins can manage bots at `/admin`:
 | Bot directory access | Read-only | Full access |
 | Bot profile management | Limited | Full |
 
-Limits are from `src/config_defaults.py:729` (`bots.max_per_server`, `bots.max_per_server_premium`).
+Limits are from `src/config_defaults.py` (`bots.max_per_server`, `bots.max_per_server_premium`).
 
 ## Use OAuth 2.0 (roadmap)
 
@@ -582,7 +582,7 @@ GET /api/v1/auth/oauth/{provider}/login?redirect_uri=...&code_challenge=...&code
 POST /api/v1/auth/oauth/{provider}/callback
 ```
 
-Provide `code_challenge` (43–128 `A-Z a-z 0-9 - . _ ~` characters) with `code_challenge_method=S256` at initiation, and `code_verifier` at callback. The server sets an `HttpOnly` cookie `plexichat_oauth_state` and rejects mismatched `state` (`src/api/routes/auth/oauth.py:91`). See [Authentication API](../api/authentication.md#sign-in-with-oauth).
+Provide `code_challenge` (43–128 `A-Z a-z 0-9 - . _ ~` characters) with `code_challenge_method=S256` at initiation, and `code_verifier` at callback. The server sets an `HttpOnly` cookie `plexichat_oauth_state` and rejects mismatched `state` (`src/api/routes/auth/oauth.py`). See [Authentication API](../api/authentication.md#sign-in-with-oauth).
 
 ## Host a bot
 
@@ -819,6 +819,6 @@ bot.start();
 
 - [API reference](../api/index.md)
 - [WebSocket guide](../client-development/websocket.md)
-- [OAuth scopes](../oauth-scopes.md) — regrouped by `PERMISSION_SCOPES` (`src/core/admin/permissions.py:42`)
-- [Rate limits](../rate-limits.md) — defaults from `src/config_defaults.py:270`
+- [OAuth scopes](../oauth-scopes.md) — regrouped by `PERMISSION_SCOPES` (`src/core/admin/permissions.py`)
+- [Rate limits](../rate-limits.md) — defaults from `src/config_defaults.py`
 - [Error codes](../errors.md) — envelope is `{"error":{"code":...,"message":"..."}}`

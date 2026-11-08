@@ -10,10 +10,10 @@ This directory contains the narrative docs that the backend serves at `/docs/api
 | `getting-started.md` | First request and capability discovery |
 | `configuration.md` | Configuration areas and file precedence |
 | `deployment.md` | Docker Compose and manual deployment |
-| `rate-limits.md` | Rate-limit tiers (global 25000, user 10000, IP 5000 per 60 s — see `src/config_defaults.py:270`) |
+| `rate-limits.md` | Rate-limit tiers (global 25000, user 10000, IP 5000 per 60 s — see `src/config_defaults.py`) |
 | `features.md` | Feature map and license gates |
 | `security.md` | Public security guidance, SSRF and media proxy details |
-| `api/index.md` | REST route-group overview (all groups under `/api/v1`, see `src/config_defaults.py:130`) |
+| `api/index.md` | REST route-group overview (all groups under `/api/v1`, see `src/config_defaults.py`) |
 | `websocket/index.md` | Gateway overview (`/gateway` at `src/api/websocket/gateway.py` (`gateway_endpoint`)) |
 
 ## Reference pages
@@ -21,35 +21,37 @@ This directory contains the narrative docs that the backend serves at `/docs/api
 The `api/` and `websocket/` subdirectories provide per-group docs:
 
 * API groups: `auth`, `users`, `servers`, `channels`, `messages`, `relationships`, `presence`, `reactions`, `webhooks`, `media`, `search`, `polls`, `voice`, `reports`, `feedback`, `telemetry`, `system`, `artifacts`, `federation`, `suite`
-* Gateway: opcodes `50` and `60`–`68`, intents `20` and `21` (see `src/api/websocket/opcodes.py:40` and `src/core/events/types.py:120`)
-* Health: `GET /api/v1/ready` (readiness) and `GET /api/v1/health` (detailed) — see `src/api/routes/health.py:18`
+* Gateway: opcodes `50` and `60`–`68`, intents `20` and `21` (see `src/api/websocket/opcodes.py` and `src/core/events/types.py`)
+* Health: `GET /api/v1/ready` (readiness) and `GET /api/v1/health` (detailed) — see `src/api/routes/health.py`
 
-If you need the live route list, inspect `src/api/app.py:515`, which mounts every router under the configured API prefix.
+If you need the live route list, inspect `src/api/app.py`, which mounts every router under the configured API prefix.
 
 ## Key API conventions
 
-* Base prefix is `/api/v1` (`api.api_prefix` in `src/config_defaults.py:130`). Do not use `/api` alone.
+* Base prefix is `/api/v1` (`api.api_prefix` in `src/config_defaults.py`). Do not use `/api` alone.
 * Gateway path is `/gateway` (`src/api/websocket/gateway.py` (`gateway_endpoint`)), not `/ws`.
-* Channel creation uses `channel_type` (`src/api/routes/servers/channels.py:134`), for example `{"name": "general", "channel_type": "text"}`.
-* `read_by` on messages is a list of `ReaderInfo` objects (`src/api/schemas/messages.py:94`).
-* OAuth requires PKCE `S256` with a `code_challenge` (`src/api/routes/auth/oauth.py:202`).
-* Presence reads outside your friends and shared servers return `404` (`src/api/routes/presence.py:379`).
-* Bulk delete is `POST /api/v1/channels/{channel_id}/messages/bulk-delete` (max 100 IDs, see `src/api/routes/messages/messages_crud/delete.py:218`).
-* Media proxy is `GET /api/v1/media/proxy?url=...` (`src/api/routes/media.py:465`).
-* Webhooks live under `/api/v1/webhooks`; execution is `POST /api/v1/webhooks/{webhook_id}/{token}` (`src/api/routes/webhooks.py:455`).
-* Settings bulk update is `PUT /api/v1/users/@me/settings/bulk` (`src/api/routes/settings.py:147`).
-* Rate limits default to global `25000`, user `10000`, and IP `5000` per `60` s (`src/config_defaults.py:270`).
+* Channel creation uses `channel_type` (`src/api/routes/servers/channels.py`), for example `{"name": "general", "channel_type": "text"}`.
+* `read_by` on messages is a list of `ReaderInfo` objects (`src/api/schemas/messages.py`).
+* OAuth requires PKCE `S256` with a `code_challenge` (`src/api/routes/auth/oauth.py`).
+* Presence reads outside your friends and shared servers return `404` (`src/api/routes/presence.py`).
+* Bulk delete is `POST /api/v1/channels/{channel_id}/messages/bulk-delete` (max 100 IDs, see `src/api/routes/messages/messages_crud/delete.py`).
+* Media proxy is `GET /api/v1/media/proxy?url=...` (`src/api/routes/media.py`).
+* Webhooks live under `/api/v1/webhooks`; execution is `POST /api/v1/webhooks/{webhook_id}/{token}` (`src/api/routes/webhooks.py`).
+* Settings bulk update is `PUT /api/v1/users/@me/settings/bulk` (`src/api/routes/settings.py`).
+* Rate limits default to global `25000`, user `10000`, and IP `5000` per `60` s (`src/config_defaults.py`).
 
 ## Configuration discovery
 
-Plexichat loads config in this order:
+Plexichat resolves the config file path in this order (`setup_config` in `src/server/config_loader.py`):
 
-1. `config/config.yaml` in the checkout
-2. `~/.plexichat/config/config.yaml`
-3. File pointed to by `PLEXICHAT_CONFIG` (see `docker-compose.yml:167`)
-4. Environment variable overrides (for example `POSTGRES_PASSWORD`, `VALKEY_PASSWORD`, `PLEXICHAT_SYSTEM_KEY`)
+1. `--config PATH` on the command line
+2. `PLEXICHAT_CONFIG` environment variable
+3. `~/.plexichat/config/config.yaml`
+4. `config/config.yaml` in the checkout
 
-Values from later sources override earlier ones.
+The first two are explicit and take precedence over the auto-detection search. If neither auto-detected file exists, the home-directory path is used as the default (and written there). Home is searched before the checkout, so a stale home file overrides the one in the repository.
+
+Environment variable overrides (for example `POSTGRES_PASSWORD`, `VALKEY_PASSWORD`, `PLEXICHAT_SYSTEM_KEY`) are applied after the file loads, so they win over both the file and the built-in defaults.
 
 ## Documentation rules
 

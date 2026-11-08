@@ -8,6 +8,7 @@ If you're new to deploying Plexichat, start with these guides:
 
 - [Environment generator](/docs/api/deployment/env-generator) — Generate a secure `.env` file with cryptographically random values.
 - [Docker deployment](docker/index.md) — Complete Docker Compose setup for development and production.
+- [Hardened deployment profile (FI-like)](hardened.md) — Concrete overlay + compose/nginx/TLS, strict origins/CORS, admin/ClamAV/least-privilege/audit/secrets, and capacity references.
 - [Getting started](getting-started.md) — Step-by-step production deployment guide.
 - [Requirements](requirements.md) — System requirements for production and development.
 - [Overview](overview.md) — Deployment architecture and components.
@@ -66,10 +67,11 @@ For details, see the [Configuration overview](../configuration.md).
 
 ### Security considerations
 
+- Use the [hardened deployment profile (FI-like)](hardened.md) for a concrete, validated-as-possible production baseline (TLS proxy, strict origins/CORS, admin allowlist, ClamAV, least privilege, audit, secrets).
 - Use `PLEXICHAT_SYSTEM_KEY` for encryption at the bootstrap level.
 - Enable 2FA for operator accounts.
 - Configure access token gating for closed deployments.
-- Review [Security best practices](../security.md).
+- Review [Security best practices](../security.md) and [Admin hardening](../admin-hardening.md).
 
 ## Maintenance
 

@@ -58,7 +58,7 @@ encryption:
     salt_length: 16
 ```
 
-Do not reduce `memory_cost` or `time_cost` in production. If login performance is a concern, increase `parallelism` instead of reducing memory. See `src/config_defaults.py:465`.
+Do not reduce `memory_cost` or `time_cost` in production. If login performance is a concern, increase `parallelism` instead of reducing memory. See `src/config_defaults.py`.
 
 ### Account lockout
 
@@ -106,7 +106,7 @@ authentication:
 
 *   Require 2FA for all admin accounts. The admin UI requires OTP by default (`admin_ui.require_otp: true`).
 *   Make 2FA optional for regular users, but encourage adoption through UI prompts.
-*   The key is `require_otp`, not `require_2fa`. See `src/config_defaults.py:561`.
+*   The key is `require_otp`, not `require_2fa`. See `src/config_defaults.py`.
 
 ## Encryption
 
@@ -125,7 +125,7 @@ media:
 
 *   When `encrypt_messages` is `true` (the default), message content and attachments are encrypted before storage with the dedicated `message_keyring.json`.
 *   When `encrypt_at_rest` is `true` (the default), media files on disk are encrypted.
-*   `signing_key` generates time-limited, tamper-proof media URLs. Change it from the default in production. The server auto-generates it with `secrets.token_hex(32)` and persists it to `config/config.yaml` on first startup if it is still `CHANGE_THIS_SIGNING_KEY`. See `src/cli/main.py:90`.
+*   `signing_key` generates time-limited, tamper-proof media URLs. Change it from the default in production. The server auto-generates it with `secrets.token_hex(32)` and persists it to `config/config.yaml` on first startup if it is still `CHANGE_THIS_SIGNING_KEY`. See `src/cli/main.py`.
 *   `signing_expiry: 3600` means media URLs expire after 1 hour. Reduce for higher security or increase for caching convenience.
 
 ### Key rotation
@@ -271,7 +271,7 @@ Most deployments terminate TLS at a reverse proxy (nginx, Caddy, Traefik). Keep 
 
 ### Encryption-at-rest defaults
 
-*   **Argon2id** uses `time_cost: 3` (OWASP 2024 minimum), `memory_cost: 65536` (64 MiB), `parallelism: 2`, `hash_length: 32`, and `salt_length: 16`. See `src/config_defaults.py:465`.
+*   **Argon2id** uses `time_cost: 3` (OWASP 2024 minimum), `memory_cost: 65536` (64 MiB), `parallelism: 2`, `hash_length: 32`, and `salt_length: 16`. See `src/config_defaults.py`.
 *   **`*_encrypted` columns** for medium-sensitivity user data (email, phone, display name, bio) hold AES-256-GCM ciphertext from the system keyring. Legacy plaintext columns remain for backward compatibility.
 *   **`media.signing_key`** is auto-generated with `secrets.token_hex(32)` and persisted on first startup if it is still `CHANGE_THIS_SIGNING_KEY`.
 *   **Message content** is encrypted at rest when `messaging.encrypt_messages: true` (the default).
@@ -288,7 +288,7 @@ api:
 
 *   The key is `cors_origins`, not `allow_origins`. The default is an explicit list, not `["*"]`.
 *   When `cors_allow_credentials` is `true`, browsers reject wildcard origins.
-*   List only domains that host your web client. See `src/config_defaults.py:133`.
+*   List only domains that host your web client. See `api.cors_origins` in `src/config_defaults.py`.
 
 ## Admin UI
 
@@ -342,7 +342,7 @@ rate_limiting:
 
 *   `bot_multiplier: 1.5` — Bots get 1.5× user limits so they can process events for subscribers.
 *   `webhook_multiplier: 1.0` — Webhooks get standard limits.
-*   Internal services bypass limits with the runtime-generated internal secret (`X-Plexichat-Internal-Secret`) or `X-RateLimit-Bypass` with `hmac.compare_digest` verification. See `src/api/middleware/rate_limiting.py:102`.
+*   Internal services bypass limits with the runtime-generated internal secret (`X-Plexichat-Internal-Secret`) or `X-RateLimit-Bypass` with `hmac.compare_digest` verification. See `src/api/middleware/rate_limiting.py`.
 
 Clients should respect `429 Too Many Requests`, use exponential backoff, avoid retry storms, and cache responses where practical.
 
@@ -372,7 +372,7 @@ oauth:
 
 ### Security considerations
 
-*   **PKCE** — Keep `pkce_enabled: true` (the default). PKCE prevents authorization-code interception. See `src/api/routes/auth/oauth.py:186`.
+*   **PKCE** — Keep `pkce_enabled: true` (the default). PKCE prevents authorization-code interception. See `src/api/routes/auth/oauth.py`.
 *   **State management**:
 
     ```yaml
@@ -388,7 +388,7 @@ oauth:
     *   `max_states_per_ip: 10` prevents state-token flooding.
     *   `cleanup_on_verify: true` removes used state tokens to prevent replay.
     *   `state_ttl_seconds: 600` (10 minutes) limits the attack window.
-    *   `state_cookie_required: true` binds the OAuth state to the browser with an `HttpOnly` cookie. See `src/api/routes/auth/oauth.py:90`.
+    *   `state_cookie_required: true` binds the OAuth state to the browser with an `HttpOnly` cookie. See `src/api/routes/auth/oauth.py`.
 
 *   **Client secrets** — Store secrets securely with environment-variable interpolation:
 
@@ -401,7 +401,7 @@ oauth:
 
     Never commit OAuth secrets to version control.
 
-*   **Redirect URI allow-list** — The server enforces an exact-match allow-list for `redirect_uri` (`src/api/routes/auth/oauth.py:50`). Configure `oauth.<provider>.allowed_redirect_uris` and enable `oauth.allow_localhost_redirects` only for development.
+*   **Redirect URI allow-list** — The server enforces an exact-match allow-list for `redirect_uri` (`src/api/routes/auth/oauth.py`). Configure `oauth.<provider>.allowed_redirect_uris` and enable `oauth.allow_localhost_redirects` only for development.
 
 ## Self-test infrastructure
 
@@ -418,7 +418,7 @@ selftest:
     - "/api/v1/admin/logout"
 ```
 
-*   Self-test is production-safe. It uses long, randomly generated passwords and only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts. All test resources are cleaned up through API calls. See `src/config_defaults.py:542`.
+*   Self-test is production-safe. It uses long, randomly generated passwords and only creates and deletes its own test users (`selftest_admin` / `selftest_admin_other`). It never touches real admin accounts. All test resources are cleaned up through API calls. See `src/config_defaults.py`.
 *   `exit_on_failure: false` prevents shutdown on self-test failure, which avoids denial-of-service.
 *   `capture_stack_traces: true` is useful in development. Set it to `false` in production to avoid revealing implementation details.
 *   Self-test cleanup is strictly non-destructive: it only removes rows owned by its `selftest_%` accounts and resources recorded by the current run. There are no whole-table wipes and no disposable-database escape hatch; the suite is safe to run on a live deployment at any time. See `src/core/selftest/services/cleanup.py`.

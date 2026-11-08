@@ -137,7 +137,7 @@ DEFAULT_TEST_CONFIG = {
             "X-Custom-Header",
         ],
     },
-    "version": {"current": "r.1.0-1", "min_client": "a.1.0-1"},
+    "version": {"current": "1.0.0", "min_client": "1.0.0a1"},
     "servers": {"templates": {"max_templates_per_user": 1000}},
     # Discovery tests build small servers (owner + 1-2 members) and
     # bump immediately after listing; keep the directory thresholds
@@ -153,7 +153,7 @@ DEFAULT_TEST_CONFIG = {
 _test_config_dir = tempfile.mkdtemp()
 _test_config_path = os.path.join(_test_config_dir, "config.yaml")
 config.setup(config_path=_test_config_path, default_config=DEFAULT_TEST_CONFIG)
-version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+version.setup(current_version="1.0.0", min_supported_version="1.0.0a1")
 
 # Initialize logger for tests
 _test_log_dir = tempfile.mkdtemp()

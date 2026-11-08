@@ -38,7 +38,7 @@ def default_version() -> str:
     in at module scope would initialize it too early.
 
     Returns:
-        The current application version string (e.g. "a.1.0-170").
+        The current application version string (e.g. "1.0.0a210").
     """
     from src.server.lifecycle import VERSION
 
@@ -267,6 +267,10 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                 "auto_block_threshold": 5,
             },
         },
+        # Rate limiting defaults (configurable). This section is the single
+        # source of truth for documented defaults; enforcement reads from
+        # runtime config (utils.config), and src/core/ratelimit/config.py
+        # fallbacks MUST stay aligned with these values.
         "rate_limiting": {
             "enabled": True,
             "global": {"requests": 25000, "window_seconds": 60.0, "burst": 5000},
@@ -845,6 +849,36 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
             "percentile_sample_rows": 25000,
             "client_hash_salt": secrets.token_hex(16),
         },
+        "dsar": {
+            "enabled": True,
+            "require_admin_review": True,
+            "default_format": "json",
+            "export_formats": ["json", "zip"],
+            "max_export_size_mb": 500,
+            "retention_days": 7,
+            "pending_expiry_days": 30,
+            "local_path": str(home_dir / "data" / "exports" / "dsar"),
+            "s3_path_prefix": "dsar-exports",
+            "rate_limit": {
+                "requests": 1,
+                "window_seconds": 86400,
+            },
+            "audit_log": {
+                "file_path": str(home_dir / "data" / "dsar_audit_log.jsonl"),
+                "hash_chain_enabled": True,
+                "backup_to_s3": True,
+                "s3_backup_path": "audit/dsar/log_backup.jsonl",
+                "halt_on_invalid_audit": True,
+                "rotate_on_broken_chain": False,
+            },
+            "harvester": {
+                "interval_hours": 24,
+                "boot_check_enabled": True,
+                "batch_size": 20,
+                "require_admin_review": True,
+                "retention_days": 7,
+            },
+        },
         "static_client": {
             "enabled": False,
             "serve": True,
@@ -871,7 +905,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                 "x_frame_options": "SAMEORIGIN",
                 "referrer_policy": "strict-origin-when-cross-origin",
                 "permissions_policy": "geolocation=(), microphone=(self), camera=()",
-                "content_security_policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
+                "content_security_policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
             },
             "rate_limit": {
                 "enabled": True,

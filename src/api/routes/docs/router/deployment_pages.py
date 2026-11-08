@@ -2,6 +2,8 @@
 Mixin providing deployment documentation page route handlers.
 """
 
+import re
+
 from fastapi import Request
 
 
@@ -43,6 +45,42 @@ class DeploymentPagesMixin:
             "/deployment/index",
         )
 
+    async def docs_deployment_docker(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/docker/index.md"),
+            "Docker Deployment",
+            "/deployment/docker",
+        )
+
+    async def docs_deployment_docker_page(self, request: Request, page: str):
+        from fastapi import HTTPException
+
+        if not re.fullmatch(r"[a-z0-9-]+", page):
+            raise HTTPException(404, detail="Page not found")
+        return await self._serve_page(
+            request,
+            self._doc_path(f"deployment/docker/{page}.md"),
+            page.replace("-", " ").title(),
+            f"/deployment/docker/{page}",
+        )
+
+    async def docs_deployment_licensing(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/licensing.md"),
+            "Licensing",
+            "/deployment/licensing",
+        )
+
+    async def docs_deployment_disaster_recovery(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/disaster-recovery.md"),
+            "Disaster Recovery",
+            "/deployment/disaster-recovery",
+        )
+
     async def docs_deployment_postgres_migration(self, request: Request):
         return await self._serve_page(
             request,
@@ -57,6 +95,22 @@ class DeploymentPagesMixin:
             self._doc_path("deployment/versioning.md"),
             "Versioning and Updates",
             "/deployment/versioning",
+        )
+
+    async def docs_deployment_hardened(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/hardened.md"),
+            "Hardened Deployment",
+            "/deployment/hardened",
+        )
+
+    async def docs_deployment_load_testing(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/load-testing.md"),
+            "Load Testing and Capacity",
+            "/deployment/load-testing",
         )
 
     async def docs_migrations(self, request: Request):

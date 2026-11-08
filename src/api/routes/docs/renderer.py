@@ -5,6 +5,8 @@ This module handles all markdown rendering with proper syntax highlighting.
 """
 
 import re
+from typing import List, Optional
+
 from .config import DocsConfig
 from .dynamic import (
     get_api_rate_limits,
@@ -23,15 +25,9 @@ from .dynamic import (
 
 try:
     import mistune
-    from mistune.plugins import (
-        plugin_strikethrough,
-        plugin_footnotes,
-        plugin_table,
-        plugin_task_lists,
-    )
 
     MISTUNE_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercises the fallback renderer only
     MISTUNE_AVAILABLE = False
 
 
@@ -144,6 +140,11 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
         link_text = match.group(1)
         link_url = match.group(2)
 
+        if link_url.startswith((f"{conf.path}/", f"{conf.path}#")):
+            # Already resolved by _rewrite_doc_links, which runs first; adding
+            # the prefix again produced /docs/api/docs/api/... links.
+            return f'<a href="{link_url}">{link_text}</a>'
+
         if link_url.startswith(("http://", "https://", "#", "mailto:")):
             return f'<a href="{link_url}">{link_text}</a>'
 
@@ -208,25 +209,224 @@ def _convert_markdown_links(text: str, conf: DocsConfig, current_path: str = "")
     return re.sub(link_pattern, replace_link, text)
 
 
+def _demote_title_heading(text: str) -> str:
+    """Turn the document's own `# Title` into `## Title`, outside code fences.
+
+    Every page opens with an `# ...` heading, and the page shell already emits
+    the page title as the single <h1>. Rendering both put two <h1> elements on
+    every docs page, which flattens the document outline that screen readers
+    and "jump to heading" lists depend on.
+
+    Only the first top-level heading is demoted -- later `#` lines are real
+    sections of a split document -- and fence state is tracked, so a `#`
+    comment inside a shell snippet stays exactly as written. Replacing on the
+    raw markdown (rather than patching the HTML) keeps this true for both the
+    mistune path and the fallback renderer.
+    """
+    lines = text.split("\n")
+    in_fence = False
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if stripped.startswith("# "):
+            lines[index] = line.replace("# ", "## ", 1)
+            break
+    return "\n".join(lines)
+
+
+LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
+
+def _known_doc_routes() -> set[str]:
+    """Paths the docs router actually serves, or empty when unavailable."""
+    try:
+        from .router import router as docs_router
+    except Exception:  # the renderer must stay usable without the router
+        return set()
+    return {
+        route.path
+        for route in getattr(docs_router, "routes", [])
+        if getattr(route, "path", "").startswith("/")
+    }
+
+
+def resolve_doc_link(
+    link_url: str,
+    known_routes: Optional[set[str]] = None,
+    source_dir: str = "",
+) -> Optional[str]:
+    """Map a repository-relative markdown link onto a served docs route.
+
+    The pages are written as markdown files in the repository, so they link to
+    each other as `[x](deployment/configuration/config-api.md)`. The served
+    routes are flat (`/config-api`), and the link was rendered verbatim: 19 of
+    the 53 sidebar links 404'd, and every "see also" in the prose with them.
+
+    Returns the path to link to (without the docs prefix), or None when no
+    served route matches -- plain text reads better than a dead link.
+    """
+    if not link_url:
+        return None
+    if link_url.startswith(("http://", "https://", "mailto:", "tel:", "#")):
+        return link_url
+
+    path, _, anchor = link_url.partition("#")
+    path = path.split("?", 1)[0].strip()
+    if not path:
+        return f"#{anchor}" if anchor else None
+
+    # Relative prefixes from a repository path, and the .md the file carries.
+    # ``..`` walks out of the page's directory before the path is resolved: a
+    # link to "../disaster-recovery.md" from docs/deployment/docker/ means
+    # docs/deployment/disaster-recovery.md, not a sibling in docker/.
+    directory = [part for part in source_dir.strip("/").split("/") if part]
+    while path.startswith("./") or path.startswith("../"):
+        # "./../x" is a real form in these pages: normalise both, and only walk
+        # out of the directory on "..".
+        if path.startswith("../") and directory:
+            directory.pop()
+        path = path[3:] if path.startswith("../") else path[2:]
+    if path.startswith("/"):
+        path = path[1:]
+        directory = []
+    if path.endswith(".md"):
+        path = path[:-3]
+    path = path.strip("/")
+    source_dir = "/".join(directory)
+    if not path:
+        return "/"
+
+    routes = _known_doc_routes() if known_routes is None else known_routes
+    segments = path.split("/")
+    candidates: List[str] = []
+    # The reference and gateway pages are served by one dynamic route each
+    # ("/reference/{page}"), so an exact set membership test rejects every
+    # cross-reference between them and the link is dropped to plain text.
+    templates = [
+        re.compile(
+            "".join(
+                "[^/]+" if part.startswith("{") else re.escape(part)
+                for part in re.split(r"(\{[^}]+\})", route)
+            )
+        )
+        for route in routes
+        if "{" in route
+    ]
+
+    def served(candidate: str) -> bool:
+        return candidate in routes or any(
+            template.fullmatch(candidate) for template in templates
+        )
+
+    # A sibling link ("security.md" from docs/admin/index.md) is relative to
+    # the page's own directory, which only the caller knows. Without this the
+    # target had no served route and the link was dropped to plain text --
+    # every cross-reference inside a directory lost its link silently.
+    # Relative links are written from the page's own directory, whether they are
+    # bare siblings ("rbac.md") or carry a subdirectory ("docker/quick-start.md"
+    # from docs/deployment/), so resolve both against it.
+    if source_dir:
+        base = source_dir.strip("/")
+        if not path.startswith(base + "/"):
+            candidates.append(f"/{base}/{path}")
+        # Two directories are served under a different prefix than they live in:
+        # docs/api/*.md is the API reference ("/reference/<page>") and
+        # docs/websocket/*.md is the gateway guide ("/websocket/<page>").
+        served_prefix = {"api": "/reference", "websocket": "/websocket"}.get(base)
+        if served_prefix and not path.startswith(("api/", "websocket/")):
+            candidates.insert(0, f"{served_prefix}/{path}")
+    # The configuration pages are served flat, whatever directory they live in.
+    if path.startswith("deployment/configuration/"):
+        candidates.append("/" + segments[-1])
+    # A directory's own landing page is that directory's route.
+    if segments[-1] == "index":
+        directory = "/".join(segments[:-1])
+        candidates.append("/" + directory if directory else "/")
+    if path.startswith("api/"):
+        candidates.append("/reference/" + path[4:])
+    if path.startswith("websocket/"):
+        candidates.append("/websocket/" + path[10:])
+    candidates.append("/" + path)
+    candidates.append("/" + segments[-1])
+
+    for candidate in candidates:
+        if served(candidate):
+            return candidate + (f"#{anchor}" if anchor else "")
+    return None
+
+
+def _rewrite_doc_links(text: str, conf: DocsConfig, source_dir: str = "") -> str:
+    """Point every in-page link at a route the docs server serves.
+
+    Fenced code is left alone: `[x](y)` inside a snippet is example text, not
+    navigation. The *URL* is rewritten and the markdown link is kept --
+    injecting an anchor here would be escaped by mistune (it renders the page
+    as text, not trusted HTML), which is how the first attempt turned every
+    cross-reference into literal `&lt;a href=...` on the page.
+    """
+    lines = text.split("\n")
+    in_fence = False
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence or "](" not in line:
+            continue
+
+        def replace(match: "re.Match[str]") -> str:
+            label, url = match.group(1), match.group(2)
+            # A link that already names its full served path ("/docs/api/...")
+            # must not be re-resolved as a repository path and re-prefixed.
+            prefix = conf.path.rstrip("/")
+            target = url
+            if prefix and url.startswith(prefix + "/"):
+                target = url[len(prefix) + 1 :]
+            resolved = resolve_doc_link(target, None, source_dir)
+            if resolved is None:
+                # Nothing serves this target: keep the words, drop the link.
+                return label
+            if resolved.startswith(("http://", "https://", "mailto:", "tel:", "#")):
+                return f"[{label}]({resolved})"
+            return f"[{label}]({conf.path}{resolved.lstrip('/') if not resolved.startswith('/') else resolved})"
+
+        lines[index] = LINK_RE.sub(replace, line)
+    return "\n".join(lines)
+
+
 def markdown_to_html(
-    markdown_content: str, title: str, conf: DocsConfig, current_path: str = ""
+    markdown_content: str,
+    title: str,
+    conf: DocsConfig,
+    current_path: str = "",
+    source_dir: str = "",
 ) -> str:
     """Convert markdown to HTML with modern styling using mistune."""
     # Replace dynamic placeholders first (before rendering)
     markdown_content = _replace_dynamic_placeholders(markdown_content, conf)
+    markdown_content = _demote_title_heading(markdown_content)
+    markdown_content = _rewrite_doc_links(markdown_content, conf, source_dir)
 
     if MISTUNE_AVAILABLE:
         assert mistune is not None
-        # Use mistune with plugins for better rendering
-        renderer = mistune.HTMLRenderer()
-        markdown = mistune.Markdown(
-            renderer=renderer,
-            plugins=[
-                plugin_strikethrough,
-                plugin_footnotes,
-                plugin_table,
-                plugin_task_lists,
-            ],
+        # Plugins by documented *name*, not imported callables.
+        #
+        # This module used to `from mistune.plugins import
+        # plugin_strikethrough, ...`, which no longer exists in mistune 3.x.
+        # The ImportError was caught by the same handler as "mistune is not
+        # installed", so MISTUNE_AVAILABLE was False on every deployment that
+        # shipped mistune 3 -- and every page rendered through the crude
+        # fallback below (no thead/tbody, no language classes, escaped HTML)
+        # while looking like a styling problem. create_markdown accepts these
+        # string names and raises on an unknown one, so this cannot fail
+        # silently again.
+        markdown = mistune.create_markdown(
+            escape=False,  # pages embed generated HTML rows
+            plugins=["strikethrough", "footnotes", "table", "task_lists"],
         )
         html_content = markdown(markdown_content)
     else:

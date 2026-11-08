@@ -6,6 +6,14 @@ from fastapi import Request
 
 
 class WebSocketPagesMixin:
+    async def docs_client_oauth_integration(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("client-development/oauth-integration.md"),
+            "OAuth Integration",
+            "/client-development/oauth-integration",
+        )
+
     async def docs_websocket_index(self, request: Request):
         return await self._serve_page(
             request, self._doc_path("websocket/index.md"), "WebSocket", "/websocket"

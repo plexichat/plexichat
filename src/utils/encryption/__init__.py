@@ -28,7 +28,9 @@ Usage:
 from typing import Optional, Tuple
 from .core import (
     EncryptionManager,
+    Keyring,
     KeyringDecryptionError,
+    KeyringMigrationError,
     SnowflakeGenerator,
     MessageEncryptor,
     generate_key_pair as _generate_key_pair,
@@ -529,7 +531,9 @@ def decrypt_file(blob: bytes, aad: Optional[bytes] = None) -> bytes:
 
 __all__ = [
     "EncryptionManager",
+    "Keyring",
     "KeyringDecryptionError",
+    "KeyringMigrationError",
     "SnowflakeGenerator",
     "MessageEncryptor",
     "setup",

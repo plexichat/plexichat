@@ -4,7 +4,7 @@ This guide describes how to configure Valkey for Plexichat in production. Valkey
 
 ## Configuration location
 
-Add Valkey settings to your configuration file under the `valkey` key. Plexichat also accepts `redis` as a legacy alias for backward compatibility (`src/core/database/valkey_client/base.py:45`).
+Add Valkey settings to your configuration file under the `valkey` key. Plexichat also accepts `redis` as a legacy alias for backward compatibility (`src/core/database/valkey_client/base.py`).
 
 ```yaml
 valkey:
@@ -59,9 +59,9 @@ When `enabled` is `false`, Plexichat falls back to in-memory storage:
 ```yaml
 valkey:
   enabled: false
-  host: "localhost"          # From ${VALKEY_HOST:-localhost} in src/config_defaults.py:113
+  host: "localhost"          # From ${VALKEY_HOST:-localhost} in src/config_defaults.py
   port: 6379
-  password: ""               # From ${VALKEY_PASSWORD:-} in src/config_defaults.py:115
+  password: ""               # From ${VALKEY_PASSWORD:-} in src/config_defaults.py
   db: 0
 ```
 
@@ -88,7 +88,7 @@ valkey:
 *   The default is `0`. Use a different number (`0`–`15`) to isolate Plexichat from other applications on the same Valkey server.
 *   Valkey Cluster does not support multiple databases.
 
-Plexichat reads these values in `src/core/database/valkey_client/base.py:51`. Test connectivity:
+Plexichat reads these values in `src/core/database/valkey_client/base.py`. Test connectivity:
 
 ```bash
 redis-cli -h <host> -p <port> -a <password> ping
@@ -102,13 +102,13 @@ Plexichat exposes a single TLS toggle for Valkey.
 
 ```yaml
 valkey:
-  ssl: false   # Default is false. Set to true to use TLS. Defined in src/config_defaults.py:117
+  ssl: false   # Default is false. Set to true to use TLS. Defined in src/config_defaults.py
 ```
 
-There are no `ssl_cert_reqs` or `ssl_ca_certs` keys in `src/config_defaults.py:110` or `src/core/database/valkey_client/base.py:61`. When you set `ssl: true`, the client sets `use_tls: true` in the Glide client configuration:
+There are no `ssl_cert_reqs` or `ssl_ca_certs` keys in `src/config_defaults.py` or `src/core/database/valkey_client/base.py`. When you set `ssl: true`, the client sets `use_tls: true` in the Glide client configuration:
 
-*   `src/core/database/valkey_client/base.py:149` passes `use_tls: self.ssl` to `GlideClientConfiguration`.
-*   `src/api/websocket/__init__.py:487` does the same for the cross-worker pub/sub client: `use_tls = valkey_cfg.get("ssl", False)`.
+*   `src/core/database/valkey_client/base.py` passes `use_tls: self.ssl` to `GlideClientConfiguration`.
+*   `src/api/websocket/__init__.py` does the same for the cross-worker pub/sub client: `use_tls = valkey_cfg.get("ssl", False)`.
 
 Certificate verification uses the system CA bundle. For self-signed certificates, add the CA to the system trust store on the Plexichat host. There is no per-Valkey `ssl_ca_certs` path.
 
@@ -131,11 +131,11 @@ Most managed Valkey and Redis services require TLS:
 ```yaml
 valkey:
   connection_pool:
-    max_connections: 50   # Default in src/config_defaults.py:121
+    max_connections: 50   # Default in src/config_defaults.py
     timeout: 5            # Seconds. Converted to milliseconds for Glide.
 ```
 
-Plexichat applies these values in `src/core/database/valkey_client/base.py:158`. `timeout` becomes `request_timeout = timeout * 1000` and `reconnect_strategy = BackoffStrategy(num_of_retries=3, factor=timeout*1000, exponent_base=2)`. The cross-worker listener uses `request_timeout: 5000` (`src/api/websocket/__init__.py:501`).
+Plexichat applies these values in `src/core/database/valkey_client/base.py`. `timeout` becomes `request_timeout = timeout * 1000` and `reconnect_strategy = BackoffStrategy(num_of_retries=3, factor=timeout*1000, exponent_base=2)`. The cross-worker listener uses `request_timeout: 5000` (`src/api/websocket/__init__.py`).
 
 **Maximum connections**
 
@@ -167,10 +167,10 @@ Monitor `connected_clients` with `redis-cli info clients` and ensure the Valkey 
 
 ```yaml
 valkey:
-  key_prefix: "plexichat:"   # Default in src/config_defaults.py:118
+  key_prefix: "plexichat:"   # Default in src/config_defaults.py
 ```
 
-Plexichat prefixes every key with `key_prefix` (`src/core/database/valkey_client/base.py:63`). The helper `src/core/database/valkey_client/base.py:207` adds the prefix if it is missing.
+Plexichat prefixes every key with `key_prefix` (`src/core/database/valkey_client/base.py`). The helper `src/core/database/valkey_client/base.py` adds the prefix if it is missing.
 
 **Guidelines**
 
@@ -189,12 +189,12 @@ redis-cli --scan --pattern "plexichat:*"
 ```yaml
 valkey:
   ttl:
-    session: 1800    # 30 minutes. Defined in src/config_defaults.py:123
+    session: 1800    # 30 minutes. Defined in src/config_defaults.py
     presence: 300    # 5 minutes
     cache: 60        # 1 minute
 ```
 
-Plexichat reads these values in `src/core/database/valkey_client/base.py:65`.
+Plexichat reads these values in `src/core/database/valkey_client/base.py`.
 
 **Session TTL**
 
@@ -216,7 +216,7 @@ Plexichat reads these values in `src/core/database/valkey_client/base.py:65`.
 
 ```yaml
 valkey:
-  cache_max_items: 1000   # Default in src/config_defaults.py:124
+  cache_max_items: 1000   # Default in src/config_defaults.py
 ```
 
 Without a limit, caches can grow without bound. Set `cache_max_items` to bound memory use. Each cached item typically uses 1–10 KB.
@@ -236,12 +236,12 @@ Recommended policies:
 
 ## Cross-worker pub/sub
 
-When `valkey.enabled` is `true`, Plexichat starts a cross-worker listener that subscribes to `{key_prefix}events:cross_worker` (`src/api/websocket/__init__.py:344`). The connection uses a dedicated Glide client created in `src/api/websocket/__init__.py:463` so subscribing does not put the shared client into subscriber mode.
+When `valkey.enabled` is `true`, Plexichat starts a cross-worker listener that subscribes to `{key_prefix}events:cross_worker` (`src/api/websocket/__init__.py`). The connection uses a dedicated Glide client created in `src/api/websocket/__init__.py` so subscribing does not put the shared client into subscriber mode.
 
 You can observe and tune the poll loop via:
 
-*   `cross_worker_listener_status()` — Returns `enabled`, `status`, `backoff_sec`, `poll_count`, and `running` (`src/api/websocket/__init__.py:100`).
-*   `get_poll_tuning()` and `update_poll_tuning()` — Read and hot-reload tuning constants (`src/api/websocket/__init__.py:559`).
+*   `cross_worker_listener_status()` — Returns `enabled`, `status`, `backoff_sec`, `poll_count`, and `running` (`src/api/websocket/__init__.py`).
+*   `get_poll_tuning()` and `update_poll_tuning()` — Read and hot-reload tuning constants (`src/api/websocket/__init__.py`).
 
 ## Scaling considerations
 

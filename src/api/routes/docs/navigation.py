@@ -19,7 +19,8 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Security", "/security"),
             NavItem("Keyrings & KEKs", "/keyrings"),
             NavItem("Performance", "/performance"),
-            NavItem("Configuration", "/configuration"),
+            # Configuration is its own section below; listing it here too put
+            # two identical links to the same page in the sidebar.
         ],
         "Reference": [
             NavItem("API Routes", "/reference"),
@@ -36,6 +37,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
         "Admin": [
             NavItem("Admin Overview", "/admin"),
+            NavItem("Admin Hardening", "/admin-hardening"),
             NavItem("Getting Started", "/admin/getting-started"),
             NavItem("RBAC System", "/admin/rbac"),
             NavItem("Approval Workflows", "/admin/approval-workflows"),
@@ -44,6 +46,8 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             NavItem("Server Management", "/admin/server-management"),
             NavItem("Operations", "/admin/operations"),
             NavItem("Security", "/admin/security"),
+            NavItem("Data Export (DSAR)", "/admin/data-export"),
+            NavItem("Purge Residue Check", "/admin/purge-residue-check"),
             NavItem("Troubleshooting", "/admin/troubleshooting"),
         ],
         "Database": [
@@ -53,6 +57,8 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
         "Operations": [
             NavItem("Versioning and Updates", "/deployment/versioning"),
+            NavItem("Hardened Deployment", "/deployment/hardened"),
+            NavItem("Load Testing & Capacity", "/deployment/load-testing"),
             NavItem("Env Generator", "/deployment/env-generator"),
         ],
     }

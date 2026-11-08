@@ -68,8 +68,8 @@ def test_min_age_falls_back_to_older_release():
     """When the newest release is below min_age, the manager picks the
     next-newer release instead of giving up."""
     with tempfile.TemporaryDirectory() as tmp:
-        fresh = _make_asset("a.1.0-60")
-        stale = _make_asset("a.1.0-59")
+        fresh = _make_asset("1.0.0a60")
+        stale = _make_asset("1.0.0a59")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -79,19 +79,19 @@ def test_min_age_falls_back_to_older_release():
             with patch.object(
                 StaticClientManager,
                 "_should_fetch",
-                side_effect=lambda a, v, n: v.build < 60,
+                side_effect=lambda a, v, n: v.pre[1] < 60 if v.pre else 0,
             ) as should:
                 with patch.object(
                     StaticClientManager,
                     "_fetch_and_install",
                     return_value=InstallResult(
-                        installed_version="a.1.0-59", already_current=False
+                        installed_version="1.0.0a59", already_current=False
                     ),
                 ) as fetch:
                     result = mgr.ensure_active()
                     assert fetch.call_count == 1
-                    assert fetch.call_args[0][0].build == 59
-                    assert result.installed_version == "a.1.0-59"
+                    assert fetch.call_args[0][0].pre[1] == 59
+                    assert result.installed_version == "1.0.0a59"
                     assert should.call_count == 2
 
 
@@ -99,8 +99,8 @@ def test_below_min_age_returns_error_when_all_too_new():
     """If every newer release fails min_age, return below_min_age without
     installing anything."""
     with tempfile.TemporaryDirectory() as tmp:
-        fresh = _make_asset("a.1.0-60")
-        fresher = _make_asset("a.1.0-59")
+        fresh = _make_asset("1.0.0a60")
+        fresher = _make_asset("1.0.0a59")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -119,7 +119,7 @@ def test_already_on_newest_returns_current():
     """If the installed version matches the newest release, return
     already_current without any fetch attempt."""
     with tempfile.TemporaryDirectory() as tmp:
-        newer = _make_asset("a.1.0-60")
+        newer = _make_asset("1.0.0a60")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -127,7 +127,7 @@ def test_already_on_newest_returns_current():
             StaticClientManager, "_candidate_releases", return_value=[newer]
         ):
             with patch.object(
-                StaticClientManager, "current_version", return_value="a.1.0-60"
+                StaticClientManager, "current_version", return_value="1.0.0a60"
             ):
                 with patch.object(StaticClientManager, "_fetch_and_install") as fetch:
                     result = mgr.ensure_active()
@@ -140,8 +140,8 @@ def test_older_candidates_are_skipped():
     """Releases older than the installed version must be skipped so the
     manager does not downgrade."""
     with tempfile.TemporaryDirectory() as tmp:
-        newer = _make_asset("a.1.0-60")
-        older = _make_asset("a.1.0-58")
+        newer = _make_asset("1.0.0a60")
+        older = _make_asset("1.0.0a58")
 
         mgr = StaticClientManager(_make_cfg(tmp, min_age=3600))
 
@@ -149,7 +149,7 @@ def test_older_candidates_are_skipped():
             StaticClientManager, "_candidate_releases", return_value=[newer, older]
         ):
             with patch.object(
-                StaticClientManager, "current_version", return_value="a.1.0-59"
+                StaticClientManager, "current_version", return_value="1.0.0a59"
             ):
                 with patch.object(
                     StaticClientManager,
@@ -160,14 +160,14 @@ def test_older_candidates_are_skipped():
                         StaticClientManager,
                         "_fetch_and_install",
                         return_value=InstallResult(
-                            installed_version="a.1.0-60", already_current=False
+                            installed_version="1.0.0a60", already_current=False
                         ),
                     ) as fetch:
                         result = mgr.ensure_active()
                         assert fetch.call_count == 1
-                        assert fetch.call_args[0][0].build == 60
+                        assert fetch.call_args[0][0].pre[1] == 60
                         assert should.call_count == 1
-                        assert result.installed_version == "a.1.0-60"
+                        assert result.installed_version == "1.0.0a60"
 
 
 def test_config_template_does_not_raise_keyerror():
@@ -177,11 +177,11 @@ def test_config_template_does_not_raise_keyerror():
 
     cfg = get_static_client_config()
     out = cfg.config_injection.content.format(
-        origin="https://plexichat.example", version="a.1.0-60"
+        origin="https://plexichat.example", version="1.0.0a60"
     )
     assert "serverUrl" in out
     assert "https://plexichat.example" in out
-    assert "a.1.0-60" in out
+    assert "1.0.0a60" in out
     assert "{origin}" not in out
     assert "{version}" not in out
 
@@ -219,13 +219,16 @@ def test_security_headers_csp_defaults_are_consistent():
     fallback = get_static_client_config().security_headers.content_security_policy
     assert dataclass_default == fallback
 
-    assert "script-src 'self' https://cdn.jsdelivr.net" in fallback
+    # Chart.js and Phosphor are self-hosted, so no third-party origins remain.
+    assert "script-src 'self';" in fallback
+    assert "cdn.jsdelivr.net" not in fallback
     script_src = fallback.split("script-src", 1)[1].split(";", 1)[0]
     assert "'unsafe-inline'" not in script_src
-    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in fallback
-    # Self-hosted fonts (Phosphor.woff2) and data: media must be allowed.
-    assert "font-src 'self' https://fonts.gstatic.com data:" in fallback
-    assert "media-src 'self' blob: data:" in fallback
+    assert "style-src 'self' 'unsafe-inline';" in fallback
+    assert "fonts.googleapis.com" not in fallback
+    # Self-hosted fonts (Phosphor.woff2, Inter) and data: media must be allowed.
+    assert "font-src 'self' data:;" in fallback
+    assert "media-src 'self' blob: data:;" in fallback
 
 
 def test_request_origin_prefers_origin_then_host():
@@ -264,7 +267,7 @@ def test_render_config_js_escapes_host_header_injection():
     template = (
         'window.PLEXICHAT_CONFIG = {{ serverUrl: "{origin}", version: "{version}" }};'
     )
-    out = _render_config_js(template, 'http://x";alert(1)//', "a.1.0-60")
+    out = _render_config_js(template, 'http://x";alert(1)//', "1.0.0a60")
     # The raw unescaped breakout never appears verbatim...
     assert 'http://x";alert(1)' not in out
     # ...the quote is escaped, so the string literal never closes...

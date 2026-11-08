@@ -6,6 +6,28 @@ from fastapi import Request
 
 
 class ReferencePagesMixin:
+    async def docs_features_page(self, request: Request, page: str):
+        from fastapi import HTTPException
+
+        import re as _re
+
+        if not _re.fullmatch(r"[a-z0-9-]+", page):
+            raise HTTPException(404, detail="Page not found")
+        return await self._serve_page(
+            request,
+            self._doc_path(f"features/{page}.md"),
+            page.replace("-", " ").title(),
+            f"/features/{page}",
+        )
+
+    async def docs_oauth_scopes(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("oauth-scopes.md"),
+            "OAuth Scopes",
+            "/oauth-scopes",
+        )
+
     async def docs_api_reference(self, request: Request):
         return await self._serve_page(
             request, self._doc_path("api/index.md"), "API Reference", "/reference"

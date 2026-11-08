@@ -4,7 +4,7 @@ All API errors use a single JSON envelope. Check the HTTP status code first, the
 
 ## Error envelope
 
-Every error response returns this shape (`src/api/schemas/common.py:58`):
+Every error response returns this shape (`src/api/schemas/common.py`):
 
 ```json
 {
@@ -22,11 +22,11 @@ Every error response returns this shape (`src/api/schemas/common.py:58`):
 | `error.retry_after` | number | Included only for 429 rate-limit errors. Seconds to wait before retrying. |
 | `error.traceback` | string | Included only for self-test requests with `X-Plexichat-SelfTest-Debug: true` when `selftest.capture_stack_traces` is enabled. |
 
-The server never leaks SQL, file paths, or internal details in `error.message`. Messages are sanitized server-side (`src/api/middleware/error_handling.py:71`).
+The server never leaks SQL, file paths, or internal details in `error.message`. Messages are sanitized server-side (`src/api/middleware/error_handling.py`).
 
 ### Validation errors are 400, not 422
 
-FastAPI generates 422 for Pydantic validation failures by default. Plexichat normalizes all `RequestValidationError` responses to `400` with the standard envelope (`src/api/middleware/error_handling.py:245` and `src/api/middleware/error_handling.py:372`). If you handle validation failures, check for `400` — your client will never receive `422` from this API.
+FastAPI generates 422 for Pydantic validation failures by default. Plexichat normalizes all `RequestValidationError` responses to `400` with the standard envelope (`src/api/middleware/error_handling.py`). If you handle validation failures, check for `400` — your client will never receive `422` from this API.
 
 Example validation error:
 
@@ -87,7 +87,7 @@ Validation errors return `400` with the envelope above, never `422`.
 - `Message must have content...` — Empty message.
 - `File too large` — Upload exceeds the size limit.
 - `Invalid file type` — Unsupported file format.
-- `Invalid storage URL` — Voice metadata URL failed private-network or credential checks (`src/api/routes/features/voice.py:40`).
+- `Invalid storage URL` — Voice metadata URL failed private-network or credential checks (`src/api/routes/features/voice.py`).
 - `Invalid version format` — Malformed version string (`INVALID_VERSION_FORMAT`).
 
 ### Resource errors (404)
@@ -111,10 +111,10 @@ Version errors include extra fields for client update logic:
 {
   "error": {
     "code": "VERSION_OUTDATED",
-    "message": "Client version a.0.9-1 is no longer supported",
-    "client_version": "a.0.9-1",
-    "min_version": "a.1.0-1",
-    "server_version": "a.1.0-1",
+    "message": "Client version 0.9.0a1 is no longer supported",
+    "client_version": "0.9.0a1",
+    "min_version": "1.0.0a1",
+    "server_version": "1.0.0a1",
     "update_url": "https://..."
   }
 }
@@ -212,6 +212,6 @@ async function apiRequest(url, options) {
 
 ## Related documentation
 
-- `src/api/middleware/error_handling.py:109` — `format_error_response` envelope
-- `src/api/middleware/error_handling.py:306` — `setup_exception_handlers` handlers
-- `src/api/schemas/common.py:49` — `ErrorDetail` and `ErrorResponse` models
+- `src/api/middleware/error_handling.py` — `format_error_response` envelope
+- `src/api/middleware/error_handling.py` — `setup_exception_handlers` handlers
+- `src/api/schemas/common.py` — `ErrorDetail` and `ErrorResponse` models

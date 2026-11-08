@@ -11,6 +11,13 @@ import io
 import re
 
 import utils.config as config
+import zstandard
+
+_COMPRESSED_LOG_SUFFIXES = (".log.zst", ".log.zip")
+
+
+def _is_compressed_log(name: str) -> bool:
+    return name.endswith(_COMPRESSED_LOG_SUFFIXES)
 
 
 def get_log_dir() -> Path:
@@ -36,14 +43,14 @@ def list_logs() -> List[Dict[str, Any]]:
     logs = []
 
     for item in log_dir.iterdir():
-        if item.is_file() and (item.suffix == ".log" or item.name.endswith(".log.zip")):
+        if item.is_file() and (item.suffix == ".log" or _is_compressed_log(item.name)):
             stats = item.stat()
             logs.append(
                 {
                     "filename": item.name,
                     "size": stats.st_size,
                     "modified": int(stats.st_mtime * 1000),
-                    "is_zipped": item.name.endswith(".zip"),
+                    "is_zipped": _is_compressed_log(item.name),
                 }
             )
 
@@ -63,7 +70,7 @@ def read_log_lines(
     log_dir = get_log_dir().resolve()
     if Path(filename).name != filename or ".." in Path(filename).parts:
         raise FileNotFoundError(f"Log file {filename} not found")
-    if not (filename.endswith(".log") or filename.endswith(".log.zip")):
+    if not (filename.endswith(".log") or _is_compressed_log(filename)):
         raise FileNotFoundError(f"Log file {filename} not found")
     log_path = (log_dir / filename).resolve()
     try:
@@ -121,6 +128,14 @@ def read_log_lines(
             log_filename = names[0]
             with zf.open(log_filename, "r") as f:
                 text_stream = io.TextIOWrapper(f, encoding="utf-8", errors="replace")
+                for line in text_stream:
+                    handle_line(line)
+    elif filename.endswith(".zst"):
+        with open(log_path, "rb") as raw:
+            with zstandard.ZstdDecompressor().stream_reader(raw) as reader:
+                text_stream = io.TextIOWrapper(
+                    reader, encoding="utf-8", errors="replace"
+                )
                 for line in text_stream:
                     handle_line(line)
     else:

@@ -93,6 +93,18 @@ CASES = [
         "/automod/rules/{rule_id}",
     ),
     (
+        "automod_rules_get",
+        "src.api.routes.admin.moderation",
+        "GET",
+        "/automod/rules?server_id={server_id}",
+    ),
+    (
+        "blocked_users_delete",
+        "src.api.routes.admin.moderation",
+        "DELETE",
+        "/blocked-users/{user_id}",
+    ),
+    (
         "plexijoin_connection",
         "src.api.routes.admin.plexijoin",
         "GET",
@@ -188,6 +200,39 @@ def test_admin_param_accepts_decimal_string(label, module_path, method, path):
     assert int_resp.status_code != 422, int_resp.text
     assert string_resp.status_code == int_resp.status_code, (
         f"{label}: string={string_resp.status_code} int={int_resp.status_code}"
+    )
+
+
+# A malformed id must be a validation error, never a 500. Both routes below
+# declared the id as a plain ``str`` and cast it with ``int()`` inside the
+# handler, so ``?server_id=`` (and any non-numeric value) raised ValueError and
+# the deployment answered 500 Internal Server Error instead of rejecting the
+# request (found on live 1.0.0a183).
+MALFORMED = [
+    (
+        "automod_rules_get",
+        "src.api.routes.admin.moderation",
+        "GET",
+        "/automod/rules?server_id=not-an-id",
+    ),
+    (
+        "blocked_users_delete",
+        "src.api.routes.admin.moderation",
+        "DELETE",
+        "/blocked-users/not-an-id",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label,module_path,method,path", MALFORMED, ids=[entry[0] for entry in MALFORMED]
+)
+def test_malformed_admin_id_is_rejected_before_the_handler(
+    label, module_path, method, path
+):
+    response = _client(module_path).request(method, "/api/v1/admin" + path)
+    assert response.status_code == 422, (
+        f"{label}: malformed id answered {response.status_code}: {response.text}"
     )
 
 

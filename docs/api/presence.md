@@ -90,7 +90,7 @@ Returns a `Presence` object. If the user has never been online, `last_seen` is `
 
 **Visibility rules**
 
-The check is implemented in `_can_view_presence` (`plexichat/src/api/routes/presence.py:314`) and `_get_presence_targets` (`plexichat/src/api/routes/presence.py:89`):
+The check is implemented in `_can_view_presence` (`src/api/routes/presence.py`) and `_get_presence_targets` (`src/api/routes/presence.py`):
 
 - Allowed viewers: self, friends (`get_friend_ids`), or members of any shared server (`get_all_shared_member_ids`).
 - Blocked users are excluded from presence targets and cannot view presence, even if they share a server.

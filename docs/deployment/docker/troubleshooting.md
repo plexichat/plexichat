@@ -12,7 +12,7 @@ Fix common Docker issues.
 Error response from daemon: Ports are not available: exposing port TCP 0.0.0.0:8000 -> 0.0.0.0:8000: listen tcp 0.0.0.0:8000: bind: address already in use
 ```
 
-**Cause:** Another process already uses 8000, 80, 443, or 30000–30100/UDP (the backend voice range at `plexichat/docker-compose.yml:205`).
+**Cause:** Another process already uses 8000, 80, 443, or 30000–30100/UDP (the backend voice range at `plexichat/docker-compose.yml`).
 
 **Fix:**
 
@@ -33,7 +33,7 @@ kill -9 <PID>
 docker compose up -d
 ```
 
-**Option 2 - Change the host port in `plexichat/docker-compose.yml:205`:**
+**Option 2 - Change the host port in `plexichat/docker-compose.yml`:**
 
 ```yaml
 backend:
@@ -150,7 +150,7 @@ Then check database logs:
 docker compose logs db --tail 50
 ```
 
-The health check runs `pg_isready -U ${POSTGRES_USER}` (`plexichat/docker-compose.yml:36`).
+The health check runs `pg_isready -U ${POSTGRES_USER}` (`plexichat/docker-compose.yml`).
 
 ### Error: `Could not connect to Valkey`
 
@@ -160,7 +160,7 @@ The health check runs `pg_isready -U ${POSTGRES_USER}` (`plexichat/docker-compos
 ERROR: Failed to connect to valkey at valkey:6379
 ```
 
-**Cause:** Valkey is not running or the password is wrong. Valkey fails fast if `VALKEY_PASSWORD` is empty (`plexichat/docker-compose.yml:49`).
+**Cause:** Valkey is not running or the password is wrong. Valkey fails fast if `VALKEY_PASSWORD` is empty (`plexichat/docker-compose.yml`).
 
 **Fix:**
 
@@ -171,7 +171,7 @@ docker compose ps valkey
 docker compose exec valkey sh -c 'REDISCLI_AUTH="$VALKEY_PASSWORD" redis-cli ping'
 ```
 
-Expected: `PONG` (`plexichat/docker-compose.yml:55`).
+Expected: `PONG` (`plexichat/docker-compose.yml`).
 
 If it fails, restart Valkey:
 
@@ -193,7 +193,7 @@ grep VALKEY_PASSWORD plexichat/.env
 ERROR: Failed to create bucket plexichat-media in RustFS
 ```
 
-**Cause:** RustFS is not yet healthy or the bucket already exists. RustFS is internal-only (`expose: 9000/9001` at `plexichat/docker-compose.yml:91`) with health check `curl -f http://127.0.0.1:9000/health` (`plexichat/docker-compose.yml:95`).
+**Cause:** RustFS is not yet healthy or the bucket already exists. RustFS is internal-only (`expose: 9000/9001` at `plexichat/docker-compose.yml`) with health check `curl -f http://127.0.0.1:9000/health` (`plexichat/docker-compose.yml`).
 
 **Fix:**
 
@@ -204,7 +204,7 @@ docker compose ps rustfs
 docker compose logs rustfs --tail 50
 ```
 
-`rustfs-init` retries until `rc alias set` succeeds (`plexichat/docker-compose.yml:108`). If you need to run it manually:
+`rustfs-init` retries until `rc alias set` succeeds (`plexichat/docker-compose.yml`). If you need to run it manually:
 
 ```bash
 docker compose exec rustfs sh -c 'curl -sf http://127.0.0.1:9000/health && echo ok'
@@ -468,7 +468,7 @@ Or inspect the API config endpoint:
 curl -sf http://localhost:8000/api/v1/health | jq .
 ```
 
-Ensure the frontend origin is allowed. For example in `plexichat/config/docker-config.yaml:1`:
+Ensure the frontend origin is allowed. For example in `plexichat/config/docker-config.yaml`:
 
 ```yaml
 api:

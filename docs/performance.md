@@ -4,7 +4,7 @@ This guide helps you tune Plexichat for your deployment size. It identifies perf
 
 ## Before you begin
 
-All settings in this guide live in `config.yaml`. Defaults come from `src/config_defaults.py:48`. Change one subsystem at a time and measure the result before tuning another.
+All settings in this guide live in `config.yaml`. Defaults come from `src/config_defaults.py`. Change one subsystem at a time and measure the result before tuning another.
 
 ## Message creation and event fanout
 
@@ -111,13 +111,20 @@ media:
 database:
   type: "sqlite"              # Use SQLite for small deployments, PostgreSQL for large
   connection_pool:
-    min_connections: 2
-    max_connections: 20
+    min_connections: 5
+    max_connections: 100
     connect_timeout: 10
-  monitoring:
-    slow_query_threshold_ms: 1000
-    alert_on_slow_queries: true
 ```
+
+Slow-query alerting lives under `monitoring`, not `database`. The only slow-query setting is a threshold on total query time:
+
+```yaml
+monitoring:
+  alert_thresholds:
+    query_time_ms: 5000
+```
+
+There is no `database.monitoring` block and no `slow_query_threshold_ms` key; setting one has no effect.
 
 ### SQLite
 
@@ -262,7 +269,7 @@ logging:
   level: "DEBUG"        # Use DEBUG in development, INFO or WARNING in production
   max_bytes: 10485760   # 10 MB per file
   backup_count: 5       # 5 rotated files = 50 MB total
-  zip_logs: true        # Compress rotated files
+  zip_logs: true        # Zstd-compress rotated files
   rotate: true          # Enable rotation
   include_exception_details: false  # Disable in production
 ```
@@ -327,6 +334,7 @@ monitoring:
 
 ## Related documentation
 
+*   [Load testing and capacity](deployment/load-testing.md) — load-test scaffold, component measurements, and estimated/measured capacity guidance.
 *   [Database configuration](deployment/configuration/config-database.md) — PostgreSQL and SQLite setup and connection pooling.
 *   [Valkey configuration](deployment/configuration/config-valkey.md) — Caching, session storage, and scaling.
 *   [WebSocket configuration](deployment/configuration/config-websocket.md) — Gateway tuning for concurrent connections.

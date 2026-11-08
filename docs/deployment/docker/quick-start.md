@@ -30,27 +30,29 @@ chmod 600 plexichat/.env
 # S3_ACCESS_KEY, S3_SECRET_KEY, and BACKUP_RESTIC_PASSWORD.
 ```
 
-The Compose file fails fast if any required password is empty (`plexichat/docker-compose.yml:32`, `plexichat/docker-compose.yml:48`). Do not commit `.env` to version control.
+The Compose file fails fast if any required password is empty (`plexichat/docker-compose.yml`, `plexichat/docker-compose.yml`). Do not commit `.env` to version control.
 
 ## Step 2: Start services
 
-From the `plexichat/` directory, run:
+From the `plexichat/` directory, set pinned release tags and run:
 
 ```bash
-BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
+export BACKEND_VERSION=1.0.0a210 CLIENT_VERSION=1.0.0a135
+docker compose up -d
 ```
 
-To deploy a specific version:
+`BACKEND_VERSION` and `CLIENT_VERSION` are required by default (compose uses `:?` and supply-chain verification refuses `latest`/`dev`/floating tags). Use audited non-production overrides only when you explicitly understand the risk:
 
 ```bash
-BACKEND_VERSION=a.1.0-170 CLIENT_VERSION=a.1.0-122 docker compose up -d
+# NOT for production: explicit audited override
+ALLOW_UNPINNED_IMAGES=1 BACKEND_VERSION=latest CLIENT_VERSION=latest docker compose up -d
 ```
 
 This command does the following:
 
 - Pulls images from `gitlab.plexichat.com` (or builds `backend` from `plexichat/Dockerfile:1` which uses `python:3.14.8-slim-trixie`).
 - Starts `db`, `valkey`, `rustfs`, `clamav`, `backend`, and `client`.
-- Applies the settings from `.env` and `plexichat/config/docker-config.yaml:1`.
+- Applies the settings from `.env` and `plexichat/config/docker-config.yaml`.
 
 The first run takes 2–3 minutes to download images, install dependencies, and initialize the database.
 
@@ -86,7 +88,7 @@ plexichat-backend-1 plexichat:dev                      Up 1 minute (healthy)   0
 plexichat-client-1  nginx:stable-alpine                Up 1 minute (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
 ```
 
-`valkey`, `db`, `rustfs`, `clamav`, `backend`, and `client` all report `healthy`. Only `client` (80/443) and `backend` (8000/TCP, 30000–30100/UDP) publish host ports. `rustfs` (9000/9001), `valkey` (6379), and `db` (5432) are internal-only (`plexichat/docker-compose.yml:91`, `plexichat/docker-compose.yml:142`) unless you add a `ports` override.
+`valkey`, `db`, `rustfs`, `clamav`, `backend`, and `client` all report `healthy`. Only `client` (80/443) and `backend` (8000/TCP, 30000–30100/UDP) publish host ports. `rustfs` (9000/9001), `valkey` (6379), and `db` (5432) are internal-only (`plexichat/docker-compose.yml`, `plexichat/docker-compose.yml`) unless you add a `ports` override.
 
 ## Step 4: Access Plexichat
 
@@ -129,7 +131,7 @@ Check the deep health endpoint:
 curl http://localhost:8000/api/v1/health
 ```
 
-Expected fields include `status`, `version`, and `cross_worker_listener` (`plexichat/src/api/routes/health.py:46`).
+Expected fields include `status`, `version`, and `cross_worker_listener` (`src/api/routes/health.py`).
 
 ## Step 6: Run the self-test
 
@@ -198,7 +200,7 @@ docker compose logs backend
 
 Common causes:
 
-- A host port is already in use. Change the mapping in `plexichat/docker-compose.yml:205` or stop the conflicting process.
+- A host port is already in use. Change the mapping in `plexichat/docker-compose.yml` or stop the conflicting process.
 - Insufficient disk space. Free at least 10 GB.
 - Docker daemon is not running. Restart Docker Desktop or `dockerd`.
 
@@ -228,8 +230,8 @@ docker compose up -d
 
 The default stack uses:
 
-- PostgreSQL 18 (`postgres:18-alpine` at `plexichat/docker-compose.yml:25`)
-- Valkey 9.1 (`valkey/valkey:9.1.1-alpine` at `plexichat/docker-compose.yml:43`)
+- PostgreSQL 18 (`postgres:18-alpine` at `plexichat/docker-compose.yml`)
+- Valkey 9.1 (`valkey/valkey:9.1.1-alpine` at `plexichat/docker-compose.yml`)
 - RustFS 1.0 (`rustfs/rustfs:1.0.0-rc.3`) for S3-compatible storage
 - Backend on 8000/TCP and 30000–30100/UDP (`plexichat/Dockerfile:40`)
 - Frontend on 80/443 (`plexichat-client/Dockerfile:16`)

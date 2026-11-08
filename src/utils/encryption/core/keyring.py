@@ -30,6 +30,13 @@ class KeyringDecryptionError(RuntimeError):
     pass
 
 
+class KeyringMigrationError(KeyringDecryptionError):
+    """Raised when a fallback-loaded keyring cannot be safely migrated to its
+    dedicated KEK (e.g. the dedicated KEK is unavailable or mismatched)."""
+
+    pass
+
+
 # Pepper ids double as password-hash envelope labels; keep the charset tight
 # (must match the envelope regex in `src.utils.encryption.pepper`).
 _PEPPER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
@@ -75,6 +82,16 @@ class Keyring:
         self.pepper_keys: Dict[str, bytes] = {}
         self.rotated_at: int = 0
         self._thread_lock = threading.Lock()
+        # True when the on-disk keyring was decrypted with the fallback
+        # (PLEXICHAT_SYSTEM_KEY) path rather than this keyring's dedicated KEK.
+        # Forward migration rewraps the file under the dedicated KEK as soon as
+        # it is available so the fallback window is explicit and bounded.
+        self._loaded_via_fallback: bool = False
+        # Set when a fallback-loaded keyring cannot be safely rewrapped under
+        # its dedicated KEK. Reads remain possible (data recovered in memory)
+        # but writes are refused to avoid persisting under an unsafe/ambiguous
+        # state. Cleared on successful migration.
+        self._migration_blocked_reason: Optional[str] = None
         self.load()
 
         # Initialize blind index root key if it doesn't exist
@@ -173,20 +190,20 @@ class Keyring:
         """
         from ..vault import HardwareVault
 
-        # Try dedicated KEK first
-        try:
-            vault_instance = HardwareVault(kek_env_var=self.kek_env_var)
-            kek = vault_instance.get_kek()
-            if kek:
-                return kek
-        except Exception as e:
-            if not fallback:
+        # A fallback request means the caller has already tried (and failed to
+        # decrypt with) this keyring's dedicated KEK. Retrying that same KEK
+        # here would return the wrong key and turn the recovery read into a
+        # second InvalidTag; go straight to the system KEK instead.
+        if not fallback:
+            try:
+                vault_instance = HardwareVault(kek_env_var=self.kek_env_var)
+                kek = vault_instance.get_kek()
+                if kek:
+                    return kek
+            except Exception as e:
                 raise KeyringDecryptionError(
                     f"Failed to get KEK from {self.kek_env_var}: {e}"
                 )
-            logger.warning(
-                f"Failed to get KEK from {self.kek_env_var}, trying fallback: {e}"
-            )
 
         # Fallback to system KEK if enabled
         if fallback and self.kek_env_var != "PLEXICHAT_SYSTEM_KEY":
@@ -246,6 +263,8 @@ class Keyring:
 
     def _load_from_disk(self):
         """Decrypt and parse the keyring file (caller must hold the lock)."""
+        self._loaded_via_fallback = False
+        self._migration_blocked_reason = None
         if not self.path.exists():
             return
 
@@ -258,6 +277,7 @@ class Keyring:
             nonce = base64.b64decode(encrypted_data["nonce"])
 
             # Try dedicated KEK first, then the system KEK for old keyrings
+            loaded_via_fallback = False
             try:
                 kek = self._get_kek(fallback=False)
                 decrypted = AESGCM(kek).decrypt(nonce, payload, None)
@@ -268,10 +288,13 @@ class Keyring:
                 ):
                     raise
                 logger.warning(
-                    f"Failed to decrypt {self.path.name} with {self.kek_env_var}, trying PLEXICHAT_SYSTEM_KEY fallback"
+                    f"Failed to decrypt {self.path.name} with {self.kek_env_var}, "
+                    "trying PLEXICHAT_SYSTEM_KEY fallback (recovery read). "
+                    "A forward migration to the dedicated KEK will be attempted."
                 )
                 system_kek = self._get_kek(fallback=True)
                 decrypted = AESGCM(system_kek).decrypt(nonce, payload, None)
+                loaded_via_fallback = True
 
             data = json.loads(decrypted)
 
@@ -293,9 +316,25 @@ class Keyring:
             self.current_key_source = self._detect_current_key_source(
                 data.get("current_key_source")
             )
+            self._loaded_via_fallback = loaded_via_fallback
             logger.info(
                 f"Loaded keyring {self.path.name} with {len(self.keys)} key version(s)"
+                + (
+                    " (decrypted via PLEXICHAT_SYSTEM_KEY fallback)"
+                    if loaded_via_fallback
+                    else ""
+                )
             )
+
+            # Forward-migrate fallback-loaded keyrings under the dedicated KEK as
+            # soon as it is available. This bounds the fallback window explicitly
+            # instead of relying on some later incidental save. On load we attempt
+            # migration but preserve recovery reads if the dedicated KEK is not yet
+            # safe to use; write paths refuse unsafe operations until migrated.
+            if loaded_via_fallback:
+                self._attempt_fallback_migration_on_load()
+        except (KeyringDecryptionError, KeyringMigrationError):
+            raise
         except Exception as e:
             logger.critical(
                 f"FATAL: Failed to decrypt keyring at {self.path}: {e}. "
@@ -325,17 +364,171 @@ class Keyring:
             self.keys = {}
             self.rotated_at = 0
             self.pepper_keys = {}
+            self._loaded_via_fallback = False
+            self._migration_blocked_reason = None
 
             raise KeyringDecryptionError(
                 f"Keyring decryption failed for {self.path}: {e}. "
                 f"Restore keyring files from backup or set correct KEK."
             )
 
-    def save(self):
-        """Save keyring to disk, encrypted with KEK (acquires file lock)."""
-        self._with_file_lock(
-            lambda: self._write_atomic(include_blind_index_root_key=True)
+    def _attempt_fallback_migration_on_load(self) -> None:
+        """Attempt forward migration during load; preserve recovery on failure.
+
+        Aligns with kek_migration semantics: if the dedicated KEK is not safely
+        usable, fail loudly and block unsafe write operations while keeping the
+        decrypted key material in memory so recovery reads remain possible.
+        """
+        if not self._loaded_via_fallback:
+            return
+        if not self.path.exists() or not self.keys:
+            self._loaded_via_fallback = False
+            return
+        if self.kek_env_var == "PLEXICHAT_SYSTEM_KEY":
+            self._loaded_via_fallback = False
+            return
+
+        try:
+            self._migrate_fallback_to_dedicated_kek(strict=True)
+        except KeyringMigrationError as e:
+            # Loud failure surfaced at the migration boundary; preserve the
+            # in-memory recovered state for read-only recovery, but block writes.
+            self._migration_blocked_reason = str(e)
+            logger.critical(
+                "Keyring %s remains in fallback-recovery mode: reads are "
+                "available from decrypted memory, but writes are refused until "
+                "dedicated KEK %s is available and migration succeeds. %s",
+                self.path.name,
+                self.kek_env_var,
+                e,
+            )
+
+    def _assert_safe_to_persist(self) -> None:
+        """Raise if persisting this keyring would be unsafe.
+
+        A keyring recovered via fallback must be rewrapped under its dedicated
+        KEK before any persistence; otherwise writes would silently remain under
+        the fallback/ambiguous state (or fail KEK semantics).
+        """
+        if self._migration_blocked_reason:
+            raise KeyringMigrationError(
+                f"Refusing unsafe write for {self.path.name}: keyring was "
+                "recovered via PLEXICHAT_SYSTEM_KEY fallback but forward "
+                f"migration to {self.kek_env_var} is blocked. "
+                f"{self._migration_blocked_reason}"
+            )
+
+    def _migrate_fallback_to_dedicated_kek(self, strict: bool = False) -> bool:
+        """Rewrap a fallback-loaded keyring under its dedicated KEK.
+
+        Called while holding the keyring lock (from ``_load_from_disk`` or a
+        write path). The keyring contents are already decrypted in memory from
+        the ``PLEXICHAT_SYSTEM_KEY`` fallback path; this persists the same data
+        under the dedicated KEK so the fallback window is explicit, bounded, and
+        auditable.
+
+        Returns:
+            ``True`` if migration completed (or was not needed).
+
+        Idempotent: only acts when ``_loaded_via_fallback`` is set and clears the
+        flag after a successful atomic write.
+
+        Fails loudly when the keyring was recovered via fallback but the
+        dedicated KEK cannot be used for safe forward migration. The on-disk
+        keyring is left unchanged to preserve recovery.
+        """
+        if not self._loaded_via_fallback:
+            return True
+
+        if not self.path.exists() or not self.keys:
+            # Nothing persisted to migrate (e.g. brand-new/empty state).
+            self._loaded_via_fallback = False
+            self._migration_blocked_reason = None
+            return True
+
+        if self.kek_env_var == "PLEXICHAT_SYSTEM_KEY":
+            # System keyrings have no separate dedicated fallback target.
+            self._loaded_via_fallback = False
+            self._migration_blocked_reason = None
+            return True
+
+        try:
+            dedicated_kek = self._get_kek(fallback=False)
+        except Exception as e:
+            logger.critical(
+                "KEK forward migration required but unsafe: keyring %s was "
+                "decrypted via PLEXICHAT_SYSTEM_KEY fallback, however the "
+                "dedicated KEK %s is unavailable (%s). On-disk keyring left "
+                "unchanged for recovery; refusing unsafe operation. Restore the "
+                "correct %s or run the kek_migration tool.",
+                self.path.name,
+                self.kek_env_var,
+                e,
+                self.kek_env_var,
+            )
+            raise KeyringMigrationError(
+                f"Keyring {self.path.name} was loaded via PLEXICHAT_SYSTEM_KEY "
+                f"fallback but dedicated KEK {self.kek_env_var} is unavailable; "
+                "refusing unsafe operation (on-disk keyring unchanged, recovery "
+                "reads remain possible via fallback)"
+            ) from e
+
+        if not dedicated_kek or len(dedicated_kek) != 32:
+            logger.critical(
+                "KEK forward migration refused for %s: dedicated KEK %s returned "
+                "an invalid key (%s bytes). On-disk keyring unchanged.",
+                self.path.name,
+                self.kek_env_var,
+                0 if not dedicated_kek else len(dedicated_kek),
+            )
+            raise KeyringMigrationError(
+                f"Dedicated KEK {self.kek_env_var} is invalid for {self.path.name}; "
+                "refusing unsafe migration"
+            )
+
+        logger.info(
+            "KEK forward migration: rewrapping %s from PLEXICHAT_SYSTEM_KEY "
+            "fallback to dedicated KEK %s (%d key version(s), %d pepper(s)).",
+            self.path.name,
+            self.kek_env_var,
+            len(self.keys),
+            len(self.pepper_keys),
         )
+        # Persist the full keyring (including blind index root key) under the
+        # dedicated KEK. _write_atomic always encrypts with fallback=False.
+        self._write_atomic(include_blind_index_root_key=True)
+        self._loaded_via_fallback = False
+        self._migration_blocked_reason = None
+        logger.info(
+            "KEK forward migration complete: %s is now encrypted under dedicated "
+            "KEK %s (idempotent, no data loss).",
+            self.path.name,
+            self.kek_env_var,
+        )
+        return True
+
+    @property
+    def needs_kek_migration(self) -> bool:
+        """True if this keyring was recovered via fallback and is not yet
+        rewrapped under its dedicated KEK."""
+        return self._loaded_via_fallback
+
+    def save(self):
+        """Save keyring to disk, encrypted with KEK (acquires file lock).
+
+        If the keyring was loaded via fallback decryption, this performs an
+        explicit forward migration to the dedicated KEK (under the same lock)
+        and fails loudly if that migration cannot be completed safely.
+        """
+
+        def _save_impl():
+            if self._loaded_via_fallback or self._migration_blocked_reason:
+                self._migrate_fallback_to_dedicated_kek(strict=True)
+                self._assert_safe_to_persist()
+                return
+            self._write_atomic(include_blind_index_root_key=True)
+
+        self._with_file_lock(_save_impl)
 
     def _write_atomic(self, include_blind_index_root_key: bool = False) -> None:
         """Build, encrypt, and atomically write the keyring payload.
@@ -486,7 +679,16 @@ class Keyring:
         return self._with_file_lock(_get_key_impl)
 
     def _save_without_lock(self):
-        """Internal save without acquiring lock (caller must hold lock)."""
+        """Internal save without acquiring lock (caller must hold lock).
+
+        Ensures any pending fallback->dedicated-KEK migration is applied before
+        writing, so eligible writes never persist a fallback-derived keyring under
+        ambiguous state.
+        """
+        if self._loaded_via_fallback or self._migration_blocked_reason:
+            self._migrate_fallback_to_dedicated_kek(strict=True)
+            self._assert_safe_to_persist()
+            return
         self._write_atomic(include_blind_index_root_key=False)
 
     def rotate(self) -> int:

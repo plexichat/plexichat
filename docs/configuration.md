@@ -16,7 +16,7 @@ Plexichat checks for configuration in this order. The first match wins.
 4.  `./config/config.yaml` in the project directory. This is convenient for development checkouts.
 5.  Built-in defaults from `src/config_defaults.py`.
 
-If no file exists, the server creates one at the home path with the built-in defaults, logs a warning, and continues with those defaults. The auto-detect order (home before project) is implemented in `plexichat/src/server/config_loader.py:setup_config`.
+If no file exists, the server creates one at the home path with the built-in defaults, logs a warning, and continues with those defaults. The auto-detect order (home before project) is implemented in `src/server/config_loader.py:setup_config`.
 
 Use `python main.py --config /path/to/config.yaml pre-flight` to validate a file without starting the server.
 
@@ -73,7 +73,7 @@ Some variables are read before the config system initializes and must be set dir
 
 ## Config file handling
 
-- **Deep merge.** The file you provide is deep-merged over the built-in defaults. You only need to include the keys you want to change. See `plexichat/src/utils/common_utils/utils/config/core.py:ConfigLoader`.
+- **Deep merge.** The file you provide is deep-merged over the built-in defaults. You only need to include the keys you want to change. See `src/utils/common_utils/utils/config/core.py:ConfigLoader`.
 - **Atomic writes.** When the server persists a change with `config.set()`, it writes to a temporary file in the same directory and renames it into place. A crash mid-write leaves the previous file intact.
 - **Hot-path cache.** Reads through `config.get()` are cached and invalidated on `set()` or reload.
 

@@ -1,6 +1,6 @@
 # Embeds and URL preview configuration
 
-This guide describes how to configure embeds and URL previews for Plexichat. Embeds are rich cards with a title, description, images, and fields. URL preview fetches Open Graph metadata for links in messages. All defaults in this guide come from `src/config_defaults.py:801`.
+This guide describes how to configure embeds and URL previews for Plexichat. Embeds are rich cards with a title, description, images, and fields. URL preview fetches Open Graph metadata for links in messages. All defaults in this guide come from `src/config_defaults.py`.
 
 ## Before you begin
 
@@ -86,7 +86,7 @@ Set `enabled` to `false` if your server has limited outbound bandwidth or runs i
 
 ### Rate limiting
 
-`rate_limit_requests` is `10` and `rate_limit_window_seconds` is `60` by default. A user can trigger 10 URL fetches per 60 seconds. This limit is separate from the global API rate limit defined in `src/config_defaults.py:821`.
+`rate_limit_requests` is `10` and `rate_limit_window_seconds` is `60` by default. A user can trigger 10 URL fetches per 60 seconds. This limit is separate from the global API rate limit defined in `src/config_defaults.py`.
 
 ### Proxy images
 

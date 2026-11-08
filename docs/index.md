@@ -31,7 +31,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 *   [Voice](deployment/configuration/config-voice.md) — WebRTC signaling, SFU backends, and STUN/TURN.
 *   [WebSocket](deployment/configuration/config-websocket.md) — Gateway settings, compression, rate limits, and allowed origins.
 *   [Search](deployment/configuration/config-search.md) — Search backends, indexing, and result limits.
-*   [Rate limiting](deployment/configuration/config-rate-limiting.md) — Global, user, IP, bot, and webhook rate limits. Defaults are defined in `src/config_defaults.py:270`.
+*   [Rate limiting](deployment/configuration/config-rate-limiting.md) — Global, user, IP, bot, and webhook rate limits. Defaults are defined in `src/config_defaults.py`.
 *   [API and server](deployment/configuration/config-api.md) — CORS, trusted proxies, debug mode, and TLS.
 *   [Email](deployment/configuration/config-email.md) — SMTP setup for verification and password reset.
 *   [Embeds and URL preview](deployment/configuration/config-embeds.md) — Embed limits and URL preview configuration.
@@ -45,7 +45,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 
 *   [Deployment](deployment/index.md) — Installation, security hardening, scaling, monitoring, and backup.
 *   **[Docker deployment](deployment/docker/index.md)** — Quick start, configuration, development, production setup, and troubleshooting.
-*   [Versioning and updates](deployment/versioning.md) — Version scheme `a.1.0-170`, update procedures, and rollback strategies.
+*   [Versioning and updates](deployment/versioning.md) — Version scheme `1.0.0a210`, update procedures, and rollback strategies.
 *   [SQLite to PostgreSQL migration](./deployment/postgres-migration.md) — Automated migration guide.
 *   [Security best practices](security.md) — Authentication security, encryption, and production checklist.
 *   [Performance tuning](performance.md) — Subsystem optimization and scaling recommendations.
@@ -72,10 +72,10 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 | `{{BASE_URL}}` | — | REST API base (default `http://localhost:8000/api/v1`). |
 | `{{WEBSOCKET_URL}}` | — | WebSocket gateway (default `ws://localhost:8000/gateway`). |
 | `/api/v1/ready` | `GET` | Readiness probe. Returns as soon as HTTP is bound. |
-| `/api/v1/health` | `GET` | Health check. Covers database, events, and cross-worker listener. |
+| `/api/v1/health` | `GET` | Health check. Covers database, events, and cross-worker listener. Also served at `/health`, as is `/ready`. |
 | `/api/v1/version` | `GET` | Current server version and minimum supported client version. |
 | `/api/v1/version/negotiate` | `POST` | Version compatibility check for a given `client_version`. |
 | `/api/v1/status` | `GET` | Server state, version, and uptime. |
 | `/api/v1/capabilities` | `GET` | Public constants without authentication. |
 
-Version endpoints are implemented in `src/api/routes/version.py:64` and use the version utility in `src/utils/common_utils/utils/version/__init__.py:1`.
+Version endpoints are implemented in `src/api/routes/version.py` and use the version utility in `src/utils/common_utils/utils/version/`. `/api/v1/version` reports the running build (currently `1.0.0a210`), the minimum supported client, and `api_version`.

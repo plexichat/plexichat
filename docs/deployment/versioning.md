@@ -4,38 +4,40 @@ This guide describes the versioning scheme for Plexichat and how to update a dep
 
 ## Version scheme
 
-Plexichat uses a stage-based version string with the format:
+Plexichat uses [PEP 440](https://peps.python.org/pep-0440/) version strings:
 
 ```
-[stage].[major].[minor]-[build]
+[epoch!]X.Y.Z[.devN][aN|bN|rcN][.postN][+local]
 ```
 
-Valid stages are `a`, `b`, `c`, and `r`. The regular expression enforced by the server is `^([abcr])\.(\d+)\.(\d+)-(\d+)$`. Strings are lowercased and trimmed before validation, and strings that contain `\r`, `\n`, or `\x00` are rejected.
+The regular expression enforced by the server is a PEP 440 pattern. Strings are lowercased and trimmed before validation, and strings that contain `\r`, `\n`, or `\x00` are rejected.
 
 ### Components
 
-- `stage` — Release stage: `a` (alpha), `b` (beta), `c` (candidate), `r` (release).
-- `major` — Major version, minimum 1. Incremented for breaking changes.
-- `minor` — Minor version, minimum 0. Incremented for new features.
-- `build` — Build number, minimum 1. Resets to 1 when `minor` is incremented or when the stage changes.
+- `epoch` — Epoch segment, defaults to 0. Incremented when the versioning scheme itself changes.
+- `release` — `X.Y.Z` release segment (major.minor.patch).
+- `pre` — Pre-release: `aN` (alpha), `bN` (beta), `rcN` (release candidate).
+- `post` — Post-release: `.postN`.
+- `dev` — Development release: `.devN`.
+- `local` — Local version segment: `+local`.
 
 ### Stage order
 
-The server compares versions in the order `stage` > `major` > `minor` > `build`. Stage priority is `a` < `b` < `c` < `r`. A version with a higher stage is always newer than a version with a lower stage, regardless of numeric components.
+PEP 440 compares versions in the order: `epoch` > `release` > `pre` > `post` > `dev` > `local`. Pre-release ordering is `a` (alpha) < `b` (beta) < `rc` (candidate) < final. A pre-release is always older than the same release without a pre-release suffix.
 
 For example:
 
 ```
-a.1.0-1 < a.1.0-2 < a.1.1-1 < b.1.0-1 < c.1.0-1 < r.1.0-1
+1.0.0a1 < 1.0.0a2 < 1.1.0a1 < 1.0.0b1 < 1.0.0rc1 < 1.0.0
 ```
 
-An `r.1.0-1` server is newer than `a.99.99-999`.
+A `1.0.0` release is newer than `99.99.0a999`.
 
 ### Examples
 
-- `a.1.0-1` — Alpha 1.0, build 1
-- `b.2.3-15` — Beta 2.3, build 15
-- `r.1.0-1` — Release 1.0, build 1
+- `1.0.0a1` — Alpha 1.0
+- `2.3.0b15` — Beta 2.3
+- `1.0.0` — Release 1.0
 
 ## Release flow
 
@@ -45,8 +47,8 @@ a version tag in the scheme above is merged into `master`:
 ```bash
 git checkout dev
 git pull
-git tag -a a.1.0-170 -m "a.1.0-170"
-git push origin a.1.0-170
+git tag -a 1.0.0a210 -m "1.0.0a210"
+git push origin 1.0.0a210
 ```
 
 The tag pipeline runs `create_merge_request`, which merges `dev` into `master`
@@ -58,8 +60,8 @@ What each kind of tag does:
 
 | Tag | Pipeline |
 |---|---|
-| `<stage>.<major>.<minor>-<build>`, e.g. `a.1.0-170` | merges `dev` into `master`, then builds and pushes the backend and backup images, scans the image, and publishes the OpenTimestamp proof |
-| `<stage>.<major>.<minor>-build<N>`, e.g. `a.1.0-build<n>` | nothing: a marker cut on `master` by `validate_master_and_tag` with `-o ci.skip`, so it starts no pipeline of its own |
+| `X.Y.Z[aN|bN|rcN]`, e.g. `1.0.0a210` | merges `dev` into `master`, then builds and pushes the backend and backup images, scans the image, and publishes the OpenTimestamp proof |
+| `X.Y.Z-build<N>`, e.g. `1.0.0-build<n>` | nothing: a marker cut on `master` by `validate_master_and_tag` with `-o ci.skip`, so it starts no pipeline of its own |
 
 Notes:
 
@@ -67,9 +69,9 @@ Notes:
   `python main.py pre-flight` (configuration and module initialisation, no port
   bound) and only then tags the merge commit `<version>-build<pipeline id>`,
   where `<version>` is read from `python main.py version` — so the marker
-  follows a bump instead of staying on `a.1.0` forever. A retried job finds the
+  follows a bump instead of staying on `1.0.0` forever. A retried job finds the
   tag already present and succeeds without pushing again.
-- The build marker is not a release: it does not match the `a.X.Y-N` pattern the
+- The build marker is not a release: it does not match the `X.Y.Z[aN|bN|rcN]` pattern the
   docker and release jobs trigger on, so marking `master` never builds an image
   by itself.
 - The number you tag is the number the build advertises: `VERSION` in
@@ -92,36 +94,34 @@ The API prefix is `/api/v1` by default.
 curl https://your-server.com/api/v1/version
 ```
 
-Response (`ServerVersionResponse` in `src/api/schemas/version.py:34`):
+Response (`ServerVersionResponse` in `src/api/schemas/version.py`):
 
 ```json
 {
   "version": {
-    "stage": "a",
-    "major": 1,
-    "minor": 0,
-    "build": 51,
-    "string": "a.1.0-51"
+    "epoch": 0,
+    "release": [1, 0, 0],
+    "pre": { "kind": "a", "n": 51 },
+    "string": "1.0.0a51"
   },
   "min_supported_version": {
-    "stage": "a",
-    "major": 1,
-    "minor": 0,
-    "build": 1,
-    "string": "a.1.0-1"
+    "epoch": 0,
+    "release": [1, 0, 0],
+    "pre": { "kind": "a", "n": 1 },
+    "string": "1.0.0a1"
   },
   "api_version": "v1"
 }
 ```
 
-- `version` is a `VersionInfo` object with `stage`, `major`, `minor`, `build`, and `string` (`src/api/schemas/version.py:19`).
+- `version` is a `VersionInfo` object with `epoch`, `release`, `pre`, `post`, `dev`, `local`, and `string` (`src/api/schemas/version.py`).
 - `min_supported_version` is `null` if no minimum is configured.
 - `api_version` is the API prefix version, currently `v1`.
 
 Other endpoints:
 
-- `POST /api/v1/version/negotiate` — Check whether a client version is compatible. Send `{"client_version": "a.1.0-1"}`. Returns `compatible`, `update_required`, and `update_recommended`, or HTTP 400 for an invalid format and HTTP 426 when an update is required (`src/api/routes/version.py:94`).
-- `GET /api/v1/status` — Get server state, uptime, and maintenance information (`src/api/routes/version.py:230`).
+- `POST /api/v1/version/negotiate` — Check whether a client version is compatible. Send `{"client_version": "1.0.0a1"}`. Returns `compatible`, `update_required`, and `update_recommended`, or HTTP 400 for an invalid format and HTTP 426 when an update is required (`src/api/routes/version.py`).
+- `GET /api/v1/status` — Get server state, uptime, and maintenance information (`src/api/routes/version.py`).
 
 You can also view the version in the admin panel and in the server logs at startup.
 
@@ -133,9 +133,9 @@ You can also view the version in the admin panel and in the server logs at start
 
 Choose an update channel based on your stability needs:
 
-- **Stable** — `r.x.x-x` only.
-- **Testing** — `c.x.x-x` and `r.x.x-x`.
-- **Development** — All stages.
+- **Stable** — final releases (`1.0.0`, no pre-release suffix) only.
+- **Testing** — `rc` candidates and final releases.
+- **Development** — All pre-release stages (`a`, `b`, `rc`).
 
 ## Update
 

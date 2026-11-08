@@ -119,7 +119,7 @@ def _oauth_cookie_params(max_age: int) -> dict:
     response_model=OAuthLoginResponse,
     summary="Initiate OAuth login",
     responses={
-        400: {"model": ErrorResponse, "description": "redirect_uri not allowed"},
+        400: {"model": ErrorResponse, "description": "Invalid request"},
         404: {"model": ErrorResponse, "description": "Unsupported OAuth provider"},
         429: {"model": ErrorResponse, "description": "Too many pending OAuth requests"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
@@ -132,6 +132,7 @@ async def oauth_login_init(
     redirect_uri: str,
     code_challenge: Optional[str] = None,
     code_challenge_method: Optional[str] = None,
+    code_verifier: Optional[str] = None,
 ) -> OAuthLoginResponse:
     if provider not in OAUTH_PROVIDERS:
         raise HTTPException(
@@ -188,6 +189,19 @@ async def oauth_login_init(
         ip_address = _oauth_get_client_ip(request)
     else:
         ip_address = request.client.host if request.client else None
+
+    # RFC 7636: the code_verifier is a client secret and MUST only be sent
+    # at the token-exchange (callback) step. Reject it unconditionally at init.
+    if code_verifier is not None and str(code_verifier).strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": 400,
+                    "message": "code_verifier must not be provided at the OAuth login/init step; keep the verifier secret until the callback",
+                }
+            },
+        )
 
     pkce_enabled = oauth_config.get("pkce_enabled", True) and provider_info.get(
         "supports_pkce", False

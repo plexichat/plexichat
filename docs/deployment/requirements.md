@@ -39,13 +39,13 @@ These numbers include model weights and the inference runtime. The deploy script
 
 ### Database
 
-- **PostgreSQL**: 18. The Docker Compose file uses `postgres:18-alpine` (`plexichat/docker-compose.yml:25`). Earlier PostgreSQL versions may work but are not tested.
+- **PostgreSQL**: 18. The Docker Compose file uses `postgres:18-alpine` (`plexichat/docker-compose.yml`). Earlier PostgreSQL versions may work but are not tested.
 - **Connection**: TCP/IP access from the application server.
 - **Extensions**: `pg_trgm` for text search and `uuid-ossp` for UUID generation.
 
 ### Cache (strongly recommended)
 
-- **Valkey**: 7+. The Docker Compose file uses `valkey/valkey:9.1.1-alpine` (`plexichat/docker-compose.yml:43`).
+- **Valkey**: 7+. The Docker Compose file uses `valkey/valkey:9.1.1-alpine` (`plexichat/docker-compose.yml`).
 - **Persistence**: Enable AOF or RDB for durability.
 
 ### Storage

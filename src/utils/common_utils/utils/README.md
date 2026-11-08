@@ -5,7 +5,7 @@ Core utility modules for the common_utils library.
 ## Modules
 
 - `config/` - Configuration file loading and management (YAML/JSON)
-- `logger/` - Logging utility with rotation and zipping support
+- `logger/` - Logging utility with rotation and zstd compression support
 - `validator/` - Input validation with SQL injection and XSS protection
 - `version/` - Version string parsing, comparison, and management
 

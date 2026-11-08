@@ -7,6 +7,22 @@ For local development, use `http://localhost:8000`.
 
 You must authenticate with `Authorization: Bearer <token>` for all report endpoints.
 
+## Endpoints at a glance
+
+The report surface is split across two routers, and that is why the paths differ:
+the two submission routes are served under `/api/v1/reports`, while the enhanced
+submission and the review/read routes are served by the feature-expansion router
+under `/api/v1/features/reports`. Calling the bare `/api/v1/reports/...` path for
+the last three returns `404`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/reports/messages` | Report a message. |
+| `POST` | `/api/v1/reports/users` | Report a user. |
+| `POST` | `/api/v1/features/reports/enhanced` | Report a message or user with a priority and evidence URLs. |
+| `PATCH` | `/api/v1/features/reports/{report_id}/status` | Move a report through its lifecycle (admin only). |
+| `GET` | `/api/v1/features/reports/{report_id}` | Read a single report (reporter or admin). |
+
 ## Rate limiting and privacy
 
 *   You can submit up to 10 reports per rolling minute. If you exceed the limit, the API returns `429` or `503` depending on the backend tier. The limit is enforced atomically in the shared cache.
@@ -155,7 +171,7 @@ curl -X POST https://api.plexichat.com/api/v1/reports/users \
 Submit an enhanced report that supports both `message` and `user` targets, priority, and evidence URLs. You use this when you need richer moderation metadata than the legacy message or user routes provide.
 
 ```
-POST /api/v1/reports/enhanced
+POST /api/v1/features/reports/enhanced
 ```
 
 Evidence URLs are validated as public `http` or `https` URLs. The server rejects URLs with credentials, loopback, link-local, private, multicast, reserved, or unspecified addresses to prevent SSRF (the URL may later be fetched or rendered by moderation tools).
@@ -177,7 +193,7 @@ Evidence URLs are validated as public `http` or `https` URLs. The server rejects
 ### Example request
 
 ```bash
-curl -X POST https://api.plexichat.com/api/v1/reports/enhanced \
+curl -X POST https://api.plexichat.com/api/v1/features/reports/enhanced \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -232,7 +248,7 @@ Duplicate protection is enforced by a partial unique database index on `(reporte
 Update the lifecycle status of a report. Only admins can call this endpoint.
 
 ```
-PATCH /api/v1/reports/{report_id}/status
+PATCH /api/v1/features/reports/{report_id}/status
 ```
 
 ### Path parameters
@@ -258,7 +274,7 @@ Reopening a report (`status` set to `open`) clears prior review and resolution m
 ### Example request
 
 ```bash
-curl -X PATCH https://api.plexichat.com/api/v1/reports/123456789012345681/status \
+curl -X PATCH https://api.plexichat.com/api/v1/features/reports/123456789012345681/status \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -295,7 +311,7 @@ curl -X PATCH https://api.plexichat.com/api/v1/reports/123456789012345681/status
 Get details for a single report. You can view a report if you are the reporter or an admin. Reporters receive a safe projection that omits internal moderation fields.
 
 ```
-GET /api/v1/reports/{report_id}
+GET /api/v1/features/reports/{report_id}
 ```
 
 ### Path parameters
@@ -307,7 +323,7 @@ GET /api/v1/reports/{report_id}
 ### Example request
 
 ```bash
-curl -X GET https://api.plexichat.com/api/v1/reports/123456789012345681 \
+curl -X GET https://api.plexichat.com/api/v1/features/reports/123456789012345681 \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN"
 ```
 
@@ -343,4 +359,7 @@ Reporters do not receive admin-only fields such as `admin_notes`, `reviewed_by`,
 ## Related endpoints
 
 *   [Messages](messages.md) — Message contents and moderation context.
-*   [Admin](../admin/index.md) — Admin review workflows.
+*   [Admin](../admin/index.md) — Admin review workflows, including the queue
+    routes that triage submitted reports: `GET /api/v1/admin/reports`,
+    `POST /api/v1/admin/message-reports/{report_id}/review`, and
+    `POST /api/v1/admin/user-reports/{report_id}/review`.

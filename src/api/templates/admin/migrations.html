@@ -291,8 +291,8 @@
             <div class="card-header">
                 <h1 class="card-title">Database Migrations</h1>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
-                    <button class="btn btn-outline" onclick="refreshMigrations()">Refresh</button>
-                    <a href="#" class="emergency-link" onclick="showEmergencyModal()">Emergency Override</a>
+                    <button class="btn btn-outline" data-click="refreshMigrations">Refresh</button>
+                    <a href="#" class="emergency-link" data-click="showEmergencyModal">Emergency Override</a>
                 </div>
             </div>
 
@@ -336,14 +336,14 @@
         <div class="modal">
             <div class="modal-header">
                 <h3>Run Migration</h3>
-                <button class="btn btn-outline" onclick="closeModal('run-modal')">Close</button>
+                <button class="btn btn-outline" data-click="closeModal" data-modal="run-modal">Close</button>
             </div>
             <div class="modal-body">
                 <div id="run-modal-content"></div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('run-modal')">Cancel</button>
-                <button class="btn btn-primary" id="run-confirm-btn" onclick="confirmRunMigration()">Run Migration</button>
+                <button class="btn btn-secondary" data-click="closeModal" data-modal="run-modal">Cancel</button>
+                <button class="btn btn-primary" id="run-confirm-btn" data-click="confirmRunMigration">Run Migration</button>
             </div>
         </div>
     </div>
@@ -353,11 +353,11 @@
         <div class="modal">
             <div class="modal-header">
                 <h3>Migration Details</h3>
-                <button class="btn btn-outline" onclick="closeModal('details-modal')">Close</button>
+                <button class="btn btn-outline" data-click="closeModal" data-modal="details-modal">Close</button>
             </div>
             <div class="modal-body" id="details-modal-content"></div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('details-modal')">Close</button>
+                <button class="btn btn-secondary" data-click="closeModal" data-modal="details-modal">Close</button>
             </div>
         </div>
     </div>
@@ -367,7 +367,7 @@
         <div class="modal">
             <div class="modal-header">
                 <h3>Emergency Override</h3>
-                <button class="btn btn-outline" onclick="closeModal('emergency-modal')">Close</button>
+                <button class="btn btn-outline" data-click="closeModal" data-modal="emergency-modal">Close</button>
             </div>
             <div class="modal-body">
                 <div class="warning-banner">
@@ -384,8 +384,8 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('emergency-modal')">Cancel</button>
-                <button class="btn btn-danger" onclick="generateEmergencyToken()">Generate Token</button>
+                <button class="btn btn-secondary" data-click="closeModal" data-modal="emergency-modal">Cancel</button>
+                <button class="btn btn-danger" data-click="generateEmergencyToken">Generate Token</button>
             </div>
         </div>
     </div>
@@ -743,13 +743,23 @@
             }
         }
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('active');
-            currentMigration = null;
-        }
+function closeModal(btnOrId) {
+    const modalId = typeof btnOrId === 'string' ? btnOrId : btnOrId.dataset.modal;
+    document.getElementById(modalId).classList.remove('active');
+    currentMigration = null;
+}
 
-        // Load migrations on page load
-        refreshMigrations();
+// Load migrations on page load
+refreshMigrations();
+
+// Data-click event delegation
+document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-click]');
+    if (!btn) return;
+    e.preventDefault();
+    const fn = window[btn.dataset.click];
+    if (fn) fn(btn);
+});
     </script>
 </body>
 

@@ -1,6 +1,6 @@
 # Search configuration
 
-This guide describes how to configure search for Plexichat. Search settings control how the server indexes and queries messages, servers, and users. All defaults in this guide come from `src/config_defaults.py:431`.
+This guide describes how to configure search for Plexichat. Search settings control how the server indexes and queries messages, servers, and users. All defaults in this guide come from `src/config_defaults.py`.
 
 ## Before you begin
 
@@ -34,7 +34,7 @@ search:
 | `batch_size` | `100` | Number of documents indexed per batch during initial or background reindexing. |
 | `write_time_indexing` | `true` | When `true`, the server indexes new messages immediately. |
 
-Do not use the stale value `sqlite` for `backend`. The correct backend name is `sqlite_fts5` as defined in `src/config_defaults.py:433`. It provides better ranking and performance than plain SQLite.
+Do not use the stale value `sqlite` for `backend`. The correct backend name is `sqlite_fts5` as defined in `src/config_defaults.py`. It provides better ranking and performance than plain SQLite.
 
 ### Enable search
 
@@ -76,7 +76,7 @@ search:
 | `discovery.max_tags` | `10` | Maximum tags a server owner can assign for categorization. |
 | `discovery.bump_cooldown_hours` | `4` | Hours a server owner must wait before they can bump the server to a more prominent position. |
 
-Do not use the stale key `discovery.min_members`. The correct key is `discovery.min_members_for_listing` as defined in `src/config_defaults.py:439`.
+Do not use the stale key `discovery.min_members`. The correct key is `discovery.min_members_for_listing` as defined in `src/config_defaults.py`.
 
 ### Discovery enabled
 

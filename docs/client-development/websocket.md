@@ -106,7 +106,7 @@ Track `payload.s` on every dispatch so you can resume after a dropped connection
 
 ## Gateway opcodes
 
-Values are defined in `plexichat/src/api/websocket/opcodes.py`.
+Values are defined in `src/api/websocket/opcodes.py`.
 
 | Opcode | Name | Description | Sent by |
 | --- | --- | --- | --- |
@@ -149,7 +149,7 @@ Artifacts are collaborative canvases such as whiteboards and live code editors. 
 
 ## Intents
 
-Intents are a bitmask that controls which events you receive. Values are defined in `plexichat/src/core/events/types.py`.
+Intents are a bitmask that controls which events you receive. Values are defined in `src/core/events/types.py`.
 
 ```javascript
 const Intents = {
@@ -215,7 +215,7 @@ These intents require approval. If you request them without permission, the gate
 - `GUILD_PRESENCES` (`1 << 8`)
 - `MESSAGE_CONTENT` (`1 << 15`)
 
-The server also validates the intent type. A non-integer value, a boolean, a negative number, or a value greater than `4194303` fails validation with close code `4013` (Invalid Intents). See `plexichat/src/api/websocket/intents.py`.
+The server also validates the intent type. A non-integer value, a boolean, a negative number, or a value greater than `4194303` fails validation with close code `4013` (Invalid Intents). See `src/api/websocket/intents.py`.
 
 Request only the intents you need to reduce event volume and processing cost.
 
@@ -936,7 +936,7 @@ client.connect();
 
 ## Gateway close codes
 
-Close codes are defined in `plexichat/src/api/websocket/opcodes.py`.
+Close codes are defined in `src/api/websocket/opcodes.py`.
 
 ### Standard codes
 

@@ -139,38 +139,46 @@ def _isolate_process_globals():
     finally:
         import sys
 
-        import src.api as api
-
-        api._setup_complete = False
-        api._internal_secret = None
-        for name in (
-            "_db",
-            "_auth",
-            "_messaging",
-            "_servers",
-            "_relationships",
-            "_presence",
-            "_reactions",
-            "_embeds",
-            "_notifications",
-            "_webhooks",
-            "_threads",
-            "_media",
-            "_settings",
-            "_features",
-            "_avatars",
-            "_reports",
-            "_feedback",
-            "_admin",
-            "_search",
-            "_events",
-            "_polls",
-            "_stickers",
-            "_soundboard",
-            "_telemetry",
-            "_applications",
-        ):
-            setattr(api, name, None)
+        # src.api is heavy: importing it here registers every FastAPI route and
+        # runs Pydantic model-field creation, which can deadlock an xdist
+        # execnet worker mid-teardown. Only touch it if already imported AND
+        # setup ran -- the same defensive pattern already used for the suite
+        # managers below, so a teardown glitch never fails a passing test.
+        api = sys.modules.get("src.api")
+        if api is not None and getattr(api, "_setup_complete", False):
+            try:
+                api._setup_complete = False
+                api._internal_secret = None
+                for name in (
+                    "_db",
+                    "_auth",
+                    "_messaging",
+                    "_servers",
+                    "_relationships",
+                    "_presence",
+                    "_reactions",
+                    "_embeds",
+                    "_notifications",
+                    "_webhooks",
+                    "_threads",
+                    "_media",
+                    "_settings",
+                    "_features",
+                    "_avatars",
+                    "_reports",
+                    "_feedback",
+                    "_admin",
+                    "_search",
+                    "_events",
+                    "_polls",
+                    "_stickers",
+                    "_soundboard",
+                    "_telemetry",
+                    "_applications",
+                ):
+                    setattr(api, name, None)
+            except Exception:  # noqa: BLE001 -- teardown must not fail a passing test
+                pass
 
         # Suite domain managers. Only reset the modules that are already
         # imported so the ~10k tests that never touch the suite pay nothing.

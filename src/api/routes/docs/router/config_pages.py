@@ -6,6 +6,14 @@ from fastapi import Request
 
 
 class ConfigPagesMixin:
+    async def docs_config_static_client(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/configuration/config-static-client.md"),
+            "Static Client Configuration",
+            "/config-static-client",
+        )
+
     async def docs_configuration(self, request: Request):
         return await self._serve_page(
             request,

@@ -28,7 +28,7 @@ def _stored_hash_is_argon2(password_hash: Any) -> bool:
     read from the inner hash. Comparing the envelope itself rejected every
     peppered admin credential: admin login answered ``Insecure password hash on
     file; contact operator`` for a valid password on any build that hashes with
-    a pepper (found on the live a.1.0-166 deployment).
+    a pepper (found on the live 1.0.0a166 deployment).
     """
     if not isinstance(password_hash, str) or not password_hash:
         return False
@@ -47,12 +47,21 @@ class AuthenticationMixin(SessionMixin, PasswordMixin):
 
     """Authentication and user provisioning."""
 
-    def ensure_admin_user(self) -> None:
-        """Ensure admin user exists, create with random password if not."""
+    def ensure_admin_user(self, force: bool = False) -> None:
+        """Ensure admin user exists, create with random password if not.
+
+        If ``force`` is True and an admin user already exists, the existing
+        row is deleted first and a fresh random password is generated. This
+        is used by the ``reset-admin-password`` CLI command so operators can
+        recover access when the bootstrap password has been lost.
+        """
         db = self._db
         row = db.fetch_one("SELECT id FROM admin_users WHERE username = ?", ("admin",))
-        if row:
+        if row and not force:
             return
+        if row and force:
+            db.execute("DELETE FROM admin_sessions WHERE admin_id = ?", (row["id"],))
+            db.execute("DELETE FROM admin_users WHERE username = ?", ("admin",))
         password = _generate_password()
         import src.utils.encryption as encryption
 

@@ -128,36 +128,35 @@ def canonical_license_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
     signature covers, or the two sides of the same check disagree:
 
     * :func:`sign_license` signs whatever mapping it is handed -- i.e. the
-      license JSON as documented above, which carries ``type`` and
-      ``allowed_hosts``.
-    * ``_verify_signature`` used to rebuild the payload from six fields only.
+      license JSON as documented above, which may or may not carry ``type``
+      and ``allowed_hosts``.
+    * ``_verify_signature`` rebuilds the payload from the parsed License
+      object, mirroring exactly how ``LicenseManager._parse_license_data``
+      reads each key out of the raw mapping.
+
+    Only fields actually present in the signed data are included. Fields
+    that were never part of the signed payload (e.g. ``type`` and
+    ``allowed_hosts`` on older vendor-signed licenses) are omitted rather
+    than defaulted, so the canonical view matches what was signed.
+    ``signature`` itself is never included.
 
     Every field the parser accepts and that influences what the license
-    grants is therefore listed here, and ``signature`` never is. Each entry
-    mirrors exactly how ``LicenseManager._parse_license_data`` reads the same
-    key out of the raw mapping, including the defaults, so both sides
-    canonicalize to identical JSON.
-
-    The two fields that used to be missing mattered most:
-
-    * A vendor-signed license that followed the documented format failed
-      verification outright and silently demoted the instance to free tier.
-    * ``type`` was unprotected, so rewriting ``"type": "standard"`` to
-      ``"type": "test"`` in an otherwise valid license kept the signature
-      valid while turning every premium feature on -- ``has_feature``
-      short-circuits on ``type == "test"``. ``allowed_hosts`` was equally
-      rewritable on a provisional license.
+    grants is listed here, mirroring the defaults in
+    ``LicenseManager._parse_license_data`` for fields that are present.
     """
-    return {
+    result: Dict[str, Any] = {
         "version": data.get("version", "1.0"),
-        "type": data.get("type", "standard"),
         "instance_id": data.get("instance_id", ""),
         "issued_at": data.get("issued_at", 0),
         "expires_at": data.get("expires_at"),
         "features": data.get("features", {}),
         "limits": data.get("limits", {}),
-        "allowed_hosts": list(data.get("allowed_hosts", []) or []),
     }
+    if "type" in data:
+        result["type"] = data["type"]
+    if "allowed_hosts" in data:
+        result["allowed_hosts"] = list(data["allowed_hosts"] or [])
+    return result
 
 
 def _canonical_message(data: Mapping[str, Any]) -> bytes:
@@ -208,6 +207,7 @@ class LicenseManager:
         self._public_key = public_key_bytes
         self._license: Optional[License] = None
         self._license_source: Optional[str] = None
+        self._raw_license_data: Optional[Dict[str, Any]] = None
         self._validation_result: Optional[LicenseValidationResult] = None
 
     def snapshot(self) -> tuple:
@@ -322,6 +322,11 @@ class LicenseManager:
                 allowed_hosts=list(data.get("allowed_hosts", []) or []),
                 signature=data.get("signature"),
             )
+            # Keep a copy of the raw signed data (minus the signature field)
+            # so signature verification canonicalizes exactly what was signed,
+            # including only fields that were actually present.
+            raw = {k: v for k, v in data.items() if k != "signature"}
+            self._raw_license_data = raw
             self._license = license_obj
             return license_obj
         except (TypeError, KeyError) as e:
@@ -427,22 +432,13 @@ class LicenseManager:
             public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
 
             # Canonical payload shared with ``sign_license`` -- see
-            # ``canonical_license_payload``. Rebuilding it from the parsed
-            # License object (rather than the raw mapping) is what keeps
-            # ``type`` and ``allowed_hosts`` inside the covered set, so a
-            # license whose entitlements were rewritten after signing no
-            # longer verifies.
+            # ``canonical_license_payload``. We rebuild it from the raw
+            # signed data (not the License object, which always carries
+            # defaults for ``type`` and ``allowed_hosts``) so that a
+            # vendor-signed license that omits those fields verifies
+            # against exactly what was signed.
             message = _canonical_message(
-                {
-                    "version": self._license.version,
-                    "type": self._license.type,
-                    "instance_id": self._license.instance_id,
-                    "issued_at": self._license.issued_at,
-                    "expires_at": self._license.expires_at,
-                    "features": self._license.features,
-                    "limits": self._license.limits,
-                    "allowed_hosts": self._license.allowed_hosts,
-                }
+                canonical_license_payload(self._raw_license_data or {})
             )
 
             signature_bytes = base64.b64decode(self._license.signature)

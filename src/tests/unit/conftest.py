@@ -28,7 +28,7 @@ for _key, _value in DEFAULT_TEST_CONFIG.items():
         _merged.update(_value)
         _value = _merged
     config.set(_key, _value)
-version.setup(current_version="r.1.0-1", min_supported_version="a.1.0-1")
+version.setup(current_version="1.0.0", min_supported_version="1.0.0a1")
 
 
 @pytest.fixture

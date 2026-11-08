@@ -9,13 +9,16 @@ exact request and response schemas, see the generated OpenAPI documentation at
 All routes in this section are relative to:
 
 ```
-https://api.plexichat.com
+https://api.plexichat.com/api/v1
 ```
 
-For local development, use `http://localhost:8000`.
+For local development, use `http://localhost:8000/api/v1`.
 
-The API prefix for most product endpoints is `/api/v1`. Utility endpoints
-such as `/health` and `/version` are at the root.
+Every product endpoint lives under the `/api/v1` prefix (`api.api_prefix`).
+`/health` and `/ready` are the only utility endpoints that are also served at
+the application root, so a probe may use either `/health` or `/api/v1/health`.
+There is no root `/version`, `/status`, `/capabilities` or `/qr`: those exist
+only under `/api/v1`, and a request to the bare root returns `404`.
 
 ## Authentication
 
@@ -35,12 +38,13 @@ These endpoints do not require authentication unless noted:
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/health` | Readiness and health signal. |
-| `GET` | `/version` | Current backend version. |
-| `POST` | `/version/negotiate` | Client compatibility negotiation. |
-| `GET` | `/status` | Operational or maintenance status. |
-| `GET` | `/capabilities` | Public runtime constants and feature hints. |
-| `GET` | `/qr` | QR code generation (local). |
+| `GET` | `/health` (also `/api/v1/health`) | Health signal. |
+| `GET` | `/ready` (also `/api/v1/ready`) | Readiness probe; returns once HTTP is bound. |
+| `GET` | `/api/v1/version` | Current backend version and minimum supported client version. |
+| `POST` | `/api/v1/version/negotiate` | Client compatibility negotiation. |
+| `GET` | `/api/v1/status` | Operational status and uptime. |
+| `GET` | `/api/v1/capabilities` | Public runtime constants and feature hints. No token required. |
+| `GET` | `/api/v1/qr` | QR code generation; requires the parameters the schema documents. |
 
 ## Authenticated product areas
 
@@ -65,7 +69,7 @@ These endpoints do not require authentication unless noted:
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/v1/capabilities` | Per-feature availability state. Requires authentication. Returns `{feature: {state, message, details}}` for client banners. |
+| `GET` | `/api/v1/capabilities` | Per-feature availability state. Public: no token required. Returns `{feature: {state, message, details}}` for client banners. |
 | `GET` | `/api/v1/admin/capabilities` | Same as above plus a top-level `summary` with counts and `by_state` grouping. Requires admin privileges. |
 
 ## Additional route groups

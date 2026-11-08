@@ -1,13 +1,18 @@
-Chart.defaults.color = '#999';
-Chart.defaults.borderColor = 'oklch(0.22 0.005 240)';
-Chart.defaults.plugins.legend.display = true;
-Chart.defaults.plugins.legend.position = 'top';
-Chart.defaults.plugins.legend.align = 'end';
-Chart.defaults.plugins.legend.labels.boxWidth = 12;
-Chart.defaults.plugins.legend.labels.font = { size: 10 };
-Chart.defaults.elements.line.borderWidth = 2;
-Chart.defaults.elements.point.radius = 3;
-Chart.defaults.elements.point.hoverRadius = 5;
+// Chart.js is vendored and served locally. Guard every use so a missing or
+// blocked chart bundle degrades to an empty panel instead of throwing at the
+// top of this script and taking the rest of the dashboard down with it.
+if (typeof Chart !== 'undefined') {
+    Chart.defaults.color = '#999';
+    Chart.defaults.borderColor = 'oklch(0.22 0.005 240)';
+    Chart.defaults.plugins.legend.display = true;
+    Chart.defaults.plugins.legend.position = 'top';
+    Chart.defaults.plugins.legend.align = 'end';
+    Chart.defaults.plugins.legend.labels.boxWidth = 12;
+    Chart.defaults.plugins.legend.labels.font = { size: 10 };
+    Chart.defaults.elements.line.borderWidth = 2;
+    Chart.defaults.elements.point.radius = 3;
+    Chart.defaults.elements.point.hoverRadius = 5;
+}
 
 const C = {
     blue: 'oklch(0.65 0.18 250)',
@@ -57,6 +62,7 @@ const pageTitles = {
 };
 
 // === TAB SYSTEM ===
+let _handlingHashChange = false;
 const showTab = n => {
     // Handle compound hashes like 'approval-{id}' and 'user-{id}' —
     // navigate to the parent tab and schedule a scroll-to after data loads.
@@ -132,6 +138,16 @@ document.addEventListener('keydown', e => {
         const toast = document.body.querySelector('.toast');
         if (toast) toast.querySelector('.toast-dismiss')?.click();
     }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-click]')) {
+        e.preventDefault();
+        e.target.closest('[data-click]').click();
+    }
+});
+
+// === ALERTS FILTER CHANGE ===
+document.addEventListener('change', e => {
+    const target = e.target.closest('#alerts-source-filter, #alerts-severity-filter, #alerts-hours-filter');
+    if (target) refreshAlerts();
 });
 
 // === EVENT DELEGATION ===
@@ -183,6 +199,7 @@ const actionHandlers = new Map([
     ['manageUser', manageUser],
     ['openExport', openExport],
     ['refreshAccessTokenDetail', refreshAccessTokenDetail],
+    ['refreshAlerts', refreshAlerts],
     ['refreshApprovals', refreshApprovals],
     ['refreshAuditLog', refreshAuditLog],
     ['refreshHashReports', refreshHashReports],
@@ -199,6 +216,8 @@ const actionHandlers = new Map([
     ['removeAccessTokenScope', removeAccessTokenScope],
     ['removeBan', removeBan],
     ['removeUserBadge', removeUserBadge],
+    ['filterAlertsSource', filterAlertsSource],
+    ['resetAlertsFilter', resetAlertsFilter],
     ['resetAutomodRule', resetAutomodRule],
     ['resetTelemetry', resetTelemetry],
     ['reviewHashReport', reviewHashReport],
@@ -228,6 +247,7 @@ const actionHandlers = new Map([
     ['toggleAdminUserStatus', toggleAdminUserStatus],
     ['toggleAutomodRule', toggleAutomodRule],
     ['toggleSidebar', toggleSidebar],
+    ['toggleSummary', toggleSummary],
     ['triggerCopy', triggerCopy],
     ['triggerDownload', triggerDownload],
     ['unblockHash', unblockHash],
@@ -405,6 +425,7 @@ function showToast(message, type = 'info') {
 }
 
 function renderChart(canvasId, type, data, options) {
+    if (typeof Chart === 'undefined') return;
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     if (charts[canvasId]) charts[canvasId].destroy();
@@ -606,6 +627,28 @@ async function refreshAlerts() {
     await loadSystemAlerts({ source, severity, hours });
 }
 
+function resetAlertsFilter() {
+    const el = document.getElementById('alerts-hours-filter');
+    if (el) el.value = '168';
+    refreshAlerts();
+}
+
+function filterAlertsSource(btn) {
+    const s = document.getElementById('alerts-source-filter');
+    if (s && btn.dataset.source) s.value = btn.dataset.source;
+    refreshAlerts();
+}
+
+function toggleSummary(btn) {
+    const n = btn.nextElementSibling;
+    if (n) {
+        n.hidden = !n.hidden;
+        btn.textContent = (n.hidden ? '▶' : '▼') + ' Summary (' + btn.dataset.summaryLabel + ')';
+        btn.setAttribute('aria-expanded', n.hidden ? 'false' : 'true');
+        sessionStorage.setItem('plexichat-summary-collapsed', n.hidden ? '1' : '0');
+    }
+}
+
 async function loadSystemAlerts(opts = {}) {
     const list = document.getElementById('alerts-full-list') || document.getElementById('system-alerts-list');
     if (!list) return;
@@ -633,7 +676,7 @@ async function loadSystemAlerts(opts = {}) {
                 .sort((a, b) => b[1] - a[1])
                 .map(([k, v]) => {
                     const srcColor = { cross_worker: 'var(--destructive, #ef4444)', valkey: 'var(--warning, #f59e0b)', db_pool: 'var(--warning, #f59e0b)', approvals: 'var(--success, #22c55e)', admin: 'var(--primary, #6366f1)' }[k] || 'inherit';
-                    return `<span class="source-count-chip" role="button" tabindex="0" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;color:${srcColor};" onclick="var s=document.getElementById('alerts-source-filter');if(s){s.value='${esc(k)}';refreshAlerts();}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Filter to ${esc(k)}">${esc(k)}: ${v}</span>`;
+                    return `<span class="source-count-chip" role="button" tabindex="0" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;color:${srcColor};" data-click="filterAlertsSource" data-source="${esc(k)}" title="Filter to ${esc(k)}">${esc(k)}: ${v}</span>`;
                 });
             sourceCountsEl.innerHTML = parts.length ? parts.join('  ·  ') : '';
         }
@@ -689,7 +732,7 @@ async function loadSystemAlerts(opts = {}) {
             })
             .join(', ');
         const summaryHtml = `<div class="text-xs" style="padding:6px 0;margin-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;">
-            <span class="summary-toggle" role="button" tabindex="0" aria-expanded="true" style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="var n=this.nextElementSibling;n.hidden=!n.hidden;this.textContent=(n.hidden?'▶':'▼')+' Summary (${sinceLabel})';this.setAttribute('aria-expanded',n.hidden?'false':'true');sessionStorage.setItem('plexichat-summary-collapsed',n.hidden?'1':'0');" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}" title="Toggle summary">▼ Summary (${sinceLabel})</span>
+            <span class="summary-toggle" role="button" tabindex="0" aria-expanded="true" style="cursor:pointer;user-select:none;white-space:nowrap;" data-click="toggleSummary" data-summary-label="${esc(sinceLabel)}" title="Toggle summary">▼ Summary (${sinceLabel})</span>
             <span class="summary-items" style="color:var(--muted-foreground);">${summary}</span>
         </div>`;
 
@@ -1114,6 +1157,71 @@ async function loadAccessTokenDetail(btn) {
 }
 
 function closeAccessTokenDetail() { selectedAccessTokenId = null; document.getElementById('access-token-detail').classList.add('hidden'); }
+
+function showCreateTokenModal() {
+    document.getElementById('create-token-name').value = '';
+    document.getElementById('create-token-description').value = '';
+    document.getElementById('create-token-scope-mode').value = 'none';
+    document.getElementById('create-token-expires').value = '30d';
+    document.getElementById('create-token-scopes').value = '';
+    const modal = document.getElementById('create-token-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('active');
+    document.getElementById('create-token-name').focus();
+}
+
+function closeCreateTokenModal() {
+    const modal = document.getElementById('create-token-modal');
+    modal.classList.remove('active');
+    modal.classList.add('hidden');
+}
+
+async function confirmCreateToken() {
+    const nameInput = document.getElementById('create-token-name');
+    const name = nameInput.value.trim();
+    if (!name) {
+        showToast('Token name is required', 'warning');
+        nameInput.focus();
+        return;
+    }
+
+    const expiry = document.getElementById('create-token-expires').value;
+    const expirySeconds = {'30d': 30 * 86400, '90d': 90 * 86400, '1y': 365 * 86400}[expiry];
+    const body = {
+        name,
+        description: document.getElementById('create-token-description').value.trim(),
+        scope_mode: document.getElementById('create-token-scope-mode').value,
+    };
+    if (expirySeconds) body.expires_at = Math.floor(Date.now() / 1000) + expirySeconds;
+
+    try {
+        const created = await api('/api/v1/admin/security/access-tokens', {method:'POST', body:JSON.stringify(body)});
+        const tokenId = created.access_token?.id;
+        const scopes = document.getElementById('create-token-scopes').value
+            .split(',').map(v => v.trim()).filter(Boolean);
+        const failedScopes = [];
+        if (tokenId) {
+            for (const value of scopes) {
+                try {
+                    await api(`/api/v1/admin/security/access-tokens/${encodeURIComponent(tokenId)}/scopes`, {
+                        method:'POST',
+                        body:JSON.stringify({scope_type: value.includes('/') ? 'cidr' : 'ip', value}),
+                    });
+                } catch (e) {
+                    failedScopes.push(value);
+                }
+            }
+        }
+        closeCreateTokenModal();
+        loadSecurity();
+        const warning = failedScopes.length
+            ? ` (scopes failed: ${failedScopes.join(', ')})`
+            : '';
+        showToast(`Token created. Copy it now: ${created.token}${warning}`, failedScopes.length ? 'warning' : 'success');
+    } catch (e) {
+        showToast('Failed to create token: ' + e.message, 'error');
+    }
+}
 
 async function refreshAccessTokenDetail() { if (selectedAccessTokenId) loadAccessTokenDetail(selectedAccessTokenId); }
 
@@ -2262,7 +2370,6 @@ async function saveServerRetention(e) {
 }
 
 // === HASH-BASED NAVIGATION (back/forward buttons + bookmarks) ===
-let _handlingHashChange = false;
 window.addEventListener('hashchange', () => {
     if (_handlingHashChange) return;
     const hash = window.location.hash.slice(1);
@@ -2295,4 +2402,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('user-report-status')?.addEventListener('change', loadUserReports);
     document.getElementById('approval-status-filter')?.addEventListener('change', loadApprovals);
     document.getElementById('dash-time-range')?.addEventListener('change', refreshMetrics);
+
+    // Mandatory-2FA guard: login already forces setup, but a session minted
+    // before the requirement (or before the setup was completed) must not be
+    // usable on the dashboard. Send it back through the login flow.
+    api('/api/v1/admin/auth/security-status')
+        .then(sec => { if (sec.must_setup_otp) window.location.replace('/api/v1/admin/login'); })
+        .catch(() => {});
 });

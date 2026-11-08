@@ -1,0 +1,77 @@
+{
+  "basis": {
+    "platform": "Linux-7.0.14-26-pve-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "python": "3.14.6",
+    "cpu_count": 4
+  },
+  "measured_at": 1794078181.1077547,
+  "sample": {
+    "msg_chars": 240,
+    "tokens": 40,
+    "compress": true
+  },
+  "argon2_login": {
+    "verify_mean_ms": 554.99,
+    "verify_p95_ms": 551.3,
+    "single_process_max_verify_per_s": 1.8,
+    "memory_cost_kib": 65536,
+    "note": "dominant per-login CPU+64MiB; 1 backend process => effectively serialized"
+  },
+  "per_message_components_us": {
+    "crypto_total": 78.82,
+    "sqlite_local_fts_plus_40_token_rows": 1333.38,
+    "per_recipient_conn_json_zlib": 24.04
+  },
+  "fanout_floor": [
+    {
+      "recipient_connections": 1,
+      "primitive_cpu_floor_ms": 1.436,
+      "optimistic_cpu_ceiling_msg_per_s": 696.3,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 2,
+      "primitive_cpu_floor_ms": 1.46,
+      "optimistic_cpu_ceiling_msg_per_s": 684.8,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 5,
+      "primitive_cpu_floor_ms": 1.532,
+      "optimistic_cpu_ceiling_msg_per_s": 652.6,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 10,
+      "primitive_cpu_floor_ms": 1.653,
+      "optimistic_cpu_ceiling_msg_per_s": 605.1,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 20,
+      "primitive_cpu_floor_ms": 1.893,
+      "optimistic_cpu_ceiling_msg_per_s": 528.3,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 50,
+      "primitive_cpu_floor_ms": 2.614,
+      "optimistic_cpu_ceiling_msg_per_s": 382.5,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 100,
+      "primitive_cpu_floor_ms": 3.816,
+      "optimistic_cpu_ceiling_msg_per_s": 262.0,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    },
+    {
+      "recipient_connections": 200,
+      "primitive_cpu_floor_ms": 6.22,
+      "optimistic_cpu_ceiling_msg_per_s": 160.8,
+      "caveat": "excludes Postgres txn+network, Valkey, FTS-via-Postgres, per-member channels.view permission checks, asyncio/uvicorn, fsync, socket I/O; real stack is lower"
+    }
+  ],
+  "disclaimer": "NOT end-to-end measured throughput. Run login_load/ws_idle/msg_send against the target 5600X/12GB default Docker deployment for accurate stack figures."
+}

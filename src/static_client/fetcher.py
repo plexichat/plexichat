@@ -26,7 +26,6 @@ import requests
 import utils.logger as logger
 from src.utils.common_utils.utils.version.core import (
     Version,
-    VersionStage,
     format_version,
     parse_version,
 )
@@ -184,14 +183,14 @@ def _hash_file(path: Path, algo: str = "sha256") -> str:
 
 def _release_target_for_version(
     cfg: StaticClientConfig, desired: Version
-) -> Tuple[VersionStage, int, int]:
-    """Return the (stage, major, minor) used to find matching client releases."""
-    return (desired.stage, desired.major, desired.minor)
+) -> Tuple[int, ...]:
+    """Return the release tuple used to find matching client releases."""
+    return desired.release
 
 
-def _release_version_tag(stage: VersionStage, major: int, minor: int) -> str:
-    """Build a regex that matches releases for a given (stage, major, minor)."""
-    return f"^{stage.value}\\.{major}\\.{minor}-\\d+$"
+def _release_version_tag(major: int, minor: int, patch: int = 0) -> str:
+    """Build a regex that matches PEP 440 releases for a given major.minor.patch."""
+    return rf"^{major}\.{minor}\.{patch}(?:[abrc]\d+)?$"
 
 
 class GitLabReleaseClient:
@@ -244,7 +243,7 @@ class GitLabReleaseClient:
         return results
 
     def list_release_assets_for_version(
-        self, stage: VersionStage, major: int, minor: int
+        self, major: int, minor: int, patch: int = 0
     ) -> List[Tuple[Version, ReleaseAsset]]:
         """Return all matching (version, asset) pairs sorted newest-first.
 
@@ -253,7 +252,7 @@ class GitLabReleaseClient:
         returned (not just the newest) so the manager can fall back to an
         older release when the newest one fails the ``min_age`` check.
         """
-        pattern = re.compile(_release_version_tag(stage, major, minor))
+        pattern = re.compile(_release_version_tag(major, minor, patch))
         results: List[Tuple[Version, ReleaseAsset]] = []
         for release in self.list_releases():
             tag = release.get("tag_name") if isinstance(release, dict) else None
@@ -294,25 +293,25 @@ class GitLabReleaseClient:
             )
         results.sort(
             key=lambda pair: (
-                pair[0].stage.value,
-                pair[0].major,
-                pair[0].minor,
-                pair[0].build,
+                pair[0].release,
+                pair[0].pre or (),
+                pair[0].post if pair[0].post is not None else -1,
+                pair[0].dev if pair[0].dev is not None else -1,
             ),
             reverse=True,
         )
         return results
 
     def find_release_for_version(
-        self, stage: VersionStage, major: int, minor: int
+        self, major: int, minor: int, patch: int = 0
     ) -> Optional[ReleaseAsset]:
-        """Find the release with the highest build for (stage, major, minor).
+        """Find the release with the highest build for (major, minor, patch).
 
         Returns ``None`` if no matching release exists. This is a thin
         wrapper around :meth:`list_release_assets_for_version` kept for
         back-compat with existing callers.
         """
-        matches = self.list_release_assets_for_version(stage, major, minor)
+        matches = self.list_release_assets_for_version(major, minor, patch)
         return matches[0][1] if matches else None
 
 

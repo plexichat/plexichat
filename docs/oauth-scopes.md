@@ -2,7 +2,7 @@
 
 OAuth scopes define which user data or application capabilities an external client requests during authorization. The server validates every requested scope, regardless of what the client displays.
 
-Source of truth: `src/core/applications/oauth/scopes.py:8`.
+Source of truth: `src/core/applications/oauth/scopes.py`.
 
 ## Runtime summary
 
@@ -29,14 +29,14 @@ Privileged scopes expose sensitive data and require extra review. The `bot` scop
 
 Definitions:
 
-*   `VALID_SCOPES` — `src/core/applications/oauth/scopes.py:8`
-*   `PRIVILEGED_SCOPES` — `src/core/applications/oauth/scopes.py:36` (`guilds.members.read`, `messages.read`)
-*   `BOT_REQUIRED_SCOPES` — `src/core/applications/oauth/scopes.py:34` (`bot`)
-*   `SCOPE_DESCRIPTIONS` — `src/core/applications/oauth/scopes.py:21`
+*   `VALID_SCOPES` — `src/core/applications/oauth/scopes.py`
+*   `PRIVILEGED_SCOPES` — `src/core/applications/oauth/scopes.py` (`guilds.members.read`, `messages.read`)
+*   `BOT_REQUIRED_SCOPES` — `src/core/applications/oauth/scopes.py` (`bot`)
+*   `SCOPE_DESCRIPTIONS` — `src/core/applications/oauth/scopes.py`
 
 ## Validate scopes
 
-Use `validate_scopes(scopes)` and `parse_scopes(scope_string)` from `src/core/applications/oauth/scopes.py:42`:
+Use `validate_scopes(scopes)` and `parse_scopes(scope_string)` from `src/core/applications/oauth/scopes.py`:
 
 ```python
 from src.core.applications.oauth.scopes import validate_scopes, parse_scopes
@@ -45,7 +45,7 @@ scopes = parse_scopes("identify email guilds")
 valid, issues = validate_scopes(scopes)
 ```
 
-The server also enforces scopes during the OAuth flow. See `src/api/routes/auth/oauth.py:202` and `src/api/routes/auth/oauth_config.py:1`.
+The server also enforces scopes during the OAuth flow. See `src/api/routes/auth/oauth.py` and `src/api/routes/auth/oauth_config.py`.
 
 ## Usage notes
 
@@ -53,7 +53,7 @@ The server also enforces scopes during the OAuth flow. See `src/api/routes/auth/
 *   Privileged scopes require extra review because they expose sensitive data.
 *   The `bot` scope is distinct because it triggers bot installation behavior. Include it only when you install a bot.
 *   Scope validation happens server-side even if a client renders this list correctly.
-*   OAuth clients must register allowed redirect URIs. The server rejects unlisted `redirect_uri` values. See `src/api/routes/auth/oauth.py:74`.
+*   OAuth clients must register allowed redirect URIs. The server rejects unlisted `redirect_uri` values. See `src/api/routes/auth/oauth.py`.
 
 ## Related pages
 

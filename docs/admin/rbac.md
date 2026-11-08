@@ -334,7 +334,7 @@ The correct path is `/audit/logs`, not `/audit-log`. Do not use `/audit-log`; th
 
 ### A permission is not working
 
-- Verify spelling and that the scope exists in `PERMISSION_SCOPES` (see `src/core/admin/permissions.py:42`).
+- Verify spelling and that the scope exists in `PERMISSION_SCOPES` (see `src/core/admin/permissions.py`).
 - Check for typos such as `users.force_password_change` (use `users.force_username_change`), `servers.ban` (use `admin.moderation.bans`), or `reports.resolve` (use `reports.action`).
 - Confirm the permission was granted as `true` in at least one assigned role. Review `GET /api/v1/admin/admins/{id}/roles`.
 

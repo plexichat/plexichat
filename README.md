@@ -121,6 +121,36 @@ You can read a user's presence only if you are that user, a friend, or a member 
 * Wildcard permissions such as `*` are rejected (`src/core/servers/permission_utils.py:28`).
 * Permission scopes are defined in `src/core/admin/permissions.py:42` and enforced by `require_admin_permission` (`src/api/routes/admin/utils.py:164`).
 
+## Admin credentials
+
+The admin user (`admin`) is created automatically on first boot with a randomly generated password.
+
+### Where the password is shown
+
+On first boot the password is printed to the container console:
+
+```
+PLEXICHAT FIRST BOOT: generated admin credentials
+============================================================
+  Username: admin
+  Password: <random-24-char-password>
+  Saved to ~/.plexichat/admin_credentials.txt (mode 0600)
+  Set PLEXICHAT_NO_SAVE_ADMIN_CREDENTIALS=1 to disable disk write.
+============================================================
+```
+
+It is also written to `~/.plexichat/admin_credentials.txt` (mode `0600`) so it survives container recreation. Set `PLEXICHAT_NO_SAVE_ADMIN_CREDENTIALS=1` in your environment to disable the disk write if you prefer console-only delivery.
+
+### Resetting a lost password
+
+If you lose the admin password (for example, the container was recreated before you captured the console output), regenerate it with:
+
+```bash
+python main.py reset-admin-password
+```
+
+This deletes the existing `admin` user, creates a new one with a fresh random password, prints it once, and writes it to `~/.plexichat/admin_credentials.txt`. OTP setup is required on first login with the new password.
+
 ## Use the API
 
 ### Route groups
@@ -240,13 +270,13 @@ For details, see `src/tests/README.md` and `docs/README.md`.
 
 ## Version
 
-Current version: `a.1.0-170` (Alpha), defined in `src/server/lifecycle.py:16`.
+Current version: `1.0.0a210` (Alpha), defined in `src/server/lifecycle.py:16`.
 
 `src.config_defaults.default_version()` reads that constant lazily, so a
 freshly generated config always advertises the build the process is running.
 
 Releases are cut by tagging a `dev` commit with this same string; the tag
 pipeline merges `dev` into `master`, and `master` then marks the merge as
-`<version>-build<pipeline id>` (`a.1.0-build<pipeline id>` today, since the tag
+`<version>-build<pipeline id>` (`1.0.0-build<pipeline id>` today, since the tag
 is derived from this constant). See
 `docs/deployment/versioning.md#release-flow`.

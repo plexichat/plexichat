@@ -5,7 +5,7 @@ This sub-package splits the original core.py into focused mixin modules.
 The EncryptionManager is composed via MRO mixin pattern.
 """
 
-from .keyring import Keyring, KeyringDecryptionError
+from .keyring import Keyring, KeyringDecryptionError, KeyringMigrationError
 from .manager import EncryptionManager, PasswordHasher
 from .manager import VerifyMismatchError, VerificationError, InvalidHash
 from .snowflake import SnowflakeGenerator
@@ -15,6 +15,7 @@ from .signing import generate_key_pair, sign_data, verify_signature
 __all__ = [
     "Keyring",
     "KeyringDecryptionError",
+    "KeyringMigrationError",
     "EncryptionManager",
     "PasswordHasher",
     "VerifyMismatchError",

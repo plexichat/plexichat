@@ -9,7 +9,9 @@ repos:
         pass_filenames: false
         args: [
           "--extend-exclude",
-          ".venv,venv,.pytest_cache,/cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,/media,/config,logs"
+          # ``loadtest/`` holds throughput benchmark scripts written as dense
+          # one-liners; they are developer tooling, not shipped code.
+          ".venv,venv,.pytest_cache,/cache,temp,temp_test,temp_test_*,temp_notifications_test,temp_relationships_test,temp_voice_test,temp_embeds_test,temp_test_security,uploads,/media,/config,logs,loadtest"
         ]
       - id: ruff-format
         name: ruff-format
@@ -23,6 +25,9 @@ repos:
         entry: pyright
         language: system
         types: [python]
+        # Pre-commit passes explicit filenames, which bypasses
+        # [tool.pyright].exclude; skip the benchmark package here too.
+        exclude: ^loadtest/
 
       #  Basic security
       - id: bandit

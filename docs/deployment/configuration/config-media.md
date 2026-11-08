@@ -1,6 +1,6 @@
 # Media configuration
 
-This guide describes how to configure media handling for Plexichat. Media settings control file uploads, storage backends, image processing, and malware scanning. All defaults in this guide come from `src/config_defaults.py:184`.
+This guide describes how to configure media handling for Plexichat. Media settings control file uploads, storage backends, image processing, and malware scanning. All defaults in this guide come from `src/config_defaults.py`.
 
 ## Before you begin
 
@@ -13,7 +13,7 @@ media:
   local_url: "/media"
 ```
 
-Defaults use `~/.plexichat` as the home directory. See `src/config_defaults.py:62` for the `home_dir` definition.
+Defaults use `~/.plexichat` as the home directory. See `src/config_defaults.py` for the `home_dir` definition.
 
 ## Choose a storage backend
 
@@ -45,10 +45,10 @@ media:
 
 | Field | Default | Description |
 |---|---|---|
-| `local_path` | `~/.plexichat/media` | Filesystem path where the server stores media. The value comes from `home_dir / "media"` in `src/config_defaults.py:191`. |
+| `local_path` | `~/.plexichat/media` | Filesystem path where the server stores media. The value comes from `home_dir / "media"` in `src/config_defaults.py`. |
 | `local_url` | `/media` | URL prefix where the server serves media. |
 
-Do not use the stale nested keys `media.local.path` or `media.local.url_prefix`. The correct flat keys are `media.local_path` and `media.local_url` as defined in `src/config_defaults.py:191`.
+Do not use the stale nested keys `media.local.path` or `media.local.url_prefix`. The correct flat keys are `media.local_path` and `media.local_url` as defined in `src/config_defaults.py`.
 
 For production, use an absolute path such as `/var/lib/plexichat/media` and ensure the application user has read and write permissions. Place the directory on a filesystem with sufficient space and I/O performance, preferably SSD, and monitor disk usage. Configure your reverse proxy to serve `local_url` with caching headers. Back up the directory separately from the database.
 
@@ -80,7 +80,7 @@ media:
   s3_public_url: "${S3_PUBLIC_URL:-}"
 ```
 
-Do not nest these keys under `media.s3`. The correct keys are flat under `media` with the `s3_` prefix, as defined in `src/config_defaults.py:193`.
+Do not nest these keys under `media.s3`. The correct keys are flat under `media` with the `s3_` prefix, as defined in `src/config_defaults.py`.
 
 | Field | Default | Description |
 |---|---|---|
@@ -175,7 +175,7 @@ media:
     document: ["application/pdf", "text/plain", "application/zip", "text/markdown", "application/json"]
 ```
 
-Do not use plural keys such as `images` or `videos`. The correct keys are `image`, `video`, `audio`, and `document` as defined in `src/config_defaults.py:220`.
+Do not use plural keys such as `images` or `videos`. The correct keys are `image`, `video`, `audio`, and `document` as defined in `src/config_defaults.py`.
 
 Validate MIME types on upload by inspecting file contents, not just extensions. If you allow documents or archives, enable malware scanning. Keep image processing libraries patched against exploits such as ImageTragick.
 
@@ -199,7 +199,7 @@ media:
 
 | Field | Default | Description |
 |---|---|---|
-| `thumbnail_sizes` | `[64, 128, 256, 512]` | Thumbnail edge lengths in pixels. Defined at `src/config_defaults.py:232`. |
+| `thumbnail_sizes` | `[64, 128, 256, 512]` | Thumbnail edge lengths in pixels. Defined at `src/config_defaults.py`. |
 | `image_quality` | `85` | JPEG/WebP quality from `1` to `100`. |
 | `image_optimize` | `true` | When `true`, the server optimizes images on upload. |
 | `image_processing.max_dimension` | `16384` | Maximum width or height in pixels before the server rejects the image. |
@@ -208,7 +208,7 @@ media:
 | `video_processing.ffprobe_timeout` | `30` | Timeout in seconds for `ffprobe` metadata extraction. |
 | `video_processing.max_size_for_metadata` | `524288000` (500 MB) | Maximum file size for which the server extracts video metadata. |
 
-Do not use the stale keys `media.processing`, `media.processing.resize_images`, `media.processing.max_image_width`, `media.processing.max_image_height`, `media.processing.compress_videos`, or `media.processing.thumbnail_size`. The correct structure is `media.image_processing` and the top-level `media.thumbnail_sizes` list as defined in `src/config_defaults.py:232`.
+Do not use the stale keys `media.processing`, `media.processing.resize_images`, `media.processing.max_image_width`, `media.processing.max_image_height`, `media.processing.compress_videos`, or `media.processing.thumbnail_size`. The correct structure is `media.image_processing` and the top-level `media.thumbnail_sizes` list as defined in `src/config_defaults.py`.
 
 Image processing is CPU-intensive. Monitor processing time and consider background workers if uploads block.
 
@@ -229,7 +229,7 @@ media:
 | `scanner_host` | `localhost` | Hostname of the ClamAV daemon. |
 | `scanner_port` | `3310` | TCP port of the ClamAV daemon. |
 
-Do not use the stale keys `media.malware_scanning.enabled` or `media.malware_scanning.clamav_socket`. The correct keys are `media.scanner_enabled`, `media.scanner_host`, and `media.scanner_port` as defined in `src/config_defaults.py:246`. The server connects over TCP to `localhost:3310`, not a Unix socket.
+Do not use the stale keys `media.malware_scanning.enabled` or `media.malware_scanning.clamav_socket`. The correct keys are `media.scanner_enabled`, `media.scanner_host`, and `media.scanner_port` as defined in `src/config_defaults.py`. The server connects over TCP to `localhost:3310`, not a Unix socket.
 
 For Docker deployments, set the environment variables `SCANNER_ENABLED`, `SCANNER_HOST`, and `SCANNER_PORT`. The `docker-compose` stack includes a `clamav` service with a 4 GB RAM limit, automatic signature updates, and third-party signatures through the `clamav-unofficial-sigs` sidecar.
 
@@ -262,7 +262,7 @@ media:
 | `rate_limit.uploads_per_hour` | `100` | Maximum uploads per hour per user. |
 | `rate_limit.max_total_size_per_day` | `536870912` (512 MB) | Maximum total bytes a user can upload per day. |
 
-Thumbnail generation has its own limit at `media.image_processing.max_thumbnail_requests_per_minute` (`60` per minute). Do not use the stale key `media.rate_limit.thumbnails_per_minute`. See `src/config_defaults.py:235` for the correct structure.
+Thumbnail generation has its own limit at `media.image_processing.max_thumbnail_requests_per_minute` (`60` per minute). Do not use the stale key `media.rate_limit.thumbnails_per_minute`. See `src/config_defaults.py` for the correct structure.
 
 ## Configure the external proxy
 
@@ -283,7 +283,7 @@ media:
 | `proxy_max_size` | `10485760` (10 MB) | Maximum size of a proxied response. |
 | `proxy_buffer_size` | `65536` (64 KB) | Buffer size for proxy streaming. |
 
-Do not use the stale keys `media.external_proxy.enabled` or `media.external_proxy.timeout_seconds`. The correct keys are `media.proxy_enabled`, `media.proxy_cache_ttl`, `media.proxy_max_size`, and `media.proxy_buffer_size` as defined in `src/config_defaults.py:249`.
+Do not use the stale keys `media.external_proxy.enabled` or `media.external_proxy.timeout_seconds`. The correct keys are `media.proxy_enabled`, `media.proxy_cache_ttl`, `media.proxy_max_size`, and `media.proxy_buffer_size` as defined in `src/config_defaults.py`.
 
 ## Related documentation
 

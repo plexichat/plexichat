@@ -1,10 +1,10 @@
 # Rate limits
 
-Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions. All defaults in this document come from `src/config_defaults.py:270` and `src/core/ratelimit/config.py:13`.
+Plexichat applies multiple layers of request protection to keep the API stable under normal traffic and abuse conditions. The values below are **configurable defaults**; the single source of truth for documented defaults is `src/config_defaults.py` (`rate_limiting`), which is merged into runtime config at startup. Enforcement reads from runtime config (`src/core/ratelimit/*`), and `src/core/ratelimit/config.py` fallbacks are kept aligned with `config_defaults.py`. Operators may tune any limit in `config.yaml`.
 
 ## Default limits
 
-Configure limits under `rate_limiting` in `config.yaml`. The server reloads them at startup. If the config key is missing, the fallback values in `src/core/ratelimit/config.py:13` apply.
+Configure limits under `rate_limiting` in `config.yaml`. The server reloads them at startup. If the config key is missing, the fallback values in `src/core/ratelimit/config.py` apply.
 
 ### Global limits
 
@@ -75,31 +75,31 @@ rate_limiting:
 | `admin_bypass` | `true` | When `true`, admins bypass per-user limits. Global and IP limits still apply. |
 | `internal_bypass` | `true` | When `true`, internal service-to-service requests bypass limits. |
 
-The server also supports a bypass secret in the `X-RateLimit-Bypass` header. The value is compared with `hmac.compare_digest` on UTF-8 encodings to avoid timing attacks and `500` errors on malformed headers. See `src/api/middleware/rate_limiting.py:102` and `src/core/ratelimit/middleware.py:250`.
+The server also supports a bypass secret in the `X-RateLimit-Bypass` header. The value is compared with `hmac.compare_digest` on UTF-8 encodings to avoid timing attacks and `500` errors on malformed headers. See `src/api/middleware/rate_limiting.py` and `src/core/ratelimit/middleware.py`.
 
 Do not use stale values such as `bot_multiplier: 0.5` or `webhook_multiplier: 2.0`. A multiplier below `1.0` restricts bots below user levels, which you rarely want.
 
 ## Route-level limits
 
-The code defines stricter limits for sensitive or high-volume routes in addition to the global, user, and IP limits. See `src/core/ratelimit/config.py:170` (`DEFAULT_ROUTE_LIMITS`).
+The code defines stricter limits for sensitive or high-volume routes in addition to the global, user, and IP limits. See `src/core/ratelimit/config.py` (`DEFAULT_ROUTE_LIMITS`).
 
 Common examples:
 
-*   Auth endpoints — `POST /auth/login` (5 per 60s), `POST /auth/register` (3 per 60s), `POST /auth/2fa/*` (5 per 60s). See `src/core/ratelimit/middleware.py:16`.
+*   Auth endpoints — `POST /auth/login` (5 per 60s), `POST /auth/register` (3 per 60s), `POST /auth/2fa/*` (5 per 60s). See `src/core/ratelimit/middleware.py`.
 *   Message send — `POST /channels/{id}/messages` (10 per 5s, burst 5, wired to `rate_limiting.routes.send_message`).
 *   Media uploads — `POST /media/upload` (10 per 60s, hourly 100).
 *   Webhooks — `POST /webhooks/{id}/{token}` (5 per 2s).
-*   Static client — `static_client:html` (300 per 60s) and `static_client:assets` (5000 per 60s), wired through `src/config_defaults.py:290`.
+*   Static client — `static_client:html` (300 per 60s) and `static_client:assets` (5000 per 60s), wired through `src/config_defaults.py`.
 
-Use `get_route_config(route)` and `get_default_config()` from `src/core/ratelimit/config.py:662` to inspect the active route config.
+Use `get_route_config(route)` and `get_default_config()` from `src/core/ratelimit/config.py` to inspect the active route config.
 
 ## How the middleware works
 
-Plexichat enforces limits in ASGI middleware (`src/core/ratelimit/middleware.py:170` and `src/api/middleware/rate_limiting.py:14`). For each HTTP request the middleware:
+Plexichat enforces limits in ASGI middleware (`src/core/ratelimit/middleware.py` and `src/api/middleware/rate_limiting.py`). For each HTTP request the middleware:
 
 1.  Extracts the client IP with `src/utils/net.py:get_client_ip()` (trusted-proxy aware).
 2.  Extracts user info (`user_id`, `is_bot`, `is_admin`, `is_internal`) from `request.state`.
-3.  Resolves a route pattern with `extract_route_info()` (`src/core/ratelimit/middleware.py:139`).
+3.  Resolves a route pattern with `extract_route_info()` (`src/core/ratelimit/middleware.py`).
 4.  Calls `ratelimit.check_rate_limit()` and returns `429` with rate-limit headers when the check fails.
 
 `OPTIONS` requests (CORS preflight) and paths in `exclude_paths` are not rate-limited.
@@ -107,15 +107,15 @@ Plexichat enforces limits in ASGI middleware (`src/core/ratelimit/middleware.py:
 ## What clients should expect
 
 *   Limits can be applied globally, per user, per IP, or per route and resource.
-*   The server can tune any limit away from the code defaults in `src/config_defaults.py:270`.
-*   Bots and feature tiers may receive different multipliers depending on server policy. See `src/core/ratelimit/config.py:76`.
+*   The server can tune any limit away from the code defaults in `src/config_defaults.py`.
+*   Bots and feature tiers may receive different multipliers depending on server policy. See `src/core/ratelimit/config.py`.
 *   Admin and internal bypass behavior is configurable. Do not assume it is available.
 
 ## Responses and headers
 
-Rate-limited requests return `429 Too Many Requests` with standard rate-limit headers and retry metadata in the response body. See `src/core/ratelimit/middleware.py:290`.
+Rate-limited requests return `429 Too Many Requests` with standard rate-limit headers and retry metadata in the response body. See `src/core/ratelimit/middleware.py`.
 
-On success, the middleware can include rate-limit headers when `include_headers_on_success` is `true` (the default in `src/api/middleware/rate_limiting.py:121`).
+On success, the middleware can include rate-limit headers when `include_headers_on_success` is `true` (the default in `src/api/middleware/rate_limiting.py`).
 
 ## Client recommendations
 

@@ -133,10 +133,10 @@ Each migration's logs are available through `MigrationTracker.get_migration_logs
 
 *   **Logs** — Check `logs/` and the `migration_logs` table. The CLI also prints a summary with `applied_count` and `failed_count`.
 *   **Lock errors** — `Could not acquire migration lock` means another migration is running. Wait for it to finish or clear a stale lock.
-*   **Checksum mismatch** — The file was modified after it was recorded. Restore the original file or consume a valid emergency override token. See `src/core/migrations/manager.py:539`.
+*   **Checksum mismatch** — The file was modified after it was recorded. Restore the original file or consume a valid emergency override token. See `src/core/migrations/manager.py`.
 *   **SQLite column drops** — Handled with table recreation in the migration. If a run fails mid-recreation, restore from backup.
 *   **PostgreSQL column drops** — Use `ALTER TABLE ... DROP COLUMN IF EXISTS`. Indexes are recreated automatically on SQLite only where needed.
-*   **Status looks stale** — The manager caches `get_migration_status()` for 15 seconds with a per-database key. The cache is invalidated after apply or rollback. See `src/core/migrations/manager.py:435`.
+*   **Status looks stale** — The manager caches `get_migration_status()` for 15 seconds with a per-database key. The cache is invalidated after apply or rollback. See `src/core/migrations/manager.py`.
 
 ## Best practices
 
@@ -149,4 +149,4 @@ Each migration's logs are available through `MigrationTracker.get_migration_logs
 
 *   [Migration reference](migration-reference.md) — Authoritative list of migrations and schema modules.
 *   [Database configuration](deployment/configuration/config-database.md) — Connection pool and monitoring.
-*   [Admin migrations API](../src/api/templates/admin/migrations.html) — UI for listing and running migrations.
+*   Admin migrations API (`src/api/templates/admin/migrations.html`) — UI for listing and running migrations.

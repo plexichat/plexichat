@@ -74,6 +74,7 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
         trusted_proxies = []
 
     # Only consider X-Forwarded-For if the direct peer is a trusted proxy.
+    client_ip = direct_ip
     if direct_ip and _ip_matches_trusted(direct_ip, trusted_proxies):
         forwarded = get_header("X-Forwarded-For")
         if forwarded:
@@ -86,8 +87,8 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
                 # entries that match configured trusted proxy CIDRs yields
                 # the first address we did NOT receive from a trusted proxy
                 # — i.e. the address our own infrastructure observed. If
-                # every entry is a trusted proxy (or parsing fails) we fail
-                # safe to the direct peer address.
+                # every entry is a trusted proxy (or parsing fails) we fall
+                # back to CF-Connecting-IP / direct peer below.
                 for candidate in reversed(parts):
                     host = candidate
                     # Strip an optional port or bracketed IPv6 suffix form.
@@ -102,8 +103,26 @@ def get_client_ip(request: Union[Request, Dict[str, Any]]) -> Optional[str]:
                         # ignore it and keep walking left.
                         continue
                     if not _ip_matches_trusted(host, trusted_proxies):
-                        return host
-                # All reported hops were trusted proxies: fall back to peer.
-                return direct_ip
+                        client_ip = host
+                        break
+                else:
+                    # All reported hops were trusted proxies — fall through
+                    # to CF-Connecting-IP below.
+                    client_ip = None
 
-    return direct_ip
+        # Cloudflare sets CF-Connecting-IP to the real client IP. When behind
+        # trusted proxies and X-Forwarded-For carried only trusted hops,
+        # use CF-Connecting-IP as the authoritative client address rather
+        # than the direct peer (which is the last proxy in the chain).
+        if client_ip is None:
+            cf_connecting_ip = get_header("CF-Connecting-IP")
+            if cf_connecting_ip:
+                cf_ip = cf_connecting_ip.strip()
+                try:
+                    ipaddress.ip_address(cf_ip)
+                    client_ip = cf_ip
+                except ValueError:
+                    # Malformed CF-Connecting-IP — fall through to direct_ip.
+                    client_ip = direct_ip
+
+    return client_ip or direct_ip

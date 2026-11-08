@@ -30,21 +30,21 @@ All paths in this document are prefixed with `/api/v1/` unless noted. Routes mar
 GET /
 ```
 
-Returns basic API metadata. Mounted at the app root (`plexichat/src/api/app.py:544`), not under `/api/v1`.
+Returns basic API metadata. Mounted at the app root (`src/api/app.py`), not under `/api/v1`.
 
 **Response** `200 OK`
 
 ```json
 {
   "name": "Plexichat API",
-  "version": "a.1.0-170",
+  "version": "1.0.0a210",
   "docs": "/docs",
   "api": "/api/v1",
   "api_docs": "/docs/api"
 }
 ```
 
-`api_docs` is present only when docs are enabled (`docs.enabled` in `plexichat/src/config_defaults.py:754`).
+`api_docs` is present only when docs are enabled (`docs.enabled` in `src/config_defaults.py`).
 
 ## Health checks
 
@@ -54,14 +54,14 @@ Returns basic API metadata. Mounted at the app root (`plexichat/src/api/app.py:5
 GET /api/v1/health
 ```
 
-Checks API health and returns advisory diagnostics. This endpoint never takes down the health check if optional subsystems fail — each metric is wrapped in `try/except` and logged at `DEBUG` (`plexichat/src/api/routes/health.py:46`).
+Checks API health and returns advisory diagnostics. This endpoint never takes down the health check if optional subsystems fail — each metric is wrapped in `try/except` and logged at `DEBUG` (`src/api/routes/health.py`).
 
 **Response** `200 OK` (`HealthResponse`)
 
 ```json
 {
   "status": "healthy",
-  "version": "a.1.0-170",
+  "version": "1.0.0a210",
   "events_metrics": {
     "dropped_count": 0,
     "subscriber_count": 12,
@@ -91,7 +91,7 @@ If the endpoint itself fails, it returns `500 Internal server error`.
 GET /api/v1/ready
 ```
 
-Minimal probe for load balancers and container orchestrators. It returns as soon as the HTTP server is bound and doesn't check the database or Valkey (`plexichat/src/api/routes/health.py:18`).
+Minimal probe for load balancers and container orchestrators. It returns as soon as the HTTP server is bound and doesn't check the database or Valkey (`src/api/routes/health.py`).
 
 **Response** `200 OK`
 
@@ -111,25 +111,23 @@ Use `/ready` for routing decisions and `/health` for diagnostics.
 GET /api/v1/version
 ```
 
-Returns the current version and the minimum supported client version. Cached for one hour (`@cached(ttl=3600)` in `plexichat/src/api/routes/version.py:67`).
+Returns the current version and the minimum supported client version. Cached for one hour (`@cached(ttl=3600)` in `src/api/routes/version.py`).
 
 **Response** `200 OK` (`ServerVersionResponse`)
 
 ```json
 {
   "version": {
-    "stage": "a",
-    "major": 1,
-    "minor": 0,
-    "build": 157,
-    "string": "a.1.0-170"
+    "epoch": 0,
+    "release": [1, 0, 0],
+    "pre": { "kind": "a", "n": 210 },
+    "string": "1.0.0a210"
   },
   "min_supported_version": {
-    "stage": "a",
-    "major": 1,
-    "minor": 0,
-    "build": 100,
-    "string": "a.1.0-100"
+    "epoch": 0,
+    "release": [1, 0, 0],
+    "pre": { "kind": "a", "n": 100 },
+    "string": "1.0.0a100"
   },
   "api_version": "v1"
 }
@@ -147,7 +145,7 @@ Check whether a client version is compatible with the server.
 
 ```json
 {
-  "client_version": "a.1.0-125"
+  "client_version": "1.0.0a125"
 }
 ```
 
@@ -155,7 +153,7 @@ Check whether a client version is compatible with the server.
 |-------|------|----------|-------------|
 | `client_version` | string | Yes | Client version string. Must parse with `utils.version.parse`. |
 
-**Compatibility logic** (`plexichat/src/api/routes/version.py:104`):
+**Compatibility logic** (`src/api/routes/version.py`):
 
 1. If the version doesn't parse, the server returns `400 INVALID_VERSION_FORMAT`.
 2. If the version is older than `min_supported`, the server returns `426 VERSION_OUTDATED` with `update_required: true`.
@@ -167,13 +165,13 @@ Check whether a client version is compatible with the server.
 ```json
 {
   "compatible": true,
-  "server_version": { "stage": "a", "major": 1, "minor": 0, "build": 157, "string": "a.1.0-170" },
-  "client_version": { "stage": "a", "major": 1, "minor": 0, "build": 125, "string": "a.1.0-125" },
-  "min_supported_version": { "stage": "a", "major": 1, "minor": 0, "build": 100, "string": "a.1.0-100" },
+  "server_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 210 }, "string": "1.0.0a210" },
+  "client_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 125 }, "string": "1.0.0a125" },
+  "min_supported_version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 100 }, "string": "1.0.0a100" },
   "update_required": false,
   "update_recommended": true,
   "update_url": null,
-  "message": "A newer version (a.1.0-170) is available. Consider updating for the latest features and fixes."
+  "message": "A newer version (1.0.0a210) is available. Consider updating for the latest features and fixes."
 }
 ```
 
@@ -191,14 +189,14 @@ Check whether a client version is compatible with the server.
 GET /api/v1/status
 ```
 
-Returns operational state, version, uptime, and any maintenance announcement. Cached for 10 seconds (`plexichat/src/api/routes/version.py:231`).
+Returns operational state, version, uptime, and any maintenance announcement. Cached for 10 seconds (`src/api/routes/version.py`).
 
 **Response** `200 OK` (`ServerStatusResponse`)
 
 ```json
 {
   "state": "running",
-  "version": { "stage": "a", "major": 1, "minor": 0, "build": 157, "string": "a.1.0-170" },
+  "version": { "epoch": 0, "release": [1, 0, 0], "pre": { "kind": "a", "n": 210 }, "string": "1.0.0a210" },
   "uptime_seconds": 86400,
   "maintenance_message": null,
   "estimated_downtime_seconds": null,
@@ -225,8 +223,8 @@ GET /api/v1/capabilities/artifacts
 
 Returns per-feature availability for artifacts. Use this instead of hardcoding feature flags.
 
-- **Auth**: Requires `Authorization: Bearer <token>` (`get_current_user` in `plexichat/src/api/routes/capabilities.py:32`).
-- **Prefix**: `/capabilities/artifacts` (`plexichat/src/api/routes/__init__.py:62` — the sub-router is mounted without an extra `/api/v1` prefix duplication; the full path is `/api/v1/capabilities/artifacts`).
+- **Auth**: Requires `Authorization: Bearer <token>` (`get_current_user` in `src/api/routes/capabilities.py`).
+- **Prefix**: `/capabilities/artifacts` (`src/api/routes/__init__.py` — the sub-router is mounted without an extra `/api/v1` prefix duplication; the full path is `/api/v1/capabilities/artifacts`).
 
 **Response** `200 OK` — map of feature to capability object:
 
@@ -238,7 +236,7 @@ Returns per-feature availability for artifacts. Use this instead of hardcoding f
 }
 ```
 
-The server builds this from `get_artifact_capabilities()` and `capability_to_dict` in `plexichat/src/core/artifacts/capabilities.py:15`.
+The server builds this from `get_artifact_capabilities()` and `capability_to_dict` in `src/core/artifacts/capabilities.py`.
 
 **Errors**:
 
@@ -259,7 +257,7 @@ GET /api/v1/help/security-logout
 
 Explains forced-logout reasons (admin invalidation, session reset, policy change).
 
-- **Response**: `200 OK` with `text/html`. Rendered from `_get_help_style` in `plexichat/src/api/routes/help.py:61`.
+- **Response**: `200 OK` with `text/html`. Rendered from `_get_help_style` in `src/api/routes/help.py`.
 
 ### Access blocked help
 
@@ -277,7 +275,7 @@ Explains IP blocks (terms violations, abuse detection, manual block).
 GET /robots.txt
 ```
 
-Serves `static/robots.txt` from the working directory. Mounted at the app root without the `/api/v1` prefix and excluded from the OpenAPI schema (`plexichat/src/api/routes/help.py:12`).
+Serves `static/robots.txt` from the working directory. Mounted at the app root without the `/api/v1` prefix and excluded from the OpenAPI schema (`src/api/routes/help.py`).
 
 ## QR code generation
 
@@ -286,7 +284,7 @@ GET /api/v1/qr
 GET /qr
 ```
 
-Generates a QR code image locally (no external service). Both paths are valid — the router is mounted at `/qr` in `plexichat/src/api/routes/__init__.py:103` and `/api/v1/qr` via the `api_prefix`.
+Generates a QR code image locally (no external service). Both paths are valid — the router is mounted at `/qr` in `src/api/routes/__init__.py` and `/api/v1/qr` via the `api_prefix`.
 
 ### Query parameters
 
