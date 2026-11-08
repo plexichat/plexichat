@@ -4,7 +4,7 @@ Unit tests for the Logger utility.
 
 ## Test Coverage
 
-- `test_logger.py` - Tests for logger creation, log content, zipping, custom formats, and rotation
+- `test_logger.py` - Tests for logger creation, log content, zstd compression, custom formats, and rotation
 
 ## Key Test Cases
 

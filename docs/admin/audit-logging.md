@@ -188,7 +188,7 @@ Replace `?` with the start timestamp in milliseconds.
 File logs are managed by the system logger:
 
 * Rotate based on `logging.max_bytes` and `logging.backup_count`.
-* Compress old logs when `logging.zip_logs` is `true`.
+* Compress old logs with zstd when `logging.zip_logs` is `true`.
 
 ### Database logs
 

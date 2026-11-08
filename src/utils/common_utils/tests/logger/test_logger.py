@@ -3,6 +3,7 @@ import time
 import logging
 import zipfile
 import pytest
+import zstandard
 from datetime import datetime, timedelta
 
 from utils.logger import Logger
@@ -62,6 +63,18 @@ def cleanup_logger(logger):
         for filt in logger.filters[:]:
             if filt.__class__.__name__ == "SanitizingFilter":
                 logger.removeFilter(filt)
+
+
+def _read_zstd_text(path):
+    with open(path, "rb") as raw:
+        with zstandard.ZstdDecompressor().stream_reader(raw) as reader:
+            return reader.read().decode()
+
+
+def _write_zstd_archive(path, content):
+    with open(path, "wb") as raw:
+        with zstandard.ZstdCompressor().stream_writer(raw, closefd=False) as writer:
+            writer.write(content.encode())
 
 
 class TestBasicLoggerCreation:
@@ -249,10 +262,10 @@ class TestDualFileHandler:
         assert os.path.exists(dated_log)
 
 
-class TestLogZipping:
-    """Tests for log file zipping functionality."""
+class TestLogCompression:
+    """Tests for zstd compression of old log files."""
 
-    def test_log_zipping(self, clean_log_dir):
+    def test_log_compression(self, clean_log_dir):
         os.makedirs(TEMP_LOG_DIR)
         with open(os.path.join(TEMP_LOG_DIR, "old.log"), "w") as f:
             f.write("old logs")
@@ -262,8 +275,14 @@ class TestLogZipping:
         cleanup_logger(logger)
 
         files = os.listdir(TEMP_LOG_DIR)
-        assert "old.log.zip" in files
+        assert "old.log.zst" in files
         assert "old.log" not in files
+        assert not any(name.endswith(".zip") for name in files)
+
+        with open(os.path.join(TEMP_LOG_DIR, "old.log.zst"), "rb") as f:
+            frame = zstandard.get_frame_parameters(f.read())
+        assert frame.window_size == 1 << 24
+        assert frame.content_size == (1 << 64) - 1
 
     def test_zip_logs_disabled(self, clean_log_dir):
         os.makedirs(TEMP_LOG_DIR)
@@ -276,9 +295,9 @@ class TestLogZipping:
 
         files = os.listdir(TEMP_LOG_DIR)
         assert "old.log" in files
-        assert "old.log.zip" not in files
+        assert "old.log.zst" not in files
 
-    def test_zip_multiple_logs(self, clean_log_dir):
+    def test_compress_multiple_logs(self, clean_log_dir):
         os.makedirs(TEMP_LOG_DIR)
         for i in range(3):
             with open(os.path.join(TEMP_LOG_DIR, f"old{i}.log"), "w") as f:
@@ -289,15 +308,15 @@ class TestLogZipping:
         cleanup_logger(logger)
 
         files = os.listdir(TEMP_LOG_DIR)
-        zip_files = [f for f in files if f.endswith(".zip")]
-        assert len(zip_files) == 3
+        archive_files = [f for f in files if f.endswith(".log.zst")]
+        assert len(archive_files) == 3
 
-    def test_latest_log_not_zipped(self, clean_log_dir):
+    def test_latest_log_not_compressed(self, clean_log_dir):
         os.makedirs(TEMP_LOG_DIR)
         with open(os.path.join(TEMP_LOG_DIR, "latest.log"), "w") as f:
-            f.write("latest should not be zipped")
+            f.write("latest should not be compressed")
         with open(os.path.join(TEMP_LOG_DIR, "old.log"), "w") as f:
-            f.write("old should be zipped")
+            f.write("old should be compressed")
 
         logger_manager = Logger(log_dir=TEMP_LOG_DIR, zip_logs=True)
         logger = logger_manager.get_logger()
@@ -305,10 +324,10 @@ class TestLogZipping:
 
         files = os.listdir(TEMP_LOG_DIR)
         assert "latest.log" in files
-        assert "latest.log.zip" not in files
-        assert "old.log.zip" in files
+        assert "latest.log.zst" not in files
+        assert "old.log.zst" in files
 
-    def test_zip_content_preserved(self, clean_log_dir):
+    def test_compressed_content_preserved(self, clean_log_dir):
         os.makedirs(TEMP_LOG_DIR)
         original_content = "This is the original log content"
         with open(os.path.join(TEMP_LOG_DIR, "old.log"), "w") as f:
@@ -318,22 +337,70 @@ class TestLogZipping:
         logger = logger_manager.get_logger()
         cleanup_logger(logger)
 
-        zip_path = os.path.join(TEMP_LOG_DIR, "old.log.zip")
-        with zipfile.ZipFile(zip_path, "r") as zipf:
-            with zipf.open("old.log") as f:
-                content = f.read().decode()
-                assert content == original_content
+        archive_path = os.path.join(TEMP_LOG_DIR, "old.log.zst")
+        assert _read_zstd_text(archive_path) == original_content
 
 
-class TestOldZipCleanup:
-    """Tests for old zip file cleanup functionality."""
+class TestOldArchiveCleanup:
+    """Tests for compressed log archive cleanup functionality."""
 
-    def test_cleanup_old_zips(self, clean_log_dir):
+    def test_cleanup_old_archives(self, clean_log_dir):
         os.makedirs(TEMP_LOG_DIR)
 
-        old_zip = os.path.join(TEMP_LOG_DIR, "very_old.log.zip")
+        old_archive = os.path.join(TEMP_LOG_DIR, "very_old.log.zst")
+        _write_zstd_archive(old_archive, "old content")
+
+        old_time = (datetime.now() - timedelta(days=40)).timestamp()
+        os.utime(old_archive, (old_time, old_time))
+
+        logger_manager = Logger(
+            log_dir=TEMP_LOG_DIR, zip_logs=True, max_zip_age_days=30
+        )
+        logger = logger_manager.get_logger()
+        cleanup_logger(logger)
+
+        files = os.listdir(TEMP_LOG_DIR)
+        assert "very_old.log.zst" not in files
+
+    def test_keep_recent_archives(self, clean_log_dir):
+        os.makedirs(TEMP_LOG_DIR)
+
+        recent_archive = os.path.join(TEMP_LOG_DIR, "recent.log.zst")
+        _write_zstd_archive(recent_archive, "recent content")
+
+        logger_manager = Logger(
+            log_dir=TEMP_LOG_DIR, zip_logs=True, max_zip_age_days=30
+        )
+        logger = logger_manager.get_logger()
+        cleanup_logger(logger)
+
+        files = os.listdir(TEMP_LOG_DIR)
+        assert "recent.log.zst" in files
+
+    def test_no_cleanup_when_max_age_none(self, clean_log_dir):
+        os.makedirs(TEMP_LOG_DIR)
+
+        old_archive = os.path.join(TEMP_LOG_DIR, "ancient.log.zst")
+        _write_zstd_archive(old_archive, "ancient content")
+
+        old_time = (datetime.now() - timedelta(days=365)).timestamp()
+        os.utime(old_archive, (old_time, old_time))
+
+        logger_manager = Logger(
+            log_dir=TEMP_LOG_DIR, zip_logs=True, max_zip_age_days=None
+        )
+        logger = logger_manager.get_logger()
+        cleanup_logger(logger)
+
+        files = os.listdir(TEMP_LOG_DIR)
+        assert "ancient.log.zst" in files
+
+    def test_legacy_zip_archives_still_cleaned(self, clean_log_dir):
+        os.makedirs(TEMP_LOG_DIR)
+
+        old_zip = os.path.join(TEMP_LOG_DIR, "legacy.log.zip")
         with zipfile.ZipFile(old_zip, "w") as zipf:
-            zipf.writestr("log.txt", "old content")
+            zipf.writestr("legacy.log", "old content")
 
         old_time = (datetime.now() - timedelta(days=40)).timestamp()
         os.utime(old_zip, (old_time, old_time))
@@ -345,42 +412,7 @@ class TestOldZipCleanup:
         cleanup_logger(logger)
 
         files = os.listdir(TEMP_LOG_DIR)
-        assert "very_old.log.zip" not in files
-
-    def test_keep_recent_zips(self, clean_log_dir):
-        os.makedirs(TEMP_LOG_DIR)
-
-        recent_zip = os.path.join(TEMP_LOG_DIR, "recent.log.zip")
-        with zipfile.ZipFile(recent_zip, "w") as zipf:
-            zipf.writestr("log.txt", "recent content")
-
-        logger_manager = Logger(
-            log_dir=TEMP_LOG_DIR, zip_logs=True, max_zip_age_days=30
-        )
-        logger = logger_manager.get_logger()
-        cleanup_logger(logger)
-
-        files = os.listdir(TEMP_LOG_DIR)
-        assert "recent.log.zip" in files
-
-    def test_no_cleanup_when_max_age_none(self, clean_log_dir):
-        os.makedirs(TEMP_LOG_DIR)
-
-        old_zip = os.path.join(TEMP_LOG_DIR, "ancient.log.zip")
-        with zipfile.ZipFile(old_zip, "w") as zipf:
-            zipf.writestr("log.txt", "ancient content")
-
-        old_time = (datetime.now() - timedelta(days=365)).timestamp()
-        os.utime(old_zip, (old_time, old_time))
-
-        logger_manager = Logger(
-            log_dir=TEMP_LOG_DIR, zip_logs=True, max_zip_age_days=None
-        )
-        logger = logger_manager.get_logger()
-        cleanup_logger(logger)
-
-        files = os.listdir(TEMP_LOG_DIR)
-        assert "ancient.log.zip" in files
+        assert "legacy.log.zip" not in files
 
 
 class TestCustomLogFormat:
@@ -496,10 +528,10 @@ class TestGetMethods:
         cleanup_logger(logger)
 
         logs = logger_manager.get_logs()
-        zip_files = [f for f in logs if f.endswith(".zip")]
+        compressed_files = [f for f in logs if f.endswith(".log.zst")]
         log_files = [f for f in logs if f.endswith(".log")]
 
-        assert len(zip_files) == 2
+        assert len(compressed_files) == 2
         assert len(log_files) >= 1
 
     def test_get_current_log_path(self, clean_log_dir):

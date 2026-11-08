@@ -1,10 +1,19 @@
 import os
 import logging
-import zipfile
 import glob
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from typing import Optional, List, Union
+
+import zstandard
+
+# Archived logs use a streaming zstd frame: level 19 and a 24-bit window
+# (16 MiB), matching the intended `zstd -19 --windowlog=24 --stream` shape.
+_LOG_COMPRESSION_LEVEL = 19
+_LOG_COMPRESSION_WINDOW_LOG = 24
+_LOG_COMPRESSION_CHUNK_SIZE = 1024 * 1024
+_LOG_ARCHIVE_SUFFIX = ".log.zst"
+_LEGACY_ARCHIVE_SUFFIX = ".log.zip"
 
 
 class SanitizingFilter(logging.Filter):
@@ -89,7 +98,7 @@ class Logger:
     """
     A configurable logging utility with:
     - Live updates to both dated log and latest.log
-    - Automatic zipping of old logs on startup
+    - Automatic zstd compression of old logs on startup
     - Configurable rotation
     - Cleanup of old latest.log files
     """
@@ -114,9 +123,9 @@ class Logger:
             max_bytes: Max size of a log file before rotation (if rotate is True).
             backup_count: Number of backup files to keep.
             level: Logging level (e.g., logging.INFO, logging.DEBUG).
-            zip_logs: Whether to zip old logs on startup.
+            zip_logs: Whether to zstd-compress old logs on startup.
             rotate: Whether to use RotatingFileHandler for size-based rotation.
-            max_zip_age_days: Delete zipped logs older than this many days (None to keep forever).
+            max_zip_age_days: Delete compressed logs older than this many days (None to keep forever).
         """
         self.log_dir = log_dir
         self.log_name_format = log_name_format
@@ -135,8 +144,8 @@ class Logger:
         self.logger: logging.Logger = self._setup_logger()
 
         if self.zip_logs:
-            self._zip_old_logs()
-            self._cleanup_old_zips()
+            self._compress_old_logs()
+            self._cleanup_old_archives()
 
     def _setup_log_dir(self) -> None:
         """Creates the log directory if it doesn't exist."""
@@ -169,9 +178,13 @@ class Logger:
 
         return filepath
 
-    def _zip_old_logs(self) -> None:
-        """Zips .log files in the directory (excluding latest.log and current log)."""
+    def _compress_old_logs(self) -> None:
+        """Compress .log files with zstd (excluding latest.log and current log)."""
         current_log_name = os.path.basename(self.current_log_file)
+        compression_params = zstandard.ZstdCompressionParameters.from_level(
+            _LOG_COMPRESSION_LEVEL, window_log=_LOG_COMPRESSION_WINDOW_LOG
+        )
+        compressor = zstandard.ZstdCompressor(compression_params=compression_params)
         for filename in os.listdir(self.log_dir):
             filepath = os.path.join(self.log_dir, filename)
 
@@ -181,42 +194,54 @@ class Logger:
             if not filename.endswith(".log") or not os.path.isfile(filepath):
                 continue
 
-            # Zip the old log file
-            zip_name = filepath + ".zip"
+            archive_path = filepath + ".zst"
+            tmp_path = archive_path + ".tmp"
             try:
-                with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as zipf:
-                    zipf.write(filepath, arcname=filename)
+                with open(filepath, "rb") as source:
+                    with open(tmp_path, "wb") as destination:
+                        with compressor.stream_writer(
+                            destination, closefd=False
+                        ) as writer:
+                            while chunk := source.read(_LOG_COMPRESSION_CHUNK_SIZE):
+                                writer.write(chunk)
+                os.replace(tmp_path, archive_path)
                 os.remove(filepath)
-            except (OSError, zipfile.BadZipFile) as e:
-                self.logger.warning(f"Could not zip {filepath}: {e}")
+            except (OSError, zstandard.ZstdError) as e:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                self.logger.warning(f"Could not compress {filepath}: {e}")
 
-    def _cleanup_old_zips(self) -> None:
-        """Delete zipped logs older than max_zip_age_days and keep only backup_count items."""
-        zip_files = []
+    def _cleanup_old_archives(self) -> None:
+        """Delete compressed logs older than max_zip_age_days and keep only backup_count items."""
+        archive_files = []
         for filename in os.listdir(self.log_dir):
-            if filename.endswith(".zip"):
+            if filename.endswith(_LOG_ARCHIVE_SUFFIX) or filename.endswith(
+                _LEGACY_ARCHIVE_SUFFIX
+            ):
                 filepath = os.path.join(self.log_dir, filename)
-                zip_files.append((filepath, os.path.getmtime(filepath)))
+                archive_files.append((filepath, os.path.getmtime(filepath)))
 
         # Sort by mtime descending (newest first)
-        zip_files.sort(key=lambda x: x[1], reverse=True)
+        archive_files.sort(key=lambda x: x[1], reverse=True)
 
         # 1. Enforce backup_count (keep only first 'backup_count' files)
-        if self.backup_count > 0 and len(zip_files) > self.backup_count:
-            for filepath, _ in zip_files[self.backup_count :]:
+        if self.backup_count > 0 and len(archive_files) > self.backup_count:
+            for filepath, _ in archive_files[self.backup_count :]:
                 try:
                     os.remove(filepath)
                 except OSError:
                     pass
             # Update list for age check
-            zip_files = zip_files[: self.backup_count]
+            archive_files = archive_files[: self.backup_count]
 
         # 2. Enforce max_zip_age_days
         if self.max_zip_age_days is not None:
             cutoff_time = datetime.now(timezone.utc).timestamp() - (
                 self.max_zip_age_days * 24 * 60 * 60
             )
-            for filepath, mtime in zip_files:
+            for filepath, mtime in archive_files:
                 if mtime < cutoff_time:
                     try:
                         os.remove(filepath)
@@ -271,9 +296,11 @@ class Logger:
         return self.logger
 
     def get_logs(self) -> List[str]:
-        """Returns a list of all log files (both .log and .zip)."""
-        return glob.glob(os.path.join(self.log_dir, "*.log")) + glob.glob(
-            os.path.join(self.log_dir, "*.zip")
+        """Returns a list of all log files (including compressed archives)."""
+        return (
+            glob.glob(os.path.join(self.log_dir, "*.log"))
+            + glob.glob(os.path.join(self.log_dir, "*.log.zst"))
+            + glob.glob(os.path.join(self.log_dir, "*.log.zip"))
         )
 
     def get_current_log_path(self) -> str:

@@ -5,7 +5,7 @@ A simple, configurable logging utility for Python applications.
 ## Features
 
 - **Automatic Log Rotation**: Rotates logs based on size.
-- **Log Zipping**: Automatically zips old log files on startup.
+- **Zstd Log Compression**: Automatically compresses old log files on startup.
 - **Customizable Naming**: Define your own log filename format.
 - **Latest Log**: Always maintains a `latest.log` file with the most recent logs.
 - **Easy Integration**: Designed to be initialized once in your main application.
@@ -73,13 +73,13 @@ logger.info("Application started")
 | `max_bytes`       | Max size before rotation            | `10MB`                        |
 | `backup_count`    | Number of backups to keep           | `5`                           |
 | `level`           | Logging level                       | `logging.INFO`                |
-| `zip_logs`        | Zip old logs on startup             | `True`                        |
+| `zip_logs`        | Zstd-compress old logs on startup   | `True`                        |
 | `rotate`          | Enable rotation                     | `True`                        |
-| `max_zip_age_days`| Delete zipped logs older than X days| `30`                          |
+| `max_zip_age_days`| Delete compressed logs older than X days | `30`                     |
 
 ### Accessing Logs
 
-You can retrieve a list of all log files (including zips) programmatically:
+You can retrieve a list of all log files (including compressed archives) programmatically:
 
 ```python
 files = log_manager.get_logs()
@@ -89,4 +89,4 @@ print(files)
 ## Notes
 
 - The `latest.log` file in the log directory will always contain the logs from the current session.
-- Old `.log` files are zipped into `.log.zip` files if `zip_logs` is enabled.
+- Old `.log` files are compressed into `.log.zst` files with zstd level 19 and a 24-bit (16 MiB) window if `zip_logs` is enabled. The name is retained for configuration compatibility.

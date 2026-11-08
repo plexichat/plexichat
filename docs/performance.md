@@ -269,7 +269,7 @@ logging:
   level: "DEBUG"        # Use DEBUG in development, INFO or WARNING in production
   max_bytes: 10485760   # 10 MB per file
   backup_count: 5       # 5 rotated files = 50 MB total
-  zip_logs: true        # Compress rotated files
+  zip_logs: true        # Zstd-compress rotated files
   rotate: true          # Enable rotation
   include_exception_details: false  # Disable in production
 ```

@@ -41,9 +41,9 @@ def setup(
         max_bytes (int): Max size of a log file before rotation.
         backup_count (int): Number of backup files to keep.
         level (str): Logging level ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL").
-        zip_logs (bool): Whether to zip old logs on startup.
+        zip_logs (bool): Whether to zstd-compress old logs on startup.
         rotate (bool): Whether to use RotatingFileHandler for size-based rotation.
-        max_zip_age_days (int|None): Delete zipped logs older than this many days (None to keep forever).
+        max_zip_age_days (int|None): Delete compressed logs older than this many days (None to keep forever).
     """
     global _logger_instance, _setup_called
 
