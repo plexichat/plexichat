@@ -328,7 +328,10 @@ security:dependency_scanning:
     when:
       - script_failure
       - runner_system_failure
-      - stuck_or_timeout_failure
+      - stuck_pending_with_matching_runners
+      - stuck_pending_no_matching_runners
+      - no_updates_running
+      - no_updates_canceling
   script:
     - pip install pip-audit
     - pip-audit -r requirements.txt --format json > pip-audit-report.json
@@ -454,7 +457,10 @@ test:pytest:
     max: 2
     when:
       - runner_system_failure
-      - stuck_or_timeout_failure
+      - stuck_pending_with_matching_runners
+      - stuck_pending_no_matching_runners
+      - no_updates_running
+      - no_updates_canceling
       - unknown_failure
   script:
     # pytest and its plugins (asyncio, benchmark, xdist, timeout) are test-only
@@ -1148,7 +1154,10 @@ container_scanning:
     max: 2
     when:
       - runner_system_failure
-      - stuck_or_timeout_failure
+      - stuck_pending_with_matching_runners
+      - stuck_pending_no_matching_runners
+      - no_updates_running
+      - no_updates_canceling
   allow_failure: false
 
 docker:backup:
