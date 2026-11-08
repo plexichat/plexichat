@@ -57,6 +57,13 @@ TOOLS = {
         "url": (
             "https://github.com/google/osv-scanner/releases/download/{version}/{asset}"
         ),
+        # GitHub's release-download endpoint intermittently returns 504 while
+        # the API and asset CDN are healthy (seen on 2026-11-08, which blocked
+        # every release build). The asset API serves the same bytes and is
+        # digest-checked below, so it is a safe fallback rather than a bypass.
+        "fallback_urls": (
+            "https://api.github.com/repos/google/osv-scanner/releases/assets/632251666",
+        ),
         "sha256": "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b",  # pragma: allowlist secret
         "binary": "osv-scanner",
     },
@@ -142,8 +149,13 @@ def _download(url: str, dest: str) -> None:
         try:
             # The scheme was checked above; nosec B310 is the generic warning
             # about urlopen being handed an unvalidated URL.
+            # The GitHub asset API redirects to its CDN only when it is asked
+            # for the binary explicitly; the header is harmless elsewhere.
+            request = urllib.request.Request(
+                url, headers={"Accept": "application/octet-stream"}
+            )
             with (
-                urllib.request.urlopen(url, timeout=120) as response,  # nosec: B310
+                urllib.request.urlopen(request, timeout=120) as response,  # nosec: B310
                 open(dest, "wb") as out,
             ):  # nosec: B310
                 shutil.copyfileobj(response, out)
@@ -175,6 +187,12 @@ def tool_url(tool: str) -> str:
     return spec["url"].format(version=spec["version"], asset=spec["asset"])
 
 
+def tool_urls(tool: str) -> list[str]:
+    """Pinned download sources for a scanner, in preference order."""
+    spec = TOOLS[tool]
+    return [tool_url(tool), *spec.get("fallback_urls", ())]
+
+
 def install_tool(tool: str, bin_dir: str, url: str | None = None) -> str:
     """Download, verify and install one scanner; return the installed path.
 
@@ -200,16 +218,27 @@ def install_tool(tool: str, bin_dir: str, url: str | None = None) -> str:
         raise InstallError(
             f"unknown scanner {tool!r}; known: {', '.join(sorted(TOOLS))}"
         )
-    source = url or tool_url(tool)
+    sources = [url] if url else tool_urls(tool)
     os.makedirs(bin_dir, exist_ok=True)
     target = os.path.join(bin_dir, spec["binary"])
 
     with tempfile.TemporaryDirectory(dir=bin_dir) as scratch:
         download = os.path.join(scratch, spec["asset"])
-        try:
-            _download(source, download)
-        except Exception as exc:  # urllib raises a family of these
-            raise InstallError(f"could not download {source}: {exc}") from exc
+        last_error: Exception | None = None
+        for source in sources:
+            try:
+                _download(source, download)
+                break
+            except Exception as exc:  # urllib raises a family of these
+                last_error = exc
+                print(
+                    f"download failed for {source} ({exc})",
+                    file=sys.stderr,
+                )
+        else:
+            raise InstallError(
+                f"could not download {tool} from any pinned source: {last_error}"
+            ) from last_error
 
         actual = sha256_of(download)
         if actual != spec["sha256"]:

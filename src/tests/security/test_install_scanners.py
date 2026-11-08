@@ -75,6 +75,37 @@ def test_a_pinned_release_is_installed_executable(scanners, tmp_path, monkeypatc
     assert os.access(installed, os.X_OK)
 
 
+def test_osv_scanner_falls_back_to_the_release_api(scanners, tmp_path, monkeypatch):
+    """A 504 from the release endpoint must not block a release build.
+
+    GitHub's release-download host can fail while the API asset endpoint is
+    healthy. The fallback bytes are still checked against the same pinned
+    digest, so this changes the transport, not the trust decision.
+    """
+    payload = b"#!/bin/sh\necho scanner\n"
+    monkeypatch.setitem(scanners.TOOLS["osv-scanner"], "sha256", _digest(payload))
+    calls: list[str] = []
+
+    def fake_download(url, dest):
+        calls.append(url)
+        if len(calls) == 1:
+            raise scanners.urllib.error.HTTPError(
+                url, 504, "Gateway Time-out", {}, None
+            )
+        Path(dest).write_bytes(payload)
+
+    monkeypatch.setattr(scanners, "_download", fake_download)
+
+    installed = scanners.install_tool("osv-scanner", str(tmp_path / "bin"))
+
+    assert len(calls) == 2
+    assert calls[0].startswith("https://github.com/")
+    assert calls[1].startswith(
+        "https://api.github.com/repos/google/osv-scanner/releases/assets/"
+    )
+    assert Path(installed).read_bytes() == payload
+
+
 def test_a_transient_transport_failure_is_retried(scanners, tmp_path, monkeypatch):
     """A resolver blip must not be reported as a dependency finding.
 
