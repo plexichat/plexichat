@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plexichat Admin Login</title>
+    <link rel="icon" type="image/svg+xml" href="/api/v1/admin/static/favicon.svg">
     <style nonce="{{ csp_nonce }}">
         :root {
             --bg: oklch(0.098 0.005 240);
@@ -68,9 +69,11 @@
             flex-shrink: 0;
         }
 
-        .login-logo-icon svg {
-            width: 20px;
-            height: 20px;
+        .login-logo-icon svg,
+        .login-logo-img {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
         }
 
         .login-logo-text {
@@ -242,7 +245,7 @@
     <div class="login-card">
         <div class="login-logo">
             <div class="login-logo-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <img src="/api/v1/admin/static/favicon.svg" alt="" class="login-logo-img">
             </div>
             <div class="login-logo-text">
                 <span class="login-logo-title">Plexichat</span>
