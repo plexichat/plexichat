@@ -1,193 +1,93 @@
-"""
-aiortc SFU adapter - Pure Python WebRTC SFU implementation.
+"""aiortc SFU adapter implementation (hardened)."""
 
-This adapter uses aiortc to implement an SFU directly in Python,
-eliminating the need for external SFU services like mediasoup or Janus.
-It runs in-process with the FastAPI application for maximum integration.
-"""
+from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import os
-import re
-import time
+import time as _time_mod
 import uuid
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import utils.logger as logger
-from .base import (
-    SFUAdapter,
-    RoomInfo,
-    SFUTransport,
-    SFUProducer,
-    SFUConsumer,
-    TransportDirection,
-    MediaKind,
-)
-from .quality import QualityReporter, parse_quality_metrics
-from .acoustic_defense import (
+
+from ...exceptions import SFUConnectionError
+from ..acoustic_defense import AudioProcessingTrack
+from ..base import (
     AcousticDefenseConfig,
-    AudioProcessingTrack,
+    MediaKind,
+    RoomInfo,
+    SFUAdapter,
+    SFUConsumer,
+    SFUProducer,
+    SFUTransport,
+    TransportDirection,
 )
-from .fanout import FanoutView, TrackFanout
-from ..exceptions import SFUConnectionError
+from ..fanout import FanoutView, TrackFanout
+from ..quality import QualityReporter
+from .constants import (
+    DEFAULT_MAX_INCOMING_TRACKS,
+    MAX_CONSUMERS_PER_PEER,
+    MAX_PEERS_PER_ROOM,
+    MAX_PRODUCERS_PER_PEER,
+    MAX_TRACKS_PER_KIND,
+    MAX_TRANSPORTS_PER_PEER,
+)
+from .errors import SFUValidationError
+from .media import BoundedVideoTrack, _same_sender_track
+from .models import AiortcPeer
+from .sdp import (
+    _parse_dtls_params_from_sdp,
+    _parse_ice_candidates_from_sdp,
+    _parse_ice_params_from_sdp,
+)
+from .stats import _as_number, _quality_metrics_from_stats
+from .validation import (
+    validate_dtls_parameters,
+    validate_ice_candidate_payload,
+    validate_identifier,
+    validate_payload_mapping,
+    validate_recording_output_dir,
+    validate_room_id,
+    validate_sdp_payload,
+)
+
+import sys as _sys
+
+_pkg = _sys.modules[__name__.rsplit(".", 1)[0]]
+# Patchable time (tests monkeypatch aiortc_adapter.time.monotonic).
+time = getattr(_pkg, "time", _time_mod)
 
 
-RTCPeerConnection: Any = None
-AIORTC_AVAILABLE = False
-try:
-    from aiortc import RTCPeerConnection
-
-    AIORTC_AVAILABLE = True
-except ImportError:
-    try:
-        logger.warning("aiortc not installed - SFU adapter will not be available")
-    except RuntimeError:
-        # Logger not configured yet (import runs before setup_logging()).
-        pass
-
-MediaRecorder: Any = None
-AIORTC_RECORDING_AVAILABLE = False
-try:
-    from aiortc.contrib.media import MediaRecorder
-
-    AIORTC_RECORDING_AVAILABLE = True
-except ImportError:
-    try:
-        logger.warning(
-            "aiortc MediaRecorder not available - recording will be disabled"
-        )
-    except RuntimeError:
-        # Logger not configured yet (import runs before setup_logging()).
-        pass
+def _rtc_peer_connection_cls() -> Any:
+    return getattr(_pkg, "RTCPeerConnection", None)
 
 
-def _parse_ice_params_from_sdp(sdp: str) -> Dict[str, str]:
-    ufrag_m = re.search(r"a=ice-ufrag:(\S+)", sdp)
-    pwd_m = re.search(r"a=ice-pwd:(\S+)", sdp)
-    return {
-        "usernameFragment": ufrag_m.group(1) if ufrag_m else "",
-        "password": pwd_m.group(1) if pwd_m else "",
-    }
+def _media_recorder_cls() -> Any:
+    return getattr(_pkg, "MediaRecorder", None)
 
 
-def _parse_ice_candidates_from_sdp(sdp: str) -> List[Dict[str, Any]]:
-    candidates = []
-    for m in re.finditer(
-        r"a=candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ (\S+)",
-        sdp,
-    ):
-        candidates.append(
-            {
-                "foundation": m.group(1),
-                "component": int(m.group(2)),
-                "protocol": m.group(3),
-                "priority": int(m.group(4)),
-                "ip": m.group(5),
-                "port": int(m.group(6)),
-                "type": m.group(7),
-            }
-        )
-    return candidates
+def _aiortc_available() -> bool:
+    return bool(getattr(_pkg, "AIORTC_AVAILABLE", False))
 
 
-# aiortc reports RTP jitter in the codec's clock-rate units
-# (``StreamStatistics.jitter`` accumulates ``arrival - rtp_timestamp``
-# differences where arrival is scaled by the stream clock rate). The quality
-# store and BandwidthEstimator measure jitter in milliseconds, so the raw
-# value must be divided by the codec clock rate. Dividing is also the safe
-# direction: an unexpected unit can only under-report, never fabricate a
-# degradation.
-_CLOCK_RATES = {"audio": 48000, "video": 90000}
-_DEFAULT_CLOCK_RATE = 48000
+def _aiortc_recording_available() -> bool:
+    return bool(getattr(_pkg, "AIORTC_RECORDING_AVAILABLE", False))
 
 
-def _as_number(value: Any) -> Optional[float]:
-    """Coerce a stat field to a finite float, or ``None``."""
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number != number or number in (float("inf"), float("-inf")):
-        return None
-    return number
+def _audio_processing_track_cls() -> Any:
+    return getattr(_pkg, "AudioProcessingTrack", AudioProcessingTrack)
 
 
-def _quality_metrics_from_stats(records: Any) -> Dict[str, Any]:
-    """Map aiortc ``pc.getStats()`` records to canonical quality metrics.
+def _rtc_session_description(**kwargs: Any) -> Any:
+    mod = cast(Any, importlib.import_module("aiortc"))
+    return mod.RTCSessionDescription(**kwargs)
 
-    ``remote-inbound-rtp`` records are the remote endpoint's report about the
-    stream the SFU sends it -- exactly the downlink signal BandwidthEstimator
-    needs -- and are preferred. ``inbound-rtp`` (what the SFU receives) is the
-    fallback while no RTCP report has arrived yet. Records with nothing
-    measurable are skipped rather than guessed at, and all values go through
-    the shared alias mapper so this adapter reports the same canonical keys as
-    the janus and mediasoup adapters.
-    """
-    buckets: Dict[str, Dict[str, Any]] = {
-        "remote-inbound-rtp": {
-            "seen": False,
-            "lost": 0,
-            "received": 0,
-            "jitter_ms": None,
-            "rtt_ms": None,
-        },
-        "inbound-rtp": {
-            "seen": False,
-            "lost": 0,
-            "received": 0,
-            "jitter_ms": None,
-            "rtt_ms": None,
-        },
-    }
-    for record in records or ():
-        stat_type = getattr(record, "type", None)
-        if stat_type not in buckets:
-            continue
-        bucket = buckets[stat_type]
-        bucket["seen"] = True
-        lost = _as_number(getattr(record, "packetsLost", None))
-        received = _as_number(getattr(record, "packetsReceived", None))
-        if lost is not None and lost > 0:
-            bucket["lost"] += int(lost)
-        if received is not None and received > 0:
-            bucket["received"] += int(received)
 
-        kind = str(getattr(record, "kind", "") or "").lower()
-        clock = _CLOCK_RATES.get(kind, _DEFAULT_CLOCK_RATE)
-        jitter = _as_number(getattr(record, "jitter", None))
-        if jitter is not None and jitter >= 0:
-            jitter_ms = jitter * 1000.0 / clock
-            current = bucket["jitter_ms"]
-            bucket["jitter_ms"] = (
-                jitter_ms if current is None else max(current, jitter_ms)
-            )
-        rtt = _as_number(getattr(record, "roundTripTime", None))
-        if rtt is not None and rtt >= 0:
-            # RTCP round-trip times are seconds.
-            rtt_ms = rtt * 1000.0
-            current_rtt = bucket["rtt_ms"]
-            bucket["rtt_ms"] = (
-                rtt_ms if current_rtt is None else max(current_rtt, rtt_ms)
-            )
-
-    remote = buckets["remote-inbound-rtp"]
-    bucket = remote if remote["seen"] else buckets["inbound-rtp"]
-    if not bucket["seen"]:
-        return {}
-
-    raw: Dict[str, Any] = {}
-    total = bucket["received"] + bucket["lost"]
-    if total > 0:
-        raw["packetLoss"] = bucket["lost"] * 100.0 / total
-    if bucket["jitter_ms"] is not None:
-        raw["jitter"] = bucket["jitter_ms"]
-    if bucket["rtt_ms"] is not None:
-        raw["roundTripTime"] = bucket["rtt_ms"]
-    return parse_quality_metrics(raw)
+def _rtc_ice_candidate(**kwargs: Any) -> Any:
+    mod = cast(Any, importlib.import_module("aiortc"))
+    return mod.RTCIceCandidate(**kwargs)
 
 
 def _total_bytes_sent(records: Any) -> Optional[int]:
@@ -205,135 +105,18 @@ def _total_bytes_sent(records: Any) -> Optional[int]:
     return total if seen else None
 
 
-def _parse_dtls_params_from_sdp(sdp: str) -> Dict[str, Any]:
-    fingerprints = []
-    for m in re.finditer(r"a=fingerprint:(\S+) (\S+)", sdp):
-        fingerprints.append(
-            {
-                "algorithm": m.group(1),
-                "value": m.group(2),
-            }
-        )
-    return {
-        "fingerprints": fingerprints,
-        "role": "auto",
-    }
+def _make_rtc_peer_connection() -> Any:
+    cls = _rtc_peer_connection_cls()
+    if cls is None:
+        raise SFUConnectionError("aiortc is not installed")
+    return cls()
 
 
-# Frame-rate ceiling applied to a peer whose downlink the quality estimator
-# has flagged as congested. aiortc negotiates a single video encoding and
-# exposes no encoder or bitrate API, so the frame rate is the only lever that
-# actually bounds what the sender emits.
-DEGRADED_VIDEO_FPS = 5.0
-
-
-class BoundedVideoTrack:
-    """A frame-rate bounded view of a video track, for a degraded peer.
-
-    aiortc 1.15's ``RTCRtpSender`` exposes no ``getParameters`` /
-    ``setParameters`` and no ``maxBitrate``, so ``replaceTrack`` is the only
-    runtime lever over a live sender. Replacing a peer's outbound video with
-    this wrapper is the nearest thing to dropping to a lower simulcast layer:
-    the peer keeps receiving video -- at the bounded rate, rather than a torn
-    down stream or a black picture -- while the frames the sender has to
-    encode, and therefore the bitrate, fall.
-
-    Frames that are not forwarded are still read from the source and dropped,
-    so the source queue cannot accumulate; aiortc's own disabled-sender path
-    reads and discards for the same reason.
-
-    ``stop()`` deliberately does NOT stop the wrapped source: that same track
-    is forwarded to every other peer in the room, so a sender ending must not
-    end video for the rest of the room.
-    """
-
-    def __init__(self, source: Any, max_fps: float = DEGRADED_VIDEO_FPS) -> None:
-        self._source = source
-        self._min_interval = 1.0 / max(1.0, float(max_fps))
-        self._last_sent = 0.0
-        self._ended = False
-        self._id = str(uuid.uuid4())
-        self._enabled = True
-
-    @property
-    def source(self) -> Any:
-        """The bounded track itself; what a restore re-attaches."""
-        return self._source
-
-    @property
-    def kind(self) -> str:
-        return getattr(self._source, "kind", "video")
-
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def label(self) -> str:
-        return getattr(self._source, "label", "")
-
-    @property
-    def readyState(self) -> str:
-        return "ended" if self._ended else "live"
-
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
-
-    @enabled.setter
-    def enabled(self, value: bool) -> None:
-        self._enabled = value
-
-    def stop(self) -> None:
-        """End this view only -- never the shared track underneath it."""
-        self._ended = True
-
-    async def recv(self) -> Any:
-        """Return the next frame the bounded rate allows, dropping the rest."""
-        while not self._ended:
-            frame = await self._source.recv()
-            if frame is None:
-                return None
-            now = time.monotonic()
-            if now - self._last_sent >= self._min_interval:
-                self._last_sent = now
-                return frame
-        return None
-
-
-def _same_sender_track(a: Any, b: Any) -> bool:
-    """Whether ``a`` is a view of the produced track ``b``.
-
-    Each sender holds its own fan-out view, so a ghost sender cannot be found
-    by identity: a view is matched back through the relay it subscribes to,
-    whose ``source`` is the produced track. Unwrapped tracks compare by
-    identity.
-    """
-    if a is b:
-        return True
-    relay = getattr(a, "fanout", None)
-    return relay is not None and getattr(relay, "source", None) is b
-
-
-@dataclass
-class AiortcPeer:
-    """A peer in the aiortc SFU."""
-
-    peer_id: str
-    pc: Any
-    producers: Dict[str, SFUProducer] = field(default_factory=dict)
-    consumers: Dict[str, SFUConsumer] = field(default_factory=dict)
-    transports: Dict[str, SFUTransport] = field(default_factory=dict)
-    incoming_audio_tracks: List[Any] = field(default_factory=list)
-    incoming_video_tracks: List[Any] = field(default_factory=list)
-    producer_tracks: Dict[str, Any] = field(default_factory=dict)
-    # The room this peer belongs to, so a forwarded track can name its target
-    # when an offer has to be delivered back to the client.
-    room_id: str = ""
-    # Senders whose outbound video a degradation hint replaced with a
-    # frame-rate bounded view, mapped back to the source track that must be
-    # re-attached to restore full rate.
-    degraded_senders: Dict[Any, Any] = field(default_factory=dict)
+def _make_media_recorder(filepath: str) -> Any:
+    cls = _media_recorder_cls()
+    if cls is None:
+        raise SFUConnectionError("MediaRecorder is not available")
+    return cls(filepath)
 
 
 class AiortcAdapter(SFUAdapter):
@@ -357,14 +140,14 @@ class AiortcAdapter(SFUAdapter):
                 [{"urls": "stun:..."}, {"urls": "turn:...", "username": "...", "credential": "..."}]
             acoustic_defense: Optional acoustic eavesdropping defense configuration
         """
-        if not AIORTC_AVAILABLE:
+        if not _aiortc_available():
             raise SFUConnectionError(
                 "aiortc is not installed. Install with: pip install aiortc==1.14.0"
             )
 
         self._rooms: Dict[str, Dict[str, AiortcPeer]] = {}
         self._ice_servers = ice_servers or []
-        self._acoustic_defense = acoustic_defense or AcousticDefenseConfig()
+        self._acoustic_defense: Any = acoustic_defense or AcousticDefenseConfig()
         # Deliverer of an SFU-initiated offer (see set_renegotiation_sink).
         self._renegotiation_sink: Any = None
         # One read-once relay per produced track that is forwarded to several
@@ -376,7 +159,7 @@ class AiortcAdapter(SFUAdapter):
         self._quality_reporter: Optional[QualityReporter] = None
         # Last ``(bytesSent, monotonic ts)`` per peer, for bitrate deltas.
         self._last_quality_sample: Dict[str, Tuple[int, float]] = {}
-        if AIORTC_RECORDING_AVAILABLE:
+        if _aiortc_recording_available():
             logger.info("aiortc MediaRecorder available for call recording")
         else:
             logger.info("aiortc MediaRecorder not available - call recording disabled")
@@ -388,21 +171,25 @@ class AiortcAdapter(SFUAdapter):
 
     async def create_room(self, room_id: str) -> RoomInfo:
         """Create a new room."""
+        room_id = validate_room_id(room_id)
         if room_id in self._rooms:
-            logger.warning(f"Room {room_id} already exists, returning existing")
+            logger.warning("SFU room already exists; returning existing room")
             room_info = await self.get_room_info(room_id)
             if room_info is None:
-                raise SFUConnectionError(f"Failed to get room info for {room_id}")
+                raise SFUConnectionError("Failed to get room info")
             return room_info
 
         self._rooms[room_id] = {}
-        logger.info(f"Created aiortc SFU room: {room_id}")
+        logger.info("Created aiortc SFU room")
         return RoomInfo(id=room_id, peers=[], producers=[])
 
     async def close_room(self, room_id: str) -> bool:
         """Close a room and clean up all peers."""
+        try:
+            room_id = validate_room_id(room_id)
+        except SFUValidationError:
+            return False
         if room_id not in self._rooms:
-            logger.warning(f"Room {room_id} does not exist")
             return False
 
         if room_id in self._recordings:
@@ -413,25 +200,28 @@ class AiortcAdapter(SFUAdapter):
                 self._close_fanout(track)
             try:
                 await peer.pc.close()
-            except Exception as e:
-                logger.warning(f"Error closing peer {peer_id}: {e}")
+            except Exception:
+                logger.warning("Error closing peer connection")
             self._last_quality_sample.pop(peer_id, None)
 
         del self._rooms[room_id]
-        logger.info(f"Closed aiortc SFU room: {room_id}")
+        logger.info("Closed aiortc SFU room")
         return True
 
     async def join_room(self, room_id: str, peer_id: str) -> Dict[str, Any]:
         """Join a peer to a room."""
+        room_id = validate_room_id(room_id)
+        peer_id = validate_identifier(peer_id, "peer_id")
         if room_id not in self._rooms:
             await self.create_room(room_id)
 
         if peer_id in self._rooms[room_id]:
-            logger.warning(f"Peer {peer_id} already in room {room_id}")
+            logger.warning("Peer already in room")
             return await self.get_router_capabilities(room_id)
 
-        pc = RTCPeerConnection()
-
+        if len(self._rooms[room_id]) >= MAX_PEERS_PER_ROOM:
+            raise SFUValidationError("Room peer limit exceeded")
+        pc = _make_rtc_peer_connection()
         peer = AiortcPeer(peer_id=peer_id, pc=pc, room_id=room_id)
         self._rooms[room_id][peer_id] = peer
 
@@ -457,31 +247,37 @@ class AiortcAdapter(SFUAdapter):
                 # L1 (Agent 34): renegotiation redelivers tracks; appending
                 # unconditionally accumulated duplicate/ghost entries. Dedupe
                 # and prune to a bounded set per kind.
-                if processed_track not in peer.incoming_audio_tracks:
+                if (
+                    len(peer.incoming_audio_tracks) < MAX_TRACKS_PER_KIND
+                    and processed_track not in peer.incoming_audio_tracks
+                ):
                     peer.incoming_audio_tracks.append(processed_track)
-                    self._prune_incoming_tracks(peer.incoming_audio_tracks)
-                logger.debug(
-                    f"Audio track received from peer {peer_id} in room {room_id}"
-                )
+                    self._prune_incoming_tracks(
+                        peer.incoming_audio_tracks, DEFAULT_MAX_INCOMING_TRACKS
+                    )
+                logger.debug("Audio track received")
             elif track.kind == "video":
-                if track not in peer.incoming_video_tracks:
+                if (
+                    len(peer.incoming_video_tracks) < MAX_TRACKS_PER_KIND
+                    and track not in peer.incoming_video_tracks
+                ):
                     peer.incoming_video_tracks.append(track)
-                    self._prune_incoming_tracks(peer.incoming_video_tracks)
-                logger.debug(
-                    f"Video track received from peer {peer_id} in room {room_id}"
-                )
+                    self._prune_incoming_tracks(
+                        peer.incoming_video_tracks, DEFAULT_MAX_INCOMING_TRACKS
+                    )
+                logger.debug("Video track received")
 
             if track.kind == "audio":
                 recording = self._recordings.get(room_id)
-                if recording is not None and AIORTC_RECORDING_AVAILABLE:
+                if recording is not None and _aiortc_recording_available():
                     rec_producer_id = str(uuid.uuid4())
                     filepath = os.path.join(
                         recording["output_dir"],
                         f"{recording['recording_id']}_{peer_id}_{rec_producer_id}.webm",
                     )
                     try:
-                        assert AIORTC_RECORDING_AVAILABLE
-                        recorder = MediaRecorder(filepath)
+                        assert _aiortc_recording_available()
+                        recorder = _make_media_recorder(filepath)
                         recorder.addTrack(processed_track)
                         await recorder.start()
                         recording["recorders"].append(
@@ -523,7 +319,7 @@ class AiortcAdapter(SFUAdapter):
                         f"to new peer {peer_id}: {e}"
                     )
 
-        logger.info(f"Peer {peer_id} joined room {room_id}")
+        logger.info("Peer joined room")
         return await self.get_router_capabilities(room_id)
 
     # ------------------------------------------------------------------
@@ -660,43 +456,27 @@ class AiortcAdapter(SFUAdapter):
         peer_id: str,
         offer_sdp: str,
     ) -> Dict[str, Any]:
-        """Answer the client's offer on the peer's aiortc connection.
-
-        SECURITY-correctness (audit finding: SFU/media path dead):
-        without setRemoteDescription the aiortc peer never learns the
-        remote ICE/DTLS parameters, the handshake cannot complete, and
-        no media flows despite the signaling layer reporting success.
-
-        The client's offer also makes THIS peer the **answerer**: nothing
-        creates a local description until an answer is built and installed.
-        Returning early used to leave ``localDescription`` empty, so the
-        caller fell back to ``create_transport()``, whose
-        ``createOffer()``/``setLocalDescription()`` raised
-        ``InvalidStateError`` in the ``have-remote-offer`` state -- the
-        client received synthetic SDP and media could never flow on the
-        in-process backend. The answer is rebuilt on every offer so
-        renegotiation works too.
-        """
+        """Answer the client's offer on the peer's aiortc connection."""
+        room_id = validate_room_id(room_id)
+        peer_id = validate_identifier(peer_id, "peer_id")
+        offer_sdp = validate_sdp_payload(offer_sdp, "offer SDP")
         peer = self._rooms.get(room_id, {}).get(peer_id)
         if peer is None:
-            raise SFUConnectionError(f"Peer {peer_id} not in room {room_id}")
+            raise SFUConnectionError("Peer not in room")
         try:
-            from aiortc import RTCSessionDescription
-
-            remote = RTCSessionDescription(sdp=offer_sdp, type="offer")
-        except Exception as e:
-            raise SFUConnectionError(f"Invalid offer SDP: {e}") from e
-        try:
+            remote = _rtc_session_description(sdp=offer_sdp, type="offer")
             await peer.pc.setRemoteDescription(remote)
-        except Exception as e:
-            raise SFUConnectionError(f"Failed to apply remote offer: {e}") from e
+        except SFUConnectionError:
+            raise
+        except Exception as exc:
+            raise SFUConnectionError("Failed to apply remote offer") from exc
 
         if peer.pc.signalingState == "have-remote-offer":
             try:
                 answer = await peer.pc.createAnswer()
                 await peer.pc.setLocalDescription(answer)
-            except Exception as e:
-                raise SFUConnectionError(f"Failed to build SFU answer: {e}") from e
+            except Exception as exc:
+                raise SFUConnectionError("Failed to build SFU answer") from exc
 
         local = peer.pc.localDescription
         if local is not None and local.sdp:
@@ -710,21 +490,21 @@ class AiortcAdapter(SFUAdapter):
         answer_sdp: str,
     ) -> bool:
         """Apply the client's answer so the aiortc DTLS handshake can run."""
+        try:
+            room_id = validate_room_id(room_id)
+            peer_id = validate_identifier(peer_id, "peer_id")
+            answer_sdp = validate_sdp_payload(answer_sdp, "answer SDP")
+        except SFUValidationError:
+            return False
         peer = self._rooms.get(room_id, {}).get(peer_id)
         if peer is None:
             return False
         try:
-            from aiortc import RTCSessionDescription
-
-            remote = RTCSessionDescription(sdp=answer_sdp, type="answer")
-        except Exception as e:
-            logger.warning(f"Invalid answer SDP for {peer_id}: {e}")
-            return False
-        try:
+            remote = _rtc_session_description(sdp=answer_sdp, type="answer")
             await peer.pc.setRemoteDescription(remote)
             return True
-        except Exception as e:
-            logger.warning(f"Failed to apply remote answer for {peer_id}: {e}")
+        except Exception:
+            logger.warning("Failed to apply remote answer")
             return False
 
     async def add_ice_candidate(
@@ -735,30 +515,22 @@ class AiortcAdapter(SFUAdapter):
         sdp_mid: Optional[str] = None,
         sdp_mline_index: Optional[int] = None,
     ) -> bool:
-        """Feed a trickled client candidate into the peer connection.
-
-        The signaling layer records candidates but, without this, they never
-        reach the SFU -- on loopback ICE still completes via peer-reflexive
-        discovery, which is why the gap stayed hidden; across a NAT the SFU has
-        no way to initiate a check toward the client. aiortc requires a
-        candidate to be bound to an m-line (``sdpMid`` or ``sdpMLineIndex``),
-        so candidates arriving without one are refused rather than applied to
-        the wrong transceiver.
-        """
+        """Feed a trickled client candidate into the peer connection."""
+        try:
+            room_id = validate_room_id(room_id)
+            peer_id = validate_identifier(peer_id, "peer_id")
+            cand, mid, idx = validate_ice_candidate_payload(
+                candidate, sdp_mid, sdp_mline_index
+            )
+        except SFUValidationError:
+            return False
         peer = self._rooms.get(room_id, {}).get(peer_id)
         if peer is None:
             return False
-        if sdp_mid is None and sdp_mline_index is None:
-            logger.debug(
-                f"Dropping ICE candidate for peer {peer_id}: no sdpMid/mLineIndex"
-            )
-            return False
         try:
-            from ..ice import ICECandidateParser
-            from aiortc import RTCIceCandidate
-
-            parsed = ICECandidateParser().parse(candidate)
-            remote = RTCIceCandidate(
+            ice_mod = cast(Any, importlib.import_module("...ice", __package__))
+            parsed = ice_mod.ICECandidateParser().parse(cand)
+            remote = _rtc_ice_candidate(
                 component=int(parsed["component"]),
                 foundation=str(parsed["foundation"]),
                 ip=str(parsed["address"]),
@@ -768,15 +540,14 @@ class AiortcAdapter(SFUAdapter):
                 type=str(parsed["type"]),
                 relatedAddress=parsed.get("related_address"),
                 relatedPort=parsed.get("related_port"),
-                sdpMid=sdp_mid,
-                sdpMLineIndex=sdp_mline_index,
+                sdpMid=mid,
+                sdpMLineIndex=idx,
                 tcpType=parsed.get("tcp_type"),
             )
             await peer.pc.addIceCandidate(remote)
             return True
-        except Exception as e:
-            # A malformed or out-of-order candidate must not break the session.
-            logger.debug(f"Failed to add ICE candidate for peer {peer_id}: {e}")
+        except Exception:
+            logger.debug("Failed to add ICE candidate")
             return False
 
     async def leave_room(self, room_id: str, peer_id: str) -> bool:
@@ -817,7 +588,7 @@ class AiortcAdapter(SFUAdapter):
 
         del self._rooms[room_id][peer_id]
         self._last_quality_sample.pop(peer_id, None)
-        logger.info(f"Peer {peer_id} left room {room_id}")
+        logger.info("Peer left room")
 
         if not self._rooms[room_id]:
             await self.close_room(room_id)
@@ -835,10 +606,16 @@ class AiortcAdapter(SFUAdapter):
         direction: TransportDirection,
     ) -> SFUTransport:
         """Create a WebRTC transport for a peer with real ICE/DTLS parameters."""
+        room_id = validate_room_id(room_id)
+        peer_id = validate_identifier(peer_id, "peer_id")
+        if not isinstance(direction, TransportDirection):
+            raise SFUValidationError("Invalid transport direction")
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
-            raise SFUConnectionError(f"Peer {peer_id} not in room {room_id}")
+            raise SFUConnectionError("Peer not in room")
 
         peer = self._rooms[room_id][peer_id]
+        if len(peer.transports) >= MAX_TRANSPORTS_PER_PEER:
+            raise SFUValidationError("Transport limit exceeded")
         transport_id = str(uuid.uuid4())
         pc = peer.pc
 
@@ -893,16 +670,20 @@ class AiortcAdapter(SFUAdapter):
         dtls_parameters: Dict[str, Any],
     ) -> bool:
         """Connect a transport with remote DTLS parameters."""
+        try:
+            room_id = validate_room_id(room_id)
+            peer_id = validate_identifier(peer_id, "peer_id")
+            transport_id = validate_identifier(transport_id, "transport_id")
+            dtls = validate_dtls_parameters(dtls_parameters)
+        except SFUValidationError:
+            return False
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
             return False
-
         peer = self._rooms[room_id][peer_id]
-
         if transport_id not in peer.transports:
             return False
-
-        peer.transports[transport_id].dtls_parameters = dtls_parameters
-        logger.debug(f"Connected transport {transport_id} for peer {peer_id}")
+        peer.transports[transport_id].dtls_parameters = dtls
+        logger.debug("Connected transport")
         return True
 
     # ------------------------------------------------------------------
@@ -956,10 +737,16 @@ class AiortcAdapter(SFUAdapter):
         rtp_parameters: Dict[str, Any],
     ) -> SFUProducer:
         """Create a producer to send media and forward the track to all other peers."""
+        room_id = validate_room_id(room_id)
+        peer_id = validate_identifier(peer_id, "peer_id")
+        transport_id = validate_identifier(transport_id, "transport_id")
+        rtp_parameters = validate_payload_mapping(rtp_parameters, "rtp_parameters")
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
-            raise SFUConnectionError(f"Peer {peer_id} not in room {room_id}")
+            raise SFUConnectionError("Peer not in room")
 
         peer = self._rooms[room_id][peer_id]
+        if len(peer.producers) >= MAX_PRODUCERS_PER_PEER:
+            raise SFUValidationError("Producer limit exceeded")
         producer_id = str(uuid.uuid4())
 
         track = self._find_track_by_kind(peer, kind)
@@ -971,9 +758,9 @@ class AiortcAdapter(SFUAdapter):
             kind == MediaKind.AUDIO
             and track is not None
             and self._acoustic_defense.enabled
-            and not isinstance(track, AudioProcessingTrack)
+            and not isinstance(track, _audio_processing_track_cls())
         ):
-            track = AudioProcessingTrack(track, self._acoustic_defense)
+            track = _audio_processing_track_cls()(track, self._acoustic_defense)
 
         producer = SFUProducer(
             id=producer_id,
@@ -1007,10 +794,19 @@ class AiortcAdapter(SFUAdapter):
         rtp_capabilities: Dict[str, Any],
     ) -> SFUConsumer:
         """Create a consumer to receive media from a producer."""
+        room_id = validate_room_id(room_id)
+        peer_id = validate_identifier(peer_id, "peer_id")
+        transport_id = validate_identifier(transport_id, "transport_id")
+        producer_id = validate_identifier(producer_id, "producer_id")
+        rtp_capabilities = validate_payload_mapping(
+            rtp_capabilities, "rtp_capabilities"
+        )
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
-            raise SFUConnectionError(f"Peer {peer_id} not in room {room_id}")
+            raise SFUConnectionError("Peer not in room")
 
         peer = self._rooms[room_id][peer_id]
+        if len(peer.consumers) >= MAX_CONSUMERS_PER_PEER:
+            raise SFUValidationError("Consumer limit exceeded")
         consumer_id = str(uuid.uuid4())
 
         producer = None
@@ -1065,11 +861,15 @@ class AiortcAdapter(SFUAdapter):
         producer_id: str,
     ) -> bool:
         """Pause a producer."""
+        try:
+            room_id = validate_room_id(room_id)
+            peer_id = validate_identifier(peer_id, "peer_id")
+            producer_id = validate_identifier(producer_id, "producer_id")
+        except SFUValidationError:
+            return False
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
             return False
-
         peer = self._rooms[room_id][peer_id]
-
         if producer_id not in peer.producers:
             return False
 
@@ -1084,11 +884,15 @@ class AiortcAdapter(SFUAdapter):
         producer_id: str,
     ) -> bool:
         """Resume a producer."""
+        try:
+            room_id = validate_room_id(room_id)
+            peer_id = validate_identifier(peer_id, "peer_id")
+            producer_id = validate_identifier(producer_id, "producer_id")
+        except SFUValidationError:
+            return False
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
             return False
-
         peer = self._rooms[room_id][peer_id]
-
         if producer_id not in peer.producers:
             return False
 
@@ -1103,11 +907,15 @@ class AiortcAdapter(SFUAdapter):
         producer_id: str,
     ) -> bool:
         """Close a producer."""
+        try:
+            room_id = validate_room_id(room_id)
+            peer_id = validate_identifier(peer_id, "peer_id")
+            producer_id = validate_identifier(producer_id, "producer_id")
+        except SFUValidationError:
+            return False
         if room_id not in self._rooms or peer_id not in self._rooms[room_id]:
             return False
-
         peer = self._rooms[room_id][peer_id]
-
         if producer_id not in peer.producers:
             return False
 
@@ -1264,7 +1072,7 @@ class AiortcAdapter(SFUAdapter):
 
     async def health_check(self) -> bool:
         """Check if the SFU server is healthy."""
-        return AIORTC_AVAILABLE
+        return _aiortc_available()
 
     # ------------------------------------------------------------------
     # Quality reporting
@@ -1313,7 +1121,7 @@ class AiortcAdapter(SFUAdapter):
         Peers whose pc reports nothing measurable are skipped.
         """
         samples: List[tuple] = []
-        now = time.monotonic()
+        now = getattr(_pkg, "time", _time_mod).monotonic()
         for room_id, peers in list(self._rooms.items()):
             for peer_id, peer in list(peers.items()):
                 try:
@@ -1337,39 +1145,29 @@ class AiortcAdapter(SFUAdapter):
     # ------------------------------------------------------------------
 
     async def start_recording(self, room_id: str, output_dir: str) -> Dict[str, Any]:
-        """Start recording audio in a room.
-
-        Creates a ``MediaRecorder`` per audio track currently in the room.
-        New tracks that arrive after this call are auto-recorded via the
-        ``on_track`` handler added in :meth:`join_room`.
-        """
+        """Start recording audio in a room."""
+        room_id = validate_room_id(room_id)
         if room_id not in self._rooms:
             raise SFUConnectionError(f"Room {room_id} does not exist")
-
         if room_id in self._recordings:
-            logger.warning(f"Room {room_id} is already recording")
+            logger.warning("Room is already recording")
             return {"recording_id": self._recordings[room_id]["recording_id"]}
-
-        if not AIORTC_RECORDING_AVAILABLE:
-            logger.warning(
-                f"Recording requested for room {room_id} but MediaRecorder is not available"
-            )
+        if not _aiortc_recording_available():
+            logger.warning("Recording requested but MediaRecorder is not available")
             return {"recording_id": "", "file_count": 0, "unsupported": True}
-
+        safe_dir = validate_recording_output_dir(output_dir)
         recording_id = str(uuid.uuid4())
-        os.makedirs(output_dir, exist_ok=True)
-
-        assert AIORTC_RECORDING_AVAILABLE
+        os.makedirs(safe_dir, exist_ok=True)
         recorders: List[Dict[str, Any]] = []
         for pid, peer in self._rooms[room_id].items():
-            for idx, track in enumerate(peer.incoming_audio_tracks):
+            for _idx, track in enumerate(peer.incoming_audio_tracks):
                 rec_producer_id = str(uuid.uuid4())
-                filepath = os.path.join(
-                    output_dir,
-                    f"{recording_id}_{pid}_{rec_producer_id}.webm",
-                )
+                filename = f"{recording_id}_{pid}_{rec_producer_id}.webm"
+                filepath = os.path.normpath(os.path.join(safe_dir, filename))
+                if not (filepath == safe_dir or filepath.startswith(safe_dir + os.sep)):
+                    continue
                 try:
-                    recorder = MediaRecorder(filepath)
+                    recorder = _make_media_recorder(filepath)
                     recorder.addTrack(track)
                     await recorder.start()
                     recorders.append(
@@ -1380,24 +1178,16 @@ class AiortcAdapter(SFUAdapter):
                             "recorder": recorder,
                         }
                     )
-                    logger.debug(f"Recording track {idx} for peer {pid} -> {filepath}")
+                    logger.debug("Recording track started")
                 except Exception as exc:
-                    logger.warning(f"Failed to start recorder for peer {pid}: {exc}")
-
+                    logger.warning("Failed to start recorder: %s", type(exc).__name__)
         self._recordings[room_id] = {
             "recording_id": recording_id,
-            "output_dir": output_dir,
+            "output_dir": safe_dir,
             "recorders": recorders,
         }
-
-        logger.info(
-            f"Started recording room {room_id}: "
-            f"{len(recorders)} track(s), recording_id={recording_id}"
-        )
-        return {
-            "recording_id": recording_id,
-            "file_count": len(recorders),
-        }
+        logger.info("Started recording: %d track(s)", len(recorders))
+        return {"recording_id": recording_id, "file_count": len(recorders)}
 
     async def stop_recording(self, room_id: str) -> Optional[List[str]]:
         """Stop recording a room and return the recorded file paths."""
