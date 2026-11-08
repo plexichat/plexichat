@@ -25,6 +25,23 @@ class FileUploadError(MediaError):
         self.filename = filename
 
 
+class StorageQuotaExceededError(FileUploadError):
+    """The upload would exceed the user's total storage allowance."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        used_bytes: int = 0,
+        limit_bytes: int = 0,
+        requested_bytes: int = 0,
+    ):
+        super().__init__(message)
+        self.used_bytes = int(used_bytes)
+        self.limit_bytes = int(limit_bytes)
+        self.requested_bytes = int(requested_bytes)
+
+
 class FileSizeError(MediaError):
     """File exceeds size limit."""
 

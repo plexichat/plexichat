@@ -163,6 +163,7 @@ def get_tier_limits(tier: str) -> TierLimits:
         max_video_minutes_per_day=tier_config.get("max_video_minutes_per_day", 60),
         max_file_uploads_per_day=tier_config.get("max_file_uploads_per_day", 50),
         max_file_size_mb=tier_config.get("max_file_size_mb", 10),
+        max_storage_mb=tier_config.get("max_storage_mb", 5 * 1024),
         max_servers=tier_config.get("max_servers", 100),
         max_message_length=tier_config.get("max_message_length", 2000),
         max_reactions_per_message=tier_config.get("max_reactions_per_message", 20),

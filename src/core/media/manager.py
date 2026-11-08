@@ -118,6 +118,17 @@ class MediaManager(
         except ImportError:
             self._compression_manager = None
 
+        # Central per-user storage quota: tier/config default + optional
+        # admin override + race-safe upload reservations. Initialised lazily
+        # on failure so a quota-schema issue cannot take media down.
+        self._storage_quota = None
+        try:
+            from src.core.storage_quota import StorageQuotaManager
+
+            self._storage_quota = StorageQuotaManager(db)
+        except Exception as e:
+            logger.warning(f"Storage quota manager unavailable: {e}")
+
         logger.info("Media module initialized")
 
     def close(self) -> None:

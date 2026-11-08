@@ -37,6 +37,19 @@ logger = logging.getLogger(__name__)
 class _UploadMixin:
     """Upload pipeline methods mixed into MediaManager."""
 
+    def _reserve_storage_quota(self, user_id: int, size: int):
+        quota = getattr(self, "_storage_quota", None)
+        if quota is None:
+            return None
+        return quota.reserve(user_id, size)
+
+    def _release_storage_quota(self, token) -> None:
+        if not token:
+            return
+        quota = getattr(self, "_storage_quota", None)
+        if quota is not None:
+            quota.release(token)
+
     # ── stream I/O helpers ────────────────────────────────────────────────────
 
     def _read_stream_to_temp(
@@ -169,13 +182,17 @@ class _UploadMixin:
         self._validate_file_size(file_size, media_type)
         self._check_rate_limit(user_id, file_size)
 
-        result = self._do_upload(
-            user_id=user_id,
-            file_data=file_data,
-            filename=filename,
-            content_type=content_type,
-            media_type=media_type,
-        )
+        quota_token = self._reserve_storage_quota(user_id, file_size)
+        try:
+            result = self._do_upload(
+                user_id=user_id,
+                file_data=file_data,
+                filename=filename,
+                content_type=content_type,
+                media_type=media_type,
+            )
+        finally:
+            self._release_storage_quota(quota_token)
         return result
 
     # ── _do_upload (internal bytes path) ───────────────────────────────────────
@@ -436,6 +453,7 @@ class _UploadMixin:
         use_memory = size is not None and size > 0 and size <= max_in_memory
         temp_path = None
         file_data = None
+        quota_token = None
         try:
             if use_memory:
                 # OPTIMISATION: Read small files directly into memory — no disk I/O
@@ -501,6 +519,7 @@ class _UploadMixin:
                 self._validate_svg_preview(temp_path)
 
             self._check_rate_limit(user_id, file_size)
+            quota_token = self._reserve_storage_quota(user_id, file_size)
 
             # ── Fast inline dedup (exact-hash only — no O(n) pHash scans) ──
             dedup_result = None
@@ -690,6 +709,7 @@ class _UploadMixin:
                 )
             return result
         finally:
+            self._release_storage_quota(quota_token)
             if temp_path:
                 try:
                     os.unlink(temp_path)
