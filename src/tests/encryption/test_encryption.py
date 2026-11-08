@@ -784,7 +784,7 @@ class TestMessageEncryption:
     ):
         """Env-provided message keys should not trigger the startup warning."""
         env_name = "PLEXICHAT_MESSAGE_KEY_TEST"
-        env_key = base64.b64encode(b"a" * 32).decode("utf-8")
+        env_key = base64.b64encode(os.urandom(32)).decode("utf-8")
         monkeypatch.setenv(env_name, env_key)
 
         keyring = Keyring(temp_keyring_path, kek_env_var=env_name)
@@ -800,7 +800,7 @@ class TestMessageEncryption:
     ):
         """Older keyrings without source metadata should infer env-backed keys."""
         env_name = "PLEXICHAT_MESSAGE_KEY_TEST"
-        env_key = base64.b64encode(b"b" * 32).decode("utf-8")
+        env_key = base64.b64encode(os.urandom(32)).decode("utf-8")
         monkeypatch.setenv(env_name, env_key)
 
         keyring = Keyring(temp_keyring_path, kek_env_var=env_name)

@@ -124,7 +124,7 @@ else:
 safe_content = embeds.sanitize_embed_content(user_input)
 ```
 
-`validate_embed` is defined in `__init__.py:256` and `sanitize_embed_content` in `__init__.py:266`. The underlying logic lives in `validator.py:762`.
+`validate_embed` is defined in `__init__.py:256` and `sanitize_embed_content` in `__init__.py:266`. The underlying logic lives in `validator/schema.py:113`.
 
 ## Field limits
 
@@ -140,7 +140,7 @@ safe_content = embeds.sanitize_embed_content(user_input)
 | Embeds per message | 10 |
 | Total characters per embed | 6000 |
 
-Limits are defined in `validator.py:27`. `calculate_embed_chars` (`validator.py:726`) sums `title`, `description`, `footer.text`, `author.name`, and all `fields` names and values.
+Limits are defined in `validator/constants.py:12`. `calculate_embed_chars` (`validator/schema.py:77`) sums `title`, `description`, `footer.text`, `author.name`, and all `fields` names and values.
 
 ## Embed types
 
@@ -162,15 +162,15 @@ All URLs in embeds must meet these requirements:
 * Use `http://` or `https://` (or a server-relative path under `/api/v1/media/`).
 * Not use `javascript:`, `data:`, or `vbscript:` schemes.
 * Not contain attribute-breakout characters (`"`, `'`, `<`, `>`, `` ` ``) or control characters.
-* Pass shape validation (`validator.py:57`) and SSRF checks through `src.utils.security.URLValidator` (`validator.py:305`).
+* Pass shape validation (`validator/constants.py:29`) and SSRF checks through `src.utils.security.URLValidator` (`validator/url_validation.py:69`).
 
-Relative media paths such as `/api/v1/media/...` are accepted and lifted to an absolute URL using `public_server_url` when available. See `validator.py:86`.
+Relative media paths such as `/api/v1/media/...` are accepted and lifted to an absolute URL using `public_server_url` when available. See `validator/url_validation.py:42`.
 
-Invalid URLs raise `InvalidUrlError`. See `validator.py:192`.
+Invalid URLs raise `InvalidUrlError`. See `validator/url_validation.py:69`.
 
 ## Security
 
-1. **Cross-site scripting (XSS) prevention** — `sanitize_content` (`validator.py:423`) checks raw, decoded, and normalized forms of content against blocklists for `<script>`, event handlers, and active-content tags. See `validator.py:131` for the full pattern list.
+1. **Cross-site scripting (XSS) prevention** — `sanitize_content` (`validator/content.py:19`) checks raw, decoded, and normalized forms of content against blocklists for `<script>`, event handlers, and active-content tags. See `validator/constants.py:63` for the full pattern list.
 2. **URL validation** — Only `http` and `https` URLs are allowed, with SSRF protection for private and loopback ranges.
 3. **Content limits** — Strict character and field limits prevent abuse.
 4. **Permission checks** — Server channels require the `messages.embed_links` permission to attach embeds. The check is performed through the `servers` module passed to `setup()`.
