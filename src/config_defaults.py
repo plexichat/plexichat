@@ -38,7 +38,7 @@ def default_version() -> str:
     in at module scope would initialize it too early.
 
     Returns:
-        The current application version string (e.g. "1.0.0a184").
+        The current application version string (e.g. "1.0.0a208").
     """
     from src.server.lifecycle import VERSION
 
@@ -905,7 +905,7 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                 "x_frame_options": "SAMEORIGIN",
                 "referrer_policy": "strict-origin-when-cross-origin",
                 "permissions_policy": "geolocation=(), microphone=(self), camera=()",
-                "content_security_policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
+                "content_security_policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';",
             },
             "rate_limit": {
                 "enabled": True,

@@ -103,7 +103,7 @@ static_client:
     content_security_policy: "default-src 'self'; ..."
 ```
 
-The default CSP in `src/config_defaults.py` allows scripts from `self` and `https://cdn.jsdelivr.net` and fonts from `https://fonts.googleapis.com`. Update the CSP if you load external resources.
+The default CSP in `src/config_defaults.py` allows scripts, styles, and fonts only from `self` (fonts also from `data:`). Update the CSP if you load external resources.
 
 The typed config in `src/static_client/config.py` uses a shorter default CSP that allows `wss:` for WebSocket connections. Plexichat uses `src/config_defaults.py` when you install from defaults.
 
@@ -239,7 +239,7 @@ static_client:
     x_frame_options: "SAMEORIGIN"
     referrer_policy: "strict-origin-when-cross-origin"
     permissions_policy: "geolocation=(), microphone=(self), camera=()"
-    content_security_policy: "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';"
+    content_security_policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob: data:; worker-src blob:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src 'self'; frame-ancestors 'none';"
   rate_limit:
     enabled: true
     html:   { requests: 300, window_seconds: 60, burst: 60 }

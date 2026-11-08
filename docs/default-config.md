@@ -18,7 +18,7 @@ Use this file as your starting point. Copy it to `config/config.yaml` or
 # Copy to config/config.yaml or ~/.plexichat/config/config.yaml
 application:
   name: Plexichat
-  version: 1.0.0a184
+  version: 1.0.0a208
   environment: development
 server:
   host: 127.0.0.1
@@ -176,7 +176,7 @@ authentication:
 api:
   title: Plexichat API
   description: REST API for the Plexichat messaging platform
-  version: 1.0.0a184
+  version: 1.0.0a208
   api_prefix: /api/v1
   debug: true
   cors_origins:
@@ -786,7 +786,7 @@ bots:
   max_requests_pending_per_user: 10
 versioning:
   # Defaults to the server's own version at startup (src/config_defaults.py).
-  min_supported_version: 1.0.0a184
+  min_supported_version: 1.0.0a208
   update_url: null
 docs:
   enabled: true
@@ -888,11 +888,11 @@ static_client:
     x_frame_options: SAMEORIGIN
     referrer_policy: strict-origin-when-cross-origin
     permissions_policy: geolocation=(), microphone=(self), camera=()
-    content_security_policy: 'default-src ''self''; script-src ''self'' ''unsafe-inline''
-      https://cdn.jsdelivr.net; style-src ''self'' ''unsafe-hashes'' https://fonts.googleapis.com;
-      font-src https://fonts.gstatic.com; img-src ''self'' data: blob:; media-src
-      ''self'' blob:; worker-src blob:; connect-src ''self'' http://localhost:8000
-      http://127.0.0.1:8000 wss:; manifest-src ''self''; frame-ancestors ''none'';'
+    content_security_policy: 'default-src ''self''; script-src ''self''; style-src
+      ''self'' ''unsafe-inline''; font-src ''self'' data:; img-src ''self'' data:
+      blob:; media-src ''self'' blob: data:; worker-src blob:; connect-src ''self''
+      http://localhost:8000 http://127.0.0.1:8000 wss:; manifest-src ''self'';
+      frame-ancestors ''none'';'
   rate_limit:
     enabled: true
     html:

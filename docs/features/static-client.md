@@ -30,7 +30,7 @@ The version pin policies are defined in `src/config_defaults.py` and `src/static
 ```text
 ~/.plexichat/client/
 ├── current_version          # Single-line file with the active version string
-├── 1.0.0a184/               # Unpacked dist for this version
+├── 1.0.0a208/               # Unpacked dist for this version
 │   ├── index.html
 │   ├── app.html
 │   ├── config.js            # Written by the backend after install
@@ -94,7 +94,7 @@ The backend adds the following headers to every static response (`src/static_cli
 | `X-Frame-Options` | `SAMEORIGIN` |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` |
 | `Permissions-Policy` | `geolocation=(), microphone=(self), camera=()` |
-| `Content-Security-Policy` | Configurable. The default in `src/config_defaults.py` allows `self`, `https://cdn.jsdelivr.net`, and `https://fonts.googleapis.com`. |
+| `Content-Security-Policy` | Configurable. The default in `src/config_defaults.py` allows only `self` (plus `data:` for fonts and media). |
 
 The middleware also strips the `Authorization` header from the scope before it serves files, so a stray `Authorization: Bearer ...` header on a page request doesn't leak into the response chain.
 

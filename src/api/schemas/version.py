@@ -33,7 +33,7 @@ class VersionInfo(BaseModel):
     )
     local: Optional[str] = Field(None, description="Local version segment (e.g. None)")
     string: str = Field(
-        ..., description="Full canonical PEP 440 version string (e.g., '1.0.0a184')"
+        ..., description="Full canonical PEP 440 version string (e.g., '1.0.0a208')"
     )
 
 

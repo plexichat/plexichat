@@ -127,6 +127,12 @@ class DocsRouter(
         router.get("/deployment/disaster-recovery", include_in_schema=False)(
             self.docs_deployment_disaster_recovery
         )
+        router.get("/deployment/hardened", include_in_schema=False)(
+            self.docs_deployment_hardened
+        )
+        router.get("/deployment/load-testing", include_in_schema=False)(
+            self.docs_deployment_load_testing
+        )
 
         router.get("/migrations", include_in_schema=False)(self.docs_migrations)
         router.get("/troubleshooting/client-troubleshooting", include_in_schema=False)(
@@ -137,6 +143,9 @@ class DocsRouter(
         )
 
         router.get("/admin", include_in_schema=False)(self.docs_admin)
+        router.get("/admin-hardening", include_in_schema=False)(
+            self.docs_admin_hardening
+        )
         router.get("/admin/getting-started", include_in_schema=False)(
             self.docs_admin_getting_started
         )

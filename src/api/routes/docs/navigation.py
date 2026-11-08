@@ -37,6 +37,7 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
         "Admin": [
             NavItem("Admin Overview", "/admin"),
+            NavItem("Admin Hardening", "/admin-hardening"),
             NavItem("Getting Started", "/admin/getting-started"),
             NavItem("RBAC System", "/admin/rbac"),
             NavItem("Approval Workflows", "/admin/approval-workflows"),
@@ -56,6 +57,8 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
         ],
         "Operations": [
             NavItem("Versioning and Updates", "/deployment/versioning"),
+            NavItem("Hardened Deployment", "/deployment/hardened"),
+            NavItem("Load Testing & Capacity", "/deployment/load-testing"),
             NavItem("Env Generator", "/deployment/env-generator"),
         ],
     }

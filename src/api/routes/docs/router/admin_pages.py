@@ -14,6 +14,14 @@ class AdminPagesMixin:
             "/admin",
         )
 
+    async def docs_admin_hardening(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("admin-hardening.md"),
+            "Admin Hardening",
+            "/admin-hardening",
+        )
+
     async def docs_admin_getting_started(self, request: Request):
         return await self._serve_page(
             request,

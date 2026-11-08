@@ -48,7 +48,7 @@ FOOTER_RE = re.compile(
     r"(Backend \(server API\): <strong>)([^<]+)(</strong> &middot; Frontend \(web client\): <strong>)([^<]+)(</strong>)"
 )
 
-# PEP 440-ish tag the project uses (e.g. 1.0.0a184, 1.0.0, 2.1.0rc1.post1).
+# PEP 440-ish tag the project uses (e.g. 1.0.0a208, 1.0.0, 2.1.0rc1.post1).
 VERSION_RE = re.compile(
     r"^\d+\.\d+\.\d+(?:[abrc]\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+.+)?$"
 )

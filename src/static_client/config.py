@@ -48,7 +48,7 @@ class SecurityHeadersConfig:
     referrer_policy: str = "strict-origin-when-cross-origin"
     permissions_policy: str = "geolocation=(), microphone=(self), camera=()"
     content_security_policy: str = (
-        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+        "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "font-src 'self' data:; "
         "img-src 'self' data: blob:; media-src 'self' blob: data:; "

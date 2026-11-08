@@ -34,7 +34,7 @@ Single-page admin UI with tab navigation. The template includes:
 * **Users tab** — inner tabs `All Users`, `Scheduled Deletions`, `Tier Catalog`; user search, paginated user table, detail panel, and deletions table.
 * **Admins, Tickets, Moderation, Security, Telemetry, Logs, Database, Approvals, Audit, AutoMod, Bots, Artifacts, Migrations, Alerts, PlexiJoin, License, Account tabs** — tables and forms that call the corresponding `GET/POST/PATCH/DELETE /api/v1/admin/*` JSON endpoints.
 
-The page loads `Chart.js` from `https://cdn.jsdelivr.net/npm/chart.js` with an integrity hash and the CSP nonce, and loads `/api/v1/admin/static/dashboard.css`.
+The page loads the vendored `Chart.js` from `/api/v1/admin/static/chart.umd.min.js` with the CSP nonce, and loads `/api/v1/admin/static/dashboard.css`.
 
 ### `dashboard.css`
 

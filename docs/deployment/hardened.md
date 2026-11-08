@@ -17,10 +17,10 @@ All paths below are relative to `plexichat/`:
 
 | Artifact | Purpose |
 |---|---|
-| [`config/hardened.yaml`](../../config/hardened.yaml) | Secure config overlay consistent with `src/config_defaults.py` / `src/config_defaults_authentication.py`. Sets production, strict admin, CORS/origin allowlist placeholders, proxy trust, TLS-at-edge posture, Postgres/Valkey, ClamAV required, encryption/rate limits/audit/docs auth. |
-| [`docs/deployment/hardened/docker-compose.hardened.yml`](hardened/docker-compose.hardened.yml) | Compose override: uses `PLEXICHAT_CONFIG=/app/config/hardened.yaml`, binds backend to loopback, requires ClamAV, removes public RustFS exposure, mounts hardened nginx template. |
-| [`docs/deployment/hardened/nginx.hardened.conf`](hardened/nginx.hardened.conf) | Edge TLS termination + reverse proxy reference (HSTS, security headers, proxy headers, `/admin` edge-allowlist hook, WebSocket/gateway timeouts). Mount **real** certificates. |
-| [`docs/deployment/hardened/.env.hardened.example`](hardened/.env.hardened.example) | Secret names/template only — **no real secrets**. Copy to `.env`. |
+| `config/hardened.yaml` | Secure config overlay consistent with `src/config_defaults.py` / `src/config_defaults_authentication.py`. Sets production, strict admin, CORS/origin allowlist placeholders, proxy trust, TLS-at-edge posture, Postgres/Valkey, ClamAV required, encryption/rate limits/audit/docs auth. |
+| `docs/deployment/hardened/docker-compose.hardened.yml` | Compose override: uses `PLEXICHAT_CONFIG=/app/config/hardened.yaml`, binds backend to loopback, requires ClamAV, removes public RustFS exposure, mounts hardened nginx template. |
+| `docs/deployment/hardened/nginx.hardened.conf` | Edge TLS termination + reverse proxy reference (HSTS, security headers, proxy headers, `/admin` edge-allowlist hook, WebSocket/gateway timeouts). Mount **real** certificates. |
+| `docs/deployment/hardened/.env.hardened.example` | Secret names/template only — **no real secrets**. Copy to `.env`. |
 
 ## 1. Reverse proxy + TLS
 

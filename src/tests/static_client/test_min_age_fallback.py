@@ -219,13 +219,16 @@ def test_security_headers_csp_defaults_are_consistent():
     fallback = get_static_client_config().security_headers.content_security_policy
     assert dataclass_default == fallback
 
-    assert "script-src 'self' https://cdn.jsdelivr.net" in fallback
+    # Chart.js and Phosphor are self-hosted, so no third-party origins remain.
+    assert "script-src 'self';" in fallback
+    assert "cdn.jsdelivr.net" not in fallback
     script_src = fallback.split("script-src", 1)[1].split(";", 1)[0]
     assert "'unsafe-inline'" not in script_src
-    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in fallback
-    # Self-hosted fonts (Phosphor.woff2) and data: media must be allowed.
-    assert "font-src 'self' https://fonts.gstatic.com data:" in fallback
-    assert "media-src 'self' blob: data:" in fallback
+    assert "style-src 'self' 'unsafe-inline';" in fallback
+    assert "fonts.googleapis.com" not in fallback
+    # Self-hosted fonts (Phosphor.woff2, Inter) and data: media must be allowed.
+    assert "font-src 'self' data:;" in fallback
+    assert "media-src 'self' blob: data:;" in fallback
 
 
 def test_request_origin_prefers_origin_then_host():

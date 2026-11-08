@@ -97,6 +97,22 @@ class DeploymentPagesMixin:
             "/deployment/versioning",
         )
 
+    async def docs_deployment_hardened(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/hardened.md"),
+            "Hardened Deployment",
+            "/deployment/hardened",
+        )
+
+    async def docs_deployment_load_testing(self, request: Request):
+        return await self._serve_page(
+            request,
+            self._doc_path("deployment/load-testing.md"),
+            "Load Testing and Capacity",
+            "/deployment/load-testing",
+        )
+
     async def docs_migrations(self, request: Request):
         return await self._serve_page(
             request,

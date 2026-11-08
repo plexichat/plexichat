@@ -9,13 +9,13 @@ Version Format: PEP 440
 - dev: development release number (``.devN``)
 - local: local version segment (``+local``)
 
-Examples: ``1.0.0a184``, ``1.0.0``, ``2.1.0rc3``, ``1.0.0.post1``
+Examples: ``1.0.0a208``, ``1.0.0``, ``2.1.0rc3``, ``1.0.0.post1``
 
 Usage:
     from src.utils.common_utils.utils.version.core import parse_version, format_version
 
-    version = parse_version("1.0.0a184")
-    assert format_version(version) == "1.0.0a184"
+    version = parse_version("1.0.0a208")
+    assert format_version(version) == "1.0.0a208"
 """
 
 import re
@@ -107,7 +107,7 @@ def parse_version(version_string: Optional[str]) -> Version:
     Parse a PEP 440 version string into a Version object.
 
     Args:
-        version_string: Version string (e.g., "1.0.0a184")
+        version_string: Version string (e.g., "1.0.0a208")
 
     Returns:
         Version object
@@ -130,7 +130,7 @@ def parse_version(version_string: Optional[str]) -> Version:
     if not match:
         raise InvalidVersionError(
             f"Invalid version format: '{version_string}'. "
-            f"Expected PEP 440 format (e.g., '1.0.0a184', '1.0.0', '2.1.0rc3')"
+            f"Expected PEP 440 format (e.g., '1.0.0a208', '1.0.0', '2.1.0rc3')"
         )
 
     epoch_str = match.group("epoch")
@@ -170,7 +170,7 @@ def format_version(version: Version) -> str:
         version: Version object
 
     Returns:
-        PEP 440 version string (e.g., "1.0.0a184", "1.0.0", "2.1.0rc3")
+        PEP 440 version string (e.g., "1.0.0a208", "1.0.0", "2.1.0rc3")
     """
     parts: list[str] = []
 
@@ -357,7 +357,7 @@ def increment_build(version: Version) -> Version:
     Create a new version with the build (pre-release counter) incremented.
 
     If the version has a pre-release segment, its number is incremented
-    (e.g. ``1.0.0a184`` → ``1.0.0a185``). If the version is a plain release,
+    (e.g. ``1.0.0a208`` → ``1.0.0a185``). If the version is a plain release,
     a ``.post1`` segment is added.
 
     Args:

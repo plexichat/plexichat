@@ -470,7 +470,7 @@ Expected response:
   "status": "healthy",
   "database": "connected",
   "valkey": "connected",
-  "version": "1.0.0a184"
+  "version": "1.0.0a208"
 }
 ```
 
