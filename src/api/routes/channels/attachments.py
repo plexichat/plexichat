@@ -12,6 +12,7 @@ from src.core.media.exceptions import (
     FileUploadError,
     MalwareDetectedError,
     ScannerUnavailableError,
+    StorageQuotaExceededError,
 )
 
 import utils.logger as logger
@@ -223,6 +224,22 @@ class ChannelAttachmentsMixin(ChannelBase):
                 )
             except HTTPException:
                 raise
+            except StorageQuotaExceededError as e:
+                logger.warning(
+                    f"Storage quota blocked attachment for user {current_user.user_id}: {e}"
+                )
+                raise HTTPException(
+                    status_code=413,
+                    detail={
+                        "error": {
+                            "code": 413,
+                            "message": str(e),
+                            "used_bytes": e.used_bytes,
+                            "limit_bytes": e.limit_bytes,
+                            "requested_bytes": e.requested_bytes,
+                        }
+                    },
+                )
             except (FileSizeError, FileTypeError, FileUploadError) as e:
                 logger.warning(
                     f"Attachment rejected for user {current_user.user_id} in "

@@ -37,6 +37,7 @@ from src.api.schemas.stash import (
     StashVersionDiffResponse,
     StashVersionResponse,
 )
+from src.core.media.exceptions import StorageQuotaExceededError
 from src.core.suite import stash as stash_domain
 from src.core.suite.stash import StashManager
 from src.core.artifacts.capabilities import get_capability, is_usable
@@ -392,6 +393,19 @@ async def upload_file(
         return _item_response(item)
     except HTTPException:
         raise
+    except StorageQuotaExceededError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": {
+                    "code": 413,
+                    "message": str(exc),
+                    "used_bytes": exc.used_bytes,
+                    "limit_bytes": exc.limit_bytes,
+                    "requested_bytes": exc.requested_bytes,
+                }
+            },
+        ) from exc
     except Exception as exc:
         raise _error(exc) from exc
 
