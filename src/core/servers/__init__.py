@@ -15,6 +15,8 @@ Usage:
 
 from typing import Any, List, Optional
 
+import utils.logger as logger
+
 from .composer import ServersManager
 from .models import (
     Server,
@@ -88,6 +90,7 @@ from .channels import (
     get_channel,
     channel_exists,
     get_channel_conversation_id,
+    ensure_channel_conversation,
     get_channel_by_conversation,
     get_channels,
     update_channel,
@@ -194,6 +197,7 @@ __all__ = [
     "get_channel",
     "channel_exists",
     "get_channel_conversation_id",
+    "ensure_channel_conversation",
     "get_channel_by_conversation",
     "get_channels",
     "update_channel",
@@ -410,6 +414,15 @@ def setup(
     )
     _setup_complete = True
     backfill_default_role_permissions(db)
+    try:
+        repaired = _manager.repair_dangling_channel_conversations()
+        if repaired:
+            logger.warning(
+                "Repaired %s dangling server-channel conversation link(s)",
+                repaired,
+            )
+    except Exception as exc:
+        logger.warning("Startup channel conversation repair skipped: %s", exc)
 
 
 def _get_manager() -> ServersManager:

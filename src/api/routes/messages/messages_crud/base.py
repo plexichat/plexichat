@@ -167,6 +167,18 @@ class MessagesCRUDBase:
                                 },
                             )
 
+                    ensure = getattr(servers_mod, "ensure_channel_conversation", None)
+                    if ensure is not None and messaging:
+                        try:
+                            repaired = await run_in_threadpool(ensure, channel_id)
+                            if repaired:
+                                conversation_id = repaired
+                        except Exception as repair_error:
+                            logger.warning(
+                                f"Could not repair conversation link for channel "
+                                f"{channel_id}: {repair_error}"
+                            )
+
                     if conversation_id and messaging:
                         msg = await run_in_threadpool(
                             messaging.send_message,

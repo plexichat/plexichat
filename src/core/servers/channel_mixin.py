@@ -36,6 +36,22 @@ class ChannelMixin:
             return None
         return getter(channel_id)
 
+    def ensure_channel_conversation(
+        self, channel_id: SnowflakeID
+    ) -> Optional[SnowflakeID]:
+        """Return a channel's conversation, repairing a dangling link."""
+        repair = getattr(self._manager, "ensure_channel_conversation", None)
+        if repair is None:
+            return None
+        return repair(channel_id)
+
+    def repair_dangling_channel_conversations(self) -> int:
+        """Repair every live channel whose conversation link is missing."""
+        repair = getattr(self._manager, "repair_dangling_channel_conversations", None)
+        if repair is None:
+            return 0
+        return repair()
+
     def get_channel_by_conversation(
         self, conversation_id: SnowflakeID
     ) -> Optional[dict]:

@@ -325,6 +325,24 @@ class TestTextualChannelBehavior:
         )
         assert leftover == []
 
+    def test_send_repairs_missing_channel_conversation(self, fresh_server_tuple):
+        """A stale channel conversation link self-heals instead of 500ing."""
+        server, owner, servers = fresh_server_tuple
+        channel = servers.get_channels(owner.id, server.id)[0]
+        old_conversation_id = channel.conversation_id
+        assert old_conversation_id
+        servers.db.execute(
+            "DELETE FROM msg_conversations WHERE id = ?", (old_conversation_id,)
+        )
+
+        sent = servers.send_channel_message(owner.id, channel.id, "recovered")
+
+        row = servers.db.fetch_one(
+            "SELECT conversation_id FROM srv_channels WHERE id = ?", (channel.id,)
+        )
+        assert row["conversation_id"] == sent.conversation_id
+        assert sent.conversation_id != old_conversation_id
+
     def test_announcement_channels_support_messages(self, server_with_channels):
         """Announcement channels should work anywhere text channels do."""
         server, owner, _, member_user, _, _, _, _, _, servers = server_with_channels
