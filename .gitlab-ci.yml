@@ -1065,7 +1065,7 @@ docker:build_and_push:
       # told the registry is insecure answers every login with
       # "server gave HTTP response to HTTPS client" -- which is why no
       # release tag produced an image.
-      command: ["--insecure-registry=registry.plexichat.com:80"]
+      command: ["--insecure-registry=registry.plexichat.com:80", "--feature", "containerd-snapshotter=true"]
   variables:
     # TLS for the dind socket (Agent 55 F22). With a non-empty
     # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
@@ -1102,19 +1102,24 @@ docker:build_and_push:
         echo "$CI_REGISTRY_PASSWORD" | \
           docker login -u "$CI_REGISTRY_USER" --password-stdin "$REGISTRY"
       }
+      CACHE_IMAGE="${REGISTRY}/${CI_PROJECT_PATH}/backend:buildcache"
       echo "Building backend image for $CI_COMMIT_TAG from $REGISTRY"
       retry login
-      # No build-cache exporter here. Every job gets a fresh dind, so a cache
-      # would have to live in the registry, and registry import/export
-      # (--cache-from/--cache-to type=registry) needs a builder that supports
-      # a cache exporter. This job uses the daemon's own builder because
-      # `docker buildx create` refuses to run while the dind TLS variables are
-      # exported ("could not create a builder instance with TLS data loaded
-      # from environment"), and that builder has none: the flags failed every
-      # release with "Cache export is not supported for the docker driver"
-      # after six retries, before a single byte was built.
+      # Every job gets a fresh dind, so the build cache has to live in the
+      # registry. The containerd image store (enabled on the dind service
+      # above) lets the default docker driver import/export that cache; the
+      # cleanup job never deletes :buildcache because it is not a release tag.
+      # This caches the apt and pip layers: the first build after this change
+      # warms the cache, later releases reuse it instead of reinstalling apt.
+      CACHE_FROM=""
+      if docker manifest inspect "$CACHE_IMAGE" >/dev/null 2>&1; then
+        CACHE_FROM="--cache-from type=registry,ref=$CACHE_IMAGE"
+      fi
       retry docker buildx build \
-        --load -t "$IMAGE" -t "$IMAGE_LATEST" .
+        --load \
+        --cache-to "type=registry,ref=$CACHE_IMAGE,mode=max" \
+        $CACHE_FROM \
+        -t "$IMAGE" -t "$IMAGE_LATEST" .
       retry docker push "$IMAGE"
       retry docker push "$IMAGE_LATEST"
       # Docker Hub is best-effort: missing credentials must not fail a
@@ -1167,7 +1172,7 @@ docker:backup:
     - name: docker:27-dind
       alias: docker
       # HTTP-only registry; see docker:build_and_push.
-      command: ["--insecure-registry=registry.plexichat.com:80"]
+      command: ["--insecure-registry=registry.plexichat.com:80", "--feature", "containerd-snapshotter=true"]
   variables:
     # TLS for the dind socket (Agent 55 F22). With a non-empty
     # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
@@ -1199,9 +1204,18 @@ docker:backup:
         echo "$CI_REGISTRY_PASSWORD" | \
           docker login -u "$CI_REGISTRY_USER" --password-stdin "$REGISTRY"
       }
+      CACHE_IMAGE="${REGISTRY}/${CI_PROJECT_PATH}/backup:buildcache"
       echo "Building backup image for $CI_COMMIT_TAG from $REGISTRY"
-      docker build -t "$IMAGE" -t "$IMAGE_LATEST" docker/backup/
       retry login
+      CACHE_FROM=""
+      if docker manifest inspect "$CACHE_IMAGE" >/dev/null 2>&1; then
+        CACHE_FROM="--cache-from type=registry,ref=$CACHE_IMAGE"
+      fi
+      retry docker buildx build \
+        --load \
+        --cache-to "type=registry,ref=$CACHE_IMAGE,mode=max" \
+        $CACHE_FROM \
+        -t "$IMAGE" -t "$IMAGE_LATEST" docker/backup/
       retry docker push "$IMAGE"
       retry docker push "$IMAGE_LATEST"
       if [ -n "${DOCKER_HUB_TOKEN:-}" ] && [ -n "${DOCKER_HUB_USER:-}" ]; then
