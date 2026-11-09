@@ -92,7 +92,15 @@ field_is() { # field_is LABEL PATH EXPECTED
 # req METHOD PATH [JAR] [JSON]
 req() {
     local method=$1 path=$2 jar=${3:-} body=${4:-} attempt
-    local args=(-sS -m 30 -o "$TMP/body.json" -w '%{http_code}'
+    # IPv4 only. A CI container resolves an IPv6 address for the API, and on a
+    # runner with no IPv6 path to it curl spends its 2s connect budget on that
+    # address and reports no status at all: measured from an alpine:3.20
+    # container on the gate runner, 9 of 18 requests failed "Failed to connect
+    # ... after 2001 ms" on the default dual-stack choice and 0 of 18 with -4.
+    # Those failures are what drained the retry ladder below and turned a
+    # healthy deployment into a red release gate, so ask for the family the
+    # deployment is actually reachable over.
+    local args=(-4 -sS -m 30 -o "$TMP/body.json" -w '%{http_code}'
         -X "$method" "$BASE$path" -H 'X-Plexichat-Request: 1')
     [ -n "$jar" ] && args+=(-b "$jar" -c "$jar")
     if [ -n "$jar" ] && [ -n "${JAR_TOKEN[$jar]:-}" ]; then
