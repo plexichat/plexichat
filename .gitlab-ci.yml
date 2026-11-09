@@ -128,14 +128,20 @@ variables:
   PLEXICHAT_CI_ALLOW_INSECURE_INDEX: "0"
 
 cache:
-  key:
-    files:
-      - requirements.txt
-      - requirements-dev.txt
-  paths:
-    - .venv/
-    - .cache/pip
-  policy: pull-push
+  - key:
+      files:
+        - requirements.txt
+        - requirements-dev.txt
+    paths:
+      - .venv/
+      - .cache/pip
+    policy: pull-push
+  # apt's own roots cannot be cached directly, so the helper in
+  # ci-tooling/apt-cache.sh copies these into /var before installing.
+  - key: apt-cache-v1
+    paths:
+      - .cache/apt
+    policy: pull-push
 
 # =========================================================
 # BASE PYTHON ENV (shared)
@@ -147,7 +153,8 @@ cache:
     pull_policy: if-not-present
   interruptible: true
   before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git libatomic1
+    - . ci-tooling/apt-cache.sh
+    - apt_install git libatomic1
     - |
       # Refuse a plaintext HTTP package index unless the operator has
       # explicitly opted in; otherwise the build could be hijacked by an
@@ -210,8 +217,13 @@ lint:pre-commit:
       paths:
         - .cache/pre-commit
       policy: pull-push
+    - key: apt-cache-v1
+      paths:
+        - .cache/apt
+      policy: pull-push
   before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git libatomic1 nodejs
+    - . ci-tooling/apt-cache.sh
+    - apt_install git libatomic1 nodejs
     - |
       # Same fail-closed package-index guard as .python_base (Agent 55 F23).
       case "${PIP_INDEX_URL:-}" in
@@ -882,7 +894,8 @@ metrics:trend:
     name: python:3.14.8-slim-trixie
     pull_policy: if-not-present
   before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - . ci-tooling/apt-cache.sh
+    - apt_install git
     - git config --global user.email "ci@plexichat.com"
     - git config --global user.name "Plexichat CI"
   needs:
@@ -1507,7 +1520,18 @@ validate_master_and_tag:
   stage: test-and-release
   timeout: 30m
   cache:
-    policy: pull
+    - key:
+        files:
+          - requirements.txt
+          - requirements-dev.txt
+      paths:
+        - .venv/
+        - .cache/pip
+      policy: pull
+    - key: apt-cache-v1
+      paths:
+        - .cache/apt
+      policy: pull
   script:
     - mkdir -p .plexichat
     - echo "Running production validation suite on master..."
