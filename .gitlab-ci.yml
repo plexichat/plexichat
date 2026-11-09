@@ -1067,6 +1067,11 @@ test:purge_residue:
 
 docker:build_and_push:
   stage: docker
+  # Start as soon as the pipeline does. The image is built from this commit and
+  # an OpenTimestamp proof does not change its contents, so waiting for the
+  # timestamp stage only added its runtime to every release. `needs: []` also
+  # keeps working on tag pipelines, where the pytest jobs do not run at all.
+  needs: []
   image: docker:27
   services:
     - name: docker:27-dind
@@ -1178,6 +1183,7 @@ container_scanning:
 
 docker:backup:
   stage: docker
+  needs: []
   image: docker:27
   services:
     - name: docker:27-dind
@@ -1257,6 +1263,7 @@ docker:backup:
 # actually returns the deleted layers to the disk.
 docker:cleanup_old_images:
   stage: docker
+  needs: []
   image: node:22-slim
   variables:
     REGISTRY_KEEP: "5"
