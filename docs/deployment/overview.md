@@ -105,6 +105,35 @@ The scripts support optional profiles:
 ./deploy.sh --profile search-meilisearch
 ```
 
+## Startup warm-up
+
+After the server starts listening, a background task initialises the modules
+behind the fan-out read endpoints (`auth`, `servers`, `messaging`, `search`,
+`features`, `media`, `admin`, `settings`, `presence`) and opens one pooled
+database connection. The first request to one of those paths after a restart
+therefore does not pay for lazy initialisation and the first connection while a
+user is waiting on it.
+
+The task runs off the request path and is entirely best-effort: a module that
+fails to warm is logged at debug level and skipped, and startup never fails
+because of it. The request path still initialises on demand, exactly as before.
+
+Two keys under `api` control it (see [default-config.md](../default-config.md)):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `api.warmup_enabled` | `true` | Run the warm-up at all. |
+| `api.warmup_delay_seconds` | `2.0` | Seconds to wait after startup before warming, clamped to 0–30. |
+
+A completed run logs one line at info level:
+
+```
+Startup warm-up completed in 12ms
+```
+
+If that line is absent after a restart, check the delay setting and whether
+`api.warmup_enabled` was disabled for this deployment.
+
 ## Manual deployment flow (development)
 
 1. Clone the repositories from GitLab.
