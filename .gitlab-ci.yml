@@ -1078,7 +1078,10 @@ docker:build_and_push:
       # told the registry is insecure answers every login with
       # "server gave HTTP response to HTTPS client" -- which is why no
       # release tag produced an image.
-      command: ["--insecure-registry=registry.plexichat.com:80", "--feature", "containerd-snapshotter=true"]
+      # The containerd snapshotter is named overlayfs. Leaving dind on the
+      # default overlay2 graph driver makes BuildKit fail with
+      # "snapshotter not loaded: overlay2: invalid argument".
+      command: ["--insecure-registry=registry.plexichat.com:80", "--feature", "containerd-snapshotter=true", "--storage-driver=overlayfs"]
   variables:
     # TLS for the dind socket (Agent 55 F22). With a non-empty
     # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
@@ -1185,7 +1188,10 @@ docker:backup:
     - name: docker:27-dind
       alias: docker
       # HTTP-only registry; see docker:build_and_push.
-      command: ["--insecure-registry=registry.plexichat.com:80", "--feature", "containerd-snapshotter=true"]
+      # The containerd snapshotter is named overlayfs. Leaving dind on the
+      # default overlay2 graph driver makes BuildKit fail with
+      # "snapshotter not loaded: overlay2: invalid argument".
+      command: ["--insecure-registry=registry.plexichat.com:80", "--feature", "containerd-snapshotter=true", "--storage-driver=overlayfs"]
   variables:
     # TLS for the dind socket (Agent 55 F22). With a non-empty
     # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
