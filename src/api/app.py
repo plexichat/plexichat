@@ -198,6 +198,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         telemetry_retention_task = start_telemetry_retention_sweep()
 
+        # Warm the modules behind the fan-out read endpoints once, off the
+        # request path. The first hit on each of those paths after a restart
+        # paid a one-off cost (module lazy-init + first pooled connection);
+        # on a214 ``/features/users/:id/profile`` took 2321ms as the first
+        # call and 12.9ms on every call after it.
+        from .warmup import start_warmup, stop_warmup
+
+        warmup_task = start_warmup()
+
         # Register route templates so client-supplied telemetry endpoints are
         # allowlisted against real API routes (cardinality protection).
         # ``route.path`` carries the router mount prefix (e.g. /api/v1) while
@@ -253,6 +262,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         try:
             yield
         finally:
+            await stop_warmup(warmup_task)
             await stop_poll_expiry_sweep(poll_expiry_task)
             await stop_media_maintenance_sweep(media_maintenance_task)
             await stop_telemetry_retention_sweep(telemetry_retention_task)
