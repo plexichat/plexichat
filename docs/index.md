@@ -45,7 +45,7 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 
 *   [Deployment](deployment/index.md) — Installation, security hardening, scaling, monitoring, and backup.
 *   **[Docker deployment](deployment/docker/index.md)** — Quick start, configuration, development, production setup, and troubleshooting.
-*   [Versioning and updates](deployment/versioning.md) — Version scheme `1.0.0a212`, update procedures, and rollback strategies.
+*   [Versioning and updates](deployment/versioning.md) — Version scheme `1.0.0a213`, update procedures, and rollback strategies.
 *   [SQLite to PostgreSQL migration](./deployment/postgres-migration.md) — Automated migration guide.
 *   [Security best practices](security.md) — Authentication security, encryption, and production checklist.
 *   [Performance tuning](performance.md) — Subsystem optimization and scaling recommendations.
@@ -78,4 +78,4 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 | `/api/v1/status` | `GET` | Server state, version, and uptime. |
 | `/api/v1/capabilities` | `GET` | Public constants without authentication. |
 
-Version endpoints are implemented in `src/api/routes/version.py` and use the version utility in `src/utils/common_utils/utils/version/`. `/api/v1/version` reports the running build (currently `1.0.0a212`), the minimum supported client, and `api_version`.
+Version endpoints are implemented in `src/api/routes/version.py` and use the version utility in `src/utils/common_utils/utils/version/`. `/api/v1/version` reports the running build (currently `1.0.0a213`), the minimum supported client, and `api_version`.
