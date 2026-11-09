@@ -1271,6 +1271,11 @@ docker:cleanup_old_images:
 create_merge_request:
   stage: request-merge
   image: alpine:latest
+  cache:
+    - key: apk-cache-v1-create-mr
+      paths:
+        - .cache/apk
+      policy: pull-push
   variables:
     # The runner reaches this GitLab over the LAN on http -- that is what its
     # clone_url is set to, and why every job can clone -- while https:// is
@@ -1286,12 +1291,16 @@ create_merge_request:
     # package)", which is apk's index fetch not arriving rather than two
     # packages not existing -- the same command succeeds on a healthy link. So
     # retry the fetch a few times, and if it still has not arrived say that,
-    # instead of dressing a dropped packet up as a missing package.
+    # instead of dressing a dropped packet up as a missing package. The APK
+    # index and packages are kept in .cache/apk so warm runs need no fetch.
+    - mkdir -p "$CI_PROJECT_DIR/.cache/apk"
     - |
       for attempt in 1 2 3 4 5; do
-        if apk add --no-cache curl jq; then
+        if apk add --cache-dir "$CI_PROJECT_DIR/.cache/apk" curl jq; then
           break
         fi
+        rm -rf "$CI_PROJECT_DIR/.cache/apk"
+        mkdir -p "$CI_PROJECT_DIR/.cache/apk"
         echo "apk add attempt ${attempt} failed; retrying in 5s" >&2
         sleep 5
       done
@@ -1470,6 +1479,11 @@ live_smoke:
   stage: test-and-release
   image: alpine:3.20
   needs: []
+  cache:
+    - key: apk-cache-v1-live-smoke
+      paths:
+        - .cache/apk
+      policy: pull-push
   variables:
     PLEXICHAT_BASE_URL: "https://api.plexichat.com/api/v1"
     # The gate is a test harness, not a shipped artifact: run the suite from the
@@ -1479,7 +1493,8 @@ live_smoke:
     # deployment under test is still whatever PLEXICHAT_BASE_URL names.
     SMOKE_SCRIPT_REF: "dev"
   before_script:
-    - apk add --no-cache bash curl jq
+    - mkdir -p "$CI_PROJECT_DIR/.cache/apk"
+    - apk add --cache-dir "$CI_PROJECT_DIR/.cache/apk" bash curl jq
   script:
     # The runner reaches this GitLab over plain http (its git config rewrites
     # https://gitlab.plexichat.com/ to http://), so CI_PROJECT_URL's https form

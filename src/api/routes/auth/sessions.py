@@ -38,7 +38,9 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def logout(
+# Sync on purpose: session revocation is a blocking DB write. FastAPI runs
+# sync handlers in its worker threadpool.
+def logout(
     response: Response,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> SuccessResponse:

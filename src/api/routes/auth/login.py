@@ -33,9 +33,10 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def login(
-    request: Request, response: Response, body: LoginRequest
-) -> LoginResponse:
+# Sync on purpose: auth.login performs Argon2 verification and blocking DB
+# work. FastAPI runs sync handlers in its worker threadpool, so a login burst
+# cannot stall /ready or the rest of the event loop.
+def login(request: Request, response: Response, body: LoginRequest) -> LoginResponse:
     auth = api.get_auth()
     if not auth:
         logger.error("Auth module not available")

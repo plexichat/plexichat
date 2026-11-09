@@ -89,7 +89,9 @@ class ProfileMixin:
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
-    async def update_current_user(
+    # Sync on purpose: password verification, Argon2 hashing and profile writes
+    # are blocking. FastAPI runs sync handlers in its worker threadpool.
+    def update_current_user(
         self,
         body: UserUpdateRequest,
         current_user: TokenInfo = Depends(get_current_user),
@@ -404,7 +406,7 @@ class ProfileMixin:
                 detail={"error": {"code": 500, "message": "Internal server error"}},
             )
 
-    async def schedule_account_deletion(
+    def schedule_account_deletion(
         self,
         body: UserDeletionRequest,
         current_user: TokenInfo = Depends(get_current_user),
