@@ -129,6 +129,14 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
             "version": version,
             "api_prefix": "/api/v1",
             "debug": True,
+            # Boot-time warm-up (src/api/warmup.py): initialise the modules
+            # behind the fan-out read endpoints once the server is listening,
+            # so the first request after a restart does not pay for lazy module
+            # init and the first pooled DB connection. Disabling it removes
+            # only that optimisation; the request path still initialises on
+            # demand exactly as before.
+            "warmup_enabled": True,
+            "warmup_delay_seconds": 2.0,
             "cors_origins": [
                 "http://localhost:5000",
                 "http://127.0.0.1:5000",

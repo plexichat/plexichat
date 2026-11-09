@@ -18,7 +18,7 @@ Use this file as your starting point. Copy it to `config/config.yaml` or
 # Copy to config/config.yaml or ~/.plexichat/config/config.yaml
 application:
   name: Plexichat
-  version: 1.0.0a214
+  version: 1.0.0a215
   environment: development
 server:
   host: 127.0.0.1
@@ -176,9 +176,11 @@ authentication:
 api:
   title: Plexichat API
   description: REST API for the Plexichat messaging platform
-  version: 1.0.0a214
+  version: 1.0.0a215
   api_prefix: /api/v1
   debug: true
+  warmup_enabled: true
+  warmup_delay_seconds: 2.0
   cors_origins:
   - http://localhost:5000
   - http://127.0.0.1:5000
