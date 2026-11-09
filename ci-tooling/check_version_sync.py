@@ -204,14 +204,31 @@ def check_deploy_sh(
         return
     updated = text
     # Top-level default assignments (the script's defaults, not test heredocs).
+    #
+    # A default holds a literal version token; a value starting with ``$`` is
+    # code. The unrestricted ``[^"]*`` form also matched the resolver line
+    # ``VERSION="$(normalize_version "$VERSION")"`` and rewrote it into
+    # ``VERSION="1.0.0a215"$VERSION")"`` -- a script that then published a
+    # version string with the resolver's tail glued onto it (eleven landing
+    # deploy-flag checks caught it). Require a digit and a closing quote at end
+    # of line so a computed assignment can never match.
+    version_value = r'(\d[^"\n]*)("[ \t]*$)'
     rules: List[Tuple[str, str, str]] = [
-        (r'^(VERSION=")[^"]*(")', rf"\g<1>{backend}\2", "VERSION default"),
         (
-            r'^(BACKEND_VERSION=")[^"]*(")',
-            rf"\g<1>{backend}\2",
+            rf'^(VERSION="){version_value}',
+            rf"\g<1>{backend}\g<3>",
+            "VERSION default",
+        ),
+        (
+            rf'^(BACKEND_VERSION="){version_value}',
+            rf"\g<1>{backend}\g<3>",
             "BACKEND_VERSION default",
         ),
-        (r'^(CLIENT_VERSION=")[^"]*(")', rf"\g<1>{client}\2", "CLIENT_VERSION default"),
+        (
+            rf'^(CLIENT_VERSION="){version_value}',
+            rf"\g<1>{client}\g<3>",
+            "CLIENT_VERSION default",
+        ),
         # Help/usage default annotations for the per-image/combined flags.
         (
             r"(--version <tag>   Version tag \(default: )[^)]+(\))",
@@ -237,13 +254,6 @@ def check_deploy_sh(
             r"(-cv, --client-version <tag>  Client version tag \(default: )[^)]+(\))",
             rf"\g<1>{client}\2",
             "usage -cv default",
-        ),
-        # The deploy-flags regression test asserts the published default pair.
-        # test_deploy_flags.sh uses a line continuation: check "..." \ \n "VERSION=..."
-        (
-            r'("defaults resolve to the published Server/Client pair"[^\n]*\n\s*")VERSION=[^ ]+ BACKEND_VERSION=[^ ]+ CLIENT_VERSION=[^"]+(")',
-            rf"\g<1>VERSION={backend} BACKEND_VERSION={backend} CLIENT_VERSION={client}\2",
-            "test published-pair assertion",
         ),
     ]
     for pat, repl, label in rules:
@@ -282,31 +292,49 @@ def check_deploy_sh(
                     f"{name} default is {m.group(1)!r}, expected {expected!r}",
                 )
             )
-    # Published-pair test assertion.
-    tm = re.search(
-        r'"defaults resolve to the published Server/Client pair"[^\n]*\n\s*"([^"]+)"',
-        updated,
+    # Published-pair test assertion. It lives in the deploy-flags suite, not in
+    # deploy.sh: searching the script always warned "not found" and never fixed
+    # it, so every sync left the suite asserting the previous release's pair and
+    # reddened the landing pipeline right after the version bump.
+    test_path = workspace / "plexichat-landing" / "tests" / "test_deploy_flags.sh"
+    test_text = read_text(test_path)
+    expected_line = (
+        f"VERSION={backend} BACKEND_VERSION={backend} CLIENT_VERSION={client}"
     )
-    if tm:
-        expected_line = (
-            f"VERSION={backend} BACKEND_VERSION={backend} CLIENT_VERSION={client}"
+    if test_text is None:
+        issues.append(
+            Issue("WARN", str(test_path), "deploy-flags suite not present; skipped")
         )
-        if tm.group(1) != expected_line:
+    else:
+        # Only a literal pair is rewritten. A suite that derives the values
+        # from deploy.sh (``VERSION=$DEFAULT_BACKEND ...``) states the contract
+        # in terms of the script's defaults and must be left alone.
+        new_test, n = subn_count(
+            r'("defaults resolve to the published Server/Client pair"[^\n]*\n\s*")'
+            r'VERSION=\d[^" ]* BACKEND_VERSION=\d[^" ]* CLIENT_VERSION=\d[^" ]*(")',
+            rf"\g<1>{expected_line}\g<2>",
+            test_text,
+        )
+        derived_assertion = (
+            '"defaults resolve to the published Server/Client pair"' in test_text
+        )
+        if n == 0 and not derived_assertion:
             issues.append(
                 Issue(
-                    "FAIL",
-                    str(path),
-                    f"published-pair test asserts {tm.group(1)!r}, expected {expected_line!r}",
+                    "WARN",
+                    str(test_path),
+                    "published-pair assertion not found (test may have moved)",
                 )
             )
-    else:
-        issues.append(
-            Issue(
-                "WARN",
-                str(path),
-                "published-pair test assertion not found (test may have moved)",
+        if new_test != test_text:
+            fixes.append(
+                Fix(
+                    test_path,
+                    "sync published-pair test assertion",
+                    test_text,
+                    new_test,
+                )
             )
-        )
     if updated != text:
         fixes.append(Fix(path, "sync deploy.sh default versions", text, updated))
 
@@ -320,20 +348,26 @@ def check_deploy_ps1(
         issues.append(Issue("WARN", str(path), "deploy.ps1 not present; skipped"))
         return
     updated = text
+    # Same shape as the shell defaults: a literal version, not code. The later
+    # ``$Version = Normalize-Version -v $Version`` call is not an assignment and
+    # must never be rewritten.
+    # PowerShell parameters are comma-separated, so the default line ends with
+    # ``",`` -- allow the separator after the literal.
+    ps1_version_value = r'(\d[^"\n]*)("[ \t]*,?[ \t]*$)'
     rules: List[Tuple[str, str, str]] = [
         (
-            r'(\[string\]\$Version = ")[^"]*(")',
-            rf"\g<1>{backend}\2",
+            rf'(\[string\]\$Version = "){ps1_version_value}',
+            rf"\g<1>{backend}\g<3>",
             "$Version default",
         ),
         (
-            r'(\[string\]\$BackendVersion = ")[^"]*(")',
-            rf"\g<1>{backend}\2",
+            rf'(\[string\]\$BackendVersion = "){ps1_version_value}',
+            rf"\g<1>{backend}\g<3>",
             "$BackendVersion default",
         ),
         (
-            r'(\[string\]\$ClientVersion = ")[^"]*(")',
-            rf"\g<1>{client}\2",
+            rf'(\[string\]\$ClientVersion = "){ps1_version_value}',
+            rf"\g<1>{client}\g<3>",
             "$ClientVersion default",
         ),
         # Usage/help default annotations.
