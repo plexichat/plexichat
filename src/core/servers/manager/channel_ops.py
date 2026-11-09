@@ -21,6 +21,104 @@ from .protocol import ServerProtocol
 class ChannelOpsMixin(ServerProtocol):
     """Mixin for channel messaging operations."""
 
+    def ensure_channel_conversation(
+        self, channel_id: SnowflakeID
+    ) -> Optional[SnowflakeID]:
+        """Return a channel's conversation, repairing a dangling link.
+
+        Server-channel conversations are membership-backed and deliberately
+        have no required ``msg_participants`` rows. Older cleanup sweeps could
+        therefore hard-delete one while its channel stayed live, after which
+        every send failed on the message conversation foreign key. Recreate
+        the conversation in place instead of returning 500.
+        """
+        row = self._db.fetch_one(
+            "SELECT id, server_id, channel_type, conversation_id "
+            "FROM srv_channels WHERE id = ? AND deleted = 0",
+            (channel_id,),
+        )
+        if row is None:
+            return None
+
+        conversation_id = row["conversation_id"]
+        if row["channel_type"] not in ("text", "announcement"):
+            return conversation_id
+
+        if conversation_id and self._messaging:
+            exists = getattr(self._messaging, "conversation_exists", None)
+            if exists is not None:
+                try:
+                    if exists(conversation_id):
+                        return conversation_id
+                except Exception as exc:
+                    logger.warning(
+                        "Could not verify conversation %s for channel %s: %s",
+                        conversation_id,
+                        channel_id,
+                        exc,
+                    )
+                    return conversation_id
+
+        if not self._messaging:
+            return conversation_id
+        create = getattr(self._messaging, "create_server_channel_conversation", None)
+        if create is None:
+            return conversation_id
+
+        conv = create(row["server_id"], channel_id)
+        self._db.execute(
+            "UPDATE srv_channels SET conversation_id = ?, updated_at = ? WHERE id = ?",
+            (conv.id, self._get_timestamp(), channel_id),
+        )
+        self._cache_invalidate(self._channel_cache_prefix, channel_id)
+        try:
+            from src.core.database import cache_delete, valkey_available
+
+            if valkey_available():
+                cache_delete(f"channel:{channel_id}")
+                cache_delete(f"server_channels:{row['server_id']}")
+        except Exception as exc:
+            logger.debug(
+                "Channel conversation cache invalidation skipped for %s: %s",
+                channel_id,
+                exc,
+            )
+        logger.warning(
+            "Repaired missing conversation for server channel %s: %s -> %s",
+            channel_id,
+            conversation_id,
+            conv.id,
+        )
+        return conv.id
+
+    def repair_dangling_channel_conversations(self) -> int:
+        """Recreate conversations for live text channels whose link is gone.
+
+        Runs once when the servers module starts so a database already carrying
+        a bad link heals on deploy, not only on the next send attempt.
+        """
+        rows = self._db.fetch_all(
+            "SELECT c.id, c.conversation_id FROM srv_channels c "
+            "LEFT JOIN msg_conversations v ON v.id = c.conversation_id "
+            "WHERE c.deleted = 0 "
+            "AND c.channel_type IN ('text', 'announcement') "
+            "AND (c.conversation_id IS NULL OR v.id IS NULL)"
+        )
+        repaired = 0
+        for row in rows:
+            try:
+                conversation_id = self.ensure_channel_conversation(row["id"])
+            except Exception as exc:
+                logger.warning(
+                    "Could not repair conversation for server channel %s: %s",
+                    row["id"],
+                    exc,
+                )
+                continue
+            if conversation_id and conversation_id != row["conversation_id"]:
+                repaired += 1
+        return repaired
+
     def send_channel_message(
         self,
         user_id: SnowflakeID,
@@ -60,12 +158,13 @@ class ChannelOpsMixin(ServerProtocol):
         if not self._messaging:
             raise ServerError("Messaging module not available")
 
-        if not channel.conversation_id:
+        conversation_id = self.ensure_channel_conversation(channel_id)
+        if not conversation_id:
             raise ServerError("Channel has no associated conversation")
 
         return self._messaging.send_message(
             user_id=user_id,
-            conversation_id=channel.conversation_id,
+            conversation_id=conversation_id,
             content=content,
             reply_to_id=reply_to_id,
             attachments=attachments,

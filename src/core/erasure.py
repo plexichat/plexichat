@@ -196,13 +196,34 @@ def has_other_participants(db: Any, conversation_id: int, user_id: int) -> bool:
     )
 
 
+def _is_live_server_channel_conversation(db: Any, conversation_id: int) -> bool:
+    """Return True when a live server channel still owns the conversation.
+
+    Server-channel conversations rely on server membership rather than
+    ``msg_participants`` rows, so an empty participant list does not mean the
+    conversation is unused. Deleting it leaves the channel pointing at a
+    missing foreign-key target and every send returns 500.
+    """
+    try:
+        row = db.fetch_one(
+            "SELECT 1 AS present FROM srv_channels "
+            "WHERE conversation_id = ? AND deleted = 0 LIMIT 1",
+            (int(conversation_id),),
+        )
+    except Exception:
+        return False
+    return row is not None
+
+
 def purge_user_conversations(db: Any, user_id: int) -> List[int]:
     """Detach a user from conversations, deleting the ones left empty.
 
     A DM the user shared with somebody who is still here keeps its messages
     (already anonymised by the purge) and the surviving participant's copy; a
     conversation nobody is left in -- personal notes, thread containers, a
-    self-DM -- is erased with everything in it.
+    self-DM -- is erased with everything in it. A conversation still linked to
+    a live server channel is never erased: its access is membership-backed and
+    its channel would otherwise be left dangling.
     """
     uid = int(user_id)
     conversation_ids = [
@@ -228,7 +249,11 @@ def purge_user_conversations(db: Any, user_id: int) -> List[int]:
         delete_conversation(db, cid)
         removed.append(cid)
     for cid in conversation_ids:
-        if cid in removed or has_other_participants(db, cid, uid):
+        if (
+            cid in removed
+            or has_other_participants(db, cid, uid)
+            or _is_live_server_channel_conversation(db, cid)
+        ):
             continue
         delete_conversation(db, cid)
         removed.append(cid)
@@ -267,11 +292,30 @@ _ORPHANED_CONVERSATIONS = (
     "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
     "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id) "
     "AND NOT EXISTS "
-    "(SELECT 1 FROM thread_threads t WHERE t.conversation_id = c.id)"
+    "(SELECT 1 FROM thread_threads t WHERE t.conversation_id = c.id) "
+    "AND NOT EXISTS "
+    "(SELECT 1 FROM srv_channels ch "
+    " WHERE ch.conversation_id = c.id AND ch.deleted = 0)"
 )
 
 # Thread tables are optional; without them nothing has to be excluded.
 _ORPHANED_CONVERSATIONS_NO_THREADS = (
+    "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
+    "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id) "
+    "AND NOT EXISTS "
+    "(SELECT 1 FROM srv_channels ch "
+    " WHERE ch.conversation_id = c.id AND ch.deleted = 0)"
+)
+
+# Older databases may lack thread_threads or srv_channels; keep the original
+# participant-only sweep available so cleanup never aborts on a partial schema.
+_ORPHANED_CONVERSATIONS_NO_SERVER_LINKS = (
+    "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
+    "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id) "
+    "AND NOT EXISTS "
+    "(SELECT 1 FROM thread_threads t WHERE t.conversation_id = c.id)"
+)
+_ORPHANED_CONVERSATIONS_MINIMAL = (
     "SELECT c.id FROM msg_conversations c WHERE NOT EXISTS "
     "(SELECT 1 FROM msg_participants p WHERE p.conversation_id = c.id)"
 )
@@ -284,12 +328,25 @@ def purge_orphaned_conversations(db: Any) -> List[int]:
     thread's access is tracked in ``thread_members`` -- so a live thread looks
     "empty" to a participant count. Conversations a thread still points at are
     therefore left alone; a container whose thread row is gone is swept like
-    any other orphan.
+    any other orphan. The same applies to server channels, whose access is
+    server membership: a live channel still owns its conversation even when
+    no participant rows exist.
     """
-    try:
-        rows = _rows(db, _ORPHANED_CONVERSATIONS)
-    except Exception:
-        rows = _rows(db, _ORPHANED_CONVERSATIONS_NO_THREADS)
+    rows = None
+    for query in (
+        _ORPHANED_CONVERSATIONS,
+        _ORPHANED_CONVERSATIONS_NO_THREADS,
+        _ORPHANED_CONVERSATIONS_NO_SERVER_LINKS,
+        _ORPHANED_CONVERSATIONS_MINIMAL,
+    ):
+        try:
+            rows = _rows(db, query)
+            break
+        except Exception:
+            continue
+    if rows is None:
+        logger.warning("Orphan conversation sweep skipped: required tables missing")
+        return []
     ids = [int(row["id"]) for row in rows]
     for cid in ids:
         delete_conversation(db, cid)

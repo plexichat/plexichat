@@ -139,6 +139,69 @@ def test_sweep_leaves_a_live_users_data_alone(db, auth_manager, pii_gen, monkeyp
     assert db.fetch_one("SELECT id FROM media_files WHERE id = ?", (file_id,))
 
 
+def test_sweep_leaves_a_live_server_channels_conversation_alone(
+    db, auth_manager, pii_gen, monkeypatch
+):
+    monkeypatch.setattr("src.core.erasure._media_manager", lambda: None)
+    user = _register(auth_manager, pii_gen)
+    now = 1_700_000_000_000
+    server_id = generate_snowflake_id()
+    conversation_id = generate_snowflake_id()
+    channel_id = generate_snowflake_id()
+    db.execute(
+        "INSERT INTO srv_servers (id, name, owner_id, created_at, updated_at) "
+        "VALUES (?, 'Live server', ?, ?, ?)",
+        (server_id, int(user.id), now, now),
+    )
+    db.execute(
+        "INSERT INTO msg_conversations "
+        "(id, conversation_type, created_at, updated_at) "
+        "VALUES (?, 'group', ?, ?)",
+        (conversation_id, now, now),
+    )
+    db.execute(
+        "INSERT INTO srv_channels "
+        "(id, server_id, name, channel_type, position, conversation_id, "
+        " created_at, updated_at) "
+        "VALUES (?, ?, 'general', 'text', 0, ?, ?, ?)",
+        (channel_id, server_id, conversation_id, now, now),
+    )
+
+    result = CleanupService(ctx=None).sweep_orphans(db)
+
+    assert conversation_id not in result["conversations"]
+    assert db.fetch_one(
+        "SELECT id FROM msg_conversations WHERE id = ?", (conversation_id,)
+    ), "a live server channel's conversation must survive an orphan sweep"
+
+
+def test_user_purge_keeps_a_live_server_channels_conversation(
+    db, auth_manager, pii_gen
+):
+    from src.core.erasure import purge_user_conversations
+
+    user = _register(auth_manager, pii_gen)
+    _server_id, _channel_id, conversation_id = _orphan_server(db)
+    db.execute(
+        "INSERT INTO msg_participants "
+        "(id, conversation_id, user_id, role, joined_at) "
+        "VALUES (?, ?, ?, 'member', ?)",
+        (
+            generate_snowflake_id(),
+            conversation_id,
+            int(user.id),
+            1_700_000_000_000,
+        ),
+    )
+
+    removed = purge_user_conversations(db, int(user.id))
+
+    assert conversation_id not in removed
+    assert db.fetch_one(
+        "SELECT id FROM msg_conversations WHERE id = ?", (conversation_id,)
+    ), "erasing the last participant must not delete a live channel's conversation"
+
+
 def _thread_conversation(db, owner_id, keep_thread=True):
     """A thread container, which never has ``msg_participants`` rows."""
     conversation_id = generate_snowflake_id()

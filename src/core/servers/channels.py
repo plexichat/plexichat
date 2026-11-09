@@ -63,6 +63,11 @@ def get_channel_conversation_id(channel_id: SnowflakeID) -> Optional[SnowflakeID
     return _get_manager().get_channel_conversation_id(channel_id)
 
 
+def ensure_channel_conversation(channel_id: SnowflakeID) -> Optional[SnowflakeID]:
+    """Return a channel's conversation, recreating a missing link."""
+    return _get_manager().ensure_channel_conversation(channel_id)
+
+
 def get_channel_by_conversation(
     conversation_id: SnowflakeID,
 ) -> Optional[Dict[str, Any]]:
