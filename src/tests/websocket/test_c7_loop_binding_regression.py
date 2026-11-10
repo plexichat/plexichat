@@ -126,6 +126,21 @@ async def test_gateway_binding_uses_running_loop(session_manager):
     assert local._loop is running
 
 
+def test_lifespan_binds_the_loop_before_any_request():
+    """Startup must bind the serving loop, not wait for a websocket.
+
+    Sync route handlers emit their security events from the threadpool; if the
+    dispatcher only learns its loop when the first gateway connection arrives,
+    every event before that connection is dropped.
+    """
+    import pathlib
+
+    app_src = (
+        pathlib.Path(__file__).resolve().parents[2] / "api" / "app.py"
+    ).read_text()
+    assert "get_dispatcher().set_event_loop(" in app_src
+
+
 def test_dispatcher_source_free_of_deprecated_get_event_loop():
     """Guard: dispatcher.py must not call asyncio.get_event_loop() (comments
     mentioning it are fine; only real calls count)."""

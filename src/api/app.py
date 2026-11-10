@@ -198,6 +198,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
 
         telemetry_retention_task = start_telemetry_retention_sweep()
 
+        # Bind the gateway dispatcher to the serving loop before any request
+        # can emit an event. Login, logout and registration are sync handlers,
+        # so their security events are emitted from a worker thread, where no
+        # loop is running; a dispatcher that only learned the loop from the
+        # first websocket connection dropped SECURITY_ALERT on a deployment
+        # where nobody was connected yet at boot.
+        try:
+            import asyncio as _asyncio_loop
+
+            from .websocket import get_dispatcher
+
+            get_dispatcher().set_event_loop(_asyncio_loop.get_running_loop())
+        except Exception as e:
+            logger.debug(f"Gateway dispatcher loop binding skipped: {e}")
+
         # Warm the modules behind the fan-out read endpoints once, off the
         # request path. The first hit on each of those paths after a restart
         # paid a one-off cost (module lazy-init + first pooled connection);
