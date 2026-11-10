@@ -207,3 +207,44 @@ def test_on_event_from_foreign_thread_uses_bound_loop(
 
     assert not errors, f"on_event raised from foreign thread: {errors}"
     assert captured.get("loop") is fake
+
+
+@pytest.mark.asyncio
+async def test_on_event_from_worker_thread_uses_shared_serving_loop(
+    session_manager,
+):
+    """A dispatcher that never served a connection must still find the loop.
+
+    Sync route handlers (login, logout, register) emit their security events
+    from FastAPI's threadpool, where there is no running loop. The loop is
+    bound by whichever dispatcher instance served a gateway connection, so an
+    instance-local loop was not enough: without the shared fallback the event
+    was dropped with "no running event loop".
+    """
+    previous = GatewayDispatcher._serving_loop
+    try:
+        serving = GatewayDispatcher(session_manager=session_manager)
+        running = asyncio.get_running_loop()
+        serving.set_event_loop(running)
+
+        captured = {}
+
+        def fake_submit(coro, loop):
+            captured["loop"] = loop
+            coro.close()
+            return object()
+
+        emitter = GatewayDispatcher(session_manager=session_manager)
+        assert emitter._loop is None
+
+        def worker():
+            with patch("asyncio.run_coroutine_threadsafe", side_effect=fake_submit):
+                emitter.on_event(_sample_event(), [12345])
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=10)
+
+        assert captured.get("loop") is running
+    finally:
+        GatewayDispatcher._serving_loop = previous

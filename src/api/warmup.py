@@ -76,6 +76,24 @@ def _db_probe(api_mod: Any) -> None:
         fetch_one("SELECT 1", ())
 
 
+def _warm_profile_path(api_mod: Any) -> None:
+    """Import and exercise the profile read path behind a profile GET.
+
+    ``GET /features/users/:id/profile`` imports ``src.core.profiles.manager``
+    lazily inside the handler and then runs one indexed query; on a215 the first
+    call after a restart still cost ~1s while every later call was milliseconds,
+    so the module import and the first statement compile belong here, not on a
+    user's request.
+    """
+    from src.core.profiles.manager import ProfileManager
+
+    db = api_mod.get_database()
+    if db is None:
+        return
+    # user id 0 has no row, so this is a pure read of the default shape.
+    ProfileManager(db).get_profile(0)
+
+
 def warm_once() -> float:
     """Initialise the hot modules once and return the elapsed milliseconds.
 
@@ -94,6 +112,11 @@ def warm_once() -> float:
             getter()
         except Exception as e:
             logger.debug(f"Startup warm-up skipped module '{name}': {e}")
+
+    try:
+        _warm_profile_path(api)
+    except Exception as e:
+        logger.debug(f"Startup warm-up profile probe failed: {e}")
 
     try:
         _db_probe(api)
