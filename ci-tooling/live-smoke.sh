@@ -284,6 +284,10 @@ sec "accounts and sessions"
 # its own gate accounts so it needs nothing from the runner, and SMOKE_USER_* /
 # SMOKE_TOKEN_* stay available as overrides for a host that cannot register.
 HAVE_A=0; HAVE_B=0; HAVE_C=0; HAVE_D=0; NEED_LOGIN=1; TOKEN_MODE=0
+# Filled by ring_account when it runs; token mode never calls it, so the
+# cleanup's skip needs a default. Declared here so `set -u` cannot trip on the
+# path where no ring login was attempted at all.
+RING_SKIP="no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
 if [ -n "${SMOKE_TOKEN_A:-}" ] && [ -n "${SMOKE_TOKEN_B:-}" ]; then
     NEED_LOGIN=0
     TOKEN_MODE=1
@@ -526,7 +530,7 @@ else
                    "-> $freeze_status ${BODY:0:200}" ;;
         esac
     else
-        skip "delete a throwaway account" "$RING_SKIP"
+        skip "delete a throwaway account" "${RING_SKIP}"
     fi
 fi
 
