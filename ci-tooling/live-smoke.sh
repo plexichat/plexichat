@@ -19,9 +19,11 @@
 #                        when /auth/login is rate limited by your CI's IP).
 #                        Mint them on the deployment with
 #                        ci-tooling/seed-smoke-accounts.sh --tokens and keep
-#                        them as masked CI variables. In this mode the logout
-#                        assertions run on C, because A and B are the gate's
-#                        reusable credential: logging one out would spend it.
+#                        them as masked CI variables. A logout kills the
+#                        session its token belongs to, so this mode skips the
+#                        logout assertions rather than spend a token the next
+#                        run needs; the deletion path still proves that a dead
+#                        session stops authenticating.
 #   SMOKE_DELETION_ACCOUNTS
 #                        the ring of deletion subjects the run may freeze,
 #                        comma separated (default smoke_delete_1..4)
@@ -473,17 +475,14 @@ else
         expect "A deletes the smoke server" "200,204,404"
     fi
     if [ "$TOKEN_MODE" = 1 ]; then
-        # Pre-issued sessions are reused by the next gate run, so logging A or B
-        # out is exactly what would make the next run need /auth/login -- the
-        # step a CI runner's shared egress gets 429'd on. C only carries the
-        # stranger checks above, so it takes the logout assertions instead.
-        if [ -n "${JAR_TOKEN[$JAR_C]:-}" ]; then
-            req POST /auth/logout "$JAR_C"; expect "C logs out" "200,204"
-            req GET /users/@me "$JAR_C"; expect "C's session is dead" "401,403"
-        else
-            skip "logout and session invalidation" \
-                "no SMOKE_TOKEN_C to spend (A/B sessions are reused across runs)"
-        fi
+        # Logging out invalidates the session its token belongs to, and the
+        # pre-issued tokens are what the next run needs: spending one here would
+        # turn the following run's stranger checks (C) or its every request
+        # (A/B) into skips or a 401. The deletion path below already proves that
+        # a killed session stops authenticating, so the logout request itself is
+        # the only assertion this mode gives up -- and it says so, every run.
+        skip "logout and session invalidation" \
+            "pre-issued sessions survive the run; rotate SMOKE_TOKEN_A/B/C to re-check"
     else
         req POST /auth/logout "$JAR_A"; expect "A logs out" "200,204"
         req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"

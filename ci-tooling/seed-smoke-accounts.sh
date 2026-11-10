@@ -27,10 +27,10 @@
 # 20/hour per route), so a runner sharing its egress with every other job can
 # be answered 429 -- and then the release gate is red for a reason that says
 # nothing about the deployment. A pre-issued token makes a gate run perform no
-# logins at all. Mint once, store the three values as masked CI variables
-# (SMOKE_TOKEN_A/B/C), and rotate them when a run logs C out or when the session
-# expires. Each mint is a session, so do not loop it: it counts against the
-# account's session cap.
+# logins at all. Mint once and store the three values as masked CI variables
+# (SMOKE_TOKEN_A/B/C); the gate does not log these sessions out, so they stay
+# valid until the session itself expires. Each mint is a session, so do not loop
+# it: it counts against the account's session cap.
 #
 # Usage, on the deployment host:
 #   bash ci-tooling/seed-smoke-accounts.sh

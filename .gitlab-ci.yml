@@ -1489,7 +1489,8 @@ create_merge_request:
 # spent its hourly budget). Mint them once on the deployment with
 # `ci-tooling/seed-smoke-accounts.sh --tokens` and store them as masked project
 # variables; the suite stays on the cookie-login path when they are absent.
-# Rotate after a run logs C out (its token is the one the logout checks spend).
+# The tokens survive a run: in this mode the suite skips the logout assertions
+# rather than spend a session the next run needs, and says so every run.
 live_smoke:
   stage: test-and-release
   image: alpine:3.20
