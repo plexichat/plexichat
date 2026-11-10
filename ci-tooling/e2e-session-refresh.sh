@@ -12,6 +12,10 @@
 set -uo pipefail
 
 API="${API:-https://api.plexichat.com/api/v1}"
+# Pin every request to IPv4: the API is dual-stack behind Cloudflare, and a
+# CI container on a runner with no IPv6 route picks the AAAA first (musl has
+# no Happy Eyeballs), burns a 2s connect timeout, and eventually returns 000.
+# Measured 0/18 failures with -4 vs 9/18 without (see live-smoke.sh).
 MARK='X-Plexichat-Request: 1'
 USER="e2e_$(date +%s)_$RANDOM"
 PASS="TestPass123!"
@@ -24,13 +28,13 @@ fail() { echo "  FAIL: $*"; FAILED=1; }
 step() { echo; echo "== $* =="; }
 
 step "register $USER"
-code=$(curl -s -o "$DIR/reg.json" -w '%{http_code}' \
+code=$(curl -4 -s -o "$DIR/reg.json" -w '%{http_code}' \
   -X POST "$API/auth/register" -H 'Content-Type: application/json' -H "$MARK" \
   -d "{\"username\":\"$USER\",\"email\":\"$USER@example.com\",\"password\":\"$PASS\"}")
 [ "$code" = "200" ] && pass "register -> 200" || { fail "register -> $code"; head -c 300 "$DIR/reg.json"; echo; }
 
 step "login (cookie flow)"
-code=$(curl -s -o "$DIR/login.json" -w '%{http_code}' -c "$JAR" \
+code=$(curl -4 -s -o "$DIR/login.json" -w '%{http_code}' -c "$JAR" \
   -X POST "$API/auth/login" -H 'Content-Type: application/json' -H "$MARK" \
   -d "{\"username\":\"$USER\",\"password\":\"$PASS\"}")
 [ "$code" = "200" ] && pass "login -> 200" || { fail "login -> $code"; head -c 300 "$DIR/login.json"; echo; }
@@ -39,11 +43,11 @@ cookie_before=$(grep -o 'plexichat_token[[:space:]].*' "$JAR" | awk '{print $NF}
 echo "  session cookie after login: ${cookie_before:0:16}…"
 
 step "authenticated call before refresh"
-code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/users/@me")
+code=$(curl -4 -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/users/@me")
 [ "$code" = "200" ] && pass "GET /users/@me -> 200" || fail "GET /users/@me -> $code"
 
 step "refresh (the line that used to poison the session)"
-code=$(curl -s -o "$DIR/refresh.json" -D "$DIR/refresh.hdr" -w '%{http_code}' -b "$JAR" -c "$JAR" \
+code=$(curl -4 -s -o "$DIR/refresh.json" -D "$DIR/refresh.hdr" -w '%{http_code}' -b "$JAR" -c "$JAR" \
   -X POST "$API/auth/refresh" -H "$MARK")
 [ "$code" = "200" ] && pass "refresh -> 200" || { fail "refresh -> $code"; head -c 300 "$DIR/refresh.json"; echo; }
 
@@ -64,40 +68,40 @@ else
 fi
 
 step "session still works after the rotation (this is what was broken)"
-code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/users/@me")
+code=$(curl -4 -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/users/@me")
 [ "$code" = "200" ] && pass "GET /users/@me -> 200 after refresh" || fail "GET /users/@me -> $code after refresh"
 
-code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/users/@me/settings")
+code=$(curl -4 -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/users/@me/settings")
 [ "$code" = "200" ] && pass "GET /users/@me/settings -> 200 after refresh" || fail "GET /users/@me/settings -> $code"
 
 step "send a message (the 'not sending, gone on reload' path)"
-srv=$(curl -s -b "$JAR" -X POST "$API/servers/" -H 'Content-Type: application/json' -H "$MARK" \
+srv=$(curl -4 -s -b "$JAR" -X POST "$API/servers/" -H 'Content-Type: application/json' -H "$MARK" \
   -d '{"name":"e2e-check"}' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')
 [ -n "$srv" ] && pass "created server $srv" || fail "server create failed"
 
 chan=""
 if [ -n "$srv" ]; then
-  chan=$(curl -s -b "$JAR" -X POST "$API/servers/$srv/channels" -H 'Content-Type: application/json' -H "$MARK" \
+  chan=$(curl -4 -s -b "$JAR" -X POST "$API/servers/$srv/channels" -H 'Content-Type: application/json' -H "$MARK" \
     -d '{"name":"general","type":"text"}' | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("id",""))')
   [ -n "$chan" ] && pass "created channel $chan" || fail "channel create failed"
 fi
 
 if [ -n "$chan" ]; then
-  code=$(curl -s -o "$DIR/send.json" -w '%{http_code}' -b "$JAR" \
+  code=$(curl -4 -s -o "$DIR/send.json" -w '%{http_code}' -b "$JAR" \
     -X POST "$API/channels/$chan/messages" -H 'Content-Type: application/json' -H "$MARK" \
     -d '{"content":"e2e session refresh check"}')
   [ "$code" = "200" ] && pass "POST message -> 200" || { fail "POST message -> $code"; head -c 200 "$DIR/send.json"; echo; }
 
   # "Deleted on reload": the message must come back from the server, not just
   # have been rendered optimistically.
-  got=$(curl -s -b "$JAR" "$API/channels/$chan/messages" \
+  got=$(curl -4 -s -b "$JAR" "$API/channels/$chan/messages" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); items=d if isinstance(d,list) else d.get("messages",[]); print(sum(1 for m in items if "e2e session refresh check" in str(m.get("content",""))))')
   [ "${got:-0}" -ge 1 ] && pass "message persisted and is returned by GET ($got)" \
     || fail "message NOT returned by GET after sending (would vanish on reload)"
 fi
 
 step "cleanup"
-code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -c "$JAR" -X POST "$API/auth/logout" -H "$MARK")
+code=$(curl -4 -s -o /dev/null -w '%{http_code}' -b "$JAR" -c "$JAR" -X POST "$API/auth/logout" -H "$MARK")
 [ "$code" = "200" ] && pass "logout -> 200" || fail "logout -> $code"
 
 echo

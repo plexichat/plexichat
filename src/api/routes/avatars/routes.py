@@ -1,6 +1,21 @@
 """
-Avatar routes - Endpoints for user avatars and server icons.
+Avatar route handlers - Endpoints for user avatars and server icons.
+
+Split from the monolithic ``avatars.py`` into single-responsibility modules.
+This module owns the HTTP layer (authz, upload, serve, delete) and delegates
+validation to :mod:`validation`, caching/storage to :mod:`storage`, and typed
+errors to :mod:`errors`.
+
+All public handler names and module-level objects (``router``, the checksum
+caches, the invalidation helpers) are re-exported by ``__init__.py`` so the
+package remains a drop-in replacement for the old ``src.api.routes.avatars``
+module.
 """
+
+from __future__ import annotations
+
+import hashlib
+from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -22,178 +37,29 @@ from src.api.schemas.common import (
 )
 import utils.logger as logger
 
-import hashlib
-import threading
-import time
-from collections import OrderedDict
-from typing import Optional
+from .errors import AvatarValidationError
+from .models import upload_result_from_manager
+from .storage import (
+    _cache_set_checksum,
+    _avatar_checksum_cache,
+    _icon_checksum_cache,
+    _invalidate_user_avatar_cache,
+    _invalidate_server_icon_cache,
+)
+from .validation import (
+    is_serve_safe,
+    parse_server_id,
+    validate_avatar_upload,
+)
 
 router = APIRouter(tags=["Avatars"])
 
-# (M5) Bounded LRU + TTL checksum caches.
-# Previously these were unbounded plain dicts: every unique user/server ID
-# ever fetched stayed resident (slow memory leak / OOM risk via ID probing).
-# Each cache is now an insertion-ordered OrderedDict capped at
-# ``_MAX_CHECKSUM_CACHE_ENTRIES`` entries with per-entry TTL
-# (``_CHECKSUM_CACHE_TTL_SEC``) and a threading.Lock. Reads refresh recency
-# (true LRU), writes evict expired entries first then the oldest, so size
-# never exceeds the cap. ``_cache_set_checksum`` also accepts plain dicts
-# (legacy/test path) and applies the same cap there.
-_MAX_CHECKSUM_CACHE_ENTRIES = 4096
-_CHECKSUM_CACHE_TTL_SEC = 1800.0
 
-
-class _BoundedChecksumCache:
-    """Thread-safe bounded LRU cache with TTL for checksum strings. (M5)"""
-
-    def __init__(
-        self,
-        maxsize: int = _MAX_CHECKSUM_CACHE_ENTRIES,
-        ttl: float = _CHECKSUM_CACHE_TTL_SEC,
-    ) -> None:
-        self._maxsize = maxsize
-        self._ttl = ttl
-        self._data: "OrderedDict[int, tuple[str, float]]" = OrderedDict()
-        self._lock = threading.Lock()
-
-    def _expired(self, ts: float, now: float) -> bool:
-        return (now - ts) > self._ttl
-
-    def _purge_expired(self, now: float) -> None:
-        # Oldest-first; stop at first live entry (timestamps are not
-        # strictly ordered after LRU touch, so fall back to full scan
-        # only when the cache is at/over capacity).
-        for key in list(self._data.keys()):
-            try:
-                _, ts = self._data[key]
-            except KeyError:
-                continue
-            if self._expired(ts, now):
-                self._data.pop(key, None)
-            if len(self._data) <= self._maxsize:
-                # Still scan the head for staleness when small; cheap.
-                pass
-        # Enforce hard cap (evict oldest first).
-        while len(self._data) > self._maxsize:
-            self._data.popitem(last=False)
-
-    def get(self, key: int, default: Optional[str] = None) -> Optional[str]:
-        now = time.monotonic()
-        with self._lock:
-            try:
-                value, ts = self._data[key]
-            except KeyError:
-                return default
-            if self._expired(ts, now):
-                self._data.pop(key, None)
-                return default
-            self._data.move_to_end(key)
-            return value
-
-    def __getitem__(self, key: int) -> Optional[str]:
-        result = self.get(key)
-        if result is None:
-            # Distinguish missing from stored None (we never store None).
-            with self._lock:
-                if key not in self._data:
-                    raise KeyError(key)
-            return result
-        return result
-
-    def __setitem__(self, key: int, value: str) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if key in self._data:
-                self._data.pop(key, None)
-            self._data[key] = (value, now)
-            if len(self._data) > self._maxsize:
-                self._purge_expired(now)
-                while len(self._data) > self._maxsize:
-                    self._data.popitem(last=False)
-
-    def __contains__(self, key: object) -> bool:
-        if not isinstance(key, int):
-            return False
-        now = time.monotonic()
-        with self._lock:
-            try:
-                _, ts = self._data[key]
-            except KeyError:
-                return False
-            if self._expired(ts, now):
-                self._data.pop(key, None)
-                return False
-            return True
-
-    def pop(self, key: int, default: Optional[str] = None) -> Optional[str]:
-        with self._lock:
-            entry = self._data.pop(key, None)
-        if entry is None:
-            return default
-        return entry[0]
-
-    def clear(self) -> None:
-        with self._lock:
-            self._data.clear()
-
-    def __len__(self) -> int:
-        now = time.monotonic()
-        with self._lock:
-            self._purge_expired(now)
-            return len(self._data)
-
-
-_avatar_checksum_cache = _BoundedChecksumCache()  # {uid: checksum}
-_icon_checksum_cache = _BoundedChecksumCache()  # {sid: checksum}
-
-
-def _cache_set_checksum(cache, key: int, checksum: str) -> None:
-    """Insert into a checksum cache, evicting the oldest entry at the cap."""
-    if isinstance(cache, _BoundedChecksumCache):
-        cache[key] = checksum
-        return
-    # Legacy plain-dict path (kept for backwards compatibility / tests).
-    if len(cache) >= _MAX_CHECKSUM_CACHE_ENTRIES:
-        # Evict the first-inserted entry (dicts preserve insertion order).
-        try:
-            oldest = next(iter(cache))
-            cache.pop(oldest, None)
-        except StopIteration:
-            pass
-    cache[key] = checksum
-
-
-def _invalidate_user_avatar_cache(user_id: int) -> None:
-    """Drop all cached avatar state so a re-upload/deletion is reflected.
-
-    The route keeps its own in-process checksum cache (``_avatar_checksum_cache``)
-    which is never refreshed by the manager, and the manager caches the ETag
-    checksum in Valkey under ``user_avatar_checksum:{user_id}``. Both must be
-    cleared or clients keep receiving ``304 Not Modified`` for the old avatar.
-    """
-    _avatar_checksum_cache.pop(user_id, None)
-    try:
-        from src.core.database import invalidate_pattern
-
-        invalidate_pattern(f"user_avatar_checksum:{user_id}")
-    except Exception as e:  # pragma: no cover - cache invalidation is best-effort
-        logger.debug(
-            f"Failed to invalidate user avatar checksum cache for {user_id}: {e}"
-        )
-
-
-def _invalidate_server_icon_cache(server_id: int) -> None:
-    """Drop all cached server-icon state so a re-upload/deletion is reflected."""
-    _icon_checksum_cache.pop(server_id, None)
-
-    try:
-        from src.core.database import invalidate_pattern
-
-        invalidate_pattern(f"server_icon_checksum:{server_id}")
-    except Exception as e:  # pragma: no cover - cache invalidation is best-effort
-        logger.debug(
-            f"Failed to invalidate server icon checksum cache for {server_id}: {e}"
-        )
+def _not_available() -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail={"error": {"code": 500, "message": "Avatars module not available"}},
+    )
 
 
 @router.get(
@@ -224,10 +90,7 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
     avatars = api.get_avatars()
     if not avatars:
         logger.error("Avatars module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Avatars module not available"}},
-        )
+        raise _not_available()
 
     try:
         uid = user_id
@@ -245,12 +108,10 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
             except Exception:
                 pass
 
-        # Flexible ETag check (handles weak tags and quotes)
+        # Flexible ETag check (handles weak tags and quotes). Only an exact
+        # match is accepted - a substring check previously let any client ETag
+        # containing the checksum substring return 304.
         if checksum and etag_client:
-            # Check for exact match, quoted match, or weak match.
-            # NOTE: only an exact match is accepted - a substring check
-            # (``checksum in etag_client``) previously let any client ETag
-            # containing the checksum substring return 304.
             if (
                 etag_client == checksum
                 or etag_client == f'"{checksum}"'
@@ -262,18 +123,13 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
         try:
             result = avatars.get_user_avatar_data(uid)
             if result is not None:
-                # SECURITY (Agent7 L1): defense in depth - even if a poisoned
-                # row bypasses the manager guard, never serve a script-carrying
-                # SVG raw. Fall through to the safe generated default below.
-                from src.core.avatars.manager.svg_guard import (
-                    is_unsafe_serve_payload,
-                )
-
+                # SECURITY: defense in depth - never serve a script-carrying
+                # SVG raw, even if a poisoned row bypasses the manager guard.
                 _payload, _ctype, _ = result
-                if is_unsafe_serve_payload(_ctype, _payload):
+                if not is_serve_safe(_ctype, _payload):
                     logger.warning(
-                        f"Blocked unsafe stored avatar serve for user {uid} "
-                        f"(type={_ctype})"
+                        "Blocked unsafe stored avatar serve for user "
+                        f"{uid} (type={_ctype})"
                     )
                     result = None
             if not result:
@@ -387,12 +243,9 @@ async def upload_my_avatar(
     avatars = api.get_avatars()
     if not avatars:
         logger.error("Avatars module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Avatars module not available"}},
-        )
+        raise _not_available()
 
-    # Validate file type
+    # Validate file type (quick reject before reading the body).
     if not file.content_type or not file.content_type.startswith("image/"):
         logger.warning(
             f"User {current_user.user_id} attempted to upload non-image file: {file.content_type}"
@@ -415,6 +268,20 @@ async def upload_my_avatar(
             detail={
                 "error": {"code": 400, "message": f"Failed to read file: {str(e)}"}
             },
+        )
+
+    # Hardened validation: allowed MIME, magic-byte/content-type verification,
+    # size limit. Fail closed; never leak exception text.
+    try:
+        validate_avatar_upload(file.content_type, file_data)
+    except AvatarValidationError:
+        logger.warning(
+            f"User {current_user.user_id} uploaded a rejected avatar file "
+            f"(type={file.content_type}, size={len(file_data)})"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "File must be an image"}},
         )
 
     try:
@@ -469,13 +336,14 @@ async def upload_my_avatar(
         except Exception as ge:
             logger.debug(f"emit_user_update (avatar upload) failed: {ge}")
 
+        upload_result = upload_result_from_manager(result)
         return AvatarUploadResponse(
-            success=True,
-            avatar_url=result["url"],
-            width=result["width"],
-            height=result["height"],
-            size=result["size"],
-            animated=result["animated"],
+            success=upload_result.success,
+            avatar_url=upload_result.url,
+            width=upload_result.width,
+            height=upload_result.height,
+            size=upload_result.size,
+            animated=upload_result.animated,
         )
     except HTTPException:
         raise
@@ -508,10 +376,7 @@ async def delete_my_avatar(
     avatars = api.get_avatars()
     if not avatars:
         logger.error("Avatars module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Avatars module not available"}},
-        )
+        raise _not_available()
 
     try:
         try:
@@ -599,10 +464,7 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
     avatars = api.get_avatars()
     if not avatars:
         logger.error("Avatars module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Avatars module not available"}},
-        )
+        raise _not_available()
 
     try:
         sid = server_id
@@ -627,15 +489,10 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
         try:
             result = avatars.get_server_icon_data(sid)
             if result is not None:
-                # SECURITY (Agent7 L1): defense in depth - even if a poisoned
-                # row bypasses the manager guard, never serve a script-carrying
+                # SECURITY: defense in depth - never serve a script-carrying
                 # SVG raw. Fall through to the safe generated default below.
-                from src.core.avatars.manager.svg_guard import (
-                    is_unsafe_serve_payload,
-                )
-
                 _payload, _ctype, _ = result
-                if is_unsafe_serve_payload(_ctype, _payload):
+                if not is_serve_safe(_ctype, _payload):
                     logger.warning(
                         f"Blocked unsafe stored server icon serve {sid} (type={_ctype})"
                     )
@@ -763,22 +620,16 @@ async def upload_server_icon(
 
     if not avatars:
         logger.error("Avatars module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Avatars module not available"}},
-        )
+        raise _not_available()
 
     if not servers:
         logger.error("Servers module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}},
-        )
+        raise _not_available()
 
     try:
         try:
-            sid = int(server_id)
-        except (ValueError, TypeError):
+            sid = parse_server_id(server_id)
+        except AvatarValidationError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid server ID for icon upload: {server_id}"
             )
@@ -855,6 +706,20 @@ async def upload_server_icon(
                 },
             )
 
+        # Hardened validation: allowed MIME, magic-byte/content-type verification,
+        # size limit. Fail closed; never leak exception text.
+        try:
+            validate_avatar_upload(file.content_type, file_data)
+        except AvatarValidationError:
+            logger.warning(
+                f"User {current_user.user_id} uploaded a rejected icon for server {sid} "
+                f"(type={file.content_type}, size={len(file_data)})"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "File must be an image"}},
+            )
+
         try:
             result = avatars.upload_server_icon(
                 server_id=sid, image_data=file_data, content_type=file.content_type
@@ -883,13 +748,14 @@ async def upload_server_icon(
         except Exception as ge:
             logger.debug(f"emit_guild_update (icon upload) failed: {ge}")
 
+        upload_result = upload_result_from_manager(result)
         return IconUploadResponse(
-            success=True,
-            icon_url=result["url"],
-            width=result["width"],
-            height=result["height"],
-            size=result["size"],
-            animated=result["animated"],
+            success=upload_result.success,
+            icon_url=upload_result.url,
+            width=upload_result.width,
+            height=upload_result.height,
+            size=upload_result.size,
+            animated=upload_result.animated,
         )
     except HTTPException:
         raise
@@ -932,22 +798,16 @@ async def delete_server_icon(
 
     if not avatars:
         logger.error("Avatars module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Avatars module not available"}},
-        )
+        raise _not_available()
 
     if not servers:
         logger.error("Servers module not available")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": 500, "message": "Servers module not available"}},
-        )
+        raise _not_available()
 
     try:
         try:
-            sid = int(server_id)
-        except (ValueError, TypeError):
+            sid = parse_server_id(server_id)
+        except AvatarValidationError:
             logger.warning(f"Invalid server ID format for icon deletion: {server_id}")
             raise HTTPException(
                 status_code=400,
@@ -1038,3 +898,15 @@ async def delete_server_icon(
             status_code=500,
             detail={"error": {"code": 500, "message": "Internal server error"}},
         )
+
+
+__all__ = [
+    "router",
+    "get_user_avatar",
+    "upload_my_avatar",
+    "delete_my_avatar",
+    "get_server_icon",
+    "upload_server_icon",
+    "delete_server_icon",
+    "_not_available",
+]

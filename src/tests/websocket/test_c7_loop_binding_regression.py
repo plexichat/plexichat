@@ -126,6 +126,21 @@ async def test_gateway_binding_uses_running_loop(session_manager):
     assert local._loop is running
 
 
+def test_lifespan_binds_the_loop_before_any_request():
+    """Startup must bind the serving loop, not wait for a websocket.
+
+    Sync route handlers emit their security events from the threadpool; if the
+    dispatcher only learns its loop when the first gateway connection arrives,
+    every event before that connection is dropped.
+    """
+    import pathlib
+
+    app_src = (
+        pathlib.Path(__file__).resolve().parents[2] / "api" / "app.py"
+    ).read_text()
+    assert "get_dispatcher().set_event_loop(" in app_src
+
+
 def test_dispatcher_source_free_of_deprecated_get_event_loop():
     """Guard: dispatcher.py must not call asyncio.get_event_loop() (comments
     mentioning it are fine; only real calls count)."""
@@ -207,3 +222,44 @@ def test_on_event_from_foreign_thread_uses_bound_loop(
 
     assert not errors, f"on_event raised from foreign thread: {errors}"
     assert captured.get("loop") is fake
+
+
+@pytest.mark.asyncio
+async def test_on_event_from_worker_thread_uses_shared_serving_loop(
+    session_manager,
+):
+    """A dispatcher that never served a connection must still find the loop.
+
+    Sync route handlers (login, logout, register) emit their security events
+    from FastAPI's threadpool, where there is no running loop. The loop is
+    bound by whichever dispatcher instance served a gateway connection, so an
+    instance-local loop was not enough: without the shared fallback the event
+    was dropped with "no running event loop".
+    """
+    previous = GatewayDispatcher._serving_loop
+    try:
+        serving = GatewayDispatcher(session_manager=session_manager)
+        running = asyncio.get_running_loop()
+        serving.set_event_loop(running)
+
+        captured = {}
+
+        def fake_submit(coro, loop):
+            captured["loop"] = loop
+            coro.close()
+            return object()
+
+        emitter = GatewayDispatcher(session_manager=session_manager)
+        assert emitter._loop is None
+
+        def worker():
+            with patch("asyncio.run_coroutine_threadsafe", side_effect=fake_submit):
+                emitter.on_event(_sample_event(), [12345])
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=10)
+
+        assert captured.get("loop") is running
+    finally:
+        GatewayDispatcher._serving_loop = previous

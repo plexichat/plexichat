@@ -37,6 +37,10 @@ INTENTIONAL_SLEEPS: dict[str, tuple[int, str]] = {
         1,
         "yield to the loop so fire-and-forget create_task() broadcasts run",
     ),
+    "api/routes/test_avatars_hardening.py": (
+        1,
+        "let the bounded avatar checksum-cache TTL expire",
+    ),
     "artifacts/test_voice_calls.py": (
         1,
         "poll a release event inside a stubbed recorder coroutine",

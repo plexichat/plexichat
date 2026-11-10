@@ -1284,8 +1284,10 @@ PUBLIC_BY_DESIGN: dict[tuple[str, str, str], str] = {
         "/resend-verification",
     ): "enumeration-safe resend; no caller identity exists yet",
     # Public read-only resources.
-    ("src/api/routes/avatars.py", "GET", "/users/{user_id}"): ("public avatar image"),
-    ("src/api/routes/avatars.py", "GET", "/servers/{server_id}"): (
+    ("src/api/routes/avatars/routes.py", "GET", "/users/{user_id}"): (
+        "public avatar image"
+    ),
+    ("src/api/routes/avatars/routes.py", "GET", "/servers/{server_id}"): (
         "public server icon image"
     ),
     ("src/api/routes/bots.py", "GET", "/profiles/{application_id}"): (

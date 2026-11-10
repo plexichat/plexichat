@@ -42,7 +42,9 @@ router = APIRouter()
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def register(
+# Sync on purpose: registration hashes the password and performs blocking DB
+# work. FastAPI runs sync handlers in its worker threadpool.
+def register(
     request: Request, response: Response, body: RegisterRequest
 ) -> LoginResponse:
     auth = api.get_auth()
