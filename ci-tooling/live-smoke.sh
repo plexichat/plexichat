@@ -225,14 +225,21 @@ gate_account() { # gate_account LABEL USERNAME JAR
 # script restores it. 401/404 mean it was never seeded. Anything else is the
 # deployment misbehaving and is reported rather than walked past.
 ring_account() {
-    local name
+    local name wait
+    # Reported by the caller when the ring yields nothing, so the skip says
+    # whether the ring was spent (accounts frozen by earlier runs) or the
+    # login was refused before a member could be checked. 'run the seed
+    # script' is right for the first and misleading for the second.
+    RING_SKIP="no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
     for name in ${DELETION_RING//,/ }; do
         req POST /auth/login "$JAR_D" \
             "{\"username\":\"$name\",\"password\":\"$PASSWORD\"}"
         case "$STATUS" in
             200) DELETION_ACCOUNT="$name"; ok "login D (deletion account $name)"; return 0 ;;
             403|401|404) : ;;
-            429) wait_for_reset 75 || return 1; continue ;;
+            429) wait="$(jq -r '.retry_after // "?"' "$TMP/body.json" 2>/dev/null || true)"
+                 RING_SKIP="ring login rate limited (retry_after ${wait:-?}s), so no member could be checked"
+                 wait_for_reset 75 || return 1; continue ;;
             *) bad "login D ($name)" "-> $STATUS ${BODY:0:200}"; return 1 ;;
         esac
     done
@@ -519,8 +526,7 @@ else
                    "-> $freeze_status ${BODY:0:200}" ;;
         esac
     else
-        skip "delete a throwaway account" \
-            "no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
+        skip "delete a throwaway account" "$RING_SKIP"
     fi
 fi
 
