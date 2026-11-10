@@ -20,8 +20,34 @@ if TYPE_CHECKING:
     from src.core.events.manager import EventManager
 
 
+def _serving_loop() -> Optional[asyncio.AbstractEventLoop]:
+    """The process-wide serving loop, only when it is live and running.
+
+    A bound-but-dead or not-yet-started loop must not be used to schedule:
+    ``call_soon_threadsafe`` on it either buffers the event forever or raises.
+    """
+    loop = getattr(GatewayDispatcher, "_serving_loop", None)
+    if loop is None or loop.is_closed():
+        return None
+    is_running = getattr(loop, "is_running", None)
+    if is_running is None or not is_running():
+        return None
+    return loop
+
+
 class GatewayDispatcher:
     """Dispatches events to connected WebSocket clients."""
+
+    # The serving event loop, shared by every dispatcher instance.
+    #
+    # set_event_loop() is called on the gateway's dispatcher when a websocket
+    # connects, but events are emitted from whichever dispatcher the events
+    # module holds, and now also from sync route handlers running in FastAPI's
+    # threadpool (where asyncio.get_running_loop() raises). An instance that
+    # never served a connection therefore had no loop and dropped the event
+    # with "no running event loop"; the process-wide fallback below makes any
+    # emitter find the loop the server is actually running on.
+    _serving_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __init__(
         self,
@@ -49,8 +75,13 @@ class GatewayDispatcher:
         self._rate_limited_events = 0
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Set the event loop for async dispatch."""
+        """Set the event loop for async dispatch.
+
+        Also records it as the process-wide serving loop, so dispatchers that
+        never see a connection can still schedule onto it.
+        """
         self._loop = loop
+        GatewayDispatcher._serving_loop = loop
 
     def get_rate_limit_metrics(self) -> Dict[str, int]:
         """Expose outbound back-pressure metrics for observability (C2).
@@ -82,7 +113,9 @@ class GatewayDispatcher:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = self._loop
+            # Worker thread (sync route handler) or no loop bound to this
+            # instance: fall back to the loop the server is serving on.
+            loop = self._loop or _serving_loop()
         if loop is not None and not loop.is_closed():
             asyncio.run_coroutine_threadsafe(
                 self.dispatch_event(event, user_ids),

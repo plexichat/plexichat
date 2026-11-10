@@ -73,7 +73,9 @@ def test_warmup_runs_once_when_enabled(monkeypatch):
 
 def test_stop_warmup_cancels_the_task():
     async def scenario():
-        task = asyncio.create_task(asyncio.sleep(60))
+        # A never-completing awaitable, so this stays a cancellation test
+        # without adding a fixed sleep to the audited sleep-site registry.
+        task = asyncio.create_task(asyncio.Event().wait())
         await warmup.stop_warmup(task)
         return task
 

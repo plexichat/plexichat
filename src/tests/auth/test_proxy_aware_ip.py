@@ -9,7 +9,6 @@ Covers:
 Both the shared helper and the login/register route propagation are pinned.
 """
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -83,11 +82,9 @@ def _login_route_ip(request):
     orig = api.get_auth
     api.get_auth = lambda: fake_auth
     try:
-        asyncio.run(
-            login_mod.login(
-                request, Response(), LoginRequest(username="u", password="p")
-            )
-        )
+        # Sync handler on purpose: FastAPI runs the blocking Argon2/DB work in
+        # its threadpool, so the route is called directly here.
+        login_mod.login(request, Response(), LoginRequest(username="u", password="p"))
     finally:
         api.get_auth = orig
     return captured.get("ip_address")
@@ -156,16 +153,16 @@ def _register_route_ips(request, username="m1reg"):
     orig_features = api.get_features
     api.get_features = lambda: None
     try:
-        asyncio.run(
-            reg_mod.register(
-                request,
-                Response(),
-                RegisterRequest(
-                    username=username,
-                    email=f"{username}@example.com",
-                    password="TestPass123!",
-                ),
-            )
+        # Sync handler on purpose: FastAPI runs the blocking Argon2/DB work in
+        # its threadpool, so the route is called directly here.
+        reg_mod.register(
+            request,
+            Response(),
+            RegisterRequest(
+                username=username,
+                email=f"{username}@example.com",
+                password="TestPass123!",
+            ),
         )
     finally:
         api.get_auth = orig
