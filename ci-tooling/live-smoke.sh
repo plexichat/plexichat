@@ -16,7 +16,12 @@
 #   SMOKE_USER_A/B/C     pre-provisioned accounts to log in with instead of
 #                        registering (+ SMOKE_PASSWORD, default SmokeTest123!)
 #   SMOKE_TOKEN_A/B/C    pre-issued session tokens; skips login entirely (use
-#                        when /auth/login is rate limited by your CI's IP)
+#                        when /auth/login is rate limited by your CI's IP).
+#                        Mint them on the deployment with
+#                        ci-tooling/seed-smoke-accounts.sh --tokens and keep
+#                        them as masked CI variables. In this mode the logout
+#                        assertions run on C, because A and B are the gate's
+#                        reusable credential: logging one out would spend it.
 #   SMOKE_DELETION_ACCOUNTS
 #                        the ring of deletion subjects the run may freeze,
 #                        comma separated (default smoke_delete_1..4)
@@ -269,9 +274,10 @@ sec "accounts and sessions"
 # Registration and login are both rate limited per client IP. The suite keeps
 # its own gate accounts so it needs nothing from the runner, and SMOKE_USER_* /
 # SMOKE_TOKEN_* stay available as overrides for a host that cannot register.
-HAVE_A=0; HAVE_B=0; HAVE_C=0; HAVE_D=0; NEED_LOGIN=1
+HAVE_A=0; HAVE_B=0; HAVE_C=0; HAVE_D=0; NEED_LOGIN=1; TOKEN_MODE=0
 if [ -n "${SMOKE_TOKEN_A:-}" ] && [ -n "${SMOKE_TOKEN_B:-}" ]; then
     NEED_LOGIN=0
+    TOKEN_MODE=1
     JAR_TOKEN["$JAR_A"]="$SMOKE_TOKEN_A"
     JAR_TOKEN["$JAR_B"]="$SMOKE_TOKEN_B"
     HAVE_A=1; HAVE_B=1
@@ -466,10 +472,24 @@ else
         req DELETE "/servers/$SERVER_ID" "$JAR_A"
         expect "A deletes the smoke server" "200,204,404"
     fi
-    req POST /auth/logout "$JAR_A"; expect "A logs out" "200,204"
-    req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"
-    req POST /auth/logout "$JAR_B"; expect "B logs out" "200,204"
-    req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
+    if [ "$TOKEN_MODE" = 1 ]; then
+        # Pre-issued sessions are reused by the next gate run, so logging A or B
+        # out is exactly what would make the next run need /auth/login -- the
+        # step a CI runner's shared egress gets 429'd on. C only carries the
+        # stranger checks above, so it takes the logout assertions instead.
+        if [ -n "${JAR_TOKEN[$JAR_C]:-}" ]; then
+            req POST /auth/logout "$JAR_C"; expect "C logs out" "200,204"
+            req GET /users/@me "$JAR_C"; expect "C's session is dead" "401,403"
+        else
+            skip "logout and session invalidation" \
+                "no SMOKE_TOKEN_C to spend (A/B sessions are reused across runs)"
+        fi
+    else
+        req POST /auth/logout "$JAR_A"; expect "A logs out" "200,204"
+        req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"
+        req POST /auth/logout "$JAR_B"; expect "B logs out" "200,204"
+        req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
+    fi
     if [ "$HAVE_D" = 1 ]; then
         req DELETE /users/@me "$JAR_D" "{\"password\":\"$PASSWORD\"}"
         expect "the deletion account schedules its own deletion" "200,202,204"

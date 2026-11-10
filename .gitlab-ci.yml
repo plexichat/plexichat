@@ -1482,6 +1482,14 @@ create_merge_request:
 # that script again restores the members already frozen. SMOKE_USER_A/B/C (+ 
 # SMOKE_PASSWORD) and SMOKE_TOKEN_A/B/C are still accepted as overrides, but no
 # CI variable is needed for the job to run.
+#
+# SMOKE_TOKEN_A/B/C is the mode to prefer on a shared runner: with the three
+# values set the suite performs no login at all, so a per-IP login limit cannot
+# turn the release gate red (that is what did, on a runner whose egress had
+# spent its hourly budget). Mint them once on the deployment with
+# `ci-tooling/seed-smoke-accounts.sh --tokens` and store them as masked project
+# variables; the suite stays on the cookie-login path when they are absent.
+# Rotate after a run logs C out (its token is the one the logout checks spend).
 live_smoke:
   stage: test-and-release
   image: alpine:3.20
