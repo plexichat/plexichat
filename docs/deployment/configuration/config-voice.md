@@ -28,7 +28,7 @@ Plexichat supports four backend values in `src/core/voice/signaling/sfu/__init__
 | Value | Implementation | Transport |
 | --- | --- | --- |
 | `aiortc` | Pure Python in `src/core/voice/signaling/sfu/aiortc_adapter.py` | In-process |
-| `mediasoup-ws` | WebSocket adapter in `src/core/voice/signaling/sfu/mediasoup_ws.py` | `wss://` or `ws://` |
+| `mediasoup-ws` | WebSocket adapter in `src/core/voice/signaling/sfu/mediasoup_ws/` | `wss://` or `ws://` |
 | `mediasoup` | REST adapter in `src/core/voice/signaling/sfu/mediasoup.py` | `https://` or `http://` |
 | `janus` | REST adapter in `src/core/voice/signaling/sfu/janus.py` | `http://` or `https://` |
 

@@ -18,7 +18,7 @@ while doing it:
   hardware). ``_init_hsm`` already guarded every one of its notices against
   an unconfigured logger; ``_init_tpm`` did not, so the import failed on any
   host without a TPM.
-* ``src/core/voice/signaling/sfu/mediasoup_ws.py`` resolves the
+* ``src/core/voice/signaling/sfu/mediasoup_ws/identity.py`` resolves the
   deployment-scoped stable-peer secret at import time and warns with
   ``logger.critical`` when none is configured, which is the case for a
   default deployment -- and the warning itself took down the whole signaling
@@ -129,7 +129,10 @@ class TestOptionalDependencyImportWarnings:
         _unconfigure_config(monkeypatch)
         try:
             _disable_logger(real_logger)
-            reloaded = _load_isolated(mediasoup)
+            # The identity module owns the import-time secret resolution; the
+            # package ``__init__`` is a shim whose relative imports would not
+            # resolve under the probe's throwaway name.
+            reloaded = _load_isolated(mediasoup._identity)
             # The empty secret is what made the probe warn; a configured secret
             # would mean the import was never at risk and this proves nothing.
             assert reloaded._STABLE_PEER_SECRET == b""
