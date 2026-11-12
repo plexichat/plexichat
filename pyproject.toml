@@ -23,7 +23,11 @@ severity = "MEDIUM"
 # — 91 tracked source files the hook never scanned. An entry that is (or later
 # becomes) a substring of tracked source hides it, so test_bandit_config.py
 # fails if that happens.
-exclude_dirs = [".venv", "venv", ".pytest_cache", "test_artifacts", "uploads", "src/tests", "tests", "**/__pycache__"]
+# No bare ``uploads`` entry: it was there to skip the runtime media directory,
+# which the ``targets`` above (``src``, ``main.py``) never scan anyway -- while
+# the substring match hid the tracked ``src/api/routes/suite/stash/uploads.py``
+# from the scan. Every exclusion here must be a path that cannot name source.
+exclude_dirs = [".venv", "venv", ".pytest_cache", "test_artifacts", "src/tests", "tests", "**/__pycache__"]
 # The entry point is scanned alongside src/; test dirs are excluded above.
 # B101 (assert) is intentionally NOT globally skipped — assert in production
 # code is a security concern. Use `# nosec B101` for legitimate uses.

@@ -16,7 +16,7 @@ Each mixin inherits from `EndpointTesterBase` at `plexichat/src/core/selftest/se
 | `base.py` | `EndpointTesterBase` | Define `ctx` type and `__init__` shared by all mixins. |
 | `core.py` | `CoreMixin` | Implement `test_endpoint()` for generic HTTP tests, including body construction, multipart handling, retry, and side-effect capture. |
 | `auth.py` | `AuthMixin` | Implement `test_auth_endpoints()` for login, registration, session listing, logout, and `revoke-all` flows. |
-| `admin.py` | `AdminMixin` | Implement `test_migration_endpoints()`, `test_access_token_rotate()`, and `test_delay_deletion()`. |
+| `admin/` | `AdminMixin` | Implement `test_migration_endpoints()`, `test_access_token_rotate()`, and `test_delay_deletion()` (mixin package). |
 | `resources.py` | `ResourceMixin` | Implement `test_delete_resources()` and `test_password_reset_confirm()`. |
 | `media.py` | `MediaMixin` | Implement `test_media_upload_complete()` for chunked upload sessions. |
 | `polls.py` | `PollMixin` | Implement `test_poll_vote()` and `test_poll_close()`. Call `test_poll_vote()` before `test_poll_close()`. |
@@ -70,8 +70,8 @@ tester.test_bot_server_integration()
 
 `test_endpoint()` at `plexichat/src/core/selftest/services/endpoints/core.py` performs the following steps:
 
-1.  Resolves path parameters through `DataGenerator.get_param_value()` at `plexichat/src/core/selftest/services/data.py:29`.
-2.  Builds the request body from the OpenAPI schema through `DataGenerator.get_minimal_body()` at `plexichat/src/core/selftest/services/data.py:337`.
+1.  Resolves path parameters through `DataGenerator.get_param_value()` at `plexichat/src/core/selftest/services/data/params.py:9`.
+2.  Builds the request body from the OpenAPI schema through `DataGenerator.get_minimal_body()` at `plexichat/src/core/selftest/services/data/bodies.py:15`.
 3.  Selects `ctx.session` or `ctx.other_session` based on whether the path appears in `ctx._other_session_paths` or matches special cases such as `/approvals/*/approve` or thread leave.
 4.  Sends the request, retries on transient failures, captures IDs such as webhook IDs, and appends the result to `ctx.results`.
 
@@ -90,5 +90,5 @@ Note: Each mixin accesses shared state only through `self.ctx`. Mixins do not ca
 ## Related documentation
 
 *   [Self-test module](../README.md) — overall execution order.
-*   `plexichat/src/core/selftest/services/data.py:337` — schema-to-body conversion that the tester uses.
+*   `plexichat/src/core/selftest/services/data/bodies.py:15` — schema-to-body conversion that the tester uses.
 *   `plexichat/src/core/selftest/runner.py:384` — exclusion and deferral lists that determine which routes the tester executes.
