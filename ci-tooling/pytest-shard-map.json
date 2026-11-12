@@ -165,6 +165,7 @@
     "src/tests/auth/test_reaper_dsar_purge.py": 1,
     "src/tests/auth/test_reaper_purge_cascade.py": 1,
     "src/tests/auth/test_registration.py": 1,
+    "src/tests/auth/test_session_package.py": 1,
     "src/tests/auth/test_sessions.py": 0,
     "src/tests/auth/test_totp_replay_shared.py": 1,
     "src/tests/automod/test_actions.py": 0,

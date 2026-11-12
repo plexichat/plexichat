@@ -53,6 +53,19 @@ class AuthManagerProtocol:
     def _json_loads(self, data: str) -> Any: ...
 
     def get_user(self, user_id: int) -> Optional[User]: ...
+    def _verify_ws_ticket(
+        self,
+        parsed: Dict[str, Any],
+        ip_address: Optional[str],
+        user_agent: Optional[str] = None,
+    ) -> TokenInfo: ...
+    def _session_expire_hours(
+        self,
+        user_id: int,
+        device_id: Optional[int],
+        sessions_config: Dict[str, Any],
+    ) -> int: ...
+    def _device_is_trusted_by_id(self, user_id: int, device_id: int) -> bool: ...
     def _create_session(
         self,
         user_id: int,
