@@ -334,6 +334,16 @@ security:sast:
   stage: security
   timeout: 30m
   needs: []
+  # This job declared no image, so it inherited the pipeline default
+  # (python:3.11-bullseye) and ran `/analyzer run` inside it: exit 127, "No such
+  # file or directory", in about a second. Being advisory, it still left the tag
+  # pipeline green, so every release since this job was added shipped unscanned.
+  # The analyzer image is the one thing the job is -- security:secret_detection
+  # names its own for exactly this reason -- and test_ci_job_images.py now fails
+  # if a job that runs /analyzer goes back to the default.
+  image:
+    name: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest  # pragma: allowlist secret
+    pull_policy: if-not-present
   rules:
     - if: '$CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+(?:(a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+.+)?$/'
   variables:
