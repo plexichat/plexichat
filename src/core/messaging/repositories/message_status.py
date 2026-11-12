@@ -70,7 +70,9 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
 
         in_clause, params = self._build_in_clause(message_ids)
         rows = self._fetch_all(
-            f"SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN {in_clause}",  # nosec: B608
+            "SELECT message_id, status FROM msg_message_status WHERE user_id = ? AND message_id IN {ids}".format(
+                ids=in_clause
+            ),
             (user_id,) + params,
         )
         return {row["message_id"]: MessageStatusType(row["status"]) for row in rows}

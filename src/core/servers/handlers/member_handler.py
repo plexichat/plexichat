@@ -45,6 +45,17 @@ register_reconstructable_type(Member)
 # Per-user invite-creation sliding window (in-process; the global rate-limit
 # middleware covers transport-level floods, this guards the invite-minting
 # endpoint itself). Keyed by user_id, bounded by config.
+_COUNT_LIVE_INVITES_BY_INVITER = (
+    "SELECT COUNT(*) AS c FROM srv_invites "
+    "WHERE inviter_id = ? AND revoked = 0 "
+    "AND (expires_at IS NULL OR expires_at > ?)"
+)
+_COUNT_LIVE_INVITES_BY_SERVER = (
+    "SELECT COUNT(*) AS c FROM srv_invites "
+    "WHERE server_id = ? AND revoked = 0 "
+    "AND (expires_at IS NULL OR expires_at > ?)"
+)
+
 _invite_creation_lock = threading.Lock()
 _invite_creation_windows: dict = {}
 
@@ -844,15 +855,10 @@ class MemberHandler:
 
         # --- Active-invite quotas ---
         now_ms = self.manager._get_timestamp()
-        live_predicate = "(expires_at IS NULL OR expires_at > ?)"
 
         max_per_user = int(cfg.get("max_active_per_user", 25))
         if max_per_user > 0:
-            row = self.db.fetch_one(
-                f"SELECT COUNT(*) AS c FROM srv_invites "
-                f"WHERE inviter_id = ? AND revoked = 0 AND {live_predicate}",  # nosec: B608 - constant predicate
-                (user_id, now_ms),
-            )
+            row = self.db.fetch_one(_COUNT_LIVE_INVITES_BY_INVITER, (user_id, now_ms))
             if row and row["c"] >= max_per_user:
                 raise InviteLimitReachedError(
                     "Active invite limit reached for this user",
@@ -861,11 +867,7 @@ class MemberHandler:
 
         max_per_server = int(cfg.get("max_active_per_server", 100))
         if max_per_server > 0:
-            row = self.db.fetch_one(
-                f"SELECT COUNT(*) AS c FROM srv_invites "
-                f"WHERE server_id = ? AND revoked = 0 AND {live_predicate}",  # nosec: B608 - constant predicate
-                (server_id, now_ms),
-            )
+            row = self.db.fetch_one(_COUNT_LIVE_INVITES_BY_SERVER, (server_id, now_ms))
             if row and row["c"] >= max_per_server:
                 raise InviteLimitReachedError(
                     "Active invite limit reached for this server",

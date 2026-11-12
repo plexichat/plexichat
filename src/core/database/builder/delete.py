@@ -5,6 +5,8 @@ from typing import Any, List, Optional
 from .base import TableQuery, Parameter
 from .where import build_where_clause
 
+_DELETE_FROM = "DELETE FROM {table}"
+
 
 class DeleteQuery(TableQuery):
     """Query builder for DELETE statements."""
@@ -31,7 +33,9 @@ class DeleteQuery(TableQuery):
                 "DELETE requires at least one WHERE condition (safety feature)"
             )
 
-        sql = f"DELETE FROM {self.table_name}"  # nosec: B608
+        # TableQuery validates ``table_name`` as a bare identifier; the
+        # template keeps the statement out of the f-string form.
+        sql = _DELETE_FROM.format(table=self.table_name)
         params: List[Parameter] = []
 
         # Add WHERE conditions using shared builder

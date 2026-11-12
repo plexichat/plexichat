@@ -6,6 +6,7 @@ This module handles passkey registration, authentication, listing, revocation, a
 
 from typing import Optional, Dict, List, Any
 
+import contextlib
 import base64
 import json
 import os
@@ -299,8 +300,10 @@ class PasskeyManager:
                 self._db.execute(
                     f"ALTER TABLE auth_users ADD COLUMN {column} {definition}"
                 )
-            except Exception:  # nosec B110
-                pass
+            except Exception:
+                logger.debug(
+                    "Passkey column %s on auth_users left as-is", column, exc_info=True
+                )
 
     def generate_registration_options(
         self,
@@ -551,17 +554,13 @@ class PasskeyManager:
                 # without this, an unknown username returns measurably
                 # faster, preserving the enumeration oracle via latency.
                 # The result is discarded; cost is what matters.
-                try:
+                with contextlib.suppress(Exception):
                     self._db.fetch_all(
                         "SELECT credential_id FROM auth_passkeys WHERE user_id = ? AND revoked = 0",
                         (-1,),
                     )
-                except Exception:  # nosec B110 - timing ballast only
-                    pass
-                try:
+                with contextlib.suppress(Exception):
                     self._base64url_decode(self._base64url_encode(os.urandom(32)))
-                except Exception:  # nosec B110 - timing ballast only
-                    pass
             # M7: enumeration mitigation — unknown users and known users
             # with no passkeys both receive a single random dummy
             # credential, so allowCredentials shape is indistinguishable

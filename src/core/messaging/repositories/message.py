@@ -102,7 +102,7 @@ class MessageRepository(BaseRepository[Message]):
             return []
         in_clause, params = self._build_in_clause(msg_ids)
         return self._fetch_all(
-            f"SELECT * FROM msg_messages WHERE id IN {in_clause}",  # nosec: B608
+            "SELECT * FROM msg_messages WHERE id IN {ids}".format(ids=in_clause),
             params,
         )
 

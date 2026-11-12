@@ -8,7 +8,7 @@ production column set.
 """
 
 import json
-import random
+import secrets
 import time
 from unittest.mock import patch
 
@@ -31,7 +31,7 @@ class TestCalculateDelay:
     """Exponential backoff math."""
 
     def test_delay_grows_exponentially_with_attempt(self, retry_queue):
-        with patch.object(random, "randint", return_value=0):
+        with patch.object(secrets, "randbelow", return_value=0):
             delay_1 = retry_queue._calculate_delay(1)
             delay_2 = retry_queue._calculate_delay(2)
             delay_3 = retry_queue._calculate_delay(3)
@@ -40,12 +40,14 @@ class TestCalculateDelay:
         assert delay_3 == WebhookRetryQueue.BASE_DELAY_MS * 8  # 8s
 
     def test_delay_capped_at_max(self, retry_queue):
-        with patch.object(random, "randint", return_value=0):
+        with patch.object(secrets, "randbelow", return_value=0):
             delay = retry_queue._calculate_delay(20)
         assert delay == WebhookRetryQueue.MAX_DELAY_MS
 
     def test_delay_includes_jitter(self, retry_queue):
-        with patch.object(random, "randint", return_value=WebhookRetryQueue.JITTER_MS):
+        with patch.object(
+            secrets, "randbelow", return_value=WebhookRetryQueue.JITTER_MS
+        ):
             delay = retry_queue._calculate_delay(1)
         assert (
             delay == WebhookRetryQueue.BASE_DELAY_MS * 2 + WebhookRetryQueue.JITTER_MS
@@ -166,7 +168,7 @@ class TestMarkFailure:
             endpoint_url="https://example.com/hook",
         )
         monkeypatch.setattr(retry_queue, "_get_timestamp", lambda: 1_000_000_000_000)
-        monkeypatch.setattr(random, "randint", lambda a, b: 0)
+        monkeypatch.setattr(secrets, "randbelow", lambda n: 0)
 
         result = retry_queue.mark_failure(record["id"], 500, "upstream down")
 
@@ -254,7 +256,7 @@ class TestGetPendingRetries:
     def test_retrying_not_due_is_excluded(self, db, retry_queue, monkeypatch):
         record = self._enqueue(retry_queue, 1, {"m": "a"})
         monkeypatch.setattr(retry_queue, "_get_timestamp", lambda: 1_000_000_000_000)
-        monkeypatch.setattr(random, "randint", lambda a, b: 0)
+        monkeypatch.setattr(secrets, "randbelow", lambda n: 0)
         retry_queue.mark_failure(record["id"])  # next_retry_at = now + 2000
         # Freeze time at the failure moment: the retry is not due yet.
         monkeypatch.setattr(retry_queue, "_get_timestamp", lambda: 1_000_000_000_000)

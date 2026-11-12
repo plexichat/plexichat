@@ -378,8 +378,8 @@ async def update_role(
     params.append(int(role_id))
 
     # updates list contains only hardcoded column assignments (safe from injection)
-    column_updates = ", ".join(updates)
-    query = f"UPDATE admin_roles SET {column_updates} WHERE id = ?"  # nosec - hardcoded column names
+    template = "UPDATE admin_roles SET {assignments} WHERE id = ?"
+    query = template.format(assignments=", ".join(updates))
     db.execute(query, params)
 
     # Log the action

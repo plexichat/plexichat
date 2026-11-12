@@ -10,7 +10,7 @@ Provides reliable webhook delivery with:
 """
 
 import json
-import random
+import secrets
 from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
@@ -52,7 +52,7 @@ class WebhookRetryQueue:
             self.BASE_DELAY_MS * (2**attempt),
             self.MAX_DELAY_MS,
         )
-        jitter = random.randint(0, self.JITTER_MS)  # nosec B311 - not cryptographic
+        jitter = secrets.randbelow(self.JITTER_MS + 1)
         return delay + jitter
 
     def enqueue(
