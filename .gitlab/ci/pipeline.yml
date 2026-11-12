@@ -529,6 +529,11 @@ test:pytest:
     # them. The dev lock is a superset of the runtime tree, so installing it
     # here is safe on top of a cached .venv.
     - pip install --require-hashes -r requirements-dev.txt
+    # CI_NODE_INDEX is 1-based on this runner: pipeline #2517, the first run of
+    # this split, uploaded test-results-1.xml and test-results-2.xml. Every
+    # consumer below works in 0-based shard numbers, converted once here, so
+    # the report, the load log and the gate all agree on which half is which.
+    - export SHARD=$(( ${CI_NODE_INDEX:-1} - 1 ))
     # The database benchmarks are timing assertions -- ``median_ms < 10`` on a
     # single query, ``< 50`` on connection acquisition -- and pytest-benchmark
     # turns itself off under xdist, so they are not run beside the parallel
@@ -553,7 +558,7 @@ test:pytest:
       trap stop_sampler EXIT
       # One shard runs the benchmark module: it is 2.7s of assertions and does
       # not get cheaper for being run twice, and the gate reads one report.
-      if [ "${CI_NODE_INDEX:-0}" = "0" ]; then
+      if [ "$SHARD" = "0" ]; then
         python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
       fi
       stop_sampler
@@ -580,7 +585,7 @@ test:pytest:
       set -eu
       cpus=$(nproc)
       ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
-        > "test-results-load-${CI_NODE_INDEX}.log" 2>/dev/null &
+        > "test-results-load-${SHARD}.log" 2>/dev/null &
       sampler=$!
       stop_sampler() { kill "$sampler" 2>/dev/null || true; }
       trap stop_sampler EXIT
@@ -593,7 +598,7 @@ test:pytest:
       import os
       import zlib
 
-      index = int(os.environ["CI_NODE_INDEX"])
+      index = int(os.environ["SHARD"])
       total = int(os.environ["CI_NODE_TOTAL"])
       roots = ("src/tests", "src/utils/common_utils/tests")
       skip = os.path.normpath(os.path.join("src", "tests", "test_database_benchmarks.py"))
@@ -609,12 +614,20 @@ test:pytest:
           if zlib.crc32(path.encode()) % total == index:
               print(path)
       PY
-      echo "test:pytest shard ${CI_NODE_INDEX}/${CI_NODE_TOTAL}: $(wc -l < shard-files.txt) test file(s)"
+      echo "test:pytest shard ${SHARD} (node ${CI_NODE_INDEX}/${CI_NODE_TOTAL}): $(wc -l < shard-files.txt) test file(s)"
+      # An empty list means the split is broken, not that there is nothing to
+      # run: pytest with no path arguments falls back to pytest.ini's
+      # testpaths and quietly runs the entire suite. #2517 did exactly that on
+      # the second shard, 521s of duplicated work that still looked green.
+      if [ ! -s shard-files.txt ]; then
+        echo "shard ${SHARD} was assigned no test files; refusing to fall back to the whole suite" >&2
+        exit 1
+      fi
       # Unquoted on purpose: the file list is one path per line and the shell
       # splits it into arguments. (No test path in this tree contains a space.)
       # shellcheck disable=SC2046
       python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25 \
-        --junitxml="test-results-${CI_NODE_INDEX}.xml" \
+        --junitxml="test-results-${SHARD}.xml" \
         $(cat shard-files.txt)
       stop_sampler
       trap - EXIT
