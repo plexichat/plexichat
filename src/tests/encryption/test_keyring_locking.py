@@ -11,6 +11,7 @@ wrote the same temporary file. These tests pin the two properties that made the
 race possible.
 """
 
+import os
 import sys
 import threading
 
@@ -93,3 +94,78 @@ def test_two_instances_save_concurrently_without_losing_the_swap(tmp_path):
     assert errors == []
     assert Keyring(path).keys, "the surviving file still parses as a keyring"
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.unit
+@pytest.mark.encryption
+def test_first_key_is_generated_only_once(tmp_path):
+    """Instances that loaded an empty keyring adopt the persisted first key.
+
+    Every xdist worker in a fresh container constructs its keyring before any
+    key exists, so each used to generate its own version-1 key and overwrite
+    the previous one. Whichever worker lost that race kept a key the file no
+    longer contained, and its later encryption was undecryptable by peers
+    (``InvalidTag`` on version 1). The generation path re-reads the file under
+    the lock, so all instances converge on one key.
+    """
+    path = tmp_path / "system_keyring.json"
+    first = Keyring(path)
+    second = Keyring(path)
+    assert first.keys == {} and second.keys == {}
+
+    _, first_key = first.get_key()
+    _, second_key = second.get_key()
+
+    assert second_key == first_key
+    assert Keyring(path).keys[1] == first_key
+
+
+@pytest.mark.unit
+@pytest.mark.encryption
+def test_rotate_keeps_versions_added_by_a_peer(tmp_path):
+    """Rotating from a stale view must not drop a peer's key version."""
+    path = tmp_path / "system_keyring.json"
+    first = Keyring(path)
+    first.get_key()
+
+    stale = Keyring(path)
+    peer = Keyring(path)
+    peer.rotate()
+
+    stale.rotate()
+
+    assert set(Keyring(path).keys) == {1, 2, 3}
+
+
+@pytest.mark.unit
+@pytest.mark.encryption
+def test_decrypt_recovers_from_a_stale_keyring(tmp_path, monkeypatch):
+    """A manager holding a superseded key reloads the keyring and decrypts.
+
+    This is the admin-email failure from pipeline #2530: the user row was
+    encrypted with the key currently on disk while the long-lived module
+    manager still had the key it generated before a peer rewrote the file.
+    """
+    from src.utils.encryption.core.manager import EncryptionManager
+
+    def _manager():
+        return EncryptionManager(
+            argon2_time_cost=1, argon2_memory_cost=8, argon2_parallelism=1
+        )
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stale = _manager()
+    peer = _manager()
+    blob = peer.encrypt_data("secret@test.local", context="42")
+
+    # Give the stale instance the same version number with different key
+    # material, as it would hold after losing the first-key race.
+    stale.keyring.keys = {1: os.urandom(32)}
+    stale.keyring.current_version = 1
+
+    assert stale.decrypt_data(blob, context="42") == "secret@test.local"
+
+    # Real tampering still fails after the reload.
+    tampered = blob[:-4] + ("AAAA" if not blob.endswith("AAAA") else "BBBB")
+    with pytest.raises(ValueError):
+        stale.decrypt_data(tampered, context="42")

@@ -654,6 +654,14 @@ class Keyring:
 
         def _get_key_impl():
             if not self.keys:
+                # Another process (or xdist worker) may have created the first
+                # key between our construction and this call, while our view of
+                # the keyring was still empty. Generating a second version-1 key
+                # overwrites theirs, and every peer that already loaded the old
+                # one then fails to decrypt data written by the other with an
+                # ``InvalidTag``. Re-read under the lock before generating.
+                self._load_from_disk()
+            if not self.keys:
                 # Keyring is empty, generate new key
                 new_key = AESGCM.generate_key(bit_length=256)
                 self.current_version = 1
@@ -695,6 +703,10 @@ class Keyring:
         """Generate a new key version and make it current."""
 
         def _rotate_impl():
+            # Writing our in-memory key map back would silently drop any key
+            # version (or pepper) a peer added since we loaded, so refresh the
+            # whole record under the lock before incrementing the version.
+            self._load_from_disk()
             new_version = self.current_version + 1
             new_key = AESGCM.generate_key(bit_length=256)
             self.keys[new_version] = new_key

@@ -64,6 +64,7 @@ class CryptoMixin(EncryptionCoreProtocol):
         if key is not None and len(key) != 32:
             raise ValueError("Key must be 32 bytes")
 
+        supplied_key = key is not None
         if not key:
             _, key = self.keyring.get_key(version)
         if key is None:
@@ -91,6 +92,24 @@ class CryptoMixin(EncryptionCoreProtocol):
             plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
             return plaintext.decode("utf-8")
         except Exception as e:
+            # The keyring is shared mutable state (multiple processes and, in
+            # tests, multiple xdist workers). An in-memory copy loaded before
+            # a peer created the first key or rewrote the file can hold a key
+            # the file no longer has, and its stale key fails the tag check on
+            # data that is perfectly intact. Re-read the authoritative keyring
+            # once and retry with it before reporting tampering; a genuinely
+            # corrupt blob still fails the second tag check and raises below.
+            if not supplied_key:
+                try:
+                    self.keyring.load()
+                    _, reloaded_key = self.keyring.get_key(version)
+                    if reloaded_key and reloaded_key != key:
+                        plaintext = AESGCM(reloaded_key).decrypt(nonce, ciphertext, aad)
+                        return plaintext.decode("utf-8")
+                except Exception:
+                    # Keep the original integrity error below: the retry is a
+                    # best-effort staleness recovery, not a second data source.
+                    pass
             logger.error(
                 f"Decryption failed for version {version} with context {context}: {repr(e)}"
             )
