@@ -254,6 +254,12 @@ lint:pre-commit:
     # requirements-dev.txt version so lint sees the same API as the suite.
     - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit pip-audit pytest==9.1.1
   script:
+    # A package that .gitignore hides cannot be committed, and nothing else
+    # notices: its tests pass locally, where the files exist on disk, and CI
+    # never imports a package it never received. src/core/selftest/services/data/
+    # was invisible to git for exactly this reason, so this is checked before
+    # anything else in the stage runs.
+    - python ci-tooling/check_gitignore_packages.py
     - |
       # Check this pipeline's changes, not the whole tree.
       #
@@ -491,10 +497,12 @@ test:pytest:
   timeout: 1h
   # Two shards, run as parallel instances of this job, so the suite's 532s of
   # measured test time is worked on by two 4-worker pools at once instead of
-  # one. The split is by file and by a crc32 of the path (see the script
-  # below), so it is stable, covers every file exactly once, and keeps each
-  # module in one process as ``--dist loadfile`` requires. Against the report
-  # from pipeline #2514 the two halves balance at 717s/755s of test time.
+  # one. The split is by whole file, packed from measured durations into
+  # ci-tooling/pytest-shard-map.json (see the script below), so it is stable,
+  # covers every file exactly once, and keeps each module in one process as
+  # ``--dist loadfile`` requires. Packing #2518's own reports balances the
+  # halves at 699.8s/699.8s of test time; the crc32 deal it replaces matched
+  # file counts (382 against 390) and still ran 341.7s against 286.6s.
   #
   # The resource group is per-shard: a shared group would serialise the two
   # instances, which is the one thing the split exists to avoid. "Never co-run"
@@ -595,13 +603,23 @@ test:pytest:
       # roots pytest.ini's testpaths name are covered, and the benchmark module
       # is excluded here because this job runs it on its own (above).
       python3 - <<'PY' > shard-files.txt
+      import json
       import os
+      import sys
       import zlib
 
       index = int(os.environ["SHARD"])
       total = int(os.environ["CI_NODE_TOTAL"])
       roots = ("src/tests", "src/utils/common_utils/tests")
       skip = os.path.normpath(os.path.join("src", "tests", "test_database_benchmarks.py"))
+      # The map is packed by measured duration (ci-tooling/balance_pytest_shards.py),
+      # not by file count: crc32 dealt 382 files against 390 and still ran
+      # 341.7s against 286.6s (#2518), because cost per file is not uniform.
+      # A file the map does not know about -- anything added since it was
+      # generated -- falls back to the hash so it still lands on exactly one
+      # shard; --check in that tool reports the drift.
+      with open(os.path.join("ci-tooling", "pytest-shard-map.json"), encoding="utf-8") as handle:
+          mapping = json.load(handle)["files"]
       files = []
       for root in roots:
           for dirpath, _dirnames, names in os.walk(root):
@@ -610,9 +628,17 @@ test:pytest:
                       path = os.path.join(dirpath, name)
                       if os.path.normpath(path) != skip:
                           files.append(path)
+      unmapped = 0
       for path in sorted(files):
-          if zlib.crc32(path.encode()) % total == index:
+          shard = mapping.get(os.path.normpath(path))
+          if shard is None:
+              unmapped += 1
+              shard = zlib.crc32(path.encode()) % total
+          if int(shard) == index:
               print(path)
+      if unmapped:
+          print(f"NOTE: {unmapped} test file(s) are not in pytest-shard-map.json; "
+                "dealt by hash. Regenerate it from fresh reports.", file=sys.stderr)
       PY
       echo "test:pytest shard ${SHARD} (node ${CI_NODE_INDEX}/${CI_NODE_TOTAL}): $(wc -l < shard-files.txt) test file(s)"
       # An empty list means the split is broken, not that there is nothing to
