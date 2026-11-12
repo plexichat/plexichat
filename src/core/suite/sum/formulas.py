@@ -14,7 +14,7 @@ unit-tested in isolation and reused by viewport reads, CSV export, and sort.
 
 This module is the stable import facade: the parser/tokenizer and coercion
 helpers live in ``_formula_shared.py`` and the evaluator methods are split
-across ``_formula_core.py`` / ``_formula_advanced.py`` mixin modules.
+across the ``_formula_core/`` / ``_formula_advanced/`` mixin packages.
 
 Semantics follow Excel, and are shared with the PlexiSum client engine: the
 same case table (``src/tests/suite/formula_parity_cases.json``) is
