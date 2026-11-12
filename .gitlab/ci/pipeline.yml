@@ -1,0 +1,1502 @@
+include:
+  - template: Jobs/Container-Scanning.gitlab-ci.yml
+
+stages:
+  - lint
+  - security
+  - pip-licenses
+  - test
+  - stress
+  - performance
+  - metrics
+  - timestamp
+  - docker
+  - request-merge
+  - test-and-release
+
+# =========================================================
+# OPEN TIMESTAMP STAGE
+# =========================================================
+
+ots:timestamp_commit:
+  extends: .python_base
+  stage: timestamp
+  script:
+    - pip install opentimestamps
+    - python ci-tooling/ots_stamp.py
+  artifacts:
+    paths:
+      - ots-proofs/
+    expire_in: never
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+  allow_failure: true
+
+ots:push_proofs:
+  stage: test-and-release
+  extends: .python_base
+  needs:
+    - ots:timestamp_commit
+  script:
+    # The commit is stamped once, by ots:timestamp_commit, and the proof arrives
+    # here as that job's artifact (``needs`` downloads it before the script
+    # runs). This job used to run ci-tooling/ots_stamp.py a second time -- a
+    # second calendar submission and a second proof for the same commit, so
+    # what it pushed was not the artifact the other job produced -- and then
+    # copied ``ots-proofs/*.ots`` onto itself, an error the ``|| true``
+    # swallowed. Publish what the timestamp job made, and fail with what is
+    # missing when there is nothing to publish.
+    - |
+      PROJECT="$(printf '%s' "$CI_PROJECT_PATH" | tr '/' '_')"
+      SHORT_SHA="$(printf '%s' "$CI_COMMIT_SHA" | cut -c1-12)"
+      PROOF="ots-proofs/${PROJECT}_${SHORT_SHA}.ots"
+      if [ ! -s "$PROOF" ]; then
+        echo "FAIL: ots:timestamp_commit left no proof at $PROOF." >&2
+        echo "This job publishes what that one produced; fix it there." >&2
+        exit 1
+      fi
+      echo "Publishing $(stat -c%s "$PROOF") bytes from $PROOF"
+    - git config user.email "ci@plexichat.com"
+    - git config user.name "Plexichat CI"
+    - git fetch origin ci-output:refs/remotes/origin/ci-output || true
+    - |
+      # The runner reuses this build directory across pipelines, so a previous
+      # attempt can leave a ``ci-output`` branch behind. Both checkout paths
+      # below refuse to run while it exists (``--orphan`` included: "a branch
+      # named 'ci-output' already exists"), and the retry then fails before it
+      # reaches the push it was meant to test. Drop the stale local branch
+      # first -- the remote one, when there is one, is fetched above and is the
+      # only copy that matters.
+      git branch -D ci-output >/dev/null 2>&1 || true
+      if git rev-parse --verify origin/ci-output >/dev/null 2>&1; then
+        git checkout -B ci-output origin/ci-output
+      else
+        git checkout --orphan ci-output
+        git rm -rf . 2>/dev/null || true
+      fi
+    - git add ots-proofs/
+    - |
+      if git diff --cached --quiet; then
+        echo "No new proofs to commit"
+      else
+        git commit -m "OTS proof: $CI_COMMIT_SHA"
+        # A lost race against a concurrent pipeline used to leave the branch
+        # behind until someone noticed; retry onto the remote branch.
+        PUSHED=0
+        for attempt in 1 2 3; do
+          if git push origin ci-output 2>/dev/null; then
+            PUSHED=1
+            break
+          fi
+          echo "push attempt $attempt failed; rebasing onto remote"
+          git pull --rebase origin ci-output 2>/dev/null || true
+        done
+        if [ "$PUSHED" != "1" ]; then
+          echo "FAIL: could not push the proof to the ci-output branch." >&2
+          echo "Pushing over HTTP with the job token needs 'Allow Git push requests" >&2
+          echo "to the repository' enabled for this project." >&2
+          exit 1
+        fi
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+  allow_failure: true
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  # No repository-wide PIP_INDEX_URL / PIP_TRUSTED_HOST here on purpose.
+  #
+  # A committed plaintext-HTTP package index applies to *every* job, so an
+  # on-path attacker could inject arbitrary wheels (and thus control the
+  # dependency tree, including the unhashed `pip install pip-audit safety`
+  # bootstrap). Jobs now install from the default HTTPS PyPI index unless the
+  # operator deliberately points them at an internal mirror.
+  #
+  # To use an internal mirror, define PIP_INDEX_URL as a *protected, masked*
+  # CI/CD variable (Settings -> CI/CD -> Variables) with an https:// URL.
+  # If — and only if — a mirror genuinely cannot serve TLS, also set
+  # PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1 (plus the host's PIP_TRUSTED_HOST);
+  # the guard in .python_base.before_script keeps that a loud, explicit
+  # opt-in rather than a silent default.
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+  # Fail closed before any pip install when a plaintext HTTP index is
+  # configured without an explicit opt-in (Agent 55 F23).
+  PLEXICHAT_CI_ALLOW_INSECURE_INDEX: "0"
+
+cache:
+  - key:
+      files:
+        - requirements.txt
+        - requirements-dev.txt
+    paths:
+      - .venv/
+      - .cache/pip
+    policy: pull-push
+  # apt's own roots cannot be cached directly, so the helper in
+  # ci-tooling/apt-cache.sh copies these into /var before installing.
+  - key: apt-cache-v1
+    paths:
+      - .cache/apt
+    policy: pull-push
+
+# =========================================================
+# BASE PYTHON ENV (shared)
+# =========================================================
+
+.python_base:
+  image: 
+    name: python:3.14.8-slim-trixie
+    pull_policy: if-not-present
+  interruptible: true
+  before_script:
+    - . ci-tooling/apt-cache.sh
+    - apt_install git libatomic1
+    - |
+      # Refuse a plaintext HTTP package index unless the operator has
+      # explicitly opted in; otherwise the build could be hijacked by an
+      # on-path attacker (Agent 55 F23).
+      case "${PIP_INDEX_URL:-}" in
+        http://*)
+          if [ "${PLEXICHAT_CI_ALLOW_INSECURE_INDEX:-0}" != "1" ]; then
+            echo "FATAL: PIP_INDEX_URL uses plaintext http:// without PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1" >&2
+            echo "       Use an https:// mirror or set the opt-in variable deliberately." >&2
+            exit 1
+          fi
+          echo "WARNING: installing from a plaintext HTTP package index (PIP_INDEX_URL=$PIP_INDEX_URL); PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1." >&2
+          ;;
+      esac
+    - |
+      if [ -d ".venv" ]; then
+        echo "Using cached virtual environment"
+        source .venv/bin/activate
+      else
+        echo "Creating new virtual environment"
+        python -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install --require-hashes -r requirements.txt
+      fi
+    # common_utils is bundled directly in the repository at src/utils/common_utils/
+  after_script:
+    # Free disk space — remove temp files but keep cached .venv and pip
+    - rm -rf .plexichat/logs .plexichat/data .plexichat/media .plexichat/temp 2>/dev/null || true
+    - docker system prune -f --volumes 2>/dev/null || true
+
+# =========================================================
+# LINT STAGE (Consolidated via pre-commit)
+# =========================================================
+
+lint:pre-commit:
+  extends: .python_base
+  stage: lint
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  variables:
+    PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
+    NODE_OPTIONS: "--max-old-space-size=2048"
+    UV_THREADPOOL_SIZE: "4"
+  cache:
+    - key:
+        files:
+          - requirements.txt
+      paths:
+        - .venv/
+        - .cache/pip
+      policy: pull-push
+    - key:
+        files:
+          - .pre-commit-config.yaml
+          - requirements.txt
+        prefix: precommit-tools-${CI_COMMIT_REF_SLUG}
+      paths:
+        - .cache/pre-commit
+      policy: pull-push
+    - key: apt-cache-v1
+      paths:
+        - .cache/apt
+      policy: pull-push
+  before_script:
+    - . ci-tooling/apt-cache.sh
+    - apt_install git libatomic1 nodejs
+    - |
+      # Same fail-closed package-index guard as .python_base (Agent 55 F23).
+      case "${PIP_INDEX_URL:-}" in
+        http://*)
+          if [ "${PLEXICHAT_CI_ALLOW_INSECURE_INDEX:-0}" != "1" ]; then
+            echo "FATAL: PIP_INDEX_URL uses plaintext http:// without PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1" >&2
+            exit 1
+          fi
+          echo "WARNING: installing from a plaintext HTTP package index (PIP_INDEX_URL=$PIP_INDEX_URL); PLEXICHAT_CI_ALLOW_INSECURE_INDEX=1." >&2
+          ;;
+      esac
+    - |
+      if [ -d ".venv" ]; then
+        echo "Using cached virtual environment"
+        source .venv/bin/activate
+      else
+        echo "Creating new virtual environment"
+        python -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install --require-hashes -r requirements.txt
+      fi
+    # pytest is not shipped (requirements.txt only) but pyright type-checks
+    # src/utils/common_utils/tests, which import it. Pinned to the
+    # requirements-dev.txt version so lint sees the same API as the suite.
+    - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit pip-audit pytest==9.1.1
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ] || [ -n "$CI_MERGE_REQUEST_IID" ]; then
+        echo "Tag/MR pipeline — running pre-commit on all files"
+        pre-commit run --all-files --show-diff-on-failure
+      else
+        FROM_REF="${CI_COMMIT_BEFORE_SHA}"
+        if [ "$FROM_REF" = "0000000000000000000000000000000000000000" ] || [ -z "$FROM_REF" ]; then
+          FROM_REF="origin/dev"
+        fi
+        echo "Branch pipeline — running pre-commit on changed files (from $FROM_REF)"
+        pre-commit run --from-ref "$FROM_REF" --to-ref "$CI_COMMIT_SHA" --show-diff-on-failure
+      fi
+
+# =========================================================
+# SECURITY STAGE (FULL COVERAGE)
+# =========================================================
+
+# Bandit and detect-secrets are now handled by pre-commit in the lint stage.
+# We keep GitLab-specific and dependency scanning jobs here.
+
+# --- GitLab Secret Detection (extra coverage) ---
+security:secret_detection:  # pragma: allowlist secret
+  stage: security
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest  # pragma: allowlist secret
+  variables:
+    GIT_DEPTH: 100
+  before_script: []
+  cache: {}
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      secret_detection: gl-secret-detection-report.json  # pragma: allowlist secret
+    paths:
+      - gl-secret-detection-report.json
+    expire_in: 30 days
+  allow_failure: false
+
+# --- SAST (Semgrep) ---
+security:sast:
+  stage: security
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+  variables:
+    SAST_EXCLUDED_PATHS: ".venv/,venv/,tests/,.cache/,build/,dist/"
+    GIT_DEPTH: 0
+  before_script: []
+  cache: {}
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 30 days
+  allow_failure: true
+
+# --- Dependency scanning (NOT in pre-commit, keep it) ---
+security:dependency_scanning:
+  extends: .python_base
+  stage: security
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  # Pipeline 2304 (a.1.0-177) failed this job on `Temporary failure in name
+  # resolution` while fetching osv-scanner from GitHub. That is resolver
+  # flakiness, not a finding -- and because this stage precedes `test` and
+  # `docker`, the single red job skipped every test and the image build, so no
+  # release could be cut. The fetch retries inside install_scanners.py; this
+  # retries the job itself for failures that happen outside it (a dropped
+  # runner, a network cut mid-scan). A real advisory still fails on the first
+  # attempt, since a finding is not a transient error.
+  retry:
+    max: 2
+    when:
+      - script_failure
+      - runner_system_failure
+      - stuck_pending_with_matching_runners
+      - stuck_pending_no_matching_runners
+      - no_updates_running
+      - no_updates_canceling
+  script:
+    - pip install pip-audit
+    - pip-audit -r requirements.txt --format json > pip-audit-report.json
+    - pip-audit -r requirements.txt
+    # License gate: fails on a new copyleft dependency or one whose license
+    # cannot be resolved. Reviewed exceptions live in ALLOWED_COPYLEFT in
+    # ci-tooling/license_audit.py and are documented in THIRD_PARTY_NOTICES.md.
+    - python ci-tooling/license_audit.py
+    # osv-scanner looks every pinned requirement up in the OSV database. The
+    # three lines this replaces read
+    # ``curl -sfL .../releases/latest/download/osv-scanner_linux_amd64.tar.gz
+    # | tar -xz -C ./bin osv-scanner || true`` followed by two scans, each with
+    # its own ``|| true``. All three failed and reported success: this image is
+    # python:3.14.8-slim-trixie, which has neither curl nor wget, so there was
+    # no downloader to begin with; the v1 ``.tar.gz`` asset has not existed
+    # since osv-scanner v2 (the assets are raw binaries now); and the scans
+    # then ran a binary that was never installed. The job was green and
+    # published no osv-report.json. The installer pins the release and checks
+    # its digest, and the scans below are not allowed to fail quietly.
+    # A vulnerable tree fails this job: verified against a fixture pinned to
+    # requests==2.19.0, where the scan exits 1, and against this tree, where it
+    # exits 0.
+    - python ci-tooling/install_scanners.py --bin-dir ./bin osv-scanner
+    - ./bin/osv-scanner --version
+    - ./bin/osv-scanner scan source -r . --format json --output-file osv-report.json
+    - ./bin/osv-scanner scan source -r .
+  artifacts:
+    # when: always -- a scan that found something is exactly when the report
+    # matters, and the default (on_success) would withhold it.
+    when: always
+    paths:
+      - pip-audit-report.json
+      - osv-report.json
+    expire_in: 30 days
+
+# =========================================================
+# PIP-LICENSES STAGE (permissive-only license gate, round 2)
+# =========================================================
+
+# Independent second opinion on top of the license_audit.py step inside
+# security:dependency_scanning: the `pip-licenses` tool dumps every installed
+# distribution's license, and ci-tooling/check_pip_licenses.py gates the
+# pinned runtime tree in requirements.txt against the same permissive-only
+# policy (PERMISSIVE / ALLOWED_* in license_audit.py — shared, not duplicated).
+# Anything installed but not pinned there (pip-audit, safety, pip-licenses
+# itself, …) is tooling, not shipped code, and is out of scope.
+# Fails closed on any non-permissive or unresolvable license.
+pip-licenses:
+  extends: .python_base
+  stage: pip-licenses
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  script:
+    # Floor-pinned (not hashed): audit tooling follows the same precedent as
+    # `pip install pip-audit safety` in .python_base — latest 4.x+ keeps the
+    # stable --format=json schema (Name/Version/License) this gate parses.
+    - pip install "pip-licenses>=4.3"
+    - pip-licenses --format=json --output-file=pip-licenses.json
+    - pip-licenses --format=plain-vertical
+    - python ci-tooling/check_pip_licenses.py pip-licenses.json
+  artifacts:
+    paths:
+      - pip-licenses.json
+    expire_in: 30 days
+
+# =========================================================
+# DOCS PORTAL LINK INTEGRITY
+# =========================================================
+
+# The renderer deliberately keeps the words and drops the link when a target has
+# no served route, so a broken cross-reference is invisible in the HTML: the
+# page still renders, it just stops being navigable. Two published admin guides
+# were linked from docs/admin/index.md and served by nobody. This fails the
+# pipeline on any in-repository docs link that resolves to no route.
+docs:links:
+  extends: .python_base
+  stage: test
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  script:
+    - python ci-tooling/check_docs_links.py
+
+# =========================================================
+# TEST STAGE (Unit/Integration + API Self-Test)
+# =========================================================
+
+# The pytest jobs below share a resource group, so they never co-run.
+#
+# The performance:no_slow_tests gate judges test:pytest's JUnit report against
+# wall clock, and pipeline #2030 redded on
+# src/tests/suite/test_sum_coalescing.py::test_time_based_flush_fires_after_window
+# at 16.41s against the 5s default. That test takes ~1.5s on the same code with
+# the box idle, and the job's own timings show it overlapped
+# test:shuffled_order for 9 of its 13 minutes (and test:database_backends for
+# 2): three pytest runs were sharing the disk every one of them fsyncs to.
+# test:timing_under_load deliberately oversubscribes the CPU to probe wait
+# budgets, so it must never share the box with a job whose verdict is a
+# measured duration. A duration gate that measures its neighbours gates the
+# runner instead of the code -- and, as here, reds a commit that is fine.
+test:pytest:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  resource_group: pytest-suite
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  # Pipeline #2104 (a.1.0-136) lost this job to a worker that vanished at 99%
+  # -- xdist printed "node down: Not properly terminated" and then sat silent
+  # until the 1h limit, so no image was ever built. The box is shared with the
+  # other repositories' suites, and a killed xdist worker wedges the run rather
+  # than failing it. Re-run the invocation on a runner/infra failure instead
+  # of failing the release for it; a real test failure still fails fast.
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_pending_with_matching_runners
+      - stuck_pending_no_matching_runners
+      - no_updates_running
+      - no_updates_canceling
+      - unknown_failure
+  script:
+    # pytest and its plugins (asyncio, benchmark, xdist, timeout) are test-only
+    # and live in requirements-dev.in, so the runtime lock no longer carries
+    # them. The dev lock is a superset of the runtime tree, so installing it
+    # here is safe on top of a cached .venv.
+    - pip install --require-hashes -r requirements-dev.txt
+    # The database benchmarks are timing assertions -- ``median_ms < 10`` on a
+    # single query, ``< 50`` on connection acquisition -- and pytest-benchmark
+    # turns itself off under xdist, so they are not run beside the parallel
+    # suite. ``-n0`` overrides pytest.ini's default ``-n auto`` to keep this
+    # job in one process; without it the benchmarks would silently no-op.
+    # They are 1.2s on their own, so this costs the job nothing.
+    #
+    # They get a load sampler of their own: the suite-level one below starts
+    # after they finish. On pipeline #2086 the benchmark ran 8.8s against a 5s
+    # ceiling while the client repository's e2e job shared the box -- while the
+    # query's own median stayed inside the 10ms target it asserts -- so the
+    # gate was measuring the queue, not the code. The samples let it scale this
+    # report by the load it actually ran behind, as it already does for the
+    # other two.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-benchmarks-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+      stop_sampler
+      trap - EXIT
+    # Full unit + integration suite, four files at a time. Each file stays on
+    # one worker (``--dist loadfile``), so a module's fixtures and module-level
+    # state are still built once and in file order: pipeline #2057 ran the same
+    # 11,612 tests serially in 8.7 min, and the same tree with -n 4 here runs
+    # them in 2.5 min with the slowest single test at 2.94s (the serial run's
+    # worst is 5s+ under contention). ``--maxfail=20`` keeps a broken commit
+    # from burning the whole 1h timeout listing failures; the default pytest.ini
+    # addopts already deselect slow/performance/postgres tests. The JUnit
+    # report feeds the performance:no_slow_tests gate in the next stage.
+    #
+    # Sample the box's load while the suite runs, one "<load> <cores>" line
+    # every couple of seconds. A wall clock measures the neighbours as much as
+    # the suite -- #2071 redded tests that cost half their measured time -- and
+    # the gate reads these samples to widen this job's ceiling by the queue it
+    # actually shared the box with (``--load-log`` in
+    # ci-tooling/check_slow_tests.py). The samples scale the ceiling only: the
+    # verdict stays the test's own duration, so a test is never red or green on
+    # how much CPU it used.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25 \
+        --ignore=src/tests/test_database_benchmarks.py \
+        --junitxml=test-results.xml
+      stop_sampler
+      trap - EXIT
+  artifacts:
+    when: always
+    reports:
+      junit: test-results.xml
+    paths:
+      - test-results.xml
+      - test-results-benchmarks.xml
+      - test-results-load.log
+      - test-results-benchmarks-load.log
+    expire_in: 1 week
+
+# The PlexiSum engine's cross-engine contract gets its own job.
+#
+# The shared case table (src/tests/suite/formula_parity_cases.json) is the
+# statement of the formula semantics this engine and the PlexiSum client engine
+# must both satisfy, and the parity test also pins the table's digest so an
+# edit to either repository's copy that is not mirrored in the other fails
+# here. Running it as a named job keeps a broken contract a blocking, visible
+# check instead of one red line buried in test:pytest.
+test:formula_parity:
+  extends: .python_base
+  stage: test
+  timeout: 15m
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q
+      src/tests/suite/test_sum_formula_parity.py
+      src/tests/suite/test_sum_formulas.py
+  needs: []
+  allow_failure: false
+
+# Blocking gate for the security-critical surface. These suites cover
+# src/core/auth, src/utils/encryption (incl. ratchet), permissions/fanout,
+# DSAR, and WebSocket security; a regression here must be visible as its own
+# failed job, not buried in the wider test:pytest run. The selection overlaps
+# test:pytest by design (defense in depth) and stays within the fast suite by
+# honoring pytest.ini's default slow/performance/multiprocess deselects.
+test:security_surface:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q -n 4 --dist loadfile --maxfail=30
+      src/tests/auth
+      src/tests/encryption
+      src/tests/security
+      src/tests/api/security
+      src/tests/dsar
+      src/tests/websocket
+      src/tests/auth/test_permissions.py
+      src/tests/reactions/test_permissions.py
+      src/tests/search/test_permissions.py
+      src/tests/servers/test_permission_cache_invalidation.py
+      src/tests/servers/test_permissions.py
+      src/tests/soundboard/test_permissions.py
+      src/tests/suite/test_stash_permissions.py
+      src/tests/suite/test_sum_permissions.py
+      src/tests/threads/test_permissions.py
+      src/tests/voice/test_permissions.py
+      src/tests/webhooks/test_permissions.py
+      src/tests/voice/test_sfu_fanout.py
+      src/tests/voice/test_sfu_aiortc_fanout_media.py
+  needs: []
+  allow_failure: false
+
+# Order-independence gate. The suite is required to pass in any file order,
+# and the only way to keep that true is to actually run it in a different
+# one. A fixed seed makes the order -- and any failure it exposes --
+# reproducible: replay locally with the same --shuffle-seed value. Files stay
+# whole, so this is the same test set as test:pytest in a shuffled order.
+#
+# It runs in two shapes. On the merge path it is four workers: the collection
+# hook shuffles whole files and xdist hands files to workers in collection
+# order (``--dist loadfile``), so the run still exercises the shuffled order,
+# and the same 11,612 tests take 2:18 instead of 8:54 (pipeline #2058). On
+# master -- the branch a release is tagged from -- it stays in one process,
+# because that is the shape in which every file's leaked state is visible to
+# every later file; with four workers only the files that end up sharing a
+# worker see it. Cheap while iterating, exhaustive before shipping.
+test:shuffled_order:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  # Same resource group as test:pytest: see the note above it.
+  resource_group: pytest-suite
+  variables:
+    SHUFFLE_SEED: "424242"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - >
+      python -m pytest -q -n 4 --dist loadfile --maxfail=20
+      --shuffle-seed "$SHUFFLE_SEED"
+  needs: []
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: never
+    # Branch pipelines only: a tag pipeline re-runs the same commit, which
+    # already ran this gate on its branch.
+    - if: $CI_COMMIT_BRANCH
+
+# The single-process half of the gate above, kept for master for the reason
+# spelled out there.
+test:shuffled_order_serial:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  resource_group: pytest-suite
+  variables:
+    SHUFFLE_SEED: "424242"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    # ``-n0`` overrides pytest.ini's default ``-n auto``: the whole point of
+    # this job is to run every file in ONE process so a leak from one file is
+    # visible to all the later ones.
+    - python -m pytest -q -n0 --maxfail=20 --shuffle-seed "$SHUFFLE_SEED"
+  needs: []
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+
+# Wall-clock determinism gate. These suites wait on background effects -- a
+# worker thread's first cycle, an executor-driven database update, the pool
+# reclaiming an idle connection, a rate-limit window, an ICE/media handshake.
+# They pass on an idle box; the failure mode this closes is a wait whose fixed
+# budget is generous there but too tight on a loaded runner. The job runs
+# exactly those suites while dummy CPU burners oversubscribe the box, so an
+# under-budgeted wait goes red on the merge request instead of flaking later.
+# The deterministic replacements live in src/tests/_conftest/waiting.py.
+test:timing_under_load:
+  extends: .python_base
+  stage: stress
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  # Same resource group as test:pytest: the burners this job runs are exactly
+  # the load a duration gate must not be measuring.
+  resource_group: pytest-suite
+  variables:
+    # Busy-loop burners per CPU; >1 deliberately oversubscribes the scheduler.
+    PLEXICHAT_LOAD_PER_CPU: "2"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    - |
+      set -eu
+      cpus=$(nproc)
+      burners=$((cpus * PLEXICHAT_LOAD_PER_CPU))
+      echo "Oversubscribing ${cpus} CPU(s) with ${burners} busy-loop burners"
+      burner_pids=""
+      for _ in $(seq 1 "$burners"); do
+        dd if=/dev/zero of=/dev/null bs=1M status=none &
+        burner_pids="$burner_pids $!"
+      done
+      stop_burners() {
+        # shellcheck disable=SC2086
+        kill $burner_pids 2>/dev/null || true
+      }
+      trap stop_burners EXIT
+      # Serial on purpose: the burners supply the contention, and running in
+      # one process keeps each file whole so the waits run where they live.
+      # ``-n0`` overrides pytest.ini's default ``-n auto`` to hold this job to
+      # a single process. The -m override relaxes pytest.ini's default deselect
+      # to include slow-marked timeout/reclaim tests -- the most clock-sensitive
+      # ones -- while still excluding the duration-only performance suites.
+      python -m pytest -q -n0 --maxfail=20 --durations=25 \
+        -m "not performance and not production_simulation and not multiprocess" \
+        src/tests/ratelimit \
+        src/tests/webhooks \
+        src/tests/presence \
+        src/tests/websocket \
+        src/tests/events/test_queued_delivery_integration.py \
+        src/tests/media/test_scan_bugfixes.py \
+        src/tests/test_pool_monitoring.py \
+        src/tests/test_sqlite_pool_reclaim.py \
+        src/tests/test_database_pool.py \
+        src/tests/auth/test_sessions.py \
+        src/tests/auth/test_audit.py \
+        src/tests/voice/test_voice_media_handshake_e2e.py \
+        src/tests/voice/test_sfu_aiortc_media.py \
+        src/tests/voice/test_sfu_aiortc_fanout_media.py \
+        src/tests/voice/test_sfu_aiortc_degraded_media.py
+      stop_burners
+      trap - EXIT
+  allow_failure: false
+
+# Dedicated run of the database-backed suites against real services.
+#
+# ``test:pytest`` runs everything else, but with no backend reachable the
+# Postgres/Valkey fixtures skip and the job still goes green -- which is how
+# the SQL bugs these suites exist to catch rotted unnoticed. Here the
+# services are real, ``USE_DOCKER=false`` tells the fixtures to attach to
+# them instead of spawning containers, and a failure fails the pipeline.
+test:database_backends:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  # Its JUnit report is judged by the same gate; see the note at test:pytest.
+  resource_group: pytest-suite
+  needs: [test:pytest]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  services:
+    - name: postgres:15-alpine
+      alias: postgres
+      variables:
+        POSTGRES_USER: postgres
+        # Throwaway service container credentials, not a real secret.
+        POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        POSTGRES_DB: test_db
+    - name: valkey/valkey:8-alpine
+      alias: valkey
+  variables:
+    USE_DOCKER: "false"
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+    POSTGRES_DB: test_db
+    VALKEY_HOST: valkey
+    VALKEY_PORT: "6379"
+  script:
+    - pip install --require-hashes -r requirements-dev.txt
+    # ``-m`` overrides pytest.ini's addopts deselect so the
+    # ``production_simulation`` cases (which are exactly the multi-worker
+    # ones) run here. ``slow``/``performance`` stay out: they are duration
+    # tests, not correctness ones, and have their own gate.
+    # ``-n0`` overrides pytest.ini's default ``-n auto``: the multi-worker
+    # simulations already own the box's processes and must not share it with
+    # xdist workers.
+    # Same load sampling as test:pytest: this suite drives real Postgres and
+    # Valkey, so its wall clock is the box and the services together, and the
+    # gate scales its 15s ceiling by the queue the job measured.
+    - |
+      set -eu
+      cpus=$(nproc)
+      ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
+        > test-results-db-load.log 2>/dev/null &
+      sampler=$!
+      stop_sampler() { kill "$sampler" 2>/dev/null || true; }
+      trap stop_sampler EXIT
+      python -m pytest -q -n0 -m "not slow and not performance" \
+        --durations=25 --junitxml=test-results-db.xml \
+        src/tests/test_postgres_docker.py \
+        src/tests/test_transactions.py \
+        src/tests/test_database.py \
+        src/tests/test_production_simulation.py \
+        src/tests/test_valkey_docker.py
+      stop_sampler
+      trap - EXIT
+    # These suites skip silently when a backend is missing. A skip here
+    # means the services above did not come up, which must be a failure
+    # rather than a green pipeline with no coverage.
+    - |
+      if grep -qE 'skipped="[1-9]' test-results-db.xml; then
+        echo "FATAL: database-backed tests skipped -- the postgres/valkey services were not reachable" >&2
+        exit 1
+      fi
+  artifacts:
+    when: always
+    reports:
+      junit: test-results-db.xml
+    paths:
+      - test-results-db.xml
+      - test-results-db-load.log
+    expire_in: 1 week
+
+# =========================================================
+# PERFORMANCE STAGE (test-duration gate)
+# =========================================================
+
+# Hard gate: the whole test stage is green, but any single test slower than
+# its job's ceiling still fails the pipeline. Prevents performance regressions
+# from slipping in as the suite grows. Uses only the Python stdlib, so it does
+# not extend .python_base (no dependency install for a trivial parser). Note
+# that pytest.ini deselects ``slow``/``performance``-marked tests from the run,
+# so this gate deliberately enforces only the fast suite that CI actually runs.
+#
+# Every JUnit report is judged, including the benchmark module that
+# ``test:pytest`` runs before the main suite: its wall clock is mostly harness
+# and fixture, so it carries its own load sampler rather than being read as an
+# unloaded measurement of the query it asserts on.
+#
+# ``test:database_backends`` used to be left out, which left the suites that
+# drive real Postgres and Valkey -- and the multi-worker simulations among
+# them -- unwatched. Its tests
+# are wall-clock rather than CPU (worker restarts, lock TTLs), so it carries a
+# ceiling of its own: 15s against a heaviest measured test of 4.01s on an idle
+# box, which is thin headroom under a 5s default because the same tests cross
+# 5s on a busy runner with nothing wrong. ``test:pytest`` keeps the 5s.
+#
+# A ceiling is widened by the load its job measured (``--load-log``), never by
+# CPU time: how much CPU a test burns is not a verdict, only how long it took
+# is. On an idle box the samples are 1 and the ceilings above apply as written.
+performance:no_slow_tests:
+  stage: performance
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  image:
+    name: python:3.14.8-slim-trixie
+    pull_policy: if-not-present
+  needs:
+    - test:pytest
+    - test:database_backends
+  script:
+    # The metrics JSON (one entry per job, paired with the report order) is
+    # uploaded alongside the gate verdict and feeds the metrics:trend job in
+    # the next stage.
+    - >
+      python ci-tooling/check_slow_tests.py
+      test-results.xml test-results-db.xml test-results-benchmarks.xml
+      --threshold 5.0
+      --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks
+      --load-log test-results-load.log --load-log test-results-db-load.log
+      --load-log test-results-benchmarks-load.log
+      --metrics-out test-durations.json
+  artifacts:
+    when: always
+    paths:
+      - test-durations.json
+    expire_in: 1 week
+  allow_failure: false
+
+# =========================================================
+# METRICS STAGE (per-job duration trend)
+# =========================================================
+
+# Accumulates the per-job test durations from the performance gate on the
+# ``ci-output`` branch (JSONL history + rendered index.html) so regressions
+# show over time. Mirrors the ots:push_proofs pattern: fetch the branch,
+# append, render, push back. allow_failure keeps a transient push race from
+# reddening the pipeline; the next run catches the branch up.
+metrics:trend:
+  stage: metrics
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  image:
+    name: python:3.14.8-slim-trixie
+    pull_policy: if-not-present
+  before_script:
+    - . ci-tooling/apt-cache.sh
+    - apt_install git
+    - git config --global user.email "ci@plexichat.com"
+    - git config --global user.name "Plexichat CI"
+  needs:
+    - performance:no_slow_tests
+  script:
+    # The ci-output branch only tracks ci-metrics.jsonl + index.html, so
+    # checking it out would delete ci-tooling/ from the worktree.  Copy the
+    # publish script to /tmp first, and fetch the branch (CI only checks
+    # out the pipeline ref by default, so ci-output is not local).
+    - cp ci-tooling/trend_publish.py /tmp/trend_publish.py
+    - git fetch origin ci-output || true
+    - |
+      if git rev-parse --verify origin/ci-output >/dev/null 2>&1; then
+        git checkout -B ci-output origin/ci-output
+      else
+        # The runner reuses the build directory between pipelines, so a previous
+        # run can leave a local ci-output branch behind -- and --orphan refuses
+        # to switch to a branch that already exists, which failed this job with
+        # "fatal: a branch named 'ci-output' already exists" while the remote
+        # had none. Drop the stale branch first.
+        git branch -D ci-output 2>/dev/null || true
+        git checkout --orphan ci-output
+        git rm -rf . 2>/dev/null || true
+      fi
+    - python /tmp/trend_publish.py merge --metrics test-durations.json --history ci-metrics.jsonl --out ci-metrics.jsonl
+    - python /tmp/trend_publish.py render --history ci-metrics.jsonl --out index.html --project "$CI_PROJECT_PATH" --gate 5.0
+    - |
+      git add ci-metrics.jsonl index.html
+      if git diff --cached --quiet; then
+        echo "No new metrics to commit"
+      else
+        git commit -m "CI metrics: $CI_COMMIT_SHORT_SHA"
+        PUSHED=0
+        for attempt in 1 2 3; do
+          if git push origin ci-output 2>/dev/null; then
+            PUSHED=1
+            break
+          fi
+          echo "push attempt $attempt failed; rebasing onto remote"
+          git pull --rebase origin ci-output 2>/dev/null || true
+        done
+        if [ "$PUSHED" != "1" ]; then
+          echo "WARN: ci-output push failed after retries (trend catches up next run)"
+        fi
+      fi
+  artifacts:
+    when: always
+    paths:
+      - index.html
+      - ci-metrics.jsonl
+    expire_in: 1 year
+  allow_failure: true
+
+test:self_test:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  script:
+    - mkdir -p .plexichat
+    # Every run is licensed. Protected branches (master, etc.) set a real
+    # $PLEXICHAT_LICENSE in the CI secret store; on all other branches we
+    # provision the canonical provisional test license at the default
+    # location so the licensed-only PlexiJoin/federation endpoints are
+    # exercised for real instead of being skipped. The self-test is never
+    # run with --unlicensed here: a license file is always present.
+    #
+    # "Is set" is not "is usable": a stale or corrupt secret still wins the
+    # licensing module's precedence (the env var outranks the on-disk file),
+    # fails signature verification, and drops the server to free tier. Every
+    # gated route then answers 403 and the suite records an EXPECTED DENIAL,
+    # so the licensed paths never run -- that is how a PostgreSQL-only defect
+    # in them reached pipeline 2234 green. Ask the licensing module itself
+    # whether the effective licence grants PlexiJoin, and fall back (dropping
+    # the env var first) when it does not.
+    - |
+      if python ci-tooling/check_self_test_license.py; then
+        echo "Using the CI license for this run"
+      else
+        unset PLEXICHAT_LICENSE
+        python ci-tooling/write_test_license.py
+      fi
+    - python main.py self-test
+
+# The same self-test suite as `test:self_test`, against PostgreSQL.
+#
+# `test:self_test` runs on SQLite, where the app's two backends differ in ways
+# that hide real breakage: an INTEGER primary key without identity still takes
+# an implicit rowid, a JSON list can be stored in an INTEGER column, and a
+# VARCHAR date compares as text. A run against PostgreSQL found twelve
+# failing endpoints and two silently dead write paths (admin audit logging and
+# approval votes) while the SQLite run was green, so the backend the deployment
+# actually uses is exercised here rather than only in its own narrow suites.
+#
+# `test:database_backends` is not a substitute: it runs the database-layer
+# tests, not the application's endpoints. This one boots the real server on
+# 8100 (so it can share a runner host with `test:self_test`'s 8000) with
+# ``DATABASE_URL`` pointing at the service, the same variable the server reads
+# in production, and runs every endpoint check against it.
+test:self_test_postgres:
+  extends: .python_base
+  stage: test
+  timeout: 1h
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+  services:
+    # Pinned to the image `test:database_backends` uses, not to whatever is
+    # newest: this job's job is to prove the code, and a moving database
+    # version would make its verdict change without a commit.
+    - name: postgres:15-alpine
+      alias: postgres
+      variables:
+        POSTGRES_USER: postgres
+        # Throwaway service container credentials, not a real secret.
+        POSTGRES_PASSWORD: postgres  # pragma: allowlist secret
+        POSTGRES_DB: test_db
+  variables:
+    # ``sslmode=disable`` because the service container has no TLS listener;
+    # the default ``prefer`` would spend a failed handshake on every
+    # connection before falling back.
+    # The same throwaway service credentials as the ``services`` block above,
+    # not a real secret.
+    DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/test_db?sslmode=disable"  # pragma: allowlist secret
+  script:
+    - mkdir -p .plexichat
+    # Same licensing as `test:self_test`: a usable CI key is kept, anything
+    # else is replaced by the provisional test license (after unsetting the
+    # env var, which would otherwise outrank the file), so the licensed-only
+    # endpoints are exercised for real rather than skipped. This is the job
+    # the licensed PostgreSQL paths depend on, so it must never settle for
+    # an expected-403 run.
+    - |
+      if python ci-tooling/check_self_test_license.py; then
+        echo "Using the CI license for this run"
+      else
+        unset PLEXICHAT_LICENSE
+        python ci-tooling/write_test_license.py
+      fi
+    - python main.py --port 8100 self-test
+
+# Opt-in account-purge check, in a job of its own so `test:self_test` (and
+# every ordinary run of the suite) never purges an account. It runs beside
+# the other test jobs on branch pipelines: same ephemeral server, same
+# selftest_% fixtures, but on its own port so it can share a runner host with
+# test:self_test instead of failing on a busy 127.0.0.1:8000.
+#
+# The check purges a throwaway account through the real admin endpoint and
+# reads the database back: a purge that only deletes the auth_users row --
+# leaving the account's server, channel, conversation or upload behind --
+# fails here. Without it, the suites' pre-test orphan sweep would quietly
+# remove that residue and the run would stay green.
+test:purge_residue:
+  extends: .python_base
+  stage: test
+  timeout: 30m
+  needs: []
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  script:
+    - mkdir -p .plexichat
+    - python main.py --port 8100 self-test --purge-residue
+
+docker:build_and_push:
+  stage: docker
+  # Start as soon as the pipeline does. The image is built from this commit and
+  # an OpenTimestamp proof does not change its contents, so waiting for the
+  # timestamp stage only added its runtime to every release. `needs: []` also
+  # keeps working on tag pipelines, where the pytest jobs do not run at all.
+  needs: []
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+      # This deployment serves the registry over plain HTTP only: nginx on
+      # the GitLab host listens on :80 (never :443) and the registry's own
+      # /v2/ challenge advertises the matching http realm
+      # ("http://gitlab.plexichat.com/jwt/auth"). A daemon that has not been
+      # told the registry is insecure answers every login with
+      # "server gave HTTP response to HTTPS client" -- which is why no
+      # release tag produced an image.
+      command: ["--insecure-registry=registry.plexichat.com:80"]
+  variables:
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+    DOCKER_BUILDKIT: "1"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+  script:
+    - |
+      set -euo pipefail
+      # "name:80", not "name": without an explicit port Docker tries https
+      # first, and the registry has no TLS listener at all.
+      REGISTRY="${CI_REGISTRY%:*}:80"
+      IMAGE="${REGISTRY}/${CI_PROJECT_PATH}/backend:${CI_COMMIT_TAG}"
+      IMAGE_LATEST="${REGISTRY}/${CI_PROJECT_PATH}/backend:latest"
+      # The GitLab host is on a wireless link that drops out, which surfaces
+      # as transient 502s and timeouts. Those are blips, not a failed
+      # release: retry login/push with a short backoff.
+      retry() {
+        for attempt in 1 2 3 4 5 6; do
+          if "$@"; then return 0; fi
+          echo "attempt ${attempt} failed; retrying in $((attempt * 5))s" >&2
+          sleep $((attempt * 5))
+        done
+        echo "FAIL: giving up on: $*" >&2
+        return 1
+      }
+      login() {
+        echo "$CI_REGISTRY_PASSWORD" | \
+          docker login -u "$CI_REGISTRY_USER" --password-stdin "$REGISTRY"
+      }
+      echo "Building backend image for $CI_COMMIT_TAG from $REGISTRY"
+      retry login
+      # Every job gets a fresh dind, so the only layer cache available to the
+      # default docker driver is the previously published image. Inline cache
+      # metadata is embedded by BUILDKIT_INLINE_CACHE and imported from
+      # :latest on the next release, so apt and pip layers are reused.
+      CACHE_FROM=""
+      if docker pull "$IMAGE_LATEST" >/dev/null 2>&1; then
+        CACHE_FROM="--cache-from $IMAGE_LATEST"
+      else
+        echo "No previous backend image; building without cache"
+      fi
+      retry docker build \
+        $CACHE_FROM \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        -t "$IMAGE" -t "$IMAGE_LATEST" .
+      retry docker push "$IMAGE"
+      retry docker push "$IMAGE_LATEST"
+      # Docker Hub is best-effort: missing credentials must not fail a
+      # release whose registry push already succeeded (the old unconditional
+      # login made this job impossible to pass without them).
+      if [ -n "${DOCKER_HUB_TOKEN:-}" ] && [ -n "${DOCKER_HUB_USER:-}" ]; then
+        echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
+        docker tag "$IMAGE" "plexichat/plexichat:${CI_COMMIT_TAG}"
+        docker tag "$IMAGE" plexichat/plexichat:latest
+        docker push "plexichat/plexichat:${CI_COMMIT_TAG}" \
+          || echo "WARN: Docker Hub push of $CI_COMMIT_TAG failed"
+        docker push plexichat/plexichat:latest \
+          || echo "WARN: Docker Hub push of latest failed"
+      else
+        echo "Skipping Docker Hub push: DOCKER_HUB_TOKEN or DOCKER_HUB_USER not set"
+      fi
+
+container_scanning:
+  stage: docker
+  variables:
+    # Same HTTP-only registry as docker:build_and_push (docs above).
+    CS_IMAGE: "$CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG"
+    CS_REGISTRY_USER: "$CI_REGISTRY_USER"
+    CS_REGISTRY_PASSWORD: "$CI_REGISTRY_PASSWORD"
+    CS_REGISTRY_INSECURE: "true"
+  needs:
+    - docker:build_and_push
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+  # Blocking: this is the only verdict on the image that actually ships. While
+  # it was advisory, a release whose backend image carried known
+  # vulnerabilities went green and was published anyway (and on a.1.0-152 it
+  # failed on a full runner disk, which nobody had to look at because the
+  # pipeline stayed green). A real finding now stops the release; so does a
+  # scanner that cannot run, which is the point -- silence is not a pass.
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_pending_with_matching_runners
+      - stuck_pending_no_matching_runners
+      - no_updates_running
+      - no_updates_canceling
+  allow_failure: false
+
+docker:backup:
+  stage: docker
+  needs: []
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+      # HTTP-only registry; see docker:build_and_push.
+      command: ["--insecure-registry=registry.plexichat.com:80"]
+  variables:
+    # TLS for the dind socket (Agent 55 F22). With a non-empty
+    # DOCKER_TLS_CERTDIR the dind service auto-generates a CA and client
+    # certs, so builds never talk to an unauthenticated tcp://docker:2375
+    # socket that would be root-equivalent for anyone on the job network.
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+    DOCKER_BUILDKIT: "1"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+  script:
+    - |
+      set -euo pipefail
+      REGISTRY="${CI_REGISTRY%:*}:80"
+      IMAGE="${REGISTRY}/${CI_PROJECT_PATH}/backup:${CI_COMMIT_TAG}"
+      IMAGE_LATEST="${REGISTRY}/${CI_PROJECT_PATH}/backup:latest"
+      retry() {
+        for attempt in 1 2 3 4 5 6; do
+          if "$@"; then return 0; fi
+          echo "attempt ${attempt} failed; retrying in $((attempt * 5))s" >&2
+          sleep $((attempt * 5))
+        done
+        echo "FAIL: giving up on: $*" >&2
+        return 1
+      }
+      login() {
+        echo "$CI_REGISTRY_PASSWORD" | \
+          docker login -u "$CI_REGISTRY_USER" --password-stdin "$REGISTRY"
+      }
+      echo "Building backup image for $CI_COMMIT_TAG from $REGISTRY"
+      retry login
+      # Inline layer cache imported from the previously published :latest, as
+      # in docker:build_and_push.
+      CACHE_FROM=""
+      if docker pull "$IMAGE_LATEST" >/dev/null 2>&1; then
+        CACHE_FROM="--cache-from $IMAGE_LATEST"
+      else
+        echo "No previous backup image; building without cache"
+      fi
+      retry docker build \
+        $CACHE_FROM \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        -t "$IMAGE" -t "$IMAGE_LATEST" docker/backup/
+      retry docker push "$IMAGE"
+      retry docker push "$IMAGE_LATEST"
+      if [ -n "${DOCKER_HUB_TOKEN:-}" ] && [ -n "${DOCKER_HUB_USER:-}" ]; then
+        echo "$DOCKER_HUB_TOKEN" | docker login -u "$DOCKER_HUB_USER" --password-stdin
+        docker tag "$IMAGE" "plexichat/plexichat-backup:${CI_COMMIT_TAG}"
+        docker tag "$IMAGE" plexichat/plexichat-backup:latest
+        docker push "plexichat/plexichat-backup:${CI_COMMIT_TAG}" \
+          || echo "WARN: Docker Hub push of $CI_COMMIT_TAG failed"
+        docker push plexichat/plexichat-backup:latest \
+          || echo "WARN: Docker Hub push of latest failed"
+      else
+        echo "Skipping Docker Hub push: DOCKER_HUB_TOKEN or DOCKER_HUB_USER not set"
+      fi
+
+# Retention for the release images. This job used to list `docker image ls` on
+# its own dinD daemon -- which never holds the images the build job pushed --
+# and split tags into alpha/beta buckets the `a.X.Y-<build>` scheme does not
+# have, so it could only ever print "Keeping all release tags" and exit 0 while
+# every release added gigabytes to the registry. It now deletes through the
+# registry API, with the same script the client project uses.
+#
+# Only tags matching the release pattern are candidates, so `latest` and the
+# `:buildcache` tag survive, and the newest $REGISTRY_KEEP are kept. The
+# GitLab-side cleanup policy (keep_n=5, older than 7d) is the backstop for
+# releases that never reach this job, and the registry's online GC is what
+# actually returns the deleted layers to the disk.
+docker:cleanup_old_images:
+  stage: docker
+  needs: []
+  image: node:22-slim
+  variables:
+    REGISTRY_KEEP: "5"
+    CI_API_V4_URL: "http://gitlab.plexichat.com/api/v4"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+  script:
+    - node scripts/registry-cleanup.cjs --keep "$REGISTRY_KEEP" --path "${CI_PROJECT_PATH}/backend"
+    - node scripts/registry-cleanup.cjs --keep "$REGISTRY_KEEP" --path "${CI_PROJECT_PATH}/backup"
+  allow_failure: true
+
+create_merge_request:
+  stage: request-merge
+  image: alpine:latest
+  cache:
+    - key: apk-cache-v1-create-mr
+      paths:
+        - .cache/apk
+      policy: pull-push
+  variables:
+    # The runner reaches this GitLab over the LAN on http -- that is what its
+    # clone_url is set to, and why every job can clone -- while https:// is
+    # terminated at the public edge and nothing in a job container can dial it.
+    # The bare CI_API_V4_URL is https, so the curl/mr-create calls below failed
+    # on exit 7 (connect) in pipeline #2023 with every other job green. The
+    # release job carries the same override for the same reason.
+    CI_API_V4_URL: "http://gitlab.plexichat.com/api/v4"
+  before_script:
+    # This install is the only step in the job that needs the runner's uplink,
+    # and that uplink drops. Pipeline #2018 redded the whole server pipeline
+    # here with "unable to select packages: curl (no such package), jq (no such
+    # package)", which is apk's index fetch not arriving rather than two
+    # packages not existing -- the same command succeeds on a healthy link. So
+    # retry the fetch a few times, and if it still has not arrived say that,
+    # instead of dressing a dropped packet up as a missing package. The APK
+    # index and packages are kept in .cache/apk so warm runs need no fetch.
+    - mkdir -p "$CI_PROJECT_DIR/.cache/apk"
+    - |
+      for attempt in 1 2 3 4 5; do
+        if apk add --cache-dir "$CI_PROJECT_DIR/.cache/apk" curl jq; then
+          break
+        fi
+        rm -rf "$CI_PROJECT_DIR/.cache/apk"
+        mkdir -p "$CI_PROJECT_DIR/.cache/apk"
+        echo "apk add attempt ${attempt} failed; retrying in 5s" >&2
+        sleep 5
+      done
+      if ! command -v curl >/dev/null || ! command -v jq >/dev/null; then
+        echo "curl/jq still unavailable: the package index could not be fetched" >&2
+        exit 1
+      fi
+  script:
+    - |
+      API="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}"
+      AUTH="PRIVATE-TOKEN: ${PLEXICHAT_MR_PAT}"
+
+      # A dead token used to read as "no merge request yet": the API answers
+      # 401 with a JSON *object*, jq's `.[0].iid` errors on it, MR_IID came out
+      # empty, and the job exited 0 -- a green request-merge job that opened
+      # nothing. That is exactly what pipeline #2030 did once the group's
+      # PLEXICHAT_MR_PAT had been revoked, so the token is checked first and a
+      # rotation fails this job by name instead of silently doing nothing.
+      STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        --header "$AUTH" "${API}/merge_requests?per_page=1")
+      if [ "$STATUS" != "200" ]; then
+        echo "FATAL: PLEXICHAT_MR_PAT rejected by the API (HTTP ${STATUS})" >&2
+        echo "Rotate the group CI variable, then retry this job." >&2
+        exit 1
+      fi
+      
+      # Release gate. A green dev pipeline is not a release: before this gate
+      # existed, one afternoon of ordinary green dev pipelines put three merge
+      # requests into master (!10, !11, !12). dev is merged only for a commit
+      # that carries this project's release tag, ``<major>.<minor>.<patch>[<pre>]``
+      # in PEP 440 form -- the format src/api/schemas/version.py enforces and
+      # docs/deployment/versioning.md describes. Build markers such as
+      # ``1.0.0-build681`` are deliberately not release tags and do not count.
+      TAGS=$(curl --silent --fail --header "$AUTH" \
+        "${API}/repository/commits/${CI_COMMIT_SHA}/refs?type=tag") || {
+        echo "FATAL: could not read the tags on ${CI_COMMIT_SHA}" >&2
+        exit 1
+      }
+      RELEASE_TAG=$(echo "$TAGS" | jq -r '.[].name' \
+        | grep -E '^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$' | head -n 1 || true)
+      if [ -z "$RELEASE_TAG" ]; then
+        echo "No release tag <major>.<minor>.<patch>[<pre>] on ${CI_COMMIT_SHA}."
+        echo "Tags on this commit: $(echo "$TAGS" | jq -r '[.[].name] | join(", ")')"
+        echo "Nothing to release; dev is not merged into master."
+        exit 0
+      fi
+      echo "Releasing ${RELEASE_TAG} (${CI_COMMIT_SHA})"
+
+      # A release tag can be pushed on a commit that already reached master,
+      # leaving dev with nothing to merge. Asking for that merge request would
+      # fail the job by name over an empty diff, which is not a release
+      # failure, so check first and say so.
+      COMPARE=$(curl --silent --fail --header "$AUTH" \
+        "${API}/repository/compare?from=master&to=dev") || {
+        echo "FATAL: could not compare master and dev" >&2
+        exit 1
+      }
+      if [ "$(echo "$COMPARE" | jq -r '.commits | length')" = "0" ]; then
+        echo "dev has no commits that master lacks; nothing to merge."
+        exit 0
+      fi
+
+      echo "Creating merge request from dev to master..."
+      RESPONSE=$(curl --silent --request POST \
+        --header "$AUTH" \
+        --data "source_branch=dev" \
+        --data "target_branch=master" \
+        --data "title=Automated Release Merge" \
+        --data "remove_source_branch=false" \
+        "${API}/merge_requests")
+      
+      MR_IID=$(echo "$RESPONSE" | jq -r '.iid // empty')
+      
+      if [ -z "$MR_IID" ]; then
+        echo "MR creation returned: $(echo "$RESPONSE" | jq -r '.message // .')"
+        echo "Checking for existing MR from dev to master..."
+        if ! EXISTING=$(curl --silent --fail --header "$AUTH" \
+          "${API}/merge_requests?source_branch=dev&target_branch=master&state=opened"); then
+          echo "FATAL: could not list merge requests (API error)" >&2
+          exit 1
+        fi
+        # The response is an array only on success; anything else means the
+        # lookup failed, and saying so beats indexing into an error object.
+        MR_IID=$(echo "$EXISTING" | jq -r 'if type == "array" then (.[0].iid // empty) else empty end')
+        if [ -z "$MR_IID" ]; then
+          echo "FATAL: no open dev->master merge request, and creating one failed" >&2
+          exit 1
+        fi
+        echo "Found existing MR !$MR_IID"
+      else
+        echo "MR created: !$MR_IID"
+      fi
+      
+      # GitLab works out whether a new merge request can be merged in the
+      # background: for the first seconds after creation it answers a merge
+      # request with "Branch cannot be merged" while it is still checking. This
+      # job used to print that answer and exit 0, which is a green request-merge
+      # job with the merge request left open -- what pipeline #2047's !10 did
+      # (its API carried the MR as mergeable a minute later). So ask again
+      # until the merge is actually scheduled or taken, and fail by name if it
+      # never is: a release nobody merged is not a release.
+      echo "Setting auto-merge (merge when pipeline succeeds)..."
+      MERGE_SET=no
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        RESULT=$(curl --silent --request PUT \
+          --header "$AUTH" \
+          --data "merge_when_pipeline_succeeds=true" \
+          --data "should_remove_source_branch=false" \
+          "${API}/merge_requests/${MR_IID}/merge")
+        if echo "$RESULT" | jq -e '.merge_when_pipeline_succeeds == true or .state == "merged"' >/dev/null 2>&1; then
+          MERGE_SET=yes
+          break
+        fi
+        echo "attempt ${attempt}: $(echo "$RESULT" | jq -r '.message // "no message"' 2>/dev/null) (merge status: $(curl --silent --header "$AUTH" \
+          "${API}/merge_requests/${MR_IID}" | jq -r '.detailed_merge_status // .merge_status // "unknown"'))" >&2
+        sleep 5
+      done
+      if [ "$MERGE_SET" != yes ]; then
+        echo "FATAL: could not set auto-merge on !${MR_IID} after 10 attempts" >&2
+        exit 1
+      fi
+      echo "Auto-merge set on !${MR_IID}"
+  rules:
+    # A release tag pushed on a dev commit usually arrives after that commit's
+    # dev pipeline has run, so the tag pipeline is the one that can see it.
+    # Neither arm merges without the release-tag check in the script above.
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$/'
+
+#
+# The prefix is read from the tree rather than written here: ``VERSION`` in
+# ``src/server/lifecycle.py`` is what ``python main.py version``, the API and the
+# installer all report, so a release that bumps it moves the marker with it
+# instead of leaving ``1.0.0-build<n>`` on a ``2.0.0`` tree.
+validate_master_and_tag:
+  extends: .python_base
+  stage: test-and-release
+  timeout: 30m
+  cache:
+    - key:
+        files:
+          - requirements.txt
+          - requirements-dev.txt
+      paths:
+        - .venv/
+        - .cache/pip
+      policy: pull
+    - key: apt-cache-v1
+      paths:
+        - .cache/apt
+      policy: pull
+  script:
+    - mkdir -p .plexichat
+    - echo "Running production validation suite on master..."
+    - python main.py pre-flight
+    - |
+      # "Plexichat Server 1.0.0a167" -> 1.0.0a167 -> 1.0.0a167-build<pipeline id>.
+      VERSION="$(python main.py version | tail -1)"
+      VERSION="${VERSION##* }"
+      if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?(\+.+)?$'; then
+        echo "FAIL: could not read the server version (got '${VERSION}');" >&2
+        echo "refusing to tag master with a marker built from it." >&2
+        exit 1
+      fi
+      BUILD_TAG="${VERSION}-build${CI_PIPELINE_IID}"
+      # Push through the remote this job was cloned from. Building the URL by
+      # hand used ``https://${CI_SERVER_HOST}``, but this GitLab serves plain
+      # HTTP on :80 and has no TLS listener at all, so that host refuses the
+      # connection in 0 ms: every master pipeline failed here with "Could not
+      # connect to gitlab.plexichat.com port 443" *after* its tests had passed.
+      # ``origin`` carries whatever scheme and credentials the runner actually
+      # used, and is the same remote ``ots:push_proofs`` pushes to.
+      # A retried job repeats its pipeline id, so the tag can already exist;
+      # that is the desired end state, not a failure.
+      if git ls-remote --tags origin "refs/tags/${BUILD_TAG}" | grep -q .; then
+        echo "Tag ${BUILD_TAG} already exists; nothing to do"
+        exit 0
+      fi
+      git config user.email "automerge@plexichat.com"
+      git config user.name "Plexichat automerge dev into master"
+      git tag -a "$BUILD_TAG" -m "$(git log -1 --pretty=%B)"
+      if git push origin "refs/tags/${BUILD_TAG}" -o ci.skip; then
+        echo "Tagged ${CI_COMMIT_SHA} as ${BUILD_TAG}"
+      else
+        echo "FAIL: could not push ${BUILD_TAG}." >&2
+        echo "The tag goes to 'origin', the remote this job cloned from; if that" >&2
+        echo "is refused, the project needs 'Allow Git push requests to the" >&2
+        echo "repository' enabled for the job token." >&2
+        exit 1
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
