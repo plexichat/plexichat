@@ -9,7 +9,7 @@ declarations: in the composed ``StashManager`` MRO every mixin precedes this
 class.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, Dict
 
 from src.core.base import SnowflakeID
 
@@ -25,6 +25,9 @@ class StashManagerProtocol:
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+
+    def get_item(self, user_id: int, item_id: int) -> Dict[str, Any]:
+        raise NotImplementedError
 
     def _audit(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
