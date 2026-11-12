@@ -21,6 +21,7 @@ stages:
 ots:timestamp_commit:
   extends: .python_base
   stage: timestamp
+  timeout: 20m
   script:
     - pip install opentimestamps
     - python ci-tooling/ots_stamp.py
@@ -36,6 +37,7 @@ ots:timestamp_commit:
 ots:push_proofs:
   stage: test-and-release
   extends: .python_base
+  timeout: 20m
   needs:
     - ots:timestamp_commit
   script:
@@ -193,6 +195,7 @@ cache:
 lint:pre-commit:
   extends: .python_base
   stage: lint
+  timeout: 30m
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -293,6 +296,7 @@ lint:pre-commit:
 # --- GitLab Secret Detection (extra coverage) ---
 security:secret_detection:  # pragma: allowlist secret
   stage: security
+  timeout: 20m
   needs: []
   rules:
     - if: $CI_COMMIT_TAG
@@ -322,6 +326,7 @@ security:secret_detection:  # pragma: allowlist secret
 # pip-licenses) keep covering every commit.
 security:sast:
   stage: security
+  timeout: 30m
   needs: []
   rules:
     - if: '$CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+(?:(a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+.+)?$/'
@@ -344,6 +349,7 @@ security:sast:
 security:dependency_scanning:
   extends: .python_base
   stage: security
+  timeout: 30m
   needs: []
   rules:
     - if: $CI_COMMIT_TAG
@@ -416,6 +422,7 @@ security:dependency_scanning:
 pip-licenses:
   extends: .python_base
   stage: pip-licenses
+  timeout: 15m
   needs: []
   rules:
     - if: $CI_COMMIT_TAG
@@ -446,6 +453,13 @@ pip-licenses:
 docs:links:
   extends: .python_base
   stage: test
+  # 68s green in pipeline #2514. On pipeline #2512 it was still running when
+  # GitLab killed it as no_updates_running after 4022s (12:08:07 -> 13:15:08)
+  # with no trace output past the start of the script, so the one thing this
+  # job has ever needed is a ceiling of its own instead of the project-wide
+  # default: a hang has to red the job in minutes, not wedge the pipeline for
+  # an hour. 10m is ~9x its measured cost.
+  timeout: 10m
   needs: []
   rules:
     - if: $CI_COMMIT_TAG
@@ -475,7 +489,20 @@ test:pytest:
   extends: .python_base
   stage: test
   timeout: 1h
-  resource_group: pytest-suite
+  # Two shards, run as parallel instances of this job, so the suite's 532s of
+  # measured test time is worked on by two 4-worker pools at once instead of
+  # one. The split is by file and by a crc32 of the path (see the script
+  # below), so it is stable, covers every file exactly once, and keeps each
+  # module in one process as ``--dist loadfile`` requires. Against the report
+  # from pipeline #2514 the two halves balance at 717s/755s of test time.
+  #
+  # The resource group is per-shard: a shared group would serialise the two
+  # instances, which is the one thing the split exists to avoid. "Never co-run"
+  # is still enforced against the jobs it was written for -- test:shuffled_order
+  # and test:database_backends both `needs:` this job, and
+  # test:timing_under_load is in a later stage.
+  parallel: 2
+  resource_group: pytest-suite-${CI_NODE_INDEX}
   needs: []
   rules:
     - if: $CI_COMMIT_TAG
@@ -524,7 +551,11 @@ test:pytest:
       sampler=$!
       stop_sampler() { kill "$sampler" 2>/dev/null || true; }
       trap stop_sampler EXIT
-      python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+      # One shard runs the benchmark module: it is 2.7s of assertions and does
+      # not get cheaper for being run twice, and the gate reads one report.
+      if [ "${CI_NODE_INDEX:-0}" = "0" ]; then
+        python -m pytest -q -n0 src/tests/test_database_benchmarks.py --junitxml=test-results-benchmarks.xml
+      fi
       stop_sampler
       trap - EXIT
     # Full unit + integration suite, four files at a time. Each file stays on
@@ -549,23 +580,56 @@ test:pytest:
       set -eu
       cpus=$(nproc)
       ( while :; do echo "$(cut -d' ' -f1 /proc/loadavg) $cpus"; sleep 2; done ) \
-        > test-results-load.log 2>/dev/null &
+        > "test-results-load-${CI_NODE_INDEX}.log" 2>/dev/null &
       sampler=$!
       stop_sampler() { kill "$sampler" 2>/dev/null || true; }
       trap stop_sampler EXIT
+      # This shard's share of the suite. Conftest, package layout and the
+      # --dist loadfile rule are unchanged: the shard is a list of whole files,
+      # so a module's fixtures are still built once and in file order. Both
+      # roots pytest.ini's testpaths name are covered, and the benchmark module
+      # is excluded here because this job runs it on its own (above).
+      python3 - <<'PY' > shard-files.txt
+      import os
+      import zlib
+
+      index = int(os.environ["CI_NODE_INDEX"])
+      total = int(os.environ["CI_NODE_TOTAL"])
+      roots = ("src/tests", "src/utils/common_utils/tests")
+      skip = os.path.normpath(os.path.join("src", "tests", "test_database_benchmarks.py"))
+      files = []
+      for root in roots:
+          for dirpath, _dirnames, names in os.walk(root):
+              for name in names:
+                  if name.startswith("test_") and name.endswith(".py"):
+                      path = os.path.join(dirpath, name)
+                      if os.path.normpath(path) != skip:
+                          files.append(path)
+      for path in sorted(files):
+          if zlib.crc32(path.encode()) % total == index:
+              print(path)
+      PY
+      echo "test:pytest shard ${CI_NODE_INDEX}/${CI_NODE_TOTAL}: $(wc -l < shard-files.txt) test file(s)"
+      # Unquoted on purpose: the file list is one path per line and the shell
+      # splits it into arguments. (No test path in this tree contains a space.)
+      # shellcheck disable=SC2046
       python -m pytest -q -n 4 --dist loadfile --maxfail=20 --durations=25 \
-        --ignore=src/tests/test_database_benchmarks.py \
-        --junitxml=test-results.xml
+        --junitxml="test-results-${CI_NODE_INDEX}.xml" \
+        $(cat shard-files.txt)
       stop_sampler
       trap - EXIT
   artifacts:
+    # Per-shard names: the two instances upload into the same artifact
+    # directory on the jobs that `needs:` this one, so a shared name would have
+    # one shard's report overwrite the other's and the gate would judge half a
+    # suite as if it were all of it.
     when: always
     reports:
-      junit: test-results.xml
+      junit: test-results-*.xml
     paths:
-      - test-results.xml
+      - test-results-*.xml
+      - test-results-load-*.log
       - test-results-benchmarks.xml
-      - test-results-load.log
       - test-results-benchmarks-load.log
     expire_in: 1 week
 
@@ -654,6 +718,12 @@ test:shuffled_order:
   timeout: 1h
   # Same resource group as test:pytest: see the note above it.
   resource_group: pytest-suite
+  # Waits for both shards of test:pytest. It used to queue behind that job
+  # because they shared a resource group; the shards now carry their own
+  # groups, so the ordering has to be stated. Its tests are the same suite, and
+  # 4 more xdist workers beside two 4-worker shards would measure the queue
+  # rather than the code.
+  needs: [test:pytest]
   variables:
     SHUFFLE_SEED: "424242"
   script:
@@ -661,7 +731,6 @@ test:shuffled_order:
     - >
       python -m pytest -q -n 4 --dist loadfile --maxfail=20
       --shuffle-seed "$SHUFFLE_SEED"
-  needs: []
   allow_failure: false
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -868,6 +937,7 @@ test:database_backends:
 # is. On an idle box the samples are 1 and the ceilings above apply as written.
 performance:no_slow_tests:
   stage: performance
+  timeout: 15m
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -884,11 +954,12 @@ performance:no_slow_tests:
     # the next stage.
     - >
       python ci-tooling/check_slow_tests.py
-      test-results.xml test-results-db.xml test-results-benchmarks.xml
+      test-results-0.xml test-results-1.xml test-results-db.xml test-results-benchmarks.xml
       --threshold 5.0
-      --job test:pytest --job test:database_backends=15 --job test:pytest_benchmarks
-      --load-log test-results-load.log --load-log test-results-db-load.log
-      --load-log test-results-benchmarks-load.log
+      --job test:pytest-shard0 --job test:pytest-shard1
+      --job test:database_backends=15 --job test:pytest_benchmarks
+      --load-log test-results-load-0.log --load-log test-results-load-1.log
+      --load-log test-results-db-load.log --load-log test-results-benchmarks-load.log
       --metrics-out test-durations.json
   artifacts:
     when: always
@@ -908,6 +979,7 @@ performance:no_slow_tests:
 # reddening the pipeline; the next run catches the branch up.
 metrics:trend:
   stage: metrics
+  timeout: 15m
   rules:
     - if: $CI_COMMIT_TAG
       when: never
@@ -1089,6 +1161,7 @@ test:purge_residue:
 
 docker:build_and_push:
   stage: docker
+  timeout: 1h
   # Start as soon as the pipeline does. The image is built from this commit and
   # an OpenTimestamp proof does not change its contents, so waiting for the
   # timestamp stage only added its runtime to every release. `needs: []` also
@@ -1177,6 +1250,7 @@ docker:build_and_push:
 
 container_scanning:
   stage: docker
+  timeout: 30m
   variables:
     # Same HTTP-only registry as docker:build_and_push (docs above).
     CS_IMAGE: "$CI_REGISTRY:80/$CI_PROJECT_PATH/backend:$CI_COMMIT_TAG"
@@ -1205,6 +1279,7 @@ container_scanning:
 
 docker:backup:
   stage: docker
+  timeout: 1h
   needs: []
   image: docker:27
   services:
@@ -1285,6 +1360,7 @@ docker:backup:
 # actually returns the deleted layers to the disk.
 docker:cleanup_old_images:
   stage: docker
+  timeout: 20m
   needs: []
   image: node:22-slim
   variables:
@@ -1299,6 +1375,7 @@ docker:cleanup_old_images:
 
 create_merge_request:
   stage: request-merge
+  timeout: 20m
   image: alpine:latest
   cache:
     - key: apk-cache-v1-create-mr
