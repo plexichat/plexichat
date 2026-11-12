@@ -37,7 +37,7 @@ Routes are organized by resource, not by HTTP method. You add endpoints by defin
 | `join.py` | `/Join` | Client-facing federation surface and contract |
 | `suite/registry.py` | (PlexiSuite) | PlexiSuite registry and universal-home feed |
 | `suite/stash.py` | `/suite/stash` | PlexiStash metadata and authorization |
-| `suite/sum.py` | `/suite/sum` | PlexiSum workbook handling |
+| `suite/sum/` | `/suite/sum` | PlexiSum workbook handling (route package) |
 | `notifications.py` | `/users/@me/notifications` | Push notification management |
 | `voice.py` | `/voice` | Voice channel signaling |
 | `reports.py` | `/reports` | Message and user reporting |
