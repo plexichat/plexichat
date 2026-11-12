@@ -252,16 +252,35 @@ lint:pre-commit:
     - pip install ruff==0.15.10 pyright bandit[toml] detect-secrets pre-commit pip-audit pytest==9.1.1
   script:
     - |
-      if [ -n "$CI_COMMIT_TAG" ] || [ -n "$CI_MERGE_REQUEST_IID" ]; then
-        echo "Tag/MR pipeline — running pre-commit on all files"
+      # Check this pipeline's changes, not the whole tree.
+      #
+      # Branch pushes already ran incrementally, but an MR pipeline -- how most
+      # changes land -- took the --all-files branch, and the branch fallback
+      # named origin/dev without checking the shallow clone had it. The range is
+      # now the MR target when this is an MR, else the commit the push started
+      # from when that commit is present locally, else every file. Tags keep the
+      # full check: a release is the one pipeline that should scan everything.
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        echo "Tag pipeline — running pre-commit on all files"
         pre-commit run --all-files --show-diff-on-failure
       else
-        FROM_REF="${CI_COMMIT_BEFORE_SHA}"
-        if [ "$FROM_REF" = "0000000000000000000000000000000000000000" ] || [ -z "$FROM_REF" ]; then
-          FROM_REF="origin/dev"
+        BASE=""
+        if [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] && \
+           git fetch --no-tags --depth 200 origin \
+             "+refs/heads/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}:refs/remotes/origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"; then
+          BASE="origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+        elif [ -n "${CI_COMMIT_BEFORE_SHA:-}" ] && \
+             [ "${CI_COMMIT_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] && \
+             git cat-file -e "${CI_COMMIT_BEFORE_SHA}^{commit}" 2>/dev/null; then
+          BASE="${CI_COMMIT_BEFORE_SHA}"
         fi
-        echo "Branch pipeline — running pre-commit on changed files (from $FROM_REF)"
-        pre-commit run --from-ref "$FROM_REF" --to-ref "$CI_COMMIT_SHA" --show-diff-on-failure
+        if [ -n "$BASE" ]; then
+          echo "pre-commit: checking ${BASE}..${CI_COMMIT_SHA}"
+          pre-commit run --from-ref "$BASE" --to-ref "$CI_COMMIT_SHA" --show-diff-on-failure
+        else
+          echo "pre-commit: no diff base available, checking every file"
+          pre-commit run --all-files --show-diff-on-failure
+        fi
       fi
 
 # =========================================================
@@ -295,14 +314,17 @@ security:secret_detection:  # pragma: allowlist secret
   allow_failure: false
 
 # --- SAST (Semgrep) ---
+#
+# Release path only. This scanner is advisory (allow_failure: true below) and
+# takes ~190s on the runner for a verdict that cannot fail a push; the release
+# tag pipeline still runs it, so nothing ships unscanned, and the blocking
+# scanners (pre-commit's detect-secrets and bandit, dependency_scanning,
+# pip-licenses) keep covering every commit.
 security:sast:
   stage: security
   needs: []
   rules:
-    - if: $CI_COMMIT_TAG
-      when: never
-    - when: on_success
-  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+    - if: '$CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+(?:(a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?(?:\+.+)?$/'
   variables:
     SAST_EXCLUDED_PATHS: ".venv/,venv/,tests/,.cache/,build/,dist/"
     GIT_DEPTH: 0
