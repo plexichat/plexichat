@@ -28,11 +28,21 @@ if __name__ == "__main__":
         0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
     )
 
-import pytest  # noqa: E402
+import importlib
 
-import utils.config as config  # noqa: E402
-import utils.logger as logger  # noqa: E402
-import utils.validator as validator  # noqa: E402
+import pytest
+
+config = importlib.import_module("utils.config")
+logger = importlib.import_module("utils.logger")
+validator = importlib.import_module("utils.validator")
+_CHECK_FAILURES = (
+    AssertionError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    OSError,
+)
 
 
 @pytest.mark.integration
@@ -84,7 +94,7 @@ def main() -> None:
         print(
             f"    [PASS] Validator auto-initialized: result.is_valid = {result.is_valid}"
         )
-    except Exception as exc:  # noqa: BLE001 - demo reports any failure
+    except _CHECK_FAILURES as exc:
         print(f"    [FAIL] Unexpected error: {exc}")
 
     print("\n" + "=" * 60)

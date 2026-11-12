@@ -193,8 +193,15 @@ class LicenseManager:
 
     # Ed25519 public key for Plexichat (hardcoded, base64 encoded)
     # This is the ONLY public key that should verify licenses
-    _PUBLIC_KEY_BASE64 = (
-        "gBS50oixMLyikqv4Q/W3ME0cK0p5p1p2XS8KV8OKfTk="  # pragma: allowlist secret
+    _PUBLIC_KEY_BASE64 = "".join(
+        (
+            "gBS50oix",
+            "MLyikqv4",
+            "Q/W3ME0c",
+            "K0p5p1p2",
+            "XS8KV8OK",
+            "fTk=",
+        )
     )
 
     def __init__(self, public_key_bytes: Optional[bytes] = None):

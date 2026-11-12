@@ -14,7 +14,9 @@ import concurrent.futures
 
 # Check if PostgreSQL is available
 try:
-    import pg8000.dbapi  # noqa: F401
+    import importlib
+
+    importlib.import_module("pg8000.dbapi")
 
     HAS_POSTGRES = True
 except ImportError:

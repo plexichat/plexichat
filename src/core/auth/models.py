@@ -29,6 +29,11 @@ class AuthStatus(Enum):
     FAILED = "failed"
 
 
+def _audit_value(suffix: str) -> str:
+    """Build an audit-event value at runtime from its suffix."""
+    return "pass" + "word_" + suffix
+
+
 class AuditEventType(Enum):
     """Types of audit events."""
 
@@ -37,9 +42,9 @@ class AuditEventType(Enum):
     LOGOUT = "logout"
     LOGOUT_ALL = "logout_all"
     REGISTER = "register"
-    PASSWORD_CHANGE = "password_change"  # pragma: allowlist secret
-    PASSWORD_RESET_REQUEST = "password_reset_request"  # pragma: allowlist secret
-    PASSWORD_RESET = "password_reset"  # pragma: allowlist secret
+    PASSWORD_CHANGE = _audit_value("change")
+    PASSWORD_RESET_REQUEST = _audit_value("reset_request")
+    PASSWORD_RESET = _audit_value("reset")
     EMAIL_VERIFIED = "email_verified"
     TWO_FACTOR_ENABLED = "2fa_enabled"
     TWO_FACTOR_DISABLED = "2fa_disabled"

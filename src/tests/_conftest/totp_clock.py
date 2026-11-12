@@ -32,7 +32,7 @@ class _FixedDateTime(datetime.datetime):
     """
 
     @classmethod
-    def now(cls, tz=None):  # type: ignore[override]
+    def now(cls, tz: Optional[datetime.tzinfo] = None) -> "_FixedDateTime":
         assert _fixed_instant is not None
         fixed = _FixedDateTime(
             _fixed_instant.year,

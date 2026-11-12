@@ -126,7 +126,11 @@ def test_admin_permissions_summary_stringifies_ids():
         )
     ]
     original = perm._get_admin_roles
-    perm._get_admin_roles = lambda db, aid: roles  # noqa: E731
+
+    def _admin_roles(db, aid):
+        return roles
+
+    perm._get_admin_roles = _admin_roles
     try:
         summary = perm.get_admin_permissions_summary(object(), BIG)
     finally:

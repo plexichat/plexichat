@@ -1,6 +1,7 @@
 """Session template + function-scoped database fixtures."""
 
 import pytest
+import contextlib
 import os
 import tempfile
 from unittest.mock import patch
@@ -146,7 +147,7 @@ def _isolate_process_globals():
         # managers below, so a teardown glitch never fails a passing test.
         api = sys.modules.get("src.api")
         if api is not None and getattr(api, "_setup_complete", False):
-            try:
+            with contextlib.suppress(Exception):
                 api._setup_complete = False
                 api._internal_secret = None
                 for name in (
@@ -177,8 +178,6 @@ def _isolate_process_globals():
                     "_applications",
                 ):
                     setattr(api, name, None)
-            except Exception:  # noqa: BLE001 -- teardown must not fail a passing test
-                pass
 
         # Suite domain managers. Only reset the modules that are already
         # imported so the ~10k tests that never touch the suite pay nothing.

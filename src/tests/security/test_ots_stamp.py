@@ -123,7 +123,7 @@ def tool(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "ots_stamp", module)
     spec.loader.exec_module(module)
 
-    module._created_files = created  # type: ignore[attr-defined]
+    setattr(module, "_created_files", created)
     return module
 
 

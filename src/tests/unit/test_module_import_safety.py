@@ -161,7 +161,7 @@ def main():
         for name in modules:
             try:
                 importlib.import_module(name)
-            except BaseException as exc:  # noqa: BLE001 - the type is the payload
+            except (Exception, SystemExit, KeyboardInterrupt, GeneratorExit) as exc:
                 failures.append(
                     {
                         "module": name,

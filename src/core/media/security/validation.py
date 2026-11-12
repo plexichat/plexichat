@@ -17,9 +17,9 @@ Provides security checks for uploaded files including:
 # guard runs for every entry point that imports this validation
 # module (web server via ``app.py``, the CLI, migration tools, and
 # admin-tools), not just those that go through the FastAPI factory.
-try:
-    import defusedxml  # noqa: F401
-except ImportError:  # pragma: no cover
+from importlib.util import find_spec
+
+if find_spec("defusedxml") is None:  # pragma: no cover
     raise ImportError(
         "defusedxml is required for safe SVG/XML handling in plexichat. "
         "Install it with: pip install defusedxml"

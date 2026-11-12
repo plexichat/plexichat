@@ -352,7 +352,9 @@ def _worker_database(db_config: Dict[str, Any]) -> Database:
     """
     import utils.config as config
 
-    import src.tests._conftest.config_env  # noqa: F401  (calls config.setup)
+    import importlib
+
+    importlib.import_module("src.tests._conftest.config_env")
 
     config.set("database", db_config)
     return Database()

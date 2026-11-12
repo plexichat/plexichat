@@ -383,6 +383,7 @@
     "src/tests/profiles/test_profile_ops.py": 1,
     "src/tests/push/test_apns_send.py": 0,
     "src/tests/push/test_manager.py": 1,
+    "src/tests/push/test_manager_package.py": 0,
     "src/tests/push/test_push_bugfixes.py": 0,
     "src/tests/push/test_regression_pu1_pu2_pu3.py": 0,
     "src/tests/push/test_regression_token_hint.py": 1,

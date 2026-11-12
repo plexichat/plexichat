@@ -164,8 +164,8 @@ class TestScrubRemoteExport:
             def head_bucket(self, **_kwargs):
                 return {}
 
-            def delete_object(self, Bucket, Key):  # noqa: N803 - boto3 kwarg names
-                self.deleted.append((Bucket, Key))
+            def delete_object(self, **kwargs):
+                self.deleted.append((kwargs["Bucket"], kwargs["Key"]))
 
         client = FakeS3Client()
         monkeypatch.setattr(boto3, "client", lambda **_kwargs: client)

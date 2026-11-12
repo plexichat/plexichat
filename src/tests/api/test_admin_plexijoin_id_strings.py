@@ -206,7 +206,7 @@ async def test_federation_join_request_inbound_keeps_rowid_numeric(monkeypatch):
         submitted.update({"remote_instance_id": remote_instance_id})
         return dict(_request_row(), status="pending")
 
-    manager.submit_inbound_request = _submit  # type: ignore[method-assign]
+    setattr(manager, "submit_inbound_request", _submit)
     monkeypatch.setattr(federation_module, "_get_plexijoin_manager", lambda: manager)
     monkeypatch.setattr(
         federation_module, "_authenticate", lambda *args, **kwargs: {"id": 1}

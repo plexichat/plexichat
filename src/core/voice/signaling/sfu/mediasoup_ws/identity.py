@@ -10,7 +10,7 @@ import hmac
 import os
 
 import utils.logger as logger
-import utils.config as _voice_config  # noqa: F401
+import utils.config as _voice_config
 
 # Deployment-scoped secret used to derive stable peer / room
 # identifiers. Loaded once per process so the same `peer_id`

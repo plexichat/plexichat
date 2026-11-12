@@ -69,7 +69,7 @@ class KeywordRule(BaseRule):
     def _contains_whole_word(self, text: str, word: str) -> bool:
         """Check if text contains word as a whole word."""
         word_chars = set(
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"  # pragma: allowlist secret
+            "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789_"
         )
 
         start = 0

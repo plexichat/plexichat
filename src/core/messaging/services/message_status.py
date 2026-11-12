@@ -403,10 +403,13 @@ class MessageStatusService(BaseService):
         target_msg_id: SnowflakeID
         if up_to_message_id:
             # Roll back to the message *before* the given one, not the given
-            # one itself. Normalize str-like SnowflakeIDs for the comparison.
+            # one itself. Callers crossing a JSON boundary may hand us a
+            # decimal string, so normalize it for the comparison; anything
+            # non-numeric is passed through and simply matches no row.
+            anchor_id: Any
             try:
-                anchor_id: SnowflakeID = int(up_to_message_id)  # type: ignore[arg-type]
-            except Exception:
+                anchor_id = int(up_to_message_id)
+            except (TypeError, ValueError):
                 anchor_id = up_to_message_id
             prev_id = self._message_repo.get_previous_id_in_conversation(
                 conversation_id, anchor_id

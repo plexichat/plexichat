@@ -22,11 +22,11 @@ from src.core.artifacts.capabilities import (
 )
 from src.core.artifacts.models import ArtifactType
 
-# Re-exported for ``routes/artifacts.py`` (stable import surface); marked noqa
+# Re-exported for ``routes/artifacts.py`` (stable import surface).
 # because the helpers are only consumed by the route module, not here.
-from src.core.artifacts.revision import (  # noqa: F401
-    payload_revision,
-    stale_payload_write,
+from src.core.artifacts.revision import (
+    payload_revision as payload_revision,
+    stale_payload_write as stale_payload_write,
 )
 
 

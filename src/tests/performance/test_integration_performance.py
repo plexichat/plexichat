@@ -10,15 +10,11 @@ Tests complete workflows and end-to-end scenarios:
 """
 
 import pytest
+from importlib.util import find_spec
 from unittest.mock import patch
 
 # Check if pytest-benchmark is available
-try:
-    import pytest_benchmark  # noqa: F401
-
-    HAS_BENCHMARK = True
-except ImportError:
-    HAS_BENCHMARK = False
+HAS_BENCHMARK = find_spec("pytest_benchmark") is not None
 
 
 class TestCompleteUserJourney:

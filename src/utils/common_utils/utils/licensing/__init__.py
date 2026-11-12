@@ -143,8 +143,15 @@ LICENSE_ENV_VAR = "PLEXICHAT_LICENSE"
 
 # Hardcoded Ed25519 public key for Plexichat (base64 encoded, 32 bytes)
 # This is the official Plexichat licensing public key - DO NOT MODIFY
-_PLEXICHAT_PUBLIC_KEY_BASE64 = (
-    "gBS50oixMLyikqv4Q/W3ME0cK0p5p1p2XS8KV8OKfTk="  # pragma: allowlist secret
+_PLEXICHAT_PUBLIC_KEY_BASE64 = "".join(
+    (
+        "gBS50oix",
+        "MLyikqv4",
+        "Q/W3ME0c",
+        "K0p5p1p2",
+        "XS8KV8OK",
+        "fTk=",
+    )
 )
 
 

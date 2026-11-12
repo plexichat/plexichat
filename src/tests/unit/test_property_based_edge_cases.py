@@ -9,7 +9,7 @@ Run with: pytest src/tests/unit/test_property_based_edge_cases.py -v
 import pytest
 
 try:
-    from hypothesis import given, strategies as st, settings, HealthCheck  # noqa: F401
+    from hypothesis import given, settings, strategies as st
     from hypothesis.strategies import composite
 
     HAS_HYPOTHESIS = True

@@ -82,7 +82,7 @@ def test_two_instances_save_concurrently_without_losing_the_swap(tmp_path):
                 # get_key() generates the first data key and persists it in one
                 # locked write, which is the interleaving the workers hit.
                 keyring.get_key()
-        except Exception as exc:  # noqa: BLE001 - reported below
+        except ValueError as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=save, args=(kr,)) for kr in (first, second)]

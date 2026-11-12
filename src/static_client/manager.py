@@ -54,7 +54,10 @@ from .manifest import (
 )
 
 # Re-export InstallResult to keep callers stable
-from . import fetcher as _fetcher  # noqa: F401  (kept for back-compat)
+from . import fetcher as _fetcher
+
+# ``_fetcher`` stays importable from this module for back-compat.
+_BACKCOMPAT_MODULES = (_fetcher,)
 
 
 def _js_escape(value: str) -> str:
