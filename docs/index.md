@@ -78,4 +78,4 @@ The docs path is configurable through `docs.path` (default `/docs/api`) and `api
 | `/api/v1/status` | `GET` | Server state, version, and uptime. |
 | `/api/v1/capabilities` | `GET` | Public constants without authentication. |
 
-Version endpoints are implemented in `src/api/routes/version.py` and use the version utility in `src/utils/common_utils/utils/version/`. `/api/v1/version` reports the running build (currently `1.0.0a219`), the minimum supported client, and `api_version`.
+Version endpoints are implemented in `src/api/routes/version.py` and use the version utility in `src/utils/common_utils/utils/version/`. `/api/v1/version` reports the running build (currently `1.0.0a220`), the minimum supported client, and `api_version`.
