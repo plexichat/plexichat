@@ -693,7 +693,7 @@ class SecurityTestHelper:
         for payload in xss_payloads.all():
             try:
                 result = create_fn(**{field_name: payload})
-            except Exception:
+            except (KeyError, PermissionError, RuntimeError, TypeError, ValueError):
                 # Field-level rejection — acceptable XSS defense.
                 continue
             if isinstance(result, dict):
@@ -747,7 +747,7 @@ class SecurityTestHelper:
         for field_name in protected_fields:
             try:
                 result = update_fn(**{field_name: "tampered_value"})
-            except Exception:
+            except (KeyError, PermissionError, RuntimeError, TypeError, ValueError):
                 # Update rejected — acceptable tamper defense.
                 continue
             if isinstance(result, dict):

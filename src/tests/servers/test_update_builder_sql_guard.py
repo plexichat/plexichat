@@ -330,7 +330,7 @@ def test_no_builder_lists_updated_at_while_also_writing_it():
     for path in _iter_source_files():
         try:
             text = path.read_text(encoding="utf-8")
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             continue
         # Fast filter: only parse files that might be update builders touching updated_at
         if "updated_at" not in text:

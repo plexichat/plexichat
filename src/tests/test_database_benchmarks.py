@@ -245,7 +245,7 @@ def benchmark_db_sqlite(tmp_path):
         if db.type == "sqlite":
             if hasattr(db._local, "connection") and db._local.connection:
                 db._local.connection.close()
-    except Exception:
+    except (AttributeError, OSError, RuntimeError):
         pass
 
 
@@ -789,7 +789,7 @@ def test_performance_regression_detection(
     # Cleanup
     try:
         os.remove(baseline_file)
-    except Exception:
+    except OSError:
         pass
 
 

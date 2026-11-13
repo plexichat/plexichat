@@ -126,7 +126,7 @@ def wired(server_with_voice):
     finally:
         try:
             asyncio.run(manager.close())
-        except Exception:
+        except (OSError, RuntimeError):
             pass
         signaling._manager = None
         signaling._setup_complete = False

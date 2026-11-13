@@ -240,7 +240,7 @@ class TestSQLiteConcurrency:
                         "INSERT INTO load_test (value, created_at) VALUES (?, ?)",
                         (f"writer_{thread_id}_write_{i}", int(time.time() * 1000)),
                     )
-                except Exception:
+                except (OSError, RuntimeError):
                     pass
 
         def read_worker(thread_id: int):
@@ -252,7 +252,7 @@ class TestSQLiteConcurrency:
                 try:
                     sqlite_db.fetch_one("SELECT COUNT(*) as count FROM load_test")
                     reads_completed += 1
-                except Exception:
+                except (OSError, RuntimeError):
                     pass
             return reads_completed
 

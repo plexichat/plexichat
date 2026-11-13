@@ -55,7 +55,7 @@ def _const_assigns(tree: ast.AST) -> dict[str, object]:
         ):
             try:
                 out[node.targets[0].id] = ast.literal_eval(node.value)
-            except Exception:
+            except (ValueError, SyntaxError):
                 pass
     return out
 
@@ -101,7 +101,7 @@ def test_gateway_websocket_path_is_root_gateway_not_api_v1():
                     if dec.func.attr == "websocket" and dec.args:
                         try:
                             ws_paths.append(ast.literal_eval(dec.args[0]))
-                        except Exception:
+                        except (ValueError, SyntaxError):
                             pass
     assert "/gateway" in ws_paths
     assert all(not p.startswith("/api/v1") for p in ws_paths)
@@ -131,7 +131,7 @@ def test_health_router_defines_health_and_ready_under_api_prefix_mount():
                 ):
                     try:
                         paths.append(ast.literal_eval(dec.args[0]))
-                    except Exception:
+                    except (ValueError, SyntaxError):
                         pass
     assert "/ready" in paths
     assert "/health" in paths
@@ -175,7 +175,7 @@ def test_oauth_state_cookie_name_and_pkce_constants():
         ):
             try:
                 method_default = ast.literal_eval(stmt.value)
-            except Exception:
+            except (ValueError, SyntaxError):
                 pass
     assert method_default == "S256"
     # RFC7636 challenge grammar constant present
@@ -262,7 +262,7 @@ def test_dsar_data_export_routes_and_rate_limit():
                         if k.arg in ("requests", "window_seconds"):
                             try:
                                 vals[k.arg] = ast.literal_eval(k.value)
-                            except Exception:
+                            except (ValueError, SyntaxError):
                                 pass
                     if (
                         vals.get("requests") == 1

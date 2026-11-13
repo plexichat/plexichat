@@ -81,11 +81,11 @@ def screenshare(
             try:
                 if voice.is_user_in_voice(user.id):
                     voice.leave_channel(user.id)
-            except Exception:
+            except (RuntimeError, ValueError):
                 pass
         try:
             asyncio.run(signaling.close())
-        except Exception:
+        except (OSError, RuntimeError):
             pass
         signaling._manager = None
         signaling._setup_complete = False

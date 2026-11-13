@@ -452,7 +452,7 @@ def execute_worker_transactions(
                 logger.error(f"Transaction failed: {e}")
                 try:
                     database.rollback()
-                except Exception:
+                except (OSError, RuntimeError):
                     pass
     finally:
         database.close()

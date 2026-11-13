@@ -3,6 +3,7 @@
 import pytest
 import contextlib
 import os
+import sqlite3
 import tempfile
 from unittest.mock import patch
 
@@ -269,7 +270,7 @@ def migrated_db_template():
 
                 reports.setup(template_db)
                 feedback.setup(template_db)
-            except Exception:
+            except (ImportError, RuntimeError):
                 # If reports/feedback setup fails, create minimal tables manually
                 pass  # Tables will be created by migrations or not needed
 
@@ -468,14 +469,14 @@ def db(setup_config, migrated_db_template):
             if isinstance(db.engine.config, dict):
                 db.engine.config["path"] = temp_db.name
                 db.engine.config["connection_pool"] = dict(_TEST_DB_POOL_CONFIG)
-        except Exception:
+        except (AttributeError, KeyError, TypeError):
             pass
     if getattr(db, "_local", None) is not None:
         old_conn = getattr(db._local, "connection", None)
         if old_conn is not None:
             try:
                 old_conn.close()
-            except Exception:
+            except (OSError, RuntimeError, sqlite3.Error):
                 pass
         db._local.connection = None
     pool = getattr(db, "_pool", None)
@@ -492,12 +493,12 @@ def db(setup_config, migrated_db_template):
                     if conn is not None:
                         try:
                             conn.close()
-                        except Exception:
+                        except (OSError, RuntimeError, sqlite3.Error):
                             pass
                 for conn in list(pool._available):
                     try:
                         conn.close()
-                    except Exception:
+                    except (OSError, RuntimeError, sqlite3.Error):
                         pass
                 pool._available.clear()
                 pool._in_use.clear()
@@ -514,12 +515,12 @@ def db(setup_config, migrated_db_template):
                 # After the wake they re-check the (now reset) counters and
                 # build a fresh connection against the re-pointed path.
                 pool._condition.notify_all()
-        except Exception:
+        except (AttributeError, RuntimeError):
             pass
         db._pool = None
     try:
         db.monitor._connection_metadata.clear()
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
     # The singleton's query cache keys do not include the database path, so
     # cached SELECT results from the previous test's DB file would be served
@@ -528,7 +529,7 @@ def db(setup_config, migrated_db_template):
     try:
         with db._query_cache_lock:
             db._query_cache.clear()
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
     db.connect()
 
@@ -543,7 +544,7 @@ def db(setup_config, migrated_db_template):
     # Cleanup
     try:
         db.close()
-    except Exception:
+    except (OSError, RuntimeError, sqlite3.Error):
         pass
 
     # Close ANY other connections the singleton still tracks — e.g. ones
@@ -564,10 +565,10 @@ def db(setup_config, migrated_db_template):
             ):
                 try:
                     _conn.close()
-                except Exception:
+                except (OSError, RuntimeError, sqlite3.Error):
                     pass
         db.monitor._connection_metadata.clear()
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
 
     # Drop any cached workbook sessions left behind by the SumManager.
@@ -581,7 +582,7 @@ def db(setup_config, migrated_db_template):
             for _session in _sum_manager._WORKBOOK_SESSIONS.values():
                 try:
                     _session.connection.close()
-                except Exception:
+                except (OSError, RuntimeError, sqlite3.Error):
                     pass
             _sum_manager._WORKBOOK_SESSIONS.clear()
         # Also clean up any orphaned temp files from sessions that were
@@ -596,7 +597,7 @@ def db(setup_config, migrated_db_template):
         # Clear any per-workbook session locks to prevent stale references.
         _wb_locks = getattr(_sum_manager, "_WORKBOOK_SESSION_LOCKS", {})
         _wb_locks.clear()
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
 
     # Remove the temp copy AND its WAL/SHM sidecars so /tmp (tmpfs —
@@ -604,7 +605,7 @@ def db(setup_config, migrated_db_template):
     for _path in (temp_db.name, f"{temp_db.name}-wal", f"{temp_db.name}-shm"):
         try:
             os.unlink(_path)
-        except Exception:
+        except OSError:
             pass
 
     # Restore the database config

@@ -166,7 +166,7 @@ def media_module(modules, temp_upload_dir):
     if media._manager is not None:
         try:
             media._manager.close()
-        except Exception:
+        except (OSError, RuntimeError):
             pass
     media._manager = None
     media._setup_complete = False

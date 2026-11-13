@@ -54,22 +54,22 @@ Permission requirement: all mutating operations require `channels.manage` on the
 
 ## RoleHandler
 
-Defined in `role_handler.py:30`.
+`RoleHandler` in `role_handler.py:16` composes the mixins in `roles/`, split by concern.
 
 ### Methods
 
 | Method | Description |
 |---|---|
-| `validate_role_name(name)` | Strip and enforce `role_name_max_length`. See `role_handler.py:35`. |
-| `create_role(user_id, server_id, name, permissions, color, hoist, mentionable)` | Create a role. Validates the permission dict, checks grantability, enforces `max_roles_per_server`, and clamps position below the creator's highest role. See `role_handler.py:48`. |
-| `get_role(role_id, user_id)` | Return a role if the caller is a member of the server. See `role_handler.py:130`. |
-| `get_roles(user_id, server_id)` | Return all roles ordered by `position DESC`. Requires `roles.manage`. See `role_handler.py:142`. |
-| `update_role(user_id, role_id, name, permissions, color, hoist, mentionable, position)` | Update role fields with hierarchy and permission-grantability checks. Invalidates server permission caches. See `role_handler.py:151`. |
-| `delete_role(user_id, role_id)` | Delete a role and its member assignments. Rejects the default role. See `role_handler.py:280`. |
-| `move_role(user_id, role_id, position)` | Move a role in the hierarchy. Rejects the default role and positions at or above the actor's highest role. See `role_handler.py:312`. |
-| `get_channel_override / set_channel_override / delete_channel_override` | Manage per-channel allow/deny overrides for a role or member. Invalidates `perms:*` and `has_perm:*` caches. See `role_handler.py:345`. |
-| `get_permissions / get_permissions_batch / has_permission` | Resolve effective permissions with base-role calculation, channel overrides, and timeout restrictions. `get_permissions` is two-level cached (in-memory + Valkey). See `role_handler.py:562`. |
-| `get_member_roles / assign_role / remove_role / assign_roles_from_whitelist` | Manage member-role assignments with hierarchy and administrator-escalation guards. See `role_handler.py:703`. |
+| `validate_role_name(name)` | Strip and enforce `role_name_max_length`. See `roles/crud.py:27`. |
+| `create_role(user_id, server_id, name, permissions, color, hoist, mentionable)` | Create a role. Validates the permission dict, checks grantability, enforces `max_roles_per_server`, and clamps position below the creator's highest role. See `roles/crud.py:40`. |
+| `get_role(role_id, user_id)` | Return a role if the caller is a member of the server. See `roles/crud.py:122`. |
+| `get_roles(user_id, server_id)` | Return all roles ordered by `position DESC`. Requires `roles.manage`. See `roles/crud.py:134`. |
+| `update_role(user_id, role_id, name, permissions, color, hoist, mentionable, position)` | Update role fields with hierarchy and permission-grantability checks. Invalidates server permission caches. See `roles/crud.py:143`. |
+| `delete_role(user_id, role_id)` | Delete a role and its member assignments. Rejects the default role. See `roles/crud.py:275`. |
+| `move_role(user_id, role_id, position)` | Move a role in the hierarchy. Rejects the default role and positions at or above the actor's highest role. See `roles/crud.py:307`. |
+| `get_channel_override / set_channel_override / delete_channel_override` | Manage per-channel allow/deny overrides for a role or member. Invalidates `perms:*` and `has_perm:*` caches. See `roles/overrides.py:15`. |
+| `get_permissions / get_permissions_batch / has_permission` | Resolve effective permissions with base-role calculation, channel overrides, and timeout restrictions. `get_permissions` is two-level cached (in-memory + Valkey). See `roles/permissions.py:18`. |
+| `get_member_roles / assign_role / remove_role / assign_roles_from_whitelist` | Manage member-role assignments with hierarchy and administrator-escalation guards. See `roles/assignments.py:25`. |
 
 Key invariants:
 

@@ -37,9 +37,9 @@ def messaging_manager(db):
                 if repo_db is not None and repo_db is not db:
                     try:
                         repo_db.close()
-                    except Exception:
+                    except (OSError, RuntimeError):
                         pass
-        except Exception:
+        except (AttributeError, TypeError):
             pass
 
 
@@ -64,9 +64,9 @@ def server_manager(db, auth_manager, messaging_manager):
                 if repo_db is not None and repo_db is not db:
                     try:
                         repo_db.close()
-                    except Exception:
+                    except (OSError, RuntimeError):
                         pass
-        except Exception:
+        except (AttributeError, TypeError):
             pass
 
 

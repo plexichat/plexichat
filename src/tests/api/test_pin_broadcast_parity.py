@@ -80,10 +80,10 @@ def wired_server_channel(
         from src.core.servers.manager import backfill_default_role_permissions
 
         backfill_default_role_permissions(db)
-    except Exception:
+    except ImportError:
         try:
             server_manager.backfill_default_role_permissions(db)
-        except Exception:
+        except AttributeError:
             pass
 
     monkeypatch.setattr(api_module, "_messaging", messaging_manager)

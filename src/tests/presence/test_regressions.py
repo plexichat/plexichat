@@ -46,7 +46,7 @@ def fake_valkey():
         valkey_client._default_client = saved_default
         try:
             client.close()
-        except Exception:
+        except (OSError, RuntimeError):
             pass
 
 

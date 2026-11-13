@@ -412,8 +412,10 @@ def postgres_db(postgres_config):
     # Cleanup
     try:
         db.close()
-    except Exception:
-        pass
+    except Exception as close_error:
+        logging.getLogger(__name__).debug(
+            f"postgres teardown close failed: {close_error}"
+        )
 
 
 @pytest.fixture
@@ -445,8 +447,10 @@ def postgres_db_with_table(postgres_db):
     # Cleanup
     try:
         postgres_db.execute("DROP TABLE IF EXISTS test_transactions CASCADE")
-    except Exception:
-        pass
+    except Exception as drop_error:
+        logging.getLogger(__name__).debug(
+            f"postgres teardown drop failed: {drop_error}"
+        )
 
 
 @pytest.fixture
@@ -481,8 +485,10 @@ def postgres_db_with_constraints(postgres_db):
     # Cleanup
     try:
         postgres_db.execute("DROP TABLE IF EXISTS constrained_data CASCADE")
-    except Exception:
-        pass
+    except Exception as drop_error:
+        logging.getLogger(__name__).debug(
+            f"postgres teardown drop failed: {drop_error}"
+        )
 
 
 @pytest.fixture
@@ -523,8 +529,10 @@ def clean_postgres_db(postgres_db) -> "Database":
         table_name = row["tablename"]
         try:
             postgres_db.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE")
-        except Exception:
-            pass
+        except Exception as drop_error:
+            logging.getLogger(__name__).debug(
+                f"postgres teardown drop of {table_name} failed: {drop_error}"
+            )
 
 
 @pytest.fixture

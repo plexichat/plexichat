@@ -94,7 +94,7 @@ def stress_test_users(modules):
                 username=username, email=email, password=password
             )
             users.append(user)
-        except Exception:
+        except (RuntimeError, ValueError):
             pass
 
     return users
@@ -112,7 +112,7 @@ def load_test_server(modules, stress_test_users):
     for user in stress_test_users[1:10]:
         try:
             modules.servers.add_member(server.id, user.id)
-        except Exception:
+        except (RuntimeError, ValueError):
             pass
 
     return server, owner, stress_test_users[1:10]

@@ -102,7 +102,7 @@ def reset_singletons():
     for handler in app_logger.handlers[:]:
         try:
             handler.close()
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             pass
         app_logger.removeHandler(handler)
     for filt in app_logger.filters[:]:
