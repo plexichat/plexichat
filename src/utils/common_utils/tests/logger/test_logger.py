@@ -56,7 +56,7 @@ def cleanup_logger(logger):
         for handler in logger.handlers[:]:
             try:
                 handler.close()
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 pass
             logger.removeHandler(handler)
     if hasattr(logger, "filters"):
