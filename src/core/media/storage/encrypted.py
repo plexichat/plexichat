@@ -270,8 +270,10 @@ class EncryptedStorage(StorageBackendBase):
                         finally:
                             try:
                                 stream_to_close.close()
-                            except Exception:
-                                pass
+                            except Exception as close_error:
+                                logger.debug(
+                                    f"encrypted media stream close failed: {close_error}"
+                                )
 
                     generator = self._streaming_encryptor.decrypt_stream_generator(
                         fresh_enc_stream, aad
@@ -306,15 +308,16 @@ class EncryptedStorage(StorageBackendBase):
         try:
             if self._backend.exists(enc_path):
                 deleted = self._backend.delete(enc_path)
-        except Exception:
-            pass
+        except Exception as delete_error:
+            # The unencrypted fallback below may still remove something.
+            logger.debug(f"encrypted blob delete failed: {delete_error}")
 
         # Also try unencrypted version (for cleanup)
         try:
             if self._backend.exists(path):
                 deleted = self._backend.delete(path) or deleted
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug(f"plain blob delete failed: {delete_error}")
 
         return deleted
 
@@ -357,8 +360,8 @@ class EncryptedStorage(StorageBackendBase):
                         encrypted_blob = self._backend.retrieve(enc_path)
                         header, _ = self._encryptor.deserialize_header(encrypted_blob)
                         return header.original_size
-                    except Exception:
-                        pass
+                    except Exception as header_error:
+                        logger.debug(f"encrypted header read failed: {header_error}")
             # Fallback: return encrypted size (not accurate but better than nothing)
             return self._backend.get_size(enc_path)
 

@@ -108,12 +108,13 @@ def get_key(
     finally:
         try:
             session.logout()
-        except Exception:
-            pass
+        except Exception as exc:
+            # The key was already created; teardown failures must not mask it.
+            logger.debug(f"HSM logout after key creation failed: {exc}")
         try:
             session.closeSession()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"HSM session close after key creation failed: {exc}")
 
 
 def encrypt(
@@ -164,19 +165,20 @@ def _crypt(
         finally:
             try:
                 session.logout()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"HSM logout after crypt operation failed: {exc}")
     finally:
         try:
             session.closeSession()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"HSM session close after crypt operation failed: {exc}")
 
 
 def gcm_mechanism(py: Any, iv: bytes, aad: bytes) -> Any:
     ckm = getattr(py, "CKM_AES_GCM", None)
     if ckm is None:
         raise HsmCryptoError("PyKCS11 build lacks CKM_AES_GCM")
+    last_error: Exception | None = None
     for param in (
         (bytes(iv), bytes(aad), 128),
         {"iv": bytes(iv), "aad": bytes(aad), "tag_bits": 128},
@@ -184,6 +186,8 @@ def gcm_mechanism(py: Any, iv: bytes, aad: bytes) -> Any:
     ):
         try:
             return py.Mechanism(ckm, param)
-        except Exception:
-            continue
-    raise HsmCryptoError("could not build CKM_AES_GCM mechanism param")
+        except Exception as exc:
+            # Builds differ in which parameter shape they accept; keep the last
+            # failure so the error raised below names a real cause.
+            last_error = exc
+    raise HsmCryptoError("could not build CKM_AES_GCM mechanism param") from last_error

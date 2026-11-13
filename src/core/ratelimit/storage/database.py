@@ -95,8 +95,10 @@ class DatabaseStorage(RateLimitStorage):
                     )""",
                     (excess,),
                 )
-        except Exception:
-            pass
+        except Exception as prune_error:
+            import utils.logger as logger
+
+            logger.debug(f"rate limit bucket prune failed: {prune_error}")
 
     def get_bucket(self, key: str) -> Optional[Dict[str, Any]]:
         """Get bucket state."""
@@ -415,8 +417,10 @@ class DatabaseStorage(RateLimitStorage):
         """Roll back any open transaction without masking the original error."""
         try:
             self._db.rollback()
-        except Exception:
-            pass
+        except Exception as rollback_error:
+            import utils.logger as logger
+
+            logger.debug(f"rate limit storage rollback failed: {rollback_error}")
 
     def _fail_closed(self, exc: Exception, capacity: int) -> tuple:
         """Deny the request after a non-retryable backend error."""

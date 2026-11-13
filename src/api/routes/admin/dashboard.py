@@ -233,8 +233,9 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
         from src.api.websocket import get_poll_tuning
 
         old_tuning = get_poll_tuning()
-    except Exception:
-        pass  # audit best-effort — don't block the update
+    except Exception as audit_error:
+        # Audit is best-effort; the tuning update below still proceeds.
+        logger.debug(f"dashboard tuning audit failed: {audit_error}")
 
     try:
         from src.api.websocket import update_poll_tuning

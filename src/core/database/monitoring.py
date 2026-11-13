@@ -262,8 +262,11 @@ class DatabaseMonitor:
                                 severity="warning",
                                 target_path="#alerts",
                             )
-                        except Exception:
-                            pass
+                        except Exception as alert_error:
+                            # Alert delivery is a side channel; sampling continues.
+                            logger.debug(
+                                f"high utilization alert failed: {alert_error}"
+                            )
                 elif isinstance(util, (int, float)) and self._alert_state.get(
                     "high_utilization"
                 ):
@@ -282,8 +285,10 @@ class DatabaseMonitor:
                             severity="info",
                             target_path="#alerts",
                         )
-                    except Exception:
-                        pass
+                    except Exception as alert_error:
+                        logger.debug(
+                            f"utilization recovery alert failed: {alert_error}"
+                        )
 
                 if error_rate > self._error_rate_threshold:
                     logger.warning(
@@ -305,8 +310,8 @@ class DatabaseMonitor:
                                 severity="warning",
                                 target_path="#alerts",
                             )
-                        except Exception:
-                            pass
+                        except Exception as alert_error:
+                            logger.debug(f"high error rate alert failed: {alert_error}")
                 elif isinstance(error_rate, (int, float)) and self._alert_state.get(
                     "high_error_rate"
                 ):
@@ -325,8 +330,8 @@ class DatabaseMonitor:
                             severity="info",
                             target_path="#alerts",
                         )
-                    except Exception:
-                        pass
+                    except Exception as alert_error:
+                        logger.debug(f"error rate recovery alert failed: {alert_error}")
 
                 # Old connections warning
                 for old in stats.get("old_connections", []):

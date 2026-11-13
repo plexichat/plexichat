@@ -10,6 +10,7 @@ Tests cover:
 """
 
 import pytest
+import logging
 import os
 
 # common_utils is now a native package.
@@ -762,8 +763,10 @@ class TestPostgresFailedTransactionRecovery:
 
         try:
             postgres_db.execute("DROP TABLE IF EXISTS test_transactions_postgres")
-        except Exception:
-            pass
+        except Exception as drop_error:
+            logging.getLogger(__name__).debug(
+                f"postgres teardown drop failed: {drop_error}"
+            )
 
     def test_infailedsqltransaction_detection(self, postgres_db_with_table):
         """Test detection of InFailedSqlTransaction error by exception type."""

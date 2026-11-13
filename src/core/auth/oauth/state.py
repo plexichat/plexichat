@@ -152,8 +152,10 @@ class OAuthStateManager:
                     else "ALTER TABLE auth_oauth_states ADD COLUMN cookie_issued INTEGER DEFAULT 0"
                 )
                 self._db.execute(col)
-            except Exception:
-                pass  # Column added concurrently.
+            except Exception as exc:
+                # Expected when a concurrent process already added the column;
+                # anything else is worth seeing.
+                logger.debug(f"oauth state cookie_issued column add skipped: {exc}")
 
         # Index for cleanup queries
         self._db.execute(

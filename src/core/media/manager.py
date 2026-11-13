@@ -22,10 +22,10 @@ from typing import Optional
 from src.core.base import BaseManager
 
 # ── mixins ────────────────────────────────────────────────────────────────────
-from ._config import (  # noqa: F401  (re-exported for convenience)
-    DEFAULT_SIZE_LIMITS,
-    DEFAULT_ALLOWED_TYPES,
-    DEFAULT_THUMBNAIL_SIZES,
+from ._config import (
+    DEFAULT_SIZE_LIMITS as DEFAULT_SIZE_LIMITS,
+    DEFAULT_ALLOWED_TYPES as DEFAULT_ALLOWED_TYPES,
+    DEFAULT_THUMBNAIL_SIZES as DEFAULT_THUMBNAIL_SIZES,
 )
 from ._validation import _ValidationMixin
 from ._storage_setup import _StorageSetupMixin

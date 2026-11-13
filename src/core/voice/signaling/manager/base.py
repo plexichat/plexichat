@@ -193,15 +193,16 @@ class SignalingManagerBase:
 
                     if isinstance(self, QualityMixin):
                         self._sfu.set_quality_mixin(self)
-            except Exception:
-                pass
+            except Exception as mixin_error:
+                # Quality reporting degrades gracefully without the mixin.
+                logger.debug(f"SFU quality mixin attach failed: {mixin_error}")
             try:
                 if hasattr(self._sfu, "set_renegotiation_sink"):
                     sink = getattr(self, "on_renegotiation_needed", None)
                     if callable(sink):
                         self._sfu.set_renegotiation_sink(sink)
-            except Exception:
-                pass
+            except Exception as sink_error:
+                logger.debug(f"SFU renegotiation sink attach failed: {sink_error}")
         return self._sfu
 
     async def close(self) -> None:
@@ -214,8 +215,8 @@ class SignalingManagerBase:
         if self._sfu is not None:
             try:
                 await self._sfu.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"SFU close failed: {close_error}")
             self._sfu = None
         self._connections.clear()
         self._rooms.clear()

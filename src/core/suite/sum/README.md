@@ -84,8 +84,8 @@ PlexiSum provides a spreadsheet-like engine with:
 | `container.py` | `.plexisum` container format (header + zstd + SHA-256) |
 | `segments.py` | Column segment encoding (plain, run-length, delta, dictionary) |
 | `formulas.py` | Bounded formula evaluator facade |
-| `_formula_core.py` | Formula tokenizer, parser, core evaluator |
-| `_formula_advanced.py` | Advanced formula functions |
+| `_formula_core/` | Formula tokenizer, parser, core evaluator (mixin package) |
+| `_formula_advanced/` | Advanced formula functions (mixin package) |
 | `_formula_shared.py` | Shared formula constants, error codes, cell resolver protocol |
 | `_formula_protocol.py` | Formula protocol definitions |
 | `_shared.py` | Constants, errors, blob stores, session state |

@@ -244,8 +244,8 @@ class ChannelMixin:
                         user = auth.get_user(rid)
                         if user:
                             recipient_username = user.username
-                    except Exception:
-                        pass
+                    except Exception as user_error:
+                        logger.debug(f"DM recipient lookup failed: {user_error}")
 
                 return DMChannelResponse(
                     id=SnowflakeID(channel.id),

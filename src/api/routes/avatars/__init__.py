@@ -27,59 +27,65 @@ from typing import Any, cast
 # Submodules are imported so they remain accessible as package attributes
 # (e.g. ``avatars.validation``, ``avatars.storage``) and their public names are
 # re-exported below for backward compatibility.
-from . import constants, errors, models, storage, validation  # noqa: F401
-from .routes import (  # noqa: F401
-    router,
-    get_user_avatar,
-    upload_my_avatar,
-    delete_my_avatar,
-    get_server_icon,
-    upload_server_icon,
-    delete_server_icon,
+from . import (
+    constants as constants,
+    errors as errors,
+    models as models,
+    storage as storage,
+    validation as validation,
 )
-from .storage import (  # noqa: F401
-    _BoundedChecksumCache,
-    _cache_set_checksum,
-    _avatar_checksum_cache,
-    _icon_checksum_cache,
-    _invalidate_user_avatar_cache,
-    _invalidate_server_icon_cache,
+from .routes import (
+    router as router,
+    get_user_avatar as get_user_avatar,
+    upload_my_avatar as upload_my_avatar,
+    delete_my_avatar as delete_my_avatar,
+    get_server_icon as get_server_icon,
+    upload_server_icon as upload_server_icon,
+    delete_server_icon as delete_server_icon,
 )
-from .constants import (  # noqa: F401
-    AVATAR_MAX_FILE_SIZE_DEFAULT,
-    AVATAR_MAX_DIMENSION_DEFAULT,
-    AVATAR_MAX_PIXELS_DEFAULT,
-    AVATAR_ALLOWED_TYPES_DEFAULT,
-    AVATAR_DEFAULT_COLORS_DEFAULT,
-    USER_AVATAR_URL_PREFIX,
-    SERVER_ICON_URL_PREFIX,
-    _MAX_CHECKSUM_CACHE_ENTRIES,
-    _CHECKSUM_CACHE_TTL_SEC,
-    is_safe_avatar_identifier,
+from .storage import (
+    _BoundedChecksumCache as _BoundedChecksumCache,
+    _cache_set_checksum as _cache_set_checksum,
+    _avatar_checksum_cache as _avatar_checksum_cache,
+    _icon_checksum_cache as _icon_checksum_cache,
+    _invalidate_user_avatar_cache as _invalidate_user_avatar_cache,
+    _invalidate_server_icon_cache as _invalidate_server_icon_cache,
 )
-from .validation import (  # noqa: F401
-    validate_avatar_upload,
-    validate_upload_magic_bytes,
-    validate_upload_size,
-    is_serve_safe,
-    parse_server_id,
-    sanitize_filename,
-    max_file_size,
-    allowed_types,
+from .constants import (
+    AVATAR_MAX_FILE_SIZE_DEFAULT as AVATAR_MAX_FILE_SIZE_DEFAULT,
+    AVATAR_MAX_DIMENSION_DEFAULT as AVATAR_MAX_DIMENSION_DEFAULT,
+    AVATAR_MAX_PIXELS_DEFAULT as AVATAR_MAX_PIXELS_DEFAULT,
+    AVATAR_ALLOWED_TYPES_DEFAULT as AVATAR_ALLOWED_TYPES_DEFAULT,
+    AVATAR_DEFAULT_COLORS_DEFAULT as AVATAR_DEFAULT_COLORS_DEFAULT,
+    USER_AVATAR_URL_PREFIX as USER_AVATAR_URL_PREFIX,
+    SERVER_ICON_URL_PREFIX as SERVER_ICON_URL_PREFIX,
+    _MAX_CHECKSUM_CACHE_ENTRIES as _MAX_CHECKSUM_CACHE_ENTRIES,
+    _CHECKSUM_CACHE_TTL_SEC as _CHECKSUM_CACHE_TTL_SEC,
+    is_safe_avatar_identifier as is_safe_avatar_identifier,
 )
-from .errors import (  # noqa: F401
-    AvatarError,
-    AvatarValidationError,
-    AvatarNotFoundError,
-    AvatarStorageError,
-    AvatarUnauthorizedError,
-    AvatarForbiddenError,
+from .validation import (
+    validate_avatar_upload as validate_avatar_upload,
+    validate_upload_magic_bytes as validate_upload_magic_bytes,
+    validate_upload_size as validate_upload_size,
+    is_serve_safe as is_serve_safe,
+    parse_server_id as parse_server_id,
+    sanitize_filename as sanitize_filename,
+    max_file_size as max_file_size,
+    allowed_types as allowed_types,
 )
-from .models import (  # noqa: F401
-    AvatarMetadata,
-    AvatarUploadResult,
-    metadata_from_manager,
-    upload_result_from_manager,
+from .errors import (
+    AvatarError as AvatarError,
+    AvatarValidationError as AvatarValidationError,
+    AvatarNotFoundError as AvatarNotFoundError,
+    AvatarStorageError as AvatarStorageError,
+    AvatarUnauthorizedError as AvatarUnauthorizedError,
+    AvatarForbiddenError as AvatarForbiddenError,
+)
+from .models import (
+    AvatarMetadata as AvatarMetadata,
+    AvatarUploadResult as AvatarUploadResult,
+    metadata_from_manager as metadata_from_manager,
+    upload_result_from_manager as upload_result_from_manager,
 )
 
 # Optional-dependency shim kept for compatibility with code that reached for

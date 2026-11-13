@@ -35,15 +35,20 @@ class AdminSetupMixin(SetupServiceBase):
                 invalidate_pattern("token_verify:*")
                 invalidate_pattern("user_data:*")
                 cache_delete(f"user_profile:{user_id}")
-            except Exception:
-                pass
+            except Exception as cache_error:
+                logger.debug(
+                    f"selftest admin profile cache delete failed: {cache_error}"
+                )
         try:
             auth_mod = api.get_auth()
             if auth_mod is not None and hasattr(auth_mod, "revoke_permission"):
                 for perm in granted:
                     try:
                         auth_mod.revoke_permission(user_id, perm)
-                    except Exception:
+                    except Exception as revoke_error:
+                        logger.debug(
+                            f"selftest permission revoke failed: {revoke_error}"
+                        )
                         continue
         except Exception as e:
             logger.debug(f"Grant revocation note: {sanitize_error(e)}")
@@ -190,8 +195,8 @@ class AdminSetupMixin(SetupServiceBase):
                 db.execute(
                     "UPDATE admin_roles SET position = 100 WHERE name = 'super_admin'"
                 )
-            except Exception:
-                pass
+            except Exception as update_error:
+                logger.debug(f"super_admin position update failed: {update_error}")
 
             support_admin_row = db.fetch_one(
                 "SELECT id FROM admin_roles WHERE name = ?",
@@ -239,8 +244,8 @@ class AdminSetupMixin(SetupServiceBase):
                         support_admin_id,
                     ),
                 )
-            except Exception:
-                pass
+            except Exception as update_error:
+                logger.debug(f"support_admin update failed: {update_error}")
 
             mod_admin_row = db.fetch_one(
                 "SELECT id FROM admin_roles WHERE name = ?",
@@ -531,5 +536,5 @@ class AdminSetupMixin(SetupServiceBase):
                         created_at INTEGER NOT NULL
                     )
                 """)
-        except Exception:
-            pass
+        except Exception as seed_error:
+            logger.debug(f"selftest seed statement failed: {seed_error}")

@@ -45,8 +45,8 @@ class MediaMixin(EndpointTesterBase):
         if create_resp.status_code in (200, 201):
             try:
                 session_id = create_resp.json().get("session_id")
-            except Exception:
-                pass
+            except Exception as parse_error:
+                logger.debug(f"upload session id parse failed: {parse_error}")
 
         if not session_id:
             logger.debug(

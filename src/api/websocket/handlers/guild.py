@@ -175,8 +175,9 @@ class GuildHandler:
         presence_module = None
         try:
             presence_module = api.get_presence()
-        except Exception:
-            pass
+        except Exception as presence_error:
+            # The guild payload still goes out without presence data.
+            logger.debug(f"guild payload presence module unavailable: {presence_error}")
 
         user_cache: Dict[int, Any] = {}
         status_cache: Dict[int, str] = {}
@@ -190,8 +191,8 @@ class GuildHandler:
                 if auth:
                     try:
                         user_cache[u_id] = await run_in_threadpool(auth.get_user, u_id)
-                    except Exception:
-                        pass
+                    except Exception as user_error:
+                        logger.debug(f"guild member user lookup failed: {user_error}")
 
             if u_id not in status_cache:
                 status_cache[u_id] = "offline"
@@ -202,8 +203,10 @@ class GuildHandler:
                         )
                         if presence_status:
                             status_cache[u_id] = presence_status.status.value
-                    except Exception:
-                        pass
+                    except Exception as status_error:
+                        logger.debug(
+                            f"guild member presence lookup failed: {status_error}"
+                        )
 
             user = user_cache[u_id]
             member_list.append(

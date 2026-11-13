@@ -6,6 +6,7 @@ Provides session-scoped database with transaction-based isolation.
 
 import os
 import shutil
+import sqlite3
 import tempfile
 from typing import Optional
 
@@ -99,12 +100,12 @@ class DatabaseManager:
             try:
                 if self._in_transaction:
                     self._db.execute("ROLLBACK")
-            except Exception:
+            except (OSError, RuntimeError, sqlite3.Error):
                 pass
 
             try:
                 self._db.close()
-            except Exception:
+            except (OSError, RuntimeError, sqlite3.Error):
                 pass
 
             self._db = None
@@ -117,5 +118,5 @@ class DatabaseManager:
         try:
             if os.path.exists(self.test_dir):
                 shutil.rmtree(self.test_dir, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass

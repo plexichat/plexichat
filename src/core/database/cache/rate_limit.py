@@ -91,8 +91,9 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
                 )
             ):
                 return True, limit
-        except Exception:
-            pass
+        except Exception as feature_error:
+            # No feature override means no limit; the reason is still recorded.
+            logger.debug(f"rate-limit feature lookup failed: {feature_error}")
         return False, 0
 
 

@@ -248,8 +248,8 @@ class ConnectionHandler:
                         "avatar": None,
                         "bot": False,
                     }
-            except Exception:
-                pass
+            except Exception as member_error:
+                logger.debug(f"ready payload member lookup failed: {member_error}")
 
         # P1 parity: the client reads data.user.presence.status on boot to
         # honour the server-known status (including a persisted idle/dnd).
@@ -265,8 +265,8 @@ class ConnectionHandler:
                     if hasattr(status_enum, "value")
                     else str(status_enum)
                 )
-            except Exception:
-                pass
+            except Exception as status_error:
+                logger.debug(f"ready payload presence status failed: {status_error}")
         user_data["presence"] = {"status": presence_status}
 
         # Resolve guilds through the INJECTED servers boundary only, so the
@@ -290,8 +290,8 @@ class ConnectionHandler:
                             "unavailable": False,
                         }
                     )
-            except Exception:
-                pass
+            except Exception as payload_error:
+                logger.debug(f"ready payload enrichment failed: {payload_error}")
 
         return {
             "v": 10,

@@ -374,8 +374,8 @@ class DataExportMixin:
                 finally:
                     try:
                         raw_stream.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(f"dsar export stream close failed: {close_error}")
 
                 # Reached only when the loop above completed without
                 # GeneratorExit/cancellation (i.e. all bytes sent).

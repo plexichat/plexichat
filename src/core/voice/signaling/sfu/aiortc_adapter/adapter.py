@@ -435,7 +435,8 @@ class AiortcAdapter(SFUAdapter):
         for peer in self._rooms[room_id].values():
             try:
                 senders = list(peer.pc.getSenders())
-            except Exception:
+            except Exception as sender_error:
+                logger.debug(f"peer sender enumeration failed: {sender_error}")
                 continue
             for sender in senders:
                 if (

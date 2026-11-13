@@ -44,7 +44,10 @@ async def get_user_audit_logs(
                 perms = servers_mod.get_permissions(current_user.user_id, int(sid))
                 if perms.get("server.view_audit_log", False):
                     visible_server_ids.append(int(sid))
-            except Exception:
+            except Exception as perm_error:
+                logger.debug(
+                    f"audit log permission check failed for {sid}: {perm_error}"
+                )
                 continue
 
     if not visible_server_ids:

@@ -38,13 +38,13 @@ class EmojiOpsMixin(ReactionProtocol):
                 )
                 if not row:
                     return
-        except Exception:
-            pass
+        except Exception as column_error:
+            logger.debug(f"emoji migration column probe failed: {column_error}")
         try:
             self._db.execute("SELECT url FROM react_custom_emoji LIMIT 1")
             return  # columns already present
-        except Exception:
-            pass
+        except Exception as probe_error:
+            logger.debug(f"emoji table needs migration: {probe_error}")
         logger.info("Migrating react_custom_emoji table with new columns")
         migrations = [
             "ALTER TABLE react_custom_emoji ADD COLUMN url TEXT NOT NULL DEFAULT ''",

@@ -8,6 +8,7 @@ Provides AES-256-GCM encryption for files with:
 - Authenticated encryption with integrity verification
 """
 
+import contextlib
 import os
 import struct
 import hashlib
@@ -414,10 +415,10 @@ class StreamingFileEncryptor:
             checksum.update(chunk)
 
         # Restore position for callers that expect fully consumed streams
-        try:
+        with contextlib.suppress(OSError):
+            # Non-seekable streams (pipes, sockets) cannot be rewound; the
+            # caller asked for convenience, not for a guarantee.
             input_stream.seek(0)
-        except Exception:
-            pass
 
         return {
             "key_version": version,

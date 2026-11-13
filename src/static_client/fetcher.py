@@ -260,7 +260,12 @@ class GitLabReleaseClient:
                 continue
             try:
                 ver = parse_version(tag)
-            except Exception:  # defensive against malformed tags
+            except (TypeError, ValueError) as tag_error:
+                # Defensive against malformed release tags; the log names the
+                # tag so a bad release can be fixed upstream.
+                logger.debug(
+                    f"skipping release with unparsable tag {tag!r}: {tag_error}"
+                )
                 continue
             assets = release.get("assets", {}) or {}
             links = assets.get("links", []) if isinstance(assets, dict) else []
@@ -410,7 +415,7 @@ def list_installed_versions(install_dir: Path) -> List[InstalledVersion]:
             continue
         try:
             parse_version(entry.name)
-        except Exception:  # skip non-version directories
+        except (TypeError, ValueError):  # skip non-version directories
             continue
         out.append(InstalledVersion(version=entry.name, install_path=entry))
     out.sort(key=lambda iv: iv.version)

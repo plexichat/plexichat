@@ -588,7 +588,8 @@ def list_artifact_ops(
                     "op": _json_loads(row.get("data")),
                 }
             )
-        except Exception:  # pragma: no cover - defensive
+        except Exception as row_error:  # pragma: no cover - defensive
+            logger.debug(f"skipping unreadable artifact history row: {row_error}")
             continue
     return ops
 
@@ -705,7 +706,8 @@ def get_active_voice_calls(db) -> List[VoiceCall]:
     for row in rows or []:
         try:
             calls.append(row_to_voice_call(row))
-        except Exception:
+        except Exception as row_error:
+            logger.debug(f"skipping unreadable voice call row: {row_error}")
             continue
     return calls
 

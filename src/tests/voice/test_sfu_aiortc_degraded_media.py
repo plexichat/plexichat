@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import fractions
+import logging
 
 import pytest
 
@@ -82,9 +83,9 @@ class _Collector:
             while True:
                 frame = await track.recv()
                 self.frames.append(frame)
-        except Exception:
+        except Exception as recv_error:
             # Receiver track ended (pc closed); nothing more to collect.
-            pass
+            logging.getLogger(__name__).debug(f"receiver track drained: {recv_error}")
 
     async def stop(self) -> None:
         if self._task is not None:

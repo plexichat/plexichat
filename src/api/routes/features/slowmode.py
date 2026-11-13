@@ -76,7 +76,8 @@ async def set_channel_slowmode(
             ):
                 can_manage = True
                 break
-        except Exception:
+        except Exception as perm_error:
+            logger.debug(f"slowmode manage check failed: {perm_error}")
             continue
     if not can_manage:
         raise_forbidden("Missing permission to manage this channel")

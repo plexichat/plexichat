@@ -146,6 +146,8 @@ class SelfTestContext:
             if session is not None:
                 try:
                     session.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"selftest session close failed: {close_error}")
                 setattr(self, attr, None)

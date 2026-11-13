@@ -44,8 +44,10 @@ def _get_servers_module():
                 servers = get_servers()
                 if servers:
                     return servers
-            except Exception:
-                pass
+            except Exception as lookup_error:
+                # The servers module may not be initialised yet; fall through to
+                # the direct import below.
+                logger.debug(f"servers module lookup failed: {lookup_error}")
     try:
         from src.core import servers
 
@@ -559,8 +561,9 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
             client = get_client()
             if client:
                 client.delete(f"recent_messages:{msg_row['conversation_id']}")
-        except Exception:
-            pass
+        except Exception as cache_error:
+            # Cache eviction is advisory; the edit is already committed.
+            logger.debug(f"recent message cache evict failed: {cache_error}")
 
         self._cleanup_thread_links(message_id)
 
@@ -656,8 +659,8 @@ class EditDeleteMixin(BaseService, MessageServiceProtocol):
                     client = get_client()
                     if client:
                         client.delete(f"recent_messages:{msg_row['conversation_id']}")
-                except Exception:
-                    pass
+                except Exception as cache_error:
+                    logger.debug(f"recent message cache evict failed: {cache_error}")
 
                 self._cleanup_thread_links(message_id)
 

@@ -154,8 +154,8 @@ class EmbedAttachmentMixin(EmbedManagerProtocol):
         except Exception:
             try:
                 self._db.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_error:
+                logger.debug(f"embed attachment rollback failed: {rollback_error}")
             raise
 
         logger.debug(f"Embed {embed_id} attached to message {message_id}")

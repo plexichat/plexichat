@@ -8,7 +8,7 @@ The runner at `plexichat/src/core/selftest/runner.py:64` composes all services a
 
 | Service | Source file | Description |
 | --- | --- | --- |
-| `DataGenerator` | `plexichat/src/core/selftest/services/data.py:20` | Generate snowflake IDs, build request bodies from OpenAPI schemas, and resolve path parameters to concrete test IDs. |
+| `DataGenerator` | `plexichat/src/core/selftest/services/data/` | Generate snowflake IDs, build request bodies from OpenAPI schemas, and resolve path parameters to concrete test IDs. |
 | `RouteDiscovery` | `plexichat/src/core/selftest/services/discovery.py:15` | Fetch `/openapi.json`, extract the route list, and provide license-gating helpers such as `plexijoin_expected_statuses()`. |
 | `SetupService` | `plexichat/src/core/selftest/services/setup/composer.py:19` | Create test users, servers, channels, roles, and feature resources. See [Setup service](setup/README.md). |
 | `CleanupService` | `plexichat/src/core/selftest/services/cleanup.py:17` | Perform pre-test truncation, recursive deletion, and API plus SQL cleanup. |

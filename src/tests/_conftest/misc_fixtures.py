@@ -38,7 +38,7 @@ def mocker():
                 p = self._patches.pop()
                 try:
                     p.stop()
-                except Exception:
+                except (AttributeError, RuntimeError):
                     pass
 
     m = Mocker()

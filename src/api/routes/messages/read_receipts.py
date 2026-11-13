@@ -75,8 +75,8 @@ async def get_unread_count(
                     and channel.conversation_id
                 ):
                     conv_id = channel.conversation_id
-            except Exception:
-                pass
+            except Exception as channel_error:
+                logger.debug(f"read receipt channel resolution failed: {channel_error}")
 
         counts = await run_in_threadpool(
             messaging.get_unread_count, current_user.user_id, conv_id
@@ -181,8 +181,11 @@ async def acknowledge_messages(
                     if channel_type_str in ("voice", "stage"):
                         # Voice channels don't have messages - return success with 0 marked
                         return AckResponse(success=True, messages_marked=0)
-            except Exception:
-                pass  # If we can't check, continue with normal flow
+            except Exception as channel_error:
+                # If the channel lookup fails, continue with the normal flow.
+                logger.debug(
+                    f"read receipt voice channel check failed: {channel_error}"
+                )
 
         # ``message_id`` is a client-supplied optional cursor, so it needs the
         # same guard as ``channel_id`` above: a non-numeric value used to
@@ -396,8 +399,11 @@ async def _dispatch_message_ack_broadcast(
                 if channel:
                     is_server_channel = True
                     server_id = getattr(channel, "server_id", None)
-            except Exception:
-                pass  # Fall through to the participant lookup below.
+            except Exception as channel_error:
+                # Fall through to the participant lookup below.
+                logger.debug(
+                    f"read receipt server channel check failed: {channel_error}"
+                )
         try:
             if is_server_channel and server_id is not None and servers_mod is not None:
                 user_ids = servers_mod.get_member_user_ids(int(server_id))

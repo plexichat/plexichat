@@ -96,8 +96,10 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
                         polls_module.delete_poll(
                             current_user.user_id, int(metadata["poll_id"])
                         )
-                    except Exception:
-                        pass
+                    except Exception as poll_error:
+                        logger.debug(
+                            f"poll close on message delete failed: {poll_error}"
+                        )
 
             servers_mod = api.get_servers()
 
@@ -121,8 +123,10 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
                             author_username = user.username
                             author_avatar_url = getattr(user, "avatar_url", None)
                             author_badges = getattr(user, "badges", []) or []
-                    except Exception:
-                        pass
+                    except Exception as badge_error:
+                        logger.debug(
+                            f"delete broadcast badge lookup failed: {badge_error}"
+                        )
 
                 reactions_data = []
                 reactions_module = api.get_reactions()

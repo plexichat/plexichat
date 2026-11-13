@@ -66,14 +66,18 @@ class ChannelWebhooksMixin(ChannelBase):
                 try:
                     if servers_mod.get_channel(cid, current_user.user_id):
                         has_access = True
-                except Exception:
-                    pass
+                except Exception as channel_error:
+                    logger.debug(
+                        f"webhook channel access check failed: {channel_error}"
+                    )
             if not has_access and messaging_mod:
                 try:
                     if messaging_mod.get_conversation(cid, current_user.user_id):
                         has_access = True
-                except Exception:
-                    pass
+                except Exception as conv_error:
+                    logger.debug(
+                        f"webhook conversation access check failed: {conv_error}"
+                    )
 
             if not has_access:
                 exists = False

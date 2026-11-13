@@ -209,8 +209,10 @@ class DatabaseConnectionMixin:
                 )
                 try:
                     self.engine.close_connection(conn, self._pool, {"close": True})
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    # The thread-local is discarded below either way; a leak here
+                    # is exactly what an operator needs to see.
+                    logger.debug(f"stale connection close failed: {close_error}")
                 self._local.connection = None
                 self._local.last_valid_check = 0
                 self._local.last_validation = 0
@@ -237,8 +239,8 @@ class DatabaseConnectionMixin:
         if callable(touch):
             try:
                 touch(conn, in_transaction)
-            except Exception:
-                pass
+            except Exception as touch_error:
+                logger.debug(f"connection touch hook failed: {touch_error}")
 
     def connect(self: _DatabaseConnectionProtocol) -> Optional[DbConnection]:
         with self._lock:
@@ -247,8 +249,8 @@ class DatabaseConnectionMixin:
                     self.engine.close_connection(
                         self._local.connection, self._pool, {"close": True}
                     )
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    logger.debug(f"connection close failed: {close_error}")
                 self._local.connection = None
 
             logger.debug("Acquiring new database connection")
@@ -366,8 +368,8 @@ class DatabaseConnectionMixin:
             ):
                 try:
                     conn.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_error:
+                    logger.debug(f"connection rollback failed: {rollback_error}")
 
             if self.type == "sqlite" and not is_closed:
                 try:
@@ -511,8 +513,8 @@ class DatabaseConnectionMixin:
                 reaped = pool_reap(MONITOR_IDLE_RECLAIM_SECONDS)
                 if isinstance(reaped, int):
                     reaped_count += reaped
-        except Exception:
-            pass
+        except Exception as reap_error:
+            logger.debug(f"idle connection reclaim failed: {reap_error}")
 
         return reaped_count
 

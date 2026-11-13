@@ -41,8 +41,8 @@ class BotMixin(EndpointTesterBase):
                                 "Bot already approved by auto-loop, skipping test"
                             )
                             return
-            except Exception:
-                pass
+            except Exception as bot_error:
+                logger.debug(f"selftest bot creation lookup failed: {bot_error}")
 
         logger.info("Testing bot server integration (request -> approve)...")
 
@@ -65,7 +65,8 @@ class BotMixin(EndpointTesterBase):
                 if _probe.status_code == 200:
                     _req_session = _cand
                     break
-            except Exception:
+            except Exception as session_error:
+                logger.debug(f"selftest request session probe failed: {session_error}")
                 continue
         if _req_session is None:
             # Last resort: fresh login as other (credentials are known and
@@ -86,8 +87,8 @@ class BotMixin(EndpointTesterBase):
                             )
                             self.ctx.other_token = _tok
                             _req_session = self.ctx.other_session
-            except Exception:
-                pass
+            except Exception as session_error:
+                logger.debug(f"selftest other session unavailable: {session_error}")
         if _req_session is None:
             _req_session = self.ctx.session
         req_body = {"application_id": str(self.ctx.test_application_id)}
@@ -121,8 +122,8 @@ class BotMixin(EndpointTesterBase):
                         logger.debug(
                             f"Captured bot request ID: {self.ctx.test_bot_request_id}"
                         )
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.debug(f"selftest bot cleanup failed: {cleanup_error}")
                 logger.info(
                     f"Bot request PASSED -> {resp.status_code} ({duration:.1f}ms)"
                 )

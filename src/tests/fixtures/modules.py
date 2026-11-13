@@ -40,7 +40,7 @@ class ModuleRegistry:
                 close = getattr(module._manager, "close", None)
                 if callable(close):
                     close()
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
         module._manager = None
         module._setup_complete = False

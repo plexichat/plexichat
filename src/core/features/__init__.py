@@ -501,8 +501,8 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
             if valkey_available():
                 cache_delete(f"user_profile:{user_id}")
-        except Exception:
-            pass
+        except Exception as cache_error:
+            logger.debug(f"feature cache invalidate failed: {cache_error}")
 
         logger.info(f"Added badge '{badge}' to user {user_id} by admin {admin_id}")
 
@@ -542,8 +542,8 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
 
             if valkey_available():
                 cache_delete(f"user_profile:{user_id}")
-        except Exception:
-            pass
+        except Exception as cache_error:
+            logger.debug(f"feature cache invalidate failed: {cache_error}")
 
         logger.info(f"Removed badge '{badge}' from user {user_id} by admin {admin_id}")
 

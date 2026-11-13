@@ -24,8 +24,8 @@ def _user_to_response(user, include_private: bool = False) -> UserResponse:
 
                 if features._setup_complete:
                     badges = features.get_user_badges(int(user_id or 0))
-            except Exception:
-                pass
+            except Exception as badge_error:
+                logger.debug(f"user badge lookup failed: {badge_error}")
 
         return UserResponse(
             id=SnowflakeID(user_id),

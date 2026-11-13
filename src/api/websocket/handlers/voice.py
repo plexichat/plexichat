@@ -496,8 +496,8 @@ class VoiceHandler:
                     from src.core.voice import signaling
 
                     signaling.record_activity(connection.user_id)
-                except Exception:
-                    pass
+                except Exception as activity_error:
+                    logger.debug(f"voice activity record failed: {activity_error}")
                 await self._dispatch_voice_state_update(
                     user_id=connection.user_id,
                     channel_id_for_recipients=channel_id,
@@ -580,8 +580,8 @@ class VoiceHandler:
                     )
                     if channel:
                         server_id = getattr(channel, "server_id", None)
-                except Exception:
-                    pass
+                except Exception as channel_error:
+                    logger.debug(f"voice channel server lookup failed: {channel_error}")
 
             if not server_id:
                 return
@@ -634,8 +634,8 @@ class VoiceHandler:
                     )
                     if channel:
                         server_id = getattr(channel, "server_id", None)
-                except Exception:
-                    pass
+                except Exception as channel_error:
+                    logger.debug(f"voice channel server lookup failed: {channel_error}")
 
             event = payloads.create_voice_state_update(
                 user_id=user_id,
@@ -679,7 +679,8 @@ class VoiceHandler:
             try:
                 if self._servers.get_channel(channel_id, member_user_id):
                     visible_user_ids.append(member_user_id)
-            except Exception:
+            except Exception as member_error:
+                logger.debug(f"voice state visibility check failed: {member_error}")
                 continue
 
         return visible_user_ids

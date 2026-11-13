@@ -10,7 +10,7 @@ Each file defines one mixin or the composition class. Do not import mixins direc
 | --- | --- | --- |
 | `base.py` | `AuthManager` | Compose all mixins and provide shared helpers (`__init__`, `_log_audit`, `_track_ip`, `_track_device`, `_encrypt_ua`, `_ua_index`, serialization, config access, `_ensure_system_user`, `_get_timestamp`) |
 | `registration.py` | `RegistrationMixin` | Register users, verify email, resend verification |
-| `session.py` | `SessionMixin` | Log in, create sessions, verify tokens, refresh or revoke sessions, handle failed logins |
+| `session/` | `SessionMixin` | Compose `login.py` (log in, create sessions, failed-login throttling), `verification.py` (session/bot token verification), `tickets.py` (single-use gateway tickets) and `lifecycle.py` (refresh, revoke, list, logout) |
 | `twofactor.py` | `TwoFactorMixin` | Create 2FA challenges and manage setup, confirmation, disable, and backup codes |
 | `password.py` | `PasswordMixin` | Change passwords, request and reset passwords, validate password strength |
 | `bot.py` | `BotMixin` | Create, fetch, list, update, disable, enable, and delete bots and bot tokens |

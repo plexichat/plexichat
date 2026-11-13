@@ -105,8 +105,9 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                 checksum = avatars.get_user_avatar_checksum(uid)
                 if checksum:
                     _cache_set_checksum(_avatar_checksum_cache, uid, checksum)
-            except Exception:
-                pass
+            except Exception as cache_error:
+                # The avatar is still served; only the ETag cache misses.
+                logger.debug(f"avatar checksum cache store failed: {cache_error}")
 
         # Flexible ETag check (handles weak tags and quotes). Only an exact
         # match is accepted - a substring check previously let any client ETag
@@ -153,8 +154,8 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                             ).strip()
                             if username:
                                 initials = username[: min(2, len(username))].upper()
-                except Exception:
-                    pass
+                except Exception as initial_error:
+                    logger.debug(f"avatar initials fallback failed: {initial_error}")
 
                 svg_content = generate_default_svg(username or str(uid), initials)
                 # Ensure content is encoded before hashing
@@ -479,8 +480,8 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
                 checksum = avatars.get_server_icon_checksum(sid)
                 if checksum:
                     _cache_set_checksum(_icon_checksum_cache, sid, checksum)
-            except Exception:
-                pass
+            except Exception as cache_error:
+                logger.debug(f"server icon checksum cache store failed: {cache_error}")
 
         if checksum and etag_client == f'"{checksum}"':
             return Response(status_code=304)

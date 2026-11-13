@@ -890,8 +890,8 @@ class ChunkedUploadManager:
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.unlink(temp_path)
-                except Exception:
-                    pass
+                except OSError as unlink_error:
+                    logger.debug(f"chunked upload temp unlink failed: {unlink_error}")
 
             self._db.execute(
                 "DELETE FROM media_upload_sessions WHERE id = ?", (session_id,)

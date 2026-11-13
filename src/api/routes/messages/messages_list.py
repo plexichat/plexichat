@@ -181,8 +181,8 @@ async def get_channel_messages(
                     }
                     for uid, u in users.items()
                 }
-            except Exception:
-                pass
+            except Exception as user_error:
+                logger.debug(f"message list author enrichment failed: {user_error}")
 
         # OPTIMIZATION: Pre-fetch file IDs for attachments to avoid N+1 in _message_to_response
         media = api.get_media()

@@ -11,17 +11,13 @@ Tests WebSocket critical paths:
 """
 
 import pytest
+from importlib.util import find_spec
 import time
 from unittest.mock import AsyncMock, MagicMock
 
 # Check if pytest-benchmark is available (the benchmark fixture only exists
 # when the plugin is installed; without it those tests error at setup).
-try:
-    import pytest_benchmark  # noqa: F401
-
-    HAS_BENCHMARK = True
-except ImportError:
-    HAS_BENCHMARK = False
+HAS_BENCHMARK = find_spec("pytest_benchmark") is not None
 
 # All tests in this module assert wall-clock timing bounds, so they are
 # inherently load-sensitive and must not run in the default fast suite

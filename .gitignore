@@ -75,7 +75,11 @@ safety-*.json
 *.db
 *.sqlite
 *.sqlite3
+# The runtime data directory. The negation keeps package directories that are
+# also named ``data`` (e.g. src/core/selftest/services/data/) committable:
+# without it, ``git add`` skipped the whole package silently.
 data/
+!src/core/selftest/services/data/
 
 # Uploads and media
 uploads/

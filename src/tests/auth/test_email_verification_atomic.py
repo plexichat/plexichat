@@ -52,7 +52,7 @@ class TestEmailVerificationAtomic:
         def worker():
             try:
                 barrier.wait(timeout=10)
-            except Exception:
+            except threading.BrokenBarrierError:
                 pass
             results.append(auth_manager.verify_email(token))
 

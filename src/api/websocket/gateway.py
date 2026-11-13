@@ -157,8 +157,8 @@ async def _dispatch_offline_presence(
                 friend_ids = relationships.get_friend_ids(user_id)
                 if friend_ids:
                     target_user_ids.update(friend_ids)
-            except Exception:
-                pass
+            except Exception as friend_error:
+                logger.debug(f"presence broadcast friend lookup failed: {friend_error}")
 
         # Add server members (users in shared servers) - Optimized single query
         servers = api.get_servers()
@@ -184,8 +184,10 @@ async def _dispatch_offline_presence(
                         target_user_ids.discard(int(bid))
                     except (ValueError, TypeError):
                         continue
-            except Exception:
-                pass
+            except Exception as member_error:
+                logger.debug(
+                    f"presence broadcast member enumeration failed: {member_error}"
+                )
 
         # Clear typing indicators and dispatch TYPING_STOP events to the
         # channel members who were actually able to see the typing
@@ -567,6 +569,6 @@ async def _close_connection(connection: Connection, close_code: int) -> None:
         await connection.websocket.close(
             code=close_code, reason=get_close_message(close_code)
         )
-    except Exception:
-        pass
+    except Exception as close_error:
+        logger.debug(f"websocket gateway close failed: {close_error}")
     connection.set_disconnected()

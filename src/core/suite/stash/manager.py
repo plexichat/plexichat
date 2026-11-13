@@ -11,11 +11,11 @@ shared exception types in ``_shared.py``.
 
 from src.core.base import BaseManager
 
-from ._shared import (  # noqa: F401  (facade re-exports)
-    StashNotFoundError,
-    StashPermissionError,
-    StashStorageError,
-    StashValidationError,
+from ._shared import (
+    StashNotFoundError as StashNotFoundError,
+    StashPermissionError as StashPermissionError,
+    StashStorageError as StashStorageError,
+    StashValidationError as StashValidationError,
 )
 from .stash_manager_base import StashManagerBase
 from .stash_manager_collections import StashManagerCollections

@@ -100,8 +100,9 @@ def _get_upload_limit(user_id: Optional[int] = None) -> int:
                     tier_limits = features.get_user_tier_limits(user_id)
                     if tier_limits and tier_limits.max_file_size_mb:
                         return tier_limits.max_file_size_mb * 1024 * 1024
-            except Exception:
-                pass
+            except Exception as tier_error:
+                # Fall through to the configured global limit.
+                logger.debug(f"channel tier file limit lookup failed: {tier_error}")
 
         media_config = config.get("media", {})
         size_limits = media_config.get("size_limits", {})

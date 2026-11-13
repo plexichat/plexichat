@@ -10,35 +10,24 @@ from __future__ import annotations
 
 import importlib
 import time
-from typing import Any
 
 # Optional aiortc deps are resolved at import time and exposed as patchable
 # module attributes. The adapter resolves them from this package module at call
 # time so test monkeypatches on ``aiortc_adapter.RTCPeerConnection`` /
 # ``MediaRecorder`` / availability flags take effect.
-RTCPeerConnection: Any = None
-AIORTC_AVAILABLE = False
-try:
-    from aiortc import RTCPeerConnection as _RTCPeerConnection
+from ._deps import (
+    AIORTC_AVAILABLE,
+    AIORTC_RECORDING_AVAILABLE,
+    MediaRecorder,
+    RTCPeerConnection,
+)
 
-    RTCPeerConnection = _RTCPeerConnection
-    AIORTC_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    pass
-
-MediaRecorder: Any = None
-AIORTC_RECORDING_AVAILABLE = False
-try:
-    from aiortc.contrib.media import MediaRecorder as _MediaRecorder
-
-    MediaRecorder = _MediaRecorder
-    AIORTC_RECORDING_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    pass
-
-from ..acoustic_defense import AudioProcessingTrack  # noqa: E402
-from .adapter import AiortcAdapter, _total_bytes_sent  # noqa: E402
-from .constants import (  # noqa: E402
+from ..acoustic_defense import AudioProcessingTrack as AudioProcessingTrack
+from .adapter import (
+    AiortcAdapter as AiortcAdapter,
+    _total_bytes_sent as _total_bytes_sent,
+)
+from .constants import (
     _DEFAULT_CLOCK_RATE as DEFAULT_CLOCK_RATE,
     DEFAULT_MAX_INCOMING_TRACKS,
     DEGRADED_VIDEO_FPS,
@@ -49,21 +38,27 @@ from .constants import (  # noqa: E402
     MAX_SDP_BYTES,
     _CLOCK_RATES,
 )
-from .errors import SFUValidationError  # noqa: E402
-from .media import BoundedVideoTrack, _same_sender_track  # noqa: E402
-from .models import AiortcPeer  # noqa: E402
-from .sdp import (  # noqa: E402
-    _parse_dtls_params_from_sdp,
-    _parse_ice_candidates_from_sdp,
-    _parse_ice_params_from_sdp,
+from .errors import SFUValidationError as SFUValidationError
+from .media import (
+    BoundedVideoTrack as BoundedVideoTrack,
+    _same_sender_track as _same_sender_track,
 )
-from .stats import _as_number, _quality_metrics_from_stats  # noqa: E402
-from .validation import (  # noqa: E402
-    validate_ice_candidate_payload,
-    validate_identifier,
-    validate_payload_mapping,
-    validate_recording_output_dir,
-    validate_sdp_payload,
+from .models import AiortcPeer as AiortcPeer
+from .sdp import (
+    _parse_dtls_params_from_sdp as _parse_dtls_params_from_sdp,
+    _parse_ice_candidates_from_sdp as _parse_ice_candidates_from_sdp,
+    _parse_ice_params_from_sdp as _parse_ice_params_from_sdp,
+)
+from .stats import (
+    _as_number as _as_number,
+    _quality_metrics_from_stats as _quality_metrics_from_stats,
+)
+from .validation import (
+    validate_ice_candidate_payload as validate_ice_candidate_payload,
+    validate_identifier as validate_identifier,
+    validate_payload_mapping as validate_payload_mapping,
+    validate_recording_output_dir as validate_recording_output_dir,
+    validate_sdp_payload as validate_sdp_payload,
 )
 
 __all__ = [

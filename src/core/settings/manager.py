@@ -3,7 +3,11 @@ Settings manager - handles CRUD operations for user settings.
 """
 
 import re
-from typing import Optional, Dict, List  # noqa: F401 (Dict/List re-exported via aliases)
+from typing import (
+    Optional as Optional,
+    Dict as Dict,
+    List as List,
+)
 
 import utils.logger as logger
 

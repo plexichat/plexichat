@@ -13,7 +13,7 @@ All helpers are intentionally non-raising: a failure to dispatch must never
 break the underlying REST/CRUD operation that triggered it.
 """
 
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, ParamSpec
 
 import functools
 
@@ -22,10 +22,10 @@ import utils.logger as logger
 from .snowflakes import stringify_snowflake_ids
 from .types import EventType
 
-F = TypeVar("F", bound=Callable[..., None])
+P = ParamSpec("P")
 
 
-def _non_raising(fn: F) -> F:
+def _non_raising(fn: Callable[P, None]) -> Callable[P, None]:
     """Guard a gateway emitter so payload building cannot raise.
 
     ``_emit`` already swallows dispatch errors, but ``int(...)``/``str(...)``
@@ -37,14 +37,14 @@ def _non_raising(fn: F) -> F:
     """
 
     @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> None:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> None:
         try:
             fn(*args, **kwargs)
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"gateway_emit: failed to build {fn.__name__}: {e}")
             return None
 
-    return wrapper  # type: ignore[return-value]
+    return wrapper
 
 
 def _emit(

@@ -22,7 +22,9 @@ from pathlib import Path
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_CI_PATH = _REPO_ROOT / ".gitlab-ci.yml"
+# The commit pipeline. .gitlab-ci.yml at the root is the dispatcher that
+# includes this file; see the last test here for why.
+_CI_PATH = _REPO_ROOT / ".gitlab" / "ci" / "pipeline.yml"
 
 
 def _load_ci() -> dict:
@@ -112,3 +114,23 @@ def test_dind_sockets_require_tls():
         assert str(env.get("DOCKER_TLS_VERIFY", "")) == "1", (
             f"{name}: DOCKER_TLS_VERIFY must be enabled"
         )
+
+
+def test_the_live_smoke_gate_is_a_pipeline_of_its_own():
+    """The gate writes to production, so it is not part of a commit pipeline.
+
+    It used to be a ``when: manual`` job in this pipeline, which left every
+    pipeline in the "manual" state -- not green -- until someone clicked it, and
+    every push was an invitation to run it. It now lives in
+    .gitlab/ci/live-smoke.yml, included only for a pipeline started with
+    RUN_LIVE_SMOKE=1, and that pipeline creates the smoke job and nothing else.
+    """
+    dispatcher = (_REPO_ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    assert "local: .gitlab/ci/pipeline.yml" in dispatcher
+    assert "local: .gitlab/ci/live-smoke.yml" in dispatcher
+    assert 'RUN_LIVE_SMOKE == "1"' in dispatcher, (
+        "the smoke pipeline must be an explicit opt-in, not a per-commit job"
+    )
+    assert "live_smoke:" not in _CI_PATH.read_text(encoding="utf-8"), (
+        "live_smoke must not be a job of the commit pipeline any more"
+    )

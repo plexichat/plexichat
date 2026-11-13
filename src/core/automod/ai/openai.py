@@ -7,7 +7,9 @@ Makes real HTTP calls to OpenAI's moderation endpoint.
 import json
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from src.utils.outbound import urlopen
 from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
@@ -72,7 +74,7 @@ class OpenAIAdapter(BaseAIAdapter):
 
             request = Request(
                 self._api_url,
-                data=request_data,  # nosec B310
+                data=request_data,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
@@ -80,7 +82,7 @@ class OpenAIAdapter(BaseAIAdapter):
                 method="POST",
             )
 
-            with urlopen(request, timeout=self._timeout) as response:  # nosec: B310
+            with urlopen(request, timeout=self._timeout) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             return self._parse_response(response_data)

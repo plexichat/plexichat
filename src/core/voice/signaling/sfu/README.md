@@ -5,6 +5,8 @@ Selective Forwarding Unit integrations for voice/video.
 ## Backends
 
 - `mediasoup.py` - Mediasoup SFU adapter
+- `mediasoup_ws/` - Mediasoup WebSocket (protoo) adapter; the package
+  `__init__` is the historical `mediasoup_ws` module surface
 - `janus.py` - Janus WebRTC gateway adapter
 
 ## Usage

@@ -22,6 +22,7 @@ from ..models import (
     ServerSearchResult,
 )
 from ..exceptions import SearchIndexError, SearchBackendError
+from src.utils.outbound import urlopen
 
 
 class ElasticsearchIndexer(BaseIndexer):
@@ -38,7 +39,7 @@ class ElasticsearchIndexer(BaseIndexer):
         candidate_hosts = hosts or ["http://localhost:9200"]
         # SECURITY: same approach as the meilisearch indexer. The
         # configured host string is consumed by urllib with a
-        # blanket ``# nosec B310`` suppression; the suppression
+        # blanket bandit suppression; the suppression
         # guarantees nothing about the built-in SSRF vector. We
         # validate every configured host against the centralised
         # URLValidator BEFORE accepting the configuration so an
@@ -136,7 +137,7 @@ class ElasticsearchIndexer(BaseIndexer):
                     url, data=data, headers=headers, method=method
                 )
 
-                with urllib.request.urlopen(req, timeout=30) as response:  # nosec: B310
+                with urlopen(req, timeout=30) as response:
                     return json.loads(response.read().decode())
 
             except urllib.error.HTTPError as e:
@@ -328,7 +329,7 @@ class ElasticsearchIndexer(BaseIndexer):
                 method="POST",
             )
 
-            with urllib.request.urlopen(req, timeout=60) as response:  # nosec: B310
+            with urlopen(req, timeout=60) as response:
                 result = json.loads(response.read().decode())
 
             if result.get("errors"):

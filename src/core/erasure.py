@@ -342,7 +342,9 @@ def purge_orphaned_conversations(db: Any) -> List[int]:
         try:
             rows = _rows(db, query)
             break
-        except Exception:
+        except Exception as query_error:
+            # Try the next syntax variant; the last failure is what matters.
+            logger.debug(f"erasure query variant failed: {query_error}")
             continue
     if rows is None:
         logger.warning("Orphan conversation sweep skipped: required tables missing")

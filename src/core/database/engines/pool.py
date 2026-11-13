@@ -188,8 +188,12 @@ class ConnectionPool:
             self._in_use.discard(conn_id)
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                # The connection is leaving the pool either way; report the leak
+                # source rather than hiding it.
+                import utils.logger as logger
+
+                logger.debug(f"pool: reaped connection close failed: {close_error}")
             self._total_created -= 1
             reaped += 1
         if reaped:
@@ -231,8 +235,10 @@ class ConnectionPool:
             if force_close:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"pool: forced connection close failed: {close_error}")
                 self._total_created -= 1
                 self._condition.notify()
                 return
@@ -243,8 +249,10 @@ class ConnectionPool:
             else:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"pool: idle connection close failed: {close_error}")
                 self._total_created -= 1
 
     def close(self) -> None:
@@ -269,8 +277,10 @@ class ConnectionPool:
         for conn in conns:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                import utils.logger as logger
+
+                logger.debug(f"pool: connection closeall entry failed: {close_error}")
 
     # ``Database.reset()`` still calls ``closeall()`` as a fallback for
     # psycopg2-shaped mocks; keep the alias so that path stays quiet.

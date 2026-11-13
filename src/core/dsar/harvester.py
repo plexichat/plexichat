@@ -440,8 +440,8 @@ class DSARHarvester:
             if storage_path:
                 try:
                     ExportFormatGenerator(db=self._db).delete(storage_path)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.debug(f"dsar export cleanup failed: {cleanup_error}")
 
             from .audit_log import DSARLog
 

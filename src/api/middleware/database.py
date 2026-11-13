@@ -4,6 +4,8 @@ Database middleware - Ensures database connections are cleaned up after requests
 
 from starlette.types import ASGIApp, Receive, Send, Scope
 
+import utils.logger as logger
+
 
 class DatabaseMiddleware:
     """
@@ -45,12 +47,7 @@ class DatabaseMiddleware:
                 # invisible (bare ``except: pass``). Surface it so the
                 # operator can see leaked connections and dangling
                 # transactions instead of debugging mystery locks later.
-                try:
-                    import utils.logger as logger
-
-                    logger.warning(
-                        f"DatabaseMiddleware cleanup failed for {scope.get('path', '?')}: "
-                        f"{type(e).__name__}: {e}"
-                    )
-                except Exception:
-                    pass
+                logger.warning(
+                    f"DatabaseMiddleware cleanup failed for {scope.get('path', '?')}: "
+                    f"{type(e).__name__}: {e}"
+                )

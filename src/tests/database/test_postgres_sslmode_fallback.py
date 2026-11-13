@@ -13,11 +13,15 @@ No live PostgreSQL is needed — only ``pg8000`` for its module object, whose
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 pg8000_dbapi = pytest.importorskip("pg8000.dbapi")
 
-from src.core.database.engines.postgres import PostgresEngine  # noqa: E402
+PostgresEngine = importlib.import_module(
+    "src.core.database.engines.postgres"
+).PostgresEngine
 
 
 class _FakeConn:

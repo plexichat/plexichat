@@ -114,8 +114,13 @@ def create_tables(db):
                         f"USING CASE WHEN (\"{col}\"::text) ~ '^[0-9]+$' "
                         f'THEN "{col}"::bigint ELSE NULL END'
                     )
-                except Exception:
-                    pass
+                except Exception as column_error:
+                    # Column type differs between engines; NULL is a safe mapping.
+                    import utils.logger as logger
+
+                    logger.debug(
+                        f"automod column extraction unavailable: {column_error}"
+                    )
 
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_automod_rules_server 

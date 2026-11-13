@@ -17,7 +17,9 @@ import json
 from math import exp, inf
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from src.utils.outbound import urlopen
 from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
@@ -101,10 +103,10 @@ class ShieldstralAdapter(BaseAIAdapter):
                 self._endpoint_url,
                 data=json.dumps(request_data).encode("utf-8"),
                 headers=headers,
-                method="POST",  # nosec B310
+                method="POST",
             )
 
-            with urlopen(request, timeout=self._timeout) as response:  # nosec: B310
+            with urlopen(request, timeout=self._timeout) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             return self._parse_response(response_data)

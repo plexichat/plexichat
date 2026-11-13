@@ -1,6 +1,7 @@
 """Utility functions for KEK migration."""
 
 import base64
+import contextlib
 from pathlib import Path
 from typing import List
 
@@ -28,21 +29,17 @@ def decode_env_key(env_value: str, *, validate_quality: bool = False) -> bytes:
     """
     decoded = None
     # Try hex first (standard Plexichat production format: 64 hex chars = 32 bytes)
-    try:
+    with contextlib.suppress(ValueError, TypeError):
         key = bytes.fromhex(env_value)
         if len(key) == 32:
             decoded = key
-    except Exception:
-        pass
 
     # Try Base64 (alternative format)
     if decoded is None:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             key = base64.b64decode(env_value)
             if len(key) == 32:
                 decoded = key
-        except Exception:
-            pass
 
     if decoded is None:
         raise ValueError(

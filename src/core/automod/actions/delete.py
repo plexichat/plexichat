@@ -83,8 +83,11 @@ class DeleteMessageAction(BaseAction):
                     client = get_client()
                     if client:
                         client.delete(f"msg:recent:{violation.channel_id}")
-                except Exception:
-                    pass
+                except Exception as cache_error:
+                    # The message is already deleted; a stale cache entry ages out.
+                    logger.debug(
+                        f"automod recent-message cache evict failed: {cache_error}"
+                    )
             else:
                 self._messaging.delete_message(
                     user_id=bot_user_id,

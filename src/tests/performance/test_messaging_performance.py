@@ -14,15 +14,11 @@ import concurrent.futures
 from datetime import datetime
 
 import pytest
+from importlib.util import find_spec
 
 # Check if pytest-benchmark is available (the benchmark fixture only exists
 # when the plugin is installed; without it those tests error at setup).
-try:
-    import pytest_benchmark  # noqa: F401
-
-    HAS_BENCHMARK = True
-except ImportError:
-    HAS_BENCHMARK = False
+HAS_BENCHMARK = find_spec("pytest_benchmark") is not None
 
 # Timing-sensitive perf/memory suite: excluded from the default fast run
 # (pytest.ini deselects ``performance``). Run explicitly when needed.

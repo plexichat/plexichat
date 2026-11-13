@@ -152,8 +152,10 @@ class ApiTokenMixin(AuthManagerProtocol):
                     "security_settings_updated",
                     detail={"scope": "api_access_token", "action": "update"},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # The token update is already committed; a failed audit write
+                # must not undo it, but it must stay traceable.
+                logger.debug(f"api token update audit failed: {exc}")
         # Reuse the in-memory row we already fetched, avoiding a second SELECT
         return self._row_to_access_token(row)
 
@@ -184,8 +186,8 @@ class ApiTokenMixin(AuthManagerProtocol):
                     "security_settings_updated",
                     detail={"scope": "api_access_token", "action": "revoke"},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"api token revoke audit failed: {exc}")
         return cursor.rowcount > 0
 
     def unrevoke_api_access_token(
@@ -216,8 +218,8 @@ class ApiTokenMixin(AuthManagerProtocol):
                     "security_settings_updated",
                     detail={"scope": "api_access_token", "action": "unrevoke"},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"api token unrevoke audit failed: {exc}")
         return cursor.rowcount > 0
 
     def rotate_api_access_token(
@@ -269,8 +271,8 @@ class ApiTokenMixin(AuthManagerProtocol):
                     "security_settings_updated",
                     detail={"scope": "api_access_token", "action": "rotate"},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"api token rotate audit failed: {exc}")
         return new_token
 
     def add_api_access_token_scope(

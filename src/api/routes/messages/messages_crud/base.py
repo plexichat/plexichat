@@ -547,7 +547,7 @@ class MessagesCRUDBase:
                             author_avatar_url = getattr(user, "avatar_url", None)
                         if not author_badges:
                             author_badges = getattr(user, "badges", [])
-                except Exception:
-                    pass
+                except Exception as badge_error:
+                    logger.debug(f"author badge lookup failed: {badge_error}")
 
         return author_username, author_avatar_url, author_badges

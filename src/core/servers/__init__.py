@@ -394,7 +394,8 @@ def backfill_default_role_permissions(db: Any) -> int:
                 (json.dumps(perms), int(time.time()), int(row["id"])),
             )
             updated += 1
-        except Exception:  # pragma: no cover - defensive
+        except Exception as row_error:  # pragma: no cover - defensive
+            logger.debug(f"skipping server row that cannot be updated: {row_error}")
             continue
     return updated
 

@@ -16,7 +16,14 @@
 #   SMOKE_USER_A/B/C     pre-provisioned accounts to log in with instead of
 #                        registering (+ SMOKE_PASSWORD, default SmokeTest123!)
 #   SMOKE_TOKEN_A/B/C    pre-issued session tokens; skips login entirely (use
-#                        when /auth/login is rate limited by your CI's IP)
+#                        when /auth/login is rate limited by your CI's IP).
+#                        Mint them on the deployment with
+#                        ci-tooling/seed-smoke-accounts.sh --tokens and keep
+#                        them as masked CI variables. A logout kills the
+#                        session its token belongs to, so this mode skips the
+#                        logout assertions rather than spend a token the next
+#                        run needs; the deletion path still proves that a dead
+#                        session stops authenticating.
 #   SMOKE_DELETION_ACCOUNTS
 #                        the ring of deletion subjects the run may freeze,
 #                        comma separated (default smoke_delete_1..4)
@@ -218,14 +225,21 @@ gate_account() { # gate_account LABEL USERNAME JAR
 # script restores it. 401/404 mean it was never seeded. Anything else is the
 # deployment misbehaving and is reported rather than walked past.
 ring_account() {
-    local name
+    local name wait
+    # Reported by the caller when the ring yields nothing, so the skip says
+    # whether the ring was spent (accounts frozen by earlier runs) or the
+    # login was refused before a member could be checked. 'run the seed
+    # script' is right for the first and misleading for the second.
+    RING_SKIP="no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
     for name in ${DELETION_RING//,/ }; do
         req POST /auth/login "$JAR_D" \
             "{\"username\":\"$name\",\"password\":\"$PASSWORD\"}"
         case "$STATUS" in
             200) DELETION_ACCOUNT="$name"; ok "login D (deletion account $name)"; return 0 ;;
             403|401|404) : ;;
-            429) wait_for_reset 75 || return 1; continue ;;
+            429) wait="$(jq -r '.retry_after // "?"' "$TMP/body.json" 2>/dev/null || true)"
+                 RING_SKIP="ring login rate limited (retry_after ${wait:-?}s), so no member could be checked"
+                 wait_for_reset 75 || return 1; continue ;;
             *) bad "login D ($name)" "-> $STATUS ${BODY:0:200}"; return 1 ;;
         esac
     done
@@ -269,9 +283,14 @@ sec "accounts and sessions"
 # Registration and login are both rate limited per client IP. The suite keeps
 # its own gate accounts so it needs nothing from the runner, and SMOKE_USER_* /
 # SMOKE_TOKEN_* stay available as overrides for a host that cannot register.
-HAVE_A=0; HAVE_B=0; HAVE_C=0; HAVE_D=0; NEED_LOGIN=1
+HAVE_A=0; HAVE_B=0; HAVE_C=0; HAVE_D=0; NEED_LOGIN=1; TOKEN_MODE=0
+# Filled by ring_account when it runs; token mode never calls it, so the
+# cleanup's skip needs a default. Declared here so `set -u` cannot trip on the
+# path where no ring login was attempted at all.
+RING_SKIP="no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
 if [ -n "${SMOKE_TOKEN_A:-}" ] && [ -n "${SMOKE_TOKEN_B:-}" ]; then
     NEED_LOGIN=0
+    TOKEN_MODE=1
     JAR_TOKEN["$JAR_A"]="$SMOKE_TOKEN_A"
     JAR_TOKEN["$JAR_B"]="$SMOKE_TOKEN_B"
     HAVE_A=1; HAVE_B=1
@@ -466,10 +485,21 @@ else
         req DELETE "/servers/$SERVER_ID" "$JAR_A"
         expect "A deletes the smoke server" "200,204,404"
     fi
-    req POST /auth/logout "$JAR_A"; expect "A logs out" "200,204"
-    req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"
-    req POST /auth/logout "$JAR_B"; expect "B logs out" "200,204"
-    req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
+    if [ "$TOKEN_MODE" = 1 ]; then
+        # Logging out invalidates the session its token belongs to, and the
+        # pre-issued tokens are what the next run needs: spending one here would
+        # turn the following run's stranger checks (C) or its every request
+        # (A/B) into skips or a 401. The deletion path below already proves that
+        # a killed session stops authenticating, so the logout request itself is
+        # the only assertion this mode gives up -- and it says so, every run.
+        skip "logout and session invalidation" \
+            "pre-issued sessions survive the run; rotate SMOKE_TOKEN_A/B/C to re-check"
+    else
+        req POST /auth/logout "$JAR_A"; expect "A logs out" "200,204"
+        req GET /users/@me "$JAR_A"; expect "A's session is dead" "401,403"
+        req POST /auth/logout "$JAR_B"; expect "B logs out" "200,204"
+        req GET /users/@me "$JAR_B"; expect "B's session is dead" "401,403"
+    fi
     if [ "$HAVE_D" = 1 ]; then
         req DELETE /users/@me "$JAR_D" "{\"password\":\"$PASSWORD\"}"
         expect "the deletion account schedules its own deletion" "200,202,204"
@@ -500,8 +530,7 @@ else
                    "-> $freeze_status ${BODY:0:200}" ;;
         esac
     else
-        skip "delete a throwaway account" \
-            "no deletion account left: run ci-tooling/seed-smoke-accounts.sh on the deployment"
+        skip "delete a throwaway account" "${RING_SKIP}"
     fi
 fi
 

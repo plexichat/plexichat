@@ -22,6 +22,7 @@ from ..models import (
     ServerSearchResult,
 )
 from ..exceptions import SearchIndexError, SearchBackendError
+from src.utils.outbound import urlopen
 
 
 class MeilisearchIndexer(BaseIndexer):
@@ -38,7 +39,7 @@ class MeilisearchIndexer(BaseIndexer):
         super().__init__(config)
         # SECURITY: the host string is configured at module-load
         # time. We previously passed it straight into urllib with a
-        # blanket ``# nosec B310`` suppression. The configured host
+        # blanket bandit suppression. The configured host
         # could be ``http://10.0.0.5`` (SSRF landing page inside the
         # data-centre network) or ``http://localhost:7700`` (SSRF
         # loopback into a dev instance). Validate the configured
@@ -141,7 +142,6 @@ class MeilisearchIndexer(BaseIndexer):
         """Make HTTP request to Meilisearch."""
         if self._http_client is not None:
             return self._http_client.request(method, path, body)
-        # nosec B310
         try:
             url = self._validate_http_url(f"{self._host}{path}")
             from src.utils.security import URLValidator
@@ -155,7 +155,7 @@ class MeilisearchIndexer(BaseIndexer):
 
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
-            with urllib.request.urlopen(req, timeout=30) as response:  # nosec: B310
+            with urlopen(req, timeout=30) as response:
                 response_data = response.read().decode()
                 if response_data:
                     return json.loads(response_data)

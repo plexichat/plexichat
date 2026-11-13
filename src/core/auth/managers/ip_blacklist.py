@@ -108,6 +108,10 @@ class IpBlacklistMixin(AuthManagerProtocol):
                         r["reason_encrypted"],
                         context=f"ip_block:{r.get('ip_index', '')}",
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # The block itself is still returned; without a reason the
+                    # admin UI shows an empty note, which the log explains.
+                    logger.debug(
+                        f"ip block reason decryption failed for {r.get('ip_index')!r}: {exc}"
+                    )
         return rows

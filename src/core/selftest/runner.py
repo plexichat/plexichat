@@ -162,8 +162,8 @@ class SelfTestRunner:
         try:
             unban_url = f"{self.ctx.base_url}/api/v1/servers/{self.ctx.test_server_id}/bans/{self.ctx.test_other_user_id}"
             self.ctx.session.delete(unban_url, timeout=5)
-        except Exception:
-            pass
+        except Exception as unban_error:
+            logger.debug(f"selftest unban cleanup failed: {unban_error}")
         try:
             invite_create_url = f"{self.ctx.base_url}/api/v1/channels/{self.ctx.test_channel_id}/invites"
             invite_resp = self.ctx.session.post(
@@ -180,8 +180,8 @@ class SelfTestRunner:
                     # earlier hook) — equally good for the leave test.
                     if rejoin_resp.status_code in (200, 201, 204, 409):
                         return True
-        except Exception:
-            pass
+        except Exception as probe_error:
+            logger.debug(f"selftest health probe failed: {probe_error}")
         return False
 
     def run_purge_residue(self) -> bool:
@@ -234,8 +234,8 @@ class SelfTestRunner:
             # Error paths must not leak the RAM monitor thread.
             try:
                 self.ram_monitor.stop()
-            except Exception:
-                pass
+            except Exception as stop_error:
+                logger.debug(f"selftest ram monitor stop failed: {stop_error}")
             raise
 
     def _run_status(self) -> bool:
@@ -663,8 +663,10 @@ class SelfTestRunner:
                     for session in sessions.values():
                         try:
                             session.close()
-                        except Exception:
-                            pass
+                        except Exception as close_error:
+                            logger.debug(
+                                f"selftest safety session close failed: {close_error}"
+                            )
 
             chunks = [[] for _ in range(workers)]
             for index, item in enumerate(parallel_gets):
@@ -680,8 +682,8 @@ class SelfTestRunner:
                 )
                 if resp.status_code in (200, 204):
                     logger.info("Safety unblocked test user from uploads")
-            except Exception:
-                pass
+            except Exception as unblock_error:
+                logger.debug(f"selftest safety unblock failed: {unblock_error}")
 
         # 6. Standalone-specific endpoint tests (before destructive, so delay-deletion
         #    and password-reset can use the other_user before they are force-purged)

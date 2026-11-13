@@ -393,7 +393,8 @@ def _teardown_wired_modules():
     if media._manager is not None:
         try:
             media._manager.close()
-        except Exception:
+        except (OSError, RuntimeError):
+            # Teardown only: the manager is discarded either way.
             pass
         media._manager = None
         media._setup_complete = False

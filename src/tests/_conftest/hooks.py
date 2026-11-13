@@ -115,9 +115,9 @@ def pytest_sessionfinish(session, exitstatus):
         if inst is not None:
             try:
                 inst.stop_pool_monitoring()
-            except Exception:
+            except (AttributeError, RuntimeError):
                 pass
-    except Exception:
+    except ImportError:
         pass
 
 

@@ -519,8 +519,9 @@ def _close_pubsub_client(client: Any) -> None:
     """Close a dedicated pubsub client, swallowing all errors."""
     try:
         client.close()
-    except Exception:
-        pass
+    except Exception as close_error:
+        # Shutdown continues; the reason is still worth recording.
+        logger.debug(f"websocket broadcast client close failed: {close_error}")
 
 
 async def start_cross_worker_listener() -> None:

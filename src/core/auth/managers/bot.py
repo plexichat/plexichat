@@ -1,5 +1,7 @@
 from typing import Optional, Dict, List
 
+import utils.logger as logger
+
 from ..exceptions import (
     UserNotFoundError,
     PermissionDeniedError,
@@ -229,6 +231,10 @@ class BotMixin(AuthManagerProtocol):
                 return self.crypto.decrypt_data(
                     row["display_name_encrypted"], context=f"bot:{row['id']}"
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # Fall back to the stored plaintext name; a glance at the log
+                # is enough to spot a bot whose ciphertext no longer opens.
+                logger.debug(
+                    f"bot {row.get('id')} display name decryption failed: {exc}"
+                )
         return row.get("display_name", "")

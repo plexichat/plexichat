@@ -111,8 +111,8 @@ class AuthMixin(EndpointTesterBase):
                 token = resp.json().get("token") or resp.json().get("access_token")
                 if token:
                     login_session.headers.update({"Authorization": f"Bearer {token}"})
-            except Exception:
-                pass
+            except Exception as header_error:
+                logger.debug(f"selftest login header update failed: {header_error}")
         else:
             logger.warning(f"Auth login -> {resp.status_code}: {resp.text[:200]}")
 
@@ -217,8 +217,8 @@ class AuthMixin(EndpointTesterBase):
                         login_session.headers.update(
                             {"Authorization": f"Bearer {new_token}"}
                         )
-                except Exception:
-                    pass
+                except Exception as token_error:
+                    logger.debug(f"selftest token extraction failed: {token_error}")
             else:
                 logger.warning(
                     f"Re-login for revoke-all failed: {re_login_resp.status_code}"

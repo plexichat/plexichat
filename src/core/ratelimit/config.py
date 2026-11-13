@@ -95,8 +95,10 @@ def get_user_multiplier(user_id: int) -> float:
 
         if features.is_setup():
             return features.get_rate_limit_multiplier(user_id)
-    except Exception:
-        pass
+    except Exception as feature_error:
+        import utils.logger as logger
+
+        logger.debug(f"rate limit multiplier lookup failed: {feature_error}")
     return 1.0
 
 

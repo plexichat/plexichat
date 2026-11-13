@@ -130,8 +130,8 @@ class MigrationLockingMixin:
                         f"Migration lock acquired (SQLite lock table, owner={owner})"
                     )
                     return True
-                except Exception:
-                    pass
+                except Exception as lock_error:
+                    logger.debug(f"advisory lock probe failed: {lock_error}")
 
                 # 2) Atomic stale-lock takeover: a single conditional UPDATE;
                 #    exactly one waiter's UPDATE matches (rowcount == 1).
@@ -204,8 +204,10 @@ class MigrationLockingMixin:
                 if self._pg_advisory_conn is not None:
                     try:
                         self._pg_advisory_conn.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(
+                            f"advisory lock connection close failed: {close_error}"
+                        )
                     self._pg_advisory_conn = None
         else:
             # SQLite: delete ONLY our own lock row (ownership-validated)

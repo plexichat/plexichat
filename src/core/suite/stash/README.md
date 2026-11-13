@@ -46,7 +46,7 @@ PlexiStash manages items (files, links, notes, shortcuts), collections (folders)
 |------|---------|
 | `manager.py` | Stable import facade — composes mixins into `StashManager` |
 | `stash_manager_base.py` | Construction, audit logging, authorization, media resolution, permission checks |
-| `stash_manager_items.py` | Item CRUD, versions, grants, download tickets, purge |
+| `stash_manager_items/` | Item CRUD, versions, grants, download tickets, purge (mixin package) |
 | `stash_manager_collections.py` | Collection CRUD, collection grants, share links, text indexing, version diffs |
 | `stash_manager_protocol.py` | Shared member surface for type-checking across mixins |
 | `schema.py` | SQL schema, domain dataclasses (`StashItem`, `StashVersion`, `StashGrant`, `StashAccessContext`) |

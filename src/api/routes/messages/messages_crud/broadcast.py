@@ -72,7 +72,8 @@ def _resolve_recipients(
                         member_id, server_id, "channels.view", channel_id
                     ):
                         user_ids.append(member_id)
-                except Exception:
+                except Exception as member_error:
+                    logger.debug(f"broadcast member lookup failed: {member_error}")
                     continue
 
     if not user_ids and messaging:
@@ -84,8 +85,8 @@ def _resolve_recipients(
                 actor_id, participants_conversation_id
             )
             user_ids = [p.user_id for p in (participants or [])]
-        except Exception:
-            pass
+        except Exception as participant_error:
+            logger.debug(f"broadcast participant lookup failed: {participant_error}")
 
     return user_ids, server_id
 
@@ -130,8 +131,8 @@ class BroadcastMixin:
                         logger.warning(f"Failed to broadcast MESSAGE_CREATE: {e}")
 
                 asyncio.create_task(broadcast_task())
-        except Exception:
-            pass
+        except Exception as task_error:
+            logger.debug(f"broadcast task scheduling failed: {task_error}")
 
     async def _broadcast_message_update(
         self,
@@ -176,8 +177,8 @@ class BroadcastMixin:
                         logger.debug(f"Failed to broadcast MESSAGE_UPDATE: {e}")
 
                 asyncio.create_task(dispatch_task())
-        except Exception:
-            pass
+        except Exception as task_error:
+            logger.debug(f"dispatch task scheduling failed: {task_error}")
 
     async def _broadcast_message_delete(
         self,
@@ -222,5 +223,5 @@ class BroadcastMixin:
                         logger.debug(f"Failed to broadcast MESSAGE_DELETE: {e}")
 
                 asyncio.create_task(dispatch_task())
-        except Exception:
-            pass
+        except Exception as task_error:
+            logger.debug(f"dispatch task scheduling failed: {task_error}")

@@ -561,8 +561,8 @@ class BotManagementMixin(ApplicationManagerProtocol):
             rows = None  # pragma: no cover -- drivers without rowcount
         try:
             cursor.close()
-        except Exception:
-            pass
+        except Exception as close_error:
+            logger.debug(f"bot management cursor close failed: {close_error}")
         logger.info(
             f"Authorized app token {token_id} revoked by user {user_id} "
             f"(rows affected: {rows if rows is not None else 'unknown'})"

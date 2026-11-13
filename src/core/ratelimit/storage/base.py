@@ -246,8 +246,11 @@ class RateLimitStorage(ABC):
             if token:
                 try:
                     self.release_lock(key, token)
-                except Exception:
-                    pass
+                except Exception as release_error:
+                    # The lock expires on its own; report rather than hide.
+                    import utils.logger as logger
+
+                    logger.debug(f"rate limit lock release failed: {release_error}")
 
     def close(self) -> None:
         """Close storage connection (optional override)."""

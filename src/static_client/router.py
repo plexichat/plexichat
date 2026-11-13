@@ -197,8 +197,9 @@ def _scope_client_ip(scope: Scope) -> Optional[str]:
         ip = get_client_ip(cast(Dict[str, Any], scope))
         if ip:
             return ip
-    except Exception:
-        pass
+    except Exception as ip_error:
+        # Fall back to the raw socket peer below; the reason is still useful.
+        logger.debug(f"static client IP extraction failed: {ip_error}")
     client = scope.get("client")
     if isinstance(client, (tuple, list)) and client:
         host = client[0]
@@ -326,7 +327,11 @@ async def _check_static_client_rate_limit(
             continue
         try:
             info_headers.append((k.encode(), str(v).encode()))
-        except Exception:
+        except (AttributeError, TypeError, UnicodeError) as header_error:
+            # A header that cannot be encoded as latin-1 cannot be forwarded.
+            logger.debug(
+                f"static client dropped unencodable header {k!r}: {header_error}"
+            )
             continue
 
     if not result.allowed:

@@ -461,8 +461,9 @@ class CommandRegistry:
         except Exception:
             try:
                 self._db.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_error:
+                # The statement error below is the one the caller needs.
+                logger.debug(f"command registry rollback failed: {rollback_error}")
             raise
 
         logger.info(f"Bulk overwrote {len(result)} commands for app {application_id}")

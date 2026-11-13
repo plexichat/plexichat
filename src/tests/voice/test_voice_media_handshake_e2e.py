@@ -96,12 +96,12 @@ def wired_call(
     finally:
         try:
             manager = signaling._get_manager()
-        except Exception:
+        except (AttributeError, RuntimeError):
             manager = None
         if manager is not None:
             try:
                 asyncio.get_event_loop().run_until_complete(manager.close())
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
         signaling._manager = None
         signaling._setup_complete = False
@@ -142,7 +142,7 @@ def _remote_candidates(pc) -> list:
         if ice_transport is not None:
             try:
                 return ice_transport.getRemoteCandidates()
-            except Exception:
+            except (AttributeError, RuntimeError):
                 continue
     return []
 
@@ -179,7 +179,7 @@ async def test_full_handshake_reaches_connected_and_media_flows(wired_call):
         await client.close()
         try:
             await signaling._get_manager().close()
-        except Exception:
+        except (OSError, RuntimeError):
             pass
 
 
@@ -232,5 +232,5 @@ async def test_trickled_candidate_reaches_the_sfu_media_plane(wired_call):
         await client.close()
         try:
             await signaling._get_manager().close()
-        except Exception:
+        except (OSError, RuntimeError):
             pass

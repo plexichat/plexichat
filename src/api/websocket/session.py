@@ -285,8 +285,9 @@ class SessionManager:
                     # smembers returns a set of strings like "worker_id:connection_id"
                     global_conns = client.smembers(f"user:{user_id}:connections")
                     return len(global_conns)
-                except Exception:
-                    pass
+                except Exception as count_error:
+                    # Fall back to the in-memory connection count below.
+                    logger.debug(f"global connection count failed: {count_error}")
 
         return local_count
 

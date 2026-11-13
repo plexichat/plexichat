@@ -49,8 +49,10 @@ def _submit_server_telemetry(
                 ],
                 client_id="server",
             )
-    except Exception:
-        pass  # Don't let telemetry errors affect requests
+    except Exception as exc:
+        # Telemetry is fire-and-forget: it must never fail the request, but a
+        # failure has to be visible somewhere instead of vanishing.
+        _log_debug(f"server telemetry submit failed: {type(exc).__name__}: {exc}")
 
 
 def _log_debug(msg: str):
@@ -155,8 +157,10 @@ class LoggingMiddleware:
             db = api.get_db()
             if db:
                 db.reset_request_metrics()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Per-request DB counters are diagnostics; without the reset the
+            # request is still served, but the reason must be traceable.
+            _log_debug(f"request metric reset failed: {type(exc).__name__}: {exc}")
 
         # Start timing from when request is received
         start_time = time.perf_counter()
@@ -222,8 +226,10 @@ class LoggingMiddleware:
                                 db_metrics["query_count"],
                                 db_metrics["query_time_ms"],
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            _log_debug(
+                                f"response telemetry failed: {type(exc).__name__}: {exc}"
+                            )
 
             await send(message)
 

@@ -77,8 +77,10 @@ class MessageStatusService(BaseService):
             from src.core.database import invalidate_pattern
 
             invalidate_pattern(f"unread_counts_api:current_user:TokenInfo:{user_id}")
-        except Exception:
-            pass
+        except Exception as cache_error:
+            import utils.logger as logger
+
+            logger.debug(f"unread count cache invalidate failed: {cache_error}")
 
     def mark_delivered(
         self, user_id: SnowflakeID, message_ids: List[SnowflakeID]
@@ -163,8 +165,10 @@ class MessageStatusService(BaseService):
                     channel_receipts_enabled = getattr(
                         channel, "read_receipts_enabled", True
                     )
-        except Exception:
-            pass
+        except Exception as channel_error:
+            import utils.logger as logger
+
+            logger.debug(f"read-receipt channel lookup failed: {channel_error}")
 
         count = 0
         if user_settings.read_receipts_enabled and channel_receipts_enabled:
@@ -195,8 +199,10 @@ class MessageStatusService(BaseService):
                     # ALSO invalidate the message list caches for the API
                     # and internal repo
                     self._message_repo.invalidate_conversation_cache(conversation_id)
-                except Exception:
-                    pass
+                except Exception as cache_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"conversation cache invalidate failed: {cache_error}")
 
         # Update participant's last read position (always, for unread counts)
         self._participant_repo.update_last_read(
@@ -403,10 +409,13 @@ class MessageStatusService(BaseService):
         target_msg_id: SnowflakeID
         if up_to_message_id:
             # Roll back to the message *before* the given one, not the given
-            # one itself. Normalize str-like SnowflakeIDs for the comparison.
+            # one itself. Callers crossing a JSON boundary may hand us a
+            # decimal string, so normalize it for the comparison; anything
+            # non-numeric is passed through and simply matches no row.
+            anchor_id: Any
             try:
-                anchor_id: SnowflakeID = int(up_to_message_id)  # type: ignore[arg-type]
-            except Exception:
+                anchor_id = int(up_to_message_id)
+            except (TypeError, ValueError):
                 anchor_id = up_to_message_id
             prev_id = self._message_repo.get_previous_id_in_conversation(
                 conversation_id, anchor_id
@@ -463,7 +472,10 @@ class MessageStatusService(BaseService):
                 try:
                     self.mark_read(user_id, channel.conversation_id)
                     count += 1
-                except Exception:
+                except Exception as read_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"mark-all-read skipped a conversation: {read_error}")
                     continue
 
         return count

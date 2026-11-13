@@ -29,7 +29,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TOOL_PATH = REPO_ROOT / "ci-tooling" / "install_scanners.py"
-GITLAB_CI = REPO_ROOT / ".gitlab-ci.yml"
+# The commit pipeline: .gitlab-ci.yml at the root is now a dispatcher that
+# includes this file (the live smoke gate has a file of its own).
+GITLAB_CI = REPO_ROOT / ".gitlab" / "ci" / "pipeline.yml"
 GITHUB_PR_CHECKS = REPO_ROOT / ".github" / "workflows" / "pr-checks.yml"
 
 

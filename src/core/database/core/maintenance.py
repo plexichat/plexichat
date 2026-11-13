@@ -157,8 +157,10 @@ class DatabaseMaintenanceMixin:
             if cursor is not None:
                 try:
                     cursor.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    # Cleanup of a failed maintenance statement; the fatal error
+                    # is re-raised just below.
+                    logger.debug(f"maintenance cursor close failed: {close_error}")
         if fatal_cleanup_error is not None:
             raise fatal_cleanup_error from e
 

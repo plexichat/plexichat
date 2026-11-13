@@ -17,9 +17,9 @@ Provides security checks for uploaded files including:
 # guard runs for every entry point that imports this validation
 # module (web server via ``app.py``, the CLI, migration tools, and
 # admin-tools), not just those that go through the FastAPI factory.
-try:
-    import defusedxml  # noqa: F401
-except ImportError:  # pragma: no cover
+from importlib.util import find_spec
+
+if find_spec("defusedxml") is None:  # pragma: no cover
     raise ImportError(
         "defusedxml is required for safe SVG/XML handling in plexichat. "
         "Install it with: pip install defusedxml"
@@ -638,8 +638,10 @@ class FileValidator:
                 # during mutation.
                 try:
                     stack.extend(list(elem))
-                except Exception:
-                    pass
+                except TypeError as exc:
+                    # A leaf node has no children; anything else is a parse
+                    # problem and the fail-closed handler below reports it.
+                    logger.debug(f"validation: leaf node child walk stopped: {exc}")
             return True, ""
         except Exception as exc:
             # Catch-all: any unexpected failure must FAIL CLOSED.

@@ -34,8 +34,10 @@ def _wait_until_ready(host: str, port: int, timeout: float = 20.0) -> bool:
         try:
             if requests.get(url, timeout=1).status_code == 200:
                 return True
-        except Exception:
-            pass
+        except requests.RequestException as probe_error:
+            # The server may still be binding; the loop below retries until the
+            # deadline, and the last failure is what makes a timeout diagnosable.
+            logger.debug(f"selftest readiness probe failed: {probe_error}")
         time.sleep(0.05)
     return False
 
@@ -120,18 +122,17 @@ def handle_selftest(
         if runner is not None:
             try:
                 runner.ctx.close_sessions()
-            except Exception:
-                pass
+            except Exception as teardown_error:
+                # Teardown is best-effort: report it and keep unwinding so the
+                # process still exits with the run's verdict.
+                logger.debug(f"selftest session teardown failed: {teardown_error}")
             try:
                 runner.ram_monitor.stop()
-            except Exception:
-                pass
+            except Exception as teardown_error:
+                logger.debug(f"selftest ram monitor stop failed: {teardown_error}")
         try:
             server.cleanup()
-        except Exception:
-            pass
-        try:
-            os.environ.pop("PLEXICHAT_SELF_TEST", None)
-        except Exception:
-            pass
+        except Exception as teardown_error:
+            logger.debug(f"selftest server cleanup failed: {teardown_error}")
+        os.environ.pop("PLEXICHAT_SELF_TEST", None)
         sys.exit(exit_code)

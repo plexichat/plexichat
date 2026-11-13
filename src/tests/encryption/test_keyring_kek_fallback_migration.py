@@ -68,14 +68,14 @@ def _clear_vault_machine_key_cache():
         from src.utils.encryption import vault
 
         vault._load_machine_key_cached.cache_clear()
-    except Exception:
+    except (AttributeError, ImportError):
         pass
     yield
     try:
         from src.utils.encryption import vault
 
         vault._load_machine_key_cached.cache_clear()
-    except Exception:
+    except (AttributeError, ImportError):
         pass
 
 

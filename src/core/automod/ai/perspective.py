@@ -7,7 +7,9 @@ Makes real HTTP calls to Perspective API for toxicity analysis.
 import json
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from src.utils.outbound import urlopen
 from urllib.error import URLError, HTTPError
 
 import utils.logger as logger
@@ -84,14 +86,14 @@ class PerspectiveAdapter(BaseAIAdapter):
                     backend="perspective",
                 )
 
-            request = Request(  # nosec B310
+            request = Request(
                 url,
                 data=request_data,
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
 
-            with urlopen(request, timeout=self._timeout) as response:  # nosec: B310
+            with urlopen(request, timeout=self._timeout) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             return self._parse_response(response_data)

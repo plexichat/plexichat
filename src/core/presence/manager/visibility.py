@@ -95,8 +95,12 @@ class VisibilityMixin(PresenceManagerBase):
                     )
                     - blocked_ids
                 )
-            except Exception:
-                pass
+            except Exception as visibility_error:
+                import utils.logger as logger
+
+                logger.debug(
+                    f"presence visibility cache store failed: {visibility_error}"
+                )
 
         for p in presences:
             target_id_raw = p.user_id

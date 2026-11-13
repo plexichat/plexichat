@@ -64,8 +64,8 @@ class ResourceMixin(EndpointTesterBase):
                             _did = int(
                                 _drow["id"] if isinstance(_drow, dict) else _drow[0]
                             )
-                    except Exception:
-                        pass
+                    except Exception as scope_error:
+                        logger.debug(f"selftest scope setup failed: {scope_error}")
                 _tok = _login.json().get("token") or _login.json().get("access_token")
                 if _did and _tok:
                     _dev_session.headers.update({"Authorization": f"Bearer {_tok}"})
@@ -80,13 +80,15 @@ class ResourceMixin(EndpointTesterBase):
                 else:
                     try:
                         _dev_session.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(
+                            f"selftest dev session close failed: {close_error}"
+                        )
             else:
                 try:
                     _dev_session.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    logger.debug(f"selftest dev session close failed: {close_error}")
         except Exception as _dev_e:
             logger.debug(f"Device delete setup note: {_dev_e}")
 
@@ -204,8 +206,10 @@ class ResourceMixin(EndpointTesterBase):
                     self.ctx.test_device_id = None
                     try:
                         _sess.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(
+                            f"selftest resource session close failed: {close_error}"
+                        )
                 elif label == "delete_webhook":
                     self.ctx.test_webhook_id = None
                 elif label == "delete_channel":
@@ -254,8 +258,8 @@ class ResourceMixin(EndpointTesterBase):
                     if isinstance(other_row, dict)
                     else other_row[0]
                 )
-        except Exception:
-            pass
+        except Exception as lookup_error:
+            logger.debug(f"password reset email_index lookup failed: {lookup_error}")
 
         if not other_email:
             logger.warning(

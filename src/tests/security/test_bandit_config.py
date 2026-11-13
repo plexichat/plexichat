@@ -134,7 +134,7 @@ def test_reviewed_skips_and_floors_are_stable():
     assert "B601" in skips
     # B101 (assert) is NOT skipped: an assert in production code is a real
     # finding. It is LOW severity, so the MEDIUM floor below already hides the
-    # legitimate asserts in tests, and production uses `# nosec B101`.
+    # legitimate asserts in tests.
     assert "B101" not in skips
 
     assert str(BANDIT_CONFIG["severity"]).upper().endswith("MEDIUM")

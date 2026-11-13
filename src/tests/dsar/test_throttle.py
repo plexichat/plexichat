@@ -26,7 +26,7 @@ def limiter():
     yield ratelimit.get_manager()
     try:
         ratelimit.reset_all()
-    except Exception:
+    except (AttributeError, RuntimeError):
         pass
 
 

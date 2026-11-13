@@ -341,8 +341,9 @@ async def complete_upload_session(
         finally:
             try:
                 media.cancel_upload_session(session_id, user.user_id)
-            except Exception:
-                pass
+            except Exception as cancel_error:
+                # The primary error below is what the client needs.
+                logger.debug(f"upload session cancel failed: {cancel_error}")
 
         logger.info(
             f"User {user.user_id} completed upload session {session_id} ({session.total_size} bytes)"

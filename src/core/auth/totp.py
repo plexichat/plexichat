@@ -99,8 +99,10 @@ class TOTPReplayCache:
             return
         try:
             db.execute("DELETE FROM auth_totp_replay WHERE expires_at <= ?", (now_ms,))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Expired replay rows are also filtered by ``expires_at`` on read, so
+            # a failed prune only costs space.
+            logger.debug(f"totp replay prune failed: {exc}")
 
     def _db_cache_claim(self, key: str, ttl_seconds: int) -> Optional[bool]:
         """Claim ``key`` in the shared database.

@@ -556,16 +556,18 @@ class VoiceCallManager(BaseManager):
                 if not caller_transaction:
                     try:
                         self._db.rollback()
-                    except Exception:  # pragma: no cover - defensive
-                        pass
+                    except Exception as rollback_error:  # pragma: no cover - defensive
+                        logger.debug(f"voice call rollback failed: {rollback_error}")
                 raise
             except Exception as exc:
                 last_error = exc
                 if not caller_transaction:
                     try:
                         self._db.rollback()
-                    except Exception:  # pragma: no cover - defensive
-                        pass
+                    except Exception as rollback_error:  # pragma: no cover - defensive
+                        logger.debug(
+                            f"voice call retry rollback failed: {rollback_error}"
+                        )
                 if attempt < 4:
                     # Back off with jitter so concurrent consent writers
                     # serialize instead of colliding on every retry (a tight
@@ -665,16 +667,18 @@ class VoiceCallManager(BaseManager):
                 if not caller_transaction:
                     try:
                         self._db.rollback()
-                    except Exception:  # pragma: no cover - defensive
-                        pass
+                    except Exception as rollback_error:  # pragma: no cover - defensive
+                        logger.debug(f"voice call rollback failed: {rollback_error}")
                 raise
             except Exception as exc:
                 last_error = exc
                 if not caller_transaction:
                     try:
                         self._db.rollback()
-                    except Exception:  # pragma: no cover - defensive
-                        pass
+                    except Exception as rollback_error:  # pragma: no cover - defensive
+                        logger.debug(
+                            f"voice call retry rollback failed: {rollback_error}"
+                        )
                 if attempt < 4:
                     time.sleep(0.005 * (2**attempt) + random.uniform(0, 0.005))
         if updated is None:

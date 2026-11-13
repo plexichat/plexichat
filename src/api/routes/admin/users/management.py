@@ -176,8 +176,10 @@ class ManagementMixin(AdminUsersRouterProtocol):
                     severity="info",
                     target_path=f"#user-{uid}",
                 )
-            except Exception:
-                pass
+            except Exception as alert_error:
+                import utils.logger as logger
+
+                logger.debug(f"admin user management alert failed: {alert_error}")
 
             return SuccessResponse(
                 success=True, message="User tier updated successfully"

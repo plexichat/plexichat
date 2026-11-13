@@ -122,14 +122,15 @@ def _strip_message_ciphertext(msg):
     if hasattr(msg, "model_copy"):
         try:
             return msg.model_copy(update={f: None for f in _CIPHERTEXT_RESPONSE_FIELDS})
-        except Exception:
-            pass
+        except Exception as copy_error:
+            # Fall back to clearing the fields in place below.
+            logger.debug(f"thread message model_copy failed: {copy_error}")
     for field in _CIPHERTEXT_RESPONSE_FIELDS:
         if hasattr(msg, field):
             try:
                 setattr(msg, field, None)
-            except Exception:
-                pass
+            except Exception as clear_error:
+                logger.debug(f"thread ciphertext field clear failed: {clear_error}")
     return msg
 
 

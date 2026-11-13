@@ -248,8 +248,9 @@ async def oauth_login_init(
             state_cookie_required = bool(
                 (config_util.get("oauth", {}) or {}).get("state_cookie_required", True)
             )
-        except Exception:
-            pass
+        except Exception as config_error:
+            # Secure default already applied above; record the config problem.
+            logger.debug(f"oauth state-cookie config unreadable: {config_error}")
 
     include_nonce = provider_info.get("supports_nonce", False)
     issue_state_cookie = state_cookie_required
@@ -311,8 +312,8 @@ async def oauth_login_init(
         try:
             oauth_cfg = (config_util.get("oauth", {}) or {}) if config_util else {}
             ttl = int(oauth_cfg.get("state_ttl_seconds", 600))
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError) as ttl_error:
+            logger.debug(f"oauth state ttl unusable, keeping default: {ttl_error}")
         params_cookie = _oauth_cookie_params(max_age=max(60, ttl))
         response.set_cookie(
             OAUTH_STATE_COOKIE, oauth_state.state_token, **params_cookie
@@ -632,8 +633,8 @@ async def oauth_callback(
                             (e["email"] for e in emails if e.get("verified")),
                             None,
                         )
-                except Exception:
-                    pass
+                except Exception as email_error:
+                    logger.debug(f"oauth provider email lookup failed: {email_error}")
             if not email:
                 raise HTTPException(
                     status_code=400,

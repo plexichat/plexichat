@@ -206,8 +206,12 @@ class Query(ABC, QueryBuilderProtocol):
             if self._should_autocommit():
                 try:
                     self.connection.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_error:
+                    # The original statement error is what the caller must see;
+                    # a failed rollback is reported here instead of replacing it.
+                    logger.debug(
+                        f"builder rollback after error failed: {rollback_error}"
+                    )
             raise
 
 

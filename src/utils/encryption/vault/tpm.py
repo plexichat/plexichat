@@ -125,15 +125,17 @@ def get_tpm_key(tpm_config: Mapping[str, Any]) -> bytes | None:
                         ctx.evict_control(
                             hierarchy, primary_handle, int(str(persistent), 0)
                         )
-                    except Exception:
-                        pass  # persistence is best-effort
+                    except Exception as exc:
+                        # Persistence is best-effort; the derived key still works.
+                        _log_debug("TPM evict_control failed: %s", exc)
                 public_bytes = marshal_tpm_public(out_public)
                 name_bytes = tpm_object_name(ctx, primary_handle, out_public)
             finally:
                 try:
                     ctx.flush_context(primary_handle)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # The handle dies with the context anyway.
+                    _log_debug("TPM flush_context failed: %s", exc)
 
             return tpm_bound_kek(public_bytes, name_bytes, label=label, salt=salt)
 
@@ -144,14 +146,17 @@ def get_tpm_key(tpm_config: Mapping[str, Any]) -> bytes | None:
 
 def marshal_tpm_public(out_public: Any) -> bytes:
     for attr in ("marshal", "to_bytes", "bytes"):
-        try:
-            meth = getattr(out_public, attr, None)
-            if callable(meth):
-                data = cast(Any, meth())
-                if data:
-                    return bytes(data)
-        except Exception:
+        meth = getattr(out_public, attr, None)
+        if not callable(meth):
             continue
+        try:
+            data = cast(Any, meth())
+        except Exception as exc:
+            # Try the next marshalling shape; the caller falls back to repr().
+            _log_debug("TPM public attribute %r failed: %s", attr, exc)
+            continue
+        if data:
+            return bytes(data)
     try:
         _log_debug(
             "TPM public marshaling fell back to repr(); key binding may be unstable"
@@ -170,11 +175,13 @@ def tpm_object_name(ctx: Any, handle: Any, out_public: Any) -> bytes:
     ):
         try:
             name = expr()
-            if name is None:
-                continue
-            buf = cast(Any, getattr(name, "buffer", name))
-            if buf:
-                return bytes(buf)
-        except Exception:
+        except Exception as exc:
+            # Not every binding exposes every name accessor.
+            _log_debug("TPM name read failed: %s", exc)
             continue
+        if name is None:
+            continue
+        buf = cast(Any, getattr(name, "buffer", name))
+        if buf:
+            return bytes(buf)
     raise HsmCryptoError("could not read TPM object name")

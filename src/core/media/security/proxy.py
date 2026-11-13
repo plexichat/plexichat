@@ -248,8 +248,10 @@ class ExternalProxy:
 
         try:
             self._storage.delete(row["storage_path"])
-        except Exception:
-            pass
+        except Exception as exc:
+            # The metadata row is dropped below either way; an orphaned object
+            # is reclaimed by the storage sweep, so log and keep going.
+            logger.debug(f"proxy cache blob delete failed: {exc}")
 
         self._db.execute("DELETE FROM media_proxy_cache WHERE id = ?", (row["id"],))
 
@@ -282,8 +284,8 @@ class ExternalProxy:
         for row in rows:
             try:
                 self._storage.delete(row["storage_path"])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"proxy cache blob delete failed: {exc}")
 
             self._db.execute("DELETE FROM media_proxy_cache WHERE id = ?", (row["id"],))
             count += 1
@@ -520,8 +522,12 @@ class ExternalProxy:
             # truncated artifact lingers under the cache path.
             try:
                 self._storage.delete(storage_path)
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                # The ProxyCacheError below is the error the caller must see;
+                # record the failed cleanup without masking it.
+                logger.debug(
+                    f"proxy cache cleanup failed for {storage_path!r}: {cleanup_error}"
+                )
             raise ProxyCacheError(f"Failed to cache content: {e}", url)
 
         checksum = stream_wrapper.hex_digest

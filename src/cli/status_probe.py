@@ -9,6 +9,7 @@ middleware exactly as a status page would.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -75,10 +76,10 @@ def run_status_checks(base_url: str, timeout: float = 10.0) -> List[Dict[str, An
                 }
             )
     finally:
-        try:
+        # The probe result is what the caller wants; a failing close must not
+        # replace it with an exception.
+        with contextlib.suppress(Exception):
             session.close()
-        except Exception:
-            pass
     return results
 
 

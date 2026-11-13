@@ -14,7 +14,7 @@ unit-tested in isolation and reused by viewport reads, CSV export, and sort.
 
 This module is the stable import facade: the parser/tokenizer and coercion
 helpers live in ``_formula_shared.py`` and the evaluator methods are split
-across ``_formula_core.py`` / ``_formula_advanced.py`` mixin modules.
+across the ``_formula_core/`` / ``_formula_advanced/`` mixin packages.
 
 Semantics follow Excel, and are shared with the PlexiSum client engine: the
 same case table (``src/tests/suite/formula_parity_cases.json``) is
@@ -32,26 +32,26 @@ from typing import Any, Dict, Optional
 
 from ._formula_advanced import FormulaEvaluatorAdvanced
 from ._formula_core import FormulaEvaluatorCore
-from ._formula_shared import (  # noqa: F401  (facade re-exports)
-    CYCLE_ERROR,
-    DIV_ZERO,
-    ERROR_CODES,
-    MAX_CALL_DEPTH,
-    MAX_DEPENDENCIES,
-    N_A_ERROR,
-    NAME_ERROR,
-    NUM_ERROR,
-    REF_ERROR,
-    VALUE_ERROR,
-    CellResolver,
-    _Parser,
-    _coerce_number_text,
-    _fold_case,
-    _to_text,
-    _tokenize,
-    is_error,
-    parse_cell_ref,
-    parse_formula,
+from ._formula_shared import (
+    CYCLE_ERROR as CYCLE_ERROR,
+    DIV_ZERO as DIV_ZERO,
+    ERROR_CODES as ERROR_CODES,
+    MAX_CALL_DEPTH as MAX_CALL_DEPTH,
+    MAX_DEPENDENCIES as MAX_DEPENDENCIES,
+    N_A_ERROR as N_A_ERROR,
+    NAME_ERROR as NAME_ERROR,
+    NUM_ERROR as NUM_ERROR,
+    REF_ERROR as REF_ERROR,
+    VALUE_ERROR as VALUE_ERROR,
+    CellResolver as CellResolver,
+    _Parser as _Parser,
+    _coerce_number_text as _coerce_number_text,
+    _fold_case as _fold_case,
+    _to_text as _to_text,
+    _tokenize as _tokenize,
+    is_error as is_error,
+    parse_cell_ref as parse_cell_ref,
+    parse_formula as parse_formula,
 )
 
 

@@ -456,8 +456,8 @@ class VideoCompressor:
                 try:
                     if path and os.path.exists(path):
                         os.unlink(path)
-                except Exception:
-                    pass
+                except OSError as unlink_error:
+                    logger.debug(f"compression temp unlink failed: {unlink_error}")
 
 
 class CompressionManager:

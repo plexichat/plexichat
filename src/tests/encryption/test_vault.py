@@ -268,7 +268,11 @@ def _install_fake_tpm(monkeypatch, name=b"fake-tpm-name"):
             return ("in-public", alg)
 
     fake.TPM2B_PUBLIC = _Public
-    fake.TPM2B_SENSITIVE_CREATE = lambda: ("sensitive",)  # noqa: E731
+
+    def _sensitive_create():
+        return ("sensitive",)
+
+    fake.TPM2B_SENSITIVE_CREATE = _sensitive_create
 
     consts = types.ModuleType("tpm2_pytss.constants")
 
@@ -415,7 +419,11 @@ def _install_fake_pkcs11(monkeypatch, key=b"K" * 32, extractable=True):
 
     fake.Mechanism = type("Mechanism", (), {"AES_GCM": _Gcm, "AES_KEY_GEN": "gen"})
     fake.KeyType = type("KeyType", (), {"AES": "AES"})
-    fake.lib = lambda path: _FakePkcs11Lib(token)  # noqa: E731
+
+    def _fake_lib(path):
+        return _FakePkcs11Lib(token)
+
+    fake.lib = _fake_lib
     monkeypatch.setitem(sys.modules, "pkcs11", fake)
     return token
 

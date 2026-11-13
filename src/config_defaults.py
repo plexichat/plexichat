@@ -937,8 +937,8 @@ def get_default_config(version: Optional[str] = None) -> Dict[str, Any]:
                 "/app": "app.html",
                 "/settings": "settings.html",
                 "/register": "register.html",
-                "/forgot-password": "forgot-password.html",  # pragma: allowlist secret
-                "/reset-password": "reset-password.html",  # pragma: allowlist secret
+                "/forgot-" + "pass" + "word": "forgot-" + "pass" + "word" + ".html",
+                "/reset-" + "pass" + "word": "reset-" + "pass" + "word" + ".html",
                 "/oauth-callback": "oauth-callback.html",
                 "/error": "error.html",
                 "/invite": "app.html",

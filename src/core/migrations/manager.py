@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 from src.core.database import cached
 
 from . import validator
-from .validator import RETIRED_MIGRATIONS  # noqa: F401 (re-exported for compat)
+from .validator import RETIRED_MIGRATIONS as RETIRED_MIGRATIONS
 from .tracker import MigrationTracker
 from .runner import MigrationRunner
 from .progress import ProgressBar

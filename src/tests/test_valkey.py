@@ -385,6 +385,8 @@ class FakeGlideClient:
             return 0
         end
         """,
+        # Script identity only: GLIDE keys scripts by SHA1 of their source.
+        usedforsecurity=False,
     ).hexdigest()
     _INCR_EXPIRE_SCRIPT_SHA1 = hashlib.sha1(
         b"""
@@ -394,6 +396,8 @@ if current == 1 then
 end
 return current
 """,
+        # Script identity only: GLIDE keys scripts by SHA1 of their source.
+        usedforsecurity=False,
     ).hexdigest()
 
     def invoke_script(

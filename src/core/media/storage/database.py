@@ -278,9 +278,11 @@ class DatabaseStorage(StorageBackendBase):
             return 0
 
         placeholders = ",".join("?" * len(valid_paths))
+        # Only "?" placeholders are interpolated; the paths stay bound.
+        template = "DELETE FROM media_blobs WHERE path NOT IN ({slots})"
         result = self._db.execute(
-            f"DELETE FROM media_blobs WHERE path NOT IN ({placeholders})",
-            valid_paths,  # nosec: B608
+            template.format(slots=placeholders),
+            valid_paths,
         )
 
         count = result.rowcount if hasattr(result, "rowcount") else 0

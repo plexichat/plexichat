@@ -150,8 +150,9 @@ class PresenceMixin(PresenceManagerBase):
                     presence.current_channel_id = int(channel_value) or None
                 if server_value is not None:
                     presence.current_server_id = int(server_value) or None
-        except Exception:
-            pass
+        except Exception as server_error:
+            # A malformed server id leaves the presence row without one.
+            logger.debug(f"presence current_server_id parse failed: {server_error}")
 
         return presence
 
@@ -171,8 +172,9 @@ class PresenceMixin(PresenceManagerBase):
                 try:
                     results_map[uid] = self._dict_to_presence(data)
                     missing_ids.remove(uid)
-                except Exception:
-                    pass
+                except Exception as decode_error:
+                    # A corrupt cache entry is re-read from the database below.
+                    logger.debug(f"presence cache entry unreadable: {decode_error}")
         except Exception as e:
             logger.warning(f"Failed to fetch bulk presence from cache: {e}")
 
@@ -265,8 +267,8 @@ class PresenceMixin(PresenceManagerBase):
                     self._presence_to_dict(presence),
                     ttl=self._presence_timeout_ms // 1000,
                 )
-            except Exception:
-                pass
+            except Exception as cache_error:
+                logger.debug(f"presence online-set add failed: {cache_error}")
 
         return [results_map[uid] for uid in user_ids]
 
@@ -307,8 +309,8 @@ class PresenceMixin(PresenceManagerBase):
                     client.expire(
                         "presence:online_users", self._presence_timeout_ms // 1000
                     )
-            except Exception:
-                pass
+            except Exception as cache_error:
+                logger.debug(f"presence online-set remove failed: {cache_error}")
 
         # CORRECTNESS FIX: periodically evict stale members from the Valkey
         # online-users set so ghost entries cannot survive indefinitely just

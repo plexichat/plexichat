@@ -293,7 +293,8 @@ class TestTokenValidation:
         result = auth_manager.login(test_user.username, "TestPass123!")
 
         with patch(
-            "src.core.auth.managers.session.verify_token_hash", return_value=True
+            "src.core.auth.managers.session.verification.verify_token_hash",
+            return_value=True,
         ) as mock_verify:
             token_info = auth_manager.verify_token(result.token)
             assert token_info.valid

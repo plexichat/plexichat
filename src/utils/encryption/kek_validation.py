@@ -6,6 +6,7 @@ passphrase-like, or compressible keys cannot be used in production.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import re
@@ -40,12 +41,10 @@ def _is_dev_selftest_bypass() -> bool:
         return True
     try:
         import utils.config as config
-
-        if config.get("selftest.enabled", False):
-            return True
-    except Exception:
-        pass
-    return False
+    except ImportError:
+        # Standalone tooling without the config subsystem cannot be a selftest.
+        return False
+    return bool(config.get("selftest.enabled", False))
 
 
 def shannon_entropy(data: bytes) -> float:
@@ -267,12 +266,10 @@ def validate_kek(
     )
 
     if allow_bypass and _is_dev_selftest_bypass():
-        try:
+        with contextlib.suppress(ImportError):
             import utils.logger as logger
 
             logger.warning("KEK validation bypassed in CI/selftest mode — %s", message)
-        except Exception:
-            pass
         return _normalize_kek_material(key)
 
     raise KekValidationError(message)

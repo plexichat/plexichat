@@ -173,8 +173,9 @@ class SDPMixin:
                         video_bitrate=codec_section.get("video_bitrate", 0),
                         video_codec=codec_section.get("video_codec", "VP8"),
                     )
-            except Exception:
-                pass
+            except Exception as codec_error:
+                # Codec details are advisory; the SDP itself is still valid.
+                logger.debug(f"SDP codec section parse failed: {codec_error}")
 
         self._sdp_manipulator.set_codec_config(codec_cfg)
         modified_sdp = self._sdp_manipulator.set_bitrate(sdp, bitrate)

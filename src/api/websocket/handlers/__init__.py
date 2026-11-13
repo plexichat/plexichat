@@ -217,7 +217,8 @@ class OpcodeHandler:
             try:
                 if self._servers.get_channel(channel_id, member_user_id):
                     visible_user_ids.append(member_user_id)
-            except Exception:
+            except Exception as member_error:
+                logger.debug(f"member visibility check failed: {member_error}")
                 continue
 
         return visible_user_ids

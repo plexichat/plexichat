@@ -127,7 +127,10 @@ def test_registry_covers_the_real_sweeps():
             module = _PROJECT_ROOT.joinpath(*parts[:-1]).with_suffix(".py")
             assert module.is_file(), test_id
             assert f"class {parts[-1]}" in module.read_text(encoding="utf-8"), test_id
-        assert f"def {name}" in module.read_text(encoding="utf-8"), test_id
+        # A parametrised id carries its parameters in brackets, which are
+        # not part of the function definition in the source.
+        base_name = name.split("[", 1)[0]
+        assert f"def {base_name}" in module.read_text(encoding="utf-8"), test_id
 
 
 @pytest.mark.unit

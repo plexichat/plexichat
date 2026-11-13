@@ -91,8 +91,8 @@ async def trigger_typing(
                         for p in participants
                         if p.user_id != current_user.user_id
                     ]
-            except Exception:
-                pass
+            except Exception as participant_error:
+                logger.debug(f"typing audience lookup failed: {participant_error}")
 
         # Set typing indicator in presence module — only for a channel the
         # user can actually access (CORRECTNESS FIX: typing was previously
@@ -100,8 +100,9 @@ async def trigger_typing(
         if presence and (channel or user_ids):
             try:
                 presence.start_typing(current_user.user_id, cid)
-            except Exception:
-                pass  # Non-critical, don't fail the request
+            except Exception as typing_error:
+                # Non-critical: the request still succeeds without it.
+                logger.debug(f"start_typing failed: {typing_error}")
 
         # Broadcast typing event via WebSocket dispatcher (fire and forget)
         if user_ids:

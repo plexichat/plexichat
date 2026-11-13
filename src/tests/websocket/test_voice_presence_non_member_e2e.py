@@ -120,17 +120,17 @@ def realtime(
         try:
             if voice.is_user_in_voice(outsider.id):
                 voice.leave_channel(outsider.id)
-        except Exception:
+        except (RuntimeError, ValueError):
             pass
         for user in (owner, member):
             try:
                 if voice.is_user_in_voice(user.id):
                     voice.leave_channel(user.id)
-            except Exception:
+            except (RuntimeError, ValueError):
                 pass
         try:
             asyncio.run(signaling.close())
-        except Exception:
+        except (OSError, RuntimeError):
             pass
         voice._manager = None
         voice._setup_complete = False

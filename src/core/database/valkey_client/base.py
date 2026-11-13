@@ -211,8 +211,9 @@ class ValkeyClientBase:
                 severity="error",
                 target_path="#alerts",
             )
-        except Exception:
-            pass
+        except Exception as alert_error:
+            # Valkey being down must not also break the alert path.
+            logger.debug(f"valkey alert delivery failed: {alert_error}")
 
     def connect(self) -> bool:
         if not self.enabled:
@@ -363,17 +364,15 @@ class ValkeyClientBase:
             raise ValkeyOperationError(f"EVAL failed: {e}")
 
     def close(self) -> None:
-        if self._pubsub_handle:
-            try:
-                self._pubsub_handle = None
-            except Exception:
-                pass
+        # Dropping the pubsub handle is a plain attribute assignment; the old
+        # try/except around it could never fire.
+        self._pubsub_handle = None
 
         if self._client:
             try:
                 self._client.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"valkey client close failed: {close_error}")
 
         self._client = None
         self._connected = False
@@ -388,8 +387,8 @@ class ValkeyClientBase:
         if self._aclient:
             try:
                 await self._aclient.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"valkey async client close failed: {close_error}")
 
         self._aclient = None
         self._aconnected = False

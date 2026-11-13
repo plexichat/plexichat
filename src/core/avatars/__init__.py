@@ -82,7 +82,10 @@ def create_tables(db: Any) -> None:
         try:
             _manager.create_tables(db)
             return
-        except Exception:
+        except Exception as manager_error:
+            import utils.logger as logger
+
+            logger.debug(f"avatar manager table create failed: {manager_error}")
             # Manager path failed (e.g. test environment) - fall back to
             # the standalone DDL.
             pass

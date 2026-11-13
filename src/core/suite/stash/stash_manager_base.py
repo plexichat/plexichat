@@ -189,8 +189,10 @@ class StashManagerBase(StashManagerProtocol):
                 user_id
             ):
                 return True
-        except Exception:
-            pass
+        except Exception as permission_error:
+            import utils.logger as logger
+
+            logger.debug(f"stash permission probe failed: {permission_error}")
         try:
             return bool(
                 self._servers.has_permission(user_id, server_id, "server.manage")

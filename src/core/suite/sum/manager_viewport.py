@@ -508,8 +508,10 @@ class SumManagerViewport(SumManagerProtocol):
                                 if row_start <= r < row_end:
                                     col_cells[r] = cell
                         segment_map[col_idx] = col_cells
-                except Exception:
-                    pass
+                except Exception as segment_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"sum viewport segment decode failed: {segment_error}")
             # Merge: segment cells fill gaps, sparse cells take precedence.
             # Merged rows are plain dicts keyed like the sqlite rows
             # (subscriptable via ``row["column"]``); the merged list is
@@ -625,8 +627,10 @@ class SumManagerViewport(SumManagerProtocol):
                 session = _WORKBOOK_SESSIONS.get(int(workbook_id))
                 if session is None or session.pending > 0:
                     self._refresh_workbook_status(connection, int(workbook_id))
-            except Exception:
-                pass
+            except Exception as status_error:
+                import utils.logger as logger
+
+                logger.debug(f"sum workbook status refresh failed: {status_error}")
         except sqlite3.Error as exc:
             raise SumStorageError("Workbook file schema is invalid") from exc
         finally:

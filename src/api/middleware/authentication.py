@@ -518,8 +518,11 @@ class AuthenticationMiddleware:
                 parts = urlsplit(referer)
                 if parts.scheme and parts.netloc:
                     candidates.append(f"{parts.scheme}://{parts.netloc}".rstrip("/"))
-            except Exception:
-                pass
+            except ValueError:
+                # ``urlsplit`` raises only for a malformed authority (bad port,
+                # unbalanced IPv6 bracket). Such a header cannot name an
+                # allowed origin, so it simply contributes no candidate.
+                logger.debug(f"ignoring unparsable Referer origin: {referer!r}")
 
         allowed = {str(o).rstrip("/") for o in cors_origins if o}
         return any(c in allowed for c in candidates)

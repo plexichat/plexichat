@@ -62,8 +62,10 @@ class _FcntlLock:
         try:
             if fcntl is not None:
                 fcntl.flock(self._fd, fcntl.LOCK_UN)  # fcntl is Linux-only
-        except Exception:
-            pass
+        except OSError as unlock_error:
+            # Unlocking a descriptor the OS already closed is harmless; raising
+            # here would replace the exception unwinding through this manager.
+            logger.debug(f"deletion_log: unlock failed: {unlock_error}")
 
 
 class _MsvcrtLock:
@@ -96,8 +98,8 @@ class _MsvcrtLock:
         try:
             if self._mod is not None:
                 self._mod.locking(self._fd, self._mod.LK_UNLCK, 1)
-        except Exception:
-            pass
+        except OSError as unlock_error:
+            logger.debug(f"deletion_log: msvcrt unlock failed: {unlock_error}")
 
 
 def _file_lock(file_handle) -> ContextManager[object]:
@@ -258,12 +260,12 @@ class DeletionLog:
                     f.flush()
                     try:
                         os.fsync(f.fileno())
-                    except Exception:
+                    except OSError as fsync_error:
                         # fsync may fail on some FUSE/overlay mounts.
                         # Continue — the OS-level lock has already
                         # serialised the critical section so durability
                         # is bounded by the device's flush policy.
-                        pass
+                        logger.debug(f"deletion_log: fsync skipped: {fsync_error}")
 
                     logger.info(
                         f"deletion_log: {action} for user {user_id} "

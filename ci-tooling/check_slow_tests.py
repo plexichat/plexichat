@@ -139,6 +139,31 @@ MAX_LOAD_FACTOR = 4.0
 # cheap by ordering the fixtures differently -- so it is a named test with a
 # budget, and the module's six assertions run free behind it.
 SLOW_TEST_BUDGETS: Dict[str, Tuple[float, str]] = {
+    # Fixture-bound tests that run in a few hundredths of a second alone but
+    # queue behind the shard's own four xdist workers and the sibling jobs on
+    # the shared runner. Pipeline #2534 judged them against a 9.45s ceiling
+    # (5s x1.89 load) and they measured 12.36-13.12s; the same commit's shard
+    # jobs took 319.8s/347.6s, so the suite itself did not get slower. The
+    # budget carries the shared-runner cost, as the media entries above do,
+    # because a flat 5s gates the queue rather than the code.
+    "src.tests.settings.test_key_charset_a1.TestA1EvilKeysRejected::test_set_rejects_evil_keys[../etc/passwd]": (
+        15.0,
+        "1.86s setup idle, 13.12s in #2534 under 4-worker shard contention",
+    ),
+    "src.tests.servers.test_operations.TestServerErrorPaths::test_create_server_invalid_name": (
+        15.0,
+        "0.12s setup idle, 12.82s in #2534 under the same shard contention",
+    ),
+    "src.tests.events.test_payloads.TestMessagePayloads::test_create_message_create": (
+        15.0,
+        "0.04s setup idle, 12.36s in #2534 under the same shard contention",
+    ),
+    # This one is genuinely over the default: it waits out the coalescing
+    # window, so 5.89s is its own cost and 9.47s is that cost queued.
+    "src.tests.suite.test_sum_coalescing::test_eviction_flushes_pending_sessions_without_data_loss": (
+        12.0,
+        "waits out the coalescing eviction window: 5.89s idle, 9.47s in #2534",
+    ),
     "src.tests.unit.test_module_import_safety.TestModuleImportsBeforeLoggerSetup::test_every_production_module_imports": (
         10.0,
         "child-interpreter import of the whole tree: 2.7s idle, 7.7s at 2x oversubscription, 15.7s at 3x",

@@ -133,8 +133,10 @@ class Database(
                 return
             try:
                 inst.stop_pool_monitoring()
-            except Exception:
-                pass
+            except Exception as monitor_error:
+                logger.debug(
+                    f"pool monitoring stop failed during reset: {monitor_error}"
+                )
 
             # Close EVERY known connection: the pool's idle set, the current
             # thread's checked-out connection, and — via the monitor's
@@ -153,8 +155,10 @@ class Database(
                             for conn in list(pool._available):
                                 try:
                                     conn.close()
-                                except Exception:
-                                    pass
+                                except Exception as close_error:
+                                    logger.debug(
+                                        f"pooled connection close failed: {close_error}"
+                                    )
                                 seen.add(id(conn))
                             pool._available.clear()
                             pool._in_use.clear()
@@ -169,8 +173,9 @@ class Database(
                             # the test suite — making later tests queue 30s
                             # behind them.
                             pool._condition.notify_all()
-                    except Exception:
-                        pass
+                    except Exception as pool_error:
+                        # Reset must still drop every connection it can reach.
+                        logger.debug(f"pool drain failed during reset: {pool_error}")
                 else:
                     # PostgreSQL pool (or mock): close every pooled connection
                     # properly instead of silently dropping them via
@@ -182,16 +187,18 @@ class Database(
                     except Exception:
                         try:
                             pool.closeall()
-                        except Exception:
-                            pass
+                        except Exception as closeall_error:
+                            logger.debug(f"pool closeall failed: {closeall_error}")
             local = getattr(inst, "_local", None)
             if local is not None:
                 old_conn = getattr(local, "connection", None)
                 if old_conn is not None:
                     try:
                         old_conn.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(
+                            f"thread-local connection close failed: {close_error}"
+                        )
                     seen.add(id(old_conn))
                 local.connection = None
                 local.transaction_depth = 0
@@ -207,18 +214,20 @@ class Database(
                         if conn is not None:
                             try:
                                 conn.close()
-                            except Exception:
-                                pass
+                            except Exception as close_error:
+                                logger.debug(
+                                    f"monitor connection close failed: {close_error}"
+                                )
                     monitor._connection_metadata.clear()
-                except Exception:
-                    pass
+                except Exception as metadata_error:
+                    logger.debug(f"connection metadata clear failed: {metadata_error}")
             # Query-cache keys don't include the database path; drop cached
             # results so a re-pointed instance can't serve stale rows.
             try:
                 with inst._query_cache_lock:
                     inst._query_cache.clear()
-            except Exception:
-                pass
+            except Exception as cache_error:
+                logger.debug(f"query cache clear failed during reset: {cache_error}")
             cls._instance = None
 
     def fetch_last_insert_id(self) -> Optional[int]:

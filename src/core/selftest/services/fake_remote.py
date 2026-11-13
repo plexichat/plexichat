@@ -309,8 +309,8 @@ class FakeRemoteInstance:
                 )
                 if resp.status_code == 200:
                     return self.base_url
-            except Exception:
-                pass
+            except Exception as probe_error:
+                logger.debug(f"fake remote readiness probe failed: {probe_error}")
             time.sleep(0.05)
         self.stop()
         raise RuntimeError("Fake remote instance did not become ready")
@@ -319,12 +319,12 @@ class FakeRemoteInstance:
         if self._server is not None:
             try:
                 self._server.shutdown()
-            except Exception:
-                pass
+            except Exception as shutdown_error:
+                logger.debug(f"fake remote shutdown failed: {shutdown_error}")
             try:
                 self._server.server_close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"fake remote server close failed: {close_error}")
             self._server = None
         if self._thread is not None:
             self._thread.join(timeout=5)
@@ -335,14 +335,14 @@ class FakeRemoteInstance:
                 os.environ.pop("SSL_CERT_FILE", None)
             else:
                 os.environ["SSL_CERT_FILE"] = self._prev_ssl_cert_file
-        except Exception:
-            pass
+        except Exception as restore_error:
+            logger.debug(f"fake remote SSL_CERT_FILE restore failed: {restore_error}")
         self._prev_ssl_cert_file = None
         self._trust_bundle = ""
         if self._tmpdir is not None:
             try:
                 self._tmpdir.cleanup()
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                logger.debug(f"fake remote tmpdir cleanup failed: {cleanup_error}")
             self._tmpdir = None
         self.base_url = ""

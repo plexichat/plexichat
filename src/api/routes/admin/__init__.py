@@ -11,7 +11,7 @@ from .dashboard import router as dashboard_router
 from .tickets import router as tickets_router
 from .users import router as users_router
 from .security import router as security_router
-from .device_trust import router as device_trust_router  # noqa: F401 (re-exported)
+from .device_trust import router as _device_trust_router
 from .device_trust import get_device_trust_admin_overview
 from .moderation import router as moderation_router
 from .telemetry import router as telemetry_router
@@ -79,3 +79,6 @@ router.include_router(plexijoin_router)
 router.include_router(capabilities_router)
 router.include_router(admin_artifacts_router)
 router.include_router(data_export_router)
+
+# Re-exported for ``routes/__init__.py``; the module only serves as a mount point.
+device_trust_router = _device_trust_router
