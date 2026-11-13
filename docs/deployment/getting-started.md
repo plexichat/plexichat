@@ -390,7 +390,7 @@ curl https://chat.example.com/api/v1/ready
 # {"status":"ready"}
 
 curl https://chat.example.com/api/v1/health
-# {"status":"healthy","version":"1.0.0a220",...}
+# {"status":"healthy","version":"1.0.0a221",...}
 
 curl https://chat.example.com/api/v1/status
 # Server state, version, uptime, maintenance info
