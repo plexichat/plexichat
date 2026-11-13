@@ -61,7 +61,7 @@ class MemberInviteMixin:
         temporary: bool = False,
     ) -> Any:
         """Provided by :class:`MemberCrudMixin` on the composed handler."""
-        raise NotImplementedError
+        ...
 
     def generate_invite_code(self) -> str:
         """Generate a unique invite code."""
