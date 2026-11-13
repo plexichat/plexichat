@@ -58,8 +58,11 @@ class ArtifactJournal:
         self._entries.append(entry)
         try:
             self._flush()
-        except Exception:
-            pass
+        except Exception as flush_error:
+            # The journal is diagnostic output for the harness; keep reporting.
+            import utils.logger as logger
+
+            logger.debug(f"artifact journal flush failed: {flush_error}")
 
     def pending(self) -> List[Dict[str, Any]]:
         return list(self._entries)
@@ -68,8 +71,11 @@ class ArtifactJournal:
         self._entries = []
         try:
             self._flush()
-        except Exception:
-            pass
+        except Exception as flush_error:
+            # The journal is diagnostic output for the harness; keep reporting.
+            import utils.logger as logger
+
+            logger.debug(f"artifact journal flush failed: {flush_error}")
 
     # -- reconciliation ----------------------------------------------
 
@@ -105,7 +111,10 @@ class ArtifactJournal:
                 try:
                     db.execute(statement, params)
                     touched += 1
-                except Exception:
+                except Exception as touch_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"artifact journal touch failed: {touch_error}")
                     continue
         if touched:
             self.clear()

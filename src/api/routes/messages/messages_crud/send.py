@@ -256,8 +256,10 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                                 get_msg_id(msg),
                                 hard_delete=True,
                             )
-                        except Exception:
-                            pass
+                        except Exception as cleanup_error:
+                            logger.debug(
+                                f"message rollback cleanup failed: {cleanup_error}"
+                            )
                     raise HTTPException(
                         status_code=500,
                         detail={
@@ -285,8 +287,10 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                             msg = messaging.update_message_metadata(
                                 current_user.user_id, msg_id, {"poll_id": poll.id}
                             )
-                        except Exception:
-                            pass
+                        except Exception as meta_error:
+                            logger.debug(
+                                f"message poll metadata write failed: {meta_error}"
+                            )
                 except (
                     PollNotFoundError,
                     PollOptionNotFoundError,
@@ -308,8 +312,10 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                                 get_msg_id(msg),
                                 hard_delete=True,
                             )
-                        except Exception:
-                            pass
+                        except Exception as cleanup_error:
+                            logger.debug(
+                                f"send failure cleanup failed: {cleanup_error}"
+                            )
                     if isinstance(
                         e,
                         (
@@ -356,8 +362,10 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                                 get_msg_id(msg),
                                 hard_delete=True,
                             )
-                        except Exception:
-                            pass
+                        except Exception as cleanup_error:
+                            logger.debug(
+                                f"send warning cleanup failed: {cleanup_error}"
+                            )
                     logger.error(
                         f"Error creating poll for message {get_msg_id(msg)}: {e}",
                         exc_info=True,

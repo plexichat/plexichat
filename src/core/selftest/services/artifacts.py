@@ -252,8 +252,8 @@ class ArtifactsTester(ArtifactsEvalMixin):
             for art_id in list(created_ids):
                 try:
                     delete_artifact(db, art_id)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.debug(f"selftest artifact cleanup failed: {cleanup_error}")
 
     # === 2. capabilities ===
 
@@ -491,8 +491,8 @@ class ArtifactsTester(ArtifactsEvalMixin):
             for art_id in list(created_ids):
                 try:
                     delete_artifact(db, art_id)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.debug(f"selftest artifact cleanup failed: {cleanup_error}")
 
     # === 4. WSS round-trip harness ===
 
@@ -706,8 +706,8 @@ class ArtifactsTester(ArtifactsEvalMixin):
                         }
                     )
                 )
-            except Exception:
-                pass
+            except Exception as block_error:
+                logger.debug(f"selftest artifact block cleanup failed: {block_error}")
         except Exception as e:
             self._record(
                 "WS",
@@ -721,8 +721,10 @@ class ArtifactsTester(ArtifactsEvalMixin):
                 if sock is not None:
                     try:
                         sock.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(
+                            f"selftest artifact socket close failed: {close_error}"
+                        )
             if db is not None and temporary_artifact_id is not None:
                 try:
                     delete_artifact(db, temporary_artifact_id)
@@ -799,8 +801,8 @@ class ArtifactsTester(ArtifactsEvalMixin):
             finally:
                 try:
                     delete_artifact(db, art_id)
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.debug(f"selftest artifact cleanup failed: {cleanup_error}")
 
             resp = self.ctx.session.post(
                 self.ctx.base_url + "/api/v1/admin/artifacts/retention/purge"

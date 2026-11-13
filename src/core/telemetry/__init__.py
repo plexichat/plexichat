@@ -304,7 +304,8 @@ def submit_response_times(
                     float(entry.get("db_time_ms", 0.0)),
                 )
             )
-        except Exception:
+        except Exception as sample_error:
+            logger.debug(f"telemetry sample dropped: {sample_error}")
             continue
 
     if not batch_data:

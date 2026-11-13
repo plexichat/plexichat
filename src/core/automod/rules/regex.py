@@ -205,7 +205,8 @@ class RegexRule(BaseRule):
 
                     try:
                         compiled = re2_module.compile(pattern_str, options=options)
-                    except Exception:
+                    except Exception as re2_error:
+                        logger.debug(f"RE2 compile failed, falling back: {re2_error}")
                         # RE2 rejected the construct; static vetting below
                         # decides whether the fallback engine may be used.
                         pass

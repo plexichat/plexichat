@@ -86,8 +86,10 @@ class ItemMutationMixin(StashManagerProtocol):
             try:
                 if self._servers.has_permission(user_id, server_id, permission):
                     return True
-            except Exception:
-                pass
+            except Exception as permission_error:
+                import utils.logger as logger
+
+                logger.debug(f"stash permission check failed: {permission_error}")
         return False
 
     def set_pinned(self, user_id: int, item_id: int, pinned: bool) -> Dict[str, Any]:

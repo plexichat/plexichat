@@ -33,16 +33,17 @@ def _is_unique_violation(exc: BaseException) -> bool:
         if isinstance(exc, sqlite3.IntegrityError):
             txt = str(exc).lower()
             return "unique" in txt or "duplicate" in txt
-    except Exception:
-        pass
+    except Exception as inspect_error:
+        # Try the next driver-specific shape of the error.
+        logger.debug(f"poll unique check probe failed: {inspect_error}")
     try:
         import pg8000.dbapi
 
         if isinstance(exc, pg8000.dbapi.IntegrityError):
             txt = str(exc).lower()
             return "unique" in txt or "duplicate" in txt or "already exists" in txt
-    except Exception:
-        pass
+    except Exception as inspect_error:
+        logger.debug(f"poll duplicate check probe failed: {inspect_error}")
     txt = str(exc).lower()
     return "unique" in txt or "duplicate" in txt
 

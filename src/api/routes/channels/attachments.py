@@ -112,16 +112,20 @@ class ChannelAttachmentsMixin(ChannelBase):
                     channel = servers_mod.get_channel(cid, current_user.user_id)
                     if channel:
                         has_access = True
-                except Exception:
-                    pass
+                except Exception as channel_error:
+                    logger.debug(
+                        f"attachment channel access check failed: {channel_error}"
+                    )
 
             if not has_access and messaging:
                 try:
                     conv = messaging.get_conversation(cid, current_user.user_id)
                     if conv:
                         has_access = True
-                except Exception:
-                    pass
+                except Exception as conv_error:
+                    logger.debug(
+                        f"attachment conversation access check failed: {conv_error}"
+                    )
 
             if not has_access:
                 # Dual probe: 404 only when the channel genuinely does not

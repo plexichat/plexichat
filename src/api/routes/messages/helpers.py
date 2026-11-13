@@ -103,8 +103,14 @@ def _message_to_response(
                             try:
                                 meta = json.loads(metadata)
                                 file_id = meta.get("file_id")
-                            except Exception:
-                                pass
+                            except (
+                                TypeError,
+                                ValueError,
+                                AttributeError,
+                            ) as meta_error:
+                                logger.debug(
+                                    f"attachment metadata unreadable: {meta_error}"
+                                )
 
                 if not file_id and att_url:
                     stored_name = att_url.split("/")[-1]

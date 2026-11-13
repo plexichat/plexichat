@@ -164,8 +164,9 @@ class FanoutView(_MediaStreamTrack):
     def onended(self, handler: Any) -> None:
         try:
             self.fanout.source.onended = handler
-        except Exception:
-            pass
+        except Exception as end_error:
+            # Not every source supports an onended hook.
+            logger.debug(f"fanout source onended attach failed: {end_error}")
 
     def stop(self) -> None:
         """Detach this view only -- never the relay or the shared track."""

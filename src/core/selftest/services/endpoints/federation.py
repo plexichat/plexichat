@@ -72,8 +72,9 @@ def drop_connection(db, remote_id) -> None:
             "DELETE FROM plexijoin_connections WHERE remote_instance_id = ?",
             (remote_id,),
         )
-    except Exception:
-        pass
+    except Exception as delete_error:
+        # Suite hygiene; a leftover row only affects the next run's cleanup.
+        logger.debug(f"federation connection cleanup failed: {delete_error}")
 
 
 class FederationMixin(EndpointTesterBase):
@@ -145,8 +146,8 @@ class FederationMixin(EndpointTesterBase):
                             "DELETE FROM plexijoin_inbound_requests WHERE id = ?",
                             (int(_rid),),
                         )
-                except Exception:
-                    pass
+                except Exception as parse_error:
+                    logger.debug(f"federation id parse failed: {parse_error}")
             else:
                 logger.warning(
                     f"Federation join-request -> {jr_resp.status_code}: "
@@ -264,8 +265,8 @@ class FederationMixin(EndpointTesterBase):
         finally:
             try:
                 fake.stop()
-            except Exception:
-                pass
+            except Exception as stop_error:
+                logger.debug(f"fake remote stop failed: {stop_error}")
 
     def _join_contract_steps(self, session, base, fake, _record) -> None:
         """request -> list -> approve/deny -> message -> break via fake peer."""
@@ -323,8 +324,8 @@ class FederationMixin(EndpointTesterBase):
                 _items = list_resp.json().get("Joins") or []
                 if _items:
                     join_id = _items[0].get("Join_id") or _items[0].get("id")
-            except Exception:
-                pass
+            except Exception as join_error:
+                logger.debug(f"federation join id parse failed: {join_error}")
 
         # --- inbound rows, seeded fresh here ---
         # The setup-seeded rows are consumed by the admin plexijoin review

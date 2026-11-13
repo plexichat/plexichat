@@ -90,8 +90,8 @@ class DsarMixin(AdminMixinBase):
                     if dsar_request_id:
                         self.ctx.test_dsar_id = int(dsar_request_id)
                         logger.debug(f"Found DSAR request id: {dsar_request_id}")
-            except Exception:
-                pass
+            except Exception as parse_error:
+                logger.debug(f"DSAR request id parse failed: {parse_error}")
             logger.info(f"DSAR list PASSED -> {resp.status_code}")
         else:
             logger.warning(f"DSAR list -> {resp.status_code}: {resp.text[:200]}")
@@ -182,8 +182,8 @@ class DsarMixin(AdminMixinBase):
                         admin_id = int(
                             _row3["id"] if isinstance(_row3, dict) else _row3[0]
                         )
-            except Exception:
-                pass
+            except Exception as parse_error:
+                logger.debug(f"DSAR approval id parse failed: {parse_error}")
             if admin_id:
                 base = self.ctx.base_url
                 for method, path, label in [
@@ -263,8 +263,8 @@ class DsarMixin(AdminMixinBase):
                         deny_id = int(
                             _row2["id"] if isinstance(_row2, dict) else _row2[0]
                         )
-            except Exception:
-                pass
+            except Exception as parse_error:
+                logger.debug(f"DSAR deny id parse failed: {parse_error}")
             if deny_id:
                 deny_resp = session.post(
                     f"{self.ctx.base_url}/api/v1/admin/data-export/{deny_id}/deny",

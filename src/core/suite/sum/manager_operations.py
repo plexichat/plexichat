@@ -920,8 +920,10 @@ class SumManagerOperations(SumManagerProtocol):
                                 json.dumps(decoded.get("statistics", {})),
                             ),
                         )
-                except Exception:
-                    pass
+                except Exception as audit_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"sum operation audit failed: {audit_error}")
 
     # ── replay / snapshots ────────────────────────────────────────────────────
 

@@ -346,8 +346,8 @@ class VotingMixin(PollManagerBase):
             votes_deleted = _deleted_count(cursor)
             try:
                 cursor.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"poll vote cursor close failed: {close_error}")
 
             # De-register the voter slot so the user can vote again on this poll.
             voters_cursor = self._db.execute(
@@ -358,8 +358,8 @@ class VotingMixin(PollManagerBase):
             voters_deleted = _deleted_count(voters_cursor)
             try:
                 voters_cursor.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"poll voters cursor close failed: {close_error}")
             self._db.commit()
         except Exception:
             self._db.rollback()

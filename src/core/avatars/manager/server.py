@@ -202,8 +202,9 @@ class AvatarServerMixin(AvatarProtocol):
                     self._delete_cached_binary(f"server_icon_meta:{server_id}")
                 else:
                     return bin_data, content_type, checksum
-            except Exception:
-                pass  # Fall back to DB if cache format is weird
+            except Exception as cache_error:
+                # Fall back to the database if the cache format is unexpected.
+                logger.debug(f"server avatar cache read failed: {cache_error}")
 
         # 2. Fetch from DB
         db = self._get_db()

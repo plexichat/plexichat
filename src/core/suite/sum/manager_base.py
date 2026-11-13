@@ -314,8 +314,12 @@ class SumManagerBase(SumManagerProtocol):
                     user_id, int(server_id), "server.manage"
                 ):
                     return
-            except Exception:
-                pass
+            except Exception as permission_error:
+                import utils.logger as logger
+
+                logger.debug(
+                    f"sum workbook permission probe failed: {permission_error}"
+                )
         if mutation and self._has_grant(int(workbook["id"]), int(user_id), "view"):
             raise SumPermissionError("You have view-only access to this workbook")
         raise SumPermissionError("Not authorized to access this workbook")
@@ -367,8 +371,10 @@ class SumManagerBase(SumManagerProtocol):
                         int(user_id), int(server_id), "server.manage"
                     ):
                         can_edit = True
-                except Exception:
-                    pass
+                except Exception as grant_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"sum edit grant probe failed: {grant_error}")
 
         reason = None
         if not can_edit:

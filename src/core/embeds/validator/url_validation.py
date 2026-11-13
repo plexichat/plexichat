@@ -179,8 +179,12 @@ def validate_url(url: str, field_name: str = "url") -> str:
                 "validation. Install src.utils.security to enable "
                 "DNS-based SSRF protection."
             )
-        except Exception:
-            pass
+        except Exception as config_error:
+            # Fail closed on the DNS policy above; record why the config could
+            # not be read so the operator can fix it.
+            import utils.logger as logger
+
+            logger.debug(f"URL validation config unavailable: {config_error}")
 
         _urlparse = urlparse
         parsed_host = _urlparse(url).hostname or ""

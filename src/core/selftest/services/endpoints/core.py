@@ -372,8 +372,10 @@ class CoreMixin(EndpointTesterBase):
                             traceback_data = (
                                 retry_resp.json().get("error", {}).get("traceback")
                             )
-                        except Exception:
-                            pass
+                        except Exception as cleanup_error:
+                            logger.debug(
+                                f"selftest core cleanup failed: {cleanup_error}"
+                            )
 
             result = {
                 "method": method,
@@ -449,8 +451,10 @@ class CoreMixin(EndpointTesterBase):
                                 f"{_srv}/bans/{_oid}",
                                 timeout=5,
                             )
-                        except Exception:
-                            pass
+                        except Exception as cleanup_error:
+                            logger.debug(
+                                f"selftest core cleanup failed: {cleanup_error}"
+                            )
                     if (_is_ban or _is_unban or _is_kick) and self.ctx.test_channel_id:
                         _inv = active_session.post(
                             f"{self.ctx.base_url}/api/v1/channels/"
@@ -570,8 +574,10 @@ class CoreMixin(EndpointTesterBase):
                                 logger.debug(
                                     "Re-sent seeded friend request after unblock"
                                 )
-                            except Exception:
-                                pass
+                            except Exception as cleanup_error:
+                                logger.debug(
+                                    f"selftest nested cleanup failed: {cleanup_error}"
+                                )
                 except Exception as exc:
                     logger.debug(f"Relationship auto-unblock note: {exc}")
 
@@ -647,8 +653,8 @@ class CoreMixin(EndpointTesterBase):
                             logger.debug(
                                 f"Captured webhook id={wid} from auto-loop POST"
                             )
-                except Exception:
-                    pass
+                except Exception as parse_error:
+                    logger.debug(f"selftest id parse failed: {parse_error}")
 
             # Capture soundboard sound ID from auto-loop upload so subsequent
             # GET/PATCH/PUT/play tests address a real sound instead of a
@@ -661,8 +667,8 @@ class CoreMixin(EndpointTesterBase):
                         if sid:
                             self.ctx.test_soundboard_id = int(sid)
                             logger.debug(f"Captured soundboard sound id={sid}")
-                except Exception:
-                    pass
+                except Exception as parse_error:
+                    logger.debug(f"soundboard id parse failed: {parse_error}")
 
             # Capture artifact ID from auto-loop POST /artifacts so subsequent
             # GET/PATCH/DELETE /artifacts/{id} tests use a real, existing id.
@@ -676,8 +682,8 @@ class CoreMixin(EndpointTesterBase):
                             logger.debug(
                                 f"Captured artifact id={aid} from auto-loop POST"
                             )
-                except Exception:
-                    pass
+                except Exception as parse_error:
+                    logger.debug(f"selftest id parse failed: {parse_error}")
 
             if expected_license_denial:
                 logger.info(
@@ -691,8 +697,8 @@ class CoreMixin(EndpointTesterBase):
                 if resp.status_code in (400, 401, 403):
                     try:
                         logger.error(f"  Body: {resp.text[:300]}")
-                    except Exception:
-                        pass
+                    except Exception as log_error:
+                        logger.debug(f"response body logging failed: {log_error}")
                 if resp.status_code == 400:
                     logger.error(f"  Validation Error: {resp.text[:200]}")
                 if traceback_data:

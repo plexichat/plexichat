@@ -350,8 +350,9 @@ async def rotate_access_token(
             source="admin",
             severity="info",
         )
-    except Exception:
-        pass
+    except Exception as alert_error:
+        # The admin action already succeeded; a missing alert is not fatal.
+        logger.debug(f"admin security alert failed: {alert_error}")
 
     return AccessTokenCreateResponse(
         token=token.token or "", access_token=_serialize_access_token(token)
@@ -460,8 +461,8 @@ async def revoke_access_token(request: Request, token_id: SnowflakeIDParam):
             source="admin",
             severity="warning",
         )
-    except Exception:
-        pass
+    except Exception as alert_error:
+        logger.debug(f"admin security warning alert failed: {alert_error}")
 
     return SuccessResponse(success=True, message=None)
 
@@ -509,8 +510,9 @@ async def unrevoke_access_token(request: Request, token_id: SnowflakeIDParam):
             source="admin",
             severity="info",
         )
-    except Exception:
-        pass
+    except Exception as alert_error:
+        # The admin action already succeeded; a missing alert is not fatal.
+        logger.debug(f"admin security alert failed: {alert_error}")
 
     return SuccessResponse(success=True, message=None)
 
@@ -647,8 +649,8 @@ async def force_logout(request: Request, body: ForceLogoutRequest):
                 severity="warning",
                 target_path=f"#user-{uid}",
             )
-        except Exception:
-            pass
+        except Exception as alert_error:
+            logger.debug(f"admin user alert failed: {alert_error}")
 
         return SuccessResponse(success=True, message=None)
     except ValueError:
@@ -709,8 +711,8 @@ async def admin_lock_user(request: Request, body: UserLockRequest):
                 severity="warning",
                 target_path=f"#user-{uid}",
             )
-        except Exception:
-            pass
+        except Exception as alert_error:
+            logger.debug(f"admin user alert failed: {alert_error}")
 
         return SuccessResponse(success=True, message=None)
     except ValueError:
@@ -786,7 +788,7 @@ async def logout_all_users(request: Request):
             source="admin",
             severity="warning",
         )
-    except Exception:
-        pass
+    except Exception as alert_error:
+        logger.debug(f"admin security warning alert failed: {alert_error}")
 
     return SuccessResponse(success=True, message=None)

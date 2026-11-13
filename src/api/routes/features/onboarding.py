@@ -177,16 +177,16 @@ async def apply_onboarding_preset(
             current_user.user_id, server_id, "onboarding.manage"
         )
         has_perm = True
-    except Exception:
-        pass
+    except Exception as perm_error:
+        logger.debug(f"onboarding permission check failed: {perm_error}")
     if not has_perm:
         try:
             servers_mod.require_permission(
                 current_user.user_id, server_id, "server.manage"
             )
             has_perm = True
-        except Exception:
-            pass
+        except Exception as perm_error:
+            logger.debug(f"onboarding fallback permission check failed: {perm_error}")
     if not has_perm:
         raise_forbidden("Missing onboarding.manage or server.manage permission")
 

@@ -288,8 +288,9 @@ async def relay_artifact_op(
             )
             if result is True:
                 sent += 1
-        except Exception:
-            pass
+        except Exception as send_error:
+            # One unreachable member must not stop the fan-out.
+            logger.debug(f"artifact broadcast to member failed: {send_error}")
 
     logger.debug(
         f"Relayed ARTIFACT_OP for artifact {artifact_id} from {actor_id} "

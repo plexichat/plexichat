@@ -124,8 +124,8 @@ class AuthSetupMixin(SetupServiceBase):
                         "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
                         (user.id,),
                     )
-                except Exception:
-                    pass
+                except Exception as unlock_error:
+                    logger.debug(f"selftest account unlock failed: {unlock_error}")
 
             self.ctx.test_user_id = user.id
             logger.info(f"Test user ID: {self.ctx.test_user_id}")
@@ -164,8 +164,10 @@ class AuthSetupMixin(SetupServiceBase):
                                     "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
                                     (other_user_id,),
                                 )
-                            except Exception:
-                                pass
+                            except Exception as link_error:
+                                logger.debug(
+                                    f"selftest other user link failed: {link_error}"
+                                )
                         self.ctx.test_other_user_id = other_user_id
                         self.ctx._setup_other_username = other_username
                         self.ctx._setup_other_email = other_email
@@ -312,8 +314,10 @@ class AuthSetupMixin(SetupServiceBase):
                                     "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
                                     (third_user_id,),
                                 )
-                            except Exception:
-                                pass
+                            except Exception as link_error:
+                                logger.debug(
+                                    f"selftest third user link failed: {link_error}"
+                                )
                         self.ctx.test_third_user_id = third_user_id
                         self.ctx.test_third_username = third_username
                         logger.debug(

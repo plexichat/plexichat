@@ -224,8 +224,9 @@ class MessageIndexingMixin(SearchManagerBase):
             if on_progress is not None:
                 try:
                     on_progress(indexed, pages)
-                except Exception:
-                    pass
+                except Exception as progress_error:
+                    # A broken progress callback must not abort the backfill.
+                    logger.debug(f"indexing progress callback failed: {progress_error}")
 
             if len(page) < page_size:
                 break

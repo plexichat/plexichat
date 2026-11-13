@@ -367,8 +367,9 @@ def _order_children_first(db, tables):
                 ref = row["table"] if isinstance(row, dict) else row[2]
                 if ref in selected and ref != table:
                     refs.add(ref)
-        except Exception:
-            pass
+        except Exception as fk_error:
+            # Foreign-key introspection is optional metadata for ordering.
+            logger.debug(f"fk introspection skipped for {table}: {fk_error}")
         refs_of[table] = refs
 
     ordered = []

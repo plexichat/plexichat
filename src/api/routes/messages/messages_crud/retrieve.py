@@ -90,8 +90,9 @@ class RetrieveMixin(MessagesCRUDBase):
                         f"row={'missing' if _dbg_row is None else dict(_dbg_row)}, "
                         f"participant={_dbg_part}"
                     )
-                except Exception:
-                    pass
+                except Exception as debug_error:
+                    # Debug logging must never mask the HTTP error below.
+                    logger.debug(f"message access debug log failed: {debug_error}")
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Message not found"}},
@@ -116,8 +117,8 @@ class RetrieveMixin(MessagesCRUDBase):
                         author_info["username"] = user.username
                         author_info["avatar_url"] = getattr(user, "avatar_url", None)
                         author_info["badges"] = getattr(user, "badges", [])
-                except Exception:
-                    pass
+                except Exception as badge_error:
+                    logger.debug(f"message author badge lookup failed: {badge_error}")
 
             return _message_to_response(
                 message,

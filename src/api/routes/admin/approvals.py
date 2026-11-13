@@ -331,8 +331,11 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
             severity="info",
             target_path=f"#approval-{approval_id}",
         )
-    except Exception:
-        pass
+    except Exception as notify_error:
+        # The approval itself is already recorded; the alert is advisory.
+        import utils.logger as logger
+
+        logger.debug(f"approval notification failed: {notify_error}")
 
     return SuccessResponse(
         success=True, message=f"Approval request created: {approval_id}"
@@ -554,8 +557,10 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
                 severity="info",
                 target_path=f"#approval-{approval_id}",
             )
-    except Exception:
-        pass
+    except Exception as notify_error:
+        import utils.logger as logger
+
+        logger.debug(f"approval notification failed: {notify_error}")
 
     return SuccessResponse(success=True, message="Approval recorded")
 
@@ -674,8 +679,11 @@ async def reject_request(
             severity="warning",
             target_path=f"#approval-{approval_id}",
         )
-    except Exception:
-        pass
+    except Exception as notify_error:
+        # The approval itself is already recorded; the alert is advisory.
+        import utils.logger as logger
+
+        logger.debug(f"approval notification failed: {notify_error}")
 
     return SuccessResponse(success=True, message="Approval request rejected")
 

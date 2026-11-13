@@ -97,8 +97,8 @@ class ThreadSlowmode:
             from src.core.database import cache_delete
 
             cache_delete(cache_key)
-        except Exception:
-            pass
+        except Exception as cache_error:
+            logger.debug(f"thread slowmode cache delete failed: {cache_error}")
 
         logger.debug(
             f"Thread {thread_id} slowmode set to {interval_ms}ms by user {user_id}"

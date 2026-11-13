@@ -47,8 +47,8 @@ class DSARManager:
             from src.core.database import invalidate_pattern
 
             invalidate_pattern(pattern)
-        except Exception:
-            pass
+        except Exception as cache_error:
+            logger.debug(f"dsar cache invalidate failed: {cache_error}")
 
     def request_export(
         self, user_id: int, format: str = "json", categories: Optional[List[str]] = None

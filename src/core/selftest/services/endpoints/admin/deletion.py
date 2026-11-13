@@ -456,8 +456,8 @@ class DeletionMixin(AdminMixinBase):
             # own fixture on the deployment.
             try:
                 admin_session.delete(f"{base}/api/v1/channels/{dm_id}", timeout=10)
-            except Exception:
-                pass
+            except Exception as delete_error:
+                logger.debug(f"selftest deletion DM cleanup failed: {delete_error}")
         except Exception as e:
             self._purge_residue_result(
                 "purge_residue_seed",
@@ -469,8 +469,8 @@ class DeletionMixin(AdminMixinBase):
         finally:
             try:
                 doomed.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"selftest doomed session close failed: {close_error}")
             # A check that failed half-way must not leave its fixture account
             # behind; the purge endpoint is the same path the check trusts.
             if user_id:

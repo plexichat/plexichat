@@ -532,8 +532,10 @@ class SumManagerSessions(SumManagerProtocol):
                 self._db.rollback()
             try:
                 self._blob.delete(path)
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                import utils.logger as logger
+
+                logger.debug(f"sum session blob cleanup failed: {cleanup_error}")
             raise
         self._cache_current_file(int(workbook_id), int(revision), data)
         session.loaded_blob_revision = int(revision)

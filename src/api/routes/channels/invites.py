@@ -249,8 +249,10 @@ class ChannelInvitesMixin(ChannelBase):
                         )
                         if server:
                             server_name = server.name
-                    except Exception:
-                        pass
+                    except Exception as server_error:
+                        logger.debug(
+                            f"invite server name lookup failed: {server_error}"
+                        )
 
                 return InviteInfoResponse(
                     code=invite.code,

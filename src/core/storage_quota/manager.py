@@ -93,8 +93,9 @@ class StorageQuotaManager:
 
             if features.is_setup():
                 return str(features.get_user_tier(int(user_id)) or "standard")
-        except Exception:
-            pass
+        except Exception as tier_error:
+            # Fall back to the configured default tier below.
+            logger.debug(f"user tier lookup failed: {tier_error}")
         try:
             value = config.get("user_features", {}).get("default_tier", "standard")
             return str(value or "standard")
@@ -111,8 +112,8 @@ class StorageQuotaManager:
                 return -1
             if mb > 0:
                 return mb * MIB
-        except Exception:
-            pass
+        except Exception as limit_error:
+            logger.debug(f"quota limit lookup failed: {limit_error}")
         return None
 
     def _override_row(self, user_id: int) -> Optional[Any]:
@@ -300,8 +301,8 @@ class StorageQuotaManager:
         except Exception:
             try:
                 self._db.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_error:
+                logger.debug(f"storage quota rollback failed: {rollback_error}")
             raise
         return token
 

@@ -43,8 +43,9 @@ def _load_stable_peer_secret() -> bytes:
         if secret:
             _STABLE_PEER_SECRET = secret.encode("utf-8")
             return _STABLE_PEER_SECRET
-    except Exception:
-        pass
+    except Exception as secret_error:
+        # Fall through to the per-process random secret below.
+        logger.debug(f"stable peer secret unavailable: {secret_error}")
 
     for env_name in (
         "PLEXICHAT_VOICE_STABLE_PEER_SECRET",
@@ -61,8 +62,9 @@ def _load_stable_peer_secret() -> bytes:
         if secret:
             _STABLE_PEER_SECRET = secret.encode("utf-8")
             return _STABLE_PEER_SECRET
-    except Exception:
-        pass
+    except Exception as secret_error:
+        # Fall through to the per-process random secret below.
+        logger.debug(f"stable peer secret unavailable: {secret_error}")
 
     # Best-effort: this runs at import time (see the module-level call below),
     # which can precede ``logger.setup()``. An unconfigured logger raises,

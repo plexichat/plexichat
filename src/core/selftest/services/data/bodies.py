@@ -330,8 +330,12 @@ class MinimalBodyMixin(DataGeneratorBase):
                         if _lic_path.exists():
                             _lic_b64 = base64.b64encode(_lic_path.read_bytes()).decode()
                             body["license_key"] = _lic_b64
-                except Exception:
-                    pass
+                except Exception as license_error:
+                    import utils.logger as logger
+
+                    logger.debug(
+                        f"selftest license fixture unavailable: {license_error}"
+                    )
 
             if "access-tokens" in path and "/scopes" in path and method == "POST":
                 body["scope_type"] = "ip"

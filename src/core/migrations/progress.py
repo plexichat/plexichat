@@ -129,8 +129,10 @@ class ProgressBar:
         try:
             self._stream.write("\n")
             self._stream.flush()
-        except Exception:
-            pass
+        except (OSError, ValueError) as write_error:
+            import utils.logger as logger
+
+            logger.debug(f"migration progress write failed: {write_error}")
         self._closed = True
 
 

@@ -379,8 +379,8 @@ class SumTester:
                         }
                     )
                 )
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                logger.debug(f"selftest sum cleanup failed: {cleanup_error}")
         except Exception as e:
             self._record(
                 "sum",
@@ -394,8 +394,8 @@ class SumTester:
                 if sock is not None:
                     try:
                         sock.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(f"selftest sum socket close failed: {close_error}")
             if manager is not None and temporary_workbook_id is not None:
                 try:
                     manager.delete_workbook(owner_id, temporary_workbook_id)

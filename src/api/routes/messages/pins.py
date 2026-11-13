@@ -94,8 +94,10 @@ async def pin_message(
                                             user_ids = servers_mod.get_member_user_ids(
                                                 server_id
                                             )
-                                except Exception:
-                                    pass
+                                except Exception as member_error:
+                                    logger.debug(
+                                        f"pin broadcast member lookup failed: {member_error}"
+                                    )
 
                             if not user_ids and messaging:
                                 try:
@@ -103,8 +105,10 @@ async def pin_message(
                                         current_user.user_id, cid
                                     )
                                     user_ids = [p.user_id for p in (participants or [])]
-                                except Exception:
-                                    pass
+                                except Exception as participant_error:
+                                    logger.debug(
+                                        f"pin participant lookup failed: {participant_error}"
+                                    )
 
                             if user_ids:
                                 event = build_message_update(
@@ -127,8 +131,10 @@ async def pin_message(
                         try:
                             chan = servers_mod.get_channel(cid, current_user.user_id)
                             server_id = getattr(chan, "server_id", None)
-                        except Exception:
-                            pass
+                        except Exception as channel_error:
+                            logger.debug(
+                                f"pin server id lookup failed: {channel_error}"
+                            )
                     emit_channel_pins_update(
                         channel_id=cid, guild_id=server_id, pinned_message_ids=None
                     )
@@ -234,8 +240,10 @@ async def unpin_message(
                                             user_ids = servers_mod.get_member_user_ids(
                                                 server_id
                                             )
-                                except Exception:
-                                    pass
+                                except Exception as member_error:
+                                    logger.debug(
+                                        f"pin broadcast member lookup failed: {member_error}"
+                                    )
 
                             if not user_ids and messaging:
                                 try:
@@ -243,8 +251,10 @@ async def unpin_message(
                                         current_user.user_id, cid
                                     )
                                     user_ids = [p.user_id for p in (participants or [])]
-                                except Exception:
-                                    pass
+                                except Exception as participant_error:
+                                    logger.debug(
+                                        f"pin participant lookup failed: {participant_error}"
+                                    )
 
                             if user_ids:
                                 event = build_message_update(
@@ -267,8 +277,10 @@ async def unpin_message(
                         try:
                             chan = servers_mod.get_channel(cid, current_user.user_id)
                             server_id = getattr(chan, "server_id", None)
-                        except Exception:
-                            pass
+                        except Exception as channel_error:
+                            logger.debug(
+                                f"pin server id lookup failed: {channel_error}"
+                            )
                     emit_channel_pins_update(
                         channel_id=cid, guild_id=server_id, pinned_message_ids=None
                     )

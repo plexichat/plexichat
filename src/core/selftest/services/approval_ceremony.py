@@ -71,12 +71,12 @@ def third_user_session(ctx):
             probe = sess.get(f"{ctx.base_url}/api/v1/users/@me", timeout=5)
             if probe.status_code == 200:
                 return sess
-        except Exception:
-            pass
+        except Exception as login_error:
+            logger.debug(f"approval ceremony login failed: {login_error}")
         try:
             sess.close()
-        except Exception:
-            pass
+        except Exception as close_error:
+            logger.debug(f"approval ceremony session close failed: {close_error}")
         ctx.third_session = None
     username = getattr(ctx, "test_third_username", None)
     password = ctx._test_password
@@ -101,15 +101,15 @@ def third_user_session(ctx):
             logger.warning(f"Third user login -> {resp.status_code}: {resp.text[:200]}")
             try:
                 sess.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"approval ceremony session close failed: {close_error}")
             return None
         token = resp.json().get("token") or resp.json().get("access_token")
         if not token:
             try:
                 sess.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"approval ceremony session close failed: {close_error}")
             return None
         sess.headers.update({"Authorization": f"Bearer {token}"})
         ctx.third_session = sess
@@ -158,8 +158,8 @@ def run_ceremony(ctx, action_type: str) -> bool:
         m = _re.search(r"(\d{10,})", req_resp.text)
         if m:
             approval_id = int(m.group(1))
-    except Exception:
-        pass
+    except Exception as parse_error:
+        logger.debug(f"approval id parse from response failed: {parse_error}")
     if approval_id is None:
         try:
             _db = api.get_db()
@@ -171,8 +171,8 @@ def run_ceremony(ctx, action_type: str) -> bool:
                 )
                 if _row:
                     approval_id = int(_row["id"] if isinstance(_row, dict) else _row[0])
-        except Exception:
-            pass
+        except Exception as row_error:
+            logger.debug(f"approval id read from database failed: {row_error}")
     if approval_id is None:
         logger.warning(f"Approval ceremony ({action_type}): no id resolved")
         return False

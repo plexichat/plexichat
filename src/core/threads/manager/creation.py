@@ -152,8 +152,11 @@ class ThreadCreationMixin(ThreadProtocol):
 
                 metadata = json.loads(conv_row["metadata"])
                 channel_id = metadata.get("channel_id")
-            except Exception:
-                pass
+            except (TypeError, ValueError, AttributeError) as metadata_error:
+                # A conversation without usable metadata simply has no channel.
+                logger.debug(
+                    f"thread conversation metadata unreadable: {metadata_error}"
+                )
 
         if not channel_id:
             channel_id = message.get("channel_id")

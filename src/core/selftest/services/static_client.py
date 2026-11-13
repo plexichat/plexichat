@@ -180,10 +180,10 @@ class StaticClientTester:
                                     if not css_file.startswith("/"):
                                         css_file = "/" + css_file
                                     asset_checks.append(css_file)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as manifest_error:
+                        logger.debug(f"static manifest parse failed: {manifest_error}")
+        except Exception as manifest_fetch_error:
+            logger.debug(f"static manifest fetch failed: {manifest_fetch_error}")
 
         # Deduplicate and verify - assets must be served with 200.
         # 503 (not installed) and 404 (missing bundle file) are failures,

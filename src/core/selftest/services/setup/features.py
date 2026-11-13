@@ -145,8 +145,8 @@ class FeatureSetupMixin(SetupServiceBase):
                         ),
                     )
                     logger.debug("Synced report to reports table for PATCH status test")
-                except Exception:
-                    pass
+                except Exception as sync_error:
+                    logger.debug(f"report table sync failed: {sync_error}")
                 hash_report_id = self.ctx.data.generate_snowflake()
                 _r_db.execute(
                     "INSERT OR IGNORE INTO media_hash_reports (id, reporter_id, hash_value, reason, status, reported_at) VALUES (?, ?, ?, ?, ?, ?)",

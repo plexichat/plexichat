@@ -274,10 +274,11 @@ async def search_health(
                     mgr = search_mod.get_manager()
                     indexer_name = type(mgr._indexer).__name__
                     backend = mgr._config.get("backend", backend)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as config_error:
+                    logger.debug(f"search backend config probe failed: {config_error}")
+        except Exception as manager_error:
+            # The manager is optional telemetry; search itself still runs.
+            logger.debug(f"search manager introspection failed: {manager_error}")
         try:
             # try to get stats via manager
             mgr = (
@@ -318,8 +319,6 @@ async def search_health(
             "stats": stats,
         }
     except Exception as e:
-        import utils.logger as logger
-
         logger.error(f"Search health failed: {e}", exc_info=True)
         return {"enabled": True, "healthy": False, "error": str(e)}
 

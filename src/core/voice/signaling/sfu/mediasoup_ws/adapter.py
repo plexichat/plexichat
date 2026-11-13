@@ -56,8 +56,8 @@ class MediasoupWSAdapter(ConnectionMixin, RoomsMixin, RecordingMixin):
             if connection and connection.websocket:
                 try:
                     await connection.websocket.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    logger.debug(f"mediasoup websocket close failed: {close_error}")
         self._connections.clear()
         self._rooms.clear()
         self._message_handlers.clear()

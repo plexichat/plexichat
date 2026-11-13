@@ -97,8 +97,10 @@ class ArtifactsEvalMixin:
             finally:
                 try:
                     db.execute("DELETE FROM voice_calls WHERE id = ?", (call_id,))
-                except Exception:
-                    pass
+                except Exception as delete_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"selftest voice call cleanup failed: {delete_error}")
         except Exception as e:
             self._record(
                 "WORKER",
@@ -248,8 +250,12 @@ class ArtifactsEvalMixin:
                         "DELETE FROM plexijoin_connections WHERE remote_instance_id = ?",
                         (remote_id,),
                     )
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    import utils.logger as logger
+
+                    logger.debug(
+                        f"selftest artifact eval cleanup failed: {cleanup_error}"
+                    )
 
         except Exception as e:
             self._record(
@@ -434,8 +440,10 @@ def _recv_json_with_timeout(sock: Any, timeout: float) -> Optional[Dict[str, Any
     finally:
         try:
             sock.settimeout(original)
-        except Exception:
-            pass
+        except Exception as restore_error:
+            import utils.logger as logger
+
+            logger.debug(f"selftest socket timeout restore failed: {restore_error}")
 
 
 def _alloc_id(db: Any) -> int:
@@ -447,8 +455,10 @@ def _alloc_id(db: Any) -> int:
     try:
         rows = db.fetch_all("SELECT id FROM artifacts WHERE id >= ?", (base,))
         existing = {int(r["id"]) for r in rows}
-    except Exception:
-        pass
+    except Exception as read_error:
+        import utils.logger as logger
+
+        logger.debug(f"selftest id collision read failed: {read_error}")
     cand = base
     while cand in existing:
         cand += 1

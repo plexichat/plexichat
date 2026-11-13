@@ -254,8 +254,8 @@ async def relay_sum_op(
             )
             if result is True:
                 sent += 1
-        except Exception:
-            pass
+        except Exception as send_error:
+            logger.debug(f"sum broadcast to member failed: {send_error}")
 
     logger.debug(
         f"Relayed SUM_OP for workbook {workbook_id} from {actor_id} "

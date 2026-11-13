@@ -75,8 +75,8 @@ class TokenMixin(AdminMixinBase):
             if new_id:
                 rotated_token_id = int(new_id)
                 logger.debug(f"Rotate returned new token id: {rotated_token_id}")
-        except Exception:
-            pass
+        except Exception as parse_error:
+            logger.debug(f"rotated token id parse failed: {parse_error}")
         # The rotated-away original is revoked by rotation; point tracking
         # at the live replacement so cleanup deletes the right row.
         self.ctx.test_access_token_id = rotated_token_id

@@ -85,8 +85,8 @@ class CleanupService:
                     logger.debug(
                         f"Pre-test cleanup: removed {len(orphan_srv_rows)} orphaned servers"
                     )
-            except Exception:
-                pass
+            except Exception as delete_error:
+                logger.debug(f"selftest cleanup delete failed: {delete_error}")
             # NOTE: no whole-table DELETEs here. The self-test runs on live
             # deployments; only selftest_%-owned rows may ever be removed.
 
@@ -101,23 +101,23 @@ class CleanupService:
                         "UPDATE auth_users SET account_locked = 0, locked_until = NULL WHERE id = ?",
                         (uid,),
                     )
-                except Exception:
-                    pass
+                except Exception as delete_error:
+                    logger.debug(f"selftest cleanup delete failed: {delete_error}")
                 self.delete_all_for_user(db, uid, purge_sum=False)
                 logger.debug(f"Pre-test cleanup: Deleted user {uname}")
 
             try:
                 db.execute("DELETE FROM admin_users WHERE username LIKE 'selftest_%'")
-            except Exception:
-                pass
+            except Exception as delete_error:
+                logger.debug(f"selftest admin user cleanup failed: {delete_error}")
 
             db.commit()
         except Exception as e:
             if db.in_transaction:
                 try:
                     db.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_error:
+                    logger.debug(f"selftest cleanup rollback failed: {rollback_error}")
             logger.warning(f"Pre-test cleanup failed (non-critical): {e}")
         finally:
             if db.type == "sqlite":
@@ -326,24 +326,26 @@ class CleanupService:
         db.execute("DELETE FROM media_files WHERE uploaded_by = ?", (uid,))
         try:
             db.execute("DELETE FROM media_upload_sessions WHERE user_id = ?", (uid,))
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug(f"selftest upload session cleanup failed: {delete_error}")
 
         try:
             db.execute(
                 "DELETE FROM admin_role_assignments WHERE admin_id = ? OR assigned_by = ?",
                 (uid, uid),
             )
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug(
+                f"selftest admin role assignment cleanup failed: {delete_error}"
+            )
         try:
             db.execute("DELETE FROM admin_users WHERE id = ?", (uid,))
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug(f"selftest admin user delete failed: {delete_error}")
         try:
             db.execute("DELETE FROM admin_approvals WHERE requested_by = ?", (uid,))
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug(f"selftest admin approval delete failed: {delete_error}")
         try:
             if db.column_exists("admin_audit_log", "target_user_id"):
                 db.execute(
@@ -355,8 +357,8 @@ class CleanupService:
                     "DELETE FROM admin_audit_log WHERE admin_id = ?",
                     (uid,),
                 )
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug(f"selftest admin audit cleanup failed: {delete_error}")
 
         from src.core.erasure import purge_owned_servers, purge_user_media
 
@@ -453,8 +455,10 @@ class CleanupService:
                         logger.warning(f"Commit failed, attempting rollback: {e}")
                         try:
                             db.rollback()
-                        except Exception:
-                            pass
+                        except Exception as rollback_error:
+                            logger.debug(
+                                f"selftest purge rollback failed: {rollback_error}"
+                            )
                 else:
                     logger.debug("No active transaction to commit")
                 logger.debug("SQL fallback cleanup completed")

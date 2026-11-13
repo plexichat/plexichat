@@ -448,8 +448,8 @@ def set_admin(db: Any, user_id: int, admin_status: bool) -> bool:
             invalidate_pattern("token_verify:*")
             invalidate_pattern("user_data:*")
             cache_delete(f"user_profile:{user_id}")
-        except Exception:
-            pass
+        except Exception as cache_error:
+            logger.debug(f"admin user profile cache delete failed: {cache_error}")
         return True
     except Exception as e:
         logger.error(f"Failed to set admin status: {e}")

@@ -76,7 +76,10 @@ def _get_channel_recipients(
                                     user_ids.append(member_user_id)
                             elif servers_mod.get_channel(channel_id, member_user_id):
                                 user_ids.append(member_user_id)
-                        except Exception:
+                        except Exception as member_error:
+                            logger.debug(
+                                f"typing audience member check failed: {member_error}"
+                            )
                             continue
 
                     # Cache the resolved audience; bound the map so a flood of
@@ -84,8 +87,8 @@ def _get_channel_recipients(
                     if len(_typing_audience_cache) >= _MAX_TYPING_AUDIENCE_ENTRIES:
                         _typing_audience_cache.clear()
                     _typing_audience_cache[cache_key] = (now, tuple(user_ids))
-        except Exception:
-            pass
+        except Exception as audience_error:
+            logger.debug(f"typing audience resolution failed: {audience_error}")
 
     if not user_ids:
         messaging = api.get_messaging()
@@ -94,8 +97,10 @@ def _get_channel_recipients(
                 participants = messaging.get_participants(user_id, channel_id)
                 if participants:
                     user_ids = [p.user_id for p in participants if p.user_id != user_id]
-            except Exception:
-                pass
+            except Exception as participant_error:
+                logger.debug(
+                    f"typing conversation participants failed: {participant_error}"
+                )
 
     return user_ids, server_id
 
@@ -270,8 +275,8 @@ class PresenceHandler:
                 user = await run_in_threadpool(auth.get_user, connection.user_id)
                 if user:
                     username = user.username
-            except Exception:
-                pass
+            except Exception as user_error:
+                logger.debug(f"typing user lookup failed: {user_error}")
 
         # Record typing in presence module
         if self._presence:
@@ -279,8 +284,8 @@ class PresenceHandler:
                 await run_in_threadpool(
                     self._presence.start_typing, connection.user_id, channel_id
                 )
-            except Exception:
-                pass
+            except Exception as typing_error:
+                logger.debug(f"presence start_typing failed: {typing_error}")
 
         # Dispatch typing event to channel members
         await self._dispatch_typing_event(
@@ -323,8 +328,8 @@ class PresenceHandler:
                 await run_in_threadpool(
                     self._presence.stop_typing, connection.user_id, channel_id
                 )
-            except Exception:
-                pass
+            except Exception as typing_error:
+                logger.debug(f"presence stop_typing failed: {typing_error}")
 
         # Dispatch typing stop event only to channel members
         recipients, server_id = await run_in_threadpool(

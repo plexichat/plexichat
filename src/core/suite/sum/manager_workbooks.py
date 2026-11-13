@@ -228,8 +228,10 @@ class SumManagerWorkbooks(SumManagerProtocol):
             if transaction_started or getattr(self._db, "in_transaction", False):
                 try:
                     self._db.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"sum workbook rollback failed: {rollback_error}")
             self._blob.delete(path)
             # The rollback above normally removes the artifact too. This
             # compensation handles adapters that commit artifact writes
@@ -239,8 +241,10 @@ class SumManagerWorkbooks(SumManagerProtocol):
                     from src.core.artifacts.repository import delete_artifact
 
                     delete_artifact(self._db, artifact_id)
-                except Exception:
-                    pass
+                except Exception as artifact_error:
+                    import utils.logger as logger
+
+                    logger.debug(f"sum artifact delete failed: {artifact_error}")
             raise
         self._cache_current_file(workbook_id, int(revision), data)
         # The artifact event must follow the commit; otherwise a failed

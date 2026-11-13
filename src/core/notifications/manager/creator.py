@@ -499,8 +499,11 @@ class NotificationCreatorMixin(NotificationProtocol):
                     notif_preview = decrypt_data(
                         data[10], context=f"notification:{data[0]}"
                     )
-                except Exception:
-                    pass
+                except Exception as decrypt_error:
+                    # Fall back to the stored plaintext body below.
+                    logger.debug(
+                        f"notification body decryption failed: {decrypt_error}"
+                    )
 
             notif = Notification(
                 id=data[0],

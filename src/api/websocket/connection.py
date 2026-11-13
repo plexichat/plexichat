@@ -164,8 +164,11 @@ class Connection:
         try:
             async with self._send_lock:
                 await self.websocket.close(code, reason)
-        except Exception:
-            pass
+        except Exception as close_error:
+            # The peer is already gone; the socket state below is authoritative.
+            import utils.logger as logger
+
+            logger.debug(f"websocket close failed: {close_error}")
         self.set_disconnected()
 
     def set_identified(

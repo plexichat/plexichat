@@ -166,8 +166,8 @@ class LifecycleMixin(AdminUsersRouterProtocol):
                     severity="warning",
                     target_path="#users",
                 )
-            except Exception:
-                pass
+            except Exception as alert_error:
+                logger.debug(f"admin user lifecycle alert failed: {alert_error}")
 
             return SuccessResponse(success=True, message="Account purged successfully")
         except ValueError:

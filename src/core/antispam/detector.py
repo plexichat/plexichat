@@ -85,12 +85,12 @@ def _row_dict(row: Any) -> Dict[str, Any]:
     if hasattr(row, "keys"):
         try:
             return dict(row)
-        except Exception:
-            pass
+        except Exception as mapping_error:
+            logger.debug(f"antispam row is not a mapping: {mapping_error}")
         try:
             return {k: row[k] for k in row.keys()}
-        except Exception:
-            pass
+        except Exception as keys_error:
+            logger.debug(f"antispam row has no usable keys: {keys_error}")
     if isinstance(row, (list, tuple)):
         # Positional fallback for the dm_spam_filters column order
         # (id, user_id, target_user_id, pattern, filter_type, action,

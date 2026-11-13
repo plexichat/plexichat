@@ -147,8 +147,8 @@ class DSARLog:
                     # doesn't attempt LK_UNLCK.
                     try:
                         lock_token.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.debug(f"dsar lock token close failed: {close_error}")
                     lock_token = None
                 if lock_acquired:
                     try:
@@ -249,14 +249,15 @@ class DSARLog:
         if directory and not os.path.exists(directory):
             try:
                 os.makedirs(directory, exist_ok=True)
-            except Exception:
-                pass
+            except OSError as mkdir_error:
+                logger.debug(f"dsar log directory already usable: {mkdir_error}")
         if not os.path.exists(self.lock_path):
             try:
                 with open(self.lock_path, "wb") as lf:
                     lf.write(b"\0")
-            except Exception:
-                pass
+            except OSError as lock_error:
+                # Another process may have created the lock file first.
+                logger.debug(f"dsar lock file create skipped: {lock_error}")
 
     def verify_chain(self) -> Tuple[bool, int, Optional[str]]:
         """

@@ -91,8 +91,8 @@ class TranscriptMixin(AdminMixinBase):
             if export_id:
                 self.ctx.test_export_id = str(export_id)
                 logger.debug(f"Captured transcript export id: {export_id}")
-        except Exception:
-            pass
+        except Exception as parse_error:
+            logger.debug(f"transcript export id parse failed: {parse_error}")
 
         if not export_id:
             logger.warning("Transcript export response missing export_id")

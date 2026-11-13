@@ -371,7 +371,9 @@ async def close() -> None:
     if _manager is not None:
         try:
             await _manager.close()
-        except Exception:
-            pass
+        except Exception as close_error:
+            import utils.logger as logger
+
+            logger.debug(f"voice signaling manager close failed: {close_error}")
         _manager = None
     _setup_complete = False

@@ -68,8 +68,9 @@ def _ensure_require_signed_deliveries_column(db) -> None:
         try:
             if checker("webhook_webhooks", "require_signed_deliveries"):
                 return
-        except Exception:
-            pass
+        except Exception as probe_error:
+            # Column missing means the migration below is still needed.
+            logger.debug(f"webhook signed-delivery probe failed: {probe_error}")
     statements = (
         "ALTER TABLE webhook_webhooks ADD COLUMN require_signed_deliveries "
         "INTEGER NOT NULL DEFAULT 0",
@@ -80,7 +81,8 @@ def _ensure_require_signed_deliveries_column(db) -> None:
         try:
             db.execute(statement)
             return
-        except Exception:
+        except Exception as statement_error:
+            logger.debug(f"webhook schema statement not applicable: {statement_error}")
             continue
 
 

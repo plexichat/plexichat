@@ -234,8 +234,9 @@ def _sync_password_to_auth_users(db: Any, username: str, password_hash: str) -> 
                 from src.core.database import invalidate_pattern
 
                 invalidate_pattern(f"user_data:{user_id}*")
-            except Exception:
-                pass
+            except Exception as cache_error:
+                # The admin action already committed; the cache TTL is the floor.
+                logger.debug(f"admin user cache invalidate failed: {cache_error}")
         else:
             logger.warning(
                 "No auth_users row for admin '%s' — password not synced", username

@@ -107,8 +107,8 @@ async def search_messages(
                     }
                     for uid, u in users.items()
                 }
-            except Exception:
-                pass
+            except Exception as user_error:
+                logger.debug(f"search author enrichment failed: {user_error}")
 
         media_mod = api.get_media()
 

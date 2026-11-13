@@ -98,8 +98,8 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             _tbase = f"{self.ctx.base_url}/api/v1/threads/{tid}"
             self.ctx.session.post(f"{_tbase}/unarchive", timeout=5)
             self.ctx.session.post(f"{_tbase}/unlock", timeout=5)
-        except Exception:
-            pass
+        except Exception as unlock_error:
+            logger.debug(f"selftest slowmode unlock failed: {unlock_error}")
 
         # Use other_user for concurrency (already member, join idempotent 200/409)
         def do_join():
@@ -303,8 +303,8 @@ class ExtendedCoverageMixin(EndpointTesterBase):
             _tbase = f"{self.ctx.base_url}/api/v1/threads/{self.ctx.test_thread_id}"
             self.ctx.session.post(f"{_tbase}/unarchive", timeout=5)
             self.ctx.session.post(f"{_tbase}/unlock", timeout=5)
-        except Exception:
-            pass
+        except Exception as unlock_error:
+            logger.debug(f"selftest slowmode unlock failed: {unlock_error}")
         # Verify thread visible via API (use main session which is owner, always succeeds)
         tid = self.ctx.test_thread_id
         cid = self.ctx.test_channel_id
@@ -324,8 +324,8 @@ class ExtendedCoverageMixin(EndpointTesterBase):
                     )
                     if not any(str(t.get("id")) == str(tid) for t in (_lst or [])):
                         resp = self.ctx.session.get(url, timeout=5)
-                except Exception:
-                    pass
+                except Exception as fetch_error:
+                    logger.debug(f"selftest thread fetch failed: {fetch_error}")
             success = False
             if resp.status_code == 200:
                 threads = resp.json()
