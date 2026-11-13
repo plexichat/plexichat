@@ -7,10 +7,17 @@ on every call.
 
 import hashlib
 import hmac
+import logging
 import os
 
 import utils.logger as logger
 import utils.config as _voice_config
+
+# ``_load_stable_peer_secret`` runs at import time, before ``logger.setup()``
+# in every process that has not initialised logging yet. The project logger
+# raises in that state, so the pre-setup fallbacks report through stdlib
+# logging instead of taking the whole signaling package down with them.
+_log = logging.getLogger(__name__)
 
 # Deployment-scoped secret used to derive stable peer / room
 # identifiers. Loaded once per process so the same `peer_id`
@@ -45,7 +52,7 @@ def _load_stable_peer_secret() -> bytes:
             return _STABLE_PEER_SECRET
     except Exception as secret_error:
         # Fall through to the per-process random secret below.
-        logger.debug(f"stable peer secret unavailable: {secret_error}")
+        _log.debug(f"stable peer secret unavailable: {secret_error}")
 
     for env_name in (
         "PLEXICHAT_VOICE_STABLE_PEER_SECRET",
@@ -64,7 +71,7 @@ def _load_stable_peer_secret() -> bytes:
             return _STABLE_PEER_SECRET
     except Exception as secret_error:
         # Fall through to the per-process random secret below.
-        logger.debug(f"stable peer secret unavailable: {secret_error}")
+        _log.debug(f"stable peer secret unavailable: {secret_error}")
 
     # Best-effort: this runs at import time (see the module-level call below),
     # which can precede ``logger.setup()``. An unconfigured logger raises,

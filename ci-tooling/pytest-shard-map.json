@@ -476,6 +476,7 @@
     "src/tests/security/test_install_scanners.py": 1,
     "src/tests/security/test_license_audit.py": 0,
     "src/tests/security/test_ots_stamp.py": 1,
+    "src/tests/security/test_outbound_url_open.py": 1,
     "src/tests/security/test_security_checks.py": 0,
     "src/tests/security/test_security_headers.py": 0,
     "src/tests/security/test_session_hijacking.py": 1,
