@@ -282,11 +282,10 @@ def initialize_modules(
         _log.warning(
             f"Search module failed to initialize ({e}); continuing with low-resource blind-index fallback"
         )
-        try:
-            # still expose a minimal search module so API returns degraded responses instead of 500
-            modules_store["search"] = search
-        except Exception:
-            pass
+        # Still expose a minimal search module so the API returns degraded
+        # responses instead of 500. A dict assignment cannot fail, so the old
+        # try/except here only hid nothing.
+        modules_store["search"] = search
 
     def init_dependent():
         threads_list = []
@@ -499,8 +498,10 @@ def initialize_modules(
         if events_mod is not None:
             events_mod.set_worker_id(worker_id)
             logger.debug(f"EventManager worker_id set to {worker_id}")
-    except Exception:
-        pass
+    except Exception as worker_id_error:
+        # A missing worker id only degrades event ordering metadata; startup
+        # must continue, but the operator should see why.
+        logger.debug(f"could not set event worker_id: {worker_id_error}")
 
     timed_init(
         "webhooks",

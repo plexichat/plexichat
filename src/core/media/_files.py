@@ -184,7 +184,10 @@ class _FilesMixin:
                     if isinstance(attachment, dict)
                     else attachment[0]
                 )
-            except Exception:
+            except Exception as decrypt_error:
+                logger.debug(
+                    f"skipping corrupted attachment reference: {decrypt_error}"
+                )
                 # Corrupted encrypted reference — skip rather than blocking all
                 # deletions.  The original ``return False`` meant a single bad
                 # row prevented *any* file from ever being deleted.
@@ -308,8 +311,9 @@ class _FilesMixin:
         except BaseException:
             try:
                 rollback()
-            except Exception:
-                pass
+            except Exception as rollback_error:
+                # The BaseException that got us here is the one to propagate.
+                logger.debug(f"media transaction rollback failed: {rollback_error}")
             raise
 
     def _retry_on_db_lock(self, fn) -> None:

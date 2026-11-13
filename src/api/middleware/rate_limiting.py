@@ -12,6 +12,8 @@ from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
 from src.utils.net import get_client_ip
 
+import utils.logger as logger
+
 
 import hmac
 
@@ -28,16 +30,17 @@ def extract_ip(request: Request) -> Optional[str]:
         ip = get_client_ip(request)
         if ip:
             return ip
-    except Exception:
-        pass
+    except Exception as exc:
+        # Fall through to the socket peer below; the limiter still needs a key.
+        logger.debug(f"trusted-proxy IP extraction failed: {type(exc).__name__}: {exc}")
 
     try:
         client = getattr(request, "client", None)
         host = getattr(client, "host", None) if client else None
         if host:
             return str(host)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(f"socket peer extraction failed: {type(exc).__name__}: {exc}")
 
     return None
 
@@ -69,8 +72,10 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
         if api.is_self_test_request(request):
             user_info["is_internal"] = True
             return user_info
-    except Exception:
-        pass
+    except Exception as exc:
+        # Without the marker the request is treated as ordinary traffic, which
+        # is the safe direction; record why the marker was unavailable.
+        logger.debug(f"self-test marker check failed: {type(exc).__name__}: {exc}")
 
     if hasattr(request.state, "user") and request.state.user:
         user = request.state.user

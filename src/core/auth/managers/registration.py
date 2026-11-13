@@ -256,8 +256,8 @@ class RegistrationMixin(AuthManagerProtocol):
         finally:
             try:
                 cursor.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"registration cursor close failed: {exc}")
         if rowcount != 1:
             return False
         self._db.execute(

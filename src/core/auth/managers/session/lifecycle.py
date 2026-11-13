@@ -493,8 +493,9 @@ class LifecycleMixin(AuthManagerProtocol):
                     from src.core.events.gateway_emit import emit_security_alert
 
                     emit_security_alert(user_id, "session_revoked")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Sessions are already revoked; the alert is advisory.
+                    logger.debug(f"session_revoked alert not emitted: {exc}")
                 return count_row["cnt"] if count_row else 0
         count_row = self._db.fetch_one(
             "SELECT COUNT(*) as cnt FROM auth_sessions WHERE user_id = ? AND revoked = 0",
@@ -507,8 +508,8 @@ class LifecycleMixin(AuthManagerProtocol):
             from src.core.events.gateway_emit import emit_security_alert
 
             emit_security_alert(user_id, "session_revoked")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"session_revoked alert not emitted: {exc}")
         return count_row["cnt"] if count_row else 0
 
     def logout_all_users(self) -> int:
@@ -570,7 +571,7 @@ class LifecycleMixin(AuthManagerProtocol):
                 from src.core.events.gateway_emit import emit_security_alert
 
                 emit_security_alert(user_id, "session_revoked")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(f"session_revoked alert not emitted: {exc}")
             return True
         return False

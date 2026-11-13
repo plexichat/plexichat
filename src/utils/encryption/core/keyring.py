@@ -164,10 +164,11 @@ class Keyring:
                     src = probe.get_source()
                     if src in {"env", "hsm", "tpm", "local"}:
                         return src
-                except Exception:
+                except Exception as exc:
+                    logger.debug(f"vault source probe failed: {exc}")
                     continue
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"vault probe unusable, falling back to metadata: {exc}")
 
         # If we cannot probe the vault, only fall back to the persisted
         # metadata value if it is one of the legitimate labels.  Any

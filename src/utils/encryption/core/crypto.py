@@ -106,10 +106,10 @@ class CryptoMixin(EncryptionCoreProtocol):
                     if reloaded_key and reloaded_key != key:
                         plaintext = AESGCM(reloaded_key).decrypt(nonce, ciphertext, aad)
                         return plaintext.decode("utf-8")
-                except Exception:
+                except Exception as exc:
                     # Keep the original integrity error below: the retry is a
                     # best-effort staleness recovery, not a second data source.
-                    pass
+                    logger.debug(f"keyring staleness retry failed: {exc}")
             logger.error(
                 f"Decryption failed for version {version} with context {context}: {repr(e)}"
             )

@@ -362,15 +362,17 @@ class KeyringMigration(KEKMigrationProtocol):
                     decoded = base64.b64decode(env_value)
                     if decoded == kek:
                         return f"Environment variable {env_var} (Base64)"
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as decode_error:
+                    logger.debug(
+                        f"{env_var} is not base64 key material: {decode_error}"
+                    )
                 try:
                     # Try hex
                     decoded = bytes.fromhex(env_value)
                     if decoded == kek:
                         return f"Environment variable {env_var} (hex)"
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as decode_error:
+                    logger.debug(f"{env_var} is not hex key material: {decode_error}")
 
         # Check if it matches machine key file
         try:
@@ -378,8 +380,8 @@ class KeyringMigration(KEKMigrationProtocol):
             if machine_key_path.exists():
                 if machine_key_path.read_bytes() == kek:
                     return "Machine-local key file"
-        except Exception:
-            pass
+        except OSError as read_error:
+            logger.debug(f"machine key file probe failed: {read_error}")
 
         return "Unknown source"
 

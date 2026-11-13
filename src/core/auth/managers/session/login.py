@@ -151,8 +151,10 @@ class LoginMixin(AuthManagerProtocol):
                     "UPDATE auth_users SET password_hash = ? WHERE id = ?",
                     (self.crypto.hash_password(password), user_id),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Login proceeds with the verified stored hash; the skipped upgrade
+            # is logged so a stale pepper does not go unnoticed.
+            logger.debug(f"password rehash on login failed: {exc}")
 
         deletion_status = row.get("deletion_status", "active")
         if deletion_status == "frozen":
@@ -409,7 +411,7 @@ class LoginMixin(AuthManagerProtocol):
                     from src.core.events.gateway_emit import emit_security_alert
 
                     emit_security_alert(user_id, "account_locked")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(f"account_locked alert not emitted: {exc}")
 
         invalidate_pattern("user_data:*")

@@ -158,6 +158,9 @@ class InsertQuery(TableQuery):
             if self._should_autocommit():
                 try:
                     self.connection.rollback()
-                except Exception:
-                    pass
+                except Exception as rollback_error:
+                    # Keep the insert error the caller is about to see.
+                    logger.debug(
+                        f"insert rollback after error failed: {rollback_error}"
+                    )
             raise

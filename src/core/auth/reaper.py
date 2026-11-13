@@ -398,7 +398,8 @@ class AccountReaper:
             for row in rows or []:
                 try:
                     path = row.get("blob_path") if isinstance(row, dict) else row[0]
-                except Exception:
+                except (AttributeError, IndexError, KeyError, TypeError) as exc:
+                    logger.debug(f"reaper: unreadable blob row skipped: {exc}")
                     continue
                 if path:
                     blob_paths.append(path)
@@ -422,7 +423,8 @@ class AccountReaper:
                         workbook_ids.append(row[0])
                         if row[1]:
                             blob_paths.append(row[1])
-                except Exception:
+                except (AttributeError, IndexError, KeyError, TypeError) as exc:
+                    logger.debug(f"reaper: unreadable workbook row skipped: {exc}")
                     continue
             if workbook_ids:
                 placeholders = ",".join("?" * len(workbook_ids))

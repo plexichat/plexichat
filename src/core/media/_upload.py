@@ -88,8 +88,8 @@ class _UploadMixin:
             # failed/aborted stream does not leak orphaned files on disk.
             try:
                 temp_file.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.debug(f"upload temp file close failed: {close_error}")
             try:
                 os.unlink(temp_file.name)
             except OSError:
@@ -713,8 +713,10 @@ class _UploadMixin:
             if temp_path:
                 try:
                     os.unlink(temp_path)
-                except Exception:
-                    pass
+                except OSError as unlink_error:
+                    # Best-effort cleanup of a partial upload; the caller already
+                    # receives the original upload error.
+                    logger.debug(f"upload temp file unlink failed: {unlink_error}")
 
     # ── upload_attachment ──────────────────────────────────────────────────────
 

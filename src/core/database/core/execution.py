@@ -218,8 +218,8 @@ class DatabaseExecutionMixin:
         if callable(marker):
             try:
                 marker(conn, in_flight)
-            except Exception:
-                pass
+            except Exception as mark_error:
+                logger.debug(f"in-flight connection marker failed: {mark_error}")
 
     def execute(
         self: _DatabaseExecutionProtocol,
@@ -328,8 +328,10 @@ class DatabaseExecutionMixin:
                             self.engine.close_connection(
                                 self._local.connection, self._pool, {"close": True}
                             )
-                        except Exception:
-                            pass
+                        except Exception as close_error:
+                            logger.debug(
+                                f"reconnect: old connection close failed: {close_error}"
+                            )
                         self._local.connection = None
                     continue
 
@@ -424,8 +426,10 @@ class DatabaseExecutionMixin:
                             self.engine.close_connection(
                                 self._local.connection, self._pool, {"close": True}
                             )
-                        except Exception:
-                            pass
+                        except Exception as close_error:
+                            logger.debug(
+                                f"reconnect: old connection close failed: {close_error}"
+                            )
                         self._local.connection = None
                     continue
 

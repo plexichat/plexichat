@@ -80,8 +80,8 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
                     ("Repository", "Service", "Manager")
                 ):
                     return f"Core:{class_name}"
-            except Exception:
-                pass
+            except Exception as namespace_error:
+                logger.debug(f"cache namespace probe failed: {namespace_error}")
 
         if isinstance(val, (dict, list)):
             try:

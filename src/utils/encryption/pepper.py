@@ -37,6 +37,7 @@ warning exactly once.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import importlib
@@ -132,15 +133,35 @@ def _warn_plaintext_pin_once() -> None:
         if _warned_plaintext_pin:
             return
         _warned_plaintext_pin = True
-    try:
+    with contextlib.suppress(ImportError):
         import utils.logger as logger
 
         logger.warning(
             "HSM 'pin' is set literally in config; prefer 'pin_env' or "
             "'pin_file' so the PIN never lands in a config file."
         )
-    except Exception:
-        pass
+
+
+def _slot_matches(token: Any, wanted: int) -> bool:
+    """Return whether a PKCS#11 token reports the wanted slot id."""
+    try:
+        return int(getattr(token, "slot_id", -1)) == wanted
+    except (TypeError, ValueError):
+        return False
+
+
+def _b64decode(text: str) -> bytes:
+    """Strict base64 decode; ``binascii.Error`` is a ``ValueError``."""
+    return base64.b64decode(text, validate=True)
+
+
+def _decode_candidates(text: str) -> List[bytes]:
+    """Every way ``text`` decodes as key material (hex first, then base64)."""
+    candidates: List[bytes] = []
+    for decoder in (bytes.fromhex, _b64decode):
+        with contextlib.suppress(ValueError, TypeError):
+            candidates.append(decoder(text))
+    return candidates
 
 
 def decode_key_material(raw: str, *, what: str) -> bytes:
@@ -148,18 +169,9 @@ def decode_key_material(raw: str, *, what: str) -> bytes:
     text = (raw or "").strip()
     if not text:
         raise ValueError(f"{what}: empty key material")
-    try:
-        key = bytes.fromhex(text)
+    for key in _decode_candidates(text):
         if len(key) == 32:
             return key
-    except Exception:
-        pass
-    try:
-        key = base64.b64decode(text, validate=True)
-        if len(key) == 32:
-            return key
-    except Exception:
-        pass
     raise ValueError(f"{what}: must decode to exactly 32 bytes (hex or base64)")
 
 
@@ -171,15 +183,13 @@ def load_key_file(path: str, *, what: str) -> bytes:
     except OSError as exc:
         raise ValueError(f"{what}: cannot read key file {path}: {exc}") from exc
     if os.name != "nt" and st.st_mode & 0o077:
-        try:
+        with contextlib.suppress(ImportError):
             import utils.logger as logger
 
             logger.warning(
                 f"{what}: key file {path} is group/other-readable "
                 f"(mode {oct(st.st_mode & 0o777)}); chmod 600 recommended."
             )
-        except Exception:
-            pass
     try:
         content = p.read_text(encoding="utf-8").strip().splitlines()
         line = content[0].strip() if content else ""
@@ -325,15 +335,12 @@ class HsmPepperProvider(PepperProvider):
             if slot_id is not None:
                 try:
                     wanted = int(slot_id)
-                    for tok in tokens:
-                        try:
-                            if int(getattr(tok, "slot_id", -1)) == wanted:
-                                token = tok
-                                break
-                        except Exception:
-                            continue
                 except (TypeError, ValueError):
-                    pass
+                    wanted = -1
+                for tok in tokens:
+                    if _slot_matches(tok, wanted):
+                        token = tok
+                        break
             if token is None and tokens:
                 token = tokens[0]
             if token is None:
@@ -477,10 +484,8 @@ class HsmPepperProvider(PepperProvider):
         return base64.b64encode(digest).decode("ascii")
 
     def close(self) -> None:
-        try:
-            self._pin = ""
-        except Exception:
-            pass
+        # Attribute assignment cannot fail; the old try/except here hid nothing.
+        self._pin = ""
 
 
 def _kek_derived_key(pepper_id: str, length: int = 32) -> bytes:
@@ -648,24 +653,20 @@ def get_pepper_store(*, refresh: bool = False) -> PepperStore:
                 try:
                     providers[str(pid)] = build_provider(str(pid), entry or {}, hsm_cfg)
                 except Exception as exc:
-                    try:
+                    with contextlib.suppress(ImportError):
                         import utils.logger as logger
 
                         logger.error(f"pepper '{pid}' unavailable: {exc}")
-                    except Exception:
-                        pass
             if current_id not in providers:
                 # Fail closed: a configured current pepper that cannot be
                 # built must not silently fall back to an old pepper.
-                try:
+                with contextlib.suppress(ImportError):
                     import utils.logger as logger
 
                     logger.error(
                         f"password pepper current_id={current_id!r} unavailable; "
                         "peppering disabled until fixed"
                     )
-                except Exception:
-                    pass
                 _store = PepperStore({}, current_id, enabled=False)
                 return _store
         _store = PepperStore(providers, current_id, enabled=enabled)
@@ -679,10 +680,10 @@ def reset_pepper_store() -> None:
         old, _store = _store, None
     if old is not None:
         for provider in getattr(old, "_providers", {}).values():
-            try:
+            # Providers are being discarded; a close failure cannot affect the
+            # fresh store that replaced them.
+            with contextlib.suppress(Exception):
                 provider.close()
-            except Exception:
-                pass
 
 
 __all__ = [

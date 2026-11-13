@@ -94,8 +94,8 @@ class BlacklistManager(BaseManager):
                         safe_pattern, normalized
                     ):
                         return True, reason
-                except Exception:
-                    continue  # Skip invalid regex
+                except (re.error, TypeError):
+                    continue  # Skip an entry whose pattern does not compile
             else:
                 # Exact-match only (case-insensitive), including normalized matching
                 pat_norm = self._normalize(pattern)

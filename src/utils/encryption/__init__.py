@@ -90,8 +90,12 @@ def setup(
         from .pepper import reset_pepper_store
 
         reset_pepper_store()
-    except Exception:
-        pass
+    except Exception as exc:
+        # The store is rebuilt lazily on next use, so a failed reset cannot
+        # break setup - but it must be reported rather than swallowed.
+        import utils.logger as logger
+
+        logger.debug(f"pepper store reset failed during setup: {exc}")
 
 
 def _get_manager() -> EncryptionManager:
@@ -191,8 +195,12 @@ class _LazyDb:
         if not is_connected:
             try:
                 db.connect()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Without this, every later call on the proxy failed with a
+                # confusing attribute error on a disconnected database.
+                raise RuntimeError(
+                    f"lazy database connection failed for {name!r}: {exc}"
+                ) from exc
         return getattr(db, name)
 
 

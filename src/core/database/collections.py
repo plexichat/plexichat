@@ -24,8 +24,12 @@ def _close_connection(value: Any) -> None:
 
         if isinstance(value, sqlite3.Connection):
             value.close()
-    except Exception:
-        pass
+    except Exception as close_error:
+        # Closing a connection during interpreter/manager teardown is
+        # best-effort; surface why it failed instead of ignoring it.
+        import utils.logger as logger
+
+        logger.debug(f"database collection close failed: {close_error}")
 
 
 class CappedDict(OrderedDict):

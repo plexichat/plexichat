@@ -331,10 +331,10 @@ class BookmarkService:
                     data["content_preview"] = (msg.content or "")[:200]
                     data["author_id"] = msg.author_id
                     data["message_created_at"] = msg.created_at
-                except Exception:
+                except Exception as enrich_error:
                     # Transient enrichment failure: keep the row without a
                     # preview rather than hide a legitimate bookmark.
-                    pass
+                    logger.debug(f"bookmark enrichment failed: {enrich_error}")
             results.append(data)
         return results
 

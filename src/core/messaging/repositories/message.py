@@ -211,10 +211,14 @@ class MessageRepository(BaseRepository[Message]):
                 return self._search_matching(
                     conversation_id, match_clause, params, limit, before_id, after_id
                 )
-            except Exception:
+            except Exception as match_error:
                 # Older databases without msg_message_tokens: fall back to
                 # plaintext-only matching rather than failing the search.
-                pass
+                import utils.logger as logger
+
+                logger.debug(
+                    f"token search unavailable, using plaintext: {match_error}"
+                )
 
         match_clause = "  m.content LIKE ? ESCAPE '\\'"
         params = [conversation_id, like_pattern]
@@ -386,8 +390,10 @@ class MessageRepository(BaseRepository[Message]):
             )
             if row and row.get("metadata"):
                 existing_metadata = self._json_loads(row["metadata"]) or {}
-        except Exception:
-            pass
+        except Exception as metadata_error:
+            import utils.logger as logger
+
+            logger.debug(f"message metadata re-read failed: {metadata_error}")
         existing_metadata.update(
             {
                 "deleted_by_user": True,

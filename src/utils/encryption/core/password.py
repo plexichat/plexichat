@@ -4,6 +4,7 @@ Password hashing mixin - Argon2id password operations.
 Part of the EncryptionManager composite class.
 """
 
+import contextlib
 import hashlib
 import os
 from typing import Any, Callable, Optional, Tuple
@@ -85,12 +86,15 @@ class PasswordMixin(EncryptionCoreProtocol):
         if not hash_str or not password:
             # Run the hasher anyway on empty passwords so timing does not
             # reveal which of the two was empty.
-            try:
+            # Timing ballast: the only failures a hasher can raise on our own
+            # dummy hash are its verification errors, and the answer is False
+            # either way.
+            with contextlib.suppress(
+                VerifyMismatchError, VerificationError, InvalidHash
+            ):
                 self.password_hasher.verify(
                     self._dummy_hash_for_timing(), password or "x"
                 )
-            except Exception:
-                pass
             return False
         try:
             from ..pepper import get_pepper_store, parse_envelope
@@ -115,19 +119,17 @@ class PasswordMixin(EncryptionCoreProtocol):
         ordered.extend(pid for pid in store.provider_ids if pid not in ordered)
         candidates: list[str] = []
         for pid in ordered:
-            try:
+            # A pepper that cannot prehash (HSM offline, key revoked) is simply
+            # not tried; when none succeed the caller gets False, not an error.
+            with contextlib.suppress(Exception):
                 candidates.append(store.prehash_with(pid, password))
-            except Exception:
-                continue
         if not candidates:
             return False
         for candidate in candidates:
             try:
                 self.password_hasher.verify(inner, candidate)
                 return True
-            except (VerifyMismatchError, VerificationError, InvalidHash):
-                continue
-            except Exception:
+            except (VerifyMismatchError, VerificationError, InvalidHash, ValueError):
                 continue
         return False
 
@@ -159,8 +161,10 @@ class PasswordMixin(EncryptionCoreProtocol):
             check = getattr(self.password_hasher, "check_needs_rehash", None)
             if callable(check) and check(inner):
                 return True
-        except Exception:
-            pass
+        except (TypeError, ValueError):
+            # A hash this hasher cannot parse needs no rehash through this path;
+            # the caller keeps the stored hash.
+            return False
         return False
 
     def get_password_pepper_id(self, hash_str: str) -> Optional[str]:

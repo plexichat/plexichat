@@ -17,8 +17,9 @@ BypassCheck = Callable[[Optional[int], bool, bool], bool]
 def _warning(message: str, *args: object, **kwargs: Any) -> None:
     try:
         logger.warning(message, *args, **kwargs)
-    except Exception:
-        # Logging must never turn a limiter decision into a 500.
+    except (TypeError, ValueError):
+        # Logging must never turn a limiter decision into a 500; a malformed
+        # call site is the only realistic failure here.
         pass
 
 

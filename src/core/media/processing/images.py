@@ -211,8 +211,9 @@ class ImageProcessor:
                             if isinstance(value, bytes):
                                 continue
                             exif_data[tag] = value
-                        except Exception:
-                            pass
+                        except (KeyError, TypeError, ValueError) as exif_error:
+                            # One unreadable EXIF tag must not fail the whole upload.
+                            logger.debug(f"skipping unreadable EXIF tag: {exif_error}")
 
             return ImageMetadata(
                 width=img.width,

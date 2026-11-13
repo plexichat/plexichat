@@ -638,8 +638,10 @@ class FileValidator:
                 # during mutation.
                 try:
                     stack.extend(list(elem))
-                except Exception:
-                    pass
+                except TypeError as exc:
+                    # A leaf node has no children; anything else is a parse
+                    # problem and the fail-closed handler below reports it.
+                    logger.debug(f"validation: leaf node child walk stopped: {exc}")
             return True, ""
         except Exception as exc:
             # Catch-all: any unexpected failure must FAIL CLOSED.

@@ -137,8 +137,12 @@ def setup(
                     "stays active.",
                     type(_manager._storage).__name__,
                 )
-            except Exception:
-                pass  # Logging must never break the refusal itself.
+            except Exception as log_error:
+                # Logging must never break the refusal itself, but a failure to
+                # log should still leave a trace.
+                import utils.logger as logger
+
+                logger.debug(f"rate limiter refusal log failed: {log_error}")
             return False
 
     _manager = RateLimitManager(

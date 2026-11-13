@@ -283,8 +283,10 @@ class ProfileMixin(AuthManagerProtocol):
                 if isinstance(cached_profile, str):
                     try:
                         cached_profile = json.loads(cached_profile)
-                    except Exception:
-                        pass
+                    except (TypeError, ValueError) as exc:
+                        # A corrupt cache entry is treated as a miss and rebuilt
+                        # from the database below.
+                        logger.debug(f"discarding unparsable cached profile: {exc}")
                 if isinstance(cached_profile, dict) and "created_at" in cached_profile:
                     result[str(uid)] = cached_profile
                 else:

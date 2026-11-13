@@ -45,14 +45,11 @@ def resolve_token(pkcs11_mod: Any, lib: Any, hsm_config: Mapping[str, Any]) -> A
     if slot_id not in (None, ""):
         try:
             wanted = int(str(slot_id), 0) if isinstance(slot_id, str) else int(slot_id)
-            for tok in tokens:
-                try:
-                    if int(getattr(tok, "slot_id", -1)) == wanted:
-                        return tok
-                except Exception:
-                    continue
         except (TypeError, ValueError):
-            pass
+            wanted = -1
+        for tok in tokens:
+            if _slot_matches(tok, wanted):
+                return tok
     return tokens[0]
 
 
@@ -102,6 +99,14 @@ def get_key(
         return new_key
 
 
+def _slot_matches(token: Any, wanted: int) -> bool:
+    """Return whether a PKCS#11 token reports the wanted slot id."""
+    try:
+        return int(getattr(token, "slot_id", -1)) == wanted
+    except (TypeError, ValueError):
+        return False
+
+
 def _create_aes_key(
     session: Any,
     pkcs11_mod: Any,
@@ -121,10 +126,8 @@ def _create_aes_key(
         "CKA_DECRYPT": True,
     }
     if extractable:
-        try:
-            template["CKA_VALUE"] = new_key
-        except Exception:
-            pass
+        # Attribute assignment cannot fail; the old try/except hid nothing.
+        template["CKA_VALUE"] = new_key
     session.generate_key(
         key_type.AES, 256, mechanism=mechanism.AES_KEY_GEN, template=template
     )

@@ -184,8 +184,11 @@ def setup(db: Any, messaging_module: Optional[Any] = None) -> None:
     if _manager is not None:
         try:
             _manager.close()
-        except Exception:
-            pass
+        except Exception as close_error:
+            # Shutdown continues regardless; the reason is worth a log line.
+            import utils.logger as logger
+
+            logger.debug(f"media manager close failed: {close_error}")
         _manager = None
 
     # Keep media-owned compatibility objects available on existing databases;

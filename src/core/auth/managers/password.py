@@ -9,6 +9,7 @@ from ..passwords import validate_password as validate_pwd
 from ..tokens import create_email_token, parse_token, verify_token_hash
 from src.core.database import invalidate_pattern
 
+import utils.logger as logger
 
 from .protocol import AuthManagerProtocol
 
@@ -39,8 +40,10 @@ class PasswordMixin(AuthManagerProtocol):
                     "UPDATE auth_users SET password_hash = ? WHERE id = ?",
                     (self.crypto.hash_password(password), user_id),
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            # The password was proven correct, so verification still succeeds;
+            # the missed upgrade must not disappear silently.
+            logger.debug(f"opportunistic rehash after verify failed: {exc}")
         return True
 
     def change_password(self, user_id: int, old: str, new: str) -> bool:
@@ -67,8 +70,10 @@ class PasswordMixin(AuthManagerProtocol):
             from src.core.events.gateway_emit import emit_security_alert
 
             emit_security_alert(user_id, "password_change")
-        except Exception:
-            pass
+        except Exception as exc:
+            # The password has already changed; a missing alert must not fail
+            # the request, so record why instead of swallowing it.
+            logger.debug(f"password_change alert not emitted: {exc}")
         invalidate_pattern("user_data:*")
         return True
 
@@ -117,8 +122,9 @@ class PasswordMixin(AuthManagerProtocol):
             reset_cfg = (config_util.get("authentication", {}) or {}).get(
                 "reset_password", {}
             ) or {}
-        except Exception:
-            pass
+        except Exception as exc:
+            # A malformed reset_password block falls back to the defaults below.
+            logger.debug(f"reset_password config unusable, using defaults: {exc}")
         reset_path = str(reset_cfg.get("path") or "/reset-password").lstrip("/")
         client_url = str(reset_cfg.get("client_url") or "").rstrip("/")
         reset_url = (
