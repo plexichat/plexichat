@@ -788,7 +788,7 @@ bots:
   max_requests_pending_per_user: 10
 versioning:
   # Defaults to the server's own version at startup (src/config_defaults.py).
-  min_supported_version: 1.0.0a212
+  min_supported_version: 1.0.0a223
   update_url: null
 docs:
   enabled: true
