@@ -185,6 +185,16 @@ class SendMixin(BaseService, MessageServiceProtocol):
                 for att_data in attachments:
                     att_id = self._generate_id()
                     normalized_url = self._normalize_url(att_data.get("url", ""))
+                    # Defense in depth: attachment URLs are attacker-controlled
+                    # and, unlike embed URLs, were never validated for scheme or
+                    # SSRF. A ``javascript:``/``data:`` URL or an internal host
+                    # stored here is later echoed verbatim to every client via
+                    # _message_to_response, so it must be constrained to the
+                    # shapes the media pipeline actually produces. Relative
+                    # ``/api/v1/media/...`` paths are the legitimate form;
+                    # anything absolute must be http(s) and pass the same
+                    # private/loopback/link-local SSRF gate embeds use.
+                    self._validate_attachment_url(normalized_url)
                     encrypted_url = None
                     stored_url = normalized_url
                     if self._get_config("encrypt_attachments"):
@@ -470,6 +480,39 @@ class SendMixin(BaseService, MessageServiceProtocol):
             "Attachment URL scheme is not allowed",
             [f"disallowed url scheme: {candidate[:120]}"],
         )
+
+    def _validate_attachment_url(self, url: str) -> None:
+        """Defence-in-depth SSRF gate for attacker-controlled attachment URLs.
+
+        ``_normalize_url`` already enforces the scheme allow-list, but an
+        absolute ``http(s)://`` URL whose host resolves to a private, loopback,
+        link-local or otherwise reserved address would still pass and later be
+        echoed verbatim to every client that renders the message. Absolute URLs
+        are therefore run through the same ``URLValidator`` the embed path uses;
+        site-relative media paths (``/api/v1/media/...``) are trusted because
+        they are minted server-side by the upload pipeline.
+
+        Fails closed on infrastructure errors so a missing/broken validator can
+        never silently downgrade to "no SSRF protection".
+        """
+        if not url:
+            return
+        candidate = url.strip()
+        if not candidate:
+            return
+        if candidate.startswith("/"):
+            # Server-relative media path: never a network target.
+            return
+        try:
+            from src.utils.security import URLValidator
+
+            URLValidator().validate_url_for_request(candidate)
+        except Exception as exc:
+            logger.warning(f"Rejected attachment URL failing SSRF check: {exc}")
+            raise InvalidContentError(
+                "Attachment URL failed SSRF validation",
+                [f"unsafe url: {candidate[:120]}"],
+            )
 
     def send_system_message(
         self,
