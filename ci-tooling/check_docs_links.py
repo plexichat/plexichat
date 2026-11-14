@@ -46,6 +46,7 @@ from src.api.routes.docs.renderer import (  # noqa: E402
     MISTUNE_AVAILABLE,
     _known_doc_routes,
     resolve_doc_link,
+    served_route,
 )
 
 EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "#")
@@ -111,7 +112,9 @@ def check_sidebar(routes: set[str], conf: DocsConfig, failures: list[str]) -> in
             continue
         checked += 1
         path = href[len(prefix) :].split("#")[0].rstrip("/") or "/"
-        if path not in routes:
+        # Templated routes serve a whole directory: /reference/{page} answers
+        # for every docs/api/*.md page the sidebar links to.
+        if not served_route(path, routes):
             failures.append(f"sidebar: {href} is not a served route")
     return checked
 
