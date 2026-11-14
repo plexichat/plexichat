@@ -254,6 +254,38 @@ def _known_doc_routes() -> set[str]:
     }
 
 
+_ROUTE_TEMPLATES: dict[str, re.Pattern[str]] = {}
+
+
+def _route_template(route: str) -> re.Pattern[str]:
+    """Compile a route whose `{param}` segments match one path segment each."""
+    template = _ROUTE_TEMPLATES.get(route)
+    if template is None:
+        template = re.compile(
+            "".join(
+                "[^/]+" if part.startswith("{") else re.escape(part)
+                for part in re.split(r"(\{[^}]+\})", route)
+            )
+        )
+        _ROUTE_TEMPLATES[route] = template
+    return template
+
+
+def served_route(candidate: str, routes: set[str]) -> bool:
+    """Whether the docs router serves `candidate`.
+
+    `/reference/{page}` is one route covering the 24 published `docs/api/*.md`
+    pages, so exact set membership rejects every one of them: the sidebar and
+    the docs link check both reported the whole API reference as unreachable
+    while the router was serving it.
+    """
+    if candidate in routes:
+        return True
+    return any(
+        _route_template(route).fullmatch(candidate) for route in routes if "{" in route
+    )
+
+
 def resolve_doc_link(
     link_url: str,
     known_routes: Optional[set[str]] = None,
@@ -303,24 +335,12 @@ def resolve_doc_link(
     routes = _known_doc_routes() if known_routes is None else known_routes
     segments = path.split("/")
     candidates: List[str] = []
-    # The reference and gateway pages are served by one dynamic route each
-    # ("/reference/{page}"), so an exact set membership test rejects every
-    # cross-reference between them and the link is dropped to plain text.
-    templates = [
-        re.compile(
-            "".join(
-                "[^/]+" if part.startswith("{") else re.escape(part)
-                for part in re.split(r"(\{[^}]+\})", route)
-            )
-        )
-        for route in routes
-        if "{" in route
-    ]
 
     def served(candidate: str) -> bool:
-        return candidate in routes or any(
-            template.fullmatch(candidate) for template in templates
-        )
+        # The reference and gateway pages are served by one dynamic route each
+        # ("/reference/{page}"), so exact membership alone would reject every
+        # cross-reference between them and drop the link to plain text.
+        return served_route(candidate, routes)
 
     # A sibling link ("security.md" from docs/admin/index.md) is relative to
     # the page's own directory, which only the caller knows. Without this the

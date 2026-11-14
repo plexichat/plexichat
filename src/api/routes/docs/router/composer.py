@@ -205,21 +205,10 @@ class DocsRouter(
             self.docs_end_user_acoustic_defense
         )
 
-        router.get("/reference/notifications", include_in_schema=False)(
-            self.docs_api_notifications
-        )
-        router.get("/reference/polls", include_in_schema=False)(self.docs_api_polls)
-        router.get("/reference/voice", include_in_schema=False)(self.docs_api_voice)
-        router.get("/reference/media", include_in_schema=False)(self.docs_api_media)
-        router.get("/reference/reports", include_in_schema=False)(self.docs_api_reports)
-        router.get("/reference/feedback", include_in_schema=False)(
-            self.docs_api_feedback
-        )
-        router.get("/reference/telemetry", include_in_schema=False)(
-            self.docs_api_telemetry
-        )
-        router.get("/reference/system", include_in_schema=False)(self.docs_api_system)
-        router.get("/reference/admin", include_in_schema=False)(self.docs_api_admin)
+        # The per-endpoint pages (notifications, polls, voice, media, reports,
+        # feedback, telemetry, system, admin) need no handler of their own:
+        # ``/reference/{page}`` above serves every ``docs/api/*.md``, and the
+        # hand-written copies had already drifted from those files.
 
         router.get("/deployment/env-generator", include_in_schema=False)(
             self.docs_env_generator

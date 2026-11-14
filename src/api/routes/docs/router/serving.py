@@ -24,10 +24,16 @@ class ServingMixin:
     ) -> HTMLResponse:
         conf = _runtime_docs_config(request, get_docs_config())
 
+        # A page name is user input that becomes a path, so the resolved file
+        # must still be inside DOCS_ROOT: a route that ever interpolates its
+        # parameter gets a 404 instead of an arbitrary file read.
         try:
-            mtime_ns = file_path.stat().st_mtime_ns
-        except FileNotFoundError:
+            resolved = file_path.resolve()
+            resolved.relative_to(self.DOCS_ROOT.resolve())
+            mtime_ns = resolved.stat().st_mtime_ns
+        except (OSError, ValueError):
             raise HTTPException(404, detail="Page not found")
+        file_path = resolved
 
         source_key = f"{file_path.resolve()}|{mtime_ns}"
         html_key = self._build_html_cache_key(source_key, title, current_path, conf)
