@@ -327,16 +327,26 @@ class TrackFanout:
                 except asyncio.QueueFull:
                     pass
 
-    async def aclose(self) -> None:
-        """Stop reading and end every view."""
+    def close(self) -> None:
+        """Stop reading now and end every view.
+
+        The synchronous half of :meth:`aclose`, for a caller that drops a relay
+        from a sync path and cannot await its read loop.
+        """
         self._closed = True
         self._ended = True
         if self._task is not None and not self._task.done():
             self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
         self._task = None
         self._offer(None)
+
+    async def aclose(self) -> None:
+        """Stop reading and end every view."""
+        task = self._task
+        self.close()
+        if task is not None:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
         self._queues.clear()

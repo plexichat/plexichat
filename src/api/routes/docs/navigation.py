@@ -23,13 +23,42 @@ def build_sidebar_html(conf: DocsConfig, current_path: str = "") -> str:
             # two identical links to the same page in the sidebar.
         ],
         "Reference": [
-            NavItem("API Routes", "/reference"),
             NavItem("WebSocket Gateway", "/websocket"),
             NavItem("CLI Reference", "/cli/overview"),
             NavItem("Rate Limits", "/rate-limits"),
             NavItem("Error Codes", "/errors"),
             NavItem("Data Types", "/data-types"),
             NavItem("Permissions", "/permissions"),
+        ],
+        # Every ``docs/api/*.md`` page is served at ``/reference/<name>``, but
+        # the sidebar only linked the overview: the per-endpoint reference
+        # existed and no page linked to it, so it was reachable only by
+        # guessing the URL. One entry per page, in the order the API is used.
+        "API Reference": [
+            NavItem("Overview", "/reference"),
+            NavItem("Authentication", "/reference/authentication"),
+            NavItem("Users", "/reference/users"),
+            NavItem("Relationships", "/reference/relationships"),
+            NavItem("Channels", "/reference/channels"),
+            NavItem("Messages", "/reference/messages"),
+            NavItem("Reactions", "/reference/reactions"),
+            NavItem("Polls", "/reference/polls"),
+            NavItem("Servers", "/reference/servers"),
+            NavItem("Settings", "/reference/settings"),
+            NavItem("Presence", "/reference/presence"),
+            NavItem("Notifications", "/reference/notifications"),
+            NavItem("Search", "/reference/search"),
+            NavItem("Media", "/reference/media"),
+            NavItem("Avatars", "/reference/avatars"),
+            NavItem("Emojis", "/reference/emojis"),
+            NavItem("Soundboard", "/reference/soundboard"),
+            NavItem("Webhooks", "/reference/webhooks"),
+            NavItem("Voice", "/reference/voice"),
+            NavItem("Reports", "/reference/reports"),
+            NavItem("Feedback", "/reference/feedback"),
+            NavItem("Telemetry", "/reference/telemetry"),
+            NavItem("System", "/reference/system"),
+            NavItem("Admin", "/reference/admin"),
         ],
         "Configuration": [
             NavItem("Overview", "/configuration"),
