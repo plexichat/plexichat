@@ -1,7 +1,9 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
+# Prefer the project virtualenv so lint/typecheck/test use the pinned tools.
+PYTHON ?= $(shell test -x .venv/bin/python && echo .venv/bin/python || echo python3)
 SBOM_OUT ?= sbom
 ALLOW_UNPINNED_IMAGES ?= 0
 
@@ -17,6 +19,9 @@ help:
 	@echo "  ci-supply-chain      verify + dep scans + SBOM/provenance generation"
 	@echo "  shard-map            Rebalance ci-tooling/pytest-shard-map.json from JUnit reports"
 	@echo "  shard-map-check      Fail if the committed pytest shard map is stale"
+	@echo "  lint                 Ruff + mypy over src/"
+	@echo "  typecheck            pyright over src/"
+	@echo "  test                 pytest"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -34,6 +39,15 @@ sbom-images:
 image-digests:
 	python3 scripts/generate_sbom.py --compose $(COMPOSE) --out $(SBOM_OUT) --images-only --no-image-sbom
 	@echo "Review $(SBOM_OUT)/image-digests.lock.json and merge vetted digests into image-digests.lock.json"
+
+lint:
+	$(PYTHON) -m ruff check src
+
+typecheck:
+	.venv/bin/pyright
+
+test:
+	$(PYTHON) -m pytest
 
 shard-map:
 	python3 ci-tooling/balance_pytest_shards.py $(REPORTS)
