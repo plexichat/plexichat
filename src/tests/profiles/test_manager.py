@@ -248,6 +248,26 @@ class TestProfileClearingAndHygiene:
         with pytest.raises(ValueError):
             profiles_setup.update_profile(85, banner_url="http://10.0.0.5/banner.png")
 
+    def test_profile_save_succeeds_without_dns(self, profiles_setup, db, monkeypatch):
+        # Regression: saving a profile must not resolve the link's host. A
+        # resolver that is unavailable (offline install, CI, an outage) used to
+        # reject valid links because the write path called the SSRF gate.
+        import socket
+
+        def _offline(*_args, **_kwargs):
+            raise socket.gaierror("name resolution is unavailable")
+
+        monkeypatch.setattr(socket, "getaddrinfo", _offline)
+        monkeypatch.setattr(socket, "gethostbyname", _offline)
+        _seed(db, 86)
+        out = profiles_setup.update_profile(
+            86,
+            banner_url="https://cdn.example.com/banner.png",
+            social_links=[{"platform": "github", "url": "https://example.com/me"}],
+        )
+        assert out["banner_url"] == "https://cdn.example.com/banner.png"
+        assert "example.com/me" in str(out["social_links"])
+
     def test_expired_flag_not_exposed_by_reads(self, profiles_setup, db):
         # F7: internal _custom_status_expired key never crosses the boundary.
         past = int(time.time() * 1000) - 10000
