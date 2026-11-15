@@ -403,4 +403,7 @@ async def download_transcript_export(
         file_path,
         media_type=status.get("mime_type", "application/octet-stream"),
         filename=filename,
+        # A JSON/CSV transcript must never be re-interpreted as HTML by a
+        # browser that ignores the declared media type.
+        headers={"X-Content-Type-Options": "nosniff"},
     )
