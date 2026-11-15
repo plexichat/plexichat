@@ -289,21 +289,15 @@ async def create_sticker(
     # Defence in depth: sticker name/tags/description are rendered to every
     # server member via the sticker picker, so reject HTML metacharacters
     # and control characters (stored XSS).
-    try:
-        name = _reject_ui_text_chars(name, "sticker name")
-        if tags:
-            tag_list_raw = [t.strip() for t in tags.split(",")]
-            tag_list = [
-                _reject_ui_text_chars(t, "sticker tag") for t in tag_list_raw if t
-            ]
-            tags = ",".join(tag_list)
-        if description:
-            description = _reject_ui_text_chars(description, "sticker description")
-    except ValueError as ve:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid sticker metadata"}},
-        ) from ve
+    # SecurityRejection (a ValueError) is mapped to a 400 by the app-level
+    # handler, so the route no longer translates it by hand.
+    name = _reject_ui_text_chars(name, "sticker name")
+    if tags:
+        tag_list_raw = [t.strip() for t in tags.split(",")]
+        tag_list = [_reject_ui_text_chars(t, "sticker tag") for t in tag_list_raw if t]
+        tags = ",".join(tag_list)
+    if description:
+        description = _reject_ui_text_chars(description, "sticker description")
 
     try:
         # Cap the request body before reading it fully into memory.

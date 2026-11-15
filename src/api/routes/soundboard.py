@@ -285,15 +285,11 @@ async def upload_sound(
     # Defence in depth: sound name/emoji are rendered to every server member
     # via the soundboard picker, so reject HTML metacharacters and control
     # characters (stored XSS).
-    try:
-        name = _reject_ui_text_chars(name, "sound name")
-        if emoji:
-            emoji = _reject_ui_text_chars(emoji, "sound emoji")
-    except ValueError as ve:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid sound metadata"}},
-        ) from ve
+    # SecurityRejection (a ValueError) is mapped to a 400 by the app-level
+    # handler, so the route no longer translates it by hand.
+    name = _reject_ui_text_chars(name, "sound name")
+    if emoji:
+        emoji = _reject_ui_text_chars(emoji, "sound emoji")
 
     max_size = int(config.get("soundboard.max_sound_size", 2097152) or 2097152)
     declared_size = getattr(file, "size", None)

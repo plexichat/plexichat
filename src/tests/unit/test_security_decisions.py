@@ -50,11 +50,30 @@ def test_family_wildcard_grants_its_family_only():
 
 
 def test_owner_bypasses_capability_and_rank():
-    owner = principal(user_id=99, rank=0)
+    owner = principal(user_id=99, rank=0, is_owner=True)
     guarded = Resource(kind="role", id="5", owner_id=99, required_rank=1000)
     decision = Policy.decide(Capability.MANAGE_ROLES, owner, guarded)
     assert decision
     assert "owns" in decision.reason
+
+
+def test_server_owner_outranks_a_ceiling_with_no_role_rows():
+    # The owner has no role rows, so their rank is 0; without the server-owner
+    # bypass every rank check on their own roles would refuse them. This is the
+    # regression that surfaced when role edits moved onto Decision.
+    owner = principal(user_id=5, rank=0, is_owner=True)
+    high_role = Resource(kind="role", id="9", required_rank=500)
+    decision = Policy.decide(Capability.MANAGE_ROLES, owner, high_role)
+    assert decision
+    assert decision.code == Policy.ALLOWED
+
+
+def test_a_non_owner_without_rank_is_still_refused():
+    member = principal(user_id=6, rank=0, permissions=frozenset({"roles.manage"}))
+    high_role = Resource(kind="role", id="9", required_rank=500)
+    assert Policy.decide(Capability.MANAGE_ROLES, member, high_role).code == (
+        Policy.RANK_TOO_LOW
+    )
 
 
 def test_rank_ceiling_blocks_privilege_escalation():

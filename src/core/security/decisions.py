@@ -95,6 +95,13 @@ class Policy:
         if principal is None or principal.user_id is None:
             return Decision(False, Policy.UNAUTHENTICATED, "No authenticated principal")
 
+        # Owning the server outranks every row in it, so the ceiling does not
+        # apply: the owner has no role rows to give them a position, and
+        # without this they would fail every rank check (which is exactly what
+        # happened when role edits moved onto this object).
+        if principal.is_owner:
+            return Decision(True, Policy.ALLOWED, "Principal owns the server")
+
         if resource.owner_id is not None and principal.user_id == resource.owner_id:
             return Decision(True, Policy.ALLOWED, "Principal owns the resource")
 

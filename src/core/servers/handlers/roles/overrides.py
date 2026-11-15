@@ -7,7 +7,8 @@ from src.core.base import SnowflakeID
 
 from ...models import ChannelOverride, AuditLogAction
 from ...manager.converters import _row_to_override
-from ...exceptions import ChannelNotFoundError
+from ...exceptions import ChannelNotFoundError, RoleHierarchyError
+from .authz import override_target_decision
 from .protocol import RoleHandlerProtocol
 
 
@@ -26,6 +27,40 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         )
         return _row_to_override(row) if row else None
 
+    def _guard_override_target(
+        self,
+        user_id: SnowflakeID,
+        server_id: SnowflakeID,
+        target_type: str,
+        target_id: SnowflakeID,
+    ) -> None:
+        """Refuse an override on a role at or above the actor's own rank.
+
+        ``channels.manage`` alone used to be enough to change what a
+        higher-ranked role can see -- a member could deny ``view_channel`` on
+        an administrator's role. The bar is now the same as editing the role
+        itself, and the refusal carries a Decision code.
+        """
+        if target_type != "role":
+            return
+        row = self.db.fetch_one(
+            "SELECT position FROM srv_roles WHERE id = ? AND deleted = 0",
+            (target_id,),
+        )
+        if not row:
+            return
+        server = self.manager.get_server(server_id, user_id)
+        is_owner = server is not None and server.owner_id == user_id
+        decision = override_target_decision(
+            user_id=user_id,
+            user_roles=self.manager._get_member_role_rows(server_id, user_id),
+            target_position=row["position"],
+            permissions=self.get_permissions(user_id, server_id),
+            is_owner=is_owner,
+        )
+        if not decision:
+            raise RoleHierarchyError("Cannot override a role at or above your own")
+
     def set_channel_override(
         self,
         user_id: SnowflakeID,
@@ -42,6 +77,7 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         self.manager.require_permission(
             user_id, channel.server_id, "channels.manage", channel_id
         )
+        self._guard_override_target(user_id, channel.server_id, target_type, target_id)
 
         now = self.manager._get_timestamp()
         existing = self.db.fetch_one(
@@ -117,6 +153,7 @@ class RoleOverrideMixin(RoleHandlerProtocol):
         self.manager.require_permission(
             user_id, channel.server_id, "channels.manage", channel_id
         )
+        self._guard_override_target(user_id, channel.server_id, target_type, target_id)
 
         self.db.execute(
             """DELETE FROM srv_channel_overrides 

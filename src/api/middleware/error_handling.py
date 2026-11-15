@@ -15,6 +15,8 @@ import traceback
 import utils.config as config
 import utils.logger as logger
 
+from src.core.security.errors import SecurityRejection
+
 try:
     from utils.logger import sanitize_log_message
 except ImportError:
@@ -420,6 +422,28 @@ class ErrorHandlingMiddleware:
 
 def setup_exception_handlers(app: FastAPI):
     """Setup exception handlers for the FastAPI application."""
+
+    @app.exception_handler(SecurityRejection)
+    async def security_rejection_handler(request: Request, exc: SecurityRejection):
+        """Map a security refusal to a 400 without leaking why it happened.
+
+        The exception carries a stable ``code`` worth asserting on and logging;
+        the message is static. ``str(exc)`` can name a resolved internal
+        address, so it goes to the log and never to the client.
+        """
+        headers = _get_cors_headers(request)
+        logger.warning(
+            f"Security rejection on {request.method} {request.url.path}: "
+            f"{type(exc).__name__} code={exc.code} detail={exc}"
+        )
+        error: Dict[str, Any] = {
+            "code": 400,
+            "reason": exc.code,
+            "message": exc.public_message,
+        }
+        if exc.field:
+            error["field"] = exc.field
+        return JSONResponse(status_code=400, content={"error": error}, headers=headers)
 
     @app.exception_handler(HTTPException)
     async def fastapi_http_exception_handler(request: Request, exc: HTTPException):

@@ -467,14 +467,10 @@ async def create_emoji(
 
         # Defence in depth: emoji names are rendered to every server member
         # via the emoji picker and message reactions, so reject HTML
-        # metacharacters and control characters (stored XSS).
-        try:
-            name = _reject_ui_text_chars(name, "emoji name")
-        except ValueError as ve:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid emoji name"}},
-            ) from ve
+        # metacharacters and control characters (stored XSS). The rejection is
+        # a SecurityRejection, which the app-level handler maps to a 400 with
+        # its stable reason code -- no per-route translation needed.
+        name = _reject_ui_text_chars(name, "emoji name")
 
         # Read image data
         try:
