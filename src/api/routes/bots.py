@@ -9,7 +9,7 @@ from typing import Optional, List, Annotated
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 
-from pydantic import BaseModel, BeforeValidator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 
 from src.api.schemas.policy_types import UIText
 
@@ -150,16 +150,36 @@ class ReviewBotRequest(BaseModel):
 class UpdateBotProfileRequest(BaseModel):
     """Request to update a bot profile."""
 
-    description: Optional[str] = None
-    short_description: Optional[str] = None
-    avatar_url: Optional[str] = None
-    banner_url: Optional[str] = None
-    website_url: Optional[str] = None
-    support_url: Optional[str] = None
-    github_url: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    short_description: Optional[str] = Field(None, max_length=200)
+    avatar_url: Optional[str] = Field(None, max_length=2048)
+    banner_url: Optional[str] = Field(None, max_length=2048)
+    website_url: Optional[str] = Field(None, max_length=2048)
+    support_url: Optional[str] = Field(None, max_length=2048)
+    github_url: Optional[str] = Field(None, max_length=2048)
     tags: Optional[List[UIText]] = None
     nsfw: Optional[bool] = None
     private: Optional[bool] = None
+
+    @field_validator(
+        "avatar_url",
+        "banner_url",
+        "website_url",
+        "support_url",
+        "github_url",
+    )
+    @classmethod
+    def _http_url(cls, value: Optional[str]) -> Optional[str]:
+        # These links are rendered in the public bot directory. A javascript:
+        # or data: URL would execute for anyone who clicks the profile.
+        if value is None:
+            return value
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("must be an absolute http(s) URL")
+        return value
 
 
 class BotDirectoryResponse(BaseModel):
