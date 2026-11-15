@@ -220,6 +220,18 @@ async def add_reaction(
             import urllib.parse
 
             decoded_emoji = urllib.parse.unquote(emoji)
+            # Emoji arrives as a path parameter and is persisted/displayed to
+            # everyone who can see the message. Reject empty, oversized or
+            # control-character payloads before they reach the reactions table.
+            if (
+                not decoded_emoji
+                or len(decoded_emoji) > 32
+                or any(ord(ch) < 0x20 for ch in decoded_emoji)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": {"code": 400, "message": "Invalid emoji"}},
+                )
 
             reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
 
