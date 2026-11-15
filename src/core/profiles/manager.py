@@ -5,15 +5,17 @@ Handles creating, updating, and reading user profiles with
 custom status, bio, banner images, social links, and more.
 """
 
+import ipaddress
 import json
 from enum import Enum
 from typing import Optional, List, Dict, Any
+from urllib.parse import urlparse
 
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
 from src.core.embeds.validator import sanitize_content
 from src.core.embeds.exceptions import EmbedSanitizationError
-from src.core.security.outbound import resolve_outbound_url
+from src.core.security.errors import OutboundUrlRejected
 
 
 class _Unset(Enum):
@@ -46,13 +48,46 @@ def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _ssrf_guard_url(url: str, field_name: str) -> None:
-    """Reject an attacker-controlled URL whose host resolves internally.
+    """Reject a stored link whose host is plainly internal.
 
-    Delegates to the shared outbound gate so this path, the server icon URL and
-    the media attachment URL cannot disagree about which schemes and addresses
-    are allowed. Fails closed: a validator failure never stores the URL.
+    Social links and banner URLs are rendered for a browser to open; the server
+    never fetches them. Resolving DNS here made saving a profile depend on the
+    resolver, so a valid link such as ``https://cdn.example.com/...`` was
+    rejected whenever resolution was unavailable (offline install, CI, a
+    resolver outage) even though nothing was ever going to connect to it.
+
+    Literal internal addresses are still refused, without touching the
+    network. Resolved-address checks belong where the server does connect, in
+    :mod:`src.core.security.outbound`.
     """
-    resolve_outbound_url(url, field_name)
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except ValueError as exc:
+        raise OutboundUrlRejected(
+            f"{field_name} is not a valid URL", field=field_name
+        ) from exc
+    if not hostname:
+        raise OutboundUrlRejected(f"{field_name} is missing a host", field=field_name)
+    if hostname == "localhost" or hostname.endswith(
+        (".localhost", ".local", ".internal")
+    ):
+        raise OutboundUrlRejected(
+            f"{field_name} must not point at an internal host", field=field_name
+        )
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        raise OutboundUrlRejected(
+            f"{field_name} must not point at an internal address", field=field_name
+        )
 
 
 class ProfileManager:

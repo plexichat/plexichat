@@ -231,6 +231,23 @@ class TestProfileClearingAndHygiene:
         with pytest.raises(ValueError):
             profiles_setup.update_profile(84, banner_url="javascript:alert(1)")
 
+    def test_social_link_to_literal_internal_address_is_rejected(self, profiles_setup):
+        # The write-time guard refuses internal literals without resolving DNS;
+        # the links above are kept even when resolution is unavailable.
+        with pytest.raises(ValueError):
+            profiles_setup._validate_social_links(
+                [{"platform": "other", "url": "http://127.0.0.1/admin"}]
+            )
+        with pytest.raises(ValueError):
+            profiles_setup._validate_social_links(
+                [{"platform": "other", "url": "http://localhost:8080/admin"}]
+            )
+
+    def test_banner_literal_internal_address_rejected(self, profiles_setup, db):
+        _seed(db, 85)
+        with pytest.raises(ValueError):
+            profiles_setup.update_profile(85, banner_url="http://10.0.0.5/banner.png")
+
     def test_expired_flag_not_exposed_by_reads(self, profiles_setup, db):
         # F7: internal _custom_status_expired key never crosses the boundary.
         past = int(time.time() * 1000) - 10000
