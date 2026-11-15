@@ -19,6 +19,7 @@ from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeIDParam,
     SuccessResponse,
+    _reject_ui_text_chars,
 )
 
 router = APIRouter(tags=["Emojis"])
@@ -463,6 +464,17 @@ async def create_emoji(
 
         # Check permissions (fail closed when the servers module is absent)
         _require_manage_emojis(servers_mod, current_user.user_id, sid)
+
+        # Defence in depth: emoji names are rendered to every server member
+        # via the emoji picker and message reactions, so reject HTML
+        # metacharacters and control characters (stored XSS).
+        try:
+            name = _reject_ui_text_chars(name, "emoji name")
+        except ValueError as ve:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid emoji name"}},
+            ) from ve
 
         # Read image data
         try:
