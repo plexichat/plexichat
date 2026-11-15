@@ -2,6 +2,8 @@
 DSAR (Data Subject Access Request) mixin - Data export route handlers.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import Optional
 
 from fastapi import HTTPException, Depends, Request
@@ -172,7 +174,7 @@ class DataExportMixin:
     ) -> DSARRequestResponse:
         try:
             user_id = int(current_user.user_id)
-            req_id = int(request_id)
+            req_id = parse_id(request_id, "request_id")
 
             request_data = get_request_status(req_id, user_id)
             if not request_data:
@@ -215,7 +217,7 @@ class DataExportMixin:
     ) -> SuccessResponse:
         try:
             user_id = int(current_user.user_id)
-            req_id = int(request_id)
+            req_id = parse_id(request_id, "request_id")
 
             request_data = get_request_status(req_id, user_id)
             if not request_data:
@@ -271,7 +273,7 @@ class DataExportMixin:
     ):
         try:
             user_id = int(current_user.user_id)
-            req_id = int(request_id)
+            req_id = parse_id(request_id, "request_id")
 
             request_data = get_request_status(req_id, user_id)
             if not request_data:

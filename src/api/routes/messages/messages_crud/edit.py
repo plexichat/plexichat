@@ -4,6 +4,8 @@ Mixin providing message editing route handlers.
 Includes edit-message and related update operations.
 """
 
+from src.core.security.hardening import parse_id
+
 from fastapi import HTTPException, Depends
 
 import src.api as api
@@ -61,7 +63,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except ValueError:
                 raise HTTPException(
                     status_code=400,

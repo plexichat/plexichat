@@ -13,6 +13,7 @@ module.
 """
 
 from __future__ import annotations
+from src.api.request_guards import MAX_AVATAR_UPLOAD, read_upload_capped
 
 import hashlib
 from typing import Optional
@@ -258,7 +259,7 @@ async def upload_my_avatar(
 
     # Read file data
     try:
-        file_data = await file.read()
+        file_data = await read_upload_capped(file, MAX_AVATAR_UPLOAD)
     except Exception as e:
         logger.error(
             f"Failed to read avatar file upload from user {current_user.user_id}: {e}",
@@ -694,7 +695,7 @@ async def upload_server_icon(
 
         # Read file data
         try:
-            file_data = await file.read()
+            file_data = await read_upload_capped(file, MAX_AVATAR_UPLOAD)
         except Exception as e:
             logger.error(
                 f"Failed to read icon file upload for server {sid} from user {current_user.user_id}: {e}",

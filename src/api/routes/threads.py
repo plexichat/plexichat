@@ -6,6 +6,8 @@ THREAD_CREATE / THREAD_UPDATE / THREAD_DELETE gateway events so connected
 clients update their thread lists live without a refresh.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Depends, Body
@@ -227,7 +229,7 @@ async def list_channel_threads(
 ) -> List[ThreadResponse]:
     threads_mod = _get_threads()
     try:
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -271,7 +273,7 @@ async def create_channel_thread(
 ) -> ThreadResponse:
     threads_mod = _get_threads()
     try:
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -800,7 +802,7 @@ async def list_archived_threads(
 ):
     threads_mod = _get_threads()
     try:
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,

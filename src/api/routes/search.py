@@ -35,7 +35,7 @@ router = APIRouter(prefix="/search", tags=["Search"])
     },
 )
 async def search_messages(
-    query: str = Query(..., description="Search query"),
+    query: str = Query(..., max_length=256, description="Search query"),
     conversation_id: Optional[str] = Query(None, description="Limit to conversation"),
     server_id: Optional[str] = Query(None, description="Limit to server"),
     channel_id: Optional[str] = Query(None, description="Limit to channel"),
@@ -114,7 +114,7 @@ async def search_messages(
     summary="Search users",
 )
 async def search_users(
-    query: str = Query(..., description="Username or display name"),
+    query: str = Query(..., max_length=256, description="Username or display name"),
     server_id: Optional[str] = Query(None, description="Limit to server members"),
     limit: int = Query(default=25, ge=1, le=100),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
@@ -193,8 +193,10 @@ async def search_users(
     summary="Search public servers",
 )
 async def search_servers(
-    query: str = Query(..., description="Name, description, or tags"),
-    category: Optional[str] = Query(None, description="Filter by category"),
+    query: str = Query(..., max_length=256, description="Name, description, or tags"),
+    category: Optional[str] = Query(
+        None, max_length=64, description="Filter by category"
+    ),
     limit: int = Query(default=25, ge=1, le=100),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     current_user: TokenInfo = Depends(get_current_user),
@@ -332,7 +334,7 @@ async def search_health(
     },
 )
 async def get_search_suggestions(
-    q: str = Query(..., description="Partial query for suggestions"),
+    q: str = Query(..., max_length=128, description="Partial query for suggestions"),
     limit: int = Query(default=10, ge=1, le=20),
     current_user: TokenInfo = Depends(get_current_user),
 ):
@@ -366,9 +368,11 @@ async def get_search_suggestions(
     summary="List public servers (discovery)",
 )
 async def list_public_servers(
-    category: Optional[str] = Query(None, description="Filter by category"),
+    category: Optional[str] = Query(
+        None, max_length=64, description="Filter by category"
+    ),
     limit: int = Query(default=25, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=1000000),
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """List public servers for discovery."""

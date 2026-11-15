@@ -1,3 +1,4 @@
+from src.core.security.hardening import parse_id
 import asyncio
 from typing import Dict
 
@@ -83,7 +84,7 @@ class ChannelCRUDMixin(ChannelBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid channel ID format: {channel_id}")
                 raise HTTPException(
@@ -198,7 +199,7 @@ class ChannelCRUDMixin(ChannelBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid channel ID format for update: {channel_id}")
                 raise HTTPException(
@@ -336,7 +337,7 @@ class ChannelCRUDMixin(ChannelBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid channel ID format for deletion: {channel_id}")
                 raise HTTPException(

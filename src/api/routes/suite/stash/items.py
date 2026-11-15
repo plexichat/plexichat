@@ -34,7 +34,7 @@ from .serializers import (
 )
 async def list_items(
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
     cursor: Optional[str] = Query(None, max_length=32),
     search: Optional[str] = Query(None, max_length=200),
     scope: Optional[str] = Query(None, pattern="^(personal|server)$"),

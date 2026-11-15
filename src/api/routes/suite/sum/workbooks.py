@@ -28,7 +28,7 @@ from .router import router
 )
 async def list_workbooks(
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
     template: bool = Query(
         False, description="List template workbooks instead of regular workbooks"
     ),

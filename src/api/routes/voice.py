@@ -2,6 +2,8 @@
 Voice routes - Voice channel and WebRTC signaling endpoints.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends, status
 
@@ -104,7 +106,7 @@ async def get_voice_channel_info(
     """
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid channel ID: {channel_id}"

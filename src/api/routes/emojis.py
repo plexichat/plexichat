@@ -2,6 +2,8 @@
 Emoji routes - Custom emoji management endpoints.
 """
 
+from src.api.request_guards import MAX_EMOJI_UPLOAD, read_upload_capped
+
 import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
@@ -474,7 +476,7 @@ async def create_emoji(
 
         # Read image data
         try:
-            image_data = await image.read()
+            image_data = await read_upload_capped(image, MAX_EMOJI_UPLOAD)
         except Exception as e:
             logger.error(
                 f"Failed to read image upload for server {sid}: {e}", exc_info=True

@@ -2,6 +2,8 @@
 Avatar mixin - User avatar upload/management route handler.
 """
 
+from src.api.request_guards import MAX_AVATAR_UPLOAD, read_upload_capped
+
 from fastapi import HTTPException, Depends, File, UploadFile
 
 import src.api as api
@@ -35,7 +37,7 @@ class AvatarMixin:
                 )
 
             try:
-                file_data = await file.read()
+                file_data = await read_upload_capped(file, MAX_AVATAR_UPLOAD)
             except Exception as e:
                 logger.warning(
                     f"Failed to read upload file for user {current_user.user_id}: {e}"

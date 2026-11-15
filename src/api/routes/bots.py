@@ -676,10 +676,10 @@ async def list_bot_directory(
         NullableSnowflakeIDParam,
         Query(description="Filter out bots already approved on this server"),
     ] = None,
-    q: Optional[str] = Query(None, description="Search query"),
-    tag: Optional[str] = Query(None, description="Filter by tag"),
-    limit: int = Query(50, ge=1, description="Maximum number of results"),
-    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    q: Optional[str] = Query(None, max_length=256, description="Search query"),
+    tag: Optional[str] = Query(None, max_length=64, description="Filter by tag"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, le=1000000, description="Number of results to skip"),
 ):
     """Browse available bots in the directory."""
     try:

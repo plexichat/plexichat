@@ -1,3 +1,4 @@
+from src.core.security.hardening import parse_id
 import asyncio
 from typing import Dict
 
@@ -104,7 +105,7 @@ class ChannelInvitesMixin(ChannelBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid channel ID format for invite: {channel_id}")
                 raise HTTPException(

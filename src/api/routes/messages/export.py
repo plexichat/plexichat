@@ -2,6 +2,8 @@
 Message export routes - Chat transcript export endpoints.
 """
 
+from src.core.security.hardening import parse_id
+
 from src.core.security.hardening import sanitize_header_filename
 
 import time
@@ -52,7 +54,7 @@ async def request_transcript_export(
         )
 
     try:
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except ValueError:
         raise HTTPException(
             status_code=400,

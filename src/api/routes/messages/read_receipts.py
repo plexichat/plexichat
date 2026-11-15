@@ -2,6 +2,8 @@
 Read receipt routes - Message acknowledgment and unread counts.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import Optional, Dict
 from fastapi import APIRouter, HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
@@ -57,7 +59,7 @@ async def get_unread_count(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -149,7 +151,7 @@ async def acknowledge_messages(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -483,7 +485,7 @@ async def acknowledge_messages_bulk(
 
         for channel_id, message_id in body.items():
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
                 mid = int(message_id) if message_id else None
                 # ``mark_read`` is synchronous; keep it off the event loop so
                 # one request cannot block the whole worker.
@@ -595,7 +597,7 @@ async def get_last_read(
         )
 
     try:
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except ValueError:
         raise HTTPException(
             status_code=400,
@@ -669,7 +671,7 @@ async def mark_unread(
         )
 
     try:
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except ValueError:
         raise HTTPException(
             status_code=400,

@@ -2,6 +2,8 @@
 Pin routes - Pin and unpin messages.
 """
 
+from src.core.security.hardening import parse_id
+
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -44,7 +46,7 @@ async def pin_message(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
             mid = int(message_id)
         except ValueError:
             raise HTTPException(
@@ -190,7 +192,7 @@ async def unpin_message(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
             mid = int(message_id)
         except ValueError:
             raise HTTPException(

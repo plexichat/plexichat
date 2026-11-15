@@ -22,7 +22,7 @@ class ListingMixin:
         self,
         current_user: TokenInfo = Depends(get_current_user),
         limit: int = Query(default=100, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
+        offset: int = Query(default=0, ge=0, le=1000000),
     ) -> List[DetailedRelationshipInfo]:
         """
         Get all relationships for current user (cached for 60s).

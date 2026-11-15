@@ -4,6 +4,8 @@ Mixin providing message deletion route handlers.
 Includes delete-message and related removal operations.
 """
 
+from src.core.security.hardening import parse_id
+
 import json
 
 from fastapi import HTTPException, Depends, Body
@@ -57,7 +59,7 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
 
         try:
             try:
-                url_cid = int(channel_id)
+                url_cid = parse_id(channel_id, "channel_id")
                 mid = int(message_id)
             except ValueError:
                 raise HTTPException(
@@ -245,7 +247,7 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except ValueError:
                 raise HTTPException(
                     status_code=400,

@@ -209,7 +209,7 @@ async def list_artifacts(
     sort_by: str = "created_at",
     sort_order: str = "desc",
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
     include_payload: bool = Query(True),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ArtifactListResponse:

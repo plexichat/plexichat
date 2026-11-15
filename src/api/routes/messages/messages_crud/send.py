@@ -4,6 +4,8 @@ Mixin providing message-sending route handlers.
 Includes create-message, reply, and poll creation logic.
 """
 
+from src.core.security.hardening import parse_id
+
 from fastapi import HTTPException, Depends
 from typing import Optional
 
@@ -101,7 +103,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except ValueError:
                 raise HTTPException(
                     status_code=400,

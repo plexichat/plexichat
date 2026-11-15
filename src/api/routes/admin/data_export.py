@@ -13,6 +13,8 @@ Without these routes every user request deadlocked in 'pending' forever
 because require_admin_review defaults to true.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -104,7 +106,7 @@ async def list_data_exports(
     request: Request,
     status: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=1000000),
 ):
     """List all DSAR export requests with optional status filter."""
     check_host_restriction(request)
@@ -130,7 +132,7 @@ async def get_data_export(request: Request, request_id: SnowflakeIDParam):
     check_host_restriction(request)
     require_admin_permission(request, "data_export.read")
     try:
-        req_id = int(request_id)
+        req_id = parse_id(request_id, "request_id")
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=400,

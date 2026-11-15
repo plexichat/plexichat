@@ -6,6 +6,8 @@ playback is allowed for any member of the sound's server. Uploaded audio
 bytes are validated and stored through the shared media pipeline.
 """
 
+from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
+
 from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Depends, UploadFile
@@ -297,7 +299,7 @@ async def upload_sound(
         raise HTTPException(status_code=413, detail="Sound file is too large")
 
     try:
-        content = await file.read()
+        content = await read_upload_capped(file, MAX_SOUND_UPLOAD)
     except Exception as e:
         logger.error(f"Failed reading sound upload: {e}")
         raise HTTPException(status_code=400, detail="Could not read uploaded file")

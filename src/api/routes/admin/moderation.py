@@ -140,7 +140,7 @@ async def get_hash_reports(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
 ):
     """
     Retrieve a list of content hash reports for review.
@@ -249,7 +249,7 @@ async def get_message_reports(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
 ):
     """Retrieve message reports for admin review."""
     check_host_restriction(request)
@@ -413,7 +413,7 @@ async def get_user_reports(
     request: Request,
     status_filter: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
 ):
     """Retrieve user behavior reports for admin review."""
     check_host_restriction(request)
@@ -493,7 +493,7 @@ async def review_user_report(
 async def get_blocked_hashes(
     request: Request,
     limit: int = Query(100, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
 ):
     """
     List all currently blocked content hashes.
@@ -598,7 +598,7 @@ async def unblock_hash(hash_value: str, request: Request):
 async def get_blocked_users(
     request: Request,
     limit: int = Query(100, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1000000),
 ):
     """
     Retrieve a list of all currently blocked or banned users.

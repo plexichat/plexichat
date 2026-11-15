@@ -2,6 +2,8 @@
 Typing indicator routes - Typing indicators for channels.
 """
 
+from src.core.security.hardening import parse_id
+
 from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
@@ -40,7 +42,7 @@ async def trigger_typing(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             raise HTTPException(
                 status_code=400,

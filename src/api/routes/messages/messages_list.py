@@ -2,6 +2,8 @@
 Message list routes - Fetching lists of messages (channel messages, pinned messages).
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import List, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
@@ -71,7 +73,7 @@ async def get_channel_messages(
                 setattr(obj, name, value)
 
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -373,7 +375,7 @@ async def get_pinned_messages(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             raise HTTPException(
                 status_code=400,
