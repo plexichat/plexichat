@@ -22,7 +22,7 @@ from src.api.schemas.soundboard import (
     SoundResponse,
     SoundUpdateRequest,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, _reject_ui_text_chars
 from src.core.soundboard.exceptions import (
     ChannelNotFoundError,
     InvalidSoundFormatError,
@@ -281,6 +281,19 @@ async def upload_sound(
     sid = _parse_server_id(server_id)
 
     _require_manage_permission(current_user.user_id, sid)
+
+    # Defence in depth: sound name/emoji are rendered to every server member
+    # via the soundboard picker, so reject HTML metacharacters and control
+    # characters (stored XSS).
+    try:
+        name = _reject_ui_text_chars(name, "sound name")
+        if emoji:
+            emoji = _reject_ui_text_chars(emoji, "sound emoji")
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid sound metadata"}},
+        ) from ve
 
     max_size = int(config.get("soundboard.max_sound_size", 2097152) or 2097152)
     declared_size = getattr(file, "size", None)
