@@ -531,9 +531,19 @@ async def unblock_ip(request: Request, ip_address: str):
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.security.ipblock")
+    import ipaddress
+
+    candidate = ip_address.strip()
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid IP address"}},
+        )
     from src.core import auth
 
-    auth.unblock_ip(ip_address)
+    auth.unblock_ip(candidate)
     return SuccessResponse(success=True, message=None)
 
 

@@ -3,7 +3,9 @@ IP management schemas.
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field
+import ipaddress
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class IPBlockRequest(BaseModel):
@@ -13,7 +15,18 @@ class IPBlockRequest(BaseModel):
     reason: Optional[str] = Field(
         None, max_length=500, description="Reason for blocking"
     )
-    duration_hours: Optional[int] = Field(None, description="Duration in hours")
+    duration_hours: Optional[int] = Field(
+        None, ge=1, le=8760, description="Duration in hours (max one year)"
+    )
+
+    @field_validator("ip_address")
+    @classmethod
+    def _valid_ip(cls, value: str) -> str:
+        try:
+            ipaddress.ip_address(value.strip())
+        except ValueError as exc:
+            raise ValueError("ip_address must be a valid IPv4 or IPv6 address") from exc
+        return value.strip()
 
 
 class BlockedIPResponse(BaseModel):
