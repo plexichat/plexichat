@@ -33,11 +33,12 @@ from typing import Any, Union, get_args, get_origin
 import pytest
 from pydantic import BaseModel
 
+import src.api.routes as routes_package
 import src.api.schemas as schemas_package
 
 BASELINE_PATH = Path(__file__).with_name("policy_coverage_baseline.json")
 
-REQUEST_SUFFIXES = ("Request", "Update", "Patch", "Create")
+REQUEST_SUFFIXES = ("Request", "Update", "Patch", "Create", "Body", "Confirm")
 
 #: Machine-readable values. Never rendered as user-facing prose.
 STRUCTURED_TEXT_FIELDS = frozenset(
@@ -111,6 +112,19 @@ STRUCTURED_TEXT_FIELDS = frozenset(
         "url",
         "visibility",
         "webhook_url",
+        # Route-level request models (see ``MODEL_PACKAGES``).
+        "app_version",
+        "assigned_to",
+        "auth",
+        "fingerprint",
+        "icon_emoji",
+        "p256dh",
+        "preset",
+        "priority",
+        "redirect_uris",
+        "role",
+        "status_emoji",
+        "waveform",
     }
 )
 
@@ -118,6 +132,8 @@ STRUCTURED_TEXT_FIELDS = frozenset(
 #: characters would refuse ordinary messages ("use <b> for bold", "<3").
 UNRESTRICTED_TEXT_FIELDS = frozenset(
     {
+        "action_details",
+        "admin_notes",
         "bio",
         "body",
         "comment",
@@ -130,8 +146,12 @@ UNRESTRICTED_TEXT_FIELDS = frozenset(
         "markdown",
         "message",
         "notes",
+        "confirmation_text",
         "pronouns",
         "reason",
+        "resolution",
+        "review_reason",
+        "short_description",
         "supported_versions",
         "text",
         "title",
@@ -143,18 +163,23 @@ _STRUCTURED_SUFFIXES = ("_id", "_ids", "_at", "_url", "_urls", "_hash", "_type")
 
 
 def _iter_models():
-    for module_info in pkgutil.walk_packages(
-        schemas_package.__path__, prefix=f"{schemas_package.__name__}."
-    ):
-        module = importlib.import_module(module_info.name)
-        for name, obj in vars(module).items():
-            if (
-                inspect.isclass(obj)
-                and issubclass(obj, BaseModel)
-                and obj is not BaseModel
-                and obj.__module__ == module.__name__
-            ):
-                yield module_info.name, name, obj
+    # Route modules declare their own request bodies (``RoleCreate``,
+    # ``RenameDeviceRequest``, ``UpdateBotProfileRequest``...). Scanning only the
+    # schemas package left those outside the ratchet entirely, so a new route
+    # body could accept free text and nothing noticed.
+    for package in (schemas_package, routes_package):
+        for module_info in pkgutil.walk_packages(
+            package.__path__, prefix=f"{package.__name__}."
+        ):
+            module = importlib.import_module(module_info.name)
+            for name, obj in vars(module).items():
+                if (
+                    inspect.isclass(obj)
+                    and issubclass(obj, BaseModel)
+                    and obj is not BaseModel
+                    and obj.__module__ == module.__name__
+                ):
+                    yield module_info.name, name, obj
 
 
 def _policy_name(field: Any) -> str | None:

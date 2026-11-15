@@ -7,6 +7,7 @@ import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import SnowflakeID, ErrorResponse, SuccessResponse
+from src.api.schemas.policy_types import UIText
 
 router = APIRouter()
 
@@ -25,7 +26,7 @@ class DeviceResponse(BaseModel):
 class RenameDeviceRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=64)
+    name: UIText = Field(..., min_length=1, max_length=64)
 
 
 class TrustDeviceRequest(BaseModel):

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeID
+from src.api.schemas.policy_types import UIText
 from src.core import applications
 from src.core.database import check_rate_limit
 from src.core.applications import InteractionResponse, InteractionResponseType
@@ -53,7 +54,7 @@ class ApplicationResponse(BaseModel):
 class CreateApplicationRequest(BaseModel):
     """Request to create an application."""
 
-    name: str
+    name: UIText
     description: Optional[str] = None
     icon_emoji: Optional[str] = None
     redirect_uris: Optional[List[str]] = None
@@ -64,7 +65,7 @@ class CreateApplicationRequest(BaseModel):
 class UpdateApplicationRequest(BaseModel):
     """Request to update an application."""
 
-    name: Optional[str] = None
+    name: Optional[UIText] = None
     description: Optional[str] = None
     icon_emoji: Optional[str] = None
     redirect_uris: Optional[List[str]] = None

@@ -8,20 +8,21 @@ from fastapi import Request, HTTPException
 from pydantic import BaseModel
 
 from src.api.schemas.common import SuccessResponse
+from src.api.schemas.policy_types import UIText
 from ..utils import check_host_restriction, require_admin_permission
 from .base import AdminUsersRouterProtocol
 import utils.logger as logger
 
 
 class AdminUserCreate(BaseModel):
-    username: str
+    username: UIText
     email: str
     password: str
     role: str = "support_admin"
 
 
 class AdminUserUpdate(BaseModel):
-    username: str | None = None
+    username: UIText | None = None
     email: str | None = None
     password: str | None = None
     role: str | None = None

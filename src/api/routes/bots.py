@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Depends, status, Query
 
 from pydantic import BaseModel, BeforeValidator
 
+from src.api.schemas.policy_types import UIText
+
 from src.api.middleware.authentication import (
     get_current_user,
     get_optional_user,
@@ -52,7 +54,7 @@ class ApprovedBotResponse(BaseModel):
     application_id: str
     approved_by: str
     permissions: str
-    bot_name: Optional[str] = None
+    bot_name: Optional[UIText] = None
     bot_avatar_url: Optional[str] = None
     status: str
     installed_at: int
@@ -128,7 +130,7 @@ class ApproveBotRequest(BaseModel):
 
     application_id: str
     permissions: str = "{}"
-    bot_name: Optional[str] = None
+    bot_name: Optional[UIText] = None
 
 
 class RequestBotRequest(BaseModel):
@@ -155,7 +157,7 @@ class UpdateBotProfileRequest(BaseModel):
     website_url: Optional[str] = None
     support_url: Optional[str] = None
     github_url: Optional[str] = None
-    tags: Optional[List[str]] = None
+    tags: Optional[List[UIText]] = None
     nsfw: Optional[bool] = None
     private: Optional[bool] = None
 
