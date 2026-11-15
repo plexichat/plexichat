@@ -4,7 +4,7 @@ Admin dashboard and system metrics routes.
 
 import json
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel as _BaseModel
 from src.api.schemas.admin import (
     AdminDashboardResponse,
@@ -289,7 +289,10 @@ async def patch_cross_worker_tuning(request: Request, body: _TuningPatch):
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
-async def get_cross_worker_tuning_audit(request: Request, limit: int = 20):
+async def get_cross_worker_tuning_audit(
+    request: Request,
+    limit: int = Query(20, ge=1, le=200),
+):
     """Return recent cross-worker tuning audit log entries."""
     check_host_restriction(request)
     get_admin_from_token(request)
