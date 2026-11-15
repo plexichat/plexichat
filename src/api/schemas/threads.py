@@ -4,6 +4,7 @@ Thread schemas - Request/response models for thread endpoints.
 
 from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
+from .policy_types import UIText
 
 from .common import SnowflakeID
 
@@ -13,7 +14,7 @@ class ThreadCreateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=100, description="Thread name")
+    name: UIText = Field(..., min_length=1, max_length=100, description="Thread name")
     thread_type: str = Field(
         "public",
         description="Thread type: public, private, or announcement",
@@ -32,7 +33,7 @@ class ThreadUpdateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(
+    name: Optional[UIText] = Field(
         None, min_length=1, max_length=100, description="New thread name"
     )
     auto_archive_duration: Optional[int] = Field(

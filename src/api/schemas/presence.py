@@ -4,6 +4,7 @@ Presence schemas - Request/response models for presence endpoints.
 
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
+from .policy_types import UIText
 
 from .common import SnowflakeID
 
@@ -14,7 +15,7 @@ class PresenceUpdate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     status: str = Field(..., description="Status: online, idle, dnd, invisible")
-    custom_status: Optional[str] = Field(
+    custom_status: Optional[UIText] = Field(
         None, max_length=128, description="Custom status text"
     )
     custom_emoji: Optional[str] = Field(None, description="Custom status emoji")

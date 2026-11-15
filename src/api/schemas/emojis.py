@@ -4,6 +4,7 @@ Emoji schemas - Pydantic models for custom emoji endpoints.
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field, ConfigDict, field_serializer
+from .policy_types import UIText
 
 
 class EmojiResponse(BaseModel):
@@ -40,4 +41,4 @@ class EmojiCountsResponse(BaseModel):
 class EmojiUpdateRequest(BaseModel):
     """Emoji update request model."""
 
-    name: Optional[str] = Field(None, description="New emoji name")
+    name: Optional[UIText] = Field(None, description="New emoji name")

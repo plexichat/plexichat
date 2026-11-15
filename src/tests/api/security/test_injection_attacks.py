@@ -9,8 +9,12 @@ def test_sql_injection_in_username(test_client):
         json={"username": sql_payload, "password": "test"},
     )
 
-    # Should fail authentication
-    assert response.status_code == 401
+    # The login boundary now refuses HTML metacharacters (the UIText policy),
+    # so the payload never reaches the credential lookup and is rejected as
+    # invalid input rather than as bad credentials. Both are safe refusals; what
+    # matters is that the payload never authenticates.
+    assert response.status_code in (400, 401)
+    assert "access_token" not in response.text
 
 
 def test_sql_injection_in_email(test_client):
@@ -45,8 +49,11 @@ def test_ldap_injection(test_client):
         json={"username": ldap_payload, "password": "test"},
     )
 
-    # Should fail authentication
-    assert response.status_code == 401
+    # Same boundary refusal as the SQL payload above: rejected as invalid input
+    # because shell/LDAP metacharacters are not valid in a username, and never
+    # authenticated.
+    assert response.status_code in (400, 401)
+    assert "access_token" not in response.text
 
 
 def test_xss_in_username(test_client):

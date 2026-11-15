@@ -5,6 +5,7 @@ Artifact schemas - Pydantic models for the Artifacts REST API.
 import json
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from .policy_types import UIText
 
 from src.api.schemas.common import SnowflakeID
 from src.core.artifacts.models import ArtifactType, ArtifactStatus
@@ -93,7 +94,9 @@ class ArtifactCreateRequest(_PayloadSizeMixin, BaseModel):
     )
     artifact_type: ArtifactType = Field(..., description="Artifact type")
     title: str = Field(..., description="Display title", min_length=1, max_length=500)
-    summary: Optional[str] = Field(None, description="Short summary", max_length=2000)
+    summary: Optional[UIText] = Field(
+        None, description="Short summary", max_length=2000
+    )
     payload: Optional[Dict[str, Any]] = Field(None, description="Type-specific payload")
     status: Optional[ArtifactStatus] = Field(
         None, description="Lifecycle status (default: completed)"
@@ -114,7 +117,9 @@ class ArtifactUpdateRequest(_PayloadSizeMixin, BaseModel):
     title: Optional[str] = Field(
         None, description="Display title", min_length=1, max_length=500
     )
-    summary: Optional[str] = Field(None, description="Short summary", max_length=2000)
+    summary: Optional[UIText] = Field(
+        None, description="Short summary", max_length=2000
+    )
     status: Optional[ArtifactStatus] = Field(None, description="Lifecycle status")
     payload: Optional[Dict[str, Any]] = Field(None, description="Type-specific payload")
     recorded: Optional[bool] = Field(

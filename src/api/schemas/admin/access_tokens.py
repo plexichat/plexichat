@@ -4,12 +4,13 @@ Access token schemas.
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from ..policy_types import UIText
 
 
 class AccessTokenCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(None, max_length=100)
+    name: Optional[UIText] = Field(None, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     token: Optional[str] = Field(None, min_length=32, max_length=128)
     expires_at: Optional[int] = Field(
@@ -55,7 +56,7 @@ class AccessTokenCreateResponse(BaseModel):
 class AccessTokenUpdateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(None, max_length=100)
+    name: Optional[UIText] = Field(None, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     expires_at: Optional[int] = Field(None)
     clear_expiry: bool = Field(False)
@@ -76,7 +77,7 @@ class AccessTokenScopeCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     scope_type: str = Field(..., pattern="^(ip|cidr)$")
-    value: str = Field(..., min_length=1, max_length=128)
+    value: UIText = Field(..., min_length=1, max_length=128)
 
 
 class AccessTokenScopeResponse(BaseModel):

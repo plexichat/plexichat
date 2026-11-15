@@ -5,6 +5,7 @@ Soundboard schemas - Pydantic models for soundboard endpoints.
 from typing import Optional
 from typing_extensions import Annotated
 from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
+from .policy_types import UIText
 
 
 def _to_str(v):
@@ -40,7 +41,7 @@ class SoundResponse(BaseModel):
 class SoundUpdateRequest(BaseModel):
     """Editable sound metadata."""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=64)
+    name: Optional[UIText] = Field(None, min_length=1, max_length=64)
     emoji: Optional[str] = Field(None, max_length=32)
     volume: Optional[float] = Field(None, ge=0.0, le=1.0)
     cooldown: Optional[int] = Field(None, ge=0)

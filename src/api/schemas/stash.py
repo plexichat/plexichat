@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+from .policy_types import UIText
 
 from .common import SnowflakeID
 
@@ -18,7 +19,7 @@ class StashItemCreateRequest(BaseModel):
     collection_id: Optional[SnowflakeID] = None
     media_object_id: Optional[str] = Field(None, max_length=500)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    tags: List[str] = Field(default_factory=list, max_length=100)
+    tags: List[UIText] = Field(default_factory=list, max_length=100)
 
 
 class StashItemUpdateRequest(BaseModel):
@@ -29,7 +30,7 @@ class StashItemUpdateRequest(BaseModel):
     collection_id: Optional[SnowflakeID] = None
     media_object_id: Optional[str] = Field(None, max_length=500)
     metadata: Optional[Dict[str, Any]] = None
-    tags: Optional[List[str]] = Field(None, max_length=100)
+    tags: Optional[List[UIText]] = Field(None, max_length=100)
 
 
 class StashFileUploadRequest(BaseModel):
@@ -42,7 +43,7 @@ class StashFileUploadRequest(BaseModel):
     scope: str = Field("personal", pattern="^(personal|server)$")
     server_id: Optional[SnowflakeID] = None
     description: Optional[str] = Field(None, max_length=4000)
-    tags: List[str] = Field(default_factory=list, max_length=100)
+    tags: List[UIText] = Field(default_factory=list, max_length=100)
 
 
 class StashItemResponse(BaseModel):
@@ -134,7 +135,7 @@ class StashDownloadRedeemResponse(BaseModel):
 
 
 class StashCollectionCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
+    name: UIText = Field(..., min_length=1, max_length=200)
     server_id: Optional[SnowflakeID] = None
     parent_id: Optional[SnowflakeID] = None
 

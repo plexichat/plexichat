@@ -4,6 +4,7 @@ User schemas - Request/response models for user endpoints.
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from .policy_types import UIText
 
 from .common import SnowflakeID
 
@@ -18,7 +19,7 @@ class UserUpdateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    username: Optional[str] = Field(
+    username: Optional[UIText] = Field(
         None, min_length=3, max_length=32, description="New username"
     )
     email: Optional[str] = Field(None, description="New email")

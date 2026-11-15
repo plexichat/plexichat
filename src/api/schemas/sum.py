@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from .policy_types import UIText
 
 from .common import SnowflakeID
 
@@ -220,12 +221,12 @@ class SumSnapshotListResponse(BaseModel):
 
 
 class SumSheetCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
+    name: UIText = Field(..., min_length=1, max_length=200)
     position: Optional[int] = Field(None, ge=0)
 
 
 class SumSheetRenameRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
+    name: UIText = Field(..., min_length=1, max_length=200)
 
 
 class SumSheetOpResponse(BaseModel):
