@@ -3,10 +3,30 @@ Server schemas - Request/response models for server/guild endpoints.
 """
 
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from .common import SnowflakeID
+from .common import SnowflakeID, _reject_ui_text_chars
 from .users import UserPublicResponse
+
+
+def _validate_icon_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return url
+    url = url.strip()
+    if not url:
+        return url
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("Server icon URL must use http or https")
+    try:
+        from src.utils.security import URLValidator
+
+        URLValidator().validate_url_for_request(url)
+    except Exception as exc:
+        import utils.logger as _logger
+
+        _logger.warning(f"Rejected server icon URL failing SSRF check: {exc}")
+        raise ValueError("Server icon URL resolved to a forbidden address") from exc
+    return url
 
 
 class ServerCreateRequest(BaseModel):
@@ -19,6 +39,18 @@ class ServerCreateRequest(BaseModel):
         None, max_length=1000, description="Server description"
     )
     icon_url: Optional[str] = Field(None, description="Server icon URL")
+
+    @field_validator("name", "description")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("icon_url")
+    @classmethod
+    def _validate_icon(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_icon_url(value)
 
 
 class ServerUpdateRequest(BaseModel):
@@ -48,6 +80,18 @@ class ServerUpdateRequest(BaseModel):
     max_reactions_per_message: Optional[int] = Field(
         None, ge=1, le=200, description="Maximum reactions per message"
     )
+
+    @field_validator("name", "description")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("icon_url")
+    @classmethod
+    def _validate_icon(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_icon_url(value)
 
 
 class TransferOwnershipRequest(BaseModel):

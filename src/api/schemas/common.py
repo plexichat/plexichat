@@ -232,3 +232,29 @@ def snowflake_from_str(v: Any) -> Optional[int]:
             raise ValueError("Invalid snowflake ID: must be non-negative")
         return numeric
     raise ValueError("Invalid snowflake ID type")
+
+
+# Characters that break out of HTML attribute or text contexts. Rendered
+# into client-facing UIs (roster, channel lists, server lists, emoji/sticker
+# pickers, soundboards), so rejecting them at the input layer is defence in
+# depth against stored XSS even when an output encoder is bypassed.
+_UI_TEXT_HTML_META_CHARS = frozenset("<>\"'&=")
+
+
+def _reject_ui_text_chars(value: str, field_name: str) -> str:
+    """Reject HTML metacharacters and C0 control characters in UI-rendered text.
+
+    Applied to server/channel/emoji/sticker/soundboard names, descriptions,
+    topics, tags and other short text fields that are echoed to every member
+    of a server. Control characters are also rejected to prevent terminal
+    injection in admin dashboards that log or print these values.
+    """
+    if not value:
+        return value
+    meta = sorted({ch for ch in value if ch in _UI_TEXT_HTML_META_CHARS})
+    ctrl = [ch for ch in value if ord(ch) < 0x20 or ord(ch) == 0x7F]
+    if meta or ctrl:
+        raise ValueError(
+            f"{field_name} must not contain HTML metacharacters or control characters"
+        )
+    return value
