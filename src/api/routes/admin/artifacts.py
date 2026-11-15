@@ -300,12 +300,38 @@ async def admin_set_feature_settings(
                 "error": {"code": 400, "message": "server_id and settings are required"}
             },
         )
+    # The settings map is stored as a JSON blob and echoed back to the admin
+    # panel. Bound its shape so a bad request cannot persist an arbitrarily
+    # large document or keys/values the UI cannot render.
+    if len(settings) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "too many settings"}},
+        )
+    for key, value in settings.items():
+        if not isinstance(key, str) or not key or len(key) > 64:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "invalid setting key"}},
+            )
+        if isinstance(value, str) and len(value) > 1024:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": f"setting {key!r} is too long"}
+                },
+            )
     # Accept a decimal-string snowflake (the admin UI sends ids as strings to
     # avoid Number() rounding) as well as an int, then bind a real int so the
     # query works on both SQLite and Postgres.
     try:
         server_id = int(server_id)
     except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid server_id"}},
+        )
+    if server_id <= 0:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid server_id"}},
