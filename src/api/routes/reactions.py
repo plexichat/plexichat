@@ -20,6 +20,24 @@ import utils.logger as logger
 router = APIRouter(tags=["Reactions"])
 
 
+def _validated_emoji(emoji: str) -> str:
+    """URL-decode and validate an emoji path segment.
+
+    Emoji arrive as path parameters and are persisted/displayed to everyone who
+    can see the message. Reject empty, oversized and control-character payloads
+    before they reach the reactions table.
+    """
+    import urllib.parse
+
+    decoded = urllib.parse.unquote(emoji or "")
+    if not decoded or len(decoded) > 32 or any(ord(ch) < 0x20 for ch in decoded):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid emoji"}},
+        )
+    return decoded
+
+
 def _validate_message_in_channel(reactions, mid: int, cid: int) -> int:
     """Verify the message actually lives in the URL's channel.
 
@@ -216,22 +234,7 @@ async def add_reaction(
                     raise
 
         try:
-            # URL decode the emoji if needed (handles encoded emojis like %F0%9F%A5%BA)
-            import urllib.parse
-
-            decoded_emoji = urllib.parse.unquote(emoji)
-            # Emoji arrives as a path parameter and is persisted/displayed to
-            # everyone who can see the message. Reject empty, oversized or
-            # control-character payloads before they reach the reactions table.
-            if (
-                not decoded_emoji
-                or len(decoded_emoji) > 32
-                or any(ord(ch) < 0x20 for ch in decoded_emoji)
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid emoji"}},
-                )
+            decoded_emoji = _validated_emoji(emoji)
 
             reactions.add_reaction(current_user.user_id, mid, decoded_emoji)
 
@@ -380,9 +383,7 @@ async def clear_reactions_for_emoji(
     real_cid = _validate_message_in_channel(reactions, mid, cid)
 
     try:
-        import urllib.parse
-
-        decoded_emoji = urllib.parse.unquote(emoji)
+        decoded_emoji = _validated_emoji(emoji)
 
         removed = reactions.remove_all_reactions_for_emoji(
             current_user.user_id, mid, decoded_emoji
@@ -513,9 +514,8 @@ async def remove_reaction(
             real_cid = _validate_message_in_channel(reactions, mid, cid)
 
             # URL decode the emoji if needed
-            import urllib.parse
 
-            decoded_emoji = urllib.parse.unquote(emoji)
+            decoded_emoji = _validated_emoji(emoji)
 
             reactions.remove_reaction(current_user.user_id, mid, decoded_emoji)
 
@@ -750,9 +750,8 @@ async def get_reaction_users(
         try:
             # URL decode the emoji to match how it is stored (add/remove
             # decode on the server side; the client sends it encoded).
-            import urllib.parse
 
-            decoded_emoji = urllib.parse.unquote(emoji)
+            decoded_emoji = _validated_emoji(emoji)
 
             users = reactions.get_reaction_users(
                 user_id=current_user.user_id,
