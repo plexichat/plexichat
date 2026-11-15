@@ -1,4 +1,4 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
@@ -24,6 +24,9 @@ help:
 	@echo "  typecheck            pyright over src/"
 	@echo "  test                 pytest"
 	@echo "  large-files          List source files over LARGE_FILE_LINES (default 1000)"
+	@echo "  serve                Run the API server (python main.py)"
+	@echo "  format               Check formatting with ruff format"
+	@echo "  security             Run bandit over src/"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -50,6 +53,15 @@ typecheck:
 
 test:
 	$(PYTHON) -m pytest
+
+serve:
+	$(PYTHON) main.py
+
+format:
+	$(PYTHON) -m ruff format --check src
+
+security:
+	$(PYTHON) -m bandit -r src/api -q -lll
 
 large-files:
 	$(PYTHON) scripts/find_large_files.py --lines $(LARGE_FILE_LINES)
