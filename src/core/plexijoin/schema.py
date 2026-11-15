@@ -5,6 +5,7 @@ PlexiJoin Federation module - Table definitions for federation system.
 import utils.logger as logger
 
 from src.core.database.core.schema_splitter import split_sql_statements
+from src.core.security.hardening import require_identifier
 
 
 SCHEMA = """
@@ -109,7 +110,7 @@ def drop_tables(db):
         "idx_plexijoin_replay_seen",
     ]
     for index in indexes:
-        db.execute(f"DROP INDEX IF EXISTS {index}")
+        db.execute(f"DROP INDEX IF EXISTS {require_identifier(index, 'index name')}")
 
     tables = [
         "plexijoin_traffic_log",
@@ -118,4 +119,4 @@ def drop_tables(db):
         "plexijoin_replay_nonces",
     ]
     for table in tables:
-        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(f"DROP TABLE IF EXISTS {require_identifier(table, 'table name')}")

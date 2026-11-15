@@ -21,6 +21,7 @@ from .utils import (
     require_admin_permission,
 )
 from src.api.schemas.common import ErrorResponse
+from src.core.security.hardening import content_disposition
 import utils.logger as logger
 
 router = APIRouter()
@@ -244,7 +245,9 @@ async def export_telemetry_stats(
                 content=json.dumps(data, indent=2),
                 media_type="application/json",
                 headers={
-                    "Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.json"
+                    "Content-Disposition": content_disposition(
+                        f"telemetry_{ts.replace(' ', '_').replace(':', '-')}.json"
+                    )
                 },
             )
 
@@ -280,7 +283,9 @@ async def export_telemetry_stats(
                 content=output.getvalue(),
                 media_type="text/csv",
                 headers={
-                    "Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.csv"
+                    "Content-Disposition": content_disposition(
+                        f"telemetry_{ts.replace(' ', '_').replace(':', '-')}.csv"
+                    )
                 },
             )
 
@@ -301,7 +306,9 @@ async def export_telemetry_stats(
                 content="\n".join(lines),
                 media_type="text/plain",
                 headers={
-                    "Content-Disposition": f"attachment; filename=telemetry_{ts.replace(' ', '_').replace(':', '-')}.txt"
+                    "Content-Disposition": content_disposition(
+                        f"telemetry_{ts.replace(' ', '_').replace(':', '-')}.txt"
+                    )
                 },
             )
 

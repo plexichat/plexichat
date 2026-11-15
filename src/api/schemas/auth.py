@@ -4,12 +4,13 @@ Auth schemas - Request/response models for authentication endpoints.
 
 from typing import Optional, List
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from .policy_types import UIText
 
 from .common import SnowflakeID
 
 
 class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=32, description="Username")
+    username: UIText = Field(..., min_length=3, max_length=32, description="Username")
     email: EmailStr = Field(..., description="Email address")
     password: str = Field(..., description="Password")
     age: Optional[int] = Field(
@@ -29,7 +30,7 @@ class LoginRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    username: str = Field(..., description="Username or email")
+    username: UIText = Field(..., description="Username or email")
     password: str = Field(..., description="Password")
     device_fingerprint: Optional[str] = Field(
         None,
@@ -331,7 +332,7 @@ class PasskeyAuthenticateOptionsRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    username: Optional[str] = Field(
+    username: Optional[UIText] = Field(
         None,
         description="Username to filter credentials (omit for usernameless/discoverable credential)",
     )
@@ -381,4 +382,6 @@ class PasskeyRenameRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=100, description="New device name")
+    name: UIText = Field(
+        ..., min_length=1, max_length=100, description="New device name"
+    )

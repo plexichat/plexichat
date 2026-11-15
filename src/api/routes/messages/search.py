@@ -2,6 +2,8 @@
 Message search routes - Search messages in channels.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
@@ -42,7 +44,7 @@ async def search_messages(
 
     try:
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except ValueError:
             raise HTTPException(
                 status_code=400,

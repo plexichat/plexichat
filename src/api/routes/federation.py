@@ -20,6 +20,8 @@ Security model:
   check inside ``relay_artifact_op``.
 """
 
+from src.api.request_guards import MAX_FEDERATION_BODY, read_body_capped
+
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -165,7 +167,7 @@ async def _relay_op(artifact_id, op, actor_id) -> int:
 async def artifact_op_inbound(request: Request):
     """Authenticate and relay a cross-instance artifact op."""
     manager = _get_plexijoin_manager()
-    body = await request.body()
+    body = await read_body_capped(request, MAX_FEDERATION_BODY)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")
@@ -202,7 +204,7 @@ async def artifact_event_inbound(request: Request):
     informational notification and is recorded, not applied to local state.
     """
     manager = _get_plexijoin_manager()
-    body = await request.body()
+    body = await read_body_capped(request, MAX_FEDERATION_BODY)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")
@@ -239,7 +241,7 @@ async def join_request_inbound(request: Request):
     admin review endpoints.
     """
     manager = _get_plexijoin_manager()
-    body = await request.body()
+    body = await read_body_capped(request, MAX_FEDERATION_BODY)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")
@@ -292,7 +294,7 @@ async def message_inbound(request: Request):
     message is acknowledged, accounted, and logged.
     """
     manager = _get_plexijoin_manager()
-    body = await request.body()
+    body = await read_body_capped(request, MAX_FEDERATION_BODY)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")

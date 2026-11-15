@@ -2,6 +2,8 @@
 Emoji routes - Custom emoji management endpoints.
 """
 
+from src.api.request_guards import MAX_EMOJI_UPLOAD, read_upload_capped
+
 import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
@@ -19,6 +21,7 @@ from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeIDParam,
     SuccessResponse,
+    _reject_ui_text_chars,
 )
 
 router = APIRouter(tags=["Emojis"])
@@ -464,9 +467,16 @@ async def create_emoji(
         # Check permissions (fail closed when the servers module is absent)
         _require_manage_emojis(servers_mod, current_user.user_id, sid)
 
+        # Defence in depth: emoji names are rendered to every server member
+        # via the emoji picker and message reactions, so reject HTML
+        # metacharacters and control characters (stored XSS). The rejection is
+        # a SecurityRejection, which the app-level handler maps to a 400 with
+        # its stable reason code -- no per-route translation needed.
+        name = _reject_ui_text_chars(name, "emoji name")
+
         # Read image data
         try:
-            image_data = await image.read()
+            image_data = await read_upload_capped(image, MAX_EMOJI_UPLOAD)
         except Exception as e:
             logger.error(
                 f"Failed to read image upload for server {sid}: {e}", exc_info=True

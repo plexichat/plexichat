@@ -1,3 +1,4 @@
+from src.api.request_guards import MAX_VOICE_UPLOAD, read_upload_capped
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -246,7 +247,7 @@ async def upload_voice_message(
         )
 
     MAX_UPLOAD_SIZE = 10 * 1024 * 1024
-    content = await audio.read()
+    content = await read_upload_capped(audio, MAX_VOICE_UPLOAD)
     if len(content) > MAX_UPLOAD_SIZE:
         raise_bad_request("Audio file exceeds 10MB maximum size")
     if len(content) == 0:

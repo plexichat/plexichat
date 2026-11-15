@@ -2,6 +2,8 @@
 Reaction routes - Message reaction endpoints.
 """
 
+from src.core.security.hardening import parse_id
+
 import asyncio
 
 from typing import List, Optional
@@ -176,7 +178,7 @@ async def add_reaction(
             )
 
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except (ValueError, TypeError):
             logger.warning(f"Invalid channel ID format for reaction: {channel_id}")
             raise HTTPException(
@@ -354,7 +356,7 @@ async def clear_reactions_for_emoji(
 
     try:
         mid = int(message_id)
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,
@@ -483,7 +485,7 @@ async def remove_reaction(
             )
 
         try:
-            cid = int(channel_id)
+            cid = parse_id(channel_id, "channel_id")
         except (ValueError, TypeError):
             logger.warning(
                 f"Invalid channel ID format for reaction removal: {channel_id}"
@@ -632,7 +634,7 @@ async def clear_reactions(
 
     try:
         mid = int(message_id)
-        cid = int(channel_id)
+        cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=400,

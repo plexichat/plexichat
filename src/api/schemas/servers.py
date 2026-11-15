@@ -3,10 +3,22 @@ Server schemas - Request/response models for server/guild endpoints.
 """
 
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from .policy_types import UIText
 
-from .common import SnowflakeID
+from .common import SnowflakeID, _reject_ui_text_chars
 from .users import UserPublicResponse
+from src.core.security.outbound import resolve_outbound_url
+
+
+def _validate_icon_url(url: Optional[str]) -> Optional[str]:
+    """SSRF-gate the server icon URL through the shared outbound gate.
+
+    This was one of three near-identical local SSRF wrappers (profile social
+    links, this icon URL, the media attachment URL); the copies had already
+    drifted in their scheme checks and log messages.
+    """
+    return resolve_outbound_url(url, "Server icon URL")
 
 
 class ServerCreateRequest(BaseModel):
@@ -19,6 +31,18 @@ class ServerCreateRequest(BaseModel):
         None, max_length=1000, description="Server description"
     )
     icon_url: Optional[str] = Field(None, description="Server icon URL")
+
+    @field_validator("name", "description")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("icon_url")
+    @classmethod
+    def _validate_icon(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_icon_url(value)
 
 
 class ServerUpdateRequest(BaseModel):
@@ -48,6 +72,18 @@ class ServerUpdateRequest(BaseModel):
     max_reactions_per_message: Optional[int] = Field(
         None, ge=1, le=200, description="Maximum reactions per message"
     )
+
+    @field_validator("name", "description")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("icon_url")
+    @classmethod
+    def _validate_icon(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_icon_url(value)
 
 
 class TransferOwnershipRequest(BaseModel):
@@ -89,11 +125,11 @@ class ChannelCreateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=100, description="Channel name")
+    name: UIText = Field(..., min_length=1, max_length=100, description="Channel name")
     channel_type: Optional[str] = Field(
         "text", description="Channel type: text, voice, category"
     )
-    topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")
+    topic: Optional[UIText] = Field(None, max_length=1024, description="Channel topic")
     category_id: Optional[SnowflakeID] = Field(None, description="Parent category ID")
     nsfw: bool = Field(False, description="NSFW flag")
     slowmode_seconds: int = Field(
@@ -137,10 +173,10 @@ class ChannelUpdateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(
+    name: Optional[UIText] = Field(
         None, min_length=1, max_length=100, description="Channel name"
     )
-    topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")
+    topic: Optional[UIText] = Field(None, max_length=1024, description="Channel topic")
     position: Optional[int] = Field(None, ge=0, description="Channel position")
     nsfw: Optional[bool] = Field(None, description="NSFW flag")
     slowmode_seconds: Optional[int] = Field(
@@ -195,7 +231,7 @@ class MemberListResponse(BaseModel):
 class MemberUpdateRequest(BaseModel):
     """Request body for updating a server member."""
 
-    nickname: Optional[str] = Field(
+    nickname: Optional[UIText] = Field(
         None, description="Server-specific nickname", max_length=100
     )
     muted: Optional[bool] = Field(None, description="Server mute state")
@@ -203,7 +239,7 @@ class MemberUpdateRequest(BaseModel):
     timeout_until: Optional[int] = Field(
         None, description="Timestamp (ms) until the member is timed out"
     )
-    timeout_reason: Optional[str] = Field(None, description="Reason for the timeout")
+    timeout_reason: Optional[UIText] = Field(None, description="Reason for the timeout")
 
 
 class RoleResponse(BaseModel):
@@ -229,7 +265,7 @@ class RoleCreateRequest(BaseModel):
     """Role creation request."""
 
     model_config = ConfigDict(from_attributes=True)
-    name: str = Field(..., min_length=1, max_length=100, description="Role name")
+    name: UIText = Field(..., min_length=1, max_length=100, description="Role name")
     color: Optional[str] = Field(
         None, pattern=r"^#[0-9A-Fa-f]{6}$", description="Role color hex"
     )
@@ -244,7 +280,7 @@ class RoleUpdateRequest(BaseModel):
     """Role update request."""
 
     model_config = ConfigDict(from_attributes=True)
-    name: Optional[str] = Field(
+    name: Optional[UIText] = Field(
         None, min_length=1, max_length=100, description="Role name"
     )
     color: Optional[str] = Field(
@@ -404,7 +440,7 @@ class AutomodRuleCreateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: str = Field(..., min_length=1, max_length=100)
+    name: UIText = Field(..., min_length=1, max_length=100)
     rule_type: str = Field(..., description="Rule type")
     config: Dict[str, Any] = Field(..., description="Rule configuration")
     actions: List[AutomodRuleAction] = Field(..., description="Actions to take")
@@ -427,7 +463,7 @@ class AutomodRuleUpdateRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    name: Optional[UIText] = Field(None, min_length=1, max_length=100)
     config: Optional[Dict[str, Any]] = None
     actions: Optional[List[AutomodRuleAction]] = None
     applied_roles: Optional[List[SnowflakeID]] = None

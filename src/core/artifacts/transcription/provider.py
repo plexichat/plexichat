@@ -669,6 +669,12 @@ class AzureSpeechProvider(TranscriptionProvider):
         transcription_id = create.json().get("self", "").rstrip("/").split("/")[-1]
         if not transcription_id:
             raise RuntimeError("Azure transcription did not return an id.")
+        # This id is concatenated into the next request's path, so it must be a
+        # plain token rather than ``../`` or a full URL.
+        if len(transcription_id) > 200 or not all(
+            character.isalnum() or character in "_-" for character in transcription_id
+        ):
+            raise RuntimeError("Azure transcription returned an unsafe id.")
 
         status_url = f"{base_url}/{transcription_id}"
         import time
@@ -691,6 +697,10 @@ class AzureSpeechProvider(TranscriptionProvider):
         if not files_url:
             raise RuntimeError("Azure transcription did not finish in time.")
 
+        # Provider-supplied URL: the same gate the recording URL passes, so a
+        # compromised or misconfigured response cannot point this request at
+        # an internal address.
+        files_url = _validate_azure_content_url(files_url)
         files_resp = requests.get(files_url, headers=headers, timeout=60)
         if files_resp.status_code != 200:
             raise RuntimeError("Azure transcription files listing failed.")

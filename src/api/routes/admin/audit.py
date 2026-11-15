@@ -12,6 +12,7 @@ from pydantic import BeforeValidator
 
 from .utils import check_host_restriction, require_admin_permission
 from src.api.schemas.common import ErrorResponse, NullableSnowflakeIDParam
+from src.core.security.hardening import content_disposition
 import utils.logger as logger
 
 router = APIRouter()
@@ -328,7 +329,7 @@ async def export_audit_logs(
 
             return JSONResponse(
                 content={"logs": export_rows},
-                headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
+                headers={"Content-Disposition": content_disposition("audit_logs.json")},
             )
 
         output = io.StringIO()
@@ -378,7 +379,7 @@ async def export_audit_logs(
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
+            headers={"Content-Disposition": content_disposition("audit_logs.csv")},
         )
     except Exception as e:
         logger.error(f"Audit export error: {e}", exc_info=True)

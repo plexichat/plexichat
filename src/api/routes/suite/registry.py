@@ -246,7 +246,7 @@ def _shared_artifacts(
     user_id: int,
     server_ids: List[int],
     limit: int,
-    search: Optional[str] = None,
+    search: Optional[str] = Query(None, max_length=256),
 ) -> List[Dict[str, Any]]:
     """Gather server artifacts only where the existing RBAC boundary permits view."""
     manager = _get_manager()
@@ -291,7 +291,7 @@ def _shared_artifacts(
 
 
 def _shared_items(
-    user_id: int, limit: int, search: Optional[str] = None
+    user_id: int, limit: int, search: Optional[str] = Query(None, max_length=256)
 ) -> List[Dict[str, Any]]:
     """Gather server-scoped Stash, Sum, and authorized artifact items.
 

@@ -28,6 +28,13 @@ from ..exceptions import (
 _MESSAGE_EMBED_URL_KEYS = {"url", "icon_url"}
 _MESSAGE_EMBED_DIMENSION_KEYS = {"width", "height"}
 
+# Defence-in-depth: the embed dict is ``Dict[str, Any]`` and the sanitizer
+# recurses into any nested dict/list. Nothing in the schema bounds nesting
+# depth, so a small, deeply-nested payload could exhaust the interpreter stack
+# (RecursionError -> 500) before any field limit applies. Cap the recursion
+# explicitly and fail closed with a normal validation error.
+MAX_EMBED_NESTING_DEPTH = 8
+
 
 def sanitize_message_embeds(
     embeds: Optional[List[Dict[str, Any]]],
@@ -47,7 +54,8 @@ def sanitize_message_embeds(
 
     Raises:
         EmbedValidationError: If the list is malformed, exceeds
-            ``MAX_EMBEDS_PER_MESSAGE``, or any embed contains unsafe
+            ``MAX_EMBEDS_PER_MESSAGE``, nests deeper than
+            ``MAX_EMBED_NESTING_DEPTH``, or any embed contains unsafe
             content.
     """
     if not embeds:
@@ -60,12 +68,18 @@ def sanitize_message_embeds(
             [f"embeds: {len(embeds)}/{MAX_EMBEDS_PER_MESSAGE}"],
         )
     return [
-        _sanitize_message_embed(embed, f"embeds[{i}]") for i, embed in enumerate(embeds)
+        _sanitize_message_embed(embed, f"embeds[{i}]", depth=0)
+        for i, embed in enumerate(embeds)
     ]
 
 
-def _sanitize_message_embed(embed: Any, path: str) -> Dict[str, Any]:
+def _sanitize_message_embed(embed: Any, path: str, depth: int = 0) -> Dict[str, Any]:
     """Recursively sanitize a single message embed dict."""
+    if depth > MAX_EMBED_NESTING_DEPTH:
+        raise EmbedValidationError(
+            f"{path} exceeds maximum embed nesting depth ({MAX_EMBED_NESTING_DEPTH})",
+            [path],
+        )
     if not isinstance(embed, dict):
         raise EmbedValidationError(f"{path} must be an object", [path])
 
@@ -94,10 +108,12 @@ def _sanitize_message_embed(embed: Any, path: str) -> Dict[str, Any]:
         elif key == "fields":
             sanitized[key] = _sanitize_message_fields(value, f"{path}.fields")
         elif isinstance(value, dict):
-            sanitized[key] = _sanitize_message_embed(value, f"{path}.{key}")
+            sanitized[key] = _sanitize_message_embed(
+                value, f"{path}.{key}", depth=depth + 1
+            )
         elif isinstance(value, list):
             sanitized[key] = [
-                _sanitize_message_embed(v, f"{path}.{key}[{j}]")
+                _sanitize_message_embed(v, f"{path}.{key}[{j}]", depth=depth + 1)
                 if isinstance(v, dict)
                 else (
                     sanitize_content(str(v), f"{path}.{key}[{j}]")

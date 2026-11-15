@@ -20,9 +20,9 @@ class SearchMixin(AdminUsersRouterProtocol):
     async def admin_user_search(
         self,
         request: Request,
-        q: str,
+        q: str = Query(..., max_length=256),
         limit: int = Query(20, ge=1, le=200),
-        offset: int = Query(0, ge=0),
+        offset: int = Query(0, ge=0, le=1000000),
     ):
         """
         Search for users based on a query string.

@@ -25,6 +25,7 @@ from src.core.stickers.exceptions import (
 )
 from src.core import ratelimit
 from fastapi import Request
+from src.api.schemas.common import _reject_ui_text_chars
 
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
@@ -284,6 +285,19 @@ async def create_sticker(
         sid = int(server_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid server ID")
+
+    # Defence in depth: sticker name/tags/description are rendered to every
+    # server member via the sticker picker, so reject HTML metacharacters
+    # and control characters (stored XSS).
+    # SecurityRejection (a ValueError) is mapped to a 400 by the app-level
+    # handler, so the route no longer translates it by hand.
+    name = _reject_ui_text_chars(name, "sticker name")
+    if tags:
+        tag_list_raw = [t.strip() for t in tags.split(",")]
+        tag_list = [_reject_ui_text_chars(t, "sticker tag") for t in tag_list_raw if t]
+        tags = ",".join(tag_list)
+    if description:
+        description = _reject_ui_text_chars(description, "sticker description")
 
     try:
         # Cap the request body before reading it fully into memory.

@@ -1,3 +1,4 @@
+from src.core.security.hardening import parse_id
 from typing import List
 
 from fastapi import HTTPException, Depends
@@ -46,7 +47,7 @@ class ChannelWebhooksMixin(ChannelBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except (ValueError, TypeError):
                 logger.warning(f"Invalid channel ID format for webhooks: {channel_id}")
                 raise HTTPException(

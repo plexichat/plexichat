@@ -231,6 +231,43 @@ class TestProfileClearingAndHygiene:
         with pytest.raises(ValueError):
             profiles_setup.update_profile(84, banner_url="javascript:alert(1)")
 
+    def test_social_link_to_literal_internal_address_is_rejected(self, profiles_setup):
+        # The write-time guard refuses internal literals without resolving DNS;
+        # the links above are kept even when resolution is unavailable.
+        with pytest.raises(ValueError):
+            profiles_setup._validate_social_links(
+                [{"platform": "other", "url": "http://127.0.0.1/admin"}]
+            )
+        with pytest.raises(ValueError):
+            profiles_setup._validate_social_links(
+                [{"platform": "other", "url": "http://localhost:8080/admin"}]
+            )
+
+    def test_banner_literal_internal_address_rejected(self, profiles_setup, db):
+        _seed(db, 85)
+        with pytest.raises(ValueError):
+            profiles_setup.update_profile(85, banner_url="http://10.0.0.5/banner.png")
+
+    def test_profile_save_succeeds_without_dns(self, profiles_setup, db, monkeypatch):
+        # Regression: saving a profile must not resolve the link's host. A
+        # resolver that is unavailable (offline install, CI, an outage) used to
+        # reject valid links because the write path called the SSRF gate.
+        import socket
+
+        def _offline(*_args, **_kwargs):
+            raise socket.gaierror("name resolution is unavailable")
+
+        monkeypatch.setattr(socket, "getaddrinfo", _offline)
+        monkeypatch.setattr(socket, "gethostbyname", _offline)
+        _seed(db, 86)
+        out = profiles_setup.update_profile(
+            86,
+            banner_url="https://cdn.example.com/banner.png",
+            social_links=[{"platform": "github", "url": "https://example.com/me"}],
+        )
+        assert out["banner_url"] == "https://cdn.example.com/banner.png"
+        assert "example.com/me" in str(out["social_links"])
+
     def test_expired_flag_not_exposed_by_reads(self, profiles_setup, db):
         # F7: internal _custom_status_expired key never crosses the boundary.
         past = int(time.time() * 1000) - 10000

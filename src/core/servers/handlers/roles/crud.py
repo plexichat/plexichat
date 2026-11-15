@@ -20,6 +20,7 @@ from ...permission_utils import (
     validate_permission_dict,
     check_permissions_grantable,
 )
+from .authz import role_edit_decision
 from .protocol import RoleHandlerProtocol
 
 
@@ -162,7 +163,16 @@ class RoleCrudMixin(RoleHandlerProtocol):
         server = self.manager.get_server(role.server_id, user_id)
         is_owner = server is not None and server.owner_id == user_id
 
-        if not can_manage_role(user_roles, {"position": role.position}, is_owner):
+        # The hierarchy rule is a Decision now, so a refusal carries which rule
+        # fired (capability_missing / rank_too_low) instead of one generic error.
+        decision = role_edit_decision(
+            user_id=user_id,
+            user_roles=user_roles,
+            target_position=role.position,
+            permissions=self.get_permissions(user_id, role.server_id),
+            is_owner=is_owner,
+        )
+        if not decision:
             raise RoleHierarchyError(
                 "Cannot modify a role at or above your highest role"
             )

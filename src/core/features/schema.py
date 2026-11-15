@@ -5,6 +5,7 @@ Database schema for user features module.
 import utils.logger as logger
 
 from src.core.database.core.schema_splitter import split_sql_statements
+from src.core.security.hardening import require_identifier
 
 SCHEMA_SQLITE = """
 -- User features table (admin-controlled feature flags and badges)
@@ -97,4 +98,4 @@ def drop_tables(db) -> None:
         "user_features",
     ]
     for table in tables:
-        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(f"DROP TABLE IF EXISTS {require_identifier(table, 'table name')}")

@@ -3,9 +3,9 @@ Channel schemas - Request/response models for channel endpoints.
 """
 
 from typing import Optional, Dict
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from .common import SnowflakeID
+from .common import SnowflakeID, _reject_ui_text_chars
 
 
 class ChannelCreateRequest(BaseModel):
@@ -26,6 +26,13 @@ class ChannelCreateRequest(BaseModel):
     read_receipts_enabled: bool = Field(
         True, description="Whether to track read receipts in this channel"
     )
+
+    @field_validator("name", "topic")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
 
 
 class RecipientResponse(BaseModel):

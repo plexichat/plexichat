@@ -3,9 +3,9 @@ Poll schemas - Request/response models for poll endpoints.
 """
 
 from typing import Literal, Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from .common import SnowflakeID
+from .common import SnowflakeID, _reject_ui_text_chars
 
 ResultsVisibility = Literal["always", "after_vote", "after_end"]
 
@@ -30,6 +30,19 @@ class PollInlineCreateRequest(BaseModel):
     results_visibility: ResultsVisibility = Field(
         "always", description="When results are visible (always, after_vote, after_end)"
     )
+
+    @field_validator("question")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: str, info) -> str:
+        return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("options")
+    @classmethod
+    def _no_ui_xss_chars_options(cls, value: List[str], info) -> List[str]:
+        return [
+            _reject_ui_text_chars(opt, f"{info.field_name}[{i}]")
+            for i, opt in enumerate(value)
+        ]
 
 
 class PollCreateRequest(PollInlineCreateRequest):

@@ -3,11 +3,26 @@ Message schemas - Request/response models for message endpoints.
 """
 
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from .common import SnowflakeID
 from .reactions import ReactionResponse
 from .polls import PollInlineCreateRequest, PollResponse, PollResultsResponse
+
+
+# Defence-in-depth: attachment metadata is attacker-controlled and echoed
+# verbatim to every client that renders the message (and may surface in
+# Content-Disposition headers downstream). Bound its length and reject C0
+# control characters here so no handler further down has to trust it.
+_MAX_FILENAME_LEN = 255
+_MAX_CONTENT_TYPE_LEN = 255
+_MAX_ATTACHMENT_URL_LEN = 2048
+
+
+def _reject_control_chars(value: str, field_name: str) -> str:
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        raise ValueError(f"{field_name} must not contain control characters")
+    return value
 
 
 class AttachmentRequest(BaseModel):
@@ -15,12 +30,19 @@ class AttachmentRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    filename: str = Field(..., description="File name")
-    content_type: str = Field(..., description="MIME type")
+    filename: str = Field(..., max_length=_MAX_FILENAME_LEN, description="File name")
+    content_type: str = Field(
+        ..., max_length=_MAX_CONTENT_TYPE_LEN, description="MIME type"
+    )
     size: int = Field(..., ge=0, description="File size in bytes")
-    url: str = Field(..., description="File URL")
+    url: str = Field(..., max_length=_MAX_ATTACHMENT_URL_LEN, description="File URL")
     hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Attachment metadata")
+
+    @field_validator("filename", "content_type", "url")
+    @classmethod
+    def _no_control_chars(cls, value: str, info) -> str:
+        return _reject_control_chars(value, info.field_name)
 
 
 class MessageCreateRequest(BaseModel):

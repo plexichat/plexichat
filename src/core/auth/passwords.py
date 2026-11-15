@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import List, Tuple, Set
 
 import utils.config as config
-
+from src.core.security.errors import TextRejected
+from src.core.security.policies import RejectUICharacters
 from .models import PasswordValidation
 from ._lazy import _get_auth_manager
 
@@ -58,6 +59,16 @@ def validate_username(username: str) -> Tuple[bool, List[str]]:
     }
     if username.lower() in reserved:
         issues.append("This username is reserved")
+
+    # Defence in depth: reject HTML metacharacters and control characters
+    # regardless of the configured username_pattern, so a loosened pattern can
+    # never let XSS-relevant characters into stored usernames. The rule is the
+    # shared policy object, not a local copy of the character set, so a change
+    # to the definition cannot silently apply to names and not to usernames.
+    try:
+        RejectUICharacters().check(username, "Username")
+    except TextRejected as rejection:
+        issues.append(str(rejection))
 
     return len(issues) == 0, issues
 

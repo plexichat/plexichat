@@ -7,6 +7,7 @@ Collects reports where user is reporter or reported user.
 from typing import Any, Dict, List
 
 from ..base import BaseCollector
+from src.core.security.hardening import require_identifier
 
 
 class ReportsCollector(BaseCollector):
@@ -34,7 +35,10 @@ class ReportsCollector(BaseCollector):
     ) -> List[Dict[str, Any]]:
         """Collect all rows from a table with a WHERE clause."""
         try:
-            rows = self._db.fetch_all(f"SELECT * FROM {table} WHERE {where}", params)
+            rows = self._db.fetch_all(
+                f"SELECT * FROM {require_identifier(table, 'table name')} WHERE {where}",
+                params,
+            )
             result = []
             for row in rows:
                 item = dict(row)

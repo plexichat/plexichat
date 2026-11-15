@@ -5,12 +5,17 @@ Handles creating, updating, and reading user profiles with
 custom status, bio, banner images, social links, and more.
 """
 
+import ipaddress
 import json
 from enum import Enum
 from typing import Optional, List, Dict, Any
+from urllib.parse import urlparse
 
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
+from src.core.embeds.validator import sanitize_content
+from src.core.embeds.exceptions import EmbedSanitizationError
+from src.core.security.errors import OutboundUrlRejected
 
 
 class _Unset(Enum):
@@ -40,6 +45,49 @@ def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
     if not data:
         return data
     return {k: v for k, v in data.items() if k not in _INTERNAL_PROFILE_KEYS}
+
+
+def _ssrf_guard_url(url: str, field_name: str) -> None:
+    """Reject a stored link whose host is plainly internal.
+
+    Social links and banner URLs are rendered for a browser to open; the server
+    never fetches them. Resolving DNS here made saving a profile depend on the
+    resolver, so a valid link such as ``https://cdn.example.com/...`` was
+    rejected whenever resolution was unavailable (offline install, CI, a
+    resolver outage) even though nothing was ever going to connect to it.
+
+    Literal internal addresses are still refused, without touching the
+    network. Resolved-address checks belong where the server does connect, in
+    :mod:`src.core.security.outbound`.
+    """
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except ValueError as exc:
+        raise OutboundUrlRejected(
+            f"{field_name} is not a valid URL", field=field_name
+        ) from exc
+    if not hostname:
+        raise OutboundUrlRejected(f"{field_name} is missing a host", field=field_name)
+    if hostname == "localhost" or hostname.endswith(
+        (".localhost", ".local", ".internal")
+    ):
+        raise OutboundUrlRejected(
+            f"{field_name} must not point at an internal host", field=field_name
+        )
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        raise OutboundUrlRejected(
+            f"{field_name} must not point at an internal address", field=field_name
+        )
 
 
 class ProfileManager:
@@ -103,6 +151,10 @@ class ProfileManager:
             lowered = url.lower()
             if lowered.startswith(("javascript:", "data:")):
                 continue
+            # Defence in depth: SSRF gate the host so a social link cannot
+            # point at internal/loopback/link-local addresses (client-side
+            # SSRF-by-click when a victim opens the link).
+            _ssrf_guard_url(url, "social link url")
             validated.append({"platform": platform, "url": url})
 
         if len(validated) > self.MAX_SOCIAL_LINKS:
@@ -219,6 +271,12 @@ class ProfileManager:
 
         if bio is not None:
             bio = bio.strip()[: self.MAX_BIO_LENGTH]
+            # Defence in depth: bio is rendered to profile viewers, so run it
+            # through the same XSS denylist used for rendered embed text.
+            try:
+                bio = sanitize_content(bio)
+            except EmbedSanitizationError as exc:
+                raise ValueError(f"Bio contains unsafe content: {exc}") from exc
             # Normalise empty bio to NULL so it is indistinguishable from
             # "never set", matching the other optional text fields.
             sets.append("bio = ?")
@@ -236,6 +294,10 @@ class ProfileManager:
             lowered = banner_url.lower()
             if lowered.startswith(("javascript:", "data:", "vbscript:")):
                 raise ValueError("Invalid banner URL scheme")
+            # Defence in depth: SSRF gate the host so a banner cannot point at
+            # internal/loopback/link-local addresses.
+            if banner_url:
+                _ssrf_guard_url(banner_url, "banner_url")
             sets.append("banner_url = ?")
             params.append(banner_url if banner_url else None)
 

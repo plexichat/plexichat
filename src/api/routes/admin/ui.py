@@ -8,6 +8,16 @@ from .utils import check_host_restriction, load_admin_template
 from src.utils.security import generate_csp_nonce, build_admin_csp_header
 from pathlib import Path
 
+from src.core.security.hardening import safe_join
+
+_ADMIN_TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "admin"
+
+
+def _admin_static_path(*parts: str) -> Path:
+    """Resolve a bundled admin asset, refusing anything outside its directory."""
+    return Path(safe_join(str(_ADMIN_TEMPLATE_DIR), *parts))
+
+
 router = APIRouter()
 
 
@@ -77,9 +87,7 @@ async def admin_migrations_page(request: Request):
 async def admin_favicon(request: Request):
     """Serve the Plexichat icon used by the admin panel."""
     check_host_restriction(request)
-    icon_path = (
-        Path(__file__).parent.parent.parent / "templates" / "admin" / "favicon.svg"
-    )
+    icon_path = _admin_static_path("favicon.svg")
     if not icon_path.exists():
         return HTMLResponse(content="<!-- icon not found -->", status_code=404)
     with open(icon_path, "rb") as f:
@@ -103,8 +111,7 @@ async def admin_chart_js(request: Request):
     check_host_restriction(request)
     nonce = generate_csp_nonce()
 
-    template_dir = Path(__file__).parent.parent.parent / "templates" / "admin"
-    js_path = template_dir / "vendor" / "chart.umd.min.js"
+    js_path = _admin_static_path("vendor", "chart.umd.min.js")
     if not js_path.exists():
         return HTMLResponse(content="/* JS file not found */", status_code=404)
 
@@ -127,9 +134,7 @@ async def admin_dashboard_css(request: Request):
     check_host_restriction(request)
     nonce = generate_csp_nonce()
 
-    # Get the template directory
-    template_dir = Path(__file__).parent.parent.parent / "templates" / "admin"
-    css_path = template_dir / "dashboard.css"
+    css_path = _admin_static_path("dashboard.css")
 
     if not css_path.exists():
         return HTMLResponse(content="/* CSS file not found */", status_code=404)
@@ -153,9 +158,7 @@ async def admin_dashboard_js(request: Request):
     check_host_restriction(request)
     nonce = generate_csp_nonce()
 
-    # Get the template directory
-    template_dir = Path(__file__).parent.parent.parent / "templates" / "admin"
-    js_path = template_dir / "dashboard.js"
+    js_path = _admin_static_path("dashboard.js")
 
     if not js_path.exists():
         return HTMLResponse(content="/* JS file not found */", status_code=404)

@@ -4,6 +4,7 @@ Admin authentication schemas.
 
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from ..policy_types import UIText
 
 from src.api.schemas.common import SnowflakeID
 
@@ -13,7 +14,7 @@ class AdminLoginRequest(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    username: str = Field(..., min_length=1, max_length=100)
+    username: UIText = Field(..., min_length=1, max_length=100)
     password: str = Field(..., min_length=1, max_length=200)
 
 

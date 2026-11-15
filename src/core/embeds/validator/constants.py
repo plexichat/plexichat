@@ -68,6 +68,15 @@ DANGEROUS_PATTERNS: List[Pattern[str]] = [
     re.compile(r"\bdata\s*:", re.IGNORECASE),
     # Event handlers inside an HTML-style tag (whitespace-tolerant).
     re.compile(r"<\s*[^>]*\s*on\w+\s*=", re.IGNORECASE),
+    # Defence-in-depth: active-content sinks the client HTML renderer may
+    # honour that legitimate embed prose never needs as markup. ``<svg>`` can
+    # carry script via ``onload``/``<animate>``; ``srcdoc``/``formaction``
+    # smuggle a second HTML document or navigation target into an otherwise
+    # benign attribute; ``xlink:href`` embeds ``javascript:`` inside SVG.
+    re.compile(r"<\s*svg\b", re.IGNORECASE),
+    re.compile(r"\bsrcdoc\s*=", re.IGNORECASE),
+    re.compile(r"\bformaction\s*=", re.IGNORECASE),
+    re.compile(r"\bxlink:href\s*=", re.IGNORECASE),
     # Active-content / unknown-element tags: mXSS/DOM-clobbering and
     # framing primitives that legitimate embed text never needs as markup.
     re.compile(

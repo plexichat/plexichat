@@ -1,5 +1,7 @@
 """Apple Push Notification service transport (HTTP/2, token-based auth)."""
 
+from src.core.security.hardening import require_https_url
+
 import json
 from typing import Any, Dict, Optional
 
@@ -159,6 +161,7 @@ class ApnsMixin(PushManagerBase):
             # httpx >= 0.20 supports http2=True once the optional
             # ``h2`` package is installed.  Plexichat's requirements
             # already pin ``h2`` transitively via ``httpx[http2]``.
+            url = require_https_url(url, "APNs URL")
             with httpx.Client(http2=True, timeout=10.0) as client:
                 response = client.post(url, json=payload_dict, headers=headers)
 

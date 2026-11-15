@@ -4,7 +4,10 @@ Mixin providing message-sending route handlers.
 Includes create-message, reply, and poll creation logic.
 """
 
+from src.core.security.hardening import parse_id
+
 from fastapi import HTTPException, Depends
+from typing import Optional
 
 import src.api as api
 import utils.logger as logger
@@ -52,6 +55,35 @@ from .broadcast import BroadcastMixin
 from .base import MessagesCRUDBase
 
 
+# Bounded walk over attacker-supplied embed dicts. Embeds are stored and
+# rendered verbatim (title/description/fields/footer/author), but were never
+# fed to automod, so a sender could bypass keyword/regex moderation simply by
+# moving the offending text into an embed. Depth and total-length caps keep a
+# pathological embed from stalling the synchronous fast path.
+_EMBED_TEXT_MAX_DEPTH = 8
+_EMBED_TEXT_MAX_CHARS = 8000
+
+
+def _collect_embed_text(value, _depth: int = 0, _budget: Optional[list] = None) -> list:
+    if _budget is None:
+        _budget = [_EMBED_TEXT_MAX_CHARS]
+    if _depth > _EMBED_TEXT_MAX_DEPTH or _budget[0] <= 0:
+        return []
+    parts: list = []
+    if isinstance(value, str):
+        if value:
+            take = value[: _budget[0]]
+            parts.append(take)
+            _budget[0] -= len(take)
+    elif isinstance(value, dict):
+        for v in value.values():
+            parts.extend(_collect_embed_text(v, _depth + 1, _budget))
+    elif isinstance(value, list):
+        for v in value:
+            parts.extend(_collect_embed_text(v, _depth + 1, _budget))
+    return parts
+
+
 class SendMixin(BroadcastMixin, MessagesCRUDBase):
     async def send_channel_message(
         self,
@@ -71,7 +103,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
             except ValueError:
                 raise HTTPException(
                     status_code=400,
@@ -140,6 +172,12 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                 if body.poll.question:
                     _extra_parts.append(body.poll.question)
                 _extra_parts.extend(option for option in body.poll.options if option)
+            # Embeds are a distinct user-controlled text surface (title,
+            # description, field names/values, footer, author) that is rendered
+            # to every viewer. Include it in the moderation payload so the
+            # filter cannot be evaded by moving text into an embed.
+            if body.embeds:
+                _extra_parts.extend(_collect_embed_text(body.embeds))
             if _extra_parts:
                 automod_content = "\n".join([automod_content] + _extra_parts)
 

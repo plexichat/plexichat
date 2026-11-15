@@ -10,6 +10,8 @@ from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 
+from src.core.security.hardening import require_identifier
+
 from .base import BaseIndexer, IndexerConfig
 from ..models import (
     IndexedMessage,
@@ -559,7 +561,9 @@ class SQLiteFTS5Indexer(BaseIndexer):
         expected schema, or None when every table lines up."""
         for table, expected in _FTS_EXPECTED_COLUMNS.items():
             try:
-                rows = self._db.fetch_all(f"PRAGMA table_info({table})")
+                rows = self._db.fetch_all(
+                    f"PRAGMA table_info({require_identifier(table, 'table name')})"
+                )
             except Exception:
                 return table
             live = []

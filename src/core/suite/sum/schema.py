@@ -11,6 +11,8 @@ remain stable. Cells are typed and sparse. Managed indexes are created from
 measured workloads (``sum_statistics`` drives ``sum_indexes``).
 """
 
+from src.core.security.hardening import require_identifier
+
 import sqlite3
 import time
 from typing import Any
@@ -275,7 +277,9 @@ WORKBOOK_SCHEMA_REQUIREMENTS = {
 def _main_table_columns(db, table_name: str) -> set[str]:
     """Return columns for a known Sum metadata table across DB backends."""
     if getattr(db, "type", "sqlite") == "sqlite":
-        rows = db.fetch_all(f"PRAGMA table_info({table_name})")
+        rows = db.fetch_all(
+            f"PRAGMA table_info({require_identifier(table_name, 'table name')})"
+        )
         return {str(row.get("name")) for row in rows}
     rows = db.fetch_all(
         "SELECT column_name AS name FROM information_schema.columns "
@@ -608,7 +612,9 @@ def ensure_feature_tables(connection) -> None:
             continue
         columns = {
             row[1]
-            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+            for row in connection.execute(
+                f"PRAGMA table_info({require_identifier(table_name, 'table name')})"
+            ).fetchall()
         }
         if not required_columns.issubset(columns):
             missing = sorted(required_columns - columns)
@@ -620,7 +626,9 @@ def ensure_feature_tables(connection) -> None:
     for table_name, required_columns in WORKBOOK_SCHEMA_REQUIREMENTS.items():
         columns = {
             row[1]
-            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+            for row in connection.execute(
+                f"PRAGMA table_info({require_identifier(table_name, 'table name')})"
+            ).fetchall()
         }
         if not required_columns.issubset(columns):
             missing = sorted(required_columns - columns)

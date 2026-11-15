@@ -3,6 +3,8 @@ import os
 import time
 from datetime import datetime
 from typing import Any, Optional, Dict, List, Tuple
+from src.core.security.hardening import bounded_int
+
 from .base import BaseEngine
 from .pool import (
     ConnectionPool,
@@ -75,7 +77,10 @@ class SqliteEngine(BaseEngine):
         conn.execute("PRAGMA synchronous=NORMAL;")
 
         busy_timeout_ms = self._pool_config.get("busy_timeout", DEFAULT_BUSY_TIMEOUT_MS)
-        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)};")
+        conn.execute(
+            "PRAGMA busy_timeout="
+            f"{bounded_int(busy_timeout_ms, 'busy_timeout', minimum=0, maximum=600000)};"
+        )
 
         conn.execute("PRAGMA foreign_keys=ON;")
 
@@ -85,16 +90,29 @@ class SqliteEngine(BaseEngine):
         # ``journal_size_limit``) so thousands of per-test pools stay tiny
         # instead of reserving ~32MB page cache + 256MB mmap each.
         cache_size_kb = self._pool_config.get("cache_size_kb", -32000)
-        conn.execute(f"PRAGMA cache_size={int(cache_size_kb)};")
+        conn.execute(
+            "PRAGMA cache_size="
+            f"{bounded_int(cache_size_kb, 'cache_size_kb', minimum=-2000000, maximum=2000000)};"
+        )
 
         mmap_size = self._pool_config.get("mmap_size", 268435456)
-        conn.execute(f"PRAGMA mmap_size={int(mmap_size)};")
+        conn.execute(
+            "PRAGMA mmap_size="
+            f"{bounded_int(mmap_size, 'mmap_size', minimum=0, maximum=1099511627776)};"
+        )
 
-        temp_store = self._pool_config.get("temp_store", "MEMORY")
+        # ``temp_store`` is interpolated, so it must be one of the three
+        # documented values rather than whatever the config carries.
+        temp_store = str(self._pool_config.get("temp_store", "MEMORY")).upper()
+        if temp_store not in ("MEMORY", "FILE", "OFF"):
+            raise ValueError("connection_pool.temp_store must be MEMORY, FILE or OFF")
         conn.execute(f"PRAGMA temp_store={temp_store};")
 
         journal_size_limit = self._pool_config.get("journal_size_limit", 67108864)
-        conn.execute(f"PRAGMA journal_size_limit={int(journal_size_limit)};")
+        conn.execute(
+            "PRAGMA journal_size_limit="
+            f"{bounded_int(journal_size_limit, 'journal_size_limit', minimum=-1, maximum=1099511627776)};"
+        )
 
         return conn
 

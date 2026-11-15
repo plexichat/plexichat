@@ -4,6 +4,7 @@ Automod schemas.
 
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
+from ..policy_types import UIText
 
 
 class AutomodRuleAction(BaseModel):
@@ -39,7 +40,7 @@ class AutomodRuleCreateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     server_id: str
-    name: str = Field(..., min_length=1, max_length=100)
+    name: UIText = Field(..., min_length=1, max_length=100)
     rule_type: str
     config: Dict[str, Any]
     actions: List[AutomodRuleAction]
@@ -53,7 +54,7 @@ class AutomodRuleCreateRequest(BaseModel):
 class AutomodRuleUpdateRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    name: Optional[UIText] = Field(None, min_length=1, max_length=100)
     config: Optional[Dict[str, Any]] = None
     actions: Optional[List[AutomodRuleAction]] = None
     exempt_roles: Optional[List[int]] = None

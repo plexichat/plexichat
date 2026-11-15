@@ -6,6 +6,8 @@ from typing import Optional, List, Any, Generic, TypeVar, Annotated
 from pydantic import BaseModel, BeforeValidator, Field, ConfigDict, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
+from src.core.security.policies import HTML_META_CHARS, RejectUICharacters
+
 T = TypeVar("T")
 
 
@@ -232,3 +234,25 @@ def snowflake_from_str(v: Any) -> Optional[int]:
             raise ValueError("Invalid snowflake ID: must be non-negative")
         return numeric
     raise ValueError("Invalid snowflake ID type")
+
+
+# Characters that break out of HTML attribute or text contexts. Rendered
+# into client-facing UIs (roster, channel lists, server lists, emoji/sticker
+# pickers, soundboards), so rejecting them at the input layer is defence in
+# depth against stored XSS even when an output encoder is bypassed.
+_UI_TEXT_HTML_META_CHARS = HTML_META_CHARS
+# One shared policy object: the route and schema call sites below, the username
+# rule in core/auth/passwords.py and the coverage test all resolve to this.
+_UI_TEXT_POLICY = RejectUICharacters()
+
+
+def _reject_ui_text_chars(value: str, field_name: str) -> str:
+    """Reject HTML metacharacters and C0 control characters in UI-rendered text.
+
+    The rule itself lives in ``src.core.security.policies`` so every call site
+    shares one object that the coverage test can enumerate; the name stays
+    because the routes and schemas below already import it. The exception is a
+    ``TextRejected``, which is still a ``ValueError``, so the existing
+    ``except ValueError`` handlers keep working.
+    """
+    return _UI_TEXT_POLICY.check(value, field_name)

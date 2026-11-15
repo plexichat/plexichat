@@ -5,6 +5,7 @@ Media database schema - Table definitions for media module.
 import utils.logger as logger
 
 from src.core.database.core.schema_splitter import split_sql_statements
+from src.core.security.hardening import require_identifier
 
 
 SCHEMA = """
@@ -300,7 +301,9 @@ def create_reference_guards(db) -> None:
             "trg_artifact_media_reference_guard_update",
             "trg_media_delete_guard",
         ):
-            db.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            db.execute(
+                f"DROP TRIGGER IF EXISTS {require_identifier(trigger_name, 'trigger name')}"
+            )
         statements = [
             """
             CREATE TRIGGER trg_media_reference_guard

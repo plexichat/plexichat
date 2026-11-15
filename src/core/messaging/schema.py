@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 from src.core.database.core.schema_splitter import split_sql_statements
+from src.core.security.hardening import require_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +338,9 @@ def _column_exists(db, table: str, column: str) -> Optional[bool]:
                 (table,),
             )
         else:
-            rows = db.fetch_all(f"PRAGMA table_info({table})")
+            rows = db.fetch_all(
+                f"PRAGMA table_info({require_identifier(table, 'table name')})"
+            )
     except Exception:
         return None
     try:
@@ -371,7 +374,11 @@ def _ensure_runtime_columns(db) -> None:
         attempts = 2
         for attempt in range(1, attempts + 1):
             try:
-                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                db.execute(
+                    f"ALTER TABLE {require_identifier(table, 'table name')} "
+                    f"ADD COLUMN {require_identifier(column, 'column name')} "
+                    f"{definition}"
+                )
             except Exception as e:
                 logger.warning(
                     f"Runtime ALTER {table}.{column} failed "
@@ -434,4 +441,4 @@ def drop_tables(db) -> None:
         "msg_conversations",
     ]
     for table in tables:
-        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(f"DROP TABLE IF EXISTS {require_identifier(table, 'table name')}")

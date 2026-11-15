@@ -5,6 +5,8 @@ Composes domain-specific collectors to assemble complete user data exports
 for GDPR Article 20 Right to Data Portability compliance.
 """
 
+from src.core.security.hardening import require_identifier
+
 import json
 import time
 from typing import Any, Dict
@@ -189,7 +191,7 @@ class DataCollector:
                     "msg_forwarded": "original_author_id",
                 }.get(table, "user_id")
                 result = self._db.fetch_one(
-                    f"SELECT COUNT(*) as count FROM {table} WHERE {key_column} = ?",
+                    f"SELECT COUNT(*) as count FROM {require_identifier(table, 'table name')} WHERE {key_column} = ?",
                     (user_id,),
                 )
                 if result:
@@ -231,7 +233,8 @@ class DataCollector:
         for table, (where, params) in suite_count_queries.items():
             try:
                 row = self._db.fetch_one(
-                    f"SELECT COUNT(*) AS count FROM {table} WHERE {where}", params
+                    f"SELECT COUNT(*) AS count FROM {require_identifier(table, 'table name')} WHERE {where}",
+                    params,
                 )
                 if row:
                     counts[f"suite_{table}"] = int(row.get("count", 0))

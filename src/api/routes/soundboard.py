@@ -6,6 +6,8 @@ playback is allowed for any member of the sound's server. Uploaded audio
 bytes are validated and stored through the shared media pipeline.
 """
 
+from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
+
 from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Depends, UploadFile
@@ -22,7 +24,7 @@ from src.api.schemas.soundboard import (
     SoundResponse,
     SoundUpdateRequest,
 )
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, _reject_ui_text_chars
 from src.core.soundboard.exceptions import (
     ChannelNotFoundError,
     InvalidSoundFormatError,
@@ -282,13 +284,22 @@ async def upload_sound(
 
     _require_manage_permission(current_user.user_id, sid)
 
+    # Defence in depth: sound name/emoji are rendered to every server member
+    # via the soundboard picker, so reject HTML metacharacters and control
+    # characters (stored XSS).
+    # SecurityRejection (a ValueError) is mapped to a 400 by the app-level
+    # handler, so the route no longer translates it by hand.
+    name = _reject_ui_text_chars(name, "sound name")
+    if emoji:
+        emoji = _reject_ui_text_chars(emoji, "sound emoji")
+
     max_size = int(config.get("soundboard.max_sound_size", 2097152) or 2097152)
     declared_size = getattr(file, "size", None)
     if declared_size is not None and declared_size > max_size:
         raise HTTPException(status_code=413, detail="Sound file is too large")
 
     try:
-        content = await file.read()
+        content = await read_upload_capped(file, MAX_SOUND_UPLOAD)
     except Exception as e:
         logger.error(f"Failed reading sound upload: {e}")
         raise HTTPException(status_code=400, detail="Could not read uploaded file")

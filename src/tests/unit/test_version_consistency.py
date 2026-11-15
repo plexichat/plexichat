@@ -89,6 +89,11 @@ PUBLISHED_CLAIMS: list[tuple[str, str, str]] = [
         "generated config sample",
     ),
     (
+        "docs/default-config.md",
+        rf"^  min_supported_version: ({VERSION_TAG})$",
+        "default config version floor, which defaults to the running build",
+    ),
+    (
         "docs/getting-started.md",
         rf"e.g\. `({VERSION_TAG})`",
         "version format example",

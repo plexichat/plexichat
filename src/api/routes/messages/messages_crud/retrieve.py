@@ -4,6 +4,8 @@ Mixin providing message retrieval route handlers.
 Includes get-message-by-id and related read operations.
 """
 
+from src.core.security.hardening import parse_id
+
 from fastapi import HTTPException, Depends
 from starlette.concurrency import run_in_threadpool
 
@@ -41,7 +43,7 @@ class RetrieveMixin(MessagesCRUDBase):
 
         try:
             try:
-                cid = int(channel_id)
+                cid = parse_id(channel_id, "channel_id")
                 mid = int(message_id)
             except ValueError:
                 raise HTTPException(

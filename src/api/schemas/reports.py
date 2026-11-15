@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
+
+from .common import _reject_ui_text_chars
 
 
 class MessageReportRequest(BaseModel):
@@ -16,6 +18,13 @@ class MessageReportRequest(BaseModel):
     )
     server_id: Optional[str] = Field(None, description="Server ID if applicable")
 
+    @field_validator("reason", "details")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
+
 
 class UserReportRequest(BaseModel):
     """Report a user."""
@@ -31,6 +40,13 @@ class UserReportRequest(BaseModel):
     evidence_message_ids: Optional[List[str]] = Field(
         None, description="Message IDs as evidence"
     )
+
+    @field_validator("reason", "details")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
 
 
 class ReportResponse(BaseModel):

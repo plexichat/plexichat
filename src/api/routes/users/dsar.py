@@ -2,6 +2,8 @@
 DSAR (Data Subject Access Request) mixin - Data export route handlers.
 """
 
+from src.core.security.hardening import parse_id
+
 from typing import Optional
 
 from fastapi import HTTPException, Depends, Request
@@ -11,6 +13,10 @@ import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import SuccessResponse
+from src.core.security.hardening import (
+    content_disposition,
+    reject_control_characters,
+)
 from src.api.schemas.dsar import (
     DSARRequestBody,
     DSARRequestResponse,
@@ -168,7 +174,7 @@ class DataExportMixin:
     ) -> DSARRequestResponse:
         try:
             user_id = int(current_user.user_id)
-            req_id = int(request_id)
+            req_id = parse_id(request_id, "request_id")
 
             request_data = get_request_status(req_id, user_id)
             if not request_data:
@@ -211,7 +217,7 @@ class DataExportMixin:
     ) -> SuccessResponse:
         try:
             user_id = int(current_user.user_id)
-            req_id = int(request_id)
+            req_id = parse_id(request_id, "request_id")
 
             request_data = get_request_status(req_id, user_id)
             if not request_data:
@@ -267,7 +273,7 @@ class DataExportMixin:
     ):
         try:
             user_id = int(current_user.user_id)
-            req_id = int(request_id)
+            req_id = parse_id(request_id, "request_id")
 
             request_data = get_request_status(req_id, user_id)
             if not request_data:
@@ -387,9 +393,9 @@ class DataExportMixin:
                     )
 
             headers = {
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": content_disposition(filename),
                 "Content-Length": str(size),
-                "X-DSAR-Checksum": checksum,
+                "X-DSAR-Checksum": reject_control_characters(checksum, "checksum"),
                 "X-DSAR-Request-Id": str(req_id),
             }
 

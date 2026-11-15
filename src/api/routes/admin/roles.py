@@ -10,6 +10,7 @@ from src.api.schemas.common import (
     SuccessResponse,
 )
 from .utils import check_host_restriction, require_admin_permission
+from src.api.schemas.policy_types import UIText
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -51,7 +52,7 @@ def _serialize_role_row(row) -> dict:
 class RoleCreate(BaseModel):
     """Request to create a new admin role."""
 
-    name: str = Field(..., min_length=1, max_length=50)
+    name: UIText = Field(..., min_length=1, max_length=50)
     description: str = Field(..., max_length=500)
     permissions: dict = Field(...)
     position: Optional[int] = Field(None, ge=0, le=99)
