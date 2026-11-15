@@ -60,12 +60,17 @@ router = APIRouter(tags=["Utilities"])
 )
 async def generate_qr(
     data: str = Query(
-        ..., min_length=1, description="The data to encode in the QR code"
+        ...,
+        min_length=1,
+        max_length=1024,
+        description="The data to encode in the QR code",
     ),
     size: str = Query(
-        "200x200", description="Size of the image in pixels (e.g., 200x200)"
+        "200x200",
+        max_length=16,
+        description="Size of the image in pixels (e.g., 200x200)",
     ),
-    format: str = Query("png", description="Image format (png or jpg)"),
+    format: str = Query("png", max_length=8, description="Image format (png or jpg)"),
 ) -> Response:
     """
     Generate a QR code image locally.
@@ -77,6 +82,11 @@ async def generate_qr(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"error": {"code": 400, "message": "Data is required"}},
+        )
+    if format.lower() not in ("png", "jpg", "jpeg"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Unsupported format"}},
         )
     if qrcode is None:
         logger.warning("QR generation unavailable: qrcode dependency missing")
