@@ -56,12 +56,16 @@ def _escape_like(text: str) -> str:
 )
 async def get_audit_logs(
     request: Request,
-    action_family: Optional[str] = Query(None, description="Filter by action family"),
-    status: Optional[str] = Query(None, description="Filter by status"),
+    action_family: Optional[str] = Query(
+        None, max_length=64, description="Filter by action family"
+    ),
+    status: Optional[str] = Query(None, max_length=32, description="Filter by status"),
     admin_id: Annotated[
         NullableSnowflakeIDParam, Query(description="Filter by admin ID")
     ] = None,
-    target_type: Optional[str] = Query(None, description="Filter by target type"),
+    target_type: Optional[str] = Query(
+        None, max_length=64, description="Filter by target type"
+    ),
     date_from: Annotated[NullableInt, Query(description="Start timestamp (ms)")] = None,
     date_to: Annotated[NullableInt, Query(description="End timestamp (ms)")] = None,
     page: int = Query(1, ge=1, description="Page number"),
