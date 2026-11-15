@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import utils.config as config
 import utils.logger as logger
@@ -101,8 +101,11 @@ class MigrationRunResponse(BaseModel):
 class EmergencyOverrideRequest(BaseModel):
     """Request model for emergency override."""
 
-    reason: str
-    expires_minutes: int = 30
+    # The reason is written to the audit log and rendered in the admin UI, so
+    # bound it; the override lifetime is capped at one day so a fat-fingered
+    # request cannot mint a long-lived bypass token.
+    reason: str = Field(..., min_length=1, max_length=500)
+    expires_minutes: int = Field(30, ge=1, le=1440)
 
 
 class EmergencyOverrideResponse(BaseModel):
