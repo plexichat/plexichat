@@ -124,11 +124,32 @@ class ManagementMixin(AdminUsersRouterProtocol):
                                 }
                             },
                         )
+                note = update.get("note")
+                if note is not None and not isinstance(note, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": {
+                                "code": 400,
+                                "message": "note must be a string",
+                            }
+                        },
+                    )
+                if isinstance(note, str) and len(note) > 500:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": {
+                                "code": 400,
+                                "message": "note must be at most 500 characters",
+                            }
+                        },
+                    )
                 status = manager.set_override(
                     uid,
                     limit_bytes=limit_bytes,
                     unlimited=unlimited,
-                    note=update.get("note"),
+                    note=note,
                     updated_by=admin_id,
                 )
             return {
