@@ -1,4 +1,4 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check lint typecheck test large-files serve format security check
 
 COMPOSE ?= docker-compose.yml
 REPORTS ?= test-results-*.xml
@@ -27,6 +27,7 @@ help:
 	@echo "  serve                Run the API server (python main.py)"
 	@echo "  format               Check formatting with ruff format"
 	@echo "  security             Run bandit over src/"
+	@echo "  check                lint + typecheck + format + security"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -53,6 +54,8 @@ typecheck:
 
 test:
 	$(PYTHON) -m pytest
+
+check: lint typecheck format security
 
 serve:
 	$(PYTHON) main.py
