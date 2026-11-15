@@ -38,7 +38,7 @@ class UserReportRequest(BaseModel):
         None, max_length=2000, description="Additional details"
     )
     evidence_message_ids: Optional[List[str]] = Field(
-        None, description="Message IDs as evidence"
+        None, max_length=20, description="Message IDs as evidence"
     )
 
     @field_validator("reason", "details")
