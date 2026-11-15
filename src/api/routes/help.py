@@ -11,6 +11,15 @@ robots_router = APIRouter()
 
 _FALLBACK_ROBOTS_TXT = "User-agent: *\nDisallow: /\n"
 
+# Help pages are static HTML with inline styles and no scripts. Refuse MIME
+# sniffing and lock the document down so a future edit cannot introduce a
+# script or form sink without an explicit policy change.
+_NOSNIFF = {"X-Content-Type-Options": "nosniff"}
+_HELP_CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; "
+    "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+)
+
 
 def _resolve_robots_txt() -> Path | None:
     """Locate robots.txt independent of the process working directory."""
@@ -29,8 +38,10 @@ async def robots_txt():
     """Serve robots.txt."""
     static_path = _resolve_robots_txt()
     if static_path is None:
-        return PlainTextResponse(_FALLBACK_ROBOTS_TXT, media_type="text/plain")
-    return FileResponse(static_path, media_type="text/plain")
+        return PlainTextResponse(
+            _FALLBACK_ROBOTS_TXT, media_type="text/plain", headers=_NOSNIFF
+        )
+    return FileResponse(static_path, media_type="text/plain", headers=_NOSNIFF)
 
 
 def _get_help_style():
@@ -111,7 +122,10 @@ async def security_logout_help():
     </body>
     </html>
     """
-    return HTMLResponse(content=html)
+    return HTMLResponse(
+        content=html,
+        headers={**_NOSNIFF, "Content-Security-Policy": _HELP_CSP},
+    )
 
 
 @router.get(
@@ -150,4 +164,7 @@ async def access_blocked_help():
     </body>
     </html>
     """
-    return HTMLResponse(content=html)
+    return HTMLResponse(
+        content=html,
+        headers={**_NOSNIFF, "Content-Security-Policy": _HELP_CSP},
+    )
