@@ -269,6 +269,9 @@ CREATE INDEX IF NOT EXISTS idx_msg_participants_conv_user ON msg_participants(co
 CREATE INDEX IF NOT EXISTS idx_msg_messages_conv ON msg_messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_msg_messages_author ON msg_messages(author_id);
 CREATE INDEX IF NOT EXISTS idx_msg_messages_conv_created ON msg_messages(conversation_id, created_at);
+-- Global search and cross-conversation recency order by created_at alone; the
+-- composite (conversation_id, created_at) index cannot serve those queries.
+CREATE INDEX IF NOT EXISTS idx_msg_messages_created ON msg_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_msg_messages_reply ON msg_messages(reply_to_id);
 
 CREATE INDEX IF NOT EXISTS idx_msg_status_message ON msg_message_status(message_id);
