@@ -8,6 +8,7 @@ Collects notifications, unread counts, settings, and channel overrides.
 from typing import Any, Dict, List
 
 from ..base import BaseCollector
+from src.core.security.hardening import require_identifier
 
 
 class NotificationsCollector(BaseCollector):
@@ -28,7 +29,8 @@ class NotificationsCollector(BaseCollector):
         """Collect all rows from a table for a user."""
         try:
             rows = self._db.fetch_all(
-                f"SELECT * FROM {table} WHERE user_id = ?", (user_id,)
+                f"SELECT * FROM {require_identifier(table, 'table name')} WHERE user_id = ?",
+                (user_id,),
             )
             return [dict(row) for row in rows]
         except Exception as e:

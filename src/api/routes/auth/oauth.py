@@ -1,3 +1,4 @@
+from src.core.security.hardening import require_https_url
 import hmac as hmac_module
 import re
 from typing import List, Optional
@@ -459,6 +460,7 @@ async def oauth_callback(
         )
 
     provider_info = OAUTH_PROVIDERS[provider]
+    token_url = require_https_url(provider_info["token_url"], "OAuth token URL")
 
     async with httpx.AsyncClient() as client:
         token_data = {
@@ -475,9 +477,7 @@ async def oauth_callback(
         headers = {"Accept": "application/json"}
 
         try:
-            token_resp = await client.post(
-                provider_info["token_url"], data=token_data, headers=headers
-            )
+            token_resp = await client.post(token_url, data=token_data, headers=headers)
             token_resp.raise_for_status()
             token_result = token_resp.json()
             access_token = token_result.get("access_token")

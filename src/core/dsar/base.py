@@ -5,6 +5,8 @@ Provides the abstract base class for all domain-specific collectors with shared
 database query helpers and serialization utilities.
 """
 
+from src.core.security.hardening import require_identifier
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Protocol
 
@@ -68,7 +70,7 @@ class BaseCollector(ABC):
         Returns:
             List of dictionaries representing rows
         """
-        query = f"SELECT * FROM {table} WHERE {where}"
+        query = f"SELECT * FROM {require_identifier(table, 'table name')} WHERE {where}"
         rows = self._db.fetch_all(query, params)
         return [dict(row) for row in rows]
 
@@ -86,7 +88,7 @@ class BaseCollector(ABC):
         Returns:
             Dictionary representing the row, or None if not found
         """
-        query = f"SELECT * FROM {table} WHERE {where}"
+        query = f"SELECT * FROM {require_identifier(table, 'table name')} WHERE {where}"
         row = self._db.fetch_one(query, params)
         return dict(row) if row else None
 

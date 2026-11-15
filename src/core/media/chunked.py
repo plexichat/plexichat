@@ -8,6 +8,8 @@ Provides:
 - Session cleanup
 """
 
+from src.core.security.hardening import bounded_int, safe_join
+
 import os
 import time
 import json
@@ -248,7 +250,12 @@ class ChunkedUploadManager:
             )
             return None
 
-        chunk_size = self._config["chunk_size"]
+        chunk_size = bounded_int(
+            self._config["chunk_size"], "chunk_size", minimum=1024, maximum=67108864
+        )
+        total_size = bounded_int(
+            total_size, "total_size", minimum=1, maximum=10737418240
+        )
         total_chunks = (total_size + chunk_size - 1) // chunk_size
 
         if total_chunks > self._config["max_chunks"]:
@@ -263,7 +270,7 @@ class ChunkedUploadManager:
         expires_at = now + (self._config["session_timeout"] * 1000)
 
         # Create temp file
-        temp_path = os.path.join(self._temp_dir, f"{session_id}.tmp")
+        temp_path = safe_join(self._temp_dir, f"{session_id}.tmp")
 
         # Pre-allocate file
         try:

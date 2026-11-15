@@ -1,5 +1,7 @@
 """SELECT query builder."""
 
+from src.core.security.hardening import require_identifier
+
 from typing import Any, List, Optional
 
 from .base import TableQuery
@@ -55,7 +57,7 @@ class SelectQuery(TableQuery):
         else:
             columns_str = "*"
 
-        sql = f"SELECT {columns_str} FROM {self.table_name}"
+        sql = f"SELECT {columns_str} FROM {require_identifier(self.table_name, 'table name')}"
 
         # Add WHERE conditions using shared builder
         where_clause, params = build_where_clause(

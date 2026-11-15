@@ -9,6 +9,7 @@ custom status, and activity data.
 from typing import Any, Dict, List
 
 from ..base import BaseCollector
+from src.core.security.hardening import require_identifier
 
 
 class ProfileCollector(BaseCollector):
@@ -36,7 +37,10 @@ class ProfileCollector(BaseCollector):
     ) -> List[Dict[str, Any]]:
         """Collect all rows from a table."""
         try:
-            rows = self._db.fetch_all(f"SELECT * FROM {table} WHERE {where}", params)
+            rows = self._db.fetch_all(
+                f"SELECT * FROM {require_identifier(table, 'table name')} WHERE {where}",
+                params,
+            )
             return [dict(row) for row in rows]
         except Exception as e:
             import utils.logger as logger

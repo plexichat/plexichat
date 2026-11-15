@@ -7,6 +7,8 @@ from typing import BinaryIO, Tuple
 
 import utils.logger as logger
 
+from src.core.security.hardening import HardeningViolation, safe_join
+
 from .base import StorageBackendBase
 from ..exceptions import (
     StorageError,
@@ -40,13 +42,12 @@ class LocalStorage(StorageBackendBase):
         # SECURITY: compare against the base path plus a separator (and resolve
         # symlinks) so sibling directories such as ``<base>-evil/`` or symlink
         # escapes cannot pass a naive ``startswith`` check.
-        resolved = os.path.realpath(full)
-        base_resolved = os.path.realpath(self._base_path)
-        if (
-            not resolved.startswith(base_resolved + os.sep)
-            and resolved != base_resolved
-        ):
-            raise StorageError("Invalid path: path traversal detected", "local")
+        try:
+            safe_join(self._base_path, clean_path)
+        except HardeningViolation as exc:
+            raise StorageError(
+                "Invalid path: path traversal detected", "local"
+            ) from exc
         return full
 
     def _ensure_dir(self, file_path: str):

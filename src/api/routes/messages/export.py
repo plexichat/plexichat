@@ -2,6 +2,8 @@
 Message export routes - Chat transcript export endpoints.
 """
 
+from src.core.security.hardening import sanitize_header_filename
+
 import time
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -392,7 +394,9 @@ async def download_transcript_export(
             detail={"error": {"code": 404, "message": "Export has expired"}},
         )
 
-    filename = f"transcript_{channel_id}.{status.get('format', 'json')}"
+    filename = sanitize_header_filename(
+        f"transcript_{channel_id}.{status.get('format', 'json')}"
+    )
     return FileResponse(
         file_path,
         media_type=status.get("mime_type", "application/octet-stream"),

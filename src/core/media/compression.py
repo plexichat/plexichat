@@ -8,6 +8,8 @@ Provides:
 - Thumbnail generation
 """
 
+from src.core.security.hardening import bounded_int
+
 import os
 import subprocess
 import tempfile
@@ -343,7 +345,7 @@ class VideoCompressor:
 
         # Determine CRF
         if quality is None or quality == CompressionQuality.ORIGINAL:
-            crf = self._config["crf"]
+            crf = bounded_int(self._config["crf"], "crf", minimum=0, maximum=63)
         else:
             presets = VIDEO_CRF_PRESETS.get(
                 quality, VIDEO_CRF_PRESETS[CompressionQuality.MEDIUM]

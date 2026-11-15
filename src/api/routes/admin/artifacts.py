@@ -5,6 +5,8 @@ All endpoints are admin-guarded (host restriction + admin token). They operate
 across every server and are intended for instance-level administration.
 """
 
+from src.core.security.hardening import bounded_int
+
 from typing import Any, Dict
 
 import utils.logger as logger
@@ -58,8 +60,15 @@ async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
         )
 
     try:
-        limit = int(request.query_params.get("limit", 100))
-        offset = int(request.query_params.get("offset", 0))
+        limit = bounded_int(
+            request.query_params.get("limit", 100), "limit", minimum=1, maximum=200
+        )
+        offset = bounded_int(
+            request.query_params.get("offset", 0),
+            "offset",
+            minimum=0,
+            maximum=10_000_000,
+        )
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

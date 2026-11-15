@@ -1,5 +1,7 @@
 """INSERT query builder."""
 
+from src.core.security.hardening import require_identifier
+
 from typing import Any, Dict, Optional, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -39,7 +41,7 @@ class InsertQuery(TableQuery):
 
         placeholders = ", ".join(["?" for _ in columns])
         columns_str = ", ".join(validated_columns)
-        sql = f"INSERT INTO {self.table_name} ({columns_str}) VALUES ({placeholders})"
+        sql = f"INSERT INTO {require_identifier(self.table_name, 'table name')} ({columns_str}) VALUES ({placeholders})"
         params = [Parameter(self.data[col]) for col in columns]
 
         return sql, params
