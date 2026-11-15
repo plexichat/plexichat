@@ -4,6 +4,18 @@ import re
 from pathlib import Path
 
 DASHBOARD_JS = Path("src/api/templates/admin/dashboard.js")
+DASHBOARD_DIR = Path("src/api/templates/admin/dashboard")
+
+
+def _dashboard_source() -> str:
+    if DASHBOARD_DIR.is_dir():
+        return "\n".join(
+            part.read_text(encoding="utf-8")
+            for part in sorted(DASHBOARD_DIR.glob("*.js"))
+        )
+    return DASHBOARD_JS.read_text(encoding="utf-8")
+
+
 DASHBOARD_HTML = Path("src/api/templates/admin/dashboard.html")
 ADMIN_USERS_API = Path("src/api/routes/admin/users/admin_users.py")
 CORE_ADMIN_USERS = Path("src/core/admin/users.py")
@@ -23,7 +35,7 @@ def _is_defined(source: str, name: str) -> bool:
 
 def test_every_delegated_handler_is_defined():
     """A missing handler aborts the whole dashboard at map construction."""
-    source = DASHBOARD_JS.read_text(encoding="utf-8")
+    source = _dashboard_source()
     missing = sorted(
         action
         for action, function_name in _handlers(source).items()
@@ -34,7 +46,7 @@ def test_every_delegated_handler_is_defined():
 
 
 def test_every_template_action_is_in_the_handler_map():
-    source = DASHBOARD_JS.read_text(encoding="utf-8")
+    source = _dashboard_source()
     template = DASHBOARD_HTML.read_text(encoding="utf-8")
     actions = set(re.findall(r'data-click="([A-Za-z0-9_]+)"', template))
 
@@ -43,7 +55,7 @@ def test_every_template_action_is_in_the_handler_map():
 
 def test_manage_user_has_no_inline_event_handlers():
     """CSP uses script-src-attr, so inline onerror/onclick is blocked."""
-    source = DASHBOARD_JS.read_text(encoding="utf-8")
+    source = _dashboard_source()
 
     assert not re.search(r"\son[a-z]+\s*=", source)
     assert "admin-user-avatar" in source
@@ -51,7 +63,7 @@ def test_manage_user_has_no_inline_event_handlers():
 
 
 def test_manage_user_exposes_storage_quota_controls():
-    source = DASHBOARD_JS.read_text(encoding="utf-8")
+    source = _dashboard_source()
 
     assert "Storage quota" in source
     assert "loadUserStorage()" in source
