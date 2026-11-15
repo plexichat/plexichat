@@ -39,10 +39,14 @@ class PollInlineCreateRequest(BaseModel):
     @field_validator("options")
     @classmethod
     def _no_ui_xss_chars_options(cls, value: List[str], info) -> List[str]:
-        return [
-            _reject_ui_text_chars(opt, f"{info.field_name}[{i}]")
-            for i, opt in enumerate(value)
-        ]
+        checked: List[str] = []
+        for i, opt in enumerate(value):
+            if len(opt) > 100:
+                raise ValueError(
+                    f"{info.field_name}[{i}] must be at most 100 characters"
+                )
+            checked.append(_reject_ui_text_chars(opt, f"{info.field_name}[{i}]"))
+        return checked
 
 
 class PollCreateRequest(PollInlineCreateRequest):
@@ -57,7 +61,7 @@ class PollVoteRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     option_ids: List[SnowflakeID] = Field(
-        ..., min_length=1, description="Selected option IDs"
+        ..., min_length=1, max_length=10, description="Selected option IDs"
     )
 
 
