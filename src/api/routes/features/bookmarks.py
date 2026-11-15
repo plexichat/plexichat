@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 import asyncio
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
-from src.api.schemas.common import ErrorResponse
+from src.api.schemas.common import ErrorResponse, _reject_ui_text_chars
 from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import parse_id, raise_internal
 import utils.logger as logger
@@ -18,6 +18,13 @@ class BookmarkRequest(BaseModel):
     message_id: str = Field(..., description="ID of the message to bookmark")
     conversation_id: str = Field(..., description="ID of the conversation")
     label: Optional[str] = Field(None, max_length=100, description="Optional label")
+
+    @field_validator("label")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
 
 
 async def _dispatch_bookmark_event(event_type: str, user_id: int, bookmark: dict):
