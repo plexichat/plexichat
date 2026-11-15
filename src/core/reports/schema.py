@@ -48,6 +48,10 @@ CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);
 CREATE INDEX IF NOT EXISTS idx_reports_server ON reports(server_id);
 CREATE INDEX IF NOT EXISTS idx_reports_assigned ON reports(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
+-- The moderator queue filters on status and orders by created_at DESC. A
+-- composite index lets that query read in order instead of sorting every row.
+CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at);
 
 -- A reporter may have only one active report for a target. This partial
 -- index is supported by SQLite and PostgreSQL and closes concurrent duplicate
