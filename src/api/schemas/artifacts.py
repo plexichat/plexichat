@@ -183,6 +183,8 @@ class ServerRetentionRequest(BaseModel):
     server_id: str = Field(..., description="Target server id")
     retention_days: Optional[int] = Field(
         None,
+        ge=1,
+        le=3650,
         description=(
             "Per-server retention override in days. "
             "None clears the override (falls back to global default)."

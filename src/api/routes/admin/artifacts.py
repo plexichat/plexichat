@@ -216,6 +216,11 @@ async def admin_set_server_retention(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"error": {"code": 400, "message": "Invalid server_id"}},
             )
+        if server_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid server_id"}},
+            )
         manager = _get_manager()
         try:
             manager.set_server_retention_days(server_id, body.retention_days)
