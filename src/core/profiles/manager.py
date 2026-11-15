@@ -11,6 +11,9 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
+from src.core.embeds.validator import sanitize_content
+from src.core.embeds.exceptions import EmbedSanitizationError
+from src.utils.security import URLValidator
 
 
 class _Unset(Enum):
@@ -40,6 +43,23 @@ def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
     if not data:
         return data
     return {k: v for k, v in data.items() if k not in _INTERNAL_PROFILE_KEYS}
+
+
+def _ssrf_guard_url(url: str, field_name: str) -> None:
+    """Reject an attacker-controlled URL whose host resolves internally.
+
+    Runs the same ``URLValidator`` the embed/attachment paths use: scheme
+    allow-list (http/https), DNS resolution, and private/loopback/link-local/
+    CGNAT/NAT64/IPv4-mapped IP blocking. Fails closed so a validator failure
+    can never silently store an internal-target URL.
+    """
+    if not url:
+        return
+    try:
+        URLValidator().validate_url_for_request(url)
+    except Exception as exc:
+        logger.warning(f"Rejected {field_name} failing SSRF check: {exc}")
+        raise ValueError(f"{field_name} resolved to a forbidden address") from exc
 
 
 class ProfileManager:
@@ -103,6 +123,10 @@ class ProfileManager:
             lowered = url.lower()
             if lowered.startswith(("javascript:", "data:")):
                 continue
+            # Defence in depth: SSRF gate the host so a social link cannot
+            # point at internal/loopback/link-local addresses (client-side
+            # SSRF-by-click when a victim opens the link).
+            _ssrf_guard_url(url, "social link url")
             validated.append({"platform": platform, "url": url})
 
         if len(validated) > self.MAX_SOCIAL_LINKS:
@@ -219,6 +243,12 @@ class ProfileManager:
 
         if bio is not None:
             bio = bio.strip()[: self.MAX_BIO_LENGTH]
+            # Defence in depth: bio is rendered to profile viewers, so run it
+            # through the same XSS denylist used for rendered embed text.
+            try:
+                bio = sanitize_content(bio)
+            except EmbedSanitizationError as exc:
+                raise ValueError(f"Bio contains unsafe content: {exc}") from exc
             # Normalise empty bio to NULL so it is indistinguishable from
             # "never set", matching the other optional text fields.
             sets.append("bio = ?")
@@ -236,6 +266,10 @@ class ProfileManager:
             lowered = banner_url.lower()
             if lowered.startswith(("javascript:", "data:", "vbscript:")):
                 raise ValueError("Invalid banner URL scheme")
+            # Defence in depth: SSRF gate the host so a banner cannot point at
+            # internal/loopback/link-local addresses.
+            if banner_url:
+                _ssrf_guard_url(banner_url, "banner_url")
             sets.append("banner_url = ?")
             params.append(banner_url if banner_url else None)
 
