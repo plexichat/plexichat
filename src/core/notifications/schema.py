@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS notif_unread (
 CREATE INDEX IF NOT EXISTS idx_notif_unread_user ON notif_unread(user_id);
 CREATE INDEX IF NOT EXISTS idx_notif_unread_user_server ON notif_unread(user_id, server_id);
 CREATE INDEX IF NOT EXISTS idx_notif_unread_conv ON notif_unread(conversation_id);
+-- The read/write path looks up a single (user_id, conversation_id) row.
+CREATE INDEX IF NOT EXISTS idx_notif_unread_user_conv
+    ON notif_unread(user_id, conversation_id);
 """
 
 
