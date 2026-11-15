@@ -5,6 +5,7 @@ Application database schema - Table definitions for applications module.
 import utils.logger as logger
 
 from src.core.database.core.schema_splitter import split_sql_statements
+from src.core.security.hardening import require_identifier
 
 
 SCHEMA = """
@@ -247,4 +248,4 @@ def drop_tables(db):
         "app_applications",
     ]
     for table in tables:
-        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(f"DROP TABLE IF EXISTS {require_identifier(table, 'table name')}")

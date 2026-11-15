@@ -13,6 +13,16 @@ from .errors import (
     TextTooLong,
     UploadRejected,
 )
+from .hardening import (
+    HardeningViolation,
+    bounded_int,
+    content_disposition,
+    is_identifier,
+    reject_control_characters,
+    require_identifier,
+    safe_join,
+    sanitize_header_filename,
+)
 from .outbound import OutboundUrl, parse_outbound_url, resolve_outbound_url
 from .policies import (
     HTML_META_CHARS,
@@ -31,6 +41,7 @@ __all__ = [
     "Composite",
     "Decision",
     "HTML_META_CHARS",
+    "HardeningViolation",
     "MaxLength",
     "OutboundUrl",
     "OutboundUrlRejected",
@@ -44,9 +55,16 @@ __all__ = [
     "TextRejected",
     "TextTooLong",
     "UploadRejected",
+    "bounded_int",
     "check_text",
+    "content_disposition",
     "is_control_character",
+    "is_identifier",
     "parse_outbound_url",
+    "reject_control_characters",
+    "require_identifier",
     "resolve_outbound_url",
+    "safe_join",
+    "sanitize_header_filename",
     "text_policy",
 ]

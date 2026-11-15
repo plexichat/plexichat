@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.security.hardening import sanitize_header_filename
 from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeIDParam,
@@ -642,7 +643,10 @@ async def _export_artifact_impl(
             data = str(payload).encode("utf-8", "replace")
 
         content_type = EXPORT_MIME_MAP.get(export_format, "application/octet-stream")
-        disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{utf8_filename}"
+        disposition = (
+            f'attachment; filename="{sanitize_header_filename(ascii_filename)}"; '
+            f"filename*=UTF-8''{utf8_filename}"
+        )
 
         def _chunk_iter() -> Any:
             yield data

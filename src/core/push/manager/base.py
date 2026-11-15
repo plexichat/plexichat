@@ -10,6 +10,7 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import utils.logger as logger
+from src.core.security.hardening import require_identifier
 
 # Blind-index scope used for constant-time-ish lookup of encrypted tokens.
 PUSH_TOKEN_BLIND_INDEX_SCOPE = "push_token"
@@ -71,7 +72,10 @@ class PushManagerBase:
             if self._has_push_token_column(column):
                 continue
             try:
-                self._db.execute(f"ALTER TABLE push_tokens ADD COLUMN {column} TEXT")
+                self._db.execute(
+                    "ALTER TABLE push_tokens ADD COLUMN "
+                    f"{require_identifier(column, 'column name')} TEXT"
+                )
             except Exception as e:
                 # Another process may have added it concurrently, or the
                 # table does not exist yet — either way it is safe to ignore.

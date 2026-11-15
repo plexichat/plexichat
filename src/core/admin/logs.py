@@ -126,6 +126,10 @@ def read_log_lines(
             if not names:
                 raise FileNotFoundError(f"Log file {filename} not found")
             log_filename = names[0]
+            # A member name is archive-controlled data: refuse a path-like one
+            # rather than trusting the archive to be well formed.
+            if log_filename != os.path.basename(log_filename):
+                raise ValueError("Log archive member has an unsafe name")
             with zf.open(log_filename, "r") as f:
                 text_stream = io.TextIOWrapper(f, encoding="utf-8", errors="replace")
                 for line in text_stream:

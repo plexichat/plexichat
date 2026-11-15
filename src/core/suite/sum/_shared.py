@@ -14,6 +14,8 @@ import time
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
+from src.core.security.hardening import safe_join
+
 MAX_SNAPSHOT_CELLS = 200_000
 MAX_CSV_ROWS = 10_000
 MAX_CSV_COLUMNS = 100
@@ -348,7 +350,9 @@ class LocalBlobStore(BlobStore):
             or ".." in path
         ):
             raise ValueError("Invalid blob path")
-        return os.path.join(self._base_dir, path)
+        # Resolved comparison (not a string prefix check) so ``..`` components
+        # and symlinked escapes both fail.
+        return safe_join(self._base_dir, path)
 
     def store(self, data: bytes, key: str) -> str:
         target = self._resolve(key)

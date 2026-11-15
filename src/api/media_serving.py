@@ -6,7 +6,6 @@ verification (uid-bound), auth fallback, per-file access checks,
 malware-scan gating and range-aware streaming.
 """
 
-import re
 import unicodedata
 from typing import Any, AsyncGenerator, Optional
 
@@ -14,6 +13,8 @@ from fastapi import FastAPI, Request, HTTPException, status, Response
 from fastapi.responses import StreamingResponse
 
 import utils.logger as logger
+
+from src.core.security.hardening import content_disposition, sanitize_header_filename
 
 from .config import get_api_config
 from .lru_cache import LRUCache
@@ -365,20 +366,14 @@ def register_attachment_route(app: FastAPI) -> None:
                     row["storage_path"], row["content_type"], row["storage_backend"]
                 )
 
-                # Sanitize original filename for Content-Disposition
-                # This ensures downloads retain their initial names while being safe for headers
-                def sanitize_header_filename(name):
-                    # Normalize and remove non-ascii
-                    name = (
-                        unicodedata.normalize("NFKD", name)
-                        .encode("ascii", "ignore")
-                        .decode("ascii")
-                    )
-                    # Replace potentially problematic characters
-                    name = re.sub(r"[^\w\.\-]", "_", name)
-                    return name or "attachment"
-
-                safe_name = sanitize_header_filename(original_filename)
+                # Normalised to ASCII for legacy clients, then handed to the
+                # shared helper: control characters and path separators cannot
+                # reach the header, and the header name is the only source.
+                safe_name = sanitize_header_filename(
+                    unicodedata.normalize("NFKD", original_filename or "")
+                    .encode("ascii", "ignore")
+                    .decode("ascii")
+                )
 
                 # Generate ETag from file_id and size
                 etag = f'"{file_id}-{size}"'
@@ -422,7 +417,7 @@ def register_attachment_route(app: FastAPI) -> None:
                     ("image/", "video/", "audio/")
                 ) and not ct_lower.startswith("image/svg")
                 disposition = (
-                    f'attachment; filename="{safe_name}"'
+                    content_disposition(safe_name)
                     if (download or not inline_safe)
                     else "inline"
                 )

@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 from src.core.database import Database
+from src.core.security.hardening import require_identifier
 
 
 def _db_identity(db: Database) -> tuple:
@@ -139,6 +140,10 @@ class DataCloner:
         Returns:
             Stats for the cloning operation
         """
+        # The table name is interpolated into PRAGMA/COUNT/DELETE/INSERT below,
+        # none of which accept placeholders; refuse anything that is not a
+        # plain identifier before it reaches the first statement.
+        require_identifier(table_name, "table name")
         start_time = time.time()
         logger.info(f"Cloning table: {table_name}")
 
