@@ -2,7 +2,7 @@
 Admin UI routes serving HTML templates and static assets.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .utils import check_host_restriction, load_admin_template
 from src.utils.security import generate_csp_nonce, build_admin_csp_header
@@ -122,6 +122,7 @@ async def admin_chart_js(request: Request):
         "Content-Type": "application/javascript; charset=utf-8",
         "Content-Security-Policy": build_admin_csp_header(nonce),
         "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
     }
     return Response(content=js_content, headers=headers)
 
@@ -146,8 +147,40 @@ async def admin_dashboard_css(request: Request):
         "Content-Type": "text/css; charset=utf-8",
         "Content-Security-Policy": build_admin_csp_header(nonce),
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
+        "X-Content-Type-Options": "nosniff",
     }
     return HTMLResponse(content=css_content, headers=headers)
+
+
+_ADMIN_DASHBOARD_JS_CACHE = {"signature": None, "content": ""}
+
+# A concatenated dashboard is ~150 KB today; cap the read so a runaway part
+# cannot turn every request into a multi-megabyte allocation.
+_MAX_ADMIN_DASHBOARD_JS = 2 * 1024 * 1024
+
+
+def _admin_dashboard_js() -> str:
+    """Concatenate the ordered dashboard parts, caching by (name, mtime)."""
+    parts_dir = _admin_static_path("dashboard")
+    parts = sorted(parts_dir.glob("*.js"))
+    signature = tuple((p.name, p.stat().st_mtime_ns) for p in parts)
+    if _ADMIN_DASHBOARD_JS_CACHE["signature"] == signature:
+        return _ADMIN_DASHBOARD_JS_CACHE["content"]
+
+    chunks: list[str] = []
+    total = 0
+    for part in parts:
+        text = part.read_text(encoding="utf-8")
+        total += len(text) + 1
+        if total > _MAX_ADMIN_DASHBOARD_JS:
+            # Fail closed: a truncated script would throw at parse time, so
+            # surface the problem as a 500 instead of shipping a broken page.
+            raise HTTPException(status_code=500, detail="dashboard bundle too large")
+        chunks.append(text)
+    content = "\n".join(chunks)
+    _ADMIN_DASHBOARD_JS_CACHE["signature"] = signature
+    _ADMIN_DASHBOARD_JS_CACHE["content"] = content
+    return content
 
 
 @router.get("/static/dashboard.js", include_in_schema=False)
@@ -158,17 +191,24 @@ async def admin_dashboard_js(request: Request):
     check_host_restriction(request)
     nonce = generate_csp_nonce()
 
-    js_path = _admin_static_path("dashboard.js")
-
-    if not js_path.exists():
-        return HTMLResponse(content="/* JS file not found */", status_code=404)
-
-    with open(js_path, "r", encoding="utf-8") as f:
-        js_content = f.read()
+    # The dashboard script is split into ordered parts under dashboard/ so no
+    # single file grows past a reviewable size. They are concatenated in name
+    # order, preserving classic-script global semantics. The concatenated body
+    # is cached in-process and only re-read when a part's mtime changes.
+    parts_dir = _admin_static_path("dashboard")
+    if parts_dir.is_dir():
+        js_content = _admin_dashboard_js()
+    else:
+        js_path = _admin_static_path("dashboard.js")
+        if not js_path.exists():
+            return HTMLResponse(content="/* JS file not found */", status_code=404)
+        with open(js_path, "r", encoding="utf-8") as f:
+            js_content = f.read()
 
     headers = {
         "Content-Type": "application/javascript; charset=utf-8",
         "Content-Security-Policy": build_admin_csp_header(nonce),
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
+        "X-Content-Type-Options": "nosniff",
     }
     return HTMLResponse(content=js_content, headers=headers)
