@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 
-from src.api.schemas.common import SnowflakeID
+from src.api.schemas.common import SnowflakeID, _reject_ui_text_chars
+from src.core.security.outbound import resolve_outbound_url
 
 
 class HashReportRequest(BaseModel):
@@ -34,6 +35,25 @@ class HashReportRequest(BaseModel):
         None, max_length=2000, description="URL of the attachment"
     )
     block_uploader: bool = Field(False, description="Request to block the uploader")
+
+    @field_validator("reason", "details")
+    @classmethod
+    def _no_ui_xss_chars(cls, value: Optional[str], info) -> Optional[str]:
+        if value is None:
+            return value
+        return _reject_ui_text_chars(value, info.field_name)
+
+    @field_validator("attachment_url")
+    @classmethod
+    def _no_ssrf_attachment_url(cls, value: Optional[str]) -> Optional[str]:
+        """SSRF-gate attacker-controlled attachment URLs.
+
+        The URL is stored and may be fetched by moderators or rendered in
+        reports, so it passes the shared outbound gate (scheme allow-list, DNS
+        resolution, private/loopback/link-local blocking) rather than a local
+        copy of the scheme check.
+        """
+        return resolve_outbound_url(value, "Attachment URL")
 
 
 class HashReportResponse(BaseModel):

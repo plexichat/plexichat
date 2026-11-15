@@ -7,26 +7,17 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from .common import SnowflakeID, _reject_ui_text_chars
 from .users import UserPublicResponse
+from src.core.security.outbound import resolve_outbound_url
 
 
 def _validate_icon_url(url: Optional[str]) -> Optional[str]:
-    if not url:
-        return url
-    url = url.strip()
-    if not url:
-        return url
-    if not url.startswith(("http://", "https://")):
-        raise ValueError("Server icon URL must use http or https")
-    try:
-        from src.utils.security import URLValidator
+    """SSRF-gate the server icon URL through the shared outbound gate.
 
-        URLValidator().validate_url_for_request(url)
-    except Exception as exc:
-        import utils.logger as _logger
-
-        _logger.warning(f"Rejected server icon URL failing SSRF check: {exc}")
-        raise ValueError("Server icon URL resolved to a forbidden address") from exc
-    return url
+    This was one of three near-identical local SSRF wrappers (profile social
+    links, this icon URL, the media attachment URL); the copies had already
+    drifted in their scheme checks and log messages.
+    """
+    return resolve_outbound_url(url, "Server icon URL")
 
 
 class ServerCreateRequest(BaseModel):

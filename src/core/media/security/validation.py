@@ -32,6 +32,8 @@ from typing import Optional, Tuple
 import utils.logger as logger
 import utils.config as config
 
+from src.core.media.security.settings import FileSecuritySettings
+
 
 # Magic byte signatures for common file types
 MAGIC_SIGNATURES = {
@@ -172,21 +174,21 @@ class FileValidator:
         """Initialize validator with config."""
         self._config = self._load_config()
 
-    def _load_config(self) -> dict:
-        """Load security configuration."""
-        media_config = config.get("media", {})
-        security_config = media_config.get("security", {})
+    def _load_config(self) -> FileSecuritySettings:
+        """Load the typed security settings, refusing wrong-typed values.
 
-        return {
-            "magic_byte_validation": security_config.get("magic_byte_validation", True),
-            "block_executables": security_config.get("block_executables", True),
-            "blocked_extensions": set(
-                security_config.get("blocked_extensions", BLOCKED_EXTENSIONS)
-            ),
-            "blocked_mime_types": set(
-                security_config.get("blocked_mime_types", BLOCKED_MIME_TYPES)
-            ),
-        }
+        This used to collapse the config into a dict of ``.get`` calls, so a
+        misspelled key silently selected the permissive default and nothing was
+        logged. ``FileSecuritySettings`` makes the defaults explicit and raises
+        on a value of the wrong type; see that module.
+        """
+        media_config = config.get("media", {}) or {}
+        security_config = media_config.get("security", {}) or {}
+        return FileSecuritySettings.from_mapping(
+            security_config,
+            default_extensions=BLOCKED_EXTENSIONS,
+            default_mime_types=BLOCKED_MIME_TYPES,
+        )
 
     def validate_magic_bytes(
         self, file_data: bytes, content_type: str
@@ -201,7 +203,7 @@ class FileValidator:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        if not self._config["magic_byte_validation"]:
+        if not self._config.magic_byte_validation:
             return True, None
 
         if len(file_data) < 16:
@@ -253,17 +255,17 @@ class FileValidator:
         Returns:
             Tuple of (is_blocked, error_message)
         """
-        if not self._config["block_executables"]:
+        if not self._config.block_executables:
             return False, None
 
         # Check extension
         ext = os.path.splitext(filename.lower())[1]
-        if ext in self._config["blocked_extensions"]:
+        if ext in self._config.blocked_extensions:
             logger.warning(f"Blocked executable extension: {ext}")
             return True, f"File type not allowed: {ext}"
 
         # Check MIME type
-        if content_type.lower() in self._config["blocked_mime_types"]:
+        if content_type.lower() in self._config.blocked_mime_types:
             logger.warning(f"Blocked executable MIME type: {content_type}")
             return True, f"Content type not allowed: {content_type}"
 

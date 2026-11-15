@@ -6,6 +6,8 @@ from typing import Optional, List, Any, Generic, TypeVar, Annotated
 from pydantic import BaseModel, BeforeValidator, Field, ConfigDict, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
+from src.core.security.policies import HTML_META_CHARS, RejectUICharacters
+
 T = TypeVar("T")
 
 
@@ -238,23 +240,19 @@ def snowflake_from_str(v: Any) -> Optional[int]:
 # into client-facing UIs (roster, channel lists, server lists, emoji/sticker
 # pickers, soundboards), so rejecting them at the input layer is defence in
 # depth against stored XSS even when an output encoder is bypassed.
-_UI_TEXT_HTML_META_CHARS = frozenset("<>\"'&=")
+_UI_TEXT_HTML_META_CHARS = HTML_META_CHARS
+# One shared policy object: the route and schema call sites below, the username
+# rule in core/auth/passwords.py and the coverage test all resolve to this.
+_UI_TEXT_POLICY = RejectUICharacters()
 
 
 def _reject_ui_text_chars(value: str, field_name: str) -> str:
     """Reject HTML metacharacters and C0 control characters in UI-rendered text.
 
-    Applied to server/channel/emoji/sticker/soundboard names, descriptions,
-    topics, tags and other short text fields that are echoed to every member
-    of a server. Control characters are also rejected to prevent terminal
-    injection in admin dashboards that log or print these values.
+    The rule itself lives in ``src.core.security.policies`` so every call site
+    shares one object that the coverage test can enumerate; the name stays
+    because the routes and schemas below already import it. The exception is a
+    ``TextRejected``, which is still a ``ValueError``, so the existing
+    ``except ValueError`` handlers keep working.
     """
-    if not value:
-        return value
-    meta = sorted({ch for ch in value if ch in _UI_TEXT_HTML_META_CHARS})
-    ctrl = [ch for ch in value if ord(ch) < 0x20 or ord(ch) == 0x7F]
-    if meta or ctrl:
-        raise ValueError(
-            f"{field_name} must not contain HTML metacharacters or control characters"
-        )
-    return value
+    return _UI_TEXT_POLICY.check(value, field_name)

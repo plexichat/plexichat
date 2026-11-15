@@ -13,7 +13,7 @@ import utils.logger as logger
 from src.core.base import timestamp_ms, generate_id
 from src.core.embeds.validator import sanitize_content
 from src.core.embeds.exceptions import EmbedSanitizationError
-from src.utils.security import URLValidator
+from src.core.security.outbound import resolve_outbound_url
 
 
 class _Unset(Enum):
@@ -48,18 +48,11 @@ def _strip_internal_keys(data: Dict[str, Any]) -> Dict[str, Any]:
 def _ssrf_guard_url(url: str, field_name: str) -> None:
     """Reject an attacker-controlled URL whose host resolves internally.
 
-    Runs the same ``URLValidator`` the embed/attachment paths use: scheme
-    allow-list (http/https), DNS resolution, and private/loopback/link-local/
-    CGNAT/NAT64/IPv4-mapped IP blocking. Fails closed so a validator failure
-    can never silently store an internal-target URL.
+    Delegates to the shared outbound gate so this path, the server icon URL and
+    the media attachment URL cannot disagree about which schemes and addresses
+    are allowed. Fails closed: a validator failure never stores the URL.
     """
-    if not url:
-        return
-    try:
-        URLValidator().validate_url_for_request(url)
-    except Exception as exc:
-        logger.warning(f"Rejected {field_name} failing SSRF check: {exc}")
-        raise ValueError(f"{field_name} resolved to a forbidden address") from exc
+    resolve_outbound_url(url, field_name)
 
 
 class ProfileManager:
