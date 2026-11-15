@@ -122,6 +122,7 @@ async def admin_chart_js(request: Request):
         "Content-Type": "application/javascript; charset=utf-8",
         "Content-Security-Policy": build_admin_csp_header(nonce),
         "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
     }
     return Response(content=js_content, headers=headers)
 
@@ -146,6 +147,7 @@ async def admin_dashboard_css(request: Request):
         "Content-Type": "text/css; charset=utf-8",
         "Content-Security-Policy": build_admin_csp_header(nonce),
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
+        "X-Content-Type-Options": "nosniff",
     }
     return HTMLResponse(content=css_content, headers=headers)
 
