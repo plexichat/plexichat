@@ -18,7 +18,9 @@ class PresenceUpdate(BaseModel):
     custom_status: Optional[UIText] = Field(
         None, max_length=128, description="Custom status text"
     )
-    custom_emoji: Optional[str] = Field(None, description="Custom status emoji")
+    custom_emoji: Optional[str] = Field(
+        None, max_length=16, description="Custom status emoji"
+    )
 
 
 class PresenceResponse(BaseModel):
