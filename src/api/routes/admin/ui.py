@@ -140,8 +140,13 @@ async def admin_dashboard_css(request: Request):
     if not css_path.exists():
         return HTMLResponse(content="/* CSS file not found */", status_code=404)
 
-    with open(css_path, "r", encoding="utf-8") as f:
-        css_content = f.read()
+    # Re-read only when the stylesheet changes; this route is hit on every
+    # dashboard navigation and the file is ~28 KB.
+    signature = css_path.stat().st_mtime_ns
+    if _ADMIN_DASHBOARD_CSS_CACHE["signature"] != signature:
+        _ADMIN_DASHBOARD_CSS_CACHE["content"] = css_path.read_text(encoding="utf-8")
+        _ADMIN_DASHBOARD_CSS_CACHE["signature"] = signature
+    css_content = _ADMIN_DASHBOARD_CSS_CACHE["content"]
 
     headers = {
         "Content-Type": "text/css; charset=utf-8",
@@ -153,6 +158,7 @@ async def admin_dashboard_css(request: Request):
 
 
 _ADMIN_DASHBOARD_JS_CACHE = {"signature": None, "content": ""}
+_ADMIN_DASHBOARD_CSS_CACHE = {"signature": None, "content": ""}
 
 # A concatenated dashboard is ~150 KB today; cap the read so a runaway part
 # cannot turn every request into a multi-megabyte allocation.
