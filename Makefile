@@ -1,6 +1,7 @@
-.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain
+.PHONY: help verify-supply-chain sbom sbom-images sbom-python image-digests scan-deps scan-images ci-supply-chain shard-map shard-map-check
 
 COMPOSE ?= docker-compose.yml
+REPORTS ?= test-results-*.xml
 SBOM_OUT ?= sbom
 ALLOW_UNPINNED_IMAGES ?= 0
 
@@ -14,6 +15,8 @@ help:
 	@echo "  scan-deps            Dependency/license/vuln scans (pip-audit, license gates)"
 	@echo "  scan-images          Trivy/grype image scans for compose images (best-effort if tools present)"
 	@echo "  ci-supply-chain      verify + dep scans + SBOM/provenance generation"
+	@echo "  shard-map            Rebalance ci-tooling/pytest-shard-map.json from JUnit reports"
+	@echo "  shard-map-check      Fail if the committed pytest shard map is stale"
 
 verify-supply-chain:
 	python3 scripts/verify_compose_pinning.py
@@ -31,6 +34,12 @@ sbom-images:
 image-digests:
 	python3 scripts/generate_sbom.py --compose $(COMPOSE) --out $(SBOM_OUT) --images-only --no-image-sbom
 	@echo "Review $(SBOM_OUT)/image-digests.lock.json and merge vetted digests into image-digests.lock.json"
+
+shard-map:
+	python3 ci-tooling/balance_pytest_shards.py $(REPORTS)
+
+shard-map-check:
+	python3 ci-tooling/balance_pytest_shards.py --check
 
 scan-deps:
 	python3 ci-tooling/license_audit.py
