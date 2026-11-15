@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from .policy_types import UIText
 
 from .common import SnowflakeID
@@ -260,6 +260,14 @@ class SumGrantRequest(BaseModel):
     subject_id: SnowflakeID
     permissions: List[str] = Field(..., min_length=1, max_length=8)
     expires_at: Optional[int] = None
+
+    @field_validator("permissions")
+    @classmethod
+    def _permission_shape(cls, value: List[str]) -> List[str]:
+        for permission in value:
+            if not isinstance(permission, str) or len(permission) > 32:
+                raise ValueError("permissions must be strings of at most 32 characters")
+        return value
 
 
 class SumGrantResponse(BaseModel):
