@@ -297,9 +297,9 @@ async def get_message_report_counts(request: Request):
 )
 async def get_enhanced_reports(
     request: Request,
-    status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    status_filter: Optional[str] = Query(None, max_length=32),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=1_000_000),
 ):
     """List enhanced (``reports`` table) reports for moderator review.
 
@@ -315,8 +315,6 @@ async def get_enhanced_reports(
             status_code=500,
             detail={"error": {"code": 500, "message": "Database unavailable"}},
         )
-    limit = max(1, min(int(limit), 100))
-    offset = max(0, int(offset))
     clauses = []
     params: List[Any] = []
     if status_filter:
