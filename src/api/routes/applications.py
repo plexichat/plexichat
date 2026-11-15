@@ -9,7 +9,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeID
@@ -51,26 +51,59 @@ class ApplicationResponse(BaseModel):
     created_at: int
 
 
+def _validate_redirect_uris(value):
+    """Redirect URIs are the OAuth callback allow-list; reject unsafe shapes."""
+    if value is None:
+        return value
+    if len(value) > 20:
+        raise ValueError("at most 20 redirect URIs are allowed")
+    from urllib.parse import urlparse
+
+    for uri in value:
+        if len(uri) > 2048:
+            raise ValueError("redirect URI is too long")
+        parsed = urlparse(uri)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "redirect URI must be an absolute http(s) URL without a fragment"
+            )
+    return value
+
+
 class CreateApplicationRequest(BaseModel):
     """Request to create an application."""
 
     name: UIText
-    description: Optional[str] = None
-    icon_emoji: Optional[str] = None
-    redirect_uris: Optional[List[str]] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    icon_emoji: Optional[str] = Field(None, max_length=16)
+    redirect_uris: Optional[List[str]] = Field(None, max_length=20)
     bot_public: bool = True
     bot_require_code_grant: bool = False
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def _redirect_uris(cls, value):
+        return _validate_redirect_uris(value)
 
 
 class UpdateApplicationRequest(BaseModel):
     """Request to update an application."""
 
     name: Optional[UIText] = None
-    description: Optional[str] = None
-    icon_emoji: Optional[str] = None
-    redirect_uris: Optional[List[str]] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    icon_emoji: Optional[str] = Field(None, max_length=16)
+    redirect_uris: Optional[List[str]] = Field(None, max_length=20)
     bot_public: Optional[bool] = None
     bot_require_code_grant: Optional[bool] = None
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def _redirect_uris(cls, value):
+        return _validate_redirect_uris(value)
 
 
 class BotTokenResponse(BaseModel):
