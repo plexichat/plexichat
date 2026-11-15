@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS notif_notifications (
 -- Notifications indexes
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notif_notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notif_user_read ON notif_notifications(user_id, read);
+-- The unread tray filters user_id + read and orders by created_at; the
+-- two-column index still needs a sort, this one serves the list in order.
+CREATE INDEX IF NOT EXISTS idx_notif_user_read_created
+    ON notif_notifications(user_id, read, created_at);
 CREATE INDEX IF NOT EXISTS idx_notif_user_server ON notif_notifications(user_id, server_id);
 CREATE INDEX IF NOT EXISTS idx_notif_user_channel ON notif_notifications(user_id, channel_id);
 CREATE INDEX IF NOT EXISTS idx_notif_message ON notif_notifications(message_id);
