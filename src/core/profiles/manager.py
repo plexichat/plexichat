@@ -16,6 +16,28 @@ from src.core.base import timestamp_ms, generate_id
 from src.core.embeds.validator import sanitize_content
 from src.core.embeds.exceptions import EmbedSanitizationError
 from src.core.security.errors import OutboundUrlRejected
+from src.core.security.hardening import (
+    HardeningViolation,
+    reject_control_characters,
+)
+
+
+# Profile strings are rendered to other users and stored verbatim. Bound every
+# one of them before it reaches the database or a response, and refuse control
+# characters so a bio or URL cannot forge a log line or a header. The URL
+# ceiling applies to banners and to any avatar-style URL alike.
+MAX_PROFILE_URL_LENGTH = 2048
+MAX_SOCIAL_LINK_URL_LENGTH = 2048
+MAX_SOCIAL_PLATFORM_LENGTH = 32
+MAX_AVATAR_URL_LENGTH = MAX_PROFILE_URL_LENGTH
+
+
+def _bounded_text(value: Any, field: str, maximum: int) -> str:
+    """Return ``value`` as a stripped, length- and control-safe string."""
+    text = reject_control_characters(str(value or "").strip(), field)
+    if len(text) > maximum:
+        raise HardeningViolation(f"{field} exceeds maximum length of {maximum}")
+    return text
 
 
 class _Unset(Enum):
@@ -136,8 +158,14 @@ class ProfileManager:
             if not isinstance(link, dict):
                 logger.warning("Skipping non-dict social link entry")
                 continue
-            platform = str(link.get("platform", "other")).lower()
-            url = str(link.get("url", "")).strip()
+            platform = _bounded_text(
+                link.get("platform", "other"),
+                "social link platform",
+                MAX_SOCIAL_PLATFORM_LENGTH,
+            ).lower()
+            url = _bounded_text(
+                link.get("url", ""), "social link url", MAX_SOCIAL_LINK_URL_LENGTH
+            )
             if platform not in self.ALLOWED_SOCIAL_PLATFORMS:
                 platform = "other"
             if not url:
@@ -270,7 +298,7 @@ class ProfileManager:
         params: List[Any] = [now]
 
         if bio is not None:
-            bio = bio.strip()[: self.MAX_BIO_LENGTH]
+            bio = _bounded_text(bio, "bio", self.MAX_BIO_LENGTH)
             # Defence in depth: bio is rendered to profile viewers, so run it
             # through the same XSS denylist used for rendered embed text.
             try:
@@ -285,7 +313,7 @@ class ProfileManager:
         if banner_url is not None:
             # Validate URL scheme up-front so we never persist an
             # invalid value, even with the dynamic SQL pattern.
-            banner_url = banner_url.strip()
+            banner_url = _bounded_text(banner_url, "banner_url", MAX_PROFILE_URL_LENGTH)
             if banner_url and not banner_url.startswith(("http://", "https://")):
                 raise ValueError("Banner URL must use http or https")
             # Reject dangerous schemes by *prefix* (not substring), mirroring
@@ -307,17 +335,17 @@ class ProfileManager:
             params.append(json.dumps(validated))
 
         if pronouns is not None:
-            pronouns = pronouns.strip()[: self.MAX_PRONOUNS_LENGTH]
+            pronouns = _bounded_text(pronouns, "pronouns", self.MAX_PRONOUNS_LENGTH)
             sets.append("pronouns = ?")
             params.append(pronouns if pronouns else None)
 
         if location is not None:
-            location = location.strip()[: self.MAX_LOCATION_LENGTH]
+            location = _bounded_text(location, "location", self.MAX_LOCATION_LENGTH)
             sets.append("location = ?")
             params.append(location if location else None)
 
         if timezone is not None:
-            timezone = timezone.strip()[: self.MAX_TIMEZONE_LENGTH]
+            timezone = _bounded_text(timezone, "timezone", self.MAX_TIMEZONE_LENGTH)
             sets.append("timezone = ?")
             params.append(timezone if timezone else None)
 
@@ -362,7 +390,7 @@ class ProfileManager:
         elif text is None:
             new_text = None
         else:
-            stripped = text.strip()[: self.MAX_STATUS_LENGTH]
+            stripped = _bounded_text(text, "custom_status", self.MAX_STATUS_LENGTH)
             new_text = stripped if stripped else None
 
         if emoji is _UNSET:
@@ -370,7 +398,9 @@ class ProfileManager:
         elif emoji is None:
             new_emoji = None
         else:
-            stripped = emoji.strip()[: self.MAX_STATUS_EMOJI_LENGTH]
+            stripped = _bounded_text(
+                emoji, "custom_status_emoji", self.MAX_STATUS_EMOJI_LENGTH
+            )
             new_emoji = stripped if stripped else None
 
         if expires_at is _UNSET:
