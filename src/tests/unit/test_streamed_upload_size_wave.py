@@ -9,30 +9,28 @@ import pytest
 
 from src.core.media.exceptions import FileSizeError
 
-# A valid PNG magic header followed by inert padding.
-_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+_PAYLOAD = b"hello world " * 256  # ~3 KiB of inert content
+_CONTENT_TYPE = "application/octet-stream"
 
 
 def test_understated_declared_size_is_rejected(media_manager):
-    payload = _PNG + b"\x00" * 2048
     with pytest.raises(FileSizeError):
         media_manager.upload_stream(
             user_id=1,
-            stream=io.BytesIO(payload),
-            filename="a.png",
-            content_type="image/png",
+            stream=io.BytesIO(_PAYLOAD),
+            filename="a.bin",
+            content_type=_CONTENT_TYPE,
             size=1,  # understated: the body is far larger
         )
 
 
 def test_matching_declared_size_is_accepted(media_manager):
-    payload = _PNG + b"\x00" * 2048
     result = media_manager.upload_stream(
         user_id=1,
-        stream=io.BytesIO(payload),
-        filename="a.png",
-        content_type="image/png",
-        size=len(payload),
+        stream=io.BytesIO(_PAYLOAD),
+        filename="a.bin",
+        content_type=_CONTENT_TYPE,
+        size=len(_PAYLOAD),
     )
     assert result is not None
-    assert result.size == len(payload)
+    assert result.size == len(_PAYLOAD)

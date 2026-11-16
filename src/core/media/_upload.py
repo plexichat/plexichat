@@ -25,6 +25,8 @@ from .exceptions import (
     FileTypeError,
     ImageProcessingError,
 )
+from src.core.security.hardening import bounded_int
+
 from .security.validation import (
     BLOCKED_EXTENSIONS,
     BLOCKED_MIME_TYPES,
@@ -447,9 +449,21 @@ class _UploadMixin:
         from ._config import DEFAULT_SIZE_LIMITS
 
         _limits = self._config.get("size_limits", DEFAULT_SIZE_LIMITS)
-        max_stream_bytes = max(_limits.values()) if _limits else 100 * 1024 * 1024
-
-        max_in_memory = self._config.get("stream_processing_max_bytes", 8 * 1024 * 1024)
+        # Config values drive the spool buffer and the in-memory threshold;
+        # an unbounded (or negative) value could force an oversized allocation
+        # or disable spooling entirely. Clamp both to sane hard ceilings.
+        max_stream_bytes = bounded_int(
+            max(_limits.values()) if _limits else 100 * 1024 * 1024,
+            "media stream spool limit",
+            minimum=1,
+            maximum=2 * 1024 * 1024 * 1024,
+        )
+        max_in_memory = bounded_int(
+            self._config.get("stream_processing_max_bytes", 8 * 1024 * 1024),
+            "stream_processing_max_bytes",
+            minimum=1,
+            maximum=64 * 1024 * 1024,
+        )
         use_memory = size is not None and size > 0 and size <= max_in_memory
         temp_path = None
         file_data = None
