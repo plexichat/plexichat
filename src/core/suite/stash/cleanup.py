@@ -13,12 +13,15 @@ from typing import Any, Dict, Optional
 
 import utils.logger as logger
 
+from ..boundaries import validate_shared_config
+
 
 def _stash_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     import utils.config as cfg
 
     artifacts = config or cfg.get("artifacts", {}) or {}
-    return artifacts.get("plexistash", {}) or {}
+    raw = artifacts.get("plexistash", {}) if isinstance(artifacts, dict) else {}
+    return validate_shared_config(raw)
 
 
 class StashCleanupJob:
@@ -32,23 +35,11 @@ class StashCleanupJob:
 
     def _interval_seconds(self) -> int:
         stash_cfg = _stash_config(self._config)
-        minutes = stash_cfg.get("cleanup_interval_minutes", 60)
-        try:
-            minutes = int(minutes)
-        except (TypeError, ValueError):
-            minutes = 60
-        if minutes <= 0:
-            minutes = 60
-        return minutes * 60
+        return int(stash_cfg["cleanup_interval_minutes"]) * 60
 
     def _retention_days(self) -> int:
         stash_cfg = _stash_config(self._config)
-        days = stash_cfg.get("retention_days", 30)
-        try:
-            days = int(days)
-        except (TypeError, ValueError):
-            days = 30
-        return max(0, days)
+        return int(stash_cfg["retention_days"])
 
     def start(self) -> None:
         """Start the background cleanup loop."""

@@ -9,12 +9,14 @@ into titles and audit records.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Type
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Type
 
 import re
 
 from src.core.security.hardening import (
     HardeningViolation,
+    bounded_int,
     parse_id,
     reject_control_characters,
 )
@@ -85,6 +87,78 @@ def validate_artifact_id(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise HardeningViolation("artifact_id must be an integer id")
     return parse_id(value, "artifact_id")
+
+
+@dataclass(frozen=True)
+class ConfigRule:
+    """One declared shared-config key: its kind, bounds and safe default."""
+
+    kind: str
+    default: Any
+    minimum: int = 0
+    maximum: int = 0
+    allowed: frozenset = frozenset()
+
+
+# Keys the suite is willing to read from ``artifacts.plexistash`` (and any
+# other suite section using this helper). Anything not declared here is
+# dropped: an unknown key must never change behaviour or be interpolated into
+# a query or path.
+SHARED_CONFIG_SCHEMA = {
+    "cleanup_interval_minutes": ConfigRule("int", 60, minimum=1, maximum=1440),
+    "retention_days": ConfigRule("int", 30, minimum=0, maximum=36500),
+    "ticket_ttl_minutes": ConfigRule("int", 30, minimum=1, maximum=1440),
+    "max_items_per_page": ConfigRule("int", 50, minimum=1, maximum=200),
+    "workspace_theme": ConfigRule(
+        "enum", "system", allowed=frozenset({"light", "dark", "system"})
+    ),
+}
+
+
+def validate_shared_config(
+    config: Any,
+    *,
+    section: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return only declared shared-config keys with schema-bounded values.
+
+    Unknown keys are discarded and out-of-range or wrongly typed values fall
+    back to their declared default, so a malformed deployment config cannot
+    drive huge cleanup intervals, negative retention windows or arbitrary
+    enum values into the suite.
+    """
+    defaults = {key: rule.default for key, rule in SHARED_CONFIG_SCHEMA.items()}
+    if not isinstance(config, dict):
+        return defaults
+    raw: Any = config.get(section, {}) if section else config
+    if not isinstance(raw, dict):
+        return defaults
+
+    result: Dict[str, Any] = {}
+    for key, rule in SHARED_CONFIG_SCHEMA.items():
+        if key not in raw:
+            result[key] = rule.default
+            continue
+        value = raw[key]
+        if rule.kind == "int":
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                result[key] = rule.default
+                continue
+            try:
+                result[key] = bounded_int(
+                    value,
+                    f"shared_config.{key}",
+                    minimum=rule.minimum,
+                    maximum=rule.maximum,
+                    default=rule.default,
+                )
+            except HardeningViolation:
+                result[key] = rule.default
+        elif value in rule.allowed:
+            result[key] = value
+        else:
+            result[key] = rule.default
+    return result
 
 
 def bound_workspace_text(
@@ -197,6 +271,7 @@ __all__ = [
     "MAX_WORKSPACE_TAG_COUNT",
     "MAX_WORKSPACE_TAG_LENGTH",
     "MAX_WORKSPACE_TITLE_LENGTH",
+    "SHARED_CONFIG_SCHEMA",
     "SUITE_APP_IDS",
     "SUITE_ARTIFACT_TYPES",
     "SUITE_CAPABILITIES",
@@ -204,6 +279,7 @@ __all__ = [
     "bound_import_bytes",
     "bound_import_text",
     "bound_workspace_payload",
+    "validate_shared_config",
     "bound_workspace_tags",
     "bound_workspace_text",
     "validate_app_id",
