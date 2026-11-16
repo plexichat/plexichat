@@ -11,6 +11,13 @@ import zlib
 
 from fastapi import WebSocket
 
+from .batching import (
+    OutboundFrameBatcher,
+    DEFAULT_FLUSH_INTERVAL_S,
+    DEFAULT_MAX_BATCH,
+    DEFAULT_QUEUE_SIZE,
+)
+
 
 class ConnectionState(Enum):
     """Connection lifecycle states."""
@@ -52,6 +59,13 @@ class Connection:
     _inbound_rate_buckets: Dict[int, List[float]] = field(
         default_factory=dict, repr=False
     )
+    # Optional coalescing outbound batcher. Disabled by default so the many
+    # callers that construct a bare Connection keep their synchronous
+    # write-through behaviour; gateway_endpoint opts in for live sockets.
+    _outbound_batcher: Optional[OutboundFrameBatcher] = field(
+        default=None, repr=False
+    )
+    _batcher_task: Optional[asyncio.Task] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.compress and self._zlib_context is None:
@@ -118,29 +132,44 @@ class Connection:
         return True
 
     async def send_json(self, data: Dict[str, Any]) -> bool:
-        """
-        Send JSON data to the WebSocket.
+        """Send JSON data to the WebSocket.
 
-        Args:
-            data: Data to send
-
-        Returns:
-            True if sent successfully
+        When :meth:`enable_batching` has been called, the frame is queued for
+        the coalescing flush task and ``True`` means "accepted by the bounded
+        queue" (a full queue sheds the frame and returns ``False``). Without
+        batching, the frame is written immediately and ``True`` means the
+        transport accepted it.
         """
         if self.state in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
             return False
 
+        batcher = self._outbound_batcher
+        if batcher is not None:
+            return batcher.enqueue(data)
+
+        return await self._write_frames([data])
+
+    async def _write_frames(self, frames: List[Dict[str, Any]]) -> bool:
+        """Write a batch of frames in order under one send-lock acquisition.
+
+        Each frame remains an independent WebSocket message; coalescing only
+        removes the per-frame lock/scheduler overhead. The writer is shared by
+        the direct path and the batch flush task so they cannot interleave.
+        """
+        if self.state in (ConnectionState.DISCONNECTING, ConnectionState.DISCONNECTED):
+            return False
         try:
             async with self._send_lock:
-                if self.compress and self._zlib_context:
-                    import json
+                for data in frames:
+                    if self.compress and self._zlib_context:
+                        import json
 
-                    json_bytes = json.dumps(data).encode("utf-8")
-                    compressed = self._zlib_context.compress(json_bytes)
-                    compressed += self._zlib_context.flush(zlib.Z_SYNC_FLUSH)
-                    await self.websocket.send_bytes(compressed)
-                else:
-                    await self.websocket.send_json(data)
+                        json_bytes = json.dumps(data).encode("utf-8")
+                        compressed = self._zlib_context.compress(json_bytes)
+                        compressed += self._zlib_context.flush(zlib.Z_SYNC_FLUSH)
+                        await self.websocket.send_bytes(compressed)
+                    else:
+                        await self.websocket.send_json(data)
             return True
         except Exception:
             # C6: a partially-failed compressed send leaves the shared zlib
@@ -152,6 +181,57 @@ class Connection:
             if self.compress:
                 self._zlib_context = zlib.compressobj()
             return False
+
+    def enable_batching(
+        self,
+        *,
+        queue_size: int = DEFAULT_QUEUE_SIZE,
+        flush_interval: float = DEFAULT_FLUSH_INTERVAL_S,
+        max_batch: int = DEFAULT_MAX_BATCH,
+    ) -> OutboundFrameBatcher:
+        """Opt this connection into coalesced outbound frame flushing.
+
+        Must be called from inside the serving event loop (it starts the flush
+        task). Idempotent: repeated calls return the existing batcher.
+        """
+        if self._outbound_batcher is None:
+            batcher = OutboundFrameBatcher(
+                self._write_frames,
+                queue_size=queue_size,
+                flush_interval=flush_interval,
+                max_batch=max_batch,
+            )
+            self._outbound_batcher = batcher
+            self._batcher_task = asyncio.create_task(batcher.run())
+        return self._outbound_batcher
+
+    async def flush_outbound(self) -> None:
+        """Flush every accepted-but-unwritten frame (e.g. before close)."""
+        batcher = self._outbound_batcher
+        if batcher is not None:
+            await batcher.drain()
+
+    async def stop_batching(self) -> None:
+        """Cancel the flush task after a final best-effort drain."""
+        batcher = self._outbound_batcher
+        task = self._batcher_task
+        self._batcher_task = None
+        self._outbound_batcher = None
+        # Drain explicitly: the task may not have started yet (cancel before
+        # its first tick would otherwise skip its own CancelledError drain).
+        if batcher is not None:
+            await batcher.drain()
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    @property
+    def outbound_batcher(self) -> Optional[OutboundFrameBatcher]:
+        """The active batcher (used by tests/observability), if any."""
+        return self._outbound_batcher
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         """Close the connection.

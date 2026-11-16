@@ -734,6 +734,10 @@ class GatewayDispatcher:
 
         async def _close_conn(conn):
             try:
+                # Drain any coalesced frames before the close handshake.
+                flush = getattr(conn, "flush_outbound", None)
+                if flush is not None:
+                    await flush()
                 conn.set_disconnecting()
                 await conn.websocket.close(code=close_code, reason=reason)
                 conn.set_disconnected()

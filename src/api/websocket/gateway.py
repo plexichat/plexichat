@@ -310,6 +310,9 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     )
     # Store is_selftest on connection for handlers to use
     connection.is_selftest = is_selftest
+    # Coalesce the burst of frames a live socket emits (HELLO, ACKs, event
+    # fan-out, resume replay) through one bounded queue + one flush task.
+    connection.enable_batching()
 
     session_manager.add_connection(connection)
     connection.state = ConnectionState.CONNECTED
@@ -351,6 +354,12 @@ async def gateway_endpoint(websocket: WebSocket) -> None:
     except Exception as e:
         logger.error(f"Gateway error for {connection_id}: {e}")
     finally:
+        # Flush accepted frames before the socket is torn down, then stop the
+        # flush task. This must happen before set_disconnected() so the writer
+        # still considers the connection writable.
+        await connection.flush_outbound()
+        await connection.stop_batching()
+
         # CORRECTNESS FIX: unregister THIS connection from the session manager
         # BEFORE evaluating remaining connections for the offline transition.
         # Previously removal happened after _dispatch_offline_presence, so two
@@ -590,6 +599,9 @@ async def _heartbeat_monitor(
 
 async def _close_connection(connection: Connection, close_code: int) -> None:
     """Close a connection with a specific code."""
+    # Drain queued frames before the close handshake; otherwise a batched
+    # frame could be attempted after the socket is already closed.
+    await connection.flush_outbound()
     connection.set_disconnecting()
     try:
         await connection.websocket.close(
