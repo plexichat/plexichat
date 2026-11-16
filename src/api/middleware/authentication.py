@@ -14,6 +14,16 @@ import src.api as api
 from src.core.auth.models import TokenInfo
 from src.core.auth.exceptions import AuthError
 
+from .request_context import (
+    bind_current_context,
+    cached_is_self_test,
+    get_request_user,
+    lookup_token_result,
+    remember_token_result,
+    reset_current_context,
+    set_request_user,
+)
+
 import utils.logger as logger
 
 security = HTTPBearer(auto_error=False)
@@ -41,6 +51,17 @@ class AuthenticationMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Bind this request's cache to the current task so dependencies (even
+        # helpers that only receive a token, such as media signing) reuse the
+        # token/IP checks resolved here. Reset in ``finally`` so a worker task
+        # never carries one request's facts into the next.
+        ctx_token = bind_current_context(scope)
+        try:
+            await self._process(scope, receive, send)
+        finally:
+            reset_current_context(ctx_token)
+
+    async def _process(self, scope: Scope, receive: Receive, send: Send) -> None:
         cookie_token: Optional[str] = None
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
@@ -58,7 +79,7 @@ class AuthenticationMiddleware:
             # Use centralized self-test validation which enforces:
             # 1. Request originates from localhost (127.0.0.1 or ::1)
             # 2. X-Plexichat-Internal-Secret matches via hmac.compare_digest
-            is_internal = api.is_self_test_request(request)
+            is_internal = cached_is_self_test(request)
 
             if is_internal:
                 scope["state"]["is_internal"] = True
@@ -87,13 +108,21 @@ class AuthenticationMiddleware:
 
                             from fastapi.concurrency import run_in_threadpool
 
+                            def _verify_token_cached():
+                                found, cached = lookup_token_result(token, obj=scope)
+                                if found:
+                                    return cached
+                                result = _verify_token(token, ip, ua)
+                                remember_token_result(token, result, obj=scope)
+                                return result
+
                             try:
                                 token_info = await run_in_threadpool(
-                                    _verify_token, token, ip, ua
+                                    _verify_token_cached
                                 )
 
                                 if token_info:
-                                    scope["state"]["user"] = token_info
+                                    set_request_user(scope, token_info)
                             except Exception as e:
                                 if isinstance(e, AuthError):
                                     logger.warning(
@@ -323,12 +352,24 @@ class AuthenticationMiddleware:
 
                             from fastapi.concurrency import run_in_threadpool
 
+                            def _verify_with_cache(token_str, client_ip, user_agent):
+                                found, cached = lookup_token_result(
+                                    token_str, obj=scope
+                                )
+                                if found:
+                                    return cached
+                                result = _verify_with_cleanup(
+                                    token_str, client_ip, user_agent
+                                )
+                                remember_token_result(token_str, result, obj=scope)
+                                return result
+
                             token_info = await run_in_threadpool(
-                                _verify_with_cleanup, token, ip, ua
+                                _verify_with_cache, token, ip, ua
                             )
 
                             if token_info:
-                                scope["state"]["user"] = token_info
+                                set_request_user(scope, token_info)
                                 logger.debug(
                                     f"Auth: Successfully authenticated user {token_info.user_id} for path {path}"
                                 )
@@ -435,11 +476,21 @@ class AuthenticationMiddleware:
                                         user_agent=user_agent,
                                     )
 
+                                def _verify_cookie_cached(token_str, client_ip, ua):
+                                    found, cached = lookup_token_result(
+                                        token_str, obj=scope
+                                    )
+                                    if found:
+                                        return cached
+                                    result = _verify_cookie(token_str, client_ip, ua)
+                                    remember_token_result(token_str, result, obj=scope)
+                                    return result
+
                                 token_info = await run_in_threadpool(
-                                    _verify_cookie, cookie_token, ip, ua
+                                    _verify_cookie_cached, cookie_token, ip, ua
                                 )
                                 if token_info:
-                                    scope["state"]["user"] = token_info
+                                    set_request_user(scope, token_info)
                                     scope["state"]["cookie_auth"] = True
                                     # Bearer fallback succeeded: a stale bearer no
                                     # longer shadows the valid cookie session (F1).
@@ -610,7 +661,7 @@ class AuthenticationMiddleware:
 async def get_current_user(request: Request) -> TokenInfo:
     """Dependency for mandatory authentication."""
 
-    user = request.scope.get("state", {}).get("user")
+    user = get_request_user(request)
 
     if not user:
         # Check if there was a system error (DB failed) vs auth error (invalid token)
@@ -706,9 +757,19 @@ async def get_current_user(request: Request) -> TokenInfo:
 
 
 async def get_token_info(token: str) -> Optional[TokenInfo]:
-    """Verify a raw token string and return token info when valid."""
+    """Verify a raw token string and return token info when valid.
+
+    When called during a request that already went through
+    ``AuthenticationMiddleware`` the token was verified there; reuse that
+    result instead of verifying the same credential a second time (signed
+    media URLs call this after the auth middleware has run).
+    """
     if not token:
         return None
+
+    found, cached = lookup_token_result(token)
+    if found:
+        return cached
 
     auth = api.get_auth()
     if not auth:
@@ -720,7 +781,9 @@ async def get_token_info(token: str) -> Optional[TokenInfo]:
         return auth.verify_token(token_str, None, None)
 
     try:
-        return await run_in_threadpool(_verify_token, token)
+        result = await run_in_threadpool(_verify_token, token)
+        remember_token_result(token, result)
+        return result
     except Exception as e:
         # Log the exception to avoid silently masking system errors as "invalid token"
         logger.warning(
@@ -732,4 +795,4 @@ async def get_token_info(token: str) -> Optional[TokenInfo]:
 async def get_optional_user(request: Request) -> Optional[TokenInfo]:
     """Dependency for optional authentication."""
 
-    return request.scope.get("state", {}).get("user")
+    return get_request_user(request)
