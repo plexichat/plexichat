@@ -2,8 +2,9 @@
 Search routes - Unified search and discovery endpoints.
 """
 
+import time
 from dataclasses import asdict
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 import src.api as api
@@ -26,6 +27,38 @@ router = APIRouter(prefix="/search", tags=["Search"])
 #: Opaque pagination cursors are short signed tokens; never accept an
 #: unbounded blob as a cursor key.
 MAX_SEARCH_CURSOR_LENGTH = 512
+
+# Autocomplete fires on every keystroke, so the same (user, prefix) is asked
+# repeatedly within seconds. Each miss runs a filter scan plus a GROUP BY over
+# the user's search history. Memoize recent answers for a short TTL to bound
+# that work; the cache is size-capped and keyed only on the request inputs.
+_SUGGESTION_CACHE_TTL_SECONDS = 2.0
+_SUGGESTION_CACHE_MAX_ENTRIES = 256
+_suggestion_cache: Dict[Tuple[int, str, int], Tuple[float, List[str]]] = {}
+
+
+def _clear_suggestion_cache() -> None:
+    """Drop memoized suggestions (tests / explicit invalidation)."""
+    _suggestion_cache.clear()
+
+
+def _suggestions(search_mod, user_id: int, q: str, limit: int) -> List[str]:
+    """Return suggestions, computing at most once per key per TTL window."""
+    key = (user_id, q, limit)
+    now = time.monotonic()
+    cached = _suggestion_cache.get(key)
+    if cached is not None and (now - cached[0]) < _SUGGESTION_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    suggestions = search_mod.get_search_suggestions(
+        user_id=user_id,
+        partial_query=q,
+        limit=limit,
+    )
+    if len(_suggestion_cache) >= _SUGGESTION_CACHE_MAX_ENTRIES:
+        _suggestion_cache.clear()
+    _suggestion_cache[key] = (now, suggestions)
+    return suggestions
 
 
 @router.get(
@@ -353,11 +386,7 @@ async def get_search_suggestions(
     if not search_mod:
         raise HTTPException(status_code=500, detail="Search module not available")
     try:
-        suggestions = search_mod.get_search_suggestions(
-            user_id=current_user.user_id,
-            partial_query=q,
-            limit=limit,
-        )
+        suggestions = _suggestions(search_mod, current_user.user_id, q, limit)
         return {"suggestions": suggestions}
     except SearchBackendError as e:
         logger.error(f"Search backend unavailable (suggestions): {e}")
