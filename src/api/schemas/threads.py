@@ -17,10 +17,13 @@ class ThreadCreateRequest(BaseModel):
     name: UIText = Field(..., min_length=1, max_length=100, description="Thread name")
     thread_type: str = Field(
         "public",
+        pattern="^(public|private|announcement)$",
         description="Thread type: public, private, or announcement",
     )
     auto_archive_duration: int = Field(
         1440,
+        ge=60,
+        le=10080,
         description="Auto-archive duration in minutes (60, 1440, 4320, 10080)",
     )
     parent_message_id: Optional[SnowflakeID] = Field(
@@ -37,7 +40,10 @@ class ThreadUpdateRequest(BaseModel):
         None, min_length=1, max_length=100, description="New thread name"
     )
     auto_archive_duration: Optional[int] = Field(
-        None, description="Auto-archive duration in minutes (60, 1440, 4320, 10080)"
+        None,
+        ge=60,
+        le=10080,
+        description="Auto-archive duration in minutes (60, 1440, 4320, 10080)",
     )
 
 
