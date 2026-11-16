@@ -6,9 +6,11 @@ entire migration process including discovery, validation, execution, and trackin
 """
 
 import logging
+import os
+import threading
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from src.core.database import cached
 
@@ -19,6 +21,30 @@ from .runner import MigrationRunner
 from .progress import ProgressBar
 
 logger = logging.getLogger(__name__)
+
+
+# Integrity checks re-read and SHA-256 every completed migration file on every
+# admin status poll. The verdict only depends on the recorded rows and the
+# migration files' stamps, so cache it process-wide keyed by exactly those
+# inputs. A file edit or a history change produces a new key automatically.
+_INTEGRITY_CACHE: Dict[Tuple, Dict[str, Any]] = {}
+_INTEGRITY_CACHE_LOCK = threading.Lock()
+_INTEGRITY_CACHE_MAX = 64
+
+
+def _clear_integrity_cache() -> None:
+    """Drop cached integrity verdicts (used by tests and tooling)."""
+    with _INTEGRITY_CACHE_LOCK:
+        _INTEGRITY_CACHE.clear()
+
+
+def _file_stamp(path: str) -> Tuple[int, int]:
+    """Cheap content-change fingerprint for a migration file."""
+    try:
+        stat = os.stat(path)
+        return (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return (-1, -1)
 
 
 def _migration_status_cache_key(manager: "MigrationManager") -> str:
@@ -544,6 +570,19 @@ class MigrationManager:
             logger.warning("Migrations directory not found for integrity check")
             return results
 
+        stamp = (
+            _migration_status_cache_key(self),
+            tuple(
+                (record.get("version"), record.get("status"), record.get("checksum"))
+                for record in records
+            ),
+            tuple((v, p, _file_stamp(p)) for v, p in migration_files),
+        )
+        with _INTEGRITY_CACHE_LOCK:
+            cached = _INTEGRITY_CACHE.get(stamp)
+            if cached is not None:
+                return cached
+
         migration_dict = {v: f for v, f in migration_files}
 
         for record in records:
@@ -581,6 +620,10 @@ class MigrationManager:
                     }
                 )
 
+        with _INTEGRITY_CACHE_LOCK:
+            if len(_INTEGRITY_CACHE) >= _INTEGRITY_CACHE_MAX:
+                _INTEGRITY_CACHE.clear()
+            _INTEGRITY_CACHE[stamp] = results
         return results
 
     def _execute_migration(
