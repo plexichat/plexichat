@@ -395,12 +395,14 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
 
         if isinstance(approval, dict):
             status = approval["status"]
+            current_approvals = approval["current_approvals"]
             required_approvals = approval["required_approvals"]
             requested_by = approval["requested_by"]
             raw_approved_by = approval["approved_by"]
             expires_at = approval.get("expires_at")
         else:
             status = approval[2]
+            current_approvals = approval[3]
             required_approvals = approval[4]
             requested_by = approval[1]
             raw_approved_by = approval[5]
@@ -497,19 +499,16 @@ async def approve_request(request: Request, approval_id: SnowflakeIDParam):
             },
         )
 
-    updated = db.fetch_one(
-        "SELECT status, current_approvals, required_approvals FROM admin_approvals"
-        " WHERE id = ?",
-        (approval_id,),
+    # The conditional UPDATE is the single source of truth for this vote:
+    # its CAS guard on ``approved_by`` guarantees no other vote landed between
+    # our read and the write, so the row we already fetched determines the new
+    # count and status. Re-reading them with a second SELECT was a redundant
+    # round trip. (These values only feed the advisory audit log/alert; the
+    # HTTP response is unchanged.)
+    new_current_approvals = current_approvals + 1
+    new_status = (
+        "approved" if new_current_approvals >= required_approvals else "pending"
     )
-    if isinstance(updated, dict):
-        new_status = updated["status"]
-        new_current_approvals = updated["current_approvals"]
-        required_approvals = updated["required_approvals"]
-    elif updated:
-        new_status = updated[0]
-        new_current_approvals = updated[1]
-        required_approvals = updated[2]
 
     from src.core.admin.permissions import log_admin_action
 
