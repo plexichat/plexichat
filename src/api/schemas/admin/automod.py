@@ -2,15 +2,39 @@
 Automod schemas.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 from ..policy_types import UIText
+
+#: Rule/action kinds the automod engine knows about (``RuleType`` / ``ActionType``).
+#: The route already converts through those enums; declaring the values here
+#: rejects an unknown kind at validation instead of deep in rule creation.
+RuleTypeValue = Literal[
+    "keyword",
+    "regex",
+    "mention_spam",
+    "message_spam",
+    "invite_links",
+    "mass_emoji",
+    "caps_percentage",
+    "repeated_chars",
+    "external_links",
+    "ai_moderation",
+]
+ActionTypeValue = Literal[
+    "delete_message",
+    "timeout_user",
+    "kick_user",
+    "ban_user",
+    "alert_moderators",
+    "log_only",
+]
 
 
 class AutomodRuleAction(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    action_type: str
+    action_type: ActionTypeValue
     duration_seconds: Optional[int] = None
     reason: Optional[str] = None
     notify_user: bool = True
@@ -41,7 +65,7 @@ class AutomodRuleCreateRequest(BaseModel):
 
     server_id: str
     name: UIText = Field(..., min_length=1, max_length=100)
-    rule_type: str
+    rule_type: RuleTypeValue
     config: Dict[str, Any]
     actions: List[AutomodRuleAction]
     exempt_roles: Optional[List[int]] = None
