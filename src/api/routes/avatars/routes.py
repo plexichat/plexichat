@@ -127,8 +127,8 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
             if result is not None:
                 # SECURITY: defense in depth - never serve a script-carrying
                 # SVG raw, even if a poisoned row bypasses the manager guard.
-                _payload, _ctype, _ = result
-                if not is_serve_safe(_ctype, _payload):
+                _payload, _ctype, _avatar_checksum = result
+                if not is_serve_safe(_ctype, _payload, _avatar_checksum):
                     logger.warning(
                         "Blocked unsafe stored avatar serve for user "
                         f"{uid} (type={_ctype})"
@@ -493,8 +493,8 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
             if result is not None:
                 # SECURITY: defense in depth - never serve a script-carrying
                 # SVG raw. Fall through to the safe generated default below.
-                _payload, _ctype, _ = result
-                if not is_serve_safe(_ctype, _payload):
+                _payload, _ctype, _avatar_checksum = result
+                if not is_serve_safe(_ctype, _payload, _avatar_checksum):
                     logger.warning(
                         f"Blocked unsafe stored server icon serve {sid} (type={_ctype})"
                     )

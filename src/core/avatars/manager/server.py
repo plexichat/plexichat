@@ -8,6 +8,7 @@ import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
 from .protocol import AvatarProtocol
+from .upload_guard import serve_payload_is_safe
 
 
 class AvatarServerMixin(AvatarProtocol):
@@ -190,10 +191,9 @@ class AvatarServerMixin(AvatarProtocol):
                 content_type, checksum = meta_data.decode().split("|")
                 # SECURITY (Agent7 L1): never hand out a stored SVG /
                 # script-carrying payload raw, even from cache (legacy rows
-                # written before the upload guard existed).
-                from .svg_guard import is_unsafe_serve_payload
-
-                if is_unsafe_serve_payload(content_type, bin_data):
+                # written before the upload guard existed). One shared
+                # single-pass classifier covers every guard.
+                if not serve_payload_is_safe(content_type, bin_data):
                     logger.warning(
                         f"Blocked unsafe cached server icon {server_id} "
                         f"(type={content_type})"
@@ -219,9 +219,7 @@ class AvatarServerMixin(AvatarProtocol):
         # SECURITY (Agent7 L1): a poisoned legacy row (SVG/script stored
         # before the upload guard) must never be served raw. Returning None
         # makes the route fall back to the generated default SVG.
-        from .svg_guard import is_unsafe_serve_payload as _is_unsafe
-
-        if _is_unsafe(row["content_type"], row["icon_data"]):
+        if not serve_payload_is_safe(row["content_type"], row["icon_data"]):
             logger.warning(
                 f"Blocked unsafe stored server icon {server_id} "
                 f"(type={row['content_type']})"

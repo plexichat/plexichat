@@ -10,7 +10,14 @@ which the route layer maps to a 400 without leaking exception text.
 from __future__ import annotations
 
 import importlib
+import threading
 from typing import Any, cast
+
+from src.core.avatars.manager.upload_guard import (
+    UploadContentError,
+    assert_safe_media_payload,
+    serve_payload_is_safe,
+)
 
 from .constants import (
     AVATAR_ALLOWED_TYPES_DEFAULT,
@@ -78,6 +85,15 @@ def validate_upload_magic_bytes(content_type: str | None, data: bytes) -> None:
     if unsafe:
         raise AvatarValidationError("File must be an image")
 
+    # DEEP: reject polyglots and active content anywhere in the payload (the
+    # legacy guard above only inspects the leading bytes). Plain malformed
+    # bytes still reach the manager so its Pillow validation can return the
+    # standard generic "Invalid image file" 400.
+    try:
+        assert_safe_media_payload(data)
+    except UploadContentError:
+        raise AvatarValidationError("File must be an image")
+
 
 def validate_upload_size(data: bytes) -> None:
     """Reject an upload that exceeds the configured maximum size."""
@@ -100,18 +116,45 @@ def validate_avatar_upload(content_type: str | None, data: bytes) -> None:
     validate_upload_size(data)
 
 
-def is_serve_safe(content_type: str | None, data: bytes) -> bool:
+# Serve-safety verdicts are keyed by the stored checksum + declared type, so
+# the (potentially multi-megabyte) payload is deep-inspected only once per
+# distinct avatar/icon rather than on every GET. The cache is bounded and
+# fail-closed: a missing entry is always computed, never assumed safe.
+_SERVE_VERDICT_CACHE_MAX = 4096
+_serve_verdict_cache: dict[tuple[str, str], bool] = {}
+_serve_verdict_lock = threading.Lock()
+
+
+def is_serve_safe(
+    content_type: str | None, data: bytes, checksum: str | None = None
+) -> bool:
     """True when a stored avatar/icon payload may be served raw.
 
     Fail closed: blocked content types and any payload carrying active markup
-    are refused; inspection failures default to unsafe.
+    are refused; inspection failures default to unsafe. When ``checksum`` is
+    supplied the verdict is memoised so repeated GETs of an unchanged avatar
+    skip the whole-payload scan.
     """
-    if _is_blocked_avatar_content_type(content_type):
-        return False
-    try:
-        return not _is_unsafe_serve_payload(content_type, data)
-    except Exception:
-        return False
+    cache_key: tuple[str, str] | None = None
+    if checksum:
+        cache_key = (checksum, str(content_type or "").split(";")[0].strip().lower())
+        with _serve_verdict_lock:
+            cached = _serve_verdict_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    verdict = serve_payload_is_safe(content_type, data)
+
+    if cache_key is not None:
+        with _serve_verdict_lock:
+            if (
+                _serve_verdict_cache.get(cache_key) is None
+                and len(_serve_verdict_cache) >= _SERVE_VERDICT_CACHE_MAX
+            ):
+                # Bounded FIFO eviction; checksum keys are small strings.
+                _serve_verdict_cache.pop(next(iter(_serve_verdict_cache)))
+            _serve_verdict_cache[cache_key] = verdict
+    return verdict
 
 
 def parse_server_id(server_id: str) -> int:
