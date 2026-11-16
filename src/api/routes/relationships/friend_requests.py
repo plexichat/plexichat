@@ -373,19 +373,19 @@ class FriendRequestMixin:
                 )
 
             try:
-                pending = relationships.get_pending_requests_incoming(
-                    current_user.user_id
+                # Resolve the request with a single indexed lookup on the
+                # (sender, recipient) pair. The previous approach fetched and
+                # converted every incoming request just to scan for a matching
+                # sender — unnecessary work on accounts with a full inbox, and
+                # all of it discarded except one id. The manager's accept call
+                # below still re-validates ownership and block state.
+                pending_row = relationships._get_pending_request(
+                    sender_id, current_user.user_id
                 )
-                request_id = None
-
-                for r in pending:
-                    if r.sender_id == sender_id:
-                        request_id = r.id
-                        break
-
-                if not request_id:
+                if not pending_row:
                     logger.warning(
-                        f"Friend request from user {sender_id} not found for user {current_user.user_id}. Pending senders: {[r.sender_id for r in pending]}"
+                        f"Friend request from user {sender_id} not found for user "
+                        f"{current_user.user_id}"
                     )
                     raise HTTPException(
                         status_code=404,
@@ -398,7 +398,7 @@ class FriendRequestMixin:
                     )
 
                 result = relationships.accept_friend_request(
-                    current_user.user_id, request_id
+                    current_user.user_id, pending_row["id"]
                 )
             except HTTPException:
                 raise
