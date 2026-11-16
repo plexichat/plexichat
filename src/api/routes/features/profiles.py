@@ -1,13 +1,18 @@
 from typing import Optional, List, Union
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeID, SnowflakeIDParam
 from src.core.database.cache.decorators import cached
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.security.hardening import (
+    HardeningViolation,
+    reject_control_characters,
+    require_http_url,
+)
 from .common import raise_bad_request
 import utils.logger as logger
 
@@ -55,6 +60,61 @@ _LIMITED_PROFILE_FIELDS = (
 _PRIVATE_PROFILE_FIELDS = ("user_id", "created_at")
 
 
+MAX_SOCIAL_LINKS = 10
+MAX_SOCIAL_LINK_FIELD = 200
+MAX_STATUS_EMOJI_CHARS = 8
+
+
+def _validate_emoji(value: str) -> str:
+    """A status emoji is a short, control-free unicode token, not HTML."""
+    candidate = value.strip()
+    if not candidate or len(candidate) > MAX_STATUS_EMOJI_CHARS:
+        raise ValueError("Invalid status emoji")
+    if any(char in "<>&\"'\\" for char in candidate):
+        raise ValueError("Invalid status emoji")
+    try:
+        reject_control_characters(candidate, "status_emoji")
+    except HardeningViolation as exc:
+        raise ValueError(str(exc)) from exc
+    return candidate
+
+
+def _validate_social_links(value) -> Optional[List[dict]]:
+    """Bound the social-link array and validate every embedded string."""
+    if value is None:
+        return value
+    if not isinstance(value, list) or len(value) > MAX_SOCIAL_LINKS:
+        raise ValueError("Too many social links")
+    checked: List[dict] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise ValueError("Invalid social link")
+        clean: dict = {}
+        for key, raw in entry.items():
+            if not isinstance(key, str) or len(key) > MAX_SOCIAL_LINK_FIELD:
+                raise ValueError("Invalid social link key")
+            if raw is None:
+                clean[key] = None
+                continue
+            if not isinstance(raw, str):
+                raise ValueError("Invalid social link value")
+            if len(raw) > MAX_SOCIAL_LINK_FIELD:
+                raise ValueError("Social link value is too long")
+            try:
+                reject_control_characters(raw, key)
+            except HardeningViolation as exc:
+                raise ValueError(str(exc)) from exc
+            if key in ("url", "href", "link") and raw:
+                try:
+                    clean[key] = require_http_url(raw, key)
+                except HardeningViolation as exc:
+                    raise ValueError(str(exc)) from exc
+            else:
+                clean[key] = raw
+        checked.append(clean)
+    return checked
+
+
 class ProfileUpdateRequest(BaseModel):
     bio: Optional[str] = Field(None, max_length=1000, description="Profile bio")
     status: Optional[str] = Field(
@@ -66,6 +126,26 @@ class ProfileUpdateRequest(BaseModel):
     timezone: Optional[str] = Field(None, max_length=64, description="Timezone")
     banner_url: Optional[str] = Field(None, description="Banner image URL")
     social_links: Optional[List[dict]] = Field(None, description="Social link objects")
+
+    @field_validator("bio", "status", "pronouns", "location", "timezone")
+    @classmethod
+    def _safe_profile_text(cls, value, info):
+        if value is None:
+            return value
+        try:
+            return reject_control_characters(value, info.field_name)
+        except HardeningViolation as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("status_emoji")
+    @classmethod
+    def _safe_emoji(cls, value, info):
+        return None if value is None else _validate_emoji(value)
+
+    @field_validator("social_links")
+    @classmethod
+    def _safe_links(cls, value, info):
+        return _validate_social_links(value)
 
 
 # --- OpenAPI documentation models for the projected response variants -----
