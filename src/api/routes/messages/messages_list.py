@@ -25,7 +25,7 @@ from src.core.messaging.exceptions import (
     ConversationNotFoundError,
     ConversationAccessDeniedError,
 )
-from .helpers import _message_to_response
+from .helpers import _message_to_response, require_snowflake
 
 router = APIRouter(tags=["Messages"])
 
@@ -80,20 +80,15 @@ async def get_channel_messages(
                 detail={"error": {"code": 400, "message": "Invalid channel ID"}},
             )
 
-        try:
-            before_id = int(before) if before else None
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid before ID"}},
-            )
-        try:
-            after_id = int(after) if after else None
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": {"code": 400, "message": "Invalid after ID"}},
-            )
+        # Pagination cursors are message snowflakes: range-check them like
+        # every other id rather than letting bare int() accept negatives or
+        # arbitrarily large values into the storage lookup.
+        before_id = (
+            require_snowflake(before, "before", "Invalid before ID") if before else None
+        )
+        after_id = (
+            require_snowflake(after, "after", "Invalid after ID") if after else None
+        )
 
         messages = None
 

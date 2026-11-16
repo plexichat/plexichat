@@ -1,11 +1,32 @@
 from typing import Optional, List, Dict, Any
 
+from fastapi import HTTPException
+
+from src.core.security.hardening import parse_id
+
 import src.api as api
 import utils.logger as logger
 from src.api.schemas.messages import MessageResponse, AttachmentResponse
 from src.api.schemas.polls import PollResponse, PollOptionResponse
 from src.api.schemas.common import SnowflakeID
 from src.core.polls import PollResultsVisibility
+
+
+def require_snowflake(value, field: str = "id", message: str = "Invalid ID") -> int:
+    """Parse an untrusted path/query id as a range-checked snowflake.
+
+    Bare ``int()`` accepted negatives and values past the 64-bit snowflake
+    ceiling, which then flowed into SQL lookups and offset arithmetic. Reuse
+    the shared ``parse_id`` rule and map its rejection to the route's 400
+    contract instead of leaking a 500.
+    """
+    try:
+        return parse_id(value, field)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": message}},
+        ) from exc
 
 
 def _poll_to_response(poll) -> PollResponse:

@@ -48,3 +48,22 @@ def test_pinned_message_list_is_capped():
     assert _has_constraint(get_pinned_messages, "limit", "Le")
     assert _constraint_value(get_pinned_messages, "limit", "Le") <= 200
     assert _has_constraint(get_pinned_messages, "limit", "Ge")
+
+
+def test_require_snowflake_accepts_real_ids():
+    from src.api.routes.messages.helpers import require_snowflake
+
+    assert require_snowflake("123456789") == 123456789
+    assert require_snowflake(42) == 42
+
+
+def test_require_snowflake_rejects_out_of_range_ids():
+    import pytest
+    from fastapi import HTTPException
+
+    from src.api.routes.messages.helpers import require_snowflake
+
+    for bad in ("0", "-1", "99000000000000000000", "abc", None):
+        with pytest.raises(HTTPException) as exc:
+            require_snowflake(bad, "message_id", "Invalid message ID")
+        assert exc.value.status_code == 400
