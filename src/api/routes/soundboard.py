@@ -8,6 +8,7 @@ bytes are validated and stored through the shared media pipeline.
 
 from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
 
+from src.core.avatars.manager.upload_guard import sanitize_upload_filename
 from src.core.security.hardening import HardeningViolation, bounded_int
 
 from typing import List, Optional
@@ -150,6 +151,38 @@ def _require_sound_in_server(sound, server_id: int):
     if sound is None or int(getattr(sound, "server_id", -1)) != int(server_id):
         raise HTTPException(status_code=404, detail="Sound not found")
     return sound
+
+
+def _cheap_require_sound_in_server(
+    soundboard, sound_id: int, server_id: int, user_id: int
+) -> None:
+    """Cross-server guard for PATCH without reloading the whole sound.
+
+    BEFORE: ``update_sound`` called ``get_sound`` for the guard and then
+    ``update_sound`` immediately called ``get_sound`` again (JOIN over usage
+    rows, membership probe, full Sound reconstruction). AFTER: read only the
+    owning ``server_id`` column for the guard. The manager re-fetches the
+    sound and re-validates membership/permissions itself, so validation is
+    unchanged. The full-object path is kept as a fallback when the direct
+    lookup is unavailable.
+    """
+    row = None
+    try:
+        db = getattr(soundboard._get_manager(), "_db", None)
+        if db is not None and hasattr(db, "fetch_one"):
+            row = db.fetch_one(
+                "SELECT server_id FROM soundboard_sounds WHERE id = ?", (sound_id,)
+            )
+    except Exception as e:
+        logger.debug(f"cheap sound server lookup failed: {e}")
+        row = None
+
+    if row is not None:
+        if int(row["server_id"]) != int(server_id):
+            raise HTTPException(status_code=404, detail="Sound not found")
+        return
+
+    _require_sound_in_server(soundboard.get_sound(sound_id, user_id), server_id)
 
 
 def _require_manage_permission(user_id: int, server_id: int) -> None:
@@ -327,7 +360,10 @@ async def upload_sound(
     if len(content) > _HTTP_UPLOAD_CEILING_BYTES:
         raise HTTPException(status_code=413, detail="Sound file is too large")
 
-    filename = getattr(file, "filename", None) or f"{name}.{file.content_type}"
+    # DEEP: never forward a client-supplied path to the storage layer.
+    filename = sanitize_upload_filename(
+        getattr(file, "filename", None), default=f"{name}.bin"
+    )
 
     try:
         sound = soundboard.create_sound_from_upload(
@@ -386,7 +422,7 @@ async def update_sound(
     soundboard = _get_soundboard()
     sid = _parse_server_id(server_id)
     sid_sound = _parse_int(sound_id, "sound ID")
-    _require_sound_in_server(soundboard.get_sound(sid_sound, current_user.user_id), sid)
+    _cheap_require_sound_in_server(soundboard, sid_sound, sid, current_user.user_id)
     try:
         sound = soundboard.update_sound(
             current_user.user_id,

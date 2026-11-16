@@ -20,10 +20,13 @@ side effects.
 from __future__ import annotations
 
 import json
+import os
 import re
+from pathlib import Path
 
 __all__ = [
     "UploadContentError",
+    "PathGuardError",
     "normalize_mime",
     "detect_containers",
     "contains_active_content",
@@ -33,12 +36,21 @@ __all__ = [
     "declared_type_matches_bytes",
     "verify_upload_content",
     "serve_payload_is_safe",
+    "sanitize_upload_filename",
+    "confined_path",
+    "header_safe_filename",
+    "content_disposition",
+    "extension_for_content_type",
     "BLOCKED_MIMES",
 ]
 
 
 class UploadContentError(ValueError):
     """Raised when uploaded bytes do not honestly match their declaration."""
+
+
+class PathGuardError(ValueError):
+    """Raised when a generated filename/path would escape its base directory."""
 
 
 # Content types that must never be accepted for, or served as, raster media.
@@ -347,3 +359,100 @@ def verify_upload_content(
     if not (markers & required):
         raise UploadContentError("Content does not match declared media type")
     return normalized
+
+
+# ---------------------------------------------------------------------------
+# Filename / path confinement and header-safe Content-Disposition
+# ---------------------------------------------------------------------------
+
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_HEADER_UNSAFE_RE = re.compile(r"[\x00-\x1f\x7f\";\\]")
+
+_MIME_EXTENSIONS: dict[str, str] = {
+    "image/png": "png",
+    "image/apng": "png",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/wave": "wav",
+    "audio/webm": "webm",
+    "application/json": "json",
+}
+
+
+def sanitize_upload_filename(
+    value: object | None, *, default: str = "file", max_length: int = 128
+) -> str:
+    """Return a single safe filename component derived from ``value``.
+
+    Directory separators (both POSIX and Windows), null bytes, traversal
+    markers and header metacharacters are removed; the result is a plain
+    ASCII basename. Never returns an empty string.
+    """
+    text = str(value or "")
+    # Keep only the final component after either separator style.
+    text = text.replace("\\", "/").rsplit("/", 1)[-1]
+    if ".." in text:
+        text = text.replace("..", "_")
+    text = _SAFE_FILENAME_RE.sub("_", text)
+    text = _HEADER_UNSAFE_RE.sub("_", text)
+    text = text.strip("._") or default
+    if len(text) > max_length:
+        stem, ext = os.path.splitext(text)
+        if ext and len(ext) <= 8:
+            text = stem[: max_length - len(ext)] + ext
+        else:
+            text = text[:max_length]
+    return text or default
+
+
+def confined_path(base_dir: object, *parts: object) -> Path:
+    """Build a path from safe components and prove it stays under ``base_dir``.
+
+    ``resolve()`` collapses ``..`` and follows symlinks, so the final
+    containment check catches both lexical traversal and a symlink planted
+    inside the base directory.
+    """
+    base = Path(str(base_dir)).resolve()
+    for part in parts:
+        raw = str(part or "")
+        if not raw or ".." in raw or "/" in raw.replace("\\", "/") or "\x00" in raw:
+            raise PathGuardError("Unsafe path component")
+    candidate = base.joinpath(
+        *(sanitize_upload_filename(part, default="file") for part in parts)
+    ).resolve()
+    try:
+        inside = candidate.is_relative_to(base)
+    except AttributeError:  # pragma: no cover - Python < 3.9 fallback
+        inside = os.path.commonpath([str(base), str(candidate)]) == str(base)
+    if candidate == base or not inside:
+        raise PathGuardError("Generated path escapes its base directory")
+    return candidate
+
+
+def header_safe_filename(value: object | None, *, default: str = "download") -> str:
+    """Return a filename safe to place inside an HTTP header value."""
+    name = sanitize_upload_filename(value, default=default, max_length=120)
+    return _HEADER_UNSAFE_RE.sub("_", name) or default
+
+
+def content_disposition(
+    filename: object | None, *, disposition: str = "attachment"
+) -> str:
+    """Build a header-injection-proof ``Content-Disposition`` value."""
+    kind = disposition if disposition in ("inline", "attachment") else "attachment"
+    return f'{kind}; filename="{header_safe_filename(filename)}"'
+
+
+def extension_for_content_type(
+    content_type: str | None, *, default: str = "bin"
+) -> str:
+    """Map a media type to a confined, lowercase file extension."""
+    return _MIME_EXTENSIONS.get(normalize_mime(content_type), default)

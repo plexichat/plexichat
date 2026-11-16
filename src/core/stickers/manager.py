@@ -10,6 +10,7 @@ import utils.config as config
 import utils.logger as logger
 from src.core.avatars.manager.upload_guard import (
     UploadContentError,
+    sanitize_upload_filename,
     verify_upload_content,
 )
 from src.core.base import timestamp_ms, generate_id
@@ -191,7 +192,9 @@ class StickerManager(StickerUsageDiscoveryMixin):
                 "Missing permission to manage server", "server.manage"
             )
 
-        filename = f"sticker_{name}.{content_type.split('/')[-1]}"
+        # DEEP: confine the generated filename to a single safe component.
+        ext = sanitize_upload_filename(content_type.split("/")[-1], default="bin")
+        filename = f"sticker_{sanitize_upload_filename(name, default='sticker')}.{ext}"
 
         # Upload
         result = self._media.upload_file(user_id, image_data, filename, content_type)
@@ -404,7 +407,11 @@ class StickerManager(StickerUsageDiscoveryMixin):
         """
         if not url or not self._media:
             return
-        filename = url.rsplit("/", 1)[-1] if "/" in url else url
+        # DEEP: resolve only a single safe filename component; a stored URL
+        # must never be able to drive a path outside the media namespace.
+        filename = sanitize_upload_filename(
+            url.rsplit("/", 1)[-1] if "/" in url else url, default=""
+        )
         if not filename:
             return
         try:

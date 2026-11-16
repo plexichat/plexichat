@@ -15,6 +15,11 @@ module.
 from __future__ import annotations
 from src.api.request_guards import MAX_AVATAR_UPLOAD, read_upload_capped
 
+from src.core.avatars.manager.upload_guard import (
+    content_disposition,
+    extension_for_content_type,
+)
+
 import hashlib
 from typing import Optional
 
@@ -179,6 +184,9 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                         "Access-Control-Allow-Origin": "*",
                         "Cross-Origin-Resource-Policy": "cross-origin",
                         "X-Content-Type-Options": "nosniff",
+                        "Content-Disposition": content_disposition(
+                            "avatar.svg", disposition="inline"
+                        ),
                     },
                 )
         except HTTPException:
@@ -209,6 +217,10 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Cross-Origin-Resource-Policy": "cross-origin",
                 "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": content_disposition(
+                    f"avatar.{extension_for_content_type(content_type)}",
+                    disposition="inline",
+                ),
             },
         )
     except HTTPException:
@@ -544,6 +556,9 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
                             "Access-Control-Allow-Origin": "*",
                             "Cross-Origin-Resource-Policy": "cross-origin",
                             "X-Content-Type-Options": "nosniff",
+                            "Content-Disposition": content_disposition(
+                                "icon.svg", disposition="inline"
+                            ),
                         },
                     )
                 except Exception as e:
@@ -579,6 +594,10 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
                 "Access-Control-Allow-Methods": "GET, OPTIONS",
                 "Cross-Origin-Resource-Policy": "cross-origin",
                 "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": content_disposition(
+                    f"icon.{extension_for_content_type(content_type)}",
+                    disposition="inline",
+                ),
             },
         )
     except HTTPException:

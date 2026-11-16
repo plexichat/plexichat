@@ -1,3 +1,4 @@
+from src.core.avatars.manager.upload_guard import sanitize_upload_filename
 from src.core.security.hardening import parse_id
 from fastapi import HTTPException, UploadFile, Depends
 from starlette.concurrency import run_in_threadpool
@@ -202,7 +203,9 @@ class ChannelAttachmentsMixin(ChannelBase):
                         return media.upload_stream(
                             user_id=current_user.user_id,
                             stream=stream,
-                            filename=file.filename or "attachment",
+                            filename=sanitize_upload_filename(
+                                file.filename, default="attachment"
+                            ),
                             content_type=file.content_type
                             or "application/octet-stream",
                             size=file.size or 0,

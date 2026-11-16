@@ -14,6 +14,7 @@ import utils.logger as logger
 from src.core.avatars.manager.upload_guard import (
     UploadContentError,
     normalize_mime,
+    sanitize_upload_filename,
     verify_upload_content,
 )
 from src.core.base import BaseManager
@@ -316,7 +317,12 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             if self._normalize_audio_format(ext_suffix) == detected
             else detected
         )
-        upload_filename = f"{name}.{safe_ext}"
+        # DEEP: confine the generated filename to a single safe component so a
+        # crafted name/filename can never influence a storage path.
+        upload_filename = (
+            f"{sanitize_upload_filename(name, default='sound')}."
+            f"{sanitize_upload_filename(safe_ext, default=detected)}"
+        )
         upload_ct = "audio/mpeg" if detected == "mp3" else f"audio/{detected}"
 
         result = media.upload_file(user_id, file_data, upload_filename, upload_ct)
