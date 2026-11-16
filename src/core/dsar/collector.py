@@ -132,6 +132,11 @@ class DataCollector:
                 "warnings": warnings,
             }
 
+        # SECURITY: never hand back a payload that carries another data
+        # subject's rows. A collector that lost its ownership predicate is a
+        # cross-user PII breach; fail before any bytes are serialized.
+        verify_export_scope(result, user_id)
+
         return result
 
     def count_records(self, user_id: int) -> Dict[str, int]:
