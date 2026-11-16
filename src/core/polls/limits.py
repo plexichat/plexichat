@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from src.core.security.hardening import HardeningViolation, bounded_int
+from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
 
 # Outer envelope. These are not configurable: ``bound_count`` clamps any
 # configured value into these ranges.
@@ -103,6 +103,39 @@ def resolve_field_limits(config: Mapping[str, Any]) -> PollFieldLimits:
     )
 
 
+# A single vote may never select more options than the poll can carry. ten is
+# the envelope ceiling for ``max_options``, so it is also the bulk ceiling.
+MAX_VOTE_SELECTIONS = MAX_OPTIONS
+
+
+def validate_option_ids(option_ids: Any) -> list[int]:
+    """Parse, range-check, de-duplicate and cap a bulk vote selection.
+
+    ``int(x)`` accepted negatives, oversized snowflakes and arbitrary-length
+    lists; all three flowed into placeholder construction and INSERT loops.
+    Every id now goes through the shared snowflake parser, selections longer
+    than the envelope are refused, and duplicate ids collapse once (preserving
+    the caller's order) so the ``IN (...)`` placeholder count stays bounded.
+    """
+    from .exceptions import InvalidPollOptionError
+
+    if not isinstance(option_ids, (list, tuple)) or not option_ids:
+        raise InvalidPollOptionError("At least one option must be selected")
+    if len(option_ids) > MAX_VOTE_SELECTIONS:
+        raise InvalidPollOptionError(
+            f"At most {MAX_VOTE_SELECTIONS} options may be selected"
+        )
+    parsed: list[int] = []
+    for raw in option_ids:
+        if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+            raise InvalidPollOptionError(f"Invalid option id: {raw!r}")
+        try:
+            parsed.append(parse_id(raw, "option_id"))
+        except HardeningViolation as exc:
+            raise InvalidPollOptionError(f"Invalid option id: {exc}") from exc
+    return list(dict.fromkeys(parsed))
+
+
 def validate_question_text(value: Any, config: Mapping[str, Any]) -> str:
     """Strip and length-check a question against envelope-bounded config.
 
@@ -155,11 +188,13 @@ def bound_option_count(options: Any, config: Mapping[str, Any]) -> int:
 __all__ = [
     "MAX_OPTIONS",
     "MAX_OPTION_LENGTH",
+    "MAX_VOTE_SELECTIONS",
     "MAX_QUESTION_LENGTH",
     "MIN_OPTIONS",
     "PollFieldLimits",
     "bound_count",
     "bound_option_count",
+    "validate_option_ids",
     "resolve_field_limits",
     "validate_option_text",
     "validate_question_text",

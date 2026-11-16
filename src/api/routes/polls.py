@@ -4,6 +4,9 @@ Poll routes - Message poll endpoints.
 
 from fastapi import APIRouter, HTTPException, Depends
 
+from src.core.polls.limits import validate_option_ids
+from src.core.security.hardening import HardeningViolation, parse_id
+
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -31,6 +34,22 @@ from src.core.polls import (
     MessageNotFoundError,
     PollAlreadyExistsError,
 )
+
+
+def _invalid_poll_id() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": "Invalid poll ID"}},
+    )
+
+
+def _parse_poll_id(raw: str) -> int:
+    """Parse a poll id from the path, refusing negatives/oversized values."""
+    try:
+        return parse_id(raw, "poll_id")
+    except HardeningViolation as exc:
+        raise _invalid_poll_id() from exc
+
 
 router = APIRouter(prefix="/polls", tags=["Polls"])
 
@@ -116,7 +135,7 @@ async def create_poll(
     try:
         poll = polls_module.create_poll(
             user_id=current_user.user_id,
-            message_id=int(body.message_id),
+            message_id=_parse_poll_id(body.message_id),
             question=body.question,
             options=list(body.options),
             duration_hours=body.duration_hours,
@@ -194,13 +213,7 @@ async def get_poll(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         poll = polls_module.get_poll(pid, current_user.user_id)
@@ -246,13 +259,7 @@ async def get_poll_results(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         results = polls_module.get_results(pid, current_user.user_id)
@@ -303,13 +310,7 @@ async def get_poll_voters(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         voters = polls_module.get_voters(pid, current_user.user_id)
@@ -359,19 +360,13 @@ async def vote_on_poll(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         results = polls_module.vote(
             user_id=current_user.user_id,
             poll_id=pid,
-            option_ids=[int(x) for x in body.option_ids],
+            option_ids=validate_option_ids(body.option_ids),
         )
         return _results_to_response(results)
     except (
@@ -430,19 +425,13 @@ async def change_vote_on_poll(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         results = polls_module.change_vote(
             user_id=current_user.user_id,
             poll_id=pid,
-            option_ids=[int(x) for x in body.option_ids],
+            option_ids=validate_option_ids(body.option_ids),
         )
         return _results_to_response(results)
     except (
@@ -495,13 +484,7 @@ async def close_poll(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         poll = polls_module.close_poll(current_user.user_id, pid)
@@ -556,13 +539,7 @@ async def delete_poll(
             status_code=500,
             detail={"error": {"code": 500, "message": "Polls module not available"}},
         )
-    try:
-        pid = int(poll_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid poll ID"}},
-        )
+    pid = _parse_poll_id(poll_id)
 
     try:
         polls_module.delete_poll(current_user.user_id, pid)

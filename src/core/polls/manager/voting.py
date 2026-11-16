@@ -7,13 +7,13 @@ from ...base import SnowflakeID
 
 from ..exceptions import (
     AlreadyVotedError,
-    InvalidPollOptionError,
     MultipleVoteNotAllowedError,
     PollEndedError,
     PollNotFoundError,
     PollOptionNotFoundError,
 )
 from ..models import PollOption, PollResults
+from ..limits import validate_option_ids
 from .base import PollManagerBase, _is_unique_violation
 
 
@@ -41,8 +41,7 @@ class VotingMixin(PollManagerBase):
             AlreadyVotedError: User already voted
             MultipleVoteNotAllowedError: Multiple votes not allowed
         """
-        if not option_ids:
-            raise InvalidPollOptionError("At least one option must be selected")
+        unique_option_ids = validate_option_ids(option_ids)
 
         poll = self.get_poll(poll_id, user_id)
         if not poll:
@@ -53,8 +52,8 @@ class VotingMixin(PollManagerBase):
                 self._end_poll(poll_id)
             raise PollEndedError("Poll has ended")
 
-        # Handle duplicates and limits
-        unique_option_ids = list(set(option_ids))
+        # Duplicates, id format and the bulk cap were already validated by
+        # ``validate_option_ids`` before any database work.
         if not poll.allow_multiple_choice and len(unique_option_ids) > 1:
             raise MultipleVoteNotAllowedError(
                 "This poll does not allow multiple choice voting"
@@ -134,8 +133,7 @@ class VotingMixin(PollManagerBase):
             PollOptionNotFoundError: Option not valid for this poll
             MultipleVoteNotAllowedError: Multiple options on single-choice poll
         """
-        if not option_ids:
-            raise InvalidPollOptionError("At least one option must be selected")
+        unique_option_ids = validate_option_ids(option_ids)
 
         poll = self.get_poll(poll_id, user_id)
         if not poll:
@@ -146,7 +144,7 @@ class VotingMixin(PollManagerBase):
                 self._end_poll(poll_id)
             raise PollEndedError("Poll has ended")
 
-        unique_option_ids = list(set(option_ids))
+        # Validated once up-front by ``validate_option_ids``.
         if not poll.allow_multiple_choice and len(unique_option_ids) > 1:
             raise MultipleVoteNotAllowedError(
                 "This poll does not allow multiple choice voting"
