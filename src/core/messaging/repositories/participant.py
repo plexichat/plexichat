@@ -8,6 +8,10 @@ from ..models import Participant, ParticipantRole
 from .base import BaseRepository
 from src.core.base import SnowflakeID
 
+# Bound bulk read-position writes so one request cannot create a giant
+# parameter list or hold an unbounded in-memory batch.
+_MAX_BULK_CHUNK = 500
+
 
 class ParticipantRepository(BaseRepository[Participant]):
     """Repository for participant data access."""
@@ -203,6 +207,46 @@ class ParticipantRepository(BaseRepository[Participant]):
             (last_read_message_id, last_read_at, conversation_id, user_id),
             auto_commit=auto_commit,
         )
+
+    def get_last_read_positions(
+        self, user_id: SnowflakeID, conversation_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, SnowflakeID]:
+        """Fetch a user's last-read position for many conversations at once."""
+        result: Dict[SnowflakeID, SnowflakeID] = {}
+        for start in range(0, len(conversation_ids), _MAX_BULK_CHUNK):
+            chunk = conversation_ids[start : start + _MAX_BULK_CHUNK]
+            in_clause, params = self._build_in_clause(chunk)
+            rows = self._fetch_all(
+                "SELECT conversation_id, last_read_message_id FROM msg_participants "
+                f"WHERE user_id = ? AND conversation_id IN {in_clause}",
+                (user_id,) + params,
+            )
+            for row in rows:
+                result[row["conversation_id"]] = row["last_read_message_id"]
+        return result
+
+    def update_last_read_bulk(
+        self,
+        updates: List[tuple],
+        auto_commit: bool = True,
+    ) -> None:
+        """Apply many ``(conversation_id, user_id, last_read_id, at)`` updates.
+
+        Bounded chunks are sent through a single ``executemany`` per chunk,
+        collapsing N per-channel UPDATE round trips into one.
+        """
+        if not updates:
+            return
+        query = (
+            "UPDATE msg_participants SET last_read_message_id = ?, last_read_at = ? "
+            "WHERE conversation_id = ? AND user_id = ?"
+        )
+        for start in range(0, len(updates), _MAX_BULK_CHUNK):
+            chunk = updates[start : start + _MAX_BULK_CHUNK]
+            data = [
+                (last_read_id, at, conv, uid) for conv, uid, last_read_id, at in chunk
+            ]
+            self._db.execute_many(query, data, auto_commit=auto_commit)
 
     def find_next_owner(
         self, conversation_id: SnowflakeID, exclude_user_id: SnowflakeID

@@ -9,6 +9,18 @@ from .base import BaseRepository
 from src.core.base import SnowflakeID
 from src.utils.encryption import generate_snowflake_id
 
+# BEFORE: a bulk ack with 100 channels issued one INSERT executemany per
+# channel and an unbounded parameter list per call. AFTER: every batched
+# status write is split into bounded chunks so a single request can never
+# blow the SQLite/Postgres parameter ceiling or spike memory.
+_MAX_BULK_CHUNK = 500
+
+
+def _iter_chunks(items: List[Any], size: int = _MAX_BULK_CHUNK):
+    """Yield bounded slices of ``items``."""
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
 
 class MessageStatusRepository(BaseRepository[MessageStatus]):
     """Repository for message status data access."""
@@ -126,22 +138,23 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                 )
             )
 
-        self._db.execute_many(
-            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT (message_id, user_id) 
-               DO UPDATE SET 
-                   status = CASE 
-                       WHEN msg_message_status.status != 'read' THEN EXCLUDED.status 
-                       ELSE msg_message_status.status 
-                   END,
-                   timestamp = CASE 
-                       WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp 
-                       ELSE msg_message_status.timestamp 
-                   END""",
-            data,
-            auto_commit=auto_commit,
-        )
+        for chunk in _iter_chunks(data):
+            self._db.execute_many(
+                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (message_id, user_id)
+                   DO UPDATE SET
+                       status = CASE
+                           WHEN msg_message_status.status != 'read' THEN EXCLUDED.status
+                           ELSE msg_message_status.status
+                       END,
+                       timestamp = CASE
+                           WHEN msg_message_status.status != 'read' THEN EXCLUDED.timestamp
+                           ELSE msg_message_status.timestamp
+                       END""",
+                chunk,
+                auto_commit=auto_commit,
+            )
 
         return len(message_ids)
 
@@ -186,17 +199,76 @@ class MessageStatusRepository(BaseRepository[MessageStatus]):
                 )
             )
 
-        self._db.execute_many(
-            """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT (message_id, user_id) 
-               DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
-               WHERE msg_message_status.status != 'read'""",
-            data,
-            auto_commit=auto_commit,
-        )
+        for chunk in _iter_chunks(data):
+            self._db.execute_many(
+                """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT (message_id, user_id)
+                   DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
+                   WHERE msg_message_status.status != 'read'""",
+                chunk,
+                auto_commit=auto_commit,
+            )
 
         return len(message_ids)
+
+    def batch_mark_read_bulk(
+        self,
+        user_id: SnowflakeID,
+        ranges: List[tuple],
+        timestamp: int,
+        auto_commit: bool = True,
+    ) -> Dict[SnowflakeID, int]:
+        """Mark read across several conversations in a bounded number of round trips.
+
+        ``ranges`` holds ``(conversation_id, up_to_id, start_from_id)`` triples.
+        One CTE query resolves every message to mark across all channels and a
+        single chunked ``executemany`` performs all the writes, instead of the
+        per-channel SELECT + INSERT pair the old bulk route triggered.
+        """
+        counts: Dict[SnowflakeID, int] = {conv: 0 for conv, _, _ in ranges}
+        if not ranges:
+            return counts
+
+        for chunk in _iter_chunks(ranges, size=_MAX_BULK_CHUNK // 3):
+            values = ",".join("(?, ?, ?)" for _ in chunk)
+            rows = self._fetch_all(
+                f"""WITH receipt_ranges(conversation_id, up_to_id, start_from_id) AS (
+                        VALUES {values}
+                    )
+                    SELECT m.conversation_id, m.id
+                    FROM receipt_ranges r
+                    JOIN msg_messages m
+                      ON m.conversation_id = r.conversation_id
+                     AND (r.up_to_id IS NULL OR m.id <= r.up_to_id)
+                     AND (r.start_from_id IS NULL OR m.id > r.start_from_id)
+                    WHERE m.author_id != ? AND m.deleted = 0""",
+                tuple(
+                    param
+                    for conv, up_to, start in chunk
+                    for param in (conv, up_to, start)
+                )
+                + (user_id,),
+            )
+            if not rows:
+                continue
+            data = [
+                (generate_snowflake_id(), row["id"], user_id, "read", timestamp)
+                for row in rows
+            ]
+            for write_chunk in _iter_chunks(data):
+                self._db.execute_many(
+                    """INSERT INTO msg_message_status (id, message_id, user_id, status, timestamp)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT (message_id, user_id)
+                       DO UPDATE SET status = EXCLUDED.status, timestamp = EXCLUDED.timestamp
+                       WHERE msg_message_status.status != 'read'""",
+                    write_chunk,
+                    auto_commit=auto_commit,
+                )
+            for row in rows:
+                counts[row["conversation_id"]] += 1
+        return counts
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: SnowflakeID

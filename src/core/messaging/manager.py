@@ -5,7 +5,7 @@ This is the refactored manager that coordinates specialized services
 while maintaining backward compatibility with the existing API.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import utils.config as config
 import utils.logger as logger
@@ -677,6 +677,14 @@ class MessagingManager(BaseManager):
         return self._message_status_svc.mark_read(
             user_id, conversation_id, up_to_message_id
         )
+
+    def mark_read_bulk(
+        self,
+        user_id: SnowflakeID,
+        updates: List[Tuple[SnowflakeID, Optional[SnowflakeID]]],
+    ) -> Dict[SnowflakeID, int]:
+        """Mark messages read across many channels in bounded round trips."""
+        return self._message_status_svc.mark_read_bulk(user_id, updates)
 
     def get_last_read(
         self, user_id: SnowflakeID, conversation_id: SnowflakeID

@@ -495,6 +495,30 @@ class MessageRepository(BaseRepository[Message]):
         )
         return row["max_id"] if row else None
 
+    def get_max_ids_in_conversations(
+        self, conversation_ids: List[SnowflakeID]
+    ) -> Dict[SnowflakeID, SnowflakeID]:
+        """Resolve the latest message id for many conversations in one query.
+
+        Used by the bulk read path so a 100-channel ack does not issue 100
+        individual MAX(id) queries. Results are chunked to bound parameters.
+        """
+        result: Dict[SnowflakeID, SnowflakeID] = {}
+        chunk_size = 500
+        for start in range(0, len(conversation_ids), chunk_size):
+            chunk = conversation_ids[start : start + chunk_size]
+            in_clause, params = self._build_in_clause(chunk)
+            rows = self._fetch_all(
+                "SELECT conversation_id, MAX(id) AS max_id FROM msg_messages "
+                f"WHERE conversation_id IN {in_clause} AND deleted = 0 "
+                "GROUP BY conversation_id",
+                params,
+            )
+            for row in rows:
+                if row["max_id"] is not None:
+                    result[row["conversation_id"]] = row["max_id"]
+        return result
+
     def get_previous_id_in_conversation(
         self, conversation_id: SnowflakeID, message_id: SnowflakeID
     ) -> Optional[SnowflakeID]:

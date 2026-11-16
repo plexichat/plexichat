@@ -491,16 +491,24 @@ async def acknowledge_messages_bulk(
             )
             parsed_ids[cid] = mid
 
-        for cid, mid in parsed_ids.items():
-            try:
-                # ``mark_read`` is synchronous; keep it off the event loop so
-                # one request cannot block the whole worker.
-                marked = await run_in_threadpool(
-                    msg_manager.mark_read, current_user.user_id, cid, mid
-                )
-                if not marked:
-                    continue
+        # BEFORE: one mark_read() per channel — each ran its own participant,
+        # MAX(id), settings, SELECT and executemany round trips. AFTER: a
+        # single bulk call resolves and writes all channels with bounded
+        # chunking; the loop below only handles best-effort side effects.
+        try:
+            marked_by_channel = await run_in_threadpool(
+                msg_manager.mark_read_bulk,
+                current_user.user_id,
+                list(parsed_ids.items()),
+            )
+        except Exception as e:
+            logger.error(f"Bulk ACK: batched mark_read failed: {e}", exc_info=True)
+            raise
 
+        for cid, mid in parsed_ids.items():
+            if not marked_by_channel.get(cid):
+                continue
+            try:
                 # Mirror the single-channel ack: clear the channel's
                 # notifications and broadcast MESSAGE_ACK so other
                 # participants see live read checkmarks (B4).
@@ -522,7 +530,7 @@ async def acknowledge_messages_bulk(
                     )
                 )
             except Exception as e:
-                logger.warning(f"Bulk ACK: Failed for channel {channel_id}: {e}")
+                logger.warning(f"Bulk ACK: Failed for channel {cid}: {e}")
 
         return SuccessResponse(success=True, message=None)
     except HTTPException:

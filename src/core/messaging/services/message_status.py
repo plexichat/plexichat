@@ -2,7 +2,7 @@
 Message status service - Business logic for delivery/read status.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.database import cached
 from ..models import MessageStatus, MessageStatusType
@@ -214,6 +214,115 @@ class MessageStatusService(BaseService):
         self._invalidate_unread_counts(user_id)
 
         return count
+
+    def _invalidate_bulk_read_cache(
+        self, user_id: SnowflakeID, conversation_ids: List[SnowflakeID]
+    ) -> None:
+        """Invalidate read-state caches once for a whole bulk ack."""
+        try:
+            from src.core.database import invalidate_pattern
+
+            invalidate_pattern("msg_reader_ids:*")
+            invalidate_pattern("msg_status_batch:*")
+            for cid in conversation_ids:
+                invalidate_pattern(f"msg:obj:*:{cid}:*")
+                invalidate_pattern(f"msg:recent:{cid}")
+                self._message_repo.invalidate_conversation_cache(cid)
+        except Exception as cache_error:
+            import utils.logger as logger
+
+            logger.debug(f"bulk conversation cache invalidate failed: {cache_error}")
+        self._invalidate_unread_counts(user_id)
+
+    def mark_read_bulk(
+        self,
+        user_id: SnowflakeID,
+        updates: List[Tuple[SnowflakeID, Optional[SnowflakeID]]],
+    ) -> Dict[SnowflakeID, int]:
+        """Mark messages read across many channels with bounded round trips.
+
+        BEFORE: the bulk-ack route called ``mark_read`` once per channel, and
+        each call ran its own participant lookup, MAX(id), settings/channel
+        probes, message SELECT and executemany — up to ~100x the work.
+
+        AFTER: participation, last-read positions and per-channel MAX(id) are
+        each resolved with one chunked query, all status rows are written by
+        one chunked executemany, and all participant positions by one more.
+        Per-channel read-receipt settings and cache invalidation are preserved.
+        """
+        by_conv: Dict[Any, Optional[SnowflakeID]] = {}
+        for conversation_id, up_to in updates:
+            if conversation_id is None:
+                continue
+            try:
+                key: Any = int(conversation_id)
+            except (TypeError, ValueError):
+                key = conversation_id
+            by_conv[key] = up_to
+        if not by_conv:
+            return {}
+
+        eligible = [
+            conv
+            for conv in by_conv
+            if self._participant_svc.is_participant(conv, user_id)
+        ]
+        if not eligible:
+            return {}
+
+        last_read_map = self._participant_repo.get_last_read_positions(
+            user_id, eligible
+        )
+        max_id_map = self._message_repo.get_max_ids_in_conversations(eligible)
+
+        targets: Dict[Any, Tuple[SnowflakeID, SnowflakeID]] = {}
+        for conv in eligible:
+            target = by_conv[conv]
+            if target is None:
+                target = max_id_map.get(conv)
+            if target is None:
+                continue
+            try:
+                target_value = int(target)
+                last_value = int(last_read_map.get(conv) or 0)
+            except (TypeError, ValueError):
+                continue
+            if target_value <= last_value:
+                continue
+            targets[conv] = (target, last_value)
+
+        counts: Dict[SnowflakeID, int] = {conv: 0 for conv in by_conv}
+        if not targets:
+            return counts
+
+        now = self._get_timestamp()
+        user_settings = self._user_settings_svc.get_message_settings(user_id)
+        servers_mod = self._get_servers_module()
+
+        ranges = []
+        for conv, (target, last_value) in targets.items():
+            receipts_enabled = True
+            if servers_mod:
+                try:
+                    channel = servers_mod.get_channel(conv, user_id)
+                    if channel:
+                        receipts_enabled = getattr(
+                            channel, "read_receipts_enabled", True
+                        )
+                except Exception:
+                    receipts_enabled = True
+            if user_settings.read_receipts_enabled and receipts_enabled:
+                ranges.append((conv, target, last_value))
+
+        if ranges:
+            counts.update(self._repo.batch_mark_read_bulk(user_id, ranges, now))
+
+        # Read position always advances, even when public receipts are off.
+        self._participant_repo.update_last_read_bulk(
+            [(conv, user_id, target, now) for conv, (target, _) in targets.items()]
+        )
+        self._invalidate_bulk_read_cache(user_id, list(targets))
+        return counts
 
     def get_unread_count(
         self, user_id: SnowflakeID, conversation_id: Optional[SnowflakeID] = None
