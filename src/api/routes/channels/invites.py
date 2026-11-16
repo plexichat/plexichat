@@ -118,23 +118,26 @@ class ChannelInvitesMixin(ChannelBase):
             max_age, max_uses = require_invite_limits(body.max_age, body.max_uses)
 
             try:
-                # SELFTEST FIX: pre-check channel visibility so we
-                # return 404 (channel gone) / 403 (channel exists
-                # but caller blocked) distinctly instead of letting
-                # ``create_invite`` raise and conflate both in a
-                # single status code.
-                if not servers_mod.channel_exists(cid):
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "error": {
-                                "code": 404,
-                                "message": "Channel not found",
-                            }
-                        },
-                    )
+                # Dual-probe 404-vs-403: resolve the membership/permission-
+                # aware channel FIRST. On the overwhelmingly common success
+                # path this is the only channel lookup needed; the cheap
+                # existence probe is consulted only when ``get_channel``
+                # declines, to tell a gone channel (404) from a caller that
+                # is blocked (403). Running ``channel_exists`` unconditionally
+                # used to add a raw SELECT to every successful invite create.
+                # Status codes and the validation order are unchanged.
                 channel = servers_mod.get_channel(cid, current_user.user_id)
                 if not channel:
+                    if not servers_mod.channel_exists(cid):
+                        raise HTTPException(
+                            status_code=404,
+                            detail={
+                                "error": {
+                                    "code": 404,
+                                    "message": "Channel not found",
+                                }
+                            },
+                        )
                     raise HTTPException(
                         status_code=403,
                         detail={
