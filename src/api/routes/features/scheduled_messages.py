@@ -6,7 +6,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
-from src.core.security.hardening import bounded_int, reject_control_characters
+from src.core.security.hardening import reject_control_characters
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
@@ -85,7 +85,7 @@ async def create_scheduled_message(
 )
 async def list_scheduled_messages(
     conversation_id: Optional[str] = None,
-    status: Optional[str] = Field(None, max_length=32),
+    status: Optional[str] = Query(None, max_length=32),
     limit: int = Query(50, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ):
