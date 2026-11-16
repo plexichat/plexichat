@@ -95,6 +95,22 @@ def _handle_value_error(exc: ValueError) -> HTTPException:
     )
 
 
+def _handle_mutation_error(request_id: int, exc: ValueError) -> HTTPException:
+    """Map a DSAR mutation error to HTTP, preserving the 404 contract.
+
+    The DSAR core raises ``ValueError("DSAR request <id> not found")`` for a
+    missing row. The old route pre-flighted every mutation with a separate
+    ``SELECT *`` just to turn that into a 404; detecting it here keeps the same
+    status codes while removing one database round trip per mutation.
+    """
+    if f"DSAR request {request_id} not found" in str(exc):
+        return HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Request not found"}},
+        )
+    return _handle_value_error(exc)
+
+
 @router.get(
     "/data-export",
     responses={
@@ -146,11 +162,10 @@ async def approve_data_export(request: Request, request_id: SnowflakeIDParam):
     """Approve a pending DSAR request so the harvester can process it."""
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
-    _get_request_or_404(int(request_id))
     try:
         await run_in_threadpool(approve_request, int(request_id), int(admin_id))
     except ValueError as e:
-        raise _handle_value_error(e)
+        raise _handle_mutation_error(request_id, e)
     except Exception as e:
         logger.error(
             f"Admin data-export approve failed for {request_id}: {e}",
@@ -171,13 +186,12 @@ async def deny_data_export(
     """Deny a pending DSAR request with a reason."""
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
-    _get_request_or_404(int(request_id))
     try:
         await run_in_threadpool(
             deny_request, int(request_id), int(admin_id), body.reason
         )
     except ValueError as e:
-        raise _handle_value_error(e)
+        raise _handle_mutation_error(request_id, e)
     except Exception as e:
         logger.error(
             f"Admin data-export deny failed for {request_id}: {e}",
@@ -196,13 +210,12 @@ async def generate_data_export(request: Request, request_id: SnowflakeIDParam):
     """Manually trigger export generation for a pending/approved request."""
     check_host_restriction(request)
     admin_id = require_admin_permission(request, "data_export.process")
-    _get_request_or_404(int(request_id))
     try:
         result = await run_in_threadpool(
             generate_manual, int(request_id), int(admin_id)
         )
     except ValueError as e:
-        raise _handle_value_error(e)
+        raise _handle_mutation_error(request_id, e)
     except Exception as e:
         logger.error(
             f"Admin data-export generation failed for {request_id}: {e}",
