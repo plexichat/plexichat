@@ -113,3 +113,27 @@ See `src/api/routes/telemetry.py` for the API implementation.
 - Telemetry is disabled unless explicitly enabled; users must opt in via client settings.
 - Data is automatically cleaned up by a background retention sweep after `retention_days`.
 - Entries submitted without a timestamp default to server-receive time.
+
+## Privileged-action audit trail (`audit.py`)
+
+`src/core/telemetry/audit.py` is the hardened storage layer for privileged
+actions. It is deliberately separate from the opt-in response-time data above.
+
+- **Append-only**: records are written with `open(..., "a")` only; there is no
+  update/delete API and each row carries a monotonic `seq`.
+- **Hash chained**: every record stores `prev` (the previous checksum) and a
+  `checksum` over its canonical JSON body. A `*.head` sidecar commits the row
+  count and last checksum so tail truncation is detected too.
+- **Integrity check**: `AuditChain.verify_chain()` (or `verify_audit_chain()`)
+  returns `(valid, count, error)`; `strict=True` raises `AuditChainError`.
+- **Bounded**: action/actor/payload sizes, sequence numbers and read limits are
+  all capped.
+
+```python
+from src.core.telemetry import AuditChain
+
+chain = AuditChain("/var/lib/plexichat/audit/admin_audit_chain.jsonl")
+chain.append("user.ban", admin_id, target_id=user_id, details={"reason": "spam"})
+valid, count, error = chain.verify_chain()
+```
+

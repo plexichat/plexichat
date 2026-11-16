@@ -16,6 +16,13 @@ from src.core.security.hardening import (
     reject_control_characters,
 )
 
+from .audit import (
+    GENESIS_HASH,
+    AuditChain,
+    AuditChainError,
+    verify_audit_chain,
+)
+
 logger = logging.getLogger(__name__)
 
 _db: Any = None
@@ -763,4 +770,8 @@ __all__ = [
     "register_route_templates",
     "get_cardinality_stats",
     "EndpointStats",
+    "GENESIS_HASH",
+    "AuditChain",
+    "AuditChainError",
+    "verify_audit_chain",
 ]
