@@ -25,6 +25,7 @@ from src.api.schemas.common import (
     SnowflakeIDParam,
 )
 from src.core import applications
+from src.core.security.hardening import parse_id
 from src.core.applications.exceptions import (
     ApplicationNotFoundError,
     ApplicationAccessDeniedError,
@@ -194,6 +195,22 @@ class BotDirectoryResponse(BaseModel):
 # === Helper ===
 
 
+def _bot_id(value: object, field: str = "id") -> int:
+    """Parse a route/body id as a snowflake, reporting bad values as 400.
+
+    These handlers previously used bare ``int()`` on path and body strings,
+    which accepted negative and arbitrarily large integers. Such values then
+    flowed into application lookups and permission checks.
+    """
+    try:
+        return parse_id(value, field)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        ) from exc
+
+
 def _coerce_nullable_int(value):
     """Coerce ``null``/empty query values for optional int params to None."""
     if (
@@ -258,10 +275,9 @@ async def list_approved_bots(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get all approved bots for a server."""
+    sid = _bot_id(server_id, "server_id")
     try:
-        bots = applications.get_approved_bots(
-            server_id=int(server_id), status="approved"
-        )
+        bots = applications.get_approved_bots(server_id=sid, status="approved")
         return [_approved_bot_to_response(bot) for bot in bots]
     except Exception:
         logger.exception("Failed to list approved bots")
@@ -291,10 +307,12 @@ async def request_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Request approval for a bot on a server."""
+    sid = _bot_id(server_id, "server_id")
+    app_id = _bot_id(body.application_id, "application_id")
     try:
         req = applications.request_bot(
-            server_id=int(server_id),
-            application_id=int(body.application_id),
+            server_id=sid,
+            application_id=app_id,
             requester_id=current_user.user_id,
             reason=body.reason,
         )
@@ -333,10 +351,12 @@ async def remove_approved_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Remove an approved bot from a server."""
+    sid = _bot_id(server_id, "server_id")
+    app_id = _bot_id(application_id, "application_id")
     try:
         applications.remove_approved_bot(
-            server_id=int(server_id),
-            application_id=int(application_id),
+            server_id=sid,
+            application_id=app_id,
             user_id=current_user.user_id,
         )
     except PermissionDeniedError:
@@ -374,8 +394,9 @@ async def disable_bot(
     """Disable a bot owned by the current user."""
     from src.core import auth
 
+    bid = _bot_id(bot_id, "bot_id")
     try:
-        auth.disable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
+        auth.disable_bot(owner_id=current_user.user_id, bot_id=bid)
     except Exception:
         logger.exception("Failed to disable bot")
         raise HTTPException(
@@ -401,8 +422,9 @@ async def enable_bot(
     """Enable a bot owned by the current user."""
     from src.core import auth
 
+    bid = _bot_id(bot_id, "bot_id")
     try:
-        auth.enable_bot(owner_id=current_user.user_id, bot_id=int(bot_id))
+        auth.enable_bot(owner_id=current_user.user_id, bot_id=bid)
     except Exception:
         logger.exception("Failed to enable bot")
         raise HTTPException(
@@ -429,9 +451,10 @@ async def list_bot_requests(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Get bot requests for a server."""
+    sid = _bot_id(server_id, "server_id")
     try:
         requests = applications.get_bot_requests(
-            server_id=int(server_id),
+            server_id=sid,
             status=status_filter,
         )
         return [_bot_request_to_response(req) for req in requests]
@@ -464,10 +487,12 @@ async def approve_bot(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Approve a bot for installation on a server."""
+    sid = _bot_id(server_id, "server_id")
+    app_id = _bot_id(body.application_id, "application_id")
     try:
         bot = applications.approve_bot(
-            server_id=int(server_id),
-            application_id=int(body.application_id),
+            server_id=sid,
+            application_id=app_id,
             approved_by=current_user.user_id,
             permissions=body.permissions,
             bot_name=body.bot_name,
@@ -537,9 +562,10 @@ async def review_bot_request(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Review a bot request (approve or deny)."""
+    sid = _bot_id(server_id, "server_id")
     try:
         req = applications.review_bot_request(
-            server_id=int(server_id),
+            server_id=sid,
             request_id=request_id,
             reviewer_id=current_user.user_id,
             approve=body.approve,
@@ -633,9 +659,10 @@ async def update_bot_profile(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Update a bot's public profile."""
+    app_id = _bot_id(application_id, "application_id")
     try:
         profile = applications.update_bot_profile(
-            application_id=int(application_id),
+            application_id=app_id,
             user_id=current_user.user_id,
             description=body.description,
             short_description=body.short_description,

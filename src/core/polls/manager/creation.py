@@ -15,6 +15,7 @@ from ..exceptions import (
     PollError,
     PollOptionLimitError,
 )
+from ..limits import resolve_field_limits
 from ..models import Poll, PollResultsVisibility
 from .base import PollManagerBase, _is_unique_violation
 
@@ -78,8 +79,9 @@ class CreationMixin(PollManagerBase):
 
         question = self._validate_question(question)
 
-        min_opts = self._config.get("min_options", 2)
-        max_opts = self._config.get("max_options", 10)
+        limits = resolve_field_limits(self._config)
+        min_opts = limits.min_options
+        max_opts = limits.max_options
 
         if len(options) < min_opts or len(options) > max_opts:
             raise PollOptionLimitError(
@@ -179,7 +181,7 @@ class CreationMixin(PollManagerBase):
             raise InvalidPollQuestionError("Poll question cannot be empty")
 
         question = question.strip()
-        max_len = self._config.get("max_question_length", 300)
+        max_len = resolve_field_limits(self._config).max_question_length
 
         if len(question) > max_len:
             raise InvalidPollQuestionError(
@@ -194,7 +196,7 @@ class CreationMixin(PollManagerBase):
             raise InvalidPollOptionError("Poll option cannot be empty")
 
         option = option.strip()
-        max_len = self._config.get("max_option_length", 100)
+        max_len = resolve_field_limits(self._config).max_option_length
 
         if len(option) > max_len:
             raise InvalidPollOptionError(

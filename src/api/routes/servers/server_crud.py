@@ -96,6 +96,13 @@ async def create_server(
         )
         invalidate_user_servers(current_user.user_id)
         return _server_to_response(server)
+    except ValueError:
+        # Core re-validates the icon URL (scheme allow-list + SSRF gate) for
+        # callers that bypass the schema. A rejected value is a bad request.
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         exc_name = type(e).__name__
         if "Limit" in exc_name:
@@ -216,6 +223,12 @@ async def update_server(
         return _server_to_response(server)
     except HTTPException:
         raise
+    except ValueError:
+        # A rejected icon URL / server field is a bad request, not a 500.
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid request"}},
+        )
     except Exception as e:
         exc_name = type(e).__name__
         if "NotFound" in exc_name:

@@ -28,6 +28,11 @@ import utils.config as config
 import utils.logger as logger
 
 from src.core.media.exceptions import StorageQuotaExceededError
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    reject_control_characters,
+)
 
 from .schema import ensure_schema
 
@@ -35,6 +40,25 @@ MIB = 1024 * 1024
 DEFAULT_QUOTA_MB = 5 * 1024
 DEFAULT_RESERVATION_TTL_SECONDS = 900
 _UNLIMITED_MB = -1
+
+#: An administrator override is a human-entered value that is stored verbatim
+#: and later rendered in quota audit views. Bound both fields: a note must not
+#: smuggle a log/HTTP-header break via control characters, and a limit must not
+#: be an arbitrary-precision integer that overflows byte arithmetic downstream.
+MAX_OVERRIDE_NOTE_LENGTH = 500
+MAX_OVERRIDE_LIMIT_BYTES = 100 * 1024**4  # 100 TiB
+
+
+def _bounded_override_note(note: Any) -> Optional[str]:
+    """Return a safe override note, refusing control characters and bloat."""
+    if note is None:
+        return None
+    text = reject_control_characters(note, "note")
+    if len(text) > MAX_OVERRIDE_NOTE_LENGTH:
+        raise HardeningViolation(
+            f"note exceeds maximum length of {MAX_OVERRIDE_NOTE_LENGTH}"
+        )
+    return text
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -144,8 +168,11 @@ class StorageQuotaManager:
                     "default_limit_bytes": default_bytes,
                 }
             if limit_bytes is not None:
+                # Clamp (rather than raise) on read so a legacy/oversized row
+                # can never overflow byte arithmetic or break a quota read.
+                clamped = min(MAX_OVERRIDE_LIMIT_BYTES, max(0, _as_int(limit_bytes, 0)))
                 return {
-                    "limit_bytes": max(0, _as_int(limit_bytes, 0)),
+                    "limit_bytes": clamped,
                     "unlimited": False,
                     "source": "override",
                     "tier": tier,
@@ -337,7 +364,13 @@ class StorageQuotaManager:
         else:
             if limit_bytes is None:
                 raise ValueError("limit_bytes is required unless unlimited is true")
-            normalized_limit = max(0, int(limit_bytes))
+            normalized_limit = bounded_int(
+                limit_bytes,
+                "limit_bytes",
+                minimum=0,
+                maximum=MAX_OVERRIDE_LIMIT_BYTES,
+            )
+        safe_note = _bounded_override_note(note)
         self._ensure_schema()
         now = int(time.time() * 1000)
         self._db.execute(
@@ -354,7 +387,7 @@ class StorageQuotaManager:
                 int(user_id),
                 normalized_limit,
                 1 if unlimited else 0,
-                note,
+                safe_note,
                 int(updated_by) if updated_by is not None else None,
                 now,
             ),

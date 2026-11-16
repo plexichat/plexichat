@@ -42,6 +42,11 @@ class ServerOpsMixin(ServerProtocol):
         is_public: Optional[bool] = None,
     ) -> Server:
         """Create a new server."""
+        # Re-validate the media URL at the core boundary: the HTTP schema does
+        # this too, but direct callers (fixtures, gateway, imports) must not be
+        # able to persist an SSRF vector or a non-http(s) scheme.
+        icon_url = validate_server_media_url(icon_url, "Server icon URL")
+
         if not name or not name.strip():
             raise InvalidServerNameError("Server name cannot be empty")
 
@@ -336,6 +341,7 @@ class ServerOpsMixin(ServerProtocol):
             changes["description"] = {"old": server.description, "new": description}
 
         if icon_url is not None:
+            icon_url = validate_server_media_url(icon_url, "Server icon URL")
             updates.append("icon_url = ?")
             params.append(icon_url)
             changes["icon_url"] = {"old": server.icon_url, "new": icon_url}

@@ -35,6 +35,27 @@ from ..exceptions import SearchIndexError, SearchBackendError
 _FTS_MAX_QUERY_CHARS = 256
 _FTS_MAX_TERMS = 16
 _FTS_MAX_TERM_CHARS = 64
+_FTS_MAX_RESULTS = 1000
+_FTS_MAX_OFFSET = 1_000_000
+
+
+def _bounded_page(limit, offset):
+    """Clamp LIMIT/OFFSET to safe ranges before they reach SQLite.
+
+    A limit of 10**9 turns a single search into a full-index dump; a negative
+    limit reads as *unlimited* in SQLite. Both are capped here at the indexer
+    boundary even though the manager validates them at its entry points.
+    """
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 25
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError):
+        offset = 0
+    return max(1, min(limit, _FTS_MAX_RESULTS)), max(0, min(offset, _FTS_MAX_OFFSET))
+
 
 _FTS_EXPECTED_COLUMNS = {
     "search_messages_fts": [
@@ -261,6 +282,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             if not query or not query.strip():
                 return []
 
+            limit, offset = _bounded_page(limit, offset)
             fts_query = self._build_fts_query(query)
 
             sql = """
@@ -385,6 +407,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             if not query or not query.strip():
                 return []
 
+            limit, offset = _bounded_page(limit, offset)
             fts_query = self._build_fts_query(query)
 
             rows = self._db.fetch_all(
@@ -480,6 +503,7 @@ class SQLiteFTS5Indexer(BaseIndexer):
             if not query or not query.strip():
                 return []
 
+            limit, offset = _bounded_page(limit, offset)
             fts_query = self._build_fts_query(query)
 
             sql = """

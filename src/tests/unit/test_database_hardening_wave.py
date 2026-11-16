@@ -93,3 +93,15 @@ class TestFtsQueryBounds:
 
         indexer = SQLiteFTS5Indexer.__new__(SQLiteFTS5Indexer)
         assert indexer._build_fts_query("hello world") == '"hello"* OR "world"*'
+
+
+class TestFtsPageBounds:
+    def test_bounded_page_caps_and_clamps(self):
+        from src.core.search.indexer.sqlite_fts import (
+            _FTS_MAX_RESULTS,
+            _bounded_page,
+        )
+
+        assert _bounded_page(10**9, -5) == (_FTS_MAX_RESULTS, 0)
+        assert _bounded_page(-1, 10) == (1, 10)
+        assert _bounded_page("abc", "xyz") == (25, 0)

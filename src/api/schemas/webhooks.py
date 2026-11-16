@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 from .policy_types import UIText
 
 from .common import SnowflakeID
+from src.core.security.hardening import require_http_url
 
 
 def _validate_avatar_url(value: Optional[str]) -> Optional[str]:
@@ -93,9 +94,18 @@ class WebhookExecuteRequest(BaseModel):
     username: Optional[UIText] = Field(
         None, max_length=80, description="Override username"
     )
-    avatar_url: Optional[str] = Field(None, description="Override avatar URL")
-    embeds: Optional[List[Dict[str, Any]]] = Field(None, description="Rich embeds")
+    avatar_url: Optional[str] = Field(
+        None, max_length=2048, description="Override avatar URL"
+    )
+    embeds: Optional[List[Dict[str, Any]]] = Field(
+        None, max_length=10, description="Rich embeds"
+    )
     thread_id: Optional[SnowflakeID] = Field(None, description="Thread ID to post to")
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _execute_avatar(cls, value):
+        return require_http_url(value, "avatar_url") if value is not None else None
 
 
 class WebhookMessageResponse(BaseModel):
