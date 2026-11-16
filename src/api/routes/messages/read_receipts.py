@@ -28,6 +28,7 @@ from src.core.servers.exceptions import (
     ChannelAccessDeniedError,
     PermissionDeniedError,
 )
+from .helpers import require_snowflake
 
 router = APIRouter(tags=["Messages"])
 
@@ -189,20 +190,14 @@ async def acknowledge_messages(
                     f"read receipt voice channel check failed: {channel_error}"
                 )
 
-        # ``message_id`` is a client-supplied optional cursor, so it needs the
-        # same guard as ``channel_id`` above: a non-numeric value used to
-        # escape as a ValueError and fall through to the outer handler as a
-        # 500, even though this route declares 400 "Invalid message ID" and
-        # every sibling reader of an ID parameter (``messages_list`` before/after,
-        # bulk-delete ids, pins, retrieve/delete message ids) is wrapped.
+        # ``message_id`` is a client-supplied optional cursor. Reuse the
+        # shared range check so negatives and oversized snowflakes are
+        # rejected with this route's 400 "Invalid message ID" contract before
+        # they reach ``mark_read``.
         if message_id:
-            try:
-                up_to_id: Optional[int] = int(message_id)
-            except (TypeError, ValueError):
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid message ID"}},
-                )
+            up_to_id: Optional[int] = require_snowflake(
+                message_id, "message_id", "Invalid message ID"
+            )
         else:
             up_to_id = None
 

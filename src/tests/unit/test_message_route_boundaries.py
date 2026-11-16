@@ -129,3 +129,9 @@ def test_send_payload_counts_are_capped():
     with pytest.raises(HTTPException) as exc:
         _check_payload_counts(too_many_embeds)
     assert exc.value.status_code == 400
+
+
+def test_ack_rejects_out_of_range_cursor():
+    from src.api.routes.messages.read_receipts import acknowledge_messages
+
+    _rejects_bad_id(acknowledge_messages, ("123", "99000000000000000000"))
