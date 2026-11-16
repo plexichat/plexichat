@@ -3,7 +3,7 @@ User schemas - Request/response models for user endpoints.
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from .policy_types import UIText
 
 from .common import SnowflakeID
@@ -48,8 +48,21 @@ class UserUpdateRequest(BaseModel):
         None, max_length=64, description="Timezone (empty string clears)"
     )
     banner_url: Optional[str] = Field(
-        None, description="Banner image URL (empty string clears)"
+        None, max_length=2048, description="Banner image URL (empty string clears)"
     )
+
+    @field_validator("banner_url")
+    @classmethod
+    def _banner_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("banner_url must be an absolute http(s) URL")
+        return value
+
     social_links: Optional[List[dict]] = Field(
         None, description="Social link objects (empty list clears all)"
     )
