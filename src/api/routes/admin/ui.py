@@ -14,8 +14,20 @@ _ADMIN_TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "admin
 
 
 def _admin_static_path(*parts: str) -> Path:
-    """Resolve a bundled admin asset, refusing anything outside its directory."""
-    return Path(safe_join(str(_ADMIN_TEMPLATE_DIR), *parts))
+    """Resolve a bundled admin asset, refusing anything outside its directory.
+
+    ``safe_join`` resolves symlinks and rejects ``..`` escapes, so a single
+    bundled asset can never become a read of an arbitrary host file.
+    """
+    resolved = Path(safe_join(str(_ADMIN_TEMPLATE_DIR), *parts))
+    if not resolved.resolve().is_relative_to(_ADMIN_TEMPLATE_DIR.resolve()):
+        raise ValueError("admin asset escapes its allowlisted root")
+    return resolved
+
+
+# Static and template responses carry nosniff so a tampered SVG/CSS/JS/HTML
+# asset cannot be reinterpreted as an active document on the admin origin.
+_NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
 
 # Bundled assets ship with the server rather than arriving from a request, but
@@ -35,6 +47,7 @@ router = APIRouter()
 
 def _security_headers(nonce: str) -> dict[str, str]:
     return {
+        **_NOSNIFF,
         "Content-Security-Policy": build_admin_csp_header(nonce),
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
         "Pragma": "no-cache",
@@ -101,7 +114,9 @@ async def admin_favicon(request: Request):
     check_host_restriction(request)
     icon_path = _admin_static_path("favicon.svg")
     if not icon_path.exists():
-        return HTMLResponse(content="<!-- icon not found -->", status_code=404)
+        return HTMLResponse(
+            content="<!-- icon not found -->", status_code=404, headers=_NOSNIFF
+        )
     _check_admin_asset_size(icon_path, "favicon")
     with open(icon_path, "rb") as f:
         icon_content = f.read()
@@ -129,7 +144,9 @@ async def admin_chart_js(request: Request):
 
     js_path = _admin_static_path("vendor", "chart.umd.min.js")
     if not js_path.exists():
-        return HTMLResponse(content="/* JS file not found */", status_code=404)
+        return HTMLResponse(
+            content="/* JS file not found */", status_code=404, headers=_NOSNIFF
+        )
 
     _check_admin_asset_size(js_path, "chart")
     with open(js_path, "rb") as f:
@@ -155,7 +172,9 @@ async def admin_dashboard_css(request: Request):
     css_path = _admin_static_path("dashboard.css")
 
     if not css_path.exists():
-        return HTMLResponse(content="/* CSS file not found */", status_code=404)
+        return HTMLResponse(
+            content="/* CSS file not found */", status_code=404, headers=_NOSNIFF
+        )
 
     _check_admin_asset_size(css_path, "dashboard.css")
     # Re-read only when the stylesheet changes; this route is hit on every
@@ -225,7 +244,9 @@ async def admin_dashboard_js(request: Request):
     else:
         js_path = _admin_static_path("dashboard.js")
         if not js_path.exists():
-            return HTMLResponse(content="/* JS file not found */", status_code=404)
+            return HTMLResponse(
+                content="/* JS file not found */", status_code=404, headers=_NOSNIFF
+            )
         _check_admin_asset_size(js_path, "dashboard.js")
         with open(js_path, "r", encoding="utf-8") as f:
             js_content = f.read()

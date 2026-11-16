@@ -36,7 +36,14 @@ def _resolve_robots_txt() -> Path | None:
         candidate = Path(safe_join(str(static_dir), "robots.txt"))
     except ValueError:
         return None
-    return candidate if candidate.is_file() else None
+    # Allowlisted basename plus resolved-path confinement: the file served is
+    # exactly the shipped robots.txt, never a symlink or a sibling with the
+    # same prefix. nosniff on the response prevents content-type confusion.
+    if candidate.name != "robots.txt" or not candidate.is_file():
+        return None
+    if not candidate.resolve().is_relative_to(static_dir.resolve()):
+        return None
+    return candidate
 
 
 @robots_router.get("/robots.txt", include_in_schema=False)

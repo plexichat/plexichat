@@ -11,6 +11,7 @@ import time
 import utils.config as config
 import utils.logger as logger
 import src.api as api
+from src.core.security.hardening.paths import safe_join
 
 
 # Migration versions are used to select a Python module on disk in the
@@ -376,12 +377,20 @@ def load_admin_template(template_name: str, csp_nonce: Optional[str] = None) -> 
     if not isinstance(csp_nonce, str) or not _SAFE_CSP_NONCE_RE.fullmatch(csp_nonce):
         csp_nonce = None
 
-    template_dir = Path(__file__).parent.parent.parent / "templates" / "admin"
-    template_path = (template_dir / template_name).resolve()
+    template_root = (
+        Path(__file__).resolve().parent.parent.parent / "templates" / "admin"
+    )
+    try:
+        template_path = Path(safe_join(str(template_root), template_name))
+    except ValueError:
+        return "<h1>Template Error</h1>"
 
+    # Allowlist AND resolved-path confinement: even if the allowlist grows a
+    # name with a traversal sequence, safe_join + is_relative_to keep the read
+    # inside the shipped template root (no symlink or sibling-prefix escapes).
     if (
-        not str(template_path).startswith(str(template_dir.resolve()))
-        or not template_path.is_file()
+        not template_path.is_file()
+        or not template_path.resolve().is_relative_to(template_root.resolve())
     ):
         return "<h1>Template Error</h1>"
 
