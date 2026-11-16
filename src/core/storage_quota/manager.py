@@ -31,6 +31,7 @@ from src.core.media.exceptions import StorageQuotaExceededError
 from src.core.security.hardening import (
     HardeningViolation,
     bounded_int,
+    parse_id,
     reject_control_characters,
 )
 
@@ -47,6 +48,16 @@ _UNLIMITED_MB = -1
 #: be an arbitrary-precision integer that overflows byte arithmetic downstream.
 MAX_OVERRIDE_NOTE_LENGTH = 500
 MAX_OVERRIDE_LIMIT_BYTES = 100 * 1024**4  # 100 TiB
+#: Largest quota (in MiB) any config/tier source may declare. Anything above
+#: this is a misconfiguration, not a real tier, and is rejected as overflow.
+MAX_CONFIG_QUOTA_MB = MAX_OVERRIDE_LIMIT_BYTES // MIB
+
+#: Bounds for the user-facing storage-file listing. Without a page cap a single
+#: request could materialise every media row; without a clean path filter an
+#: attacker could use ``..``/wildcards to probe paths outside their own files.
+MAX_LIST_LIMIT = 200
+MAX_LIST_OFFSET = 1_000_000
+MAX_LIST_PATH_CHARS = 512
 
 
 def _bounded_override_note(note: Any) -> Optional[str]:
@@ -100,7 +111,16 @@ class StorageQuotaManager:
 
     def _default_limit_bytes(self) -> int:
         value = self._storage_config().get("default_quota_mb", DEFAULT_QUOTA_MB)
-        mb = _as_int(value, DEFAULT_QUOTA_MB)
+        # Config integers reach byte arithmetic and LIMIT clauses: validate the
+        # type and cap the magnitude instead of silently accepting a huge value
+        # (which used to overflow downstream computations).
+        mb = bounded_int(
+            value,
+            "storage.default_quota_mb",
+            minimum=-1,
+            maximum=MAX_CONFIG_QUOTA_MB,
+            default=DEFAULT_QUOTA_MB,
+        )
         if mb < 0:
             return -1
         return mb * MIB
@@ -109,7 +129,13 @@ class StorageQuotaManager:
         value = self._storage_config().get(
             "reservation_ttl_seconds", DEFAULT_RESERVATION_TTL_SECONDS
         )
-        return max(60, min(3600, _as_int(value, DEFAULT_RESERVATION_TTL_SECONDS)))
+        return bounded_int(
+            value,
+            "storage.reservation_ttl_seconds",
+            minimum=60,
+            maximum=3600,
+            default=DEFAULT_RESERVATION_TTL_SECONDS,
+        )
 
     def _user_tier(self, user_id: int) -> str:
         try:
@@ -131,7 +157,13 @@ class StorageQuotaManager:
             from src.core import features
 
             limits = features.get_tier_limits(tier)
-            mb = _as_int(getattr(limits, "max_storage_mb", None), 0)
+            mb = bounded_int(
+                getattr(limits, "max_storage_mb", None),
+                "tier.max_storage_mb",
+                minimum=-1,
+                maximum=MAX_CONFIG_QUOTA_MB,
+                default=0,
+            )
             if mb == _UNLIMITED_MB:
                 return -1
             if mb > 0:
@@ -371,6 +403,12 @@ class StorageQuotaManager:
                 maximum=MAX_OVERRIDE_LIMIT_BYTES,
             )
         safe_note = _bounded_override_note(note)
+        # Every id written by an override is an untrusted-number boundary too:
+        # a negative or >snowflake value would poison audit rows and lookups.
+        safe_user_id = parse_id(user_id, "user_id")
+        safe_updated_by = (
+            parse_id(updated_by, "updated_by") if updated_by is not None else None
+        )
         self._ensure_schema()
         now = int(time.time() * 1000)
         self._db.execute(
@@ -384,11 +422,11 @@ class StorageQuotaManager:
             "updated_by = excluded.updated_by, "
             "updated_at = excluded.updated_at",
             (
-                int(user_id),
+                safe_user_id,
                 normalized_limit,
                 1 if unlimited else 0,
                 safe_note,
-                int(updated_by) if updated_by is not None else None,
+                safe_updated_by,
                 now,
             ),
         )
@@ -411,6 +449,56 @@ class StorageQuotaManager:
             "note": _row_value(row, "note", 3),
             "updated_by": _row_value(row, "updated_by", 4),
             "updated_at": _row_value(row, "updated_at", 5),
+        }
+
+    def list_user_files(
+        self,
+        user_id: int,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        path_prefix: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return a bounded page of the user's live media rows.
+
+        Pagination is range-checked and the optional path filter is escaped,
+        control-character-free and traversal-free, so a caller cannot use a
+        huge offset, a ``..`` component or LIKE wildcards to scan outside their
+        own files.
+        """
+        uid = parse_id(user_id, "user_id")
+        limit = bounded_int(limit, "limit", minimum=1, maximum=MAX_LIST_LIMIT)
+        offset = bounded_int(offset, "offset", minimum=0, maximum=MAX_LIST_OFFSET)
+
+        prefix: Optional[str] = None
+        if path_prefix is not None and str(path_prefix) != "":
+            prefix = reject_control_characters(path_prefix, "path")
+            if len(prefix) > MAX_LIST_PATH_CHARS:
+                raise HardeningViolation("path filter exceeds the length limit")
+            if prefix.startswith("/"):
+                raise HardeningViolation("path filter must be relative")
+            if any(part == ".." for part in prefix.replace("\\", "/").split("/")):
+                raise HardeningViolation("path filter must not contain traversal")
+            prefix = prefix.strip("/")
+
+        where = "uploaded_by = ? AND deleted = 0"
+        params: list = [uid]
+        if prefix:
+            escaped = (
+                prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            where += " AND storage_path LIKE ? ESCAPE '\\'"
+            params.append(escaped + "%")
+
+        rows = self._db.fetch_all(
+            "SELECT id, filename, original_filename, size, storage_path, uploaded_at "
+            f"FROM media_files WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            tuple(params) + (limit, offset),
+        )
+        return {
+            "files": [dict(row) for row in rows],
+            "limit": limit,
+            "offset": offset,
         }
 
     def _ensure_schema(self) -> None:
