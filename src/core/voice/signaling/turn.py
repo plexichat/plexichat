@@ -13,6 +13,7 @@ from typing import List, Optional
 
 from .models import TURNCredentials, ICEServer
 from .exceptions import TURNCredentialError
+from ..boundaries import filter_ice_urls, validate_ice_url
 
 
 class TURNCredentialGenerator:
@@ -140,8 +141,15 @@ class ICEServerBuilder:
             turn_username: Static TURN username (for services like metered.ca)
             turn_credential: Static TURN credential/password
         """
-        self._stun_urls = stun_urls or ["stun:stun.l.google.com:19302"]
-        self._turn_urls = turn_urls or []
+        self._stun_urls = filter_ice_urls(
+            stun_urls or ["stun:stun.l.google.com:19302"]
+        )
+        self._turn_urls = []
+        for _u in turn_urls or ():
+            try:
+                self._turn_urls.append(validate_ice_url(_u))
+            except ValueError:
+                continue
         self._turn_generator = None
         self._static_username = turn_username
         self._static_credential = turn_credential

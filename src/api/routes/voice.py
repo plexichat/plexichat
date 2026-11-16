@@ -3,6 +3,10 @@ Voice routes - Voice channel and WebRTC signaling endpoints.
 """
 
 from src.core.security.hardening import parse_id
+from src.core.voice.boundaries import (
+    DEFAULT_PUBLIC_STUN_URLS,
+    sanitize_ice_servers,
+)
 
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -51,15 +55,12 @@ async def get_ice_servers(
         # the configured list without minting a session/token.
         ice_servers = signaling.get_ice_servers(current_user.user_id)
 
-        # Convert to client format
-        out: List[ICEServerConfig] = []
-        for server in ice_servers:
-            urls = server.urls
-            urls_list: List[str] = [urls] if isinstance(urls, str) else list(urls)
-            server_config = ICEServerConfig(
-                urls=urls_list, username=server.username, credential=server.credential
-            )
-            out.append(server_config)
+        # Convert to client format after validating every URL and capping
+        # the list length. A malformed config entry can never reach the client.
+        sanitized = sanitize_ice_servers(ice_servers)
+        out: List[ICEServerConfig] = [
+            ICEServerConfig(**entry) for entry in sanitized
+        ] or [ICEServerConfig(urls=list(DEFAULT_PUBLIC_STUN_URLS))]
 
         return ICEServersResponse(ice_servers=out)
     except RuntimeError:
@@ -121,17 +122,11 @@ async def get_voice_channel_info(
 
             info = signaling.get_voice_server_info(current_user.user_id, cid)
 
-            # Convert ICE servers to client format
-            ice_servers: List[ICEServerConfig] = []
-            for server in info.ice_servers:
-                urls = server.urls
-                urls_list: List[str] = [urls] if isinstance(urls, str) else list(urls)
-                server_config = ICEServerConfig(
-                    urls=urls_list,
-                    username=server.username,
-                    credential=server.credential,
-                )
-                ice_servers.append(server_config)
+            # Convert ICE servers to client format after the same URL gate.
+            sanitized = sanitize_ice_servers(info.ice_servers)
+            ice_servers: List[ICEServerConfig] = [
+                ICEServerConfig(**entry) for entry in sanitized
+            ] or [ICEServerConfig(urls=list(DEFAULT_PUBLIC_STUN_URLS))]
 
             logger.info(
                 f"User {current_user.user_id} requested voice info for channel {cid}"
