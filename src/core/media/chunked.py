@@ -8,7 +8,7 @@ Provides:
 - Session cleanup
 """
 
-from src.core.security.hardening import bounded_int, safe_join
+from src.core.security.hardening import HardeningViolation, bounded_int, safe_join
 
 import os
 import time
@@ -164,6 +164,17 @@ class ChunkedUploadManager:
         upload_temp = os.path.join(temp_dir, "chunked_uploads")
         os.makedirs(upload_temp, exist_ok=True)
         return upload_temp
+
+    def _confine_temp_path(self, temp_path: Optional[str]) -> str:
+        """Resolve a session temp path, refusing anything outside the temp dir.
+
+        The path is read back from the sessions table on every chunk write and
+        completion. A tampered row must never make the server open or unlink
+        an arbitrary file, so the value is confined to the managed directory.
+        """
+        if not temp_path:
+            raise RuntimeError("Upload session temp file missing")
+        return safe_join(self._temp_dir, temp_path)
 
     def _validate_total_size(self, content_type: str, total_size: int) -> bool:
         """Validate declared total size against per-type upload limits."""
@@ -578,9 +589,7 @@ class ChunkedUploadManager:
 
         # Write chunk to temp file
         try:
-            if session.temp_path is None:
-                raise RuntimeError("Upload session temp file missing")
-            with open(session.temp_path, "r+b") as f:
+            with open(self._confine_temp_path(session.temp_path), "r+b") as f:
                 f.seek(offset)
                 f.write(chunk_data)
         except Exception as e:
@@ -815,9 +824,7 @@ class ChunkedUploadManager:
                 )
                 return None
 
-            if session.temp_path is None:
-                raise RuntimeError("Upload session temp file missing")
-            with open(session.temp_path, "rb") as f:
+            with open(self._confine_temp_path(session.temp_path), "rb") as f:
                 file_data = f.read(session.total_size)
 
             # Cleanup
@@ -840,8 +847,10 @@ class ChunkedUploadManager:
             logger.warning(f"Session {session_id} not complete: {session.status}")
             return None
 
-        if session.temp_path is None:
-            logger.error("Upload session temp file missing")
+        try:
+            self._confine_temp_path(session.temp_path)
+        except (HardeningViolation, RuntimeError) as exc:
+            logger.error(f"Refusing unsafe upload session temp path: {exc}")
             return None
 
         return session
@@ -870,9 +879,13 @@ class ChunkedUploadManager:
 
         if row:
             temp_path = row["temp_path"] if isinstance(row, dict) else row[0]
-            if temp_path and os.path.exists(temp_path):
+            try:
+                confined = self._confine_temp_path(temp_path)
+            except (HardeningViolation, RuntimeError):
+                confined = None
+            if confined and os.path.exists(confined):
                 try:
-                    os.unlink(temp_path)
+                    os.unlink(confined)
                 except Exception as e:
                     logger.warning(f"Failed to delete temp file: {e}")
 
@@ -893,10 +906,14 @@ class ChunkedUploadManager:
         for row in rows:
             session_id = row["id"] if isinstance(row, dict) else row[0]
             temp_path = row["temp_path"] if isinstance(row, dict) else row[1]
+            try:
+                confined = self._confine_temp_path(temp_path)
+            except (HardeningViolation, RuntimeError):
+                confined = None
 
-            if temp_path and os.path.exists(temp_path):
+            if confined and os.path.exists(confined):
                 try:
-                    os.unlink(temp_path)
+                    os.unlink(confined)
                 except OSError as unlink_error:
                     logger.debug(f"chunked upload temp unlink failed: {unlink_error}")
 
