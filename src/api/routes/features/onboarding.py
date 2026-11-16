@@ -137,6 +137,15 @@ ONBOARDING_PRESETS = {
 }
 
 
+# The preset catalog is static module data. Build the response shape once at
+# import time instead of recomputing the key list on every request; the catalog
+# is read-only and FastAPI only serializes it, so sharing the object is safe.
+_ONBOARDING_PRESETS_RESPONSE = {
+    "presets": list(ONBOARDING_PRESETS.keys()),
+    "details": ONBOARDING_PRESETS,
+}
+
+
 @router.get(
     "/onboarding/presets",
     summary="List onboarding presets",
@@ -145,7 +154,7 @@ ONBOARDING_PRESETS = {
 async def list_onboarding_presets(
     current_user: TokenInfo = Depends(get_current_user),
 ):
-    return {"presets": list(ONBOARDING_PRESETS.keys()), "details": ONBOARDING_PRESETS}
+    return _ONBOARDING_PRESETS_RESPONSE
 
 
 @router.post(
@@ -210,11 +219,13 @@ async def apply_onboarding_preset(
     except Exception:
         logger.debug("Failed to set welcome screen from preset", exc_info=True)
 
+    # Resolve the enum once rather than re-running the import machinery for
+    # every step in the preset.
+    from src.core.servers.models import OnboardingStepType
+
     created_steps = []
     for step_template in preset["steps"]:
         try:
-            from src.core.servers.models import OnboardingStepType
-
             step_type = OnboardingStepType(step_template["type"])
             step = onboarding_mgr.create_onboarding_step(
                 user_id=current_user.user_id,
