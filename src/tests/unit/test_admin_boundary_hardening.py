@@ -11,6 +11,7 @@ import inspect
 from fastapi.params import Query as QueryParam
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.moderation as moderation_routes
 import src.api.routes.admin.tickets as tickets_routes
 import src.api.routes.admin.dashboard as dashboard_routes
 import src.api.routes.admin.telemetry as telemetry_routes
@@ -111,6 +112,16 @@ class TestTicketQueueBounds:
             ).max_length
             == 32
         )
+
+
+class TestModerationFilterBounds:
+    def test_all_report_status_filters_bounded(self):
+        for handler in (
+            moderation_routes.get_hash_reports,
+            moderation_routes.get_message_reports,
+            moderation_routes.get_user_reports,
+        ):
+            assert _constraint(handler, "status_filter", "MaxLen").max_length == 32
 
 
 class TestAuditExportBounds:

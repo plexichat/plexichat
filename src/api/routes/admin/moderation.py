@@ -138,7 +138,7 @@ def _user_report_to_response(report) -> UserReportResponse:
 )
 async def get_hash_reports(
     request: Request,
-    status_filter: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, max_length=32),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
 ):
@@ -247,7 +247,7 @@ async def review_hash_report(
 )
 async def get_message_reports(
     request: Request,
-    status_filter: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, max_length=32),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
 ):
@@ -409,7 +409,7 @@ async def review_message_report(
 )
 async def get_user_reports(
     request: Request,
-    status_filter: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, max_length=32),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1000000),
 ):
