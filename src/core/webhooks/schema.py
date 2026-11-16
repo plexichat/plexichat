@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS webhook_webhooks (
 CREATE INDEX IF NOT EXISTS idx_webhook_channel ON webhook_webhooks(channel_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_server ON webhook_webhooks(server_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_creator ON webhook_webhooks(creator_id);
+-- Every inbound webhook execution resolves the calling webhook by token hash.
+CREATE INDEX IF NOT EXISTS idx_webhook_token ON webhook_webhooks(token_hash);
 
 -- Webhook messages table (for tracking webhook-sent messages)
 CREATE TABLE IF NOT EXISTS webhook_messages (
