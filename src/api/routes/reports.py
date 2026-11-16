@@ -14,11 +14,87 @@ from src.api.schemas.reports import (
 )
 from src.api.schemas.common import ErrorResponse
 from src.core.reports import ReportCategory
+from src.core.security.hardening import HardeningViolation, reject_control_characters
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 # Maximum reports a single user may submit per rolling minute.
 REPORT_RATE_LIMIT = 10
+
+# Report payloads are stored and later rendered in moderator UIs. Bound every
+# caller-controlled field at the route boundary, not only in the request
+# schema, so a direct manager call or a schema change cannot reintroduce an
+# unbounded write.
+MAX_REPORT_REASON_LENGTH = 500
+MAX_REPORT_DETAILS_LENGTH = 2000
+MAX_REPORT_MESSAGE_CONTENT = 500
+MAX_EVIDENCE_IDS = 20
+MAX_EVIDENCE_ID_LENGTH = 32
+# Report listings live on the admin routes, but the same page contract belongs
+# beside the submission route so every caller uses one bounded definition.
+MAX_REPORT_PAGE_SIZE = 100
+
+
+def _bounded_page_params(limit, offset):
+    """Clamp pagination values; SQLite reads LIMIT -1 as *unlimited*."""
+    try:
+        page_limit = int(limit)
+    except (TypeError, ValueError):
+        page_limit = 0
+    try:
+        page_offset = int(offset)
+    except (TypeError, ValueError):
+        page_offset = 0
+    return max(0, min(page_limit, MAX_REPORT_PAGE_SIZE)), max(0, page_offset)
+
+
+def _bad_report_field(field: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "error": {
+                "code": 400,
+                "message": f"Invalid or oversized {field}",
+            }
+        },
+    )
+
+
+def _bounded_report_field(
+    value, field: str, maximum: int, *, required: bool = False, truncate: bool = False
+):
+    """Validate (or truncate) a text field before it enters the report store."""
+    if value is None:
+        if required:
+            raise _bad_report_field(field)
+        return None
+    if truncate and not isinstance(value, str):
+        value = str(value)
+    if not isinstance(value, str):
+        raise _bad_report_field(field)
+    try:
+        text = reject_control_characters(value, field)
+    except HardeningViolation:
+        raise _bad_report_field(field) from None
+    if len(text) > maximum:
+        if truncate:
+            return text[:maximum]
+        raise _bad_report_field(field)
+    return text
+
+
+def _bounded_evidence_ids(values):
+    """Cap the evidence list length and each element's text length."""
+    if values is None:
+        return None
+    if not isinstance(values, (list, tuple)) or len(values) > MAX_EVIDENCE_IDS:
+        raise _bad_report_field("evidence_message_ids")
+    result = []
+    for value in values:
+        if not isinstance(value, str) or len(value) > MAX_EVIDENCE_ID_LENGTH:
+            raise _bad_report_field("evidence_message_ids")
+        result.append(value)
+    return result
 
 
 def _check_report_rate_limit(user_id: int) -> None:
@@ -86,6 +162,11 @@ async def report_message(
 
     _check_report_rate_limit(current_user.user_id)
 
+    reason = _bounded_report_field(
+        body.reason, "reason", MAX_REPORT_REASON_LENGTH, required=True
+    )
+    details = _bounded_report_field(body.details, "details", MAX_REPORT_DETAILS_LENGTH)
+
     # Category must be a recognised value (lowercase enum names).
     if body.category not in {c.value for c in ReportCategory}:
         raise HTTPException(
@@ -148,7 +229,12 @@ async def report_message(
                     },
                 )
             reported_user_id = msg.author_id
-            message_content = msg.content[:500] if msg.content else None
+            message_content = _bounded_report_field(
+                msg.content,
+                "message_content",
+                MAX_REPORT_MESSAGE_CONTENT,
+                truncate=True,
+            )
             # A user may not report their own message.
             if reported_user_id == current_user.user_id:
                 raise HTTPException(
@@ -176,9 +262,9 @@ async def report_message(
                 reporter_id=current_user.user_id,
                 message_id=message_id,
                 channel_id=channel_id,
-                reason=body.reason,
+                reason=reason,
                 category=body.category,
-                details=body.details,
+                details=details,
                 server_id=server_id,
                 reported_user_id=reported_user_id,
                 message_content=message_content,
@@ -250,6 +336,12 @@ async def report_user(
 
     _check_report_rate_limit(current_user.user_id)
 
+    reason = _bounded_report_field(
+        body.reason, "reason", MAX_REPORT_REASON_LENGTH, required=True
+    )
+    details = _bounded_report_field(body.details, "details", MAX_REPORT_DETAILS_LENGTH)
+    evidence_values = _bounded_evidence_ids(body.evidence_message_ids)
+
     if body.category not in {c.value for c in ReportCategory}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -300,9 +392,9 @@ async def report_user(
             )
 
         evidence_ids = None
-        if body.evidence_message_ids:
+        if evidence_values:
             try:
-                evidence_ids = [int(mid) for mid in body.evidence_message_ids]
+                evidence_ids = [int(mid) for mid in evidence_values]
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -327,9 +419,9 @@ async def report_user(
             report = reports.report_user(
                 reporter_id=current_user.user_id,
                 reported_user_id=reported_user_id,
-                reason=body.reason,
+                reason=reason,
                 category=body.category,
-                details=body.details,
+                details=details,
                 evidence_message_ids=evidence_ids,
             )
 
