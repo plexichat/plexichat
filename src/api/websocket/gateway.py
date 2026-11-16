@@ -16,7 +16,11 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
-from .boundaries import validate_frame_bytes, validate_parsed_structure
+from .boundaries import (
+    decode_gateway_frame,
+    validate_frame_bytes,
+    validate_parsed_structure,
+)
 from .compression import (
     is_compressed,
     decompress_payload,
@@ -423,19 +427,17 @@ async def _message_loop(
             # Validate text message size
             text_data: str = message["text"]
             frame_bytes = text_data.encode("utf-8")
-            if not validate_frame_bytes(frame_bytes) or not validate_message_size(
-                frame_bytes
-            ):
+            if not validate_message_size(frame_bytes):
                 logger.warning(
                     f"Connection {connection.connection_id}: message too large"
                 )
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
             try:
-                data = json.loads(text_data)
-            except json.JSONDecodeError as e:
+                data = decode_gateway_frame(frame_bytes)
+            except ValueError as e:
                 logger.warning(
-                    f"Connection {connection.connection_id}: JSON decode error: {e}, data: {text_data[:200]}"
+                    f"Connection {connection.connection_id}: rejected frame: {e}"
                 )
                 await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
                 return
