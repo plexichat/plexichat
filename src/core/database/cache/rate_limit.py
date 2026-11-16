@@ -10,6 +10,7 @@ import time
 from typing import Dict, List, Tuple
 
 import utils.logger as logger
+from src.core.security.hardening import bounded_int
 from ..valkey_client import (
     get_client,
     is_available,
@@ -45,6 +46,14 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> Tuple[bool, i
     Returns:
         Tuple of (allowed: bool, remaining: int).
     """
+    # A negative window makes the timestamp filter `ts > now - window`
+    # select nothing (disabling the limiter), and an enormous limit does the
+    # same. Bound both before they drive the in-memory/Valkey counter.
+    limit = bounded_int(limit, "limit", minimum=1, maximum=1_000_000)
+    window_seconds = bounded_int(
+        window_seconds, "window_seconds", minimum=1, maximum=86_400
+    )
+
     client = get_client()
     if not client or not is_available():
         global _mem_rate_limits

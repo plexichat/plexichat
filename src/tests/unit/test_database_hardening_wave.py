@@ -154,3 +154,18 @@ class TestClonerBatchSize:
         for bad in (0, -1, 10**9):
             with pytest.raises(HardeningViolation):
                 cloner.batch_size = bad
+
+
+class TestRateLimitInputBounds:
+    def test_rejects_negative_window_and_huge_limit(self):
+        import src.core.database.cache.rate_limit as rl
+
+        original = rl.get_client
+        try:
+            rl.get_client = lambda: None
+            with pytest.raises(HardeningViolation):
+                rl.check_rate_limit("probe", 5, -1)
+            with pytest.raises(HardeningViolation):
+                rl.check_rate_limit("probe", 10**9, 60)
+        finally:
+            rl.get_client = original
