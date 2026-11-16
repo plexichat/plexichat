@@ -18,7 +18,11 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
-from .helpers import require_channel_snowflake
+from .helpers import (
+    require_channel_snowflake,
+    require_invite_code,
+    require_invite_limits,
+)
 from ..exception_mapping import raise_mapped, map_invite_join_error
 
 
@@ -109,6 +113,7 @@ class ChannelInvitesMixin(ChannelBase):
             except HTTPException:
                 logger.warning(f"Invalid channel ID format: {channel_id}")
                 raise
+            max_age, max_uses = require_invite_limits(body.max_age, body.max_uses)
 
             try:
                 # SELFTEST FIX: pre-check channel visibility so we
@@ -141,8 +146,8 @@ class ChannelInvitesMixin(ChannelBase):
                     invite = servers_mod.create_invite(
                         user_id=current_user.user_id,
                         channel_id=cid,
-                        max_age=body.max_age,
-                        max_uses=body.max_uses,
+                        max_age=max_age,
+                        max_uses=max_uses,
                         temporary=body.temporary,
                     )
                 except Exception as exc:
@@ -172,8 +177,8 @@ class ChannelInvitesMixin(ChannelBase):
                     server_id=SnowflakeID(invite.server_id)
                     if hasattr(invite, "server_id")
                     else None,
-                    max_age=body.max_age,
-                    max_uses=body.max_uses,
+                    max_age=max_age,
+                    max_uses=max_uses,
                     temporary=body.temporary,
                     uses=0,
                     created_at=getattr(invite, "created_at", None),
@@ -227,6 +232,7 @@ class ChannelInvitesMixin(ChannelBase):
 
         try:
             try:
+                invite_code = require_invite_code(invite_code)
                 invite = servers_mod.get_invite(invite_code)
                 if not invite:
                     raise HTTPException(
@@ -310,6 +316,7 @@ class ChannelInvitesMixin(ChannelBase):
 
         try:
             try:
+                invite_code = require_invite_code(invite_code)
                 result = servers_mod.use_invite(current_user.user_id, invite_code)
 
                 sid = getattr(result, "server_id", None) or (
@@ -452,6 +459,7 @@ class ChannelInvitesMixin(ChannelBase):
 
         try:
             try:
+                invite_code = require_invite_code(invite_code)
                 # Capture the invite's server_id BEFORE deletion — after
                 # delete_invite the row is gone (or revoked) and
                 # get_invite returns None, which used to make us emit

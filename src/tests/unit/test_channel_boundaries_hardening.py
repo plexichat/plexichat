@@ -135,3 +135,36 @@ class TestChannelFieldConstraints:
 
         unwrapped = inspect.unwrap(ChannelCRUDMixin._update_channel)
         assert "validate_channel_fields" in unwrapped.__code__.co_names
+
+
+class TestInviteBoundaries:
+    def test_invite_code_shape(self):
+        from src.api.routes.channels.helpers import require_invite_code
+
+        assert require_invite_code("aB3_-xyz") == "aB3_-xyz"
+        for bad in ("", None, "a" * 65, "../etc/passwd", "has space", "x\x00y"):
+            with pytest.raises(HTTPException) as exc:
+                require_invite_code(bad)
+            assert exc.value.status_code == 400
+
+    def test_invite_limits(self):
+        from src.api.routes.channels.helpers import require_invite_limits
+
+        assert require_invite_limits(0, 0) == (0, 0)
+        assert require_invite_limits(86400, 10) == (86400, 10)
+        for age, uses in ((10**9, 0), (0, 10**9), (-1, 0), (0, -1)):
+            with pytest.raises(HTTPException) as exc:
+                require_invite_limits(age, uses)
+            assert exc.value.status_code == 400
+
+    def test_all_invite_handlers_validate_the_code(self):
+        from src.api.routes.channels.invites import ChannelInvitesMixin
+
+        for handler in (
+            ChannelInvitesMixin._get_invite_info,
+            ChannelInvitesMixin._join_server_via_invite,
+            ChannelInvitesMixin._delete_invite,
+        ):
+            assert "require_invite_code" in handler.__code__.co_names
+        create = ChannelInvitesMixin._create_channel_invite
+        assert "require_invite_limits" in create.__code__.co_names

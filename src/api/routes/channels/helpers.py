@@ -1,3 +1,4 @@
+import re
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -103,6 +104,39 @@ def validate_channel_fields(update_data: dict) -> None:
                 status_code=400,
                 detail={"error": {"code": 400, "message": f"Invalid {field}"}},
             )
+
+
+MAX_INVITE_AGE_SECONDS = 30 * 24 * 3600
+MAX_INVITE_USES = 10_000
+INVITE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def require_invite_code(value: Any) -> str:
+    """Validate an invite code before it reaches a storage lookup."""
+    code = str(value or "")
+    if not INVITE_CODE_PATTERN.match(code):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid invite code"}},
+        )
+    return code
+
+
+def require_invite_limits(max_age: Any, max_uses: Any) -> tuple[int, int]:
+    """Bound invite lifetime and use count with the shared numeric guard."""
+    try:
+        age = bounded_int(
+            max_age, "max_age", minimum=0, maximum=MAX_INVITE_AGE_SECONDS, default=86400
+        )
+        uses = bounded_int(
+            max_uses, "max_uses", minimum=0, maximum=MAX_INVITE_USES, default=0
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid invite parameters"}},
+        ) from exc
+    return age, uses
 
 
 def _channel_to_response(
