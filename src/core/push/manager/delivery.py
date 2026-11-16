@@ -6,6 +6,20 @@ import utils.logger as logger
 
 from .base import PushManagerBase
 
+# APNs caps an alert at ~4 KB and FCM/Web Push have similar practical limits.
+# These strings are copied into every device's outbound payload, so an
+# unbounded title/body from any caller would bloat every fan-out. Fail before
+# the fan-out instead of serialising an arbitrarily large notification.
+MAX_TITLE_LENGTH = 256
+MAX_BODY_LENGTH = 4096
+
+
+def _bounded_text(value: Any, field: str, maximum: int) -> str:
+    text = str(value or "")
+    if len(text) > maximum:
+        raise ValueError(f"{field} exceeds maximum length of {maximum}")
+    return text
+
 
 class DeliveryMixin(PushManagerBase):
     """Send a notification to every valid device of a user."""
@@ -35,6 +49,9 @@ class DeliveryMixin(PushManagerBase):
         Returns:
             Number of devices the notification was sent to
         """
+        title = _bounded_text(title, "title", MAX_TITLE_LENGTH)
+        body = _bounded_text(body, "body", MAX_BODY_LENGTH)
+
         tokens = self.get_user_tokens(user_id)
         if not tokens:
             return 0

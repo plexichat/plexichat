@@ -123,3 +123,22 @@ class TestPushCredentialBounds:
         from src.core.push.manager.tokens import _bounded_credential
 
         assert _bounded_credential("abc", "token", 100) == "abc"
+
+
+class TestPushTextBounds:
+    def test_overlong_title_is_refused_before_fanout(self):
+        from src.core.push.manager.delivery import MAX_TITLE_LENGTH, _bounded_text
+
+        with pytest.raises(ValueError):
+            _bounded_text("x" * (MAX_TITLE_LENGTH + 1), "title", MAX_TITLE_LENGTH)
+
+    def test_overlong_body_is_refused(self):
+        from src.core.push.manager.delivery import MAX_BODY_LENGTH, _bounded_text
+
+        with pytest.raises(ValueError):
+            _bounded_text("x" * (MAX_BODY_LENGTH + 1), "body", MAX_BODY_LENGTH)
+
+    def test_normal_text_passes(self):
+        from src.core.push.manager.delivery import _bounded_text
+
+        assert _bounded_text("hello", "title", 256) == "hello"
