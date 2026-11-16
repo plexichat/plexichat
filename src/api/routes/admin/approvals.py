@@ -2,7 +2,7 @@
 Admin approval workflow routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from src.api.schemas.common import (
     ErrorResponse,
     SnowflakeID,
@@ -118,7 +118,9 @@ class ApprovalComment(BaseModel):
     },
 )
 async def list_approvals(
-    request: Request, status: Optional[str] = None, action_type: Optional[str] = None
+    request: Request,
+    status: Optional[str] = Query(None, max_length=32),
+    action_type: Optional[str] = Query(None, max_length=64),
 ):
     """
     List approval requests with optional filtering.
