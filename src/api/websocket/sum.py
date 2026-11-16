@@ -100,6 +100,13 @@ class SumSubscriptionRegistry:
         with self._lock:
             return set(self._subs.get(int(workbook_id), set()))
 
+    def get_connection_subscriptions(self, connection_id: str) -> Set[int]:
+        """Workbook ids currently held by one connection (copy)."""
+        if not connection_id:
+            return set()
+        with self._lock:
+            return set(self._connection_subs.get(connection_id, set()))
+
     def unsubscribe_all(self, user_id: int) -> None:
         """Remove a user from every workbook subscription."""
         with self._lock:
@@ -144,6 +151,42 @@ _sum_subscription_registry = SumSubscriptionRegistry()
 def get_sum_subscription_registry() -> SumSubscriptionRegistry:
     """Return the process-wide Sum subscription registry."""
     return _sum_subscription_registry
+
+
+def prune_unauthorized_subscriptions(
+    registry: SumSubscriptionRegistry,
+    connection_id: str,
+    user_id: int,
+    is_authorized,
+) -> list:
+    """Drop this connection's workbook subscriptions that now fail authz.
+
+    Mirrors the artifact fabric helper: a workbook grant can be revoked while
+    the socket stays open, so every Sum opcode re-checks the caller's current
+    authorization and prunes stale subscriptions. Errors and falsey verdicts
+    deny. Returns the sorted list of removed workbook ids.
+    """
+    if not connection_id or not user_id:
+        return []
+    try:
+        held = registry.get_connection_subscriptions(connection_id)
+    except Exception as exc:
+        logger.debug(f"Cannot read Sum subscriptions for {connection_id}: {exc}")
+        return []
+    revoked = []
+    for workbook_id in sorted(held):
+        try:
+            allowed = bool(is_authorized(workbook_id))
+        except Exception as exc:
+            logger.debug(
+                f"Sum subscription re-authorization failed for workbook "
+                f"{workbook_id} (connection {connection_id}): {exc}"
+            )
+            allowed = False
+        if not allowed:
+            registry.unsubscribe(user_id, workbook_id, connection_id)
+            revoked.append(workbook_id)
+    return revoked
 
 
 def _get_sum_manager():

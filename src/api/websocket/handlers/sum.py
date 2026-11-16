@@ -31,8 +31,10 @@ from src.api.websocket.boundaries import (
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.sum import (
+    _capability_allows_sum,
     _get_sum_manager,
     get_sum_subscription_registry,
+    prune_unauthorized_subscriptions,
     relay_sum_op,
     send_sum_sync,
 )
@@ -70,6 +72,43 @@ class SumHandler:
     def _manager(self):
         return _get_sum_manager()
 
+    def reauthorize_subscriptions(self, connection: Connection) -> list:
+        """Re-check every workbook subscription held by this connection.
+
+        A Sum grant/scope can be revoked without tearing down the socket. Every
+        Sum opcode calls this so a revoked grant is pruned on the next op; the
+        relay path additionally re-checks recipients. Fails closed: when the
+        capability or manager is unavailable, stale subscriptions are removed.
+        """
+        if not getattr(connection, "is_authenticated", False) or not connection.user_id:
+            return []
+
+        def _authorized(workbook_id: int) -> bool:
+            if not _capability_allows_sum():
+                return False
+            try:
+                self._manager().get_workbook(int(connection.user_id), int(workbook_id))
+                return True
+            except Exception:
+                return False
+
+        try:
+            revoked = prune_unauthorized_subscriptions(
+                self._registry,
+                connection.connection_id,
+                connection.user_id,
+                _authorized,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Sum subscription re-authorization failed: {exc}")
+            return []
+        if revoked:
+            logger.debug(
+                f"Pruned {len(revoked)} no-longer-authorized workbook "
+                f"subscriptions for connection {connection.connection_id}"
+            )
+        return revoked
+
     # === SUM_SUBSCRIBE =====================================================
 
     async def handle_sum_subscribe(
@@ -81,6 +120,8 @@ class SumHandler:
         """Handle SUM_SUBSCRIBE opcode."""
         if not connection.is_authenticated or not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        self.reauthorize_subscriptions(connection)
 
         if not data:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
@@ -171,6 +212,8 @@ class SumHandler:
         if not connection.is_authenticated or not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
+        self.reauthorize_subscriptions(connection)
+
         workbook_id = _workbook_id(data)
         if workbook_id is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
@@ -194,6 +237,8 @@ class SumHandler:
         """Handle SUM_OP opcode by applying and relaying the operation."""
         if not connection.is_authenticated or not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        self.reauthorize_subscriptions(connection)
 
         if not data:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)

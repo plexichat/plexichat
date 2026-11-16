@@ -34,6 +34,7 @@ from src.api.websocket.connection import Connection
 from src.api.websocket.artifacts import (
     cap_snapshot_payload,
     get_artifact_subscription_registry,
+    prune_unauthorized_subscriptions,
     relay_artifact_op,
     send_artifact_ack,
     send_artifact_op_rejected,
@@ -105,6 +106,44 @@ class ArtifactHandler:
 
         return connection.user_id == artifact.author_id
 
+    def reauthorize_subscriptions(self, connection: Connection) -> list:
+        """Re-check *every* live subscription of this connection right now.
+
+        The subscribe-time permission check is a point-in-time decision: a
+        role/permission or conversation grant may be revoked while the socket
+        stays open. Every artifact opcode calls this first so a revoked grant
+        drops the stale subscription before the op can use it as a routing
+        hint (relays independently re-check recipients, this removes the
+        subscription itself so it cannot linger). Fails closed: a missing DB
+        or a raising permission check prunes the subscription.
+        """
+        if not getattr(connection, "is_authenticated", False) or not connection.user_id:
+            return []
+
+        def _authorized(artifact_id: int) -> bool:
+            db = api.get_db()
+            artifact = get_artifact(db, artifact_id) if db is not None else None
+            return artifact is not None and self._has_artifact_access(
+                connection, artifact, "artifact.view"
+            )
+
+        try:
+            revoked = prune_unauthorized_subscriptions(
+                self._registry,
+                connection.connection_id,
+                connection.user_id,
+                _authorized,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Artifact subscription re-authorization failed: {exc}")
+            return []
+        if revoked:
+            logger.debug(
+                f"Pruned {len(revoked)} no-longer-authorized artifact "
+                f"subscriptions for connection {connection.connection_id}"
+            )
+        return revoked
+
     async def handle_artifact_subscribe(
         self,
         connection: Connection,
@@ -114,6 +153,11 @@ class ArtifactHandler:
         """Handle ARTIFACT_SUBSCRIBE opcode."""
         if not connection.is_authenticated:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        # Re-authorize every subscription this connection still holds before
+        # acting: a permission revoked since subscribe time must take effect
+        # on this op, not wait for reconnect.
+        self.reauthorize_subscriptions(connection)
 
         if not data:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
@@ -231,6 +275,8 @@ class ArtifactHandler:
         if not connection.is_authenticated:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
+        self.reauthorize_subscriptions(connection)
+
         if not data:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
@@ -264,6 +310,8 @@ class ArtifactHandler:
         """Handle ARTIFACT_OP opcode by relaying to other subscribers."""
         if not connection.is_authenticated:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
+
+        self.reauthorize_subscriptions(connection)
 
         if not data:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)

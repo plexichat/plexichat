@@ -102,6 +102,18 @@ class ArtifactSubscriptionRegistry:
         with self._lock:
             return set(self._subs.get(artifact_id, set()))
 
+    def get_connection_subscriptions(self, connection_id: str) -> Set[int]:
+        """Artifact ids currently held by one connection (copy).
+
+        Exposed so a gateway handler can re-authorize *every* live
+        subscription on each op instead of trusting the decision made once at
+        subscribe time.
+        """
+        if not connection_id:
+            return set()
+        with self._lock:
+            return set(self._connection_subs.get(connection_id, set()))
+
     def unsubscribe_all(self, user_id: int) -> None:
         """Remove a user from every artifact subscription."""
         with self._lock:
@@ -172,6 +184,46 @@ def cap_snapshot_payload(payload: Dict[str, object]) -> tuple:
 def get_artifact_subscription_registry() -> ArtifactSubscriptionRegistry:
     """Return the process-wide artifact subscription registry."""
     return _artifact_subscription_registry
+
+
+def prune_unauthorized_subscriptions(
+    registry: ArtifactSubscriptionRegistry,
+    connection_id: str,
+    user_id: int,
+    is_authorized,
+) -> list:
+    """Drop this connection's subscriptions that fail ``is_authorized``.
+
+    A subscription is a routing hint, not a durable capability: a role or
+    conversation grant can be revoked while the socket stays open. Callers
+    invoke this on *every* artifact opcode so permission changes take effect
+    on the next op rather than at connect/subscribe time. ``is_authorized`` is
+    supplied by the handler (where the permission policy lives); an exception
+    or a falsey result denies and prunes, never fails open.
+
+    Returns the sorted list of artifact ids that were removed.
+    """
+    if not connection_id or not user_id:
+        return []
+    try:
+        held = registry.get_connection_subscriptions(connection_id)
+    except Exception as exc:  # defensive: an unreadable registry denies all
+        logger.debug(f"Cannot read subscriptions for {connection_id}: {exc}")
+        return []
+    revoked = []
+    for artifact_id in sorted(held):
+        try:
+            allowed = bool(is_authorized(artifact_id))
+        except Exception as exc:
+            logger.debug(
+                f"Subscription re-authorization failed for artifact "
+                f"{artifact_id} (connection {connection_id}): {exc}"
+            )
+            allowed = False
+        if not allowed:
+            registry.unsubscribe(user_id, artifact_id, connection_id)
+            revoked.append(artifact_id)
+    return revoked
 
 
 async def relay_artifact_op(
