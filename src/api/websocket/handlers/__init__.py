@@ -23,6 +23,7 @@ from src.api.websocket.opcodes import (
     SERVER_ONLY_OPCODES,
     coerce_opcode,
 )
+from src.api.websocket.boundaries import requires_authentication
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
 
@@ -295,6 +296,17 @@ class OpcodeHandler:
                 f"unrouted/echo opcode {op} (ignored, connection kept)"
             )
             return None, None, None
+
+        # Identity gate for every state-mutating opcode. Centralizing it here
+        # means a newly added mutating handler cannot forget its auth check;
+        # resource-level authorization is still enforced by the owning
+        # manager inside the handler.
+        if requires_authentication(int(op)) and not connection.is_authenticated:
+            logger.debug(
+                f"Connection {connection.connection_id}: unauthenticated "
+                f"mutating opcode {op} rejected"
+            )
+            return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
         if op == GatewayOpcode.HEARTBEAT:
             return await self._connection_handler.handle_heartbeat(connection, data)

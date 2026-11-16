@@ -18,6 +18,7 @@ import json
 
 from typing import Any
 
+from .opcodes import GatewayOpcode
 from src.core.security.hardening import (
     HardeningViolation,
     bounded_int,
@@ -239,3 +240,42 @@ def validate_presence_payload(data: object) -> dict:
         "custom_emoji": custom_emoji,
         "activities": clean_activities,
     }
+
+
+# --- Mutating opcode authentication (commit 7) ----------------------------
+#: Opcodes that change server-side state or cause a fan-out. IDENTIFY/RESUME
+#: (which establish authentication) and HEARTBEAT (liveness only) are
+#: deliberately absent. Resource-level authorization remains delegated to the
+#: owning manager inside each handler; this set guarantees the *identity*
+#: gate is applied uniformly before any of them can run.
+MUTATING_OPCODES = frozenset(
+    int(op)
+    for op in (
+        GatewayOpcode.PRESENCE_UPDATE,
+        GatewayOpcode.VOICE_STATE_UPDATE,
+        GatewayOpcode.REQUEST_GUILD_MEMBERS,
+        GatewayOpcode.VOICE_CONNECT,
+        GatewayOpcode.VOICE_DISCONNECT,
+        GatewayOpcode.VOICE_SDP_OFFER,
+        GatewayOpcode.VOICE_SDP_ANSWER,
+        GatewayOpcode.VOICE_ICE_CANDIDATE,
+        GatewayOpcode.VOICE_SPEAKING,
+        GatewayOpcode.VOICE_QUALITY,
+        GatewayOpcode.TYPING_START,
+        GatewayOpcode.TYPING_STOP,
+        GatewayOpcode.ARTIFACT_SUBSCRIBE,
+        GatewayOpcode.ARTIFACT_UNSUBSCRIBE,
+        GatewayOpcode.ARTIFACT_OP,
+        GatewayOpcode.SUM_SUBSCRIBE,
+        GatewayOpcode.SUM_UNSUBSCRIBE,
+        GatewayOpcode.SUM_OP,
+        GatewayOpcode.INTERACTION_CREATE,
+        GatewayOpcode.INTERACTION_RESPONSE,
+        GatewayOpcode.RATCHET_UPDATE,
+    )
+)
+
+
+def requires_authentication(opcode: int) -> bool:
+    """Whether ``opcode`` mutates state and therefore needs an identified user."""
+    return int(opcode) in MUTATING_OPCODES
