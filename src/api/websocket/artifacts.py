@@ -24,6 +24,7 @@ import utils.logger as logger
 from src.core.events.snowflakes import stringify_snowflake_ids
 
 from src.api.websocket.boundaries import subscription_allowed
+from src.api.websocket.subscription_index import SubscriptionIndex
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
@@ -42,7 +43,16 @@ class ArtifactSubscriptionRegistry:
         # subscriptions belonging to another tab.
         self._connection_subs: Dict[str, Set[int]] = {}
         self._connection_users: Dict[str, int] = {}
+        # (user_id, artifact_id) -> number of that user's connections holding
+        # the subscription. O(1) "last tab" check; replaces a full scan of
+        # _connection_subs on every unsubscribe.
+        self._index = SubscriptionIndex()
         self._lock = threading.Lock()
+
+    def connection_count(self, user_id: int, artifact_id: int) -> int:
+        """Number of ``user_id``'s connections subscribed to ``artifact_id``."""
+        with self._lock:
+            return self._index.count(user_id, artifact_id)
 
     def subscribe(
         self, user_id: int, artifact_id: int, connection_id: Optional[str] = None
@@ -54,14 +64,28 @@ class ArtifactSubscriptionRegistry:
         already-held artifact is always allowed.
         """
         with self._lock:
+            uid = int(user_id)
+            held = (
+                self._connection_subs.get(connection_id, set())
+                if connection_id
+                else set()
+            )
+            if connection_id and not subscription_allowed(len(held), artifact_id, held):
+                return False
+            self._subs.setdefault(artifact_id, set()).add(uid)
             if connection_id:
-                held = self._connection_subs.get(connection_id, set())
-                if not subscription_allowed(len(held), artifact_id, held):
-                    return False
-            self._subs.setdefault(artifact_id, set()).add(user_id)
-            if connection_id:
+                previous_user = self._connection_users.get(connection_id)
+                already_held = artifact_id in held
+                if previous_user is not None and previous_user != uid and already_held:
+                    # Defensive: a connection id should belong to one user, but
+                    # if it is rebound, move the hold in the index too.
+                    self._index.discard(previous_user, artifact_id)
+                    self._index.add(uid, artifact_id)
+                elif not already_held:
+                    self._index.add(uid, artifact_id)
                 self._connection_subs.setdefault(connection_id, set()).add(artifact_id)
-                self._connection_users[connection_id] = int(user_id)
+                self._connection_users[connection_id] = uid
+                self._index.add_connection(uid, connection_id)
         return True
 
     def unsubscribe(
@@ -80,15 +104,16 @@ class ArtifactSubscriptionRegistry:
             uid = int(user_id)
             if connection_id:
                 artifacts = self._connection_subs.get(connection_id)
-                if artifacts is not None:
+                if artifacts is not None and artifact_id in artifacts:
                     artifacts.discard(artifact_id)
+                    self._index.discard(uid, artifact_id)
                     if not artifacts:
                         self._connection_subs.pop(connection_id, None)
                         self._connection_users.pop(connection_id, None)
-            still_subscribed = bool(connection_id) and any(
-                artifact_id in conn_artifacts
-                and self._connection_users.get(conn) == uid
-                for conn, conn_artifacts in self._connection_subs.items()
+                        self._index.discard_connection(uid, connection_id)
+            # Indexed O(1) lookup replaces the former O(all connections) scan.
+            still_subscribed = (
+                bool(connection_id) and self._index.count(uid, artifact_id) > 0
             )
             if not still_subscribed:
                 subs = self._subs.get(artifact_id)
@@ -117,15 +142,17 @@ class ArtifactSubscriptionRegistry:
     def unsubscribe_all(self, user_id: int) -> None:
         """Remove a user from every artifact subscription."""
         with self._lock:
+            # Only this user's connections are visited (indexed), not every
+            # connection held by the process.
+            connection_ids = self._index.drop_user(user_id)
             for artifact_id in list(self._subs):
                 subs = self._subs[artifact_id]
                 subs.discard(user_id)
                 if not subs:
                     self._subs.pop(artifact_id, None)
-            for connection_id, artifacts in list(self._connection_subs.items()):
-                if self._connection_users.get(connection_id) == int(user_id):
-                    self._connection_subs.pop(connection_id, None)
-                    self._connection_users.pop(connection_id, None)
+            for connection_id in connection_ids:
+                self._connection_subs.pop(connection_id, None)
+                self._connection_users.pop(connection_id, None)
 
     def unsubscribe_connection(
         self, connection_id: str, user_id: Optional[int] = None
@@ -135,19 +162,21 @@ class ArtifactSubscriptionRegistry:
             artifact_ids = self._connection_subs.pop(connection_id, set())
             tracked_user_id = self._connection_users.pop(connection_id, None)
             effective_user_id = user_id if user_id is not None else tracked_user_id
+            if effective_user_id is not None:
+                self._index.discard_connection(int(effective_user_id), connection_id)
             for artifact_id in artifact_ids:
+                if effective_user_id is not None:
+                    euid = int(effective_user_id)
+                    self._index.discard(euid, artifact_id)
+                    still_subscribed = self._index.count(euid, artifact_id) > 0
+                else:
+                    euid = None
+                    still_subscribed = False
                 subs = self._subs.get(artifact_id)
                 if subs is None:
                     continue
-                if effective_user_id is not None:
-                    still_subscribed = any(
-                        artifact_id in other_artifacts
-                        and self._connection_users.get(other_connection)
-                        == int(effective_user_id)
-                        for other_connection, other_artifacts in self._connection_subs.items()
-                    )
-                    if not still_subscribed:
-                        subs.discard(int(effective_user_id))
+                if euid is not None and not still_subscribed:
+                    subs.discard(euid)
                 if not subs:
                     self._subs.pop(artifact_id, None)
 

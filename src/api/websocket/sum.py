@@ -24,6 +24,7 @@ import utils.logger as logger
 from src.core.events.snowflakes import stringify_snowflake_ids
 
 from src.api.websocket.boundaries import subscription_allowed
+from src.api.websocket.subscription_index import SubscriptionIndex
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
 
@@ -41,7 +42,16 @@ class SumSubscriptionRegistry:
         # subscriptions belonging to another tab.
         self._connection_subs: Dict[str, Set[int]] = {}
         self._connection_users: Dict[str, int] = {}
+        # (user_id, workbook_id) -> number of that user's connections holding
+        # the subscription. O(1) "last tab" check; replaces a full scan of
+        # _connection_subs on every unsubscribe.
+        self._index = SubscriptionIndex()
         self._lock = threading.Lock()
+
+    def connection_count(self, user_id: int, workbook_id: int) -> int:
+        """Number of ``user_id``'s connections subscribed to ``workbook_id``."""
+        with self._lock:
+            return self._index.count(user_id, workbook_id)
 
     def subscribe(
         self, user_id: int, workbook_id: int, connection_id: Optional[str] = None
@@ -53,14 +63,26 @@ class SumSubscriptionRegistry:
         """
         with self._lock:
             wid = int(workbook_id)
+            uid = int(user_id)
+            held = (
+                self._connection_subs.get(connection_id, set())
+                if connection_id
+                else set()
+            )
+            if connection_id and not subscription_allowed(len(held), wid, held):
+                return False
+            self._subs.setdefault(wid, set()).add(uid)
             if connection_id:
-                held = self._connection_subs.get(connection_id, set())
-                if not subscription_allowed(len(held), wid, held):
-                    return False
-            self._subs.setdefault(wid, set()).add(int(user_id))
-            if connection_id:
+                previous_user = self._connection_users.get(connection_id)
+                already_held = wid in held
+                if previous_user is not None and previous_user != uid and already_held:
+                    self._index.discard(previous_user, wid)
+                    self._index.add(uid, wid)
+                elif not already_held:
+                    self._index.add(uid, wid)
                 self._connection_subs.setdefault(connection_id, set()).add(wid)
-                self._connection_users[connection_id] = int(user_id)
+                self._connection_users[connection_id] = uid
+                self._index.add_connection(uid, connection_id)
         return True
 
     def unsubscribe(
@@ -79,15 +101,15 @@ class SumSubscriptionRegistry:
             uid = int(user_id)
             if connection_id:
                 workbooks = self._connection_subs.get(connection_id)
-                if workbooks is not None:
+                if workbooks is not None and wid in workbooks:
                     workbooks.discard(wid)
+                    self._index.discard(uid, wid)
                     if not workbooks:
                         self._connection_subs.pop(connection_id, None)
                         self._connection_users.pop(connection_id, None)
-            still_subscribed = bool(connection_id) and any(
-                wid in conn_workbooks and self._connection_users.get(conn) == uid
-                for conn, conn_workbooks in self._connection_subs.items()
-            )
+                        self._index.discard_connection(uid, connection_id)
+            # Indexed O(1) lookup replaces the former O(all connections) scan.
+            still_subscribed = bool(connection_id) and self._index.count(uid, wid) > 0
             if not still_subscribed:
                 subs = self._subs.get(wid)
                 if subs is not None:
@@ -110,15 +132,17 @@ class SumSubscriptionRegistry:
     def unsubscribe_all(self, user_id: int) -> None:
         """Remove a user from every workbook subscription."""
         with self._lock:
+            # Only this user's connections are visited (indexed), not every
+            # connection held by the process.
+            connection_ids = self._index.drop_user(user_id)
             for workbook_id in list(self._subs):
                 subs = self._subs[workbook_id]
                 subs.discard(int(user_id))
                 if not subs:
                     self._subs.pop(workbook_id, None)
-            for connection_id, workbooks in list(self._connection_subs.items()):
-                if self._connection_users.get(connection_id) == int(user_id):
-                    self._connection_subs.pop(connection_id, None)
-                    self._connection_users.pop(connection_id, None)
+            for connection_id in connection_ids:
+                self._connection_subs.pop(connection_id, None)
+                self._connection_users.pop(connection_id, None)
 
     def unsubscribe_connection(
         self, connection_id: str, user_id: Optional[int] = None
@@ -128,19 +152,21 @@ class SumSubscriptionRegistry:
             workbook_ids = self._connection_subs.pop(connection_id, set())
             tracked_user_id = self._connection_users.pop(connection_id, None)
             effective_user_id = int(user_id) if user_id is not None else tracked_user_id
+            if effective_user_id is not None:
+                self._index.discard_connection(int(effective_user_id), connection_id)
             for workbook_id in workbook_ids:
+                if effective_user_id is not None:
+                    euid = int(effective_user_id)
+                    self._index.discard(euid, workbook_id)
+                    still_subscribed = self._index.count(euid, workbook_id) > 0
+                else:
+                    euid = None
+                    still_subscribed = False
                 subs = self._subs.get(workbook_id)
                 if subs is None:
                     continue
-                if effective_user_id is not None:
-                    still_subscribed = any(
-                        workbook_id in other_workbooks
-                        and self._connection_users.get(other_connection)
-                        == int(effective_user_id)
-                        for other_connection, other_workbooks in self._connection_subs.items()
-                    )
-                    if not still_subscribed:
-                        subs.discard(int(effective_user_id))
+                if euid is not None and not still_subscribed:
+                    subs.discard(euid)
                 if not subs:
                     self._subs.pop(workbook_id, None)
 
