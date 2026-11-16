@@ -18,7 +18,6 @@ code should call ``derive_key`` / ``verify_derived_key`` instead.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import os
 from dataclasses import dataclass, replace
 from typing import Any, Optional
@@ -27,6 +26,7 @@ import utils.logger as logger
 
 from .audit import sanitise_audit_entry
 from .hardening import bounded_int
+from .secrets import constant_time_compare, scrub_secret
 
 DEFAULT_ALGORITHM = "sha256"
 SUPPORTED_ALGORITHMS = frozenset({"sha256", "sha512"})
@@ -147,11 +147,6 @@ def audit_kdf_params(params: KDFParams) -> dict[str, str]:
     return sanitise_audit_entry(record)
 
 
-def _scrub_buffer(buffer: bytearray) -> None:
-    for index in range(len(buffer)):
-        buffer[index] = 0
-
-
 def derive_key(
     password: str,
     *,
@@ -186,7 +181,7 @@ def derive_key(
             checked.algorithm,
         )
     finally:
-        _scrub_buffer(secret)
+        scrub_secret(secret)
 
     if do_audit:
         audit = audit_kdf_params(checked)
@@ -214,7 +209,7 @@ def verify_derived_key(
         candidate = derive_key(password, params=params, salt=salt, do_audit=False).key
     except KDFParameterError:
         return False
-    return hmac.compare_digest(candidate, bytes(expected_key))
+    return constant_time_compare(candidate, bytes(expected_key))
 
 
 # Known-answer vectors. SHA-256 values are the standard PBKDF2-HMAC-SHA256

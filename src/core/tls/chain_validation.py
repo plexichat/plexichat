@@ -16,7 +16,6 @@ entries only (no Common Name fallback).
 from __future__ import annotations
 
 import hashlib
-import hmac
 import ipaddress
 import re
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Optional, Sequence
 
 from src.core.security.hardening import bounded_int
+from src.core.security.secrets import constant_time_compare
 
 from .config_validation import TLSConfigValidationError, validate_fingerprint, validate_hostname
 
@@ -200,7 +200,7 @@ def verify_pin(cert: Any, pin: Any) -> None:
     except TLSConfigValidationError as exc:
         raise TLSChainError("certificate pin is malformed") from exc
     digest = hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest()
-    if not hmac.compare_digest(digest, expected):
+    if not constant_time_compare(digest, expected):
         raise TLSChainError("certificate pin does not match the leaf")
 
 

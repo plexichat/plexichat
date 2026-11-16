@@ -23,7 +23,21 @@ from .hardening import (
     safe_join,
     sanitize_header_filename,
 )
+from .kdf import (
+    KDFParams,
+    derive_key,
+    pbkdf2_raw,
+    verify_derived_key,
+)
 from .outbound import OutboundUrl, parse_outbound_url, resolve_outbound_url
+from .secrets import (
+    SecretBuffer,
+    constant_time_compare,
+    generate_token_key,
+    scrub_secret,
+    sign_token,
+    verify_token,
+)
 from .policies import (
     HTML_META_CHARS,
     TEXT_POLICIES,
@@ -42,6 +56,7 @@ __all__ = [
     "Decision",
     "HTML_META_CHARS",
     "HardeningViolation",
+    "KDFParams",
     "MaxLength",
     "OutboundUrl",
     "OutboundUrlRejected",
@@ -49,6 +64,7 @@ __all__ = [
     "Principal",
     "RejectUICharacters",
     "Resource",
+    "SecretBuffer",
     "SecurityRejection",
     "TEXT_POLICIES",
     "TextPolicy",
@@ -57,14 +73,22 @@ __all__ = [
     "UploadRejected",
     "bounded_int",
     "check_text",
+    "constant_time_compare",
     "content_disposition",
+    "derive_key",
+    "generate_token_key",
     "is_control_character",
     "is_identifier",
     "parse_outbound_url",
+    "pbkdf2_raw",
     "reject_control_characters",
     "require_identifier",
     "resolve_outbound_url",
     "safe_join",
     "sanitize_header_filename",
+    "scrub_secret",
+    "sign_token",
     "text_policy",
+    "verify_derived_key",
+    "verify_token",
 ]
