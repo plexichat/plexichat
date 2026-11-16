@@ -196,30 +196,31 @@ class SumManagerData(SumManagerProtocol):
         import io as io_module
 
         self._workbook(user_id, workbook_id)
-        data = self._file_bytes(workbook_id)
-        connection, path = self._open_sqlite(data)
-        try:
-            sheet = connection.execute(
-                "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
-                (str(sheet_id),),
-            ).fetchone()
-            if sheet is None:
-                raise SumNotFoundError("Sheet not found")
-            rows = connection.execute(
-                "SELECT row_index, column_index, value_type, value_json, formula FROM sum_cells WHERE sheet_id = ? AND row_index < ? AND column_index < ? ORDER BY row_index, column_index",
-                (str(sheet_id), MAX_CSV_ROWS, MAX_CSV_COLUMNS),
-            ).fetchall()
-        except sqlite3.Error as exc:
-            raise SumStorageError("Workbook file schema is invalid") from exc
+        # Read from the already-materialized workbook connection instead of
+        # serializing to a container and reopening a fresh SQLite database
+        # (which replayed additive-schema DDL) for every export.
+        with self._live_connection(workbook_id) as connection:
+            try:
+                sheet = connection.execute(
+                    "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
+                    (str(sheet_id),),
+                ).fetchone()
+                if sheet is None:
+                    raise SumNotFoundError("Sheet not found")
+                rows = connection.execute(
+                    "SELECT row_index, column_index, value_type, value_json, formula FROM sum_cells WHERE sheet_id = ? AND row_index < ? AND column_index < ? ORDER BY row_index, column_index",
+                    (str(sheet_id), MAX_CSV_ROWS, MAX_CSV_COLUMNS),
+                ).fetchall()
+            except sqlite3.Error as exc:
+                raise SumStorageError("Workbook file schema is invalid") from exc
 
-        def _csv_text(value: Any) -> str:
-            # Spreadsheet display convention: whole floats render without a
-            # trailing ``.0`` so ``7*3`` exports as ``21``, not ``21.0``.
-            if isinstance(value, float) and value.is_integer():
-                return str(int(value))
-            return str(value)
+            def _csv_text(value: Any) -> str:
+                # Spreadsheet display convention: whole floats render without a
+                # trailing ``.0`` so ``7*3`` exports as ``21``, not ``21.0``.
+                if isinstance(value, float) and value.is_integer():
+                    return str(int(value))
+                return str(value)
 
-        try:
             # Formula cells export their computed value (like a spreadsheet),
             # so round-tripping through CSV preserves the numbers users see.
             evaluator = FormulaEvaluator(self._resolver_for(connection))
@@ -242,8 +243,6 @@ class SumManagerData(SumManagerProtocol):
                 if value is None:
                     continue
                 grid.setdefault(row_index, {})[column_index] = _csv_text(value)
-        finally:
-            self._close_sqlite(connection, path)
         max_row = max(grid) + 1 if grid else 0
         max_col = max((max(cols) for cols in grid.values()), default=-1) + 1
         buffer = io_module.StringIO()

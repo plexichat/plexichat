@@ -55,6 +55,38 @@ def test_get_workbook_stays_on_live_connection(
     assert response["my_permissions"]["can_edit"] is True
 
 
+def test_csv_export_stays_on_live_connection(db, two_users, server_manager, monkeypatch):
+    owner, _ = two_users
+    manager = _make_manager(db, server_manager)
+    workbook = manager.create_workbook(owner.id, "Export")
+    wb_id = int(workbook["id"])
+    sheet_id = int(workbook["sheets"][0]["id"])
+    manager.apply_operation(
+        owner.id,
+        wb_id,
+        sheet_id,
+        "csv-1",
+        "set_cell",
+        0,
+        [
+            {"row": 0, "column": 0, "value_type": "number", "value": 7},
+            {
+                "row": 0,
+                "column": 1,
+                "value_type": "formula",
+                "value": None,
+                "formula": "A1*3",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(SumManager, "_serialize_connection", _boom)
+    monkeypatch.setattr(SumManager, "_open_sqlite", _boom)
+
+    export = manager.export_csv(owner.id, wb_id, sheet_id)
+    assert export["content"].splitlines()[0].split(",") == ["7", "21"]
+
+
 def test_range_permission_sheet_check_stays_on_live_connection(
     db, two_users, server_manager, monkeypatch
 ):
