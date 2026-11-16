@@ -38,7 +38,14 @@ class StashFileUploadRequest(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=500)
     filename: str = Field(..., min_length=1, max_length=255)
-    content: str = Field(..., min_length=1, description="Base64-encoded file bytes")
+    # Mirrors the route's MAX_UPLOAD_ENCODED_LEN (70M base64 chars ~ 50 MiB
+    # decoded): reject an oversized body during validation, before decode.
+    content: str = Field(
+        ...,
+        min_length=1,
+        max_length=70_000_000,
+        description="Base64-encoded file bytes",
+    )
     content_type: Optional[str] = Field(None, max_length=255)
     scope: str = Field("personal", pattern="^(personal|server)$")
     server_id: Optional[SnowflakeID] = None
