@@ -182,8 +182,30 @@ def check_host_restriction(request: Request, require_admin_ui: bool = True) -> N
             )
 
 
+# Several maintenance routes now stack two ``require_admin_permission``
+# gates (an action scope plus ``maintenance``) on the same request. The token
+# and its validation cannot change between those calls, so remember the
+# verified admin id on the request and skip the duplicate session lookup.
+_ADMIN_ID_CACHE_ATTR = "_pcs_verified_admin_id"
+
+
+def _remember_admin_id(request: Request, admin_id: int) -> None:
+    state = getattr(request, "state", None)
+    if state is None:
+        return
+    try:
+        setattr(state, _ADMIN_ID_CACHE_ATTR, admin_id)
+    except Exception:
+        pass  # A non-state request double simply pays the lookup again.
+
+
 def get_admin_from_token(request: Request) -> int:
-    """Get admin ID from Authorization header."""
+    """Get admin ID from Authorization header (validated once per request)."""
+    state = getattr(request, "state", None)
+    cached = getattr(state, _ADMIN_ID_CACHE_ATTR, None) if state is not None else None
+    if cached is not None:
+        return cached
+
     auth_header = request.headers.get("Authorization", "")
     has_bearer = auth_header.startswith("Bearer ")
     token = auth_header[7:] if has_bearer else ""
@@ -206,7 +228,9 @@ def get_admin_from_token(request: Request) -> int:
             # Defense-in-depth fallback: even on the trusted path require a
             # resolvable numeric identity.
             try:
-                return int(user.user_id)
+                admin_id = int(user.user_id)
+                _remember_admin_id(request, admin_id)
+                return admin_id
             except (TypeError, ValueError):
                 pass  # fall through to real token validation
 
@@ -223,6 +247,7 @@ def get_admin_from_token(request: Request) -> int:
             status_code=401,
             detail={"error": {"code": 401, "message": "Invalid or expired token"}},
         )
+    _remember_admin_id(request, admin_id)
     return admin_id
 
 
