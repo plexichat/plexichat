@@ -11,6 +11,7 @@ import inspect
 from fastapi.params import Query as QueryParam
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.tickets as tickets_routes
 import src.api.routes.admin.dashboard as dashboard_routes
 import src.api.routes.admin.telemetry as telemetry_routes
 
@@ -97,6 +98,18 @@ class TestSystemAlertBounds:
         assert (
             _constraint(dashboard_routes.get_system_alert_stats, "hours", "Le").le
             == 8760
+        )
+
+
+class TestTicketQueueBounds:
+    def test_pagination_and_filter_bounded(self):
+        assert _constraint(tickets_routes.get_tickets, "limit", "Le").le == 200
+        assert _constraint(tickets_routes.get_tickets, "offset", "Le").le == 1_000_000
+        assert (
+            _constraint(
+                tickets_routes.get_tickets, "status_filter", "MaxLen"
+            ).max_length
+            == 32
         )
 
 

@@ -2,7 +2,7 @@
 Admin feedback ticket routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from typing import List, Optional
 from src.api.schemas.admin import (
     TicketResponse,
@@ -32,9 +32,9 @@ router = APIRouter()
 )
 async def get_tickets(
     request: Request,
-    status_filter: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    status_filter: Optional[str] = Query(None, max_length=32),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1_000_000),
 ):
     """
     Retrieve a list of user feedback tickets.
