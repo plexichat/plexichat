@@ -77,11 +77,7 @@ class ChannelHandler:
 
         self.manager.require_permission(user_id, server_id, "channels.manage")
 
-        if isinstance(channel_type, str):
-            try:
-                channel_type = ChannelType(channel_type.lower())
-            except ValueError:
-                channel_type = ChannelType.TEXT
+        channel_type = coerce_channel_type(channel_type)
 
         name = self.validate_channel_name(name, channel_type)
 

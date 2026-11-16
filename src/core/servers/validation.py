@@ -14,7 +14,7 @@ base.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 from urllib.parse import urlparse
 
 from src.core.security.hardening import HardeningViolation
@@ -91,3 +91,28 @@ def validate_server_description(
     if len(text) > MAX_SERVER_DESCRIPTION_LENGTH:
         raise HardeningViolation(f"{field} is too long")
     return text
+
+
+def coerce_channel_type(value: Union["ChannelType", str]) -> "ChannelType":
+    """Return the ChannelType enum for *value*, refusing bare/invalid strings.
+
+    Callers used to pass any string and fall back to TEXT when it did not match,
+    so a typo silently created a differently behaved channel. Accept a real
+    ChannelType unchanged; for text, normalise case and require an exact member
+    of the enum, otherwise raise ValueError at the boundary.
+    """
+    from ..models import ChannelType
+
+    if isinstance(value, ChannelType):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("channel_type must be a string or ChannelType")
+    normalized = reject_control_characters(value, "channel_type").strip().lower()
+    if not normalized:
+        raise ValueError("channel_type must not be empty")
+    try:
+        return ChannelType(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            "channel_type must be one of: " + ", ".join(t.value for t in ChannelType)
+        ) from exc
