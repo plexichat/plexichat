@@ -38,3 +38,22 @@ class TestIdentifierBound:
 
         assert sanitize_identifier("msg_messages", "sqlite") == "`msg_messages`"
         assert sanitize_identifier("msg_messages", "postgres") == '"msg_messages"'
+
+
+class TestMigrationVersionPath:
+    def test_rejects_traversal_version(self):
+        from src.core.migrations.tracker import MigrationTracker
+
+        tracker = MigrationTracker.__new__(MigrationTracker)
+        # A traversal/absolute version must never be turned into a module path;
+        # the guard returns no metadata rather than executing an outside file.
+        assert tracker.get_migration_metadata("../../etc/passwd") == {}
+        assert tracker.get_migration_metadata("005;rm -rf") == {}
+
+    def test_accepts_numeric_version(self):
+        from src.core.migrations.tracker import MigrationTracker
+
+        tracker = MigrationTracker.__new__(MigrationTracker)
+        # Known migration files parse without raising; an unknown numeric one
+        # simply yields no metadata.
+        assert isinstance(tracker.get_migration_metadata("999"), dict)

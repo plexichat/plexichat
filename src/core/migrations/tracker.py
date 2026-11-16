@@ -233,8 +233,22 @@ class MigrationTracker(MigrationLockingMixin):
             import importlib.util
             import os
 
+            from src.core.security.hardening import safe_join
+
             migration_dir = os.path.dirname(os.path.abspath(__file__))
-            migration_file = os.path.join(migration_dir, "migrations", f"{version}.py")
+            migrations_root = os.path.join(migration_dir, "migrations")
+            # ``version`` can originate from the migration-history table or an
+            # admin CLI argument. Interpolating it into a path and then calling
+            # ``exec_module`` on the result let a value like
+            # "../../evil" load and execute an arbitrary file. A migration
+            # version is only ever a short numeric prefix, and safe_join keeps
+            # the resolved path under the migrations directory even if a
+            # symlink is involved.
+            raw_version = str(version)
+            if not re.fullmatch(r"\d{1,6}", raw_version):
+                logger.warning(f"Refusing non-numeric migration version: {version!r}")
+                return {}
+            migration_file = safe_join(migrations_root, f"{raw_version}.py")
 
             if not os.path.exists(migration_file):
                 return {}
