@@ -275,8 +275,13 @@ class DataCloner:
         # 5. Reset sequence for PostgreSQL if it has a serial ID
         if self.target.type == "postgres" and "id" in column_names:
             try:
+                # The table name is a *value* argument to pg_get_serial_sequence
+                # and can be a bind parameter. Only the FROM-clause object name
+                # must stay interpolated (identifiers cannot be bound).
                 self.target.execute(
-                    f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), COALESCE(MAX(id), 1)) FROM {table_name}"
+                    "SELECT setval(pg_get_serial_sequence(?, 'id'), "
+                    f"COALESCE(MAX(id), 1)) FROM {table_name}",
+                    (table_name,),
                 )
                 logger.debug(f"  Reset sequence for {table_name}.id")
             except Exception as e:

@@ -2,7 +2,7 @@
 
 The query builder provides a type-safe, fluent API for constructing SQL queries. It supports `SELECT`, `INSERT`, `UPDATE`, and `DELETE` operations with identifier validation, parameterized queries, optional Pydantic model validation, and schema registry enforcement.
 
-The builder is designed to prevent SQL injection by validating all identifiers (table and column names) against a regex pattern and using parameterized placeholders for all values.
+The builder prevents SQL injection by validating all identifiers (table and column names) through the shared `require_identifier` rule and using parameterized placeholders for all values. The single place that interpolates SQL text is `sql_safety.py`; see "What can and cannot be parameterized" below.
 
 ## Architecture
 
@@ -133,11 +133,39 @@ The WHERE clause supports the following operators:
 
 ## Safety features
 
-- **Identifier validation** — table and column names must match `^[a-zA-Z_][a-zA-Z0-9_]*` (`src/core/database/builder/base.py:99`)
-- **Parameterized queries** — all values use `?` placeholders, never string interpolation (`src/core/database/builder/base.py:138`)
-- **DELETE/UPDATE WHERE requirement** — both require at least one WHERE condition as a safety guard (`src/core/database/builder/delete.py:29`, `src/core/database/builder/update.py:49`)
-- **SQL injection detection** — raises `SQLInjectionError` for invalid identifiers (`src/core/database/builder/base.py:31`)
-- **Schema validation** — optionally validates table and column existence (`src/core/database/builder/schema_registry.py:43`)
+- **Identifier validation** — table and column names go through the shared
+  `require_identifier` rule via `sql_safety.sql_identifier` (63-char bound);
+  dotted names are validated one segment at a time.
+- **Parameterized queries** — all values use `?` placeholders, never string
+  interpolation.
+- **Bounded numeric fragments** — `LIMIT`/`OFFSET` and `IN`-clause placeholder
+  counts are capped by `sql_limit`/`sql_offset`/`sql_placeholders`; non-finite
+  values are rejected.
+- **DELETE/UPDATE WHERE requirement** — both require at least one WHERE condition as a safety guard.
+- **SQL injection detection** — raises `SQLInjectionError` for invalid identifiers.
+- **Schema validation** — optionally validates table and column existence.
+
+## What can and cannot be parameterized
+
+Every **value** is a DB-API placeholder. Only three categories are ever
+interpolated into SQL text, and all of them pass through `sql_safety.py`:
+
+1. **Object names** (`SELECT`/`INSERT`/`UPDATE`/`DELETE` targets, `SET`/`WHERE`
+   columns, `ORDER BY`, `PRAGMA table_info`). Placeholders stand for *values*,
+   never for identifiers, so these must be concatenated. They are validated by
+   `require_identifier` first.
+2. **Numeric clauses** (`LIMIT`/`OFFSET`, and the number of `?` markers in an
+   `IN` list). Some drivers reject a bound LIMIT, and a placeholder list has to
+   be assembled before binding; both are capped and checked for finiteness.
+3. **Constant SQL keywords/operators** from fixed allow-lists (e.g. `IS NULL`,
+   `LIKE`, `IN`), never from user input.
+
+Everything else — including values that historically were interpolated into a
+SQL string literal (for example the table-name argument of
+`pg_get_serial_sequence()` in the migration cloner) — is a bind parameter.
+`src/tests/database/test_builder_sql_static_guard.py` enforces this split in
+CI: a raw f-string/concatenation that interpolates anything outside the
+sanctioned helpers fails the test.
 
 ## Exception hierarchy
 

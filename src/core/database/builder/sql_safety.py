@@ -15,6 +15,18 @@ A dotted name is validated one segment at a time so ``schema.table`` keeps
 working without weakening the rule.  Numbers go through :func:`bounded_int`
 with an explicit finite check, so ``nan``/``inf`` and giant ints cannot reach a
 statement planner as a SQL literal.
+
+What cannot be parameterized (and therefore lives here):
+
+* object names in DDL/PRAGMA and in the target/column clauses of DML — a bind
+  marker stands for a value, never for an identifier;
+* ``LIMIT``/``OFFSET`` literals (some drivers reject a bound limit) and the
+  count-derived ``?, ?, ...`` list of an ``IN`` clause;
+* constant SQL keywords/operators from the fixed allow-lists below.
+
+Everything else is a value and must be bound.  In particular, values that used
+to be written into a SQL string literal (like the table-name argument to
+``pg_get_serial_sequence()`` in the migration cloner) are now bind parameters.
 """
 
 from __future__ import annotations
