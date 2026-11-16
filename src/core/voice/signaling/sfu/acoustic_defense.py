@@ -30,6 +30,12 @@ from typing import Any, List
 import numpy as np
 from numpy.fft import irfft, rfftfreq
 
+from ...boundaries import (
+    validate_crf,
+    validate_frame_duration_ms,
+    validate_sample_rate,
+)
+
 
 @dataclass
 class AcousticDefenseConfig:
@@ -49,6 +55,11 @@ class AcousticDefenseConfig:
     transient_attack_ms: float = 0.5
     transient_release_ms: float = 5.0
     transient_ratio: float = 0.3
+    # Audio processing profile used by the DSP pipeline. Defaults match the
+    # historical hard-coded values so existing callers are unaffected.
+    sample_rate: int = 48000
+    frame_duration_ms: int = 20
+    encoding_crf: int = 23
 
     def __post_init__(self) -> None:
         if self.jitter_ms_min < 0 or self.jitter_ms_max < 0:
@@ -61,6 +72,9 @@ class AcousticDefenseConfig:
             raise ValueError("transient timings must be non-negative")
         if not 0 < self.transient_ratio <= 1:
             raise ValueError("transient_ratio must be greater than 0 and at most 1")
+        self.sample_rate = validate_sample_rate(self.sample_rate)
+        self.frame_duration_ms = validate_frame_duration_ms(self.frame_duration_ms)
+        self.encoding_crf = validate_crf(self.encoding_crf)
 
 
 def _generate_noise_frame(
@@ -77,6 +91,7 @@ def _generate_noise_frame(
     transforming it back. This is a true comfort-noise signal, not a sum
     of a few deterministic sinusoids.
     """
+    sample_rate = validate_sample_rate(sample_rate)
     if num_samples <= 0:
         return []
     # White noise in the time domain -> spectrum.
@@ -170,8 +185,10 @@ class AudioProcessingTrack:
         self._ready_state = source_track.readyState
         self._enabled = True
         self._silence_frame_count = 0
-        self._sample_rate = 48000
-        self._frame_duration_ms = 20
+        self._sample_rate = validate_sample_rate(getattr(config, "sample_rate", 48000))
+        self._frame_duration_ms = validate_frame_duration_ms(
+            getattr(config, "frame_duration_ms", 20)
+        )
         self._samples_per_frame = int(
             self._sample_rate * self._frame_duration_ms / 1000.0
         )

@@ -10,6 +10,11 @@ from enum import Enum
 import utils.logger as logger
 
 from ...boundaries import validate_quality_metrics
+from ...boundaries import (
+    validate_crf,
+    validate_frame_duration_ms,
+    validate_sample_rate,
+)
 from .quality import canonical_channel_id, canonical_user_id
 
 
@@ -46,6 +51,15 @@ class AcousticDefenseConfig:
     transient_attack_ms: float = 0.5
     transient_release_ms: float = 5.0
     transient_ratio: float = 0.3
+    # Audio processing profile; defaults preserve historical DSP behaviour.
+    sample_rate: int = 48000
+    frame_duration_ms: int = 20
+    encoding_crf: int = 23
+
+    def __post_init__(self) -> None:
+        self.sample_rate = validate_sample_rate(self.sample_rate)
+        self.frame_duration_ms = validate_frame_duration_ms(self.frame_duration_ms)
+        self.encoding_crf = validate_crf(self.encoding_crf)
 
 
 @dataclass

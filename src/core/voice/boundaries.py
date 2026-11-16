@@ -335,3 +335,58 @@ def validate_transcription_payload(payload: object) -> dict:
     if payload.get("recording_id") is not None:
         result["recording_id"] = validate_recording_id(payload["recording_id"])
     return result
+
+
+# --- audio processing parameter ranges (commit 9) ---
+MIN_CRF = 0
+MAX_CRF = 63
+MIN_SAMPLE_RATE = 8_000
+MAX_SAMPLE_RATE = 192_000
+VALID_SAMPLE_RATES = frozenset({8000, 12000, 16000, 24000, 44100, 48000, 96000, 192000})
+MIN_FRAME_DURATION_MS = 5
+MAX_FRAME_DURATION_MS = 100
+
+
+def _strict_bounded_int(value: object, field: str, minimum: int, maximum: int) -> int:
+    """bounded_int plus rejection of bools and fractional floats."""
+    if isinstance(value, bool) or (
+        isinstance(value, float) and not value.is_integer()
+    ):
+        raise ValueError(f"{field} must be an integer")
+    return bounded_int(value, field, minimum=minimum, maximum=maximum)
+
+
+def validate_crf(value: object, field: str = "crf") -> int:
+    """Validate an encoder CRF (0 = lossless, 63 = lowest quality)."""
+    return _strict_bounded_int(value, field, MIN_CRF, MAX_CRF)
+
+
+def validate_sample_rate(value: object, field: str = "sample_rate") -> int:
+    """Validate an audio sample rate against the supported set/range."""
+    rate = _strict_bounded_int(value, field, MIN_SAMPLE_RATE, MAX_SAMPLE_RATE)
+    if rate not in VALID_SAMPLE_RATES:
+        raise ValueError(f"{field} is not a supported sample rate")
+    return rate
+
+
+def validate_frame_duration_ms(value: object, field: str = "frame_duration_ms") -> int:
+    """Validate an audio frame duration in milliseconds."""
+    return _strict_bounded_int(
+        value, field, MIN_FRAME_DURATION_MS, MAX_FRAME_DURATION_MS
+    )
+
+
+def validate_audio_profile(profile: object) -> dict:
+    """Validate an audio encoding profile dict end-to-end."""
+    if not isinstance(profile, dict):
+        raise ValueError("audio profile must be an object")
+    result: dict = {}
+    if "sample_rate" in profile:
+        result["sample_rate"] = validate_sample_rate(profile["sample_rate"])
+    if "frame_duration_ms" in profile:
+        result["frame_duration_ms"] = validate_frame_duration_ms(
+            profile["frame_duration_ms"]
+        )
+    if "crf" in profile:
+        result["crf"] = validate_crf(profile["crf"])
+    return result
