@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 import src.api as api
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.core.security.hardening import parse_id
 from src.core.database.cache import cached, invalidate_pattern
 from src.api.schemas.emojis import (
     EmojiResponse,
@@ -25,6 +26,11 @@ from src.api.schemas.common import (
 )
 
 router = APIRouter(tags=["Emojis"])
+
+
+def _bounded_id(value: object, field: str) -> int:
+    """Parse a snowflake route id, refusing negatives and absurd values."""
+    return parse_id(value, field)
 
 
 def _emoji_to_response(emoji) -> EmojiResponse:
@@ -210,7 +216,7 @@ async def get_server_emojis(
 
     try:
         try:
-            sid = int(server_id)
+            sid = _bounded_id(server_id, "server ID")
         except (ValueError, TypeError):
             logger.warning(f"Invalid server ID format: {server_id}")
             raise HTTPException(
@@ -281,7 +287,7 @@ async def get_emoji_counts(
 
     try:
         try:
-            sid = int(server_id)
+            sid = _bounded_id(server_id, "server ID")
         except (ValueError, TypeError):
             logger.warning(f"Invalid server ID format for counts: {server_id}")
             raise HTTPException(
@@ -356,7 +362,7 @@ async def get_emoji(
 
     try:
         try:
-            eid = int(emoji_id)
+            eid = _bounded_id(emoji_id, "emoji ID")
         except (ValueError, TypeError):
             logger.warning(f"Invalid emoji ID format: {emoji_id}")
             raise HTTPException(
@@ -386,7 +392,7 @@ async def get_emoji(
             _require_server_membership(
                 servers,
                 current_user.user_id,
-                int(server_id),
+                _bounded_id(server_id, "server ID"),
                 "emoji detail",
             )
 
@@ -456,7 +462,7 @@ async def create_emoji(
 
     try:
         try:
-            sid = int(server_id)
+            sid = _bounded_id(server_id, "server ID")
         except (ValueError, TypeError):
             logger.warning(f"Invalid server ID format for emoji creation: {server_id}")
             raise HTTPException(
@@ -600,7 +606,7 @@ async def update_emoji(
         )
 
     try:
-        sid = int(server_id)
+        sid = _bounded_id(server_id, "server ID")
 
         # Check permissions (fail closed when the servers module is absent)
         _require_manage_emojis(servers_mod, current_user.user_id, sid)
@@ -698,8 +704,8 @@ async def delete_emoji(
 
     try:
         try:
-            sid = int(server_id)
-            eid = int(emoji_id)
+            sid = _bounded_id(server_id, "server ID")
+            eid = _bounded_id(emoji_id, "emoji ID")
         except (ValueError, TypeError):
             logger.warning(
                 f"Invalid ID format for emoji deletion: {server_id}/{emoji_id}"
