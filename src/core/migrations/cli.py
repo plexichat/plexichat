@@ -218,10 +218,19 @@ def create_migration(name: str) -> None:
     next_version = max(existing_versions + retired_versions, default=0) + 1
     version_str = f"{next_version:03d}"
 
-    # Create filename from description
-    filename_part = name.lower().replace(" ", "_").replace("-", "_")
+    # Create filename from description. Only a slug of safe characters may
+    # reach the path: the old replace() left "/" and ".." intact, so a name
+    # like "../../etc/cron.d/x" escaped the migrations directory and wrote a
+    # file outside it. Bound the length too so the generated path stays sane.
+    import re
+
+    from src.core.security.hardening import safe_join
+
+    filename_part = re.sub(r"[^a-z0-9_]+", "_", str(name).lower()).strip("_")[:60]
+    if not filename_part:
+        raise ValueError("Migration name must contain a letter or digit")
     filename = f"{version_str}_{filename_part}.py"
-    file_path = migrations_dir / filename
+    file_path = Path(safe_join(str(migrations_dir), filename))
 
     # Create template
     template = '''"""

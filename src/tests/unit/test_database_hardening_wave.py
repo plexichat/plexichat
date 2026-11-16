@@ -129,3 +129,16 @@ class TestReportQueueIndexes:
             require_identifier(table, "table name")
             for col in cols.rstrip(")").split(","):
                 require_identifier(col.strip(), "column name")
+
+
+class TestMigrationFilenameBounds:
+    def test_traversal_name_stays_inside_migrations_dir(self, tmp_path, monkeypatch):
+        import src.core.migrations.cli as cli
+
+        monkeypatch.setattr(cli, "__file__", str(tmp_path / "cli.py"))
+        cli.create_migration("../../evil")
+        migrations = tmp_path / "migrations"
+        files = list(migrations.glob("*.py"))
+        assert len(files) == 1
+        assert files[0].parent == migrations
+        assert "evil" in files[0].name
