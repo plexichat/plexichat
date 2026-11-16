@@ -267,6 +267,44 @@ def check_permission(
         )
 
 
+def get_admin_granted_permissions(db, admin_id: int) -> frozenset:
+    """Return the set of permission scopes granted to an admin by its roles.
+
+    Wildcard keys are returned verbatim (``"*"``, ``"scope.*"``); callers are
+    responsible for expanding them.  Fetching the role rows once keeps the
+    delegation check to a single database round trip.
+    """
+    granted = set()
+    for role in _get_admin_roles(db, admin_id):
+        for permission, allowed in (role.permissions or {}).items():
+            if allowed:
+                granted.add(permission)
+    return frozenset(granted)
+
+
+def can_delegate_permissions(db, admin_id: int, permissions: Dict[str, bool]) -> bool:
+    """Enforce the scope hierarchy for role creation/updates.
+
+    An admin may only write scopes it already holds itself (directly or via a
+    wildcard).  Without this, a lower-position admin could mint a role with
+    privileges above its own and then assign it to itself or a peer, escaping
+    the position hierarchy.  A holder of ``*`` may delegate any leaf scope.
+    """
+    held = get_admin_granted_permissions(db, admin_id)
+    if "*" in held:
+        return True
+    for permission, allowed in permissions.items():
+        if not allowed:
+            continue
+        if permission in held:
+            continue
+        scope_prefix = permission.split(".", 1)[0] + ".*"
+        if scope_prefix in held:
+            continue
+        return False
+    return True
+
+
 def check_admin_permission(
     admin_id: int, required_permission: str, db, config: Optional[Dict[str, Any]] = None
 ) -> bool:
