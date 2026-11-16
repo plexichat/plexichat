@@ -89,7 +89,10 @@ class BlockUserRequest(BaseModel):
         ..., min_length=1, max_length=500, description="Reason for blocking"
     )
     duration_hours: Optional[int] = Field(
-        None, description="Duration in hours (None = permanent)"
+        None,
+        ge=0,
+        le=8760,
+        description="Duration in hours (None or 0 = permanent, max one year)",
     )
 
 
