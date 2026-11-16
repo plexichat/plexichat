@@ -199,6 +199,39 @@ def bounded_bulk_batch(values: Any, field: str, maximum: int = MAX_BULK_BATCH) -
     return items[:safe_maximum]
 
 
+WEBHOOK_SORT_FIELDS = frozenset({"created_at", "name", "id"})
+RATCHET_SORT_FIELDS = frozenset(
+    {"interval_id", "start_message_id", "end_message_id", "created_at"}
+)
+SORT_ORDERS = frozenset({"asc", "desc"})
+
+
+def require_sort(value: Any, allowed: frozenset, field: str = "sort") -> Optional[str]:
+    """Return a client-chosen sort key only if it is on the allowlist."""
+    if value is None:
+        return None
+    key = str(value).strip().lower()
+    if key not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        )
+    return key
+
+
+def require_order(value: Any, field: str = "order") -> Optional[str]:
+    """Return a normalised ``asc``/``desc`` order or reject the value."""
+    if value is None:
+        return None
+    order = str(value).strip().lower()
+    if order not in SORT_ORDERS:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        )
+    return order
+
+
 def _channel_to_response(
     channel, current_user_id: Optional[int] = None
 ) -> ChannelResponse:

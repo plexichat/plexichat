@@ -28,7 +28,13 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from src.utils.encryption.channel_ratchet import ChannelRatchetManager
 from src.utils.encryption.channel_ratchet.gate import ratchet_encryption_licensed
 
-from .helpers import require_channel_snowflake, require_pagination
+from .helpers import (
+    RATCHET_SORT_FIELDS,
+    require_channel_snowflake,
+    require_order,
+    require_pagination,
+    require_sort,
+)
 
 
 def _resolve_manager(db: Any) -> Optional[ChannelRatchetManager]:
@@ -151,6 +157,8 @@ async def get_channel_ratchet_intervals(
     channel_id: str,
     limit: Optional[int] = Query(None, ge=1, le=200),
     offset: Optional[int] = Query(None, ge=0, le=100_000),
+    sort: Optional[str] = Query(None),
+    order: Optional[str] = Query(None),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return every ratchet interval for a channel, newest first.
@@ -161,6 +169,8 @@ async def get_channel_ratchet_intervals(
     the active-interval endpoint's ``interval``.
     """
     safe_limit, safe_offset = require_pagination(limit, offset)
+    safe_sort = require_sort(sort, RATCHET_SORT_FIELDS)
+    safe_order = require_order(order)
     cid = _parse_channel_id(channel_id)
     _require_channel_access(cid, current_user.user_id)
 
@@ -168,12 +178,15 @@ async def get_channel_ratchet_intervals(
     enabled = ratchet_encryption_licensed()
     manager = _resolve_manager(db)
     intervals = manager.snapshot_list(cid) if manager is not None else []
+    payloads = [_stringify_ids(item) for item in intervals]
+    if safe_sort:
+        payloads.sort(
+            key=lambda item: str(item.get(safe_sort, "")),
+            reverse=(safe_order == "desc"),
+        )
     return {
         "channel_id": str(cid),
-        "intervals": [
-            _stringify_ids(item)
-            for item in intervals[safe_offset : safe_offset + safe_limit]
-        ],
+        "intervals": payloads[safe_offset : safe_offset + safe_limit],
         "enabled": enabled,
     }
 

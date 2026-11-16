@@ -14,6 +14,9 @@ from .base import ChannelBase
 from .helpers import (
     require_channel_snowflake,
     require_pagination,
+    require_order,
+    require_sort,
+    WEBHOOK_SORT_FIELDS,
     sanitize_webhook_fields,
 )
 from ..exception_mapping import raise_mapped
@@ -73,6 +76,8 @@ class ChannelWebhooksMixin(ChannelBase):
         channel_id: str,
         limit: Optional[int] = Query(None, ge=1, le=200),
         offset: Optional[int] = Query(None, ge=0, le=100_000),
+        sort: Optional[str] = Query(None),
+        order: Optional[str] = Query(None),
         current_user: TokenInfo = Depends(get_current_user),
     ) -> List[WebhookResponse]:
         webhooks_mod = api.get_webhooks()
@@ -93,6 +98,8 @@ class ChannelWebhooksMixin(ChannelBase):
                 raise
 
             safe_limit, safe_offset = require_pagination(limit, offset)
+            safe_sort = require_sort(sort, WEBHOOK_SORT_FIELDS)
+            safe_order = require_order(order)
 
             # F8 FIX: existence/access pre-check consistent with channel CRUD
             # so correctness does not depend on the webhooks module raising
@@ -150,9 +157,15 @@ class ChannelWebhooksMixin(ChannelBase):
                 webhooks = await run_in_threadpool(
                     webhooks_mod.get_channel_webhooks, current_user.user_id, cid
                 )
+                webhook_items = list(webhooks or [])
+                if safe_sort:
+                    webhook_items.sort(
+                        key=lambda w: str(getattr(w, safe_sort, "")),
+                        reverse=(safe_order == "desc"),
+                    )
                 return [
                     _webhook_to_response(w)
-                    for w in (webhooks or [])[safe_offset : safe_offset + safe_limit]
+                    for w in webhook_items[safe_offset : safe_offset + safe_limit]
                 ]
             except Exception as e:
                 raise_mapped(

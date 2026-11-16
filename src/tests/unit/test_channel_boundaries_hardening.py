@@ -237,3 +237,38 @@ class TestBulkBatchBounds:
         for name in ("invites.py", "crud.py"):
             source = (root / "src/api/routes/channels" / name).read_text()
             assert "bounded_bulk_batch" in source
+
+
+class TestListOrderingAllowlists:
+    def test_sort_keys_must_be_on_the_allowlist(self):
+        from src.api.routes.channels.helpers import WEBHOOK_SORT_FIELDS, require_sort
+
+        assert require_sort("NAME", WEBHOOK_SORT_FIELDS) == "name"
+        assert require_sort(None, WEBHOOK_SORT_FIELDS) is None
+        for bad in ("__dict__", "id;DROP TABLE", "random", ""):
+            with pytest.raises(HTTPException) as exc:
+                require_sort(bad, WEBHOOK_SORT_FIELDS)
+            assert exc.value.status_code == 400
+
+    def test_order_is_restricted_to_asc_desc(self):
+        from src.api.routes.channels.helpers import require_order
+
+        assert require_order("DESC") == "desc"
+        assert require_order(None) is None
+        for bad in ("sideways", "asc;drop", ""):
+            with pytest.raises(HTTPException) as exc:
+                require_order(bad)
+            assert exc.value.status_code == 400
+
+    def test_list_endpoints_expose_sort_and_order_params(self):
+        import inspect
+
+        from src.api.routes.channels.ratchet import get_channel_ratchet_intervals
+        from src.api.routes.channels.webhooks import ChannelWebhooksMixin
+
+        for handler in (
+            ChannelWebhooksMixin._get_channel_webhooks,
+            get_channel_ratchet_intervals,
+        ):
+            params = inspect.signature(handler).parameters
+            assert "sort" in params and "order" in params
