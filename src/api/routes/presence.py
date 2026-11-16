@@ -8,7 +8,11 @@ from fastapi import APIRouter, HTTPException, Depends
 
 import src.api as api
 from src.core.database import cached
-from src.core.presence.validation import validate_emoji, validate_status
+from src.core.presence.validation import (
+    validate_emoji,
+    validate_status,
+    validate_status_text,
+)
 from src.core.security.hardening import HardeningViolation
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.presence import PresenceUpdate, PresenceResponse
@@ -177,16 +181,18 @@ async def update_presence(
 
     Sets the user's online status and custom status message.
     """
-    # Every route path validates status and emoji through the shared helpers,
-    # not just the schema layer, so a direct or internal caller cannot smuggle
-    # a control character or an unbounded emoji token into the event stream.
+    # Every route path validates status, text and emoji through the shared
+    # helpers, not just the schema layer, so a direct or internal caller cannot
+    # smuggle a control character, an unbounded token or a multi-KB status into
+    # the event stream.
     try:
         validate_status(body.status)
+        validate_status_text(body.custom_status)
         validate_emoji(body.custom_emoji)
     except HardeningViolation as exc:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid status or emoji"}},
+            detail={"error": {"code": 400, "message": "Invalid status, text or emoji"}},
         ) from exc
 
     presence = api.get_presence()

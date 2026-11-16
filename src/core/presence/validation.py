@@ -17,6 +17,7 @@ from .models import UserStatus
 
 VALID_STATUSES = frozenset(status.value for status in UserStatus)
 MAX_EMOJI_CHARS = 64
+MAX_STATUS_TEXT_CHARS = 128
 
 
 def validate_status(value: Union[UserStatus, str]) -> UserStatus:
@@ -43,4 +44,28 @@ def validate_emoji(value: Optional[str]) -> Optional[str]:
     return text
 
 
-__all__ = ["VALID_STATUSES", "MAX_EMOJI_CHARS", "validate_status", "validate_emoji"]
+def validate_status_text(
+    value: Optional[str], maximum: int = MAX_STATUS_TEXT_CHARS
+) -> str:
+    """Return a bounded, control-character-free custom status text.
+
+    An empty string is preserved (an emoji-only status stores empty text); a
+    too-long value or any C0/DEL control character is refused outright rather
+    than silently truncated, so a hostile status cannot forge a log/WS frame.
+    """
+    if value is None:
+        return ""
+    text = reject_control_characters(str(value).strip(), "custom_status")
+    if len(text) > maximum:
+        raise HardeningViolation("custom_status exceeds the length limit")
+    return text
+
+
+__all__ = [
+    "VALID_STATUSES",
+    "MAX_EMOJI_CHARS",
+    "MAX_STATUS_TEXT_CHARS",
+    "validate_status",
+    "validate_emoji",
+    "validate_status_text",
+]

@@ -8,9 +8,11 @@ from typing import Optional
 
 import utils.logger as logger
 
+from src.core.security.hardening import bounded_int
+
 from .base import PresenceManagerBase
 from ..models import Presence, CustomStatus
-from ..validation import validate_emoji
+from ..validation import MAX_STATUS_TEXT_CHARS, validate_emoji, validate_status_text
 
 
 class CustomStatusMixin(PresenceManagerBase):
@@ -50,18 +52,17 @@ class CustomStatusMixin(PresenceManagerBase):
         # whitespace-only ``text`` is only treated as "clear" when there is no
         # emoji either. With an emoji present we keep an emoji-only status
         # (storing an empty ``text``), which previously was silently dropped.
-        normalized_text = (text or "").strip()
+        max_len = bounded_int(
+            self._config.get("max_custom_status_length", 128),
+            "max_custom_status_length",
+            minimum=1,
+            maximum=MAX_STATUS_TEXT_CHARS,
+        )
+        normalized_text = validate_status_text(text, max_len)
         emoji = validate_emoji(emoji)
 
         if not normalized_text and not emoji:
             return self.clear_custom_status(user_id)
-
-        if not normalized_text:
-            normalized_text = ""
-
-        max_len = self._config.get("max_custom_status_length", 128)
-        if len(normalized_text) > max_len:
-            normalized_text = normalized_text[:max_len]
 
         now = self._get_timestamp()
 
