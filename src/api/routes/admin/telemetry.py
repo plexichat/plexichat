@@ -2,7 +2,7 @@
 Admin telemetry routes.
 """
 
-from fastapi import APIRouter, Request, HTTPException, Response
+from fastapi import APIRouter, Request, HTTPException, Response, Query
 from typing import Optional
 from datetime import datetime, timezone
 import csv
@@ -38,9 +38,9 @@ router = APIRouter()
 )
 async def get_telemetry_stats(
     request: Request,
-    hours: int = 24,
-    endpoint: Optional[str] = None,
-    source: Optional[str] = None,
+    hours: int = Query(24, ge=1, le=8760),
+    endpoint: Optional[str] = Query(None, max_length=256),
+    source: Optional[str] = Query(None, max_length=64),
 ):
     """
     Retrieve aggregated performance statistics for API endpoints.
@@ -110,10 +110,10 @@ async def get_telemetry_stats(
 )
 async def get_telemetry_history(
     request: Request,
-    endpoint: str,
-    method: str = "GET",
-    hours: int = 24,
-    bucket_minutes: int = 5,
+    endpoint: str = Query(..., max_length=256),
+    method: str = Query("GET", max_length=16),
+    hours: int = Query(24, ge=1, le=8760),
+    bucket_minutes: int = Query(5, ge=1, le=1440),
 ):
     """
     Retrieve historical latency data for a specific endpoint.
@@ -184,7 +184,7 @@ async def reset_telemetry_stats(request: Request):
 async def export_telemetry_stats(
     request: Request,
     format: str = "json",
-    hours: int = 24,
+    hours: int = Query(24, ge=1, le=8760),
 ):
     """
     Export system telemetry data in JSON, CSV, or plain text format.
