@@ -40,3 +40,11 @@ def test_search_query_is_capped():
 
     assert _has_constraint(search_messages, "content", "MaxLen")
     assert _constraint_value(search_messages, "content", "MaxLen") <= 200
+
+
+def test_pinned_message_list_is_capped():
+    from src.api.routes.messages.messages_list import get_pinned_messages
+
+    assert _has_constraint(get_pinned_messages, "limit", "Le")
+    assert _constraint_value(get_pinned_messages, "limit", "Le") <= 200
+    assert _has_constraint(get_pinned_messages, "limit", "Ge")

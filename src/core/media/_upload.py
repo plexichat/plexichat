@@ -464,9 +464,18 @@ class _UploadMixin:
                 temp_path, bytes_read, checksum_raw, header = self._read_stream_to_temp(
                     stream, max_bytes=max_stream_bytes
                 )
-            file_size = size if size and size > 0 else bytes_read
-            if not size or size <= 0:
-                self._validate_file_size(file_size, media_type)
+            # The declared size is untrusted: a client can understate it to
+            # pass the pre-spool check above and then stream many more bytes
+            # into the temp file. Validate the bytes actually read against the
+            # per-type limit and record that size, never the declared one.
+            file_size = bytes_read
+            self._validate_file_size(file_size, media_type)
+            if size and size > 0 and bytes_read != size:
+                raise FileSizeError(
+                    "Uploaded size does not match the declared size",
+                    size,
+                    bytes_read,
+                )
 
             # Content-type detection
             detected_type = self._detect_content_type(header, content_type)

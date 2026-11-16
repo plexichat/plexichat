@@ -366,9 +366,15 @@ async def get_channel_messages(
 )
 @cached(ttl=120, prefix="channel_pins_api")
 async def get_pinned_messages(
-    channel_id: str, current_user: TokenInfo = Depends(get_current_user)
+    channel_id: str,
+    # Pins used to be returned in full with no bound. A channel with a very
+    # large pin set produced an unbounded response plus unbounded author/
+    # reaction enrichment work. Cap the list at the route before any of that
+    # fan-out; callers that need more can page with the channel message list.
+    limit: int = Query(default=100, ge=1, le=200),
+    current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MessageResponse]:
-    """Get all pinned messages in a channel."""
+    """Get pinned messages in a channel (bounded)."""
     messaging = api.get_messaging()
     servers_mod = api.get_servers()
     auth = api.get_auth()
@@ -436,6 +442,10 @@ async def get_pinned_messages(
                         db.close()
 
             messages = await run_in_threadpool(_get_pins_sync) or []
+
+        # Bound the fan-out (author profiles, reactions) and the response to
+        # at most ``limit`` pins regardless of what the storage layer returns.
+        messages = messages[:limit]
 
         author_cache = {}
         author_ids = {m.author_id for m in messages}

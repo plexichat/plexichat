@@ -17,6 +17,12 @@ import utils.logger as logger
 
 router = APIRouter()
 
+# An export had no row limit at all: one request could stream the entire audit
+# table into a CSV/JSON buffer. Legitimate exports are bounded by the retention
+# window (a year of logs is well under this); cap the read so a single request
+# cannot turn an unbounded table scan into an unbounded allocation.
+_MAX_AUDIT_EXPORT_ROWS = 10_000
+
 
 def _coerce_nullable_int(value):
     """Coerce ``null``/empty query values for optional int params to None."""
@@ -260,10 +266,13 @@ async def get_audit_stats(request: Request):
 )
 async def export_audit_logs(
     request: Request,
-    action_family: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    # Bound the filter strings exactly like the paginated list endpoint does;
+    # the export path had left them unrestricted, so an arbitrarily long
+    # LIKE/equality value reached the query and the CSV header row.
+    action_family: Optional[str] = Query(None, max_length=64),
+    status: Optional[str] = Query(None, max_length=32),
     admin_id: Annotated[NullableSnowflakeIDParam, Query()] = None,
-    target_type: Optional[str] = Query(None),
+    target_type: Optional[str] = Query(None, max_length=64),
     date_from: Annotated[NullableInt, Query()] = None,
     date_to: Annotated[NullableInt, Query()] = None,
     format: str = Query("csv", pattern="^(csv|json)$"),
@@ -315,6 +324,11 @@ async def export_audit_logs(
             query += " WHERE " + " AND ".join(conditions)
 
         query += " ORDER BY created_at DESC"
+
+        # Hard row cap: an export may never materialise more than
+        # _MAX_AUDIT_EXPORT_ROWS rows, regardless of the filters supplied.
+        params.append(_MAX_AUDIT_EXPORT_ROWS)
+        query += " LIMIT ?"
 
         logs = db.fetch_all(query, params)
 
