@@ -18,7 +18,10 @@ from .validation import (
     bound_message_count,
     bound_pagination,
     bound_text,
+    validate_nonce,
     validate_room_payload,
+    validate_shared_key,
+    validate_timestamp,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,10 +148,13 @@ class PlexiJoinManager:
         self, connection_id: int, nonce: str, timestamp: int, max_skew: int = 300
     ) -> bool:
         """Atomically claim a fresh federation nonce within the clock window."""
-        if not nonce or len(nonce) > 256:
+        try:
+            nonce = validate_nonce(nonce)
+            timestamp = validate_timestamp(timestamp)
+        except Exception:
             return False
         now = int(time.time())
-        if abs(now - int(timestamp)) > max_skew:
+        if abs(now - timestamp) > max_skew:
             return False
 
         self._ensure_replay_nonce_table()
@@ -279,6 +285,7 @@ class PlexiJoinManager:
             remote_instance_id, "remote_instance_id", 128, required=True
         )
         remote_url = bound_text(remote_url, "remote_url", 2048, required=True)
+        shared_key = validate_shared_key(shared_key)
         note = bound_text(note, "note", 500)
         admin_id = bound_id(admin_id, "admin_id")
         now_ms = int(time.time() * 1000)
@@ -702,7 +709,7 @@ class PlexiJoinManager:
     @staticmethod
     def generate_shared_key() -> str:
         """Generate a cryptographically secure shared key for a connection."""
-        return secrets.token_urlsafe(32)
+        return validate_shared_key(secrets.token_urlsafe(32), require_strong=True)
 
     async def _post_signed(
         self,
@@ -725,7 +732,7 @@ class PlexiJoinManager:
 
         body = json.dumps(payload).encode("utf-8")
         timestamp = str(int(time.time()))
-        nonce = secrets.token_urlsafe(24)
+        nonce = validate_nonce(secrets.token_urlsafe(24))
         headers = {
             **pin_headers,
             "content-type": "application/json",

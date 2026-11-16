@@ -10,6 +10,7 @@ envelope.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from src.core.security.hardening import (
@@ -32,6 +33,85 @@ MAX_PAGE_NUMBER = 1_000_000
 MAX_MESSAGE_COUNT = 1_000_000
 
 _DIRECTIONS = frozenset({"inbound", "outbound"})
+
+
+# Federation tokens are urlsafe base64 (letters, digits, ``-`` and ``_``).
+# A restrictive character class here stops control characters, CRLF and
+# delimiter injection before a token is used as a signature or header value.
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+MAX_TOKEN_LENGTH = 256
+MAX_JOIN_CODE_LENGTH = 64
+MIN_JOIN_CODE_LENGTH = 8
+MAX_SHARED_KEY_LENGTH = 256
+MAX_TIMESTAMP_SKEW = 300
+
+
+def validate_token(
+    value: Any, field: str, *, max_length: int = MAX_TOKEN_LENGTH
+) -> str:
+    """Return a urlsafe token if it has a well-formed, bounded shape."""
+    if not isinstance(value, str) or not value:
+        raise HardeningViolation(f"{field} must be a non-empty token")
+    if len(value) > max_length:
+        raise HardeningViolation(f"{field} exceeds {max_length} characters")
+    if not _TOKEN_RE.match(value):
+        raise HardeningViolation(f"{field} has an invalid format")
+    return value
+
+
+def validate_nonce(value: Any, field: str = "nonce") -> str:
+    """Validate a single-use federation nonce."""
+    return validate_token(value, field, max_length=MAX_TOKEN_LENGTH)
+
+
+def validate_shared_key(value: Any, *, require_strong: bool = False) -> str:
+    """Validate the shape of a federation shared key.
+
+    ``require_strong`` is used for locally generated keys (which must be
+    full-strength); imported/legacy keys are only shape-checked so existing
+    deployments are not broken by a format tightening.
+    """
+    key = validate_token(value, "shared_key", max_length=MAX_SHARED_KEY_LENGTH)
+    if require_strong and len(key) < 32:
+        raise HardeningViolation("shared_key is too short")
+    return key
+
+
+def validate_join_code(value: Any, field: str = "join_code") -> str:
+    """Validate a human-readable join code (8-64 urlsafe characters)."""
+    if not isinstance(value, str):
+        raise HardeningViolation(f"{field} must be a string")
+    if not (MIN_JOIN_CODE_LENGTH <= len(value) <= MAX_JOIN_CODE_LENGTH):
+        raise HardeningViolation(f"{field} has an invalid length")
+    if not _TOKEN_RE.match(value):
+        raise HardeningViolation(f"{field} has an invalid format")
+    return value
+
+
+def validate_timestamp(value: Any, field: str = "timestamp") -> int:
+    """Parse a unix-seconds federation timestamp with a sane ceiling."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise HardeningViolation(f"{field} must be an integer")
+    if isinstance(value, str) and not value.isdigit():
+        raise HardeningViolation(f"{field} must be an integer")
+    seconds = int(value)
+    if seconds < 0 or seconds > 4_102_444_800:
+        raise HardeningViolation(f"{field} is outside the allowed range")
+    return seconds
+
+
+def validate_join_envelope(envelope: Any) -> Dict[str, Any]:
+    """Validate the format of a signed join-request envelope."""
+    if not isinstance(envelope, dict):
+        raise HardeningViolation("join envelope must be an object")
+    return {
+        "instance_id": bound_text(
+            envelope.get("instance_id"), "instance_id", 128, required=True
+        ),
+        "join_code": validate_join_code(envelope.get("join_code")),
+        "nonce": validate_nonce(envelope.get("nonce")),
+        "timestamp": validate_timestamp(envelope.get("timestamp")),
+    }
 
 
 def bound_text(
@@ -141,7 +221,9 @@ __all__ = [
     "MAX_INSTANCE_ID_LENGTH",
     "MAX_MESSAGE_COUNT",
     "MAX_NOTE_LENGTH",
+    "MAX_JOIN_CODE_LENGTH",
     "MAX_PAGE_SIZE",
+    "MAX_TOKEN_LENGTH",
     "MAX_PARTICIPANTS_PER_ROOM",
     "MAX_ROOM_ID_LENGTH",
     "MAX_URL_LENGTH",
@@ -150,5 +232,11 @@ __all__ = [
     "bound_message_count",
     "bound_pagination",
     "bound_text",
+    "validate_join_code",
+    "validate_join_envelope",
+    "validate_nonce",
+    "validate_shared_key",
+    "validate_timestamp",
+    "validate_token",
     "validate_room_payload",
 ]
