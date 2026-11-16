@@ -17,7 +17,40 @@ be serialized into an export that is handed to the wrong user.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, FrozenSet, Iterable, Iterator
+from typing import Any, Dict, FrozenSet, Iterable, Iterator, Set, Tuple
+
+# Placeholder written wherever a third party's personal data was removed.
+REDACTED = "[redacted]"
+
+# Fields that carry a *third party's* personal data in DSAR rows. These are
+# joined in by collectors to make the subject's own relationships readable
+# (e.g. ``friend_username``), but the named person is not the data subject and
+# has not consented to being disclosed in somebody else's export. GDPR
+# Article 15(4) protects their rights, so the values are scrubbed unless an
+# operator explicitly marks a field as legally required for disclosure.
+THIRD_PARTY_PII_FIELDS: FrozenSet[str] = frozenset(
+    {
+        "friend_username",
+        "sender_username",
+        "recipient_username",
+        "blocked_username",
+        "reporter_username",
+        "reported_username",
+        "inviter_username",
+        "target_username",
+        "other_username",
+        "friend_email",
+        "sender_email",
+        "recipient_email",
+        "blocked_email",
+        "reporter_email",
+        "reported_email",
+        "friend_display_name",
+        "sender_display_name",
+        "recipient_display_name",
+        "other_display_name",
+    }
+)
 
 # Columns that identify the data subject a row belongs to. A row is
 # considered in-scope when at least one of these columns carries the
@@ -113,4 +146,105 @@ def verify_export_scope(data: Dict[str, Any], user_id: int) -> None:
             )
 
 
-__all__ = ["ExportScopeViolation", "SUBJECT_ID_FIELDS", "verify_export_scope"]
+def _iter_strings(value: Any) -> Iterator[str]:
+    """Yield every string value in a (possibly nested) JSON-like structure."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from _iter_strings(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _iter_strings(child)
+
+
+def _collect_pii_values(
+    value: Any, fields: FrozenSet[str], legally_required: FrozenSet[str]
+) -> Set[str]:
+    """Find the concrete third-party values present in PII fields.
+
+    These values (a friend's username, a reporter's email, ...) are also
+    scrubbed from free-text fields so a message body that quotes or mentions
+    the third party cannot smuggle their identity back into the export.
+    """
+    found: Set[str] = set()
+    for mapping in _iter_mappings(value):
+        for field in fields:
+            if field in legally_required or field not in mapping:
+                continue
+            candidate = mapping[field]
+            if isinstance(candidate, str) and len(candidate) >= 3:
+                found.add(candidate)
+    return found
+
+
+def scrub_third_party_pii(
+    value: Any,
+    *,
+    fields: FrozenSet[str] = THIRD_PARTY_PII_FIELDS,
+    legally_required: Iterable[str] = (),
+    redacted: str = REDACTED,
+    scrub_inline: bool = True,
+) -> Any:
+    """Recursively remove third-party personal data from an export payload.
+
+    Walks every mapping/list in the structure. Fields in ``fields`` have their
+    value replaced with ``redacted``; additionally, any concrete value found
+    in those fields is removed from free-text strings (longest first) so
+    mentions such as ``"hey @friend_name"`` cannot leak the same identity.
+
+    ``legally_required`` field names are preserved verbatim for deployments
+    where disclosure is mandated (e.g. reporting a security incident). The
+    caller supplies that set from configuration; the default is to redact
+    everything.
+
+    The input is never mutated: a new structure of the same shape is returned.
+    """
+    required = frozenset(legally_required)
+    pii_values = (
+        _collect_pii_values(value, fields, required) if scrub_inline else set()
+    )
+    # Longest first so an overlapping value cannot leave a longer name behind
+    # after a shorter prefix has already been replaced.
+    tokens: Tuple[str, ...] = tuple(sorted(pii_values, key=len, reverse=True))
+    return _scrub(value, fields, required, redacted, tokens)
+
+
+def _scrub(
+    value: Any,
+    fields: FrozenSet[str],
+    legally_required: FrozenSet[str],
+    redacted: str,
+    tokens: Tuple[str, ...],
+) -> Any:
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for key, child in value.items():
+            if key in fields and key not in legally_required:
+                result[key] = redacted
+            else:
+                result[key] = _scrub(child, fields, legally_required, redacted, tokens)
+        return result
+    if isinstance(value, list):
+        return [_scrub(child, fields, legally_required, redacted, tokens) for child in value]
+    if isinstance(value, tuple):
+        return tuple(
+            _scrub(child, fields, legally_required, redacted, tokens) for child in value
+        )
+    if isinstance(value, str):
+        scrubbed = value
+        for token in tokens:
+            if token in scrubbed:
+                scrubbed = scrubbed.replace(token, redacted)
+        return scrubbed
+    return value
+
+
+__all__ = [
+    "REDACTED",
+    "THIRD_PARTY_PII_FIELDS",
+    "ExportScopeViolation",
+    "SUBJECT_ID_FIELDS",
+    "verify_export_scope",
+    "scrub_third_party_pii",
+]

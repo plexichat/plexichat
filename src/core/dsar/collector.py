@@ -13,7 +13,8 @@ from typing import Any, Dict
 
 import utils.logger as logger
 
-from .privacy import verify_export_scope
+from .config import legally_required_pii_fields
+from .privacy import scrub_third_party_pii, verify_export_scope
 
 from .collectors import (
     ApplicationsCollector,
@@ -137,7 +138,13 @@ class DataCollector:
         # cross-user PII breach; fail before any bytes are serialized.
         verify_export_scope(result, user_id)
 
-        return result
+        # Recursively redact third-party identifiers (friend/reporter
+        # usernames and emails) introduced by relationship-style collectors.
+        # An operator may opt a field back in when disclosure is legally
+        # required; the default is always to scrub.
+        return scrub_third_party_pii(
+            result, legally_required=legally_required_pii_fields()
+        )
 
     def count_records(self, user_id: int) -> Dict[str, int]:
         """

@@ -132,3 +132,22 @@ def request_rate_limit() -> Dict[str, int]:
     except (TypeError, ValueError):
         window_seconds = 86400
     return {"requests": requests, "window_seconds": window_seconds}
+
+
+def privacy_config() -> Dict[str, Any]:
+    """Effective ``dsar.privacy`` configuration block."""
+    cfg = get_dsar_config().get("privacy", {}) or {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def legally_required_pii_fields() -> List[str]:
+    """Third-party PII fields an operator must disclose by law.
+
+    By default nothing is exempt: every third-party identifier is redacted.
+    Deployments subject to a disclosure obligation can opt specific fields
+    back in by name via ``dsar.privacy.legally_required_pii_fields``.
+    """
+    fields = privacy_config().get("legally_required_pii_fields", [])
+    if not isinstance(fields, list):
+        return []
+    return [f.strip() for f in fields if isinstance(f, str) and f.strip()]
