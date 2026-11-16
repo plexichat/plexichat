@@ -11,7 +11,7 @@ import utils.logger as logger
 from typing import Dict, Any, Optional, List
 
 from .base import BaseRule
-from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity, coerce_severity
 
 # Try to use google-re2 for ReDoS protection, fallback to standard re
 re2_module = None
@@ -286,15 +286,12 @@ class RegexRule(BaseRule):
             severity=highest_severity,
         )
 
-    def _parse_severity(self, sev_str: str) -> ViolationSeverity:
-        """Parse severity string to enum."""
-        mapping = {
-            "low": ViolationSeverity.LOW,
-            "medium": ViolationSeverity.MEDIUM,
-            "high": ViolationSeverity.HIGH,
-            "critical": ViolationSeverity.CRITICAL,
-        }
-        return mapping.get(str(sev_str).lower(), ViolationSeverity.MEDIUM)
+    def _parse_severity(self, sev_str: Any) -> ViolationSeverity:
+        """Parse a severity string through the shared allowlist."""
+        try:
+            return coerce_severity(sev_str, ViolationSeverity.MEDIUM)
+        except ValueError:
+            return ViolationSeverity.MEDIUM
 
     def _severity_rank(self, sev: ViolationSeverity) -> int:
         """Get numeric rank for severity comparison."""

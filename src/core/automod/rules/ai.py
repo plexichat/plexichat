@@ -1,7 +1,15 @@
 from typing import Dict, Any, Optional, List
 
 from .base import BaseRule
-from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+from ..models import (
+    AIBackendType,
+    Rule,
+    RuleMatch,
+    RuleType,
+    ViolationSeverity,
+    coerce_ai_backend,
+    coerce_severity,
+)
 
 
 class AIModerationRule(BaseRule):
@@ -9,10 +17,22 @@ class AIModerationRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._backend: str = self.config.get("backend", "shieldstral")
+        # A database row written by an older client can carry any string as
+        # the backend. Validate it against the allowlist at construction, not
+        # only in validate_config(), so a stored bad value cannot be forwarded
+        # to an AI provider backend lookup.
+        try:
+            backend = coerce_ai_backend(
+                self.config.get("backend", AIBackendType.SHIELDSTRAL.value)
+            )
+        except ValueError:
+            backend = AIBackendType.SHIELDSTRAL
+        self._backend: str = backend.value
         self._categories: Optional[List[str]] = self.config.get("categories")
         self._score_threshold = self.config.get("score_threshold")
-        self._severity = self._parse_severity(self.config.get("severity"))
+        self._severity = coerce_severity(
+            self.config.get("severity"), ViolationSeverity.MEDIUM
+        )
 
     def check(
         self,
@@ -86,15 +106,13 @@ class AIModerationRule(BaseRule):
     def validate_config(cls, config: Dict[str, Any]) -> tuple:
         issues = []
         backend = config.get("backend")
-        if backend and backend not in {
-            "openai",
-            "perspective",
-            "custom",
-            "shieldstral",
-        }:
-            issues.append(
-                "backend must be one of: openai, perspective, custom, shieldstral"
-            )
+        if backend is not None:
+            try:
+                coerce_ai_backend(backend)
+            except ValueError:
+                issues.append(
+                    "backend must be one of: openai, perspective, custom, shieldstral"
+                )
 
         categories = config.get("categories")
         if categories is not None and not isinstance(categories, list):

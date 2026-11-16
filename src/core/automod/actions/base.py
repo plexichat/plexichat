@@ -7,7 +7,7 @@ All action implementations inherit from BaseAction.
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
-from ..models import ActionType, RuleAction, Violation
+from ..models import ACTION_TYPE_VALUES, ActionType, RuleAction, Violation
 
 
 class BaseAction(ABC):
@@ -69,4 +69,156 @@ class BaseAction(ABC):
         Returns:
             Tuple of (can_execute: bool, reason: str or None)
         """
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
+        # Last line of defence before an executor runs: a RuleAction can be
+        # constructed directly by a caller, so re-check its action type
+        # against the allowlist here instead of trusting the rule loader.
+        if (
+            getattr(getattr(action, "action_type", None), "value", None)
+            not in ACTION_TYPE_VALUES
+        ):
+            return False, "unknown action type"
         return True, None

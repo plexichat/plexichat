@@ -7,7 +7,7 @@ Checks messages for blocked keywords with optional word boundary matching.
 from typing import Dict, Any, Optional, List
 
 from .base import BaseRule
-from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
+from ..models import Rule, RuleMatch, RuleType, ViolationSeverity, coerce_severity
 
 
 class KeywordRule(BaseRule):
@@ -87,15 +87,12 @@ class KeywordRule(BaseRule):
 
             start = pos + 1
 
-    def _parse_severity(self, sev_str: str) -> ViolationSeverity:
-        """Parse severity string to enum."""
-        mapping = {
-            "low": ViolationSeverity.LOW,
-            "medium": ViolationSeverity.MEDIUM,
-            "high": ViolationSeverity.HIGH,
-            "critical": ViolationSeverity.CRITICAL,
-        }
-        return mapping.get(sev_str.lower(), ViolationSeverity.MEDIUM)
+    def _parse_severity(self, sev_str: Any) -> ViolationSeverity:
+        """Parse a severity string through the shared allowlist."""
+        try:
+            return coerce_severity(sev_str, ViolationSeverity.MEDIUM)
+        except ValueError:
+            return ViolationSeverity.MEDIUM
 
     def _severity_rank(self, sev: ViolationSeverity) -> int:
         """Get numeric rank for severity comparison."""
