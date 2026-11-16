@@ -66,17 +66,89 @@ MAX_BATCH_LIMIT = 1000
 MAX_INTERVAL_SECONDS = 86400
 
 
-def _bounded_headers(headers: Dict[str, Any]) -> Dict[str, str]:
-    """Drop header names/values that are oversized or carry control chars.
+# RFC 7230 hop-by-hop headers: these govern the connection itself, never the
+# payload, and must not be copied from stored metadata into a new request.
+_HOP_BY_HOP_HEADERS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "proxy-connection",
+    }
+)
 
-    Bounds are applied at the last moment before the HTTP client sees them,
-    so an oversized or CRLF-bearing stored header cannot turn into a request
-    smuggling / header injection vector.
+# Credentials, session cookies and trusted-proxy routing hints. A webhook
+# endpoint is external: forwarding any of these leaks secrets or lets a
+# stored header spoof the caller's identity/source.
+_SENSITIVE_HEADERS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "x-auth",
+        "x-auth-token",
+        "x-csrf-token",
+        "x-xsrf-token",
+        "x-plexichat-token",
+        "x-webhook-token",
+        "x-secret",
+        "x-session",
+        "x-amz-security-token",
+        "x-goog-api-key",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-real-ip",
+    }
+)
+
+# Transport-owned headers: the delivery engine sets these itself. Letting
+# stored metadata override them would allow Host/body-length confusion.
+_STRUCTURAL_HEADERS = frozenset(
+    {"host", "content-type", "content-length", "accept-encoding", "expect"}
+)
+
+
+def sanitize_forwarded_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+    """Return only headers safe to forward to an external webhook endpoint.
+
+    Stored signing headers live in retry metadata that may be stale,
+    tampered with, or written by an older version. They must not be able to
+    inject credentials, hop-by-hop control headers, proxy-routing hints, or
+    override the transport's own ``Host``/``Content-Type``. Header values are
+    bounded and checked for control characters at the same point.
+
+    Signing headers (``X-Plexichat-Signature`` / ``X-Plexichat-Timestamp``)
+    are deliberately not on any deny list: they are the whole point of the
+    delivery.
     """
+    deny = set(_HOP_BY_HOP_HEADERS) | _SENSITIVE_HEADERS | _STRUCTURAL_HEADERS
+    pairs = list((headers or {}).items())
+
+    # RFC 7230: a sender may list extra hop-by-hop headers in Connection.
+    # Honour that list so, e.g., ``Connection: X-Internal`` cannot smuggle
+    # ``X-Internal`` through as an end-to-end header.
+    for raw_name, raw_value in pairs:
+        if str(raw_name).strip().lower() == "connection":
+            for token in str(raw_value).split(","):
+                token = token.strip().lower()
+                if token:
+                    deny.add(token)
+
     cleaned: Dict[str, str] = {}
-    for raw_name, raw_value in (headers or {}).items():
+    for raw_name, raw_value in pairs:
         name = str(raw_name)
         value = str(raw_value)
+        lowered = name.strip().lower()
+        if lowered in deny:
+            logger.warning(f"Stripped unsafe header from webhook delivery: {lowered}")
+            continue
         if (
             not name
             or len(name) > MAX_HEADER_NAME_LENGTH
@@ -252,7 +324,10 @@ class WebhookDeliverer:
                 url, hostname, resolved_ip
             )
             headers.update(pinned_headers)
-        for key, value in signing_headers.items():
+        # Stored headers are untrusted metadata. Strip hop-by-hop/credential
+        # headers and bound values before they are merged into the request;
+        # this runs for every redirect hop as well as the original target.
+        for key, value in sanitize_forwarded_headers(signing_headers).items():
             headers[str(key)] = str(value)
         return request_url, headers, extensions
 
