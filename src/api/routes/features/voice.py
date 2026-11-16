@@ -1,6 +1,6 @@
 from src.api.request_guards import MAX_VOICE_UPLOAD, read_upload_capped
 from fastapi import APIRouter, Depends, UploadFile, File, Form
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 from typing import Optional
 import ipaddress
@@ -12,14 +12,48 @@ import src.api as api
 from src.core.events.snowflakes import stringify_snowflake_ids
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
-from .common import (
+from src.core.security.hardening import (
+    HardeningViolation,
     parse_id,
+    reject_control_characters,
+)
+from .common import (
+    parse_id as legacy_parse_id,
     raise_bad_request,
     raise_forbidden,
     raise_internal,
 )
 
 router = APIRouter()
+
+# Session-scoped voice metadata is client supplied. Keep every field small and
+# well formed before it reaches storage or the messaging service: a multi-megabyte
+# waveform or a forged channel/server identifier is not a legitimate voice note.
+MAX_FILENAME_LENGTH = 255
+MAX_URL_LENGTH = 2048
+MAX_WAVEFORM_LENGTH = 8192
+
+
+def _voice_snowflake(value, field: str):
+    """Validate an optional channel/server identifier via the shared rule."""
+    if value is None:
+        return None
+    try:
+        return parse_id(value, field)
+    except HardeningViolation as exc:
+        raise_bad_request(str(exc))
+
+
+def _validate_waveform(value) -> None:
+    """Reject oversized or control-character-laden waveform data."""
+    if value is None:
+        return
+    if not isinstance(value, str) or len(value) > MAX_WAVEFORM_LENGTH:
+        raise_bad_request("Invalid waveform data")
+    try:
+        reject_control_characters(value, "waveform")
+    except HardeningViolation as exc:
+        raise_bad_request(str(exc))
 
 # M3 FIX: the JSON variant previously trusted client-supplied attachment
 # metadata verbatim (url/filename/content_type/size), unlike the multipart
@@ -128,12 +162,58 @@ async def _validate_voice_storage_url(url: str) -> None:
 
 class VoiceMessageRequest(BaseModel):
     conversation_id: str = Field(..., description="Target conversation ID")
-    duration_ms: int = Field(..., gt=0, description="Duration in milliseconds")
-    filename: str = Field(..., min_length=1, description="Audio filename")
+    channel_id: Optional[str] = Field(
+        None, description="Optional originating channel ID"
+    )
+    server_id: Optional[str] = Field(
+        None, description="Optional originating server ID"
+    )
+    duration_ms: int = Field(
+        ..., gt=0, le=MAX_DURATION_MS, description="Duration in milliseconds"
+    )
+    filename: str = Field(
+        ..., min_length=1, max_length=MAX_FILENAME_LENGTH, description="Audio filename"
+    )
     content_type: str = Field(..., description="MIME type (audio/*)")
     size: int = Field(..., gt=0, description="File size in bytes")
-    url: str = Field(..., description="Storage URL")
-    waveform: Optional[str] = Field(None, description="Base64 waveform data")
+    url: str = Field(..., max_length=MAX_URL_LENGTH, description="Storage URL")
+    waveform: Optional[str] = Field(
+        None, max_length=MAX_WAVEFORM_LENGTH, description="Base64 waveform data"
+    )
+
+    @field_validator("channel_id", "server_id")
+    @classmethod
+    def _safe_scope_id(cls, value, info):
+        if value is None:
+            return value
+        try:
+            return str(parse_id(value, info.field_name))
+        except HardeningViolation as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("filename")
+    @classmethod
+    def _safe_filename(cls, value: str, info):
+        if not value or not value.strip():
+            raise ValueError("filename must not be blank")
+        try:
+            reject_control_characters(value, info.field_name)
+        except HardeningViolation as exc:
+            raise ValueError(str(exc)) from exc
+        return value
+
+    @field_validator("waveform")
+    @classmethod
+    def _safe_waveform(cls, value, info):
+        if value is None:
+            return value
+        if not isinstance(value, str) or len(value) > MAX_WAVEFORM_LENGTH:
+            raise ValueError("Invalid waveform data")
+        try:
+            reject_control_characters(value, info.field_name)
+        except HardeningViolation as exc:
+            raise ValueError(str(exc)) from exc
+        return value
 
 
 @router.post(
@@ -144,7 +224,12 @@ class VoiceMessageRequest(BaseModel):
 async def send_voice_message(
     body: VoiceMessageRequest, current_user: TokenInfo = Depends(get_current_user)
 ):
-    conv_id = parse_id(body.conversation_id, "conversation ID")
+    conv_id = legacy_parse_id(body.conversation_id, "conversation ID")
+    # Validate the optional session scope even though persistence is unchanged;
+    # the ids must still be well-formed snowflakes before any downstream use.
+    _voice_snowflake(body.channel_id, "channel ID")
+    _voice_snowflake(body.server_id, "server ID")
+    _validate_waveform(body.waveform)
 
     _validate_voice_metadata(
         filename=body.filename,
@@ -257,7 +342,8 @@ async def upload_voice_message(
     if duration_ms > MAX_DURATION_MS:
         raise_bad_request("Voice message exceeds 10 minute maximum duration")
 
-    conv_id = parse_id(conversation_id, "conversation ID")
+    _validate_waveform(waveform)
+    conv_id = legacy_parse_id(conversation_id, "conversation ID")
 
     import time
 
