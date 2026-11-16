@@ -451,14 +451,16 @@ class BotManagementMixin(ApplicationManagerProtocol):
         Returns ``None`` for a hidden profile exactly as for a missing one, so
         the caller cannot distinguish "private" from "does not exist".
         """
+        # Public profiles are the common case and need no application row at
+        # all. Only a private profile requires the owner_id comparison, so
+        # fetch that metadata lazily instead of joining app_applications on
+        # every profile read.
         row = self._db.fetch_one(
-            """SELECT bp.application_id, bp.description, bp.short_description,
-                      bp.avatar_url, bp.banner_url, bp.website_url, bp.support_url,
-                      bp.github_url, bp.tags, bp.nsfw, bp.private, bp.updated_at,
-                      a.owner_id
-               FROM app_bot_profiles bp
-               JOIN app_applications a ON a.id = bp.application_id
-               WHERE bp.application_id = ?""",
+            """SELECT application_id, description, short_description,
+                      avatar_url, banner_url, website_url, support_url,
+                      github_url, tags, nsfw, private, updated_at
+               FROM app_bot_profiles
+               WHERE application_id = ?""",
             (application_id,),
         )
 
@@ -466,7 +468,13 @@ class BotManagementMixin(ApplicationManagerProtocol):
             return None
 
         if row["private"]:
-            if viewer_id is None or int(row["owner_id"]) != int(viewer_id):
+            owner = self._db.fetch_one(
+                "SELECT owner_id FROM app_applications WHERE id = ?",
+                (application_id,),
+            )
+            if owner is None or viewer_id is None:
+                return None
+            if int(owner["owner_id"]) != int(viewer_id):
                 return None
 
         return row_to_bot_profile(row)

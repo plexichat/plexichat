@@ -163,3 +163,38 @@ class TestBotPermissionLookups:
         app = app_manager.create_application(user.id, "Bot App")
         with pytest.raises(PermissionDeniedError):
             app_manager.approve_bot(server_id=7002, application_id=app.id, approved_by=user.id)
+
+
+@pytest.mark.applications
+class TestBotProfileReadPath:
+    def test_public_profile_avoids_application_join(self, app_manager, user_pool):
+        """A public profile read needs only the profile row."""
+        user = user_pool.get_user()
+        app = app_manager.create_application(user.id, "Profile App")
+        app_manager.update_bot_profile(app.id, user.id, description="public profile")
+
+        real_fetch_one = app_manager._db.fetch_one
+        queries = []
+
+        def tracking_fetch_one(query, params=None):
+            queries.append(query)
+            return real_fetch_one(query, params)
+
+        with patch.object(app_manager._db, "fetch_one", side_effect=tracking_fetch_one):
+            profile = app_manager.get_bot_profile(app.id)
+
+        assert profile is not None and profile.description == "public profile"
+        assert len(queries) == 1
+        assert "JOIN" not in queries[0]
+        assert "app_applications" not in queries[0]
+
+    def test_private_profile_still_hides_from_non_owners(self, app_manager, user_pool):
+        """The lazy owner lookup keeps the private-profile gate intact."""
+        owner = user_pool.get_user()
+        other = user_pool.get_user()
+        app = app_manager.create_application(owner.id, "Private Profile App")
+        app_manager.update_bot_profile(app.id, owner.id, private=True)
+
+        assert app_manager.get_bot_profile(app.id) is None
+        assert app_manager.get_bot_profile(app.id, viewer_id=other.id) is None
+        assert app_manager.get_bot_profile(app.id, viewer_id=owner.id) is not None
