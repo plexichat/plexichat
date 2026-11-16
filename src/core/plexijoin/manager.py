@@ -12,6 +12,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.admin.logging import AdminLogEntry
 
+from .validation import (
+    bound_direction,
+    bound_id,
+    bound_message_count,
+    bound_pagination,
+    bound_text,
+    validate_room_payload,
+)
+
 logger = logging.getLogger(__name__)
 
 # Inbound route paths on the REMOTE instance that this instance POSTs to.
@@ -181,6 +190,7 @@ class PlexiJoinManager:
         per_page: int = 50,
     ) -> Dict[str, Any]:
         """List all outbound federation connections."""
+        page, per_page = bound_pagination(page, per_page)
         query = "SELECT * FROM plexijoin_connections"
         params = []
 
@@ -227,6 +237,7 @@ class PlexiJoinManager:
         We now materialise the decrypted ``shared_key`` here so
         callers always see the plaintext they expect.
         """
+        connection_id = bound_id(connection_id, "connection_id")
         row = self.db.fetch_one(
             "SELECT * FROM plexijoin_connections WHERE id = ?",
             (connection_id,),
@@ -264,6 +275,12 @@ class PlexiJoinManager:
         user_agent: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new outbound federation connection."""
+        remote_instance_id = bound_text(
+            remote_instance_id, "remote_instance_id", 128, required=True
+        )
+        remote_url = bound_text(remote_url, "remote_url", 2048, required=True)
+        note = bound_text(note, "note", 500)
+        admin_id = bound_id(admin_id, "admin_id")
         now_ms = int(time.time() * 1000)
         encrypted_key = self._encrypt_key(shared_key)
 
@@ -315,6 +332,7 @@ class PlexiJoinManager:
         connection = self.get_connection(connection_id)
         if not connection:
             return False
+        connection_id = bound_id(connection_id, "connection_id")
 
         self.db.execute(
             "DELETE FROM plexijoin_connections WHERE id = ?",
@@ -395,6 +413,7 @@ class PlexiJoinManager:
         request from the remote instance is approved, so fresh/pending
         connections no longer dead-end in ``pending``.
         """
+        connection_id = bound_id(connection_id, "connection_id")
         now_ms = int(time.time() * 1000)
         cursor = self.db.execute(
             """
@@ -417,6 +436,7 @@ class PlexiJoinManager:
         per_page: int = 50,
     ) -> Dict[str, Any]:
         """List inbound federation requests."""
+        page, per_page = bound_pagination(page, per_page)
         query = "SELECT * FROM plexijoin_inbound_requests"
         params = []
 
@@ -457,6 +477,12 @@ class PlexiJoinManager:
         key. This is the ONLY production path that inserts into
         ``plexijoin_inbound_requests``.
         """
+        remote_instance_id = bound_text(
+            remote_instance_id, "remote_instance_id", 128, required=True
+        )
+        remote_url = bound_text(remote_url, "remote_url", 2048, required=True)
+        requested_by = bound_text(requested_by, "requested_by", 128)
+        note = bound_text(note, "note", 500)
         now_ms = int(time.time() * 1000)
         row_id = (
             self.db.table("plexijoin_inbound_requests")
@@ -538,6 +564,7 @@ class PlexiJoinManager:
         user_agent: Optional[str],
     ) -> Dict[str, Any]:
         """Atomically move a pending inbound request to ``new_status``."""
+        request_id = bound_id(request_id, "request_id")
         now_ms = int(time.time() * 1000)
 
         cursor = self.db.execute(
@@ -645,6 +672,9 @@ class PlexiJoinManager:
         message_count: int,
     ) -> None:
         """Record traffic for a connection."""
+        connection_id = bound_id(connection_id, "connection_id")
+        direction = bound_direction(direction)
+        message_count = bound_message_count(message_count)
         now_ms = int(time.time() * 1000)
 
         self.db.execute(
@@ -731,8 +761,9 @@ class PlexiJoinManager:
 
         The request is signed with the (pending) connection's shared key —
         the remote verifies the signature against the same key before
-        recording the inbound request.
+        key before recording the inbound request.
         """
+        connection_id = bound_id(connection_id, "connection_id")
         connection = self.get_connection(connection_id)
         if not connection:
             return {"success": False, "error": "Connection not found"}
@@ -772,6 +803,11 @@ class PlexiJoinManager:
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Send a federated message over an ACTIVE connection and record traffic."""
+        connection_id = bound_id(connection_id, "connection_id")
+        if isinstance(payload, dict) and (
+            "room_id" in payload or "participants" in payload
+        ):
+            payload = validate_room_payload(payload)
         connection = self.get_connection(connection_id)
         if not connection:
             return {"success": False, "error": "Connection not found"}
