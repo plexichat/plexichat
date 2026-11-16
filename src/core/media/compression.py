@@ -8,9 +8,10 @@ Provides:
 - Thumbnail generation
 """
 
-from src.core.security.hardening import bounded_int
+from src.core.security.hardening import HardeningViolation, bounded_int
 
 import os
+import re
 import subprocess
 import tempfile
 import shutil
@@ -262,6 +263,38 @@ class ImageCompressor:
             )
 
 
+_FFMPEG_PRESETS = frozenset(
+    {
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+        "slow",
+        "slower",
+        "veryslow",
+        "placebo",
+    }
+)
+
+
+def _bounded_ffmpeg_preset(value: object) -> str:
+    """Only a known x264/x265 preset may be passed to ffmpeg."""
+    preset = str(value or "").strip().lower()
+    if preset not in _FFMPEG_PRESETS:
+        raise HardeningViolation("compression ffmpeg preset is not allowed")
+    return preset
+
+
+def _bounded_audio_bitrate(value: object) -> str:
+    """Only a plain numeric k/m bitrate may be passed to ffmpeg."""
+    bitrate = str(value or "").strip().lower()
+    if not re.fullmatch(r"\d{1,4}[km]", bitrate):
+        raise HardeningViolation("compression audio bitrate is not allowed")
+    return bitrate
+
+
 class VideoCompressor:
     """Handles video compression and transcoding."""
 
@@ -347,6 +380,12 @@ class VideoCompressor:
 
         original_size = len(video_data)
 
+        # Config-sourced ffmpeg arguments are validated here rather than being
+        # handed to ffmpeg unchecked: an arbitrary preset/bitrate makes the
+        # transcode fail (or behave unexpectedly) deep inside the subprocess.
+        preset = _bounded_ffmpeg_preset(self._config["preset"])
+        audio_bitrate = _bounded_audio_bitrate(audio_bitrate)
+
         # Determine codec
         if codec is None or codec == VideoCodec.ORIGINAL:
             codec_name = self._config["codec"]
@@ -389,7 +428,7 @@ class VideoCompressor:
                         "-crf",
                         str(crf),
                         "-preset",
-                        self._config["preset"],
+                        preset,
                     ]
                 )
             elif codec_name == "h265":
@@ -400,7 +439,7 @@ class VideoCompressor:
                         "-crf",
                         str(crf),
                         "-preset",
-                        self._config["preset"],
+                        preset,
                     ]
                 )
             elif codec_name == "vp9":
