@@ -31,6 +31,7 @@ from src.core.media.exceptions import StorageQuotaExceededError
 from src.core.security.hardening import (
     HardeningViolation,
     bounded_int,
+    parse_id,
     reject_control_characters,
 )
 
@@ -371,6 +372,12 @@ class StorageQuotaManager:
                 maximum=MAX_OVERRIDE_LIMIT_BYTES,
             )
         safe_note = _bounded_override_note(note)
+        # Every id written by an override is an untrusted-number boundary too:
+        # a negative or >snowflake value would poison audit rows and lookups.
+        safe_user_id = parse_id(user_id, "user_id")
+        safe_updated_by = (
+            parse_id(updated_by, "updated_by") if updated_by is not None else None
+        )
         self._ensure_schema()
         now = int(time.time() * 1000)
         self._db.execute(
@@ -384,11 +391,11 @@ class StorageQuotaManager:
             "updated_by = excluded.updated_by, "
             "updated_at = excluded.updated_at",
             (
-                int(user_id),
+                safe_user_id,
                 normalized_limit,
                 1 if unlimited else 0,
                 safe_note,
-                int(updated_by) if updated_by is not None else None,
+                safe_updated_by,
                 now,
             ),
         )
