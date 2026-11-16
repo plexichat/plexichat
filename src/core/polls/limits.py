@@ -103,6 +103,55 @@ def resolve_field_limits(config: Mapping[str, Any]) -> PollFieldLimits:
     )
 
 
+def validate_question_text(value: Any, config: Mapping[str, Any]) -> str:
+    """Strip and length-check a question against envelope-bounded config.
+
+    Centralising the check here means the manager and the API route enforce
+    exactly the same rule, and the helper can be tested without a database.
+    """
+    from .exceptions import InvalidPollQuestionError
+
+    text = str(value or "").strip()
+    if not text:
+        raise InvalidPollQuestionError("Poll question cannot be empty")
+    max_len = resolve_field_limits(config).max_question_length
+    if len(text) > max_len:
+        raise InvalidPollQuestionError(
+            f"Poll question cannot exceed {max_len} characters"
+        )
+    return text
+
+
+def validate_option_text(value: Any, config: Mapping[str, Any]) -> str:
+    """Strip and length-check one option against envelope-bounded config."""
+    from .exceptions import InvalidPollOptionError
+
+    text = str(value or "").strip()
+    if not text:
+        raise InvalidPollOptionError("Poll option cannot be empty")
+    max_len = resolve_field_limits(config).max_option_length
+    if len(text) > max_len:
+        raise InvalidPollOptionError(f"Poll option cannot exceed {max_len} characters")
+    return text
+
+
+def bound_option_count(options: Any, config: Mapping[str, Any]) -> int:
+    """Return the validated option count, or raise ``PollOptionLimitError``."""
+    from .exceptions import PollOptionLimitError
+
+    limits = resolve_field_limits(config)
+    count = len(options) if isinstance(options, (list, tuple)) else -1
+    if count < limits.min_options or count > limits.max_options:
+        raise PollOptionLimitError(
+            f"Poll must have between {limits.min_options} and "
+            f"{limits.max_options} options",
+            limits.min_options,
+            limits.max_options,
+            count,
+        )
+    return count
+
+
 __all__ = [
     "MAX_OPTIONS",
     "MAX_OPTION_LENGTH",
@@ -110,5 +159,8 @@ __all__ = [
     "MIN_OPTIONS",
     "PollFieldLimits",
     "bound_count",
+    "bound_option_count",
     "resolve_field_limits",
+    "validate_option_text",
+    "validate_question_text",
 ]

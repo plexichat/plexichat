@@ -9,16 +9,30 @@ it instead of reading config blindly.
 import pytest
 
 from src.core.polls.exceptions import (
+    PollOptionLimitError,
+    PollOptionLimitError,
+    PollOptionLimitError,
+    PollOptionLimitError,
+    PollOptionLimitError,
+    PollOptionLimitError,
     InvalidPollOptionError,
     InvalidPollQuestionError,
 )
 from src.core.polls.limits import (
+    bound_option_count,
+    bound_option_count,
+    bound_option_count,
+    bound_option_count,
+    bound_option_count,
+    bound_option_count,
     MAX_OPTIONS,
     MAX_OPTION_LENGTH,
     MAX_QUESTION_LENGTH,
     MIN_OPTIONS,
     bound_count,
     resolve_field_limits,
+    validate_option_text,
+    validate_question_text,
 )
 from src.core.polls.manager.creation import CreationMixin
 from src.core.security.hardening import HardeningViolation, bounded_int
@@ -122,3 +136,171 @@ class TestCreationValidatorsUseEnvelope:
             holder._validate_question("   ")
         with pytest.raises(InvalidPollOptionError):
             holder._validate_option("   ")
+
+
+class TestSharedFieldValidators:
+    """The shared helpers enforce the envelope without a manager instance."""
+
+    def test_question_text_is_stripped_and_bounded(self):
+        assert validate_question_text("  Why?  ", {}) == "Why?"
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), {})
+
+    def test_option_text_is_stripped_and_bounded(self):
+        assert validate_option_text("  Yes  ", {}) == "Yes"
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), {})
+
+    def test_widened_config_cannot_expand_question_or_option(self):
+        hostile = {"max_question_length": 10**9, "max_option_length": 10**9}
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), hostile)
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), hostile)
+
+    def test_option_count_is_bounded_even_with_widened_config(self):
+        assert bound_option_count(["A", "B"], {}) == 2
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count(["x"] * (MAX_OPTIONS + 1), {"max_options": 10**9})
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count([], {"min_options": -5})
+
+
+class TestSharedFieldValidators:
+    """The shared helpers enforce the envelope without a manager instance."""
+
+    def test_question_text_is_stripped_and_bounded(self):
+        assert validate_question_text("  Why?  ", {}) == "Why?"
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), {})
+
+    def test_option_text_is_stripped_and_bounded(self):
+        assert validate_option_text("  Yes  ", {}) == "Yes"
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), {})
+
+    def test_widened_config_cannot_expand_question_or_option(self):
+        hostile = {"max_question_length": 10**9, "max_option_length": 10**9}
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), hostile)
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), hostile)
+
+    def test_option_count_is_bounded_even_with_widened_config(self):
+        assert bound_option_count(["A", "B"], {}) == 2
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count(["x"] * (MAX_OPTIONS + 1), {"max_options": 10**9})
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count([], {"min_options": -5})
+
+
+class TestSharedFieldValidators:
+    """The shared helpers enforce the envelope without a manager instance."""
+
+    def test_question_text_is_stripped_and_bounded(self):
+        assert validate_question_text("  Why?  ", {}) == "Why?"
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), {})
+
+    def test_option_text_is_stripped_and_bounded(self):
+        assert validate_option_text("  Yes  ", {}) == "Yes"
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), {})
+
+    def test_widened_config_cannot_expand_question_or_option(self):
+        hostile = {"max_question_length": 10**9, "max_option_length": 10**9}
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), hostile)
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), hostile)
+
+    def test_option_count_is_bounded_even_with_widened_config(self):
+        assert bound_option_count(["A", "B"], {}) == 2
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count(["x"] * (MAX_OPTIONS + 1), {"max_options": 10**9})
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count([], {"min_options": -5})
+
+
+class TestSharedFieldValidators:
+    """The shared helpers enforce the envelope without a manager instance."""
+
+    def test_question_text_is_stripped_and_bounded(self):
+        assert validate_question_text("  Why?  ", {}) == "Why?"
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), {})
+
+    def test_option_text_is_stripped_and_bounded(self):
+        assert validate_option_text("  Yes  ", {}) == "Yes"
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), {})
+
+    def test_widened_config_cannot_expand_question_or_option(self):
+        hostile = {"max_question_length": 10**9, "max_option_length": 10**9}
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), hostile)
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), hostile)
+
+    def test_option_count_is_bounded_even_with_widened_config(self):
+        assert bound_option_count(["A", "B"], {}) == 2
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count(["x"] * (MAX_OPTIONS + 1), {"max_options": 10**9})
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count([], {"min_options": -5})
+
+
+class TestSharedFieldValidators:
+    """The shared helpers enforce the envelope without a manager instance."""
+
+    def test_question_text_is_stripped_and_bounded(self):
+        assert validate_question_text("  Why?  ", {}) == "Why?"
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), {})
+
+    def test_option_text_is_stripped_and_bounded(self):
+        assert validate_option_text("  Yes  ", {}) == "Yes"
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), {})
+
+    def test_widened_config_cannot_expand_question_or_option(self):
+        hostile = {"max_question_length": 10**9, "max_option_length": 10**9}
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), hostile)
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), hostile)
+
+    def test_option_count_is_bounded_even_with_widened_config(self):
+        assert bound_option_count(["A", "B"], {}) == 2
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count(["x"] * (MAX_OPTIONS + 1), {"max_options": 10**9})
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count([], {"min_options": -5})
+
+
+class TestSharedFieldValidators:
+    """The shared helpers enforce the envelope without a manager instance."""
+
+    def test_question_text_is_stripped_and_bounded(self):
+        assert validate_question_text("  Why?  ", {}) == "Why?"
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), {})
+
+    def test_option_text_is_stripped_and_bounded(self):
+        assert validate_option_text("  Yes  ", {}) == "Yes"
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), {})
+
+    def test_widened_config_cannot_expand_question_or_option(self):
+        hostile = {"max_question_length": 10**9, "max_option_length": 10**9}
+        with pytest.raises(InvalidPollQuestionError):
+            validate_question_text("x" * (MAX_QUESTION_LENGTH + 1), hostile)
+        with pytest.raises(InvalidPollOptionError):
+            validate_option_text("x" * (MAX_OPTION_LENGTH + 1), hostile)
+
+    def test_option_count_is_bounded_even_with_widened_config(self):
+        assert bound_option_count(["A", "B"], {}) == 2
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count(["x"] * (MAX_OPTIONS + 1), {"max_options": 10**9})
+        with pytest.raises(PollOptionLimitError):
+            bound_option_count([], {"min_options": -5})

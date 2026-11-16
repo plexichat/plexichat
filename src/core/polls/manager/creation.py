@@ -7,15 +7,16 @@ from ...base import SnowflakeID
 
 from ..exceptions import (
     InvalidPollDurationError,
-    InvalidPollOptionError,
-    InvalidPollQuestionError,
     MessageNotFoundError,
     PermissionDeniedError,
     PollAlreadyExistsError,
     PollError,
-    PollOptionLimitError,
 )
-from ..limits import resolve_field_limits
+from ..limits import (
+    bound_option_count,
+    validate_option_text,
+    validate_question_text,
+)
 from ..models import Poll, PollResultsVisibility
 from .base import PollManagerBase, _is_unique_violation
 
@@ -79,17 +80,7 @@ class CreationMixin(PollManagerBase):
 
         question = self._validate_question(question)
 
-        limits = resolve_field_limits(self._config)
-        min_opts = limits.min_options
-        max_opts = limits.max_options
-
-        if len(options) < min_opts or len(options) > max_opts:
-            raise PollOptionLimitError(
-                f"Poll must have between {min_opts} and {max_opts} options",
-                min_opts,
-                max_opts,
-                len(options),
-            )
+        bound_option_count(options, self._config)
 
         validated_options = [self._validate_option(opt) for opt in options]
         duration_hours = self._validate_duration(duration_hours)
@@ -177,33 +168,11 @@ class CreationMixin(PollManagerBase):
 
     def _validate_question(self, question: str) -> str:
         """Validate and sanitize poll question."""
-        if not question or not question.strip():
-            raise InvalidPollQuestionError("Poll question cannot be empty")
-
-        question = question.strip()
-        max_len = resolve_field_limits(self._config).max_question_length
-
-        if len(question) > max_len:
-            raise InvalidPollQuestionError(
-                f"Poll question cannot exceed {max_len} characters"
-            )
-
-        return question
+        return validate_question_text(question, self._config)
 
     def _validate_option(self, option: str) -> str:
         """Validate and sanitize poll option."""
-        if not option or not option.strip():
-            raise InvalidPollOptionError("Poll option cannot be empty")
-
-        option = option.strip()
-        max_len = resolve_field_limits(self._config).max_option_length
-
-        if len(option) > max_len:
-            raise InvalidPollOptionError(
-                f"Poll option cannot exceed {max_len} characters"
-            )
-
-        return option
+        return validate_option_text(option, self._config)
 
     def _validate_duration(self, duration_hours: Optional[int]) -> Optional[int]:
         """Validate poll duration."""
