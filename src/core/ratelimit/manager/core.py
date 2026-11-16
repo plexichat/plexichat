@@ -33,6 +33,7 @@ from .bypass import BypassCheck, should_bypass
 from .constants import MAX_ROUTE_KEY_LENGTH
 from .counters import apply_custom_increment
 from .keys import generate_bucket_id, generate_bucket_key
+from .principals import normalise_principal, normalise_resource_id
 from .results import bucket_from_state, build_result, create_bypass_result
 from .validation import (
     normalise_amount,
@@ -239,6 +240,13 @@ class RateLimitManager:
         """
         cost = normalise_cost(cost)
         unix_now = clock_now()
+        # SECURITY: normalize every identity-derived component *before* it can
+        # reach key generation. A forged user id must not inject extra key
+        # segments, and a client-rotated identifier must not fan out into a
+        # fresh per-request bucket.
+        user_id, ip_address = normalise_principal(user_id, ip_address)
+        resource_id = normalise_resource_id(resource_id)
+        webhook_id = normalise_resource_id(webhook_id)
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
 
@@ -485,6 +493,13 @@ class RateLimitManager:
         """
         cost = normalise_cost(cost)
         unix_now = clock_now()
+        # SECURITY: normalize every identity-derived component *before* it can
+        # reach key generation. A forged user id must not inject extra key
+        # segments, and a client-rotated identifier must not fan out into a
+        # fresh per-request bucket.
+        user_id, ip_address = normalise_principal(user_id, ip_address)
+        resource_id = normalise_resource_id(resource_id)
+        webhook_id = normalise_resource_id(webhook_id)
         if self._check_bypass(user_id, is_admin, is_internal):
             return self._create_bypass_result(route, unix_now)
 

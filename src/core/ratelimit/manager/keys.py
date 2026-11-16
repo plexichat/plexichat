@@ -52,7 +52,13 @@ def generate_bucket_key(
     parts = [bucket_type.value]
 
     if user_id is not None:
-        parts.append(f"u:{_bound(str(user_id), MAX_COMPONENT_KEY_LENGTH)}")
+        # A principal id reaching this layer must be a canonical number, but
+        # escape anyway: direct callers historically passed strings, and an
+        # unescaped ``u:1:...`` value can inject fake key segments (and fool
+        # ``reset_user``'s segment matcher). Escaping is a no-op for digits.
+        parts.append(
+            f"u:{_bound(_escape_component(str(user_id)), MAX_COMPONENT_KEY_LENGTH)}"
+        )
     elif ip_address is not None:
         ip_component = _bound(
             _escape_component(str(ip_address)), MAX_COMPONENT_KEY_LENGTH
@@ -64,9 +70,13 @@ def generate_bucket_key(
         parts.append(f"r:{route_component}")
 
     if resource_id is not None:
-        parts.append(f"res:{_bound(str(resource_id), MAX_COMPONENT_KEY_LENGTH)}")
+        parts.append(
+            f"res:{_bound(_escape_component(str(resource_id)), MAX_COMPONENT_KEY_LENGTH)}"
+        )
     if webhook_id is not None:
-        parts.append(f"wh:{_bound(str(webhook_id), MAX_COMPONENT_KEY_LENGTH)}")
+        parts.append(
+            f"wh:{_bound(_escape_component(str(webhook_id)), MAX_COMPONENT_KEY_LENGTH)}"
+        )
 
     key = ":".join(parts)
     if len(key) > MAX_TOTAL_KEY_LENGTH:
