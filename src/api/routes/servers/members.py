@@ -18,6 +18,26 @@ import utils.logger as logger
 router = APIRouter()
 
 
+def _resolve_member_user_id(db, server_id: int, member_or_user_id: int):
+    """Resolve a path id (member id or user id) to a user id in one query.
+
+    All four member-mutation routes accept either a ``srv_members.id`` or a
+    ``user_id`` in the path and previously issued two sequential ``fetch_one``
+    calls to work out which: first keyed by ``id``, then a fallback keyed by
+    ``user_id``. Both were constrained to the same server, so a single
+    disjunctive query returns the same row while halving the database
+    round-trips on these hot endpoints. ``ORDER BY (id = ?) DESC`` preserves
+    the original precedence for the (anomalous) case where both a member-id
+    and a user-id row match the same number.
+    """
+    return db.fetch_one(
+        "SELECT user_id FROM srv_members "
+        "WHERE server_id = ? AND (id = ? OR user_id = ?) "
+        "ORDER BY (id = ?) DESC LIMIT 1",
+        (server_id, member_or_user_id, member_or_user_id, member_or_user_id),
+    )
+
+
 @router.get(
     "/{server_id}/members",
     response_model=MemberListResponse,
@@ -219,15 +239,7 @@ async def update_server_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one(
-            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
-            (mid, sid),
-        )
-        if not row:
-            row = db.fetch_one(
-                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (sid, mid),
-            )
+        row = _resolve_member_user_id(db, sid, mid)
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
 
@@ -326,15 +338,7 @@ async def kick_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one(
-            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
-            (mid, sid),
-        )
-        if not row:
-            row = db.fetch_one(
-                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (sid, mid),
-            )
+        row = _resolve_member_user_id(db, sid, mid)
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
 
@@ -409,15 +413,7 @@ async def assign_role_to_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one(
-            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
-            (mid, sid),
-        )
-        if not row:
-            row = db.fetch_one(
-                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (sid, mid),
-            )
+        row = _resolve_member_user_id(db, sid, mid)
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
 
@@ -502,15 +498,7 @@ async def remove_role_from_member(
                 status_code=500,
                 detail={"error": {"code": 500, "message": "Database not available"}},
             )
-        row = db.fetch_one(
-            "SELECT user_id FROM srv_members WHERE id = ? AND server_id = ?",
-            (mid, sid),
-        )
-        if not row:
-            row = db.fetch_one(
-                "SELECT user_id FROM srv_members WHERE server_id = ? AND user_id = ?",
-                (sid, mid),
-            )
+        row = _resolve_member_user_id(db, sid, mid)
         if not row:
             raise HTTPException(status_code=404, detail="Member not found")
 
