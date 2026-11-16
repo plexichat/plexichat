@@ -36,6 +36,8 @@ APPROVED_CALLS = {
     "sql_condition",
     "require_identifier",
     "bounded_int",
+    "bounded_sql_int",
+    "sql_finite_float",
     "parse_id",
     "convert_placeholders",
     "build_where_clause",

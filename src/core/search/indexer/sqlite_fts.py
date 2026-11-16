@@ -5,12 +5,14 @@ This is the default indexer that works out of the box with no external dependenc
 """
 
 import json
+import math
 import re
 from typing import List, Dict, Any, Optional
 
 import utils.logger as logger
 
-from src.core.database.builder.sql_safety import sql_identifier
+from src.core.database.builder.sql_safety import sql_identifier, sql_placeholders
+from src.core.security.hardening import HardeningViolation
 
 from .base import BaseIndexer, IndexerConfig
 from ..models import (
@@ -46,6 +48,11 @@ def _bounded_page(limit, offset):
     limit reads as *unlimited* in SQLite. Both are capped here at the indexer
     boundary even though the manager validates them at its entry points.
     """
+    # int(inf) raises OverflowError (not ValueError), and nan would flow into
+    # the bound parameter; reject both explicitly before clamping.
+    for value, field in ((limit, "limit"), (offset, "offset")):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise HardeningViolation(f"{field} must be a finite number")
     try:
         limit = int(limit)
     except (TypeError, ValueError):
@@ -296,23 +303,19 @@ class SQLiteFTS5Indexer(BaseIndexer):
             params: List[Any] = [fts_query]
 
             if conversation_ids:
-                placeholders = ",".join("?" * len(conversation_ids))
-                sql += f" AND conversation_id IN ({placeholders})"
+                sql += f" AND conversation_id IN ({sql_placeholders(len(conversation_ids))})"
                 params.extend(str(cid) for cid in conversation_ids)
 
             if server_ids:
-                placeholders = ",".join("?" * len(server_ids))
-                sql += f" AND server_id IN ({placeholders})"
+                sql += f" AND server_id IN ({sql_placeholders(len(server_ids))})"
                 params.extend(str(sid) for sid in server_ids)
 
             if channel_ids:
-                placeholders = ",".join("?" * len(channel_ids))
-                sql += f" AND channel_id IN ({placeholders})"
+                sql += f" AND channel_id IN ({sql_placeholders(len(channel_ids))})"
                 params.extend(str(chid) for chid in channel_ids)
 
             if author_ids:
-                placeholders = ",".join("?" * len(author_ids))
-                sql += f" AND author_id IN ({placeholders})"
+                sql += f" AND author_id IN ({sql_placeholders(len(author_ids))})"
                 params.extend(str(aid) for aid in author_ids)
 
             sql += " ORDER BY rank LIMIT ? OFFSET ?"

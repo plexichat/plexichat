@@ -8,6 +8,15 @@ import base64
 
 import utils.logger as logger
 
+from src.core.database.builder.sql_safety import (
+    bounded_sql_int,
+    sql_finite_float,
+    sql_limit,
+    sql_offset,
+    sql_placeholders,
+)
+from src.core.security.hardening import SNOWFLAKE_MAX
+
 from .base import BaseIndexer, IndexerConfig
 from ..models import (
     IndexedMessage,
@@ -307,24 +316,24 @@ class PostgresIndexer(BaseIndexer):
                 params = [query, query, like]
 
             if conversation_ids:
-                sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
+                sql += f" AND conversation_id IN ({sql_placeholders(len(conversation_ids))})"
                 params.extend(conversation_ids)
 
             if server_ids:
-                sql += f" AND server_id IN ({','.join(['?'] * len(server_ids))})"
+                sql += f" AND server_id IN ({sql_placeholders(len(server_ids))})"
                 params.extend(server_ids)
 
             if channel_ids:
-                sql += f" AND channel_id IN ({','.join(['?'] * len(channel_ids))})"
+                sql += f" AND channel_id IN ({sql_placeholders(len(channel_ids))})"
                 params.extend(channel_ids)
 
             if author_ids:
-                sql += f" AND author_id IN ({','.join(['?'] * len(author_ids))})"
+                sql += f" AND author_id IN ({sql_placeholders(len(author_ids))})"
                 params.extend(author_ids)
 
             sql += " ORDER BY rank DESC, created_at DESC LIMIT ? OFFSET ?"
-            params.append(max(1, int(limit)))
-            params.append(max(0, int(offset)))
+            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(max(0, sql_offset(offset, "offset")))
 
             rows = self._db.fetch_all(sql, tuple(params))
             results = []
@@ -401,16 +410,16 @@ class PostgresIndexer(BaseIndexer):
             params: List[Any] = [query, f"%{_escape_like(query)}%"]
 
             if conversation_ids:
-                sql += f" AND conversation_id IN ({','.join(['?'] * len(conversation_ids))})"
+                sql += f" AND conversation_id IN ({sql_placeholders(len(conversation_ids))})"
                 params.extend(conversation_ids)
             if server_ids:
-                sql += f" AND server_id IN ({','.join(['?'] * len(server_ids))})"
+                sql += f" AND server_id IN ({sql_placeholders(len(server_ids))})"
                 params.extend(server_ids)
             if channel_ids:
-                sql += f" AND channel_id IN ({','.join(['?'] * len(channel_ids))})"
+                sql += f" AND channel_id IN ({sql_placeholders(len(channel_ids))})"
                 params.extend(channel_ids)
             if author_ids:
-                sql += f" AND author_id IN ({','.join(['?'] * len(author_ids))})"
+                sql += f" AND author_id IN ({sql_placeholders(len(author_ids))})"
                 params.extend(author_ids)
 
             decoded = self._decode_cursor(cursor)
@@ -426,17 +435,32 @@ class PostgresIndexer(BaseIndexer):
                 """
                 params.extend(
                     [
-                        float(decoded.get("rank", 0.0)),
-                        float(decoded.get("rank", 0.0)),
-                        int(decoded.get("created_at", 0)),
-                        float(decoded.get("rank", 0.0)),
-                        int(decoded.get("created_at", 0)),
-                        int(decoded.get("id", 0)),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        bounded_sql_int(
+                            decoded.get("created_at", 0),
+                            "cursor timestamp",
+                            minimum=0,
+                            maximum=SNOWFLAKE_MAX,
+                        ),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        bounded_sql_int(
+                            decoded.get("created_at", 0),
+                            "cursor timestamp",
+                            minimum=0,
+                            maximum=SNOWFLAKE_MAX,
+                        ),
+                        bounded_sql_int(
+                            decoded.get("id", 0),
+                            "cursor id",
+                            minimum=0,
+                            maximum=SNOWFLAKE_MAX,
+                        ),
                     ]
                 )
 
             sql += " ORDER BY rank DESC, created_at DESC, message_id DESC LIMIT ?"
-            params.append(max(1, int(limit)))
+            params.append(max(1, sql_limit(limit, "limit")))
             rows = self._db.fetch_all(sql, tuple(params))
 
             results = [
@@ -522,8 +546,8 @@ class PostgresIndexer(BaseIndexer):
                     query,
                     like,
                     like,
-                    max(1, int(limit)),
-                    max(0, int(offset)),
+                    max(1, sql_limit(limit, "limit")),
+                    max(0, sql_offset(offset, "offset")),
                 ]
             else:
                 sql = """
@@ -538,8 +562,8 @@ class PostgresIndexer(BaseIndexer):
                     query,
                     like,
                     like,
-                    max(1, int(limit)),
-                    max(0, int(offset)),
+                    max(1, sql_limit(limit, "limit")),
+                    max(0, sql_offset(offset, "offset")),
                 ]
 
             rows = self._db.fetch_all(sql, tuple(params))
@@ -604,14 +628,19 @@ class PostgresIndexer(BaseIndexer):
                 """
                 params.extend(
                     [
-                        float(decoded.get("rank", 0.0)),
-                        float(decoded.get("rank", 0.0)),
-                        int(decoded.get("id", 0)),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        bounded_sql_int(
+                            decoded.get("id", 0),
+                            "cursor id",
+                            minimum=0,
+                            maximum=SNOWFLAKE_MAX,
+                        ),
                     ]
                 )
 
             sql += " ORDER BY rank DESC, user_id DESC LIMIT ?"
-            params.append(max(1, int(limit)))
+            params.append(max(1, sql_limit(limit, "limit")))
             rows = self._db.fetch_all(sql, tuple(params))
             results = [
                 UserSearchResult(
@@ -717,8 +746,8 @@ class PostgresIndexer(BaseIndexer):
                 params.append(category)
 
             sql += " ORDER BY rank DESC LIMIT ? OFFSET ?"
-            params.append(max(1, int(limit)))
-            params.append(max(0, int(offset)))
+            params.append(max(1, sql_limit(limit, "limit")))
+            params.append(max(0, sql_offset(offset, "offset")))
 
             rows = self._db.fetch_all(sql, tuple(params))
             return [
@@ -792,14 +821,19 @@ class PostgresIndexer(BaseIndexer):
                 """
                 params.extend(
                     [
-                        float(decoded.get("rank", 0.0)),
-                        float(decoded.get("rank", 0.0)),
-                        int(decoded.get("id", 0)),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        sql_finite_float(decoded.get("rank", 0.0), "cursor rank"),
+                        bounded_sql_int(
+                            decoded.get("id", 0),
+                            "cursor id",
+                            minimum=0,
+                            maximum=SNOWFLAKE_MAX,
+                        ),
                     ]
                 )
 
             sql += " ORDER BY rank DESC, server_id DESC LIMIT ?"
-            params.append(max(1, int(limit)))
+            params.append(max(1, sql_limit(limit, "limit")))
             rows = self._db.fetch_all(sql, tuple(params))
             results = [
                 ServerSearchResult(

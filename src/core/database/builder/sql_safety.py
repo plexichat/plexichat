@@ -49,6 +49,22 @@ def _finite_int(value: Any, field: str, *, minimum: int, maximum: int) -> int:
     return bounded_int(value, field, minimum=minimum, maximum=maximum)
 
 
+def bounded_sql_int(value: Any, field: str, *, minimum: int, maximum: int) -> int:
+    """Public finite/bounded integer for callers that interpolate numbers."""
+    return _finite_int(value, field, minimum=minimum, maximum=maximum)
+
+
+def sql_finite_float(value: Any, field: str = "value") -> float:
+    """Coerce to float, rejecting ``nan``/``inf`` (e.g. a crafted cursor)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise HardeningViolation(f"{field} must be a number") from exc
+    if not math.isfinite(number):
+        raise HardeningViolation(f"{field} must be a finite number")
+    return number
+
+
 def sql_identifier(
     value: Any, field: str = "identifier", quote: str | None = None
 ) -> str:

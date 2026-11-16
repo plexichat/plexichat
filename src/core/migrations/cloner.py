@@ -15,10 +15,10 @@ from typing import List, Dict, Any, Optional
 import utils.logger as logger
 from src.core.database import Database
 from src.core.database.builder.sql_safety import (
+    bounded_sql_int,
     sql_identifier,
     sql_placeholders,
 )
-from src.core.security.hardening import bounded_int
 
 
 def _db_identity(db: Database) -> tuple:
@@ -51,7 +51,7 @@ class DataCloner:
         # A zero/negative batch makes the LIMIT/OFFSET clone loop spin forever
         # (SQLite reads a negative LIMIT as "unlimited"), and an enormous one
         # turns one execute_many into an unbounded single transaction.
-        self._batch_size = bounded_int(
+        self._batch_size = bounded_sql_int(
             value, "batch_size", minimum=1, maximum=self._MAX_BATCH_SIZE
         )
 
