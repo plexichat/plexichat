@@ -168,3 +168,43 @@ class TestInviteBoundaries:
             assert "require_invite_code" in handler.__code__.co_names
         create = ChannelInvitesMixin._create_channel_invite
         assert "require_invite_limits" in create.__code__.co_names
+
+
+class TestWebhookFieldBounds:
+    def test_normal_webhook_fields_pass_through(self):
+        from src.api.routes.channels.helpers import sanitize_webhook_fields
+
+        assert sanitize_webhook_fields("ci", "https://cdn.example.com/a.png") == (
+            "ci",
+            "https://cdn.example.com/a.png",
+        )
+
+    def test_name_is_bounded_and_control_characters_stripped(self):
+        from src.api.routes.channels.helpers import sanitize_webhook_fields
+
+        name, _ = sanitize_webhook_fields("a\x00b" + "x" * 500, None)
+        assert len(name) == 100
+        assert "\x00" not in name
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "javascript:alert(1)",
+            "ftp://example.com/x",
+            "data:text/html,x",
+            "https://user:pass@example.com/x",
+            "x" * 3000,
+        ],
+    )
+    def test_non_http_or_oversized_urls_are_dropped(self, url):
+        from src.api.routes.channels.helpers import sanitize_webhook_fields
+
+        assert sanitize_webhook_fields("ci", url)[1] is None
+
+    def test_listing_uses_the_field_guard(self):
+        from src.api.routes.channels import webhooks as webhooks_routes
+
+        assert (
+            "sanitize_webhook_fields"
+            in webhooks_routes._webhook_to_response.__code__.co_names
+        )

@@ -11,8 +11,44 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
-from .helpers import require_channel_snowflake, require_pagination
+from .helpers import (
+    require_channel_snowflake,
+    require_pagination,
+    sanitize_webhook_fields,
+)
 from ..exception_mapping import raise_mapped
+
+
+def _webhook_to_response(w) -> WebhookResponse:
+    """Build a webhook response with bounded, scheme-checked fields."""
+    name, avatar_url = sanitize_webhook_fields(w.name, w.avatar_url)
+    return WebhookResponse(
+        id=SnowflakeID(w.id),
+        channel_id=SnowflakeID(w.channel_id),
+        server_id=SnowflakeID(w.server_id),
+        creator_id=SnowflakeID(getattr(w, "creator_id", 0))
+        if getattr(w, "creator_id", 0)
+        else None,
+        name=name,
+        avatar_url=avatar_url,
+        created_at=w.created_at,
+    )
+
+
+def _webhook_to_response(w) -> WebhookResponse:
+    """Build a webhook response with bounded, scheme-checked fields."""
+    name, avatar_url = sanitize_webhook_fields(w.name, w.avatar_url)
+    return WebhookResponse(
+        id=SnowflakeID(w.id),
+        channel_id=SnowflakeID(w.channel_id),
+        server_id=SnowflakeID(w.server_id),
+        creator_id=SnowflakeID(getattr(w, "creator_id", 0))
+        if getattr(w, "creator_id", 0)
+        else None,
+        name=name,
+        avatar_url=avatar_url,
+        created_at=w.created_at,
+    )
 
 
 class ChannelWebhooksMixin(ChannelBase):
@@ -115,17 +151,7 @@ class ChannelWebhooksMixin(ChannelBase):
                     webhooks_mod.get_channel_webhooks, current_user.user_id, cid
                 )
                 return [
-                    WebhookResponse(
-                        id=SnowflakeID(w.id),
-                        channel_id=SnowflakeID(w.channel_id),
-                        server_id=SnowflakeID(w.server_id),
-                        creator_id=SnowflakeID(getattr(w, "creator_id", 0))
-                        if getattr(w, "creator_id", 0)
-                        else None,
-                        name=w.name,
-                        avatar_url=w.avatar_url,
-                        created_at=w.created_at,
-                    )
+                    _webhook_to_response(w)
                     for w in (webhooks or [])[safe_offset : safe_offset + safe_limit]
                 ]
             except Exception as e:

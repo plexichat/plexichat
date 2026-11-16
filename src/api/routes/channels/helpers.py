@@ -12,7 +12,9 @@ from src.core.security.hardening import (
     bounded_int,
     parse_id,
     reject_control_characters,
+    require_http_url,
 )
+from src.core.security.hardening.text import strip_control_characters
 
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
@@ -137,6 +139,30 @@ def require_invite_limits(max_age: Any, max_uses: Any) -> tuple[int, int]:
             detail={"error": {"code": 400, "message": "Invalid invite parameters"}},
         ) from exc
     return age, uses
+
+
+MAX_WEBHOOK_NAME_LENGTH = 100
+MAX_WEBHOOK_URL_LENGTH = 2048
+
+
+def sanitize_webhook_fields(name: Any, avatar_url: Any) -> tuple[str, Optional[str]]:
+    """Bound webhook response fields and keep only HTTP(S) avatar URLs.
+
+    A stored webhook record is trusted only for identity, not for the shape of
+    the values echoed to clients. Control characters are stripped, the name is
+    capped, and an avatar URL with a non-HTTP scheme or embedded credentials
+    is dropped rather than reflected into the API response.
+    """
+    safe_name = strip_control_characters(name)[:MAX_WEBHOOK_NAME_LENGTH]
+    safe_url = None
+    if avatar_url:
+        url = str(avatar_url).strip()
+        if len(url) <= MAX_WEBHOOK_URL_LENGTH:
+            try:
+                safe_url = require_http_url(url, "webhook avatar URL")
+            except ValueError:
+                safe_url = None
+    return safe_name, safe_url
 
 
 def _channel_to_response(
