@@ -324,17 +324,29 @@ async def revoke_all_sessions(
 
     try:
         sessions = auth.get_sessions(current_user.user_id)
-        revoked = 0
-        for s in sessions:
-            if except_current and s.id == current_user.session_id:
-                continue
-            try:
-                auth.revoke_session(current_user.user_id, s.id)
-                revoked += 1
-            except Exception as e:
-                logger.debug(
-                    f"Failed to revoke session {s.id} for user {current_user.user_id}: {e}"
-                )
+        bulk_revoke = getattr(auth, "revoke_sessions_bulk", None)
+        if bulk_revoke is not None:
+            # One UPDATE + one cache invalidation + one audit/alert for the
+            # whole batch instead of repeating those writes per session.
+            revoked = bulk_revoke(
+                current_user.user_id,
+                [s.id for s in sessions],
+                except_session_id=(
+                    current_user.session_id if except_current else None
+                ),
+            )
+        else:  # pragma: no cover - fallback for alternate auth providers
+            revoked = 0
+            for s in sessions:
+                if except_current and s.id == current_user.session_id:
+                    continue
+                try:
+                    auth.revoke_session(current_user.user_id, s.id)
+                    revoked += 1
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to revoke session {s.id} for user {current_user.user_id}: {e}"
+                    )
 
         logger.info(
             f"User {current_user.user_id} revoked {revoked} sessions (except_current={except_current})"
