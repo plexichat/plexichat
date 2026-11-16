@@ -67,6 +67,43 @@ def _serialize_inbound_request(req) -> dict:
     }
 
 
+class _EncryptionService:
+    """Adapter exposing ``utils.encryption`` to the PlexiJoin manager.
+
+    The crypto module is imported lazily inside each method so importing this
+    route module never requires the encryption stack to be present. The adapter
+    is defined once at import time instead of being re-created on every
+    federation admin request.
+    """
+
+    @staticmethod
+    def encrypt(data: str) -> str:
+        import utils.encryption as enc_mod
+
+        return enc_mod.encrypt_data(data)
+
+    @staticmethod
+    def decrypt(data: str) -> str:
+        import utils.encryption as enc_mod
+
+        return enc_mod.decrypt_data(data)
+
+
+_ENCRYPTION_SERVICE = None
+
+
+def _encryption_service():
+    """Return the shared encryption adapter, or ``None`` when crypto is absent."""
+    global _ENCRYPTION_SERVICE
+    if _ENCRYPTION_SERVICE is None:
+        try:
+            import utils.encryption  # noqa: F401
+        except Exception:
+            return None
+        _ENCRYPTION_SERVICE = _EncryptionService()
+    return _ENCRYPTION_SERVICE
+
+
 def _get_plexijoin_manager(request):
     """Get PlexiJoin manager instance."""
     import src.api as api_mod
@@ -93,21 +130,7 @@ def _get_plexijoin_manager(request):
             },
         )
 
-    try:
-        import utils.encryption as enc_mod
-
-        class _EncryptionService:
-            @staticmethod
-            def encrypt(data: str) -> str:
-                return enc_mod.encrypt_data(data)
-
-            @staticmethod
-            def decrypt(data: str) -> str:
-                return enc_mod.decrypt_data(data)
-
-        encryption_service = _EncryptionService()
-    except Exception:
-        encryption_service = None
+    encryption_service = _encryption_service()
 
     if encryption_service is None:
         raise HTTPException(
