@@ -20,6 +20,7 @@ Security invariants (enforced here, not by callers):
 
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+from ..boundaries import SUITE_APP_IDS, SUITE_CAPABILITIES, validate_app_id
 from .interfaces import SuiteRegistry
 from .schema import AppManifest, CapabilityProjection, SuiteRegistryResponse
 
@@ -92,7 +93,7 @@ SUITE_MANIFESTS: Tuple[AppManifest, ...] = (
     ),
 )
 
-APP_IDS = frozenset(manifest.app_id for manifest in SUITE_MANIFESTS)
+APP_IDS = SUITE_APP_IDS
 
 _BY_APP_ID: Dict[str, AppManifest] = {m.app_id: m for m in SUITE_MANIFESTS}
 
@@ -243,13 +244,15 @@ class SuiteRegistryService(SuiteRegistry):
 
         Unknown IDs are rejected, never dynamically imported.
         """
-        if not isinstance(app_id, str):
+        try:
+            app_id = validate_app_id(app_id)
+        except ValueError:
             return None
         return _BY_APP_ID.get(app_id)
 
     def get_capability(self, feature: str) -> CapabilityProjection:
         """Return the authoritative scrubbed projection for one feature."""
-        if not isinstance(feature, str) or not feature:
+        if not isinstance(feature, str) or feature not in SUITE_CAPABILITIES:
             return CapabilityProjection(
                 feature=str(feature),
                 state="misconfigured",

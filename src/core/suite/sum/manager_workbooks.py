@@ -15,6 +15,7 @@ from ..boundaries import (
     MAX_WORKSPACE_PAYLOAD_BYTES,
     MAX_WORKSPACE_TITLE_LENGTH,
     bound_workspace_payload,
+    validate_artifact_id,
     bound_workspace_text,
 )
 from .manager_protocol import SumManagerProtocol
@@ -198,7 +199,7 @@ class SumManagerWorkbooks(SumManagerProtocol):
                 payload={"workbook_id": str(workbook_id)},
                 emit_event=False,
             )
-            artifact_id = int(artifact.id)
+            artifact_id = validate_artifact_id(artifact.id)
             self._db.execute(
                 "INSERT INTO sum_workbooks (id, artifact_id, owner_id, title, scope, server_id, current_revision, blob_revision, blob_path, file_size, checksum, is_template, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -445,6 +446,8 @@ class SumManagerWorkbooks(SumManagerProtocol):
             )
         now = int(time.time() * 1000)
         artifact_id = workbook.get("artifact_id")
+        if artifact_id is not None:
+            artifact_id = validate_artifact_id(artifact_id)
         self._db.begin_transaction()
         try:
             self._db.execute(
@@ -511,6 +514,8 @@ class SumManagerWorkbooks(SumManagerProtocol):
             )
         now = int(time.time() * 1000)
         artifact_id = row.get("artifact_id")
+        if artifact_id is not None:
+            artifact_id = validate_artifact_id(artifact_id)
         self._db.begin_transaction()
         try:
             self._db.execute(
