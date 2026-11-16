@@ -62,6 +62,8 @@ class ValidationMixin(WebhookManagerTrait):
                 raise WebhookAvatarError("Avatar URL must use http or https")
             if not parsed.netloc:
                 raise WebhookAvatarError("Invalid avatar URL")
+            if parsed.username or parsed.password:
+                raise WebhookAvatarError("Avatar URL must not embed credentials")
         except Exception as e:
             if isinstance(e, WebhookAvatarError):
                 raise

@@ -142,3 +142,20 @@ class TestPushTextBounds:
         from src.core.push.manager.delivery import _bounded_text
 
         assert _bounded_text("hello", "title", 256) == "hello"
+
+
+class TestWebhookAvatarCredentials:
+    def test_credentialed_avatar_url_is_refused(self):
+        from src.core.webhooks.manager.validation import ValidationMixin
+        from src.core.webhooks.exceptions import WebhookAvatarError
+
+        with pytest.raises(WebhookAvatarError):
+            object.__new__(ValidationMixin).__class__._validate_avatar_url(
+                object.__new__(ValidationMixin), "https://user:pass@example.com/a.png"
+            )
+
+    def test_plain_avatar_url_has_no_credentials(self):
+        from urllib.parse import urlparse
+
+        parsed = urlparse("https://example.com/a.png")
+        assert parsed.username is None and parsed.password is None
