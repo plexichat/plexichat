@@ -23,6 +23,7 @@ from .connection import DatabaseConnectionMixin
 from .execution import DatabaseExecutionMixin
 from .maintenance import DatabaseMaintenanceMixin
 from .metrics import DatabaseMetricsMixin
+from .statements import DEFAULT_STATEMENT_CACHE_SIZE, PreparedStatementCache
 from .transactions import DatabaseTransactionMixin
 from .types import DatabaseLocal, DbConnection
 
@@ -76,6 +77,10 @@ class Database(
         self._query_cache: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
         self._query_cache_ttl = 1.0
         self._query_cache_lock = threading.RLock()
+
+        # Statement text is pure and reusable; bound and instrument its cache
+        # so hot queries pay the conversion cost once per process.
+        self._statement_cache = PreparedStatementCache(DEFAULT_STATEMENT_CACHE_SIZE)
 
         self._in_transaction = False
 

@@ -9,6 +9,7 @@ from src.core.security.hardening import bounded_int
 
 from .. import dialect
 from .metrics import _query_count, _query_time_ms
+from .statements import get_prepared_statement
 from .types import DbConnection, DbCursor
 
 _QUERY_CACHE_MAX = 100
@@ -77,6 +78,7 @@ class _DatabaseExecutionProtocol(Protocol):
     _query_cache: "OrderedDict[str, Tuple[float, Any]]"
     _query_cache_ttl: float
     _query_cache_lock: Any
+    _statement_cache: Any
     _pool: Any
     _local: Any
     engine: Any
@@ -237,6 +239,32 @@ class DatabaseExecutionMixin:
             except Exception as mark_error:
                 logger.debug(f"in-flight connection marker failed: {mark_error}")
 
+    def _compile_query(
+        self: _DatabaseExecutionProtocol, query: str, has_params: bool
+    ) -> str:
+        """Run the full preparation pipeline once for a novel SQL string."""
+        query_sanitized = self._sanitize_sqlite_query(query)
+        query_conv = dialect.convert_placeholders(query_sanitized, self.type)
+
+        if self.type == "postgres":
+            query_conv = apply_pg_type_fixes(query_conv)
+            if not has_params:
+                # A parameterless statement bypasses the driver's paramstyle
+                # handling entirely, so revert the ``%%`` escaping that only
+                # exists for the parameterised path (see the dialect helper).
+                query_conv = dialect.unescape_postgres_percent(query_conv)
+        return query_conv
+
+    def _prepare_query(
+        self: _DatabaseExecutionProtocol, query: str, has_params: bool
+    ) -> str:
+        """Return prepared SQL, reusing the bounded cache when available."""
+        cache = getattr(self, "_statement_cache", None)
+        key = (self.type, bool(has_params), query)
+        return get_prepared_statement(
+            cache, key, lambda: self._compile_query(query, has_params)
+        )
+
     def execute(
         self: _DatabaseExecutionProtocol,
         query: str,
@@ -262,16 +290,10 @@ class DatabaseExecutionMixin:
             with self._query_cache_lock:
                 self._query_cache.clear()
 
-        query_sanitized = self._sanitize_sqlite_query(query)
-        query_conv = dialect.convert_placeholders(query_sanitized, self.type)
-
-        if self.type == "postgres":
-            query_conv = apply_pg_type_fixes(query_conv)
-            if not params:
-                # A parameterless statement bypasses the driver's paramstyle
-                # handling entirely, so revert the ``%%`` escaping that only
-                # exists for the parameterised path (see the dialect helper).
-                query_conv = dialect.unescape_postgres_percent(query_conv)
+        # Statement preparation (comment stripping, placeholder conversion,
+        # PG type rewrites) is pure and depends only on the SQL text. Cache the
+        # result so repeated hot queries pay for it once, not per request.
+        query_conv = self._prepare_query(query, bool(params))
 
         conn: Any = None
         cursor: Any = None
@@ -394,8 +416,9 @@ class DatabaseExecutionMixin:
         if self.transaction_depth > 0:
             self._validate_transaction_state()
 
-        query_sanitized = self._sanitize_sqlite_query(query)
-        query_conv = dialect.convert_placeholders(query_sanitized, self.type)
+        # executemany always binds parameters; reuse the prepared text just as
+        # execute() does (the whole batch shares one conversion).
+        query_conv = self._prepare_query(query, True)
 
         conn: Any = None
         cursor: Any = None
