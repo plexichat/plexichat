@@ -25,6 +25,7 @@ class UserUpdateRequest(BaseModel):
     email: Optional[str] = Field(None, description="New email")
     avatar_url: Optional[str] = Field(
         None,
+        max_length=2048,
         description=(
             "Avatar URL. Must reference the user's uploaded avatar "
             "(/api/v1/avatars/users/{user_id}); arbitrary URLs are rejected."
