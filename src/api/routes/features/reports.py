@@ -9,6 +9,7 @@ from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 from src.core.security.hardening import (
     HardeningViolation,
+    parse_id,
     reject_control_characters,
     require_http_url,
 )
@@ -247,6 +248,21 @@ class EnhancedReportRequest(BaseModel):
         None, description="Server ID (for message reports)"
     )
 
+    @field_validator("target_type")
+    @classmethod
+    def _valid_target_type(cls, value: str, info):
+        if value not in ("message", "user"):
+            raise ValueError("target_type must be 'message' or 'user'")
+        return value
+
+    @field_validator("target_id")
+    @classmethod
+    def _valid_target_id(cls, value: str, info):
+        try:
+            return str(parse_id(value, info.field_name))
+        except (HardeningViolation, HTTPException) as exc:
+            raise ValueError("Invalid identifier") from exc
+
     @field_validator("category")
     @classmethod
     def _valid_category(cls, value: str, info):
@@ -318,6 +334,16 @@ class ReportStatusUpdateRequest(BaseModel):
         if value not in VALID_REPORT_PRIORITIES:
             raise ValueError("Invalid priority")
         return value
+
+    @field_validator("assigned_to")
+    @classmethod
+    def _valid_assignee(cls, value, info):
+        if value is None:
+            return value
+        try:
+            return str(parse_id(value, info.field_name))
+        except (HardeningViolation, HTTPException) as exc:
+            raise ValueError("Invalid identifier") from exc
 
     @field_validator("admin_notes", "resolution")
     @classmethod
