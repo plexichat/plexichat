@@ -96,3 +96,9 @@ def test_pin_message_rejects_out_of_range_id():
 
     _rejects_bad_id(pin_message, ("123", "-1"))
     _rejects_bad_id(unpin_message, ("123", "99000000000000000000"))
+
+
+def test_get_message_rejects_out_of_range_id():
+    from src.api.routes.messages.messages_crud.retrieve import RetrieveMixin
+
+    _rejects_bad_id(RetrieveMixin().get_message, ("123", "-5"))

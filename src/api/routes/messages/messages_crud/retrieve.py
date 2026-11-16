@@ -20,7 +20,10 @@ from src.core.servers.exceptions import (
     ChannelAccessDeniedError,
     PermissionDeniedError,
 )
-from src.api.routes.messages.helpers import _message_to_response
+from src.api.routes.messages.helpers import (
+    _message_to_response,
+    require_snowflake,
+)
 from .base import MessagesCRUDBase
 
 
@@ -44,7 +47,9 @@ class RetrieveMixin(MessagesCRUDBase):
         try:
             try:
                 cid = parse_id(channel_id, "channel_id")
-                mid = int(message_id)
+                # A get-by-id cursor is an untrusted snowflake; bound its range
+                # before it reaches the messaging lookup.
+                mid = require_snowflake(message_id, "message_id", "Invalid ID format")
             except ValueError:
                 raise HTTPException(
                     status_code=400,
