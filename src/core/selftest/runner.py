@@ -37,6 +37,7 @@ from .services.static_client import StaticClientTester
 from .services.docs import DocsTester
 from .services.report import ReportGenerator
 from .services.memory import RamMonitor
+from .config_guard import sanitize_selftest_config
 
 
 class SelfTestRunner:
@@ -55,7 +56,12 @@ class SelfTestRunner:
 
         # Status mode runs without app config (it can target a remote
         # deployment): no config lookups here.
-        selftest_cfg = {} if status_only else config.get("selftest", {})
+        # The selftest config is admin/operator supplied. Normalize it at the
+        # boundary so no template payload, code-execution marker or arbitrary
+        # journal path can reach the runner's path/body/worker sinks.
+        selftest_cfg = {} if status_only else sanitize_selftest_config(
+            config.get("selftest", {})
+        )
         self.status_only = status_only
         # Opt-in check, run on its own (``run_purge_residue``) rather than as
         # part of the default suite: it purges an account.
