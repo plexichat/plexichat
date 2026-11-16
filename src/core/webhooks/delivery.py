@@ -28,7 +28,12 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import utils.logger as logger
-from src.core.webhooks.url_safety import redact_url, validate_delivery_endpoint
+from src.core.webhooks.url_safety import (
+    MAX_REDIRECT_LOCATION_LENGTH,
+    redact_url,
+    resolve_redirect_target,
+    validate_delivery_endpoint,
+)
 
 try:
     import httpx
@@ -36,6 +41,12 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     httpx = None
 
 DEFAULT_INTERVAL_SECONDS = 30
+
+# A redirect is a fresh SSRF boundary. We follow at most this many hops and
+# re-run the full URL gate (including DNS resolution and IP pinning) on each
+# one; anything beyond the budget is reported as a failed delivery rather
+# than followed further.
+MAX_REDIRECTS = 3
 
 # Signing headers captured at enqueue time carry a timestamp; receivers
 # enforcing the documented replay window reject deliveries signed more
@@ -94,6 +105,9 @@ class WebhookDeliverer:
             ``WebhookManager.sign_payload``.
         allow_private_network: Testing seam ONLY for loopback end-to-end
             tests; production must keep the strict SSRF default.
+        follow_redirects: Follow 3xx responses, but only after re-validating
+            each redirect target with the full SSRF gate and re-pinning the
+            connection to the newly approved IP.
     """
 
     def __init__(
@@ -103,11 +117,13 @@ class WebhookDeliverer:
         signer: Optional[Callable[[int, Dict[str, Any]], Dict[str, str]]] = None,
         *,
         allow_private_network: bool = False,
+        follow_redirects: bool = True,
     ):
         self._client = client
         self._timeout = timeout
         self._signer = signer
         self._allow_private_network = allow_private_network
+        self._follow_redirects = follow_redirects
 
     def _session(self) -> Any:
         """Return the HTTP client used for delivery."""
@@ -153,13 +169,72 @@ class WebhookDeliverer:
         # permanently-rejected stale signature.
         return {}
 
+    @staticmethod
+    def _post(
+        session: Any,
+        request_url: str,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+        extensions: Dict[str, Any],
+    ) -> Any:
+        """Issue one POST. The extension kwarg is omitted for plain HTTP."""
+        if extensions:
+            return session.post(
+                request_url, json=payload, headers=headers, extensions=extensions
+            )
+        return session.post(request_url, json=payload, headers=headers)
+
+    @staticmethod
+    def _redirect_location(response: Any) -> Optional[str]:
+        """Read a bounded ``Location`` header, tolerating minimal test clients."""
+        headers = getattr(response, "headers", None)
+        if not headers:
+            return None
+        try:
+            location = headers.get("Location")
+        except Exception:
+            return None
+        if not location or len(str(location)) > MAX_REDIRECT_LOCATION_LENGTH:
+            return None
+        return str(location)
+
+    @staticmethod
+    def _build_target(
+        url: str,
+        hostname: str,
+        resolved_ip: str,
+        signing_headers: Dict[str, str],
+    ) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+        """Build the IP-pinned ``(url, headers, extensions)`` for one hop.
+
+        Connecting to the IP the validator approved prevents DNS rebinding
+        between validation and connect. The loopback test seam passes no IP,
+        so it keeps posting the literal URL to the local server it bound.
+        """
+        request_url = url
+        extensions: Dict[str, Any] = {}
+        headers = {"Content-Type": "application/json"}
+        if resolved_ip:
+            request_url, pinned_headers, extensions = pinned_request(
+                url, hostname, resolved_ip
+            )
+            headers.update(pinned_headers)
+        for key, value in signing_headers.items():
+            headers[str(key)] = str(value)
+        return request_url, headers, extensions
+
     def deliver(self, record: Dict[str, Any]) -> int:
         """Deliver one queued record and return the HTTP status code.
 
+        The endpoint is re-validated immediately before the fetch, and every
+        redirect hop is validated again (with a fresh DNS resolution and IP
+        pin) before it is followed. A redirect to a private/reserved target
+        raises :class:`WebhookDeliveryError` without issuing the second POST.
+
         Raises:
-            WebhookDeliveryError: when the record is malformed, the
-                endpoint URL fails SSRF validation, or the HTTP transport
-                fails (connection errors, timeouts...).
+            WebhookDeliveryError: when the record is malformed, the endpoint
+                or a redirect target fails SSRF validation, or the HTTP
+                transport fails (connection errors, timeouts...).
         """
         endpoint_url = record.get("endpoint_url")
         payload = record.get("payload")
@@ -185,45 +260,66 @@ class WebhookDeliverer:
                 "endpoint URL refused by SSRF validation"
             ) from exc
 
-        # Connect to the IP the validator approved: re-resolving the name
-        # here would reopen the DNS-rebinding window the check closes. The
-        # loopback test seam passes no IP, so it keeps posting the literal
-        # URL to the local server it bound.
-        request_url = endpoint_url
-        extensions: Dict[str, Any] = {}
-        headers = {"Content-Type": "application/json"}
-        if resolved_ip:
-            request_url, pinned_headers, extensions = pinned_request(
-                endpoint_url, hostname, resolved_ip
-            )
-            headers.update(pinned_headers)
-
         metadata = record.get("metadata") or {}
         original = metadata.get("original_signing_headers") or {}
         effective = self._effective_signing_headers(
             record.get("webhook_id"), payload, original
         )
-        for key, value in effective.items():
-            headers[str(key)] = str(value)
 
+        logical_url = endpoint_url  # hostname-bearing URL for redirect resolution
+        request_url, headers, extensions = self._build_target(
+            endpoint_url, hostname, resolved_ip, effective
+        )
         session = self._session()
-        try:
-            if extensions:
-                response = session.post(
-                    request_url,
-                    json=payload,
-                    headers=headers,
-                    extensions=extensions,
+
+        for hop in range(MAX_REDIRECTS + 1):
+            try:
+                response = self._post(session, request_url, payload, headers, extensions)
+            except Exception as exc:
+                # F6: redact credentials/query tokens before the URL hits logs.
+                logger.warning(
+                    f"Webhook delivery transport error to {redact_url(logical_url)}: {exc}"
                 )
-            else:
-                response = session.post(request_url, json=payload, headers=headers)
-        except Exception as exc:
-            # F6: redact credentials/query tokens before the URL hits logs.
-            logger.warning(
-                f"Webhook delivery transport error to {redact_url(endpoint_url)}: {exc}"
+                raise WebhookDeliveryError(f"delivery failed: {exc}") from exc
+
+            status = int(response.status_code)
+            location = self._redirect_location(response)
+            if (
+                not self._follow_redirects
+                or not (300 <= status < 400)
+                or not location
+                or hop >= MAX_REDIRECTS
+            ):
+                return status
+
+            # SECURITY (SSRF): the redirect target is a NEW untrusted URL.
+            # Run it through the same gate as the original endpoint -- DNS
+            # resolution, private/reserved IP rejection, port/scheme checks
+            # -- and pin the next request to the address it approved. A
+            # public -> internal redirect can never reach the inner service.
+            try:
+                redirect_url, next_hostname, next_ip = resolve_redirect_target(
+                    logical_url,
+                    location,
+                    allow_private_network=self._allow_private_network,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    f"Refusing webhook redirect to unsafe target "
+                    f"{redact_url(location)}: {exc}"
+                )
+                raise WebhookDeliveryError(
+                    "redirect target refused by SSRF validation"
+                ) from exc
+
+            logger.debug(f"Webhook redirect approved after SSRF re-check: hop {hop + 1}")
+            logical_url = redirect_url
+            request_url, headers, extensions = self._build_target(
+                redirect_url, next_hostname, next_ip, effective
             )
-            raise WebhookDeliveryError(f"delivery failed: {exc}") from exc
-        return int(response.status_code)
+
+        # Redirect budget exhausted: report the last 3xx as a failed delivery.
+        return status
 
 
 def process_due_retries(
