@@ -2,11 +2,45 @@
 Common schemas - Shared Pydantic models.
 """
 
+import json
+from functools import partial
 from typing import Optional, List, Any, Generic, TypeVar, Annotated
+
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, BeforeValidator, Field, ConfigDict, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
 from src.core.security.policies import HTML_META_CHARS, RejectUICharacters
+
+# One JSON encoder configuration for every hand-built API response.
+#
+# ``starlette.responses.JSONResponse.render`` re-states its ``json.dumps``
+# options (``ensure_ascii``/``allow_nan``/``separators``) on every single
+# render. The API builds a number of small JSON responses itself (413 bodies,
+# storage-quota errors, CORS denials) — funnelling them all through this one
+# preconfigured callable keeps the option set in a single place and removes
+# that per-call keyword setup.
+#
+# NOTE: we deliberately do NOT set this as FastAPI's ``default_response_class``.
+# Recent FastAPI uses a Rust-core ``TypeAdapter.dump_json`` fast path for
+# response-model endpoints, but only while the default response class is still
+# the placeholder; installing a concrete class here would silently disable
+# that fast path for every route. Model-backed responses keep using Pydantic's
+# serialization (see ``validated_json_response`` below).
+api_json_dumps = partial(
+    json.dumps,
+    ensure_ascii=False,
+    allow_nan=False,
+    indent=None,
+    separators=(",", ":"),
+)
+
+
+class APIJSONResponse(JSONResponse):
+    """A ``JSONResponse`` that reuses the shared API encoder configuration."""
+
+    def render(self, content: Any) -> bytes:
+        return api_json_dumps(content).encode("utf-8")
 
 T = TypeVar("T")
 

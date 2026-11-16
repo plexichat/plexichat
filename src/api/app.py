@@ -15,6 +15,7 @@ import utils.logger as logger
 from .config import get_api_config
 from .middleware.compression import CompressionMiddleware
 from .routes import create_api_router, create_docs_router, is_docs_enabled
+from .schemas.common import APIJSONResponse
 from .routes.docs import get_docs_config
 from .routes.docs.openapi import render_redoc_page, render_swagger_ui_page
 
@@ -440,21 +441,22 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
                     logger.warning(
                         "Rejecting malformed Content-Length header %r", content_length
                     )
-                    return Response(
-                        content=(
-                            '{"error":{"code":400,"message":"Invalid Content-Length"}}'
-                        ),
+                    return APIJSONResponse(
+                        content={
+                            "error": {"code": 400, "message": "Invalid Content-Length"}
+                        },
                         status_code=400,
-                        media_type="application/json",
                     )
             if declared_length is not None and declared_length > effective_cap:
-                return Response(
-                    content=(
-                        '{"error":{"code":413,"message":"Request body too large",'
-                        f'"max_bytes":{effective_cap}}}'
-                    ),
+                return APIJSONResponse(
+                    content={
+                        "error": {
+                            "code": 413,
+                            "message": "Request body too large",
+                            "max_bytes": effective_cap,
+                        }
+                    },
                     status_code=413,
-                    media_type="application/json",
                 )
             # Per-method request bodies for GET/HEAD/OPTIONS/DELETE-
             # style flows don't carry a body, so we still defer to
@@ -485,13 +487,15 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             try:
                 return await call_next(request)
             except _BodyTooLarge:
-                return Response(
-                    content=(
-                        '{"error":{"code":413,"message":"Request body too large",'
-                        f'"max_bytes":{effective_cap}}}'
-                    ),
+                return APIJSONResponse(
+                    content={
+                        "error": {
+                            "code": 413,
+                            "message": "Request body too large",
+                            "max_bytes": effective_cap,
+                        }
+                    },
                     status_code=413,
-                    media_type="application/json",
                 )
 
     app.add_middleware(MaxBodySizeMiddleware)
@@ -577,12 +581,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     # Quota failures must surface as an actionable 413 everywhere, including
     # upload routes (avatars/emoji/stickers/sounds) that only catch their own
     # domain errors. FileUploadError remains the fallback for generic callers.
-    from fastapi.responses import JSONResponse
     from src.core.media.exceptions import StorageQuotaExceededError
 
     @app.exception_handler(StorageQuotaExceededError)
     async def _storage_quota_handler(request: Request, exc: StorageQuotaExceededError):
-        return JSONResponse(
+        return APIJSONResponse(
             status_code=413,
             content={
                 "detail": {
