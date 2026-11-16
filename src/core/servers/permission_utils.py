@@ -7,8 +7,16 @@ These are stateless utility functions used by handlers for permission logic.
 import json
 from typing import Any, Dict, List, Optional
 
+from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening.text import reject_control_characters
+
 from .models import SERVER_PERMISSIONS
 from .exceptions import InvalidPermissionKeyError, PermissionDeniedError
+
+#: A role permission dict never legitimately exceeds the known vocabulary.
+MAX_PERMISSION_ENTRIES = len(SERVER_PERMISSIONS)
+#: Individual keys are short dotted identifiers; cap hostile string input.
+MAX_PERMISSION_KEY_LENGTH = 64
 
 
 def validate_permission_dict(permissions: Optional[Dict[str, Any]]) -> None:
@@ -24,7 +32,27 @@ def validate_permission_dict(permissions: Optional[Dict[str, Any]]) -> None:
     """
     if not permissions:
         return
-    for key in permissions:
+    if len(permissions) > MAX_PERMISSION_ENTRIES:
+        raise InvalidPermissionKeyError(
+            f"A role may carry at most {MAX_PERMISSION_ENTRIES} permission entries"
+        )
+    for key, value in permissions.items():
+        if not isinstance(key, str):
+            raise InvalidPermissionKeyError("Permission keys must be strings")
+        try:
+            key = reject_control_characters(key, "Permission key")
+        except HardeningViolation as exc:
+            raise InvalidPermissionKeyError(str(exc), key) from exc
+        if len(key) > MAX_PERMISSION_KEY_LENGTH:
+            raise InvalidPermissionKeyError(
+                f"Permission key is too long: {key[:32]}...", key
+            )
+        # Permissions are booleans. A string/list value must never reach the
+        # grant logic, where any truthy object would flip a permission on.
+        if not isinstance(value, bool):
+            raise InvalidPermissionKeyError(
+                f"Permission value for {key} must be a boolean", key
+            )
         if key == "*" or key.endswith(".*"):
             raise InvalidPermissionKeyError(
                 f"Wildcard permissions are not allowed: {key}", key

@@ -4,6 +4,8 @@ import json
 from typing import Optional, List, Dict
 
 from src.core.base import SnowflakeID
+from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening.text import reject_control_characters
 
 from ...models import Role, AuditLogAction
 from ...manager.converters import _row_to_role
@@ -29,6 +31,11 @@ class RoleCrudMixin(RoleHandlerProtocol):
         """Validate and sanitize role name."""
         if not name or not name.strip():
             raise InvalidRoleNameError("Role name cannot be empty")
+
+        try:
+            name = reject_control_characters(name, "Role name")
+        except HardeningViolation as exc:
+            raise InvalidRoleNameError(str(exc), name) from exc
 
         name = name.strip()
         max_len = self.manager._config.get("role_name_max_length", 100)
