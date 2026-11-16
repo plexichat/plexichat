@@ -8,6 +8,7 @@ import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.relationships import BlockCreate, RelationshipResponse
 from src.api.schemas.common import SnowflakeID
+from src.core.security.hardening import parse_id
 from src.core.relationships.exceptions import (
     AlreadyBlockedError,
     CannotBlockSelfError,
@@ -43,7 +44,7 @@ class BlockingMixin:
 
         try:
             try:
-                target_id = int(body.user_id)
+                target_id = parse_id(body.user_id, "user_id")
             except (ValueError, TypeError):
                 logger.warning(
                     f"User {current_user.user_id} provided invalid target ID for block: {body.user_id}"
