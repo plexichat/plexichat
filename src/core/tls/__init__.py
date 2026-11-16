@@ -22,6 +22,7 @@ from typing import Any, List, Optional, Tuple
 import utils.config as config
 import utils.logger as logger
 
+from .chain_validation import TLSChainError, validate_certificate_file
 from .ssl_settings import (
     SECURE_CIPHERS,
     TLSHardeningError,
@@ -498,6 +499,17 @@ def get_tls_config() -> dict:
             raise TLSConfigError(f"TLS certificate not found: {cert_path}")
         if not os.path.isfile(key_path):
             raise TLSConfigError(f"TLS private key not found: {key_path}")
+
+    # A certificate that parses but cannot be verified is no identity at all.
+    # Validate the chain/SAN (and any configured pin) before startup continues;
+    # parse errors and malformed material are refusals, not warnings.
+    configured_hostname = tls_config.get("hostname")
+    raw_pins = tls_config.get("pins") or ()
+    pins = tuple(raw_pins) if isinstance(raw_pins, (list, tuple)) else ()
+    try:
+        validate_certificate_file(cert_path, hostname=configured_hostname, pins=pins)
+    except TLSChainError as exc:
+        raise TLSConfigError(f"TLS certificate failed validation: {exc}") from exc
 
     # Validate protocol/cipher overrides from configuration before they reach
     # the SSL context. A weak override aborts startup instead of silently
