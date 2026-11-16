@@ -16,6 +16,129 @@ from pydantic import BaseModel, Field
 
 router = APIRouter()
 
+# Single source of truth for the scope that guards every role-management
+# route.  Handlers must funnel through ``_require_role_manager`` so the gate
+# cannot silently drift (or be omitted) as routes are added or edited.
+ROLE_MANAGE_SCOPE = "admin.roles"
+
+
+def _require_role_manager(request: Request) -> int:
+    """Authenticate the caller and require the role-management scope.
+
+    Returns the acting admin id.  Every handler in this module calls this
+    helper as its first authorization step; the regression suite enumerates
+    the router to enforce that invariant.
+    """
+    return require_admin_permission(request, ROLE_MANAGE_SCOPE)
+
+
+# ---------------------------------------------------------------------------
+# Batched hierarchy lookups
+#
+# The role routes need three pieces of hierarchy information before they can
+# authorize a mutation: the actor's max role position, the target admin's max
+# role position, and the target role's position/system flag.  The shared
+# ``can_manage_admin``/``can_manage_role`` helpers fetch each of those
+# independently (and ``get_admin_max_position`` for the actor twice on the
+# assign path).  The helpers below resolve the whole set in ONE query while
+# reproducing those helpers' decisions exactly, so the authorization gate
+# stays identical minus the round trips.
+# ---------------------------------------------------------------------------
+
+
+def _load_hierarchy(db, current_admin_id: int, target_admin_id: int, role_id: int) -> dict:
+    """Resolve every hierarchy input for a role mutation in one query.
+
+    Returns ``current_pos``, ``target_pos``, ``admin_exists``, ``role_pos``
+    (``None`` when the role does not exist) and ``role_is_system``.  Scalar
+    subqueries keep this a single statement regardless of how many roles or
+    admins exist.
+    """
+    row = db.fetch_one(
+        """
+        SELECT
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS current_pos,
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS target_pos,
+            EXISTS(SELECT 1 FROM admin_users WHERE id = ?) AS admin_exists,
+            (SELECT position FROM admin_roles WHERE id = ?) AS role_pos,
+            (SELECT is_system FROM admin_roles WHERE id = ?) AS role_is_system
+        """,
+        (current_admin_id, target_admin_id, target_admin_id, role_id, role_id),
+    )
+    if not row:
+        return {
+            "current_pos": 0,
+            "target_pos": 0,
+            "admin_exists": False,
+            "role_pos": None,
+            "role_is_system": False,
+        }
+    if isinstance(row, dict):
+        current_pos = row.get("current_pos") or 0
+        target_pos = row.get("target_pos") or 0
+        admin_exists = row.get("admin_exists", False)
+        role_pos = row.get("role_pos")
+        role_is_system = row.get("role_is_system", False)
+    else:
+        current_pos = row[0] or 0
+        target_pos = row[1] or 0
+        admin_exists = row[2]
+        role_pos = row[3] if len(row) > 3 else None
+        role_is_system = row[4] if len(row) > 4 else False
+    return {
+        "current_pos": int(current_pos),
+        "target_pos": int(target_pos),
+        "admin_exists": bool(admin_exists),
+        "role_pos": None if role_pos is None else int(role_pos),
+        "role_is_system": bool(role_is_system),
+    }
+
+
+def _can_manage_admin_at(
+    current_admin_id: int, target_admin_id: int, current_pos: int, target_pos: int
+) -> bool:
+    """Same rule as ``can_manage_admin`` but using pre-fetched positions."""
+    if current_admin_id == target_admin_id:
+        return False
+    return current_pos > target_pos
+
+
+def _can_manage_role_at(
+    current_pos: int, role_pos: int | None, role_is_system: bool
+) -> bool:
+    """Same rule as ``can_manage_role`` but using pre-fetched hierarchy."""
+    if role_pos is None:
+        return False
+    if role_is_system:
+        return current_pos >= 100
+    return current_pos > role_pos
+
+
+def _load_create_role_context(db, admin_id: int, name: str) -> tuple[int, bool]:
+    """Fetch the actor's max position and role-name collision in one query."""
+    row = db.fetch_one(
+        """
+        SELECT
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS max_pos,
+            EXISTS(SELECT 1 FROM admin_roles WHERE name = ?) AS name_taken
+        """,
+        (admin_id, name),
+    )
+    if not row:
+        return 0, False
+    if isinstance(row, dict):
+        return int(row.get("max_pos") or 0), bool(row.get("name_taken", False))
+    return int(row[0] or 0), bool(row[1])
+
 
 def _serialize_role_row(row) -> dict:
     """Serialize an ``admin_roles`` row, stringifying its snowflake ids.
@@ -85,7 +208,7 @@ async def list_roles(request: Request):
     List all available admin roles.
     """
     check_host_restriction(request)
-    require_admin_permission(request, "admin.roles")
+    _require_role_manager(request)
 
     import src.api as api
 
@@ -119,7 +242,7 @@ async def get_role(request: Request, role_id: SnowflakeIDParam):
     Get details of a specific role.
     """
     check_host_restriction(request)
-    require_admin_permission(request, "admin.roles")
+    _require_role_manager(request)
 
     import src.api as api
 
@@ -163,7 +286,7 @@ async def create_role(request: Request, role_data: RoleCreate):
     Create a new admin role.
     """
     check_host_restriction(request)
-    admin_id = require_admin_permission(request, "admin.roles")
+    admin_id = _require_role_manager(request)
 
     import src.api as api
 
@@ -183,8 +306,10 @@ async def create_role(request: Request, role_data: RoleCreate):
 
     # Only documented, non-wildcard scopes may be delegated. The wildcard
     # permission is reserved for the seeded system super_admin role.
-    from src.core.admin.permissions import PERMISSION_SCOPES, get_admin_max_position
+    from src.core.admin.permissions import PERMISSION_SCOPES
 
+    # ``PERMISSION_SCOPES`` is a module-level constant, so this membership
+    # scan is the cached permission vocabulary — no per-request lookup.
     if not isinstance(role_data.permissions, dict) or any(
         not isinstance(name, str)
         or name == "*"
@@ -203,7 +328,9 @@ async def create_role(request: Request, role_data: RoleCreate):
             },
         )
 
-    actor_position = get_admin_max_position(db, admin_id)
+    # One query supplies both the actor's position and the duplicate-name
+    # signal that is consumed further down (same validation order as before).
+    actor_position, name_taken = _load_create_role_context(db, admin_id, role_data.name)
     requested_position = (
         actor_position - 1 if role_data.position is None else role_data.position
     )
@@ -230,11 +357,8 @@ async def create_role(request: Request, role_data: RoleCreate):
             detail={"error": {"code": 400, "message": "Invalid permissions format"}},
         )
 
-    # Check duplicate name
-    existing = db.fetch_one(
-        "SELECT id FROM admin_roles WHERE name = ?", (role_data.name,)
-    )
-    if existing:
+    # Duplicate name (pre-fetched with the position above).
+    if name_taken:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Role name already exists"}},
@@ -291,7 +415,7 @@ async def update_role(
     Update an existing admin role.
     """
     check_host_restriction(request)
-    admin_id = require_admin_permission(request, "admin.roles")
+    admin_id = _require_role_manager(request)
 
     import src.api as api
 
@@ -418,7 +542,7 @@ async def delete_role(request: Request, role_id: SnowflakeIDParam):
     Delete an admin role.
     """
     check_host_restriction(request)
-    admin_id = require_admin_permission(request, "admin.roles")
+    admin_id = _require_role_manager(request)
 
     import src.api as api
 
@@ -514,7 +638,7 @@ async def assign_role(request: Request, assignment: RoleAssignment):
     Assign a role to an admin.
     """
     check_host_restriction(request)
-    admin_id = require_admin_permission(request, "admin.roles")
+    admin_id = _require_role_manager(request)
     target_admin_id = int(assignment.admin_id)
     target_role_id = int(assignment.role_id)
 
@@ -626,7 +750,7 @@ async def revoke_role(
     Revoke a role from an admin.
     """
     check_host_restriction(request)
-    current_admin_id = require_admin_permission(request, "admin.roles")
+    current_admin_id = _require_role_manager(request)
 
     import src.api as api
 
@@ -707,7 +831,7 @@ async def get_admin_roles(request: Request, admin_id: SnowflakeIDParam):
     Get all roles assigned to a specific admin.
     """
     check_host_restriction(request)
-    require_admin_permission(request, "admin.roles")
+    _require_role_manager(request)
 
     import src.api as api
 
