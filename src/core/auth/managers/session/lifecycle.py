@@ -9,7 +9,14 @@ from src.core.database import invalidate_pattern
 
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AuditEventType, Session
-from ...tokens import create_session_token, is_expired, parse_token, verify_token_hash
+from ...replay import refresh_replay_guard
+from ...tokens import (
+    create_session_token,
+    hash_token,
+    is_expired,
+    parse_token,
+    verify_token_hash,
+)
 from ..protocol import AuthManagerProtocol
 
 
@@ -422,6 +429,26 @@ class LifecycleMixin(AuthManagerProtocol):
         row = self._db.fetch_one(
             "SELECT * FROM auth_sessions WHERE id = ?", (parsed["id"],)
         )
+        # Replay guard: a token that was already rotated away must never be
+        # accepted a second time. Reuse means the pre-rotation bearer leaked,
+        # so revoke the whole session instead of silently returning None.
+        rotated_key = f"refresh:{parsed['id']}:{hash_token(parsed['secret'])}"
+        if refresh_replay_guard.contains(rotated_key):
+            logger.warning(
+                f"Refresh token replay detected for session {parsed['id']}; revoking"
+            )
+            self._db.execute(
+                "UPDATE auth_sessions SET revoked = 1 WHERE id = ?", (parsed["id"],)
+            )
+            invalidate_pattern("token_verify:*")
+            if row:
+                self._log_audit(
+                    AuditEventType.LOGOUT,
+                    row["user_id"],
+                    False,
+                    details={"reason": "refresh_token_replay"},
+                )
+            return None
         # The session secret must be verified, not just the (enumerable) ID,
         # otherwise anyone who learns a session ID can extend it forever.
         if (
@@ -451,6 +478,9 @@ class LifecycleMixin(AuthManagerProtocol):
             "UPDATE auth_sessions SET token_hash = ?, expires_at = ?, last_activity = ? WHERE id = ?",
             (new_hash, new_expires, now, parsed["id"]),
         )
+        # Remember the consumed token so a later replay is detectable even
+        # though its hash no longer matches the live session row.
+        refresh_replay_guard.add(rotated_key)
         invalidate_pattern("token_verify:*")
         return new_token
 
