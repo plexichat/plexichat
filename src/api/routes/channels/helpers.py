@@ -165,6 +165,40 @@ def sanitize_webhook_fields(name: Any, avatar_url: Any) -> tuple[str, Optional[s
     return safe_name, safe_url
 
 
+MAX_BULK_BATCH = 1000
+
+
+def bounded_bulk_batch(values: Any, field: str, maximum: int = MAX_BULK_BATCH) -> list:
+    """Cap a bulk collection before any per-item fan-out.
+
+    Join/update events build channels, roles and member-id lists from storage
+    and then do work for every entry. Without a ceiling, one large server can
+    turn a single channel request into an unbounded loop and event payload.
+    The cap itself goes through the shared numeric guard, and the collection is
+    truncated (not rejected) so ordinary large servers keep working.
+    """
+    if values is None:
+        return []
+    try:
+        items = list(values)
+    except TypeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+        ) from exc
+    try:
+        safe_maximum = bounded_int(
+            maximum,
+            f"{field} limit",
+            minimum=1,
+            maximum=MAX_BULK_BATCH,
+            default=MAX_BULK_BATCH,
+        )
+    except ValueError:
+        safe_maximum = MAX_BULK_BATCH
+    return items[:safe_maximum]
+
+
 def _channel_to_response(
     channel, current_user_id: Optional[int] = None
 ) -> ChannelResponse:

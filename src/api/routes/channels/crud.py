@@ -13,7 +13,11 @@ from src.core.database import cached
 import utils.logger as logger
 
 from .base import ChannelBase
-from .helpers import require_channel_snowflake, validate_channel_fields
+from .helpers import (
+    bounded_bulk_batch,
+    require_channel_snowflake,
+    validate_channel_fields,
+)
 from ..exception_mapping import raise_mapped
 
 
@@ -275,7 +279,10 @@ class ChannelCRUDMixin(ChannelBase):
                                     if db:
                                         db.close()
 
-                            user_ids = await run_in_threadpool(_get_member_ids_sync)
+                            user_ids = bounded_bulk_batch(
+                                await run_in_threadpool(_get_member_ids_sync),
+                                "user_ids",
+                            )
 
                             if user_ids:
                                 event = Event(
@@ -376,7 +383,9 @@ class ChannelCRUDMixin(ChannelBase):
 
                         if ws_is_setup():
                             dispatcher = get_dispatcher()
-                            user_ids = servers_mod.get_member_user_ids(sid)
+                            user_ids = bounded_bulk_batch(
+                                servers_mod.get_member_user_ids(sid), "user_ids"
+                            )
 
                             if user_ids:
                                 event = Event(

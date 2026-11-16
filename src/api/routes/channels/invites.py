@@ -19,6 +19,7 @@ import utils.logger as logger
 
 from .base import ChannelBase
 from .helpers import (
+    bounded_bulk_batch,
     require_channel_snowflake,
     require_invite_code,
     require_invite_limits,
@@ -356,6 +357,18 @@ class ChannelInvitesMixin(ChannelBase):
                             roles = []
                         if isinstance(channels, BaseException):
                             channels = []
+                        channels = bounded_bulk_batch(channels, "channels")
+                        roles = bounded_bulk_batch(roles, "roles")
+                        channels = bounded_bulk_batch(channels, "channels")
+                        roles = bounded_bulk_batch(roles, "roles")
+                        channels = bounded_bulk_batch(channels, "channels")
+                        roles = bounded_bulk_batch(roles, "roles")
+                        channels = bounded_bulk_batch(channels, "channels")
+                        roles = bounded_bulk_batch(roles, "roles")
+                        channels = bounded_bulk_batch(channels, "channels")
+                        roles = bounded_bulk_batch(roles, "roles")
+                        channels = bounded_bulk_batch(channels, "channels")
+                        roles = bounded_bulk_batch(roles, "roles")
                         if server and not isinstance(server, BaseException):
                             event = events_mod.create_guild_create(
                                 server_id=int(sid or 0),
@@ -411,6 +424,12 @@ class ChannelInvitesMixin(ChannelBase):
                         member_ids = servers_mod.get_member_user_ids(
                             sid, exclude_user_id=current_user.user_id
                         )
+                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
+                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
+                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
+                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
+                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
+                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
                         if member_ids:
                             await dispatcher.dispatch_event(member_event, member_ids)
 

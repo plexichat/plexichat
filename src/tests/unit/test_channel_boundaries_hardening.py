@@ -208,3 +208,32 @@ class TestWebhookFieldBounds:
             "sanitize_webhook_fields"
             in webhooks_routes._webhook_to_response.__code__.co_names
         )
+
+
+class TestBulkBatchBounds:
+    def test_large_batches_are_capped(self):
+        from src.api.routes.channels.helpers import bounded_bulk_batch
+
+        assert bounded_bulk_batch(list(range(5000)), "roles") == list(range(1000))
+        assert bounded_bulk_batch(None, "roles") == []
+
+    def test_custom_cap_is_itself_bounded(self):
+        from src.api.routes.channels.helpers import bounded_bulk_batch
+
+        assert len(bounded_bulk_batch(list(range(50)), "roles", maximum=10)) == 10
+        assert len(bounded_bulk_batch(list(range(50)), "roles", maximum=10**9)) == 50
+
+    def test_non_iterable_batch_is_rejected(self):
+        from src.api.routes.channels.helpers import bounded_bulk_batch
+
+        with pytest.raises(HTTPException) as exc:
+            bounded_bulk_batch(42, "roles")
+        assert exc.value.status_code == 400
+
+    def test_channel_event_paths_use_the_cap(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        for name in ("invites.py", "crud.py"):
+            source = (root / "src/api/routes/channels" / name).read_text()
+            assert "bounded_bulk_batch" in source
