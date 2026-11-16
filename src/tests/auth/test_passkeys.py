@@ -50,6 +50,35 @@ class TestPasskeyManager:
             assert row is not None
             assert row["name"] == "auth_passkeys"
 
+    def test_table_bootstrap_runs_only_once(self):
+        """Schema DDL is paid on the first challenge, not on every request.
+
+        The authentication-options endpoint is a hot, unauthenticated route;
+        re-running five ``CREATE ... IF NOT EXISTS`` statements plus two
+        catalogue probes on every call is pure overhead once the schema exists.
+        """
+        from src.core.auth.passkeys import PasskeyManager, WEBAUTHN_AVAILABLE
+
+        if not WEBAUTHN_AVAILABLE:
+            pytest.skip("webauthn library not installed")
+
+        class _CountingDB:
+            def __init__(self):
+                self.executes = []
+
+            def execute(self, sql, params=None):
+                self.executes.append(sql)
+                return None
+
+        fake_db = _CountingDB()
+        manager = PasskeyManager(fake_db, crypto=object())
+        manager._ensure_tables()
+        first = len(fake_db.executes)
+        assert first > 0
+        manager._ensure_tables()
+        manager._ensure_tables()
+        assert len(fake_db.executes) == first
+
     def test_challenge_cleanup(self, passkey_manager, db):
         """Test cleanup of expired challenges removes only expired rows."""
         import time

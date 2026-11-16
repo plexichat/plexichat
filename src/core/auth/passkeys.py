@@ -188,6 +188,12 @@ class PasskeyManager:
         self._crypto = crypto if crypto is not None else EncryptionManager()
         self._config = config.get("authentication", {}).get("passkeys", {})
         self._challenge_ttl = self._config.get("challenge_ttl_seconds", 300)
+        # Schema bootstrap is a one-time cost: table/index DDL plus the two
+        # ``column_exists`` catalogue probes used to run on every challenge
+        # issuance (both the registration and authentication-options routes).
+        # The schema is process-lifetime stable, so remember the first success
+        # and skip the roundtrips on subsequent calls.
+        self._tables_ensured = False
 
         # Get RP configuration
         # SECURITY/CONFIG: rp_id and origin MUST be set explicitly for
@@ -233,8 +239,10 @@ class PasskeyManager:
         return WEBAUTHN_AVAILABLE
 
     def _ensure_tables(self) -> None:
-        """Ensure passkey tables exist."""
+        """Ensure passkey tables exist (once per manager instance)."""
         if not WEBAUTHN_AVAILABLE:
+            return
+        if self._tables_ensured:
             return
 
         self._db.execute(
@@ -304,6 +312,8 @@ class PasskeyManager:
                 logger.debug(
                     "Passkey column %s on auth_users left as-is", column, exc_info=True
                 )
+
+        self._tables_ensured = True
 
     def generate_registration_options(
         self,
