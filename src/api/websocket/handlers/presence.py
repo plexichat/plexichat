@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, Tuple, List, TYPE_CHECKING
 import utils.logger as logger
 from starlette.concurrency import run_in_threadpool
 
+from src.api.websocket.boundaries import validate_presence_payload
 from src.api.websocket.connection import Connection
 from src.api.websocket.opcodes import GatewayCloseCode
 
@@ -129,10 +130,17 @@ class PresenceHandler:
         if not data or not self._presence:
             return None, None, None
 
-        status = data.get("status", "online")
-        custom_status = data.get("custom_status")
-        custom_emoji = data.get("custom_emoji")
-        activities = data.get("activities", [])
+        try:
+            fields = validate_presence_payload(data)
+        except ValueError as exc:
+            logger.warning(
+                f"User {connection.user_id} sent invalid presence payload: {exc}"
+            )
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
+        status = fields["status"]
+        custom_status = fields["custom_status"]
+        custom_emoji = fields["custom_emoji"]
+        activities = fields["activities"]
 
         try:
             from src.core.presence import UserStatus

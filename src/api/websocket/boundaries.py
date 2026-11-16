@@ -18,7 +18,12 @@ import json
 
 from typing import Any
 
-from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    parse_id,
+    reject_control_characters,
+)
 
 # --- Frame / message size bounds (commit 1) ---------------------------------
 
@@ -165,3 +170,72 @@ def parse_snowflake(value: object, field: str = "id") -> int:
     the shared range guard so the rule stays identical across boundaries.
     """
     return parse_id(value, field)
+
+
+# --- Presence / status payloads (commit 6) -------------------------------
+MAX_STATUS_LEN = 32
+MAX_CUSTOM_STATUS_LEN = 128
+MAX_EMOJI_LEN = 64
+MAX_ACTIVITY_NAME_LEN = 128
+MAX_ACTIVITY_TEXT_LEN = 256
+MAX_ACTIVITIES = 5
+
+
+def _bounded_text(value: object, field: str, limit: int) -> str:
+    if not isinstance(value, str):
+        raise HardeningViolation(f"{field} must be a string")
+    text = reject_control_characters(value, field)
+    if len(text) > limit:
+        raise HardeningViolation(f"{field} exceeds {limit} characters")
+    return text
+
+
+def validate_presence_payload(data: object) -> dict:
+    """Validate and normalize a PRESENCE_UPDATE payload.
+
+    Status/custom-status/emoji/activity text is attacker-controlled and was
+    copied into persisted rows and broadcast frames without limits. Control
+    characters are refused and every field is length-bounded; the returned
+    dict carries only validated values for the handler to use.
+    """
+    if not isinstance(data, dict):
+        raise HardeningViolation("presence payload must be an object")
+
+    status = _bounded_text(data.get("status", "online"), "status", MAX_STATUS_LEN)
+
+    custom_status = None
+    if data.get("custom_status") is not None:
+        custom_status = _bounded_text(
+            data["custom_status"], "custom_status", MAX_CUSTOM_STATUS_LEN
+        )
+    custom_emoji = None
+    if data.get("custom_emoji") is not None:
+        custom_emoji = _bounded_text(
+            data["custom_emoji"], "custom_emoji", MAX_EMOJI_LEN
+        )
+
+    activities = data.get("activities", [])
+    if not isinstance(activities, list):
+        raise HardeningViolation("activities must be a list")
+    if len(activities) > MAX_ACTIVITIES:
+        raise HardeningViolation("too many activities")
+    clean_activities = []
+    for activity in activities:
+        if not isinstance(activity, dict):
+            raise HardeningViolation("activity must be an object")
+        clean = {"type": activity.get("type", "custom")}
+        for key, limit in (
+            ("name", MAX_ACTIVITY_NAME_LEN),
+            ("details", MAX_ACTIVITY_TEXT_LEN),
+            ("state", MAX_ACTIVITY_TEXT_LEN),
+        ):
+            if activity.get(key) is not None:
+                clean[key] = _bounded_text(activity[key], key, limit)
+        clean_activities.append(clean)
+
+    return {
+        "status": status,
+        "custom_status": custom_status,
+        "custom_emoji": custom_emoji,
+        "activities": clean_activities,
+    }
