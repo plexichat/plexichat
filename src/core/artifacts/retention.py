@@ -17,6 +17,7 @@ import time
 from typing import Any, Dict, Optional
 
 import utils.config as config_utils
+from src.core.security.hardening import HardeningViolation, bounded_int
 import utils.logger as logger
 
 
@@ -121,12 +122,9 @@ def resolve_retention_days(
                     raw = row.get("retention_days")
                     if raw is None:
                         return None
-                    try:
-                        days = int(raw)
-                    except (TypeError, ValueError):
-                        days = None
-                    if days is not None and days > 0:
-                        return days
+                    bounded = _bounded_retention_days(raw)
+                    if bounded is not None:
+                        return bounded
             except Exception as e:
                 logger.warning(
                     f"resolve_retention_days: failed to read server override "
@@ -141,13 +139,7 @@ def resolve_retention_days(
         default_days = evaluation_ttl_days(artifacts_cfg)
         if default_days is None:
             return None
-    try:
-        days = int(default_days)
-    except (TypeError, ValueError):
-        return None
-    if days <= 0:
-        return None
-    return days
+    return _bounded_retention_days(default_days)
 
 
 def _resolve_db(config: Optional[Dict[str, Any]] = None) -> Any:
@@ -169,6 +161,19 @@ def _resolve_db(config: Optional[Dict[str, Any]] = None) -> Any:
     return None
 
 
+_MAX_RETENTION_DAYS = 36500  # a century; anything larger is a typo or abuse
+
+
+def _bounded_retention_days(value: Any) -> Optional[int]:
+    """Return a positive retention day count within a sane ceiling, else None."""
+    try:
+        return bounded_int(
+            value, "retention days", minimum=1, maximum=_MAX_RETENTION_DAYS
+        )
+    except HardeningViolation:
+        return None
+
+
 def _seconds_per_day() -> int:
     return 86400
 
@@ -182,7 +187,7 @@ def _parse_policy_days(policy: Any) -> Optional[int]:
             days = int(policy)
         except (TypeError, ValueError):
             return None
-        return days if days > 0 else None
+        return _bounded_retention_days(days)
     if isinstance(policy, str):
         text = policy.strip()
         if not text:
@@ -204,7 +209,7 @@ def _parse_policy_days(policy: Any) -> Optional[int]:
             days = int(raw)
         except (TypeError, ValueError):
             return None
-        return days if days > 0 else None
+        return _bounded_retention_days(days)
     if isinstance(policy, dict):
         raw = policy.get("days")
         if raw is None:
@@ -213,7 +218,7 @@ def _parse_policy_days(policy: Any) -> Optional[int]:
             days = int(raw)
         except (TypeError, ValueError):
             return None
-        return days if days > 0 else None
+        return _bounded_retention_days(days)
     return None
 
 
