@@ -2,7 +2,12 @@
 Security headers middleware - Adds standard security headers to all responses.
 """
 
+from typing import Sequence
+
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Send, Scope
+
+from .response_policy import enforce_response_policy
 
 
 def _resolve_api_prefix() -> str:
@@ -20,6 +25,27 @@ def _resolve_api_prefix() -> str:
         return "/api/v1"
 
 
+def _cors_settings() -> tuple[Sequence[str], bool]:
+    """Read the CORS allowlist, failing closed when config is unavailable."""
+    try:
+        from src.api.config import get_api_config
+
+        settings = get_api_config()
+        return tuple(settings.cors_origins), bool(settings.cors_allow_credentials)
+    except Exception:
+        return (), True
+
+
+def _log_response_failure(exc: Exception) -> None:
+    """Report an unhandled downstream error; never break the error response."""
+    try:
+        import utils.logger as logger
+
+        logger.exception("unhandled error in security-headers middleware: %s", exc)
+    except Exception:
+        pass
+
+
 class SecurityHeadersMiddleware:
     """ASGI middleware to add security headers to all HTTP responses."""
 
@@ -31,113 +57,39 @@ class SecurityHeadersMiddleware:
             await self.app(scope, receive, send)
             return
 
-        async def send_with_security_headers(message):
+        path = scope.get("path", "")
+        api_prefix = _resolve_api_prefix()
+        cors_origins, allow_credentials = _cors_settings()
+        response_started = False
+
+        async def send_wrapper(message):
+            nonlocal response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 headers = list(message.get("headers", []))
-
-                # Per-path CSP scoping: the API surface is hardened
-                # and only consumes JSON; the static-client bundle +
-                # admin SPA rely on inline scripts/styles to bootstrap.
-                # Emit a strict no-unsafe CSP for API responses so XSS in a
-                # future JSON response can't ``eval``; fall back to the
-                # historically-permissive policy for ``/``/``/admin``
-                # and bundled SPA routes so we don't regress the
-                # admin UI.
-                path = scope.get("path", "")
-                api_prefix = _resolve_api_prefix()
-                is_api = path.startswith(f"{api_prefix}/")
-                is_media = path.startswith(f"{api_prefix}/media/")
-                # User-facing HTML help pages carry inline <style> blocks
-                # and must not inherit the strict API-only CSP.
-                is_help = path.startswith(f"{api_prefix}/help/")
-
-                # Security Headers
-                security_headers = [
-                    (b"X-Content-Type-Options", b"nosniff"),
-                    (b"X-XSS-Protection", b"1; mode=block"),
-                    (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
-                    (b"X-Permitted-Cross-Domain-Policies", b"none"),
-                    # The suite never needs the camera, mic, geolocation,
-                    # payment, or USB browser APIs; disable them so a
-                    # compromised page cannot prompt for or exfiltrate via
-                    # those capabilities. Clipboard stays unrestricted for
-                    # the editors' copy/paste flows.
-                    (
-                        b"Permissions-Policy",
-                        b"camera=(), microphone=(), geolocation=(), payment=(), usb=()",
-                    ),
-                    # L1: HSTS is only honored by browsers over HTTPS, so
-                    # emitting it unconditionally is safe (plain-HTTP responses
-                    # ignore the header).
-                    (
-                        b"Strict-Transport-Security",
-                        b"max-age=31536000; includeSubDomains",
-                    ),
-                ]
-                if is_api and not is_media and not is_help:
-                    # Strict CSP for API responses. They should never
-                    # be rendered as HTML; default-src 'none' makes
-                    # any accidental script-injection inert.
-                    security_headers.append(
-                        (
-                            b"Content-Security-Policy",
-                            b"default-src 'none'; "
-                            b"frame-ancestors 'none'; "
-                            b"base-uri 'none'",
-                        )
-                    )
-                elif is_media:
-                    # Media responses can be embedded by third-party
-                    # sites that have been signed; allow broad
-                    # img-src and media-src, restrict scripts.
-                    security_headers.append(
-                        (
-                            b"Content-Security-Policy",
-                            b"default-src 'none'; "
-                            b"img-src 'self' data: blob: *; "
-                            b"media-src 'self' *; "
-                            b"frame-ancestors *",
-                        )
-                    )
-                else:
-                    # Static-client / admin SPA bootstrap needs inline
-                    # scripts + styles. The bundle is served from this
-                    # origin only; CSP does not weaken XSS protection
-                    # for the SPA surface, only legitimises the
-                    # bootstrap-injection pattern that the Webpack
-                    # dev fallback requires.
-                    security_headers.append(
-                        (
-                            b"Content-Security-Policy",
-                            b"default-src 'self'; "
-                            b"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-                            b"style-src 'self' 'unsafe-inline'; "
-                            b"img-src 'self' data: blob:; "
-                            b"font-src 'self' data:; "
-                            b"connect-src 'self' ws: wss:; "
-                            b"frame-ancestors 'self'; "
-                            b"base-uri 'self'; "
-                            b"form-action 'self'",
-                        )
-                    )
-
-                # Only add if not already present (to avoid duplication)
-                final_headers = []
-                for h_name, h_value in headers:
-                    final_headers.append((h_name, h_value))
-
-                present_names = {h[0].lower() for h in final_headers}
-
-                for name, value in security_headers:
-                    if name.lower() not in present_names:
-                        final_headers.append((name, value))
-
-                # Add X-Frame-Options: SAMEORIGIN only if not a media request and not present
-                if not is_media and b"x-frame-options" not in present_names:
-                    final_headers.append((b"X-Frame-Options", b"SAMEORIGIN"))
-
-                message["headers"] = final_headers
-
+                message = dict(message)
+                message["headers"] = enforce_response_policy(
+                    headers,
+                    path=path,
+                    api_prefix=api_prefix,
+                    cors_origins=cors_origins,
+                    cors_allow_credentials=allow_credentials,
+                )
             await send(message)
 
-        await self.app(scope, receive, send_with_security_headers)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            if response_started:
+                # A partially-sent response cannot be replaced; re-raise so
+                # the server handles the broken connection as usual.
+                raise
+            # Starlette's ServerErrorMiddleware lives OUTSIDE application
+            # middleware. Without this catch, its 500 response would bypass
+            # every security header. Emit the error here so even crash paths
+            # are stamped with the canonical policy.
+            _log_response_failure(exc)
+            response = JSONResponse(
+                status_code=500, content={"detail": "Internal Server Error"}
+            )
+            await response(scope, receive, send_wrapper)
