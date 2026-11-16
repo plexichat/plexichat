@@ -13,6 +13,8 @@ from typing import Any, Dict
 
 import utils.logger as logger
 
+from .privacy import verify_export_scope
+
 from .collectors import (
     ApplicationsCollector,
     AutomodCollector,
@@ -79,6 +81,8 @@ class DataCollector:
 
         Returns a dictionary with all categories populated.
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         export_time = int(time.time())
         export_version = "1.0"
 
@@ -88,14 +92,32 @@ class DataCollector:
             "export_version": export_version,
         }
 
-        # Delegate to each collector
         warnings: list = []
-        for category, collector in self._collectors.items():
-            result[category] = collector.collect(user_id)
-            if getattr(collector, "collection_errors", None):
-                for err in collector.collection_errors:
-                    warnings.append(f"{category}: {err}")
-                collector.collection_errors.clear()
+        items = list(self._collectors.items())
+        if not items:
+            return result
+
+        # Collectors are independent read-only queries and the database hands
+        # each thread its own connection, so run them concurrently. A bounded
+        # pool keeps a large catalog from exhausting the connection pool.
+        max_workers = min(8, len(items))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(collector.collect, user_id): name
+                for name, collector in items
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                collector = self._collectors[name]
+                try:
+                    result[name] = future.result()
+                except Exception as e:
+                    collector.record_error(str(e))
+                    result[name] = {}
+                if getattr(collector, "collection_errors", None):
+                    for err in collector.collection_errors:
+                        warnings.append(f"{name}: {err}")
+                    collector.collection_errors.clear()
 
         # Surface incomplete-export warnings in the export metadata so a
         # compliance artifact with missing categories is never presented
