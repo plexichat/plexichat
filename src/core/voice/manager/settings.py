@@ -1,7 +1,11 @@
 from typing import Optional, List
 
 from ...base import SnowflakeID
-from ..boundaries import clamp_user_limit
+from ..boundaries import (
+    clamp_user_limit,
+    validate_bitrate_input,
+    validate_region_id,
+)
 from ..models import VoiceChannel, VoiceRegion, DEFAULT_VOICE_REGIONS
 from ..exceptions import (
     ChannelNotFoundError,
@@ -59,7 +63,7 @@ class SettingsMixin(VoiceProtocol):
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "channels.manage")
 
-        bitrate = max(8000, min(384000, bitrate))
+        bitrate = max(8000, min(384000, validate_bitrate_input(bitrate)))
 
         self._ensure_channel_settings(channel_id)
 
@@ -89,10 +93,10 @@ class SettingsMixin(VoiceProtocol):
         server_id = channel["server_id"]
         self._require_permission(user_id, server_id, "channels.manage")
 
-        if region_id:
-            valid_regions = [r.id for r in DEFAULT_VOICE_REGIONS]
-            if region_id not in valid_regions:
-                raise InvalidVoiceStateError(f"Invalid region: {region_id}")
+        try:
+            region_id = validate_region_id(region_id)
+        except ValueError as exc:
+            raise InvalidVoiceStateError(str(exc)) from exc
 
         self._ensure_channel_settings(channel_id)
 

@@ -5,6 +5,7 @@ Signaling models - Dataclasses for WebRTC signaling entities.
 from dataclasses import dataclass, field
 
 from ..boundaries import (
+    clamp_bitrate,
     validate_server_endpoint,
     validate_session_id,
     validate_sfu_identifier,
@@ -176,6 +177,7 @@ class VoiceServerInfo:
         self.session_id = validate_session_id(self.session_id, "session_id")
         self.channel_id = int(self.channel_id)
         self.user_id = int(self.user_id)
+        self.bitrate = clamp_bitrate(self.bitrate)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -202,6 +204,15 @@ class ConnectionQuality:
     jitter: float
     round_trip_time: int
     timestamp: int
+
+    def __post_init__(self) -> None:
+        """Clamp numeric metrics reported by clients or SFU adapters."""
+        self.bitrate = clamp_bitrate(self.bitrate)
+        for attr in ("packet_loss", "jitter", "round_trip_time"):
+            value = float(getattr(self, attr))
+            if value != value or value in (float("inf"), float("-inf")):
+                value = 0.0
+            setattr(self, attr, max(0.0, min(value, 100_000.0)))
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

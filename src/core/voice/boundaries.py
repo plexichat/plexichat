@@ -175,3 +175,87 @@ def clamp_participant_count(value: object) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(number, MAX_PARTICIPANTS_PER_CHANNEL))
+
+
+# --- region/bitrate enums and numeric ranges (commit 7) ---
+MIN_BITRATE = 8_000
+MAX_BITRATE = 384_000
+# A value beyond a 32-bit signed int is a typo/abuse, not a bitrate; reject it
+# before the existing clamp so it never reaches a SQL parameter.
+MAX_BITRATE_INPUT = 2**31 - 1
+
+VALID_REGION_IDS = frozenset(
+    {
+        "us-west", "us-east", "us-central", "us-south",
+        "eu-west", "eu-central", "singapore", "japan",
+        "brazil", "sydney", "automatic",
+    }
+)
+MAX_REGION_ID_LENGTH = 64
+
+
+def validate_bitrate_input(value: object, field: str = "bitrate") -> int:
+    """Coerce a caller-supplied bitrate to an int in a safe input range.
+
+    The manager still clamps to ``MIN_BITRATE..MAX_BITRATE``; this guard only
+    rejects non-numeric and absurd values (including bools/floats) first.
+    """
+    if isinstance(value, bool) or isinstance(value, float):
+        raise ValueError(f"{field} must be an integer")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be an integer") from exc
+    if number < 0 or number > MAX_BITRATE_INPUT:
+        raise ValueError(f"{field} is outside the allowed range")
+    return number
+
+
+def clamp_bitrate(value: object, field: str = "bitrate") -> int:
+    """Return a bitrate clamped to the supported audio range."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return MIN_BITRATE
+    return max(MIN_BITRATE, min(number, MAX_BITRATE))
+
+
+def validate_region_id(value: object | None, field: str = "region_id") -> str | None:
+    """Validate a voice region against the known region enum.
+
+    ``None`` (automatic/default) is allowed; any other value must be a bounded,
+    control-free id present in :data:`VALID_REGION_IDS`.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or len(text) > MAX_REGION_ID_LENGTH:
+        raise ValueError(f"{field} is empty or too long")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text):
+        raise ValueError(f"{field} contains control characters")
+    if text not in VALID_REGION_IDS:
+        raise ValueError(f"Invalid region: {text}")
+    return text
+
+
+def validate_quality_metrics(metrics: dict, field: str = "metrics") -> dict:
+    """Bound numeric quality samples before they reach the quality store."""
+    result = {}
+    for key, value in metrics.items():
+        if value is None:
+            continue
+        if key == "bitrate":
+            result[key] = clamp_bitrate(value)
+        elif key in {"packet_loss", "jitter", "round_trip_time"}:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if number != number or number in (float("inf"), float("-inf")):
+                continue
+            result[key] = max(0.0, min(number, 100_000.0))
+        elif key == "quality_level":
+            text = str(value).lower()
+            if text in {"excellent", "good", "fair", "poor", "critical"}:
+                result[key] = text
+    return result

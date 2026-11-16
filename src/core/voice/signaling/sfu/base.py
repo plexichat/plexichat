@@ -9,6 +9,7 @@ from enum import Enum
 
 import utils.logger as logger
 
+from ...boundaries import validate_quality_metrics
 from .quality import canonical_channel_id, canonical_user_id
 
 
@@ -474,7 +475,7 @@ class SFUAdapter(ABC):
                 f"room={room_id!r} peer={peer_id!r}"
             )
             return
-        payload = {key: value for key, value in metrics.items() if value is not None}
+        payload = validate_quality_metrics(metrics)
         if not payload:
             return
         try:
