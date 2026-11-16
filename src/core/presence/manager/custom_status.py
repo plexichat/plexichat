@@ -10,6 +10,7 @@ import utils.logger as logger
 
 from .base import PresenceManagerBase
 from ..models import Presence, CustomStatus
+from ..validation import validate_emoji
 
 
 class CustomStatusMixin(PresenceManagerBase):
@@ -50,9 +51,7 @@ class CustomStatusMixin(PresenceManagerBase):
         # emoji either. With an emoji present we keep an emoji-only status
         # (storing an empty ``text``), which previously was silently dropped.
         normalized_text = (text or "").strip()
-        emoji = (emoji or "").strip() if emoji else None
-        if emoji and len(emoji) > 64:
-            emoji = emoji[:64]
+        emoji = validate_emoji(emoji)
 
         if not normalized_text and not emoji:
             return self.clear_custom_status(user_id)

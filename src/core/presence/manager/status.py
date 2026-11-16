@@ -13,9 +13,12 @@ from src.core.database import (
     get_valkey_client,
 )
 
+from src.core.security.hardening import HardeningViolation
+
 from .base import PresenceManagerBase
 from ..models import Presence, UserStatus
 from ..exceptions import InvalidStatusError
+from ..validation import validate_status
 
 
 class StatusMixin(PresenceManagerBase):
@@ -189,13 +192,10 @@ class StatusMixin(PresenceManagerBase):
         """
         self._validate_user(user_id)
 
-        if isinstance(status, str):
-            try:
-                status = UserStatus(status.lower())
-            except ValueError:
-                raise InvalidStatusError(f"Invalid status value: {status}") from None
-        elif not isinstance(status, UserStatus):
-            raise InvalidStatusError(f"Invalid status type: {type(status).__name__}")
+        try:
+            status = validate_status(status)
+        except (HardeningViolation, TypeError) as exc:
+            raise InvalidStatusError(f"Invalid status value: {status}") from exc
 
         now = self._get_timestamp()
 
