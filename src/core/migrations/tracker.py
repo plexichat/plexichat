@@ -6,7 +6,8 @@ recording their status, and managing the migrations_history table.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
+import ast
 import hashlib
 import hmac
 import threading
@@ -18,9 +19,26 @@ import secrets
 import os
 import uuid
 from . import schema
+from . import validator
 from .locking import MigrationLockingMixin
 
 logger = logging.getLogger(__name__)
+
+
+# Reading a migration's metadata used to exec() the whole module just to read
+# its docstring. The metadata block is a docstring literal, so the AST gives
+# the same result without running any code. Cache it process-wide keyed by
+# (path, mtime_ns, size) so the several metadata lookups a single admin status
+# request makes collapse into one parse, and subsequent requests reuse it.
+_METADATA_CACHE: Dict[str, Tuple[Tuple[int, int], Dict[str, Any]]] = {}
+_METADATA_CACHE_LOCK = threading.Lock()
+_METADATA_CACHE_MAX = 256
+
+
+def _clear_metadata_cache() -> None:
+    """Drop cached migration metadata (used by tests and file mutations)."""
+    with _METADATA_CACHE_LOCK:
+        _METADATA_CACHE.clear()
 
 
 def _utcnow() -> datetime:
@@ -42,6 +60,14 @@ class MigrationTracker(MigrationLockingMixin):
     _session_registry: Dict[str, int] = {}
     _session_registry_lock = threading.Lock()
 
+    # Schema creation is idempotent (every statement is IF NOT EXISTS) but
+    # ensure_table_exists() is called from nearly every tracker read, so
+    # re-issuing ~14 DDL statements per call dominated admin migration
+    # endpoints. Remember which databases already have the schema in this
+    # process. Keyed by db identity so distinct databases never share the flag.
+    _schema_ready: Dict[str, bool] = {}
+    _schema_ready_lock = threading.Lock()
+
     def __init__(self, db):
         """
         Initialize the migration tracker.
@@ -55,17 +81,51 @@ class MigrationTracker(MigrationLockingMixin):
         self._lock_owner: Optional[str] = None
         self._pg_advisory_conn = None
 
+    def _schema_cache_key(self) -> Optional[str]:
+        """Key for the process-local schema-ready flag.
+
+        In-memory SQLite databases cannot be keyed by path (every connection
+        with ``:memory:`` resolves to the same path yet owns a distinct
+        schema), so those always re-create the tables.
+        """
+        cfg = getattr(self.db, "config", None) or {}
+        db_type = getattr(self.db, "type", None) or str(cfg.get("type", "unknown"))
+        if db_type == "sqlite":
+            path = str(cfg.get("path", ""))
+            if not path or path == ":memory:" or path.startswith("file:"):
+                return None
+        return self._db_identity()
+
     def ensure_table_exists(self):
         """
         Ensure the migrations_history table exists.
 
-        Creates the table if it doesn't already exist.
+        Creates the table if it doesn't already exist. The DDL is issued once
+        per process per database; subsequent calls only refresh the uptime
+        session (which keeps the irreversible-migration gate correct).
 
         Raises:
             Exception: If table creation fails
         """
-        schema.create_tables(self.db)
-        self.ensure_lock_table_exists()
+        key = self._schema_cache_key()
+        if key is None:
+            # In-memory databases cannot share the flag: always create.
+            schema.create_tables(self.db)
+            self.ensure_lock_table_exists()
+        else:
+            with self._schema_ready_lock:
+                ready = self._schema_ready.get(key, False)
+            if not ready:
+                # CREATE ... IF NOT EXISTS is idempotent, so a race here is
+                # harmless; the lock still keeps it to one DDL pass normally.
+                with self._schema_ready_lock:
+                    if not self._schema_ready.get(key, False):
+                        schema.create_tables(self.db)
+                        self.ensure_lock_table_exists()
+                        self._schema_ready[key] = True
+        # Always refresh the session: a new tracker instance starts with a
+        # None session id and update_uptime()/the live uptime contribution
+        # depend on it being populated from the process registry.
         self._start_uptime_session()
 
     def _db_identity(self) -> str:
@@ -223,6 +283,11 @@ class MigrationTracker(MigrationLockingMixin):
         """
         Parse migration metadata from the migration file docstring.
 
+        The ``MIGRATION_METADATA`` block is a docstring literal, so the AST
+        yields the very same string the old ``exec_module`` approach read from
+        ``module.__doc__`` -- without importing/executing a migration module on
+        every admin status call. Results are cached by file mtime/size.
+
         Args:
             version: Migration version
 
@@ -230,57 +295,44 @@ class MigrationTracker(MigrationLockingMixin):
             Dictionary with metadata fields
         """
         try:
-            import importlib.util
-            import os
-
             from src.core.security.hardening import safe_join
 
             migration_dir = os.path.dirname(os.path.abspath(__file__))
             migrations_root = os.path.join(migration_dir, "migrations")
             # ``version`` can originate from the migration-history table or an
-            # admin CLI argument. Interpolating it into a path and then calling
-            # ``exec_module`` on the result let a value like
-            # "../../evil" load and execute an arbitrary file. A migration
-            # version is only ever a short numeric prefix, and safe_join keeps
-            # the resolved path under the migrations directory even if a
-            # symlink is involved.
+            # admin CLI argument. Interpolating it into a path and then loading
+            # the result let a value like "../../evil" reach an arbitrary file.
+            # A migration version is only ever a short numeric prefix, and
+            # safe_join keeps the path under the migrations directory even if
+            # a symlink is involved. The numeric check is retained as a second
+            # layer so only canonical version names are ever considered.
             raw_version = str(version)
             if not re.fullmatch(r"\d{1,6}", raw_version):
                 logger.warning(f"Refusing non-numeric migration version: {version!r}")
                 return {}
             migration_file = safe_join(migrations_root, f"{raw_version}.py")
 
-            if not os.path.exists(migration_file):
-                return {}
-
-            spec = importlib.util.spec_from_file_location(
-                f"migration_{version}", migration_file
-            )
-            if spec is None or spec.loader is None:
-                return {}
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            docstring = module.__doc__
-            if not docstring:
-                return {}
-
-            # Parse MIGRATION_METADATA from docstring
-            # Look for MIGRATION_METADATA: followed by JSON object
-            match = re.search(
-                r"MIGRATION_METADATA:\s*\n(\{.*?\})\s*(?:\n\"\"\"|$)",
-                docstring,
-                re.DOTALL,
-            )
-            if not match:
-                return {}
-
             try:
-                metadata = json.loads(match.group(1))
-                return metadata
-            except json.JSONDecodeError:
+                stat = os.stat(migration_file)
+            except OSError:
                 return {}
+
+            stamp = (stat.st_mtime_ns, stat.st_size)
+            cached = _METADATA_CACHE.get(migration_file)
+            if cached is not None and cached[0] == stamp:
+                return dict(cached[1])
+
+            with open(migration_file, "r", encoding="utf-8") as f:
+                source = f.read()
+            metadata = validator.migration_metadata_from_docstring(
+                ast.get_docstring(ast.parse(source))
+            )
+
+            with _METADATA_CACHE_LOCK:
+                if len(_METADATA_CACHE) >= _METADATA_CACHE_MAX:
+                    _METADATA_CACHE.clear()
+                _METADATA_CACHE[migration_file] = (stamp, metadata)
+            return dict(metadata)
         except Exception as e:
             logger.warning(f"Failed to parse metadata for migration {version}: {e}")
             return {}
