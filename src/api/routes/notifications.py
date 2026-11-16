@@ -7,7 +7,7 @@ Handles user notifications.
 import asyncio
 
 import utils.logger as logger
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 import src.api as api
@@ -64,7 +64,7 @@ def _notif_to_response(notif) -> NotificationInfo:
     },
 )
 async def get_notifications(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     unread_only: bool = False,
     current_user: TokenInfo = Depends(get_current_user),
 ) -> NotificationsResponse:
