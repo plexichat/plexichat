@@ -15,7 +15,9 @@ class ChannelCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100, description="Channel name")
     channel_type: str = Field(
-        default="text", description="Channel type: text, voice, category"
+        default="text",
+        pattern="^(text|voice|category)$",
+        description="Channel type: text, voice, category",
     )
     topic: Optional[str] = Field(None, max_length=1024, description="Channel topic")
     category_id: Optional[SnowflakeID] = Field(None, description="Parent category ID")
