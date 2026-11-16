@@ -16,7 +16,7 @@ from src.core.servers.exceptions import (
     ChannelAccessDeniedError,
     PermissionDeniedError,
 )
-from .helpers import _message_to_response
+from .helpers import _message_to_response, require_snowflake
 
 router = APIRouter(tags=["Messages"])
 
@@ -47,7 +47,10 @@ async def pin_message(
     try:
         try:
             cid = parse_id(channel_id, "channel_id")
-            mid = int(message_id)
+            # Pin/unpin act on a caller-supplied message id: give it the same
+            # snowflake range check as every other id so negatives and
+            # oversized values cannot reach the storage lookup.
+            mid = require_snowflake(message_id, "message_id", "Invalid message ID")
         except ValueError:
             raise HTTPException(
                 status_code=400,
@@ -193,7 +196,10 @@ async def unpin_message(
     try:
         try:
             cid = parse_id(channel_id, "channel_id")
-            mid = int(message_id)
+            # Pin/unpin act on a caller-supplied message id: give it the same
+            # snowflake range check as every other id so negatives and
+            # oversized values cannot reach the storage lookup.
+            mid = require_snowflake(message_id, "message_id", "Invalid message ID")
         except ValueError:
             raise HTTPException(
                 status_code=400,

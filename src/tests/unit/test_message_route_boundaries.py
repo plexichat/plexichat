@@ -67,3 +67,32 @@ def test_require_snowflake_rejects_out_of_range_ids():
         with pytest.raises(HTTPException) as exc:
             require_snowflake(bad, "message_id", "Invalid message ID")
         assert exc.value.status_code == 400
+
+
+def _dummy_user():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(user_id=1, username="u", avatar_url=None, badges=[])
+
+
+def _rejects_bad_id(coro, args):
+    import asyncio
+    from unittest.mock import patch
+
+    import pytest
+    from fastapi import HTTPException
+
+    with (
+        patch("src.api.get_messaging", return_value=object()),
+        patch("src.api.get_servers", return_value=None),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(coro(*args, _dummy_user()))
+    assert exc.value.status_code == 400
+
+
+def test_pin_message_rejects_out_of_range_id():
+    from src.api.routes.messages.pins import pin_message, unpin_message
+
+    _rejects_bad_id(pin_message, ("123", "-1"))
+    _rejects_bad_id(unpin_message, ("123", "99000000000000000000"))
