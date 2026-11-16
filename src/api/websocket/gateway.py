@@ -16,6 +16,7 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
+from .boundaries import validate_frame_bytes, validate_parsed_structure
 from .compression import (
     is_compressed,
     decompress_payload,
@@ -421,7 +422,10 @@ async def _message_loop(
         if "text" in message:
             # Validate text message size
             text_data: str = message["text"]
-            if not validate_message_size(text_data.encode("utf-8")):
+            frame_bytes = text_data.encode("utf-8")
+            if not validate_frame_bytes(frame_bytes) or not validate_message_size(
+                frame_bytes
+            ):
                 logger.warning(
                     f"Connection {connection.connection_id}: message too large"
                 )
@@ -437,8 +441,10 @@ async def _message_loop(
                 return
         elif "bytes" in message:
             raw_bytes: bytes = message["bytes"]
-            # Validate compressed message size before decompression
-            if not validate_message_size(raw_bytes):
+            # Validate the raw frame size before decompression or parsing.
+            if not validate_frame_bytes(raw_bytes) or not validate_message_size(
+                raw_bytes
+            ):
                 logger.warning(
                     f"Connection {connection.connection_id}: compressed message too large"
                 )
@@ -472,6 +478,18 @@ async def _message_loop(
         if not isinstance(data, dict):
             logger.warning(
                 f"Connection {connection.connection_id}: message is not a JSON object: {data!r:.200}"
+            )
+            await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+            return
+
+        # Bound the decoded shape before any handler sees it. A small frame can
+        # still describe a pathologically deep/wide object that blows up the
+        # recursive snowflake stringifier or downstream fan-out.
+        try:
+            validate_parsed_structure(data)
+        except ValueError as exc:
+            logger.warning(
+                f"Connection {connection.connection_id}: rejected frame structure: {exc}"
             )
             await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
             return

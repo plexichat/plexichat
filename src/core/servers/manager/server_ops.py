@@ -26,6 +26,7 @@ from ..exceptions import (
     ServerLimitReachedError,
 )
 from src.core.database.cache import cached
+from src.core.servers.validation import validate_server_media_url
 from .converters import _row_to_server, _server_to_dict, _dict_to_server
 from .protocol import ServerProtocol
 

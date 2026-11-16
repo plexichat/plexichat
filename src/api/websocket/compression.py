@@ -8,11 +8,17 @@ Security features:
 """
 
 import zlib
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 import json
 
 import utils.config as config
 import utils.logger as logger
+
+from .boundaries import (
+    MAX_DECOMPRESSED_BYTES,
+    MAX_FRAME_BYTES,
+    clamp_configured_limit,
+)
 
 
 ZLIB_SUFFIX = b"\x00\x00\xff\xff"
@@ -23,17 +29,39 @@ DEFAULT_MAX_DECOMPRESSED_SIZE = 262144  # 256KB max decompressed (4:1 ratio prot
 
 
 def _get_limits() -> Tuple[int, int]:
-    """Get compression limits from config (with fallback for tests)."""
+    """Get compression limits from config (with fallback for tests).
+
+    Config values are clamped to absolute ceilings so a single bad config
+    entry cannot disable the frame-size guard. An invalid value is replaced by
+    the built-in default rather than propagating into the receive loop (which
+    would tear down every connection).
+    """
     try:
         ws_config = config.get("websocket", {})
         max_msg = ws_config.get("max_message_size", DEFAULT_MAX_MESSAGE_SIZE)
         max_decomp = ws_config.get(
             "max_decompressed_size", DEFAULT_MAX_DECOMPRESSED_SIZE
         )
-        return max_msg, max_decomp
     except RuntimeError:
         # Config not set up (e.g., in tests) - use defaults
         return DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_DECOMPRESSED_SIZE
+
+    def _clamp(value: Any, field: str, ceiling: int, default: int) -> int:
+        try:
+            return clamp_configured_limit(value, field, ceiling, default)
+        except ValueError:
+            logger.warning("Invalid websocket.%s; using default", field)
+            return default
+
+    return (
+        _clamp(max_msg, "max_message_size", MAX_FRAME_BYTES, DEFAULT_MAX_MESSAGE_SIZE),
+        _clamp(
+            max_decomp,
+            "max_decompressed_size",
+            MAX_DECOMPRESSED_BYTES,
+            DEFAULT_MAX_DECOMPRESSED_SIZE,
+        ),
+    )
 
 
 class CompressionError(Exception):
@@ -214,4 +242,5 @@ def validate_message_size(data: bytes) -> bool:
         True if size is acceptable
     """
     max_msg, _ = _get_limits()
-    return len(data) <= max_msg
+    # ``data`` is the raw frame bytes; this runs before json.loads.
+    return 0 <= len(data) <= max_msg

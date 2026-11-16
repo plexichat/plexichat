@@ -28,6 +28,8 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from src.utils.encryption.channel_ratchet import ChannelRatchetManager
 from src.utils.encryption.channel_ratchet.gate import ratchet_encryption_licensed
 
+from .helpers import require_channel_snowflake
+
 
 def _resolve_manager(db: Any) -> Optional[ChannelRatchetManager]:
     try:
@@ -59,13 +61,10 @@ def _stringify_ids(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _parse_channel_id(channel_id: str) -> int:
-    try:
-        return int(channel_id)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid channel ID"}},
-        )
+    # The ratchet endpoints used a bare int(), so negative and oversized ids
+    # reached the lookup layer and key derivation. Delegate to the channel
+    # boundary helper, which uses the shared snowflake range guard.
+    return require_channel_snowflake(channel_id)
 
 
 def _require_channel_access(cid: int, user_id: int) -> None:

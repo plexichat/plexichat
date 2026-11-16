@@ -1,13 +1,32 @@
-# marker_probe_zeta
-from typing import Optional
+from typing import Any, Optional
+
+from fastapi import HTTPException
 
 import src.api as api
 import utils.config as config
 import utils.logger as logger
 from src.api.schemas.servers import ChannelResponse
 from src.api.schemas.common import SnowflakeID
+from src.core.security.hardening import parse_id
 
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
+
+
+def require_channel_snowflake(value: Any, field: str = "channel_id") -> int:
+    """Parse an untrusted channel id with the shared snowflake range guard.
+
+    A bare ``int()`` accepted negative ids and ids past the 64-bit snowflake
+    ceiling, which then flowed into lookups, cache keys and ratchet key
+    derivation. Reusing the shared parser rejects those before any of that
+    work, while the route keeps its documented 400 contract.
+    """
+    try:
+        return parse_id(value, field)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid channel ID"}},
+        ) from exc
 
 
 def _channel_to_response(
