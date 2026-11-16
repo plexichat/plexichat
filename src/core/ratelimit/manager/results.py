@@ -93,6 +93,50 @@ def create_bypass_result(route: Optional[str], unix_now: float) -> RateLimitResu
     )
 
 
+#: Retry window used when the limiter cannot reach its storage backend.
+STORE_UNAVAILABLE_RETRY_AFTER = 60.0
+
+
+def create_store_unavailable_result(
+    config: RateLimitConfig,
+    unix_now: float,
+    bucket_key: str = "store-unavailable",
+) -> RateLimitResult:
+    """Build a FAIL-CLOSED denial for a backend outage.
+
+    A rate limiter that cannot read or write its counters has no idea whether
+    a request is over quota. Returning "allowed" in that state turns any
+    transient store outage into an unbounded free-fire window, so we deny with
+    a conservative retry hint and a complete set of rate-limit headers. The
+    headers keep clients (and monitors) from interpreting the denial as an
+    ordinary exhausted bucket.
+    """
+    safe_now = _finite_non_negative(unix_now, 0.0)
+    retry_after = STORE_UNAVAILABLE_RETRY_AFTER
+    headers = RateLimitHeaders(
+        limit=config.effective_limit,
+        remaining=0,
+        reset=safe_now + retry_after,
+        reset_after=retry_after,
+        bucket="unavailable",
+        is_global=False,
+        retry_after=retry_after,
+        scope="store",
+    )
+    return RateLimitResult(
+        allowed=False,
+        headers=headers,
+        bucket_key=bucket_key,
+        bucket_type=BucketType.GLOBAL,
+        remaining=0,
+        reset_at=safe_now + retry_after,
+        retry_after=retry_after,
+        is_global=False,
+        limited_by="store",
+        cost=0,
+    )
+
+
 def bucket_from_state(state: Dict[str, Any], bucket_key: str) -> RateLimitBucket:
     """Build a :class:`RateLimitBucket` from a raw state dict.
 

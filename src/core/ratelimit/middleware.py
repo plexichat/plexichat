@@ -5,6 +5,7 @@ FastAPI middleware for rate limiting.
 import hashlib
 import re
 import threading
+import time
 from typing import Optional, Dict, Callable, Any
 
 from fastapi import Request
@@ -13,6 +14,21 @@ from starlette.types import ASGIApp
 
 import utils.config as config
 from src.utils.net import get_client_ip
+
+from .manager.results import create_store_unavailable_result
+
+
+def _log_limiter_failure(exc: Exception) -> None:
+    """Report a limiter-wide failure; never break the denial path."""
+    try:
+        import utils.logger as logger
+
+        logger.critical(
+            "rate-limit decision failed, failing closed (denying request): %s",
+            exc,
+        )
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -399,17 +415,26 @@ class RateLimitMiddlewareASGI:
             user_info["is_webhook"] = True
             user_info["webhook_id"] = webhook_id
 
-        result = await ratelimit.acheck_rate_limit(
-            user_id=user_info.get("user_id"),
-            ip_address=user_info.get("ip_address"),
-            route=route,
-            resource_id=resource_id,
-            is_bot=user_info.get("is_bot", False),
-            is_webhook=user_info.get("is_webhook", False),
-            is_admin=user_info.get("is_admin", False),
-            is_internal=user_info.get("is_internal", False),
-            webhook_id=user_info.get("webhook_id"),
-        )
+        try:
+            result = await ratelimit.acheck_rate_limit(
+                user_id=user_info.get("user_id"),
+                ip_address=user_info.get("ip_address"),
+                route=route,
+                resource_id=resource_id,
+                is_bot=user_info.get("is_bot", False),
+                is_webhook=user_info.get("is_webhook", False),
+                is_admin=user_info.get("is_admin", False),
+                is_internal=user_info.get("is_internal", False),
+                webhook_id=user_info.get("webhook_id"),
+            )
+        except Exception as exc:
+            # A limiter that cannot produce a decision (store outage, poisoned
+            # config, unexpected backend exception) must never degrade into an
+            # unlimited pass-through. Convert to a fail-closed 429 below.
+            _log_limiter_failure(exc)
+            result = create_store_unavailable_result(
+                ratelimit.get_default_config(), time.time()
+            )
 
         if not result.allowed:
             headers = ratelimit.get_headers(result)
