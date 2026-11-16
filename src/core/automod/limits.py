@@ -27,3 +27,28 @@ MAX_DOMAIN_LENGTH = 253
 MAX_REASON_LENGTH = 500
 # Timeouts/actions driven by config integers.
 MAX_DURATION_SECONDS = 2_592_000  # 30 days
+
+
+def bounded_reason(value, field="reason"):
+    """Return a control-character-free reason within MAX_REASON_LENGTH."""
+    from src.core.security.hardening import (
+        HardeningViolation,
+        reject_control_characters,
+    )
+
+    try:
+        text = reject_control_characters(value, field)
+    except HardeningViolation:
+        raise
+    if len(text) > MAX_REASON_LENGTH:
+        raise ValueError(f"{field} exceeds {MAX_REASON_LENGTH} characters")
+    return text
+
+
+def clip_text(value, maximum, field="text"):
+    """Clip untrusted text before it is stored in a violation/audit row."""
+    import re
+
+    text = str(value or "")
+    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    return text[:maximum]

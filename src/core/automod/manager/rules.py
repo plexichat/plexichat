@@ -1,6 +1,9 @@
 import json
 from typing import Optional, List, Dict, Any
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+from ..limits import MAX_DURATION_SECONDS, bounded_reason
+
 import utils.logger as logger
 from src.core.base import SnowflakeID
 from ..models import (
@@ -33,10 +36,25 @@ def _parse_action(action_data: Any) -> RuleAction:
         action_type = coerce_action_type(action_type_str)
     except ValueError:
         raise RuleValidationError(f"Invalid action type: {action_type_str!r}") from None
+    try:
+        reason = bounded_reason(action_data.get("reason"), "action reason")
+        raw_duration = action_data.get("duration_seconds")
+        duration = (
+            None
+            if raw_duration is None
+            else bounded_int(
+                raw_duration,
+                "duration_seconds",
+                minimum=0,
+                maximum=MAX_DURATION_SECONDS,
+            )
+        )
+    except (HardeningViolation, ValueError) as exc:
+        raise RuleValidationError(f"Invalid action parameters: {exc}") from None
     return RuleAction(
         action_type=action_type,
-        duration_seconds=action_data.get("duration_seconds"),
-        reason=action_data.get("reason"),
+        duration_seconds=duration,
+        reason=reason,
         notify_user=action_data.get("notify_user", True),
         metadata=action_data.get("metadata", {}),
     )
@@ -184,16 +202,18 @@ class RuleOpsMixin(AutoModProtocol):
             # Same allowlist as create_rule: an unknown action type is
             # rejected here instead of being persisted into a config that
             # row_to_rule() will later refuse to load.
-            parsed_actions = [
-                {
-                    "action_type": _parse_action(action_data).action_type.value,
-                    "duration_seconds": action_data.get("duration_seconds"),
-                    "reason": action_data.get("reason"),
-                    "notify_user": action_data.get("notify_user", True),
-                    "metadata": action_data.get("metadata", {}),
-                }
-                for action_data in actions
-            ]
+            parsed_actions = []
+            for action_data in actions:
+                action = _parse_action(action_data)
+                parsed_actions.append(
+                    {
+                        "action_type": action.action_type.value,
+                        "duration_seconds": action.duration_seconds,
+                        "reason": action.reason,
+                        "notify_user": action.notify_user,
+                        "metadata": action.metadata,
+                    }
+                )
             if not parsed_actions:
                 raise RuleValidationError("At least one action is required")
             updates.append("actions = ?")

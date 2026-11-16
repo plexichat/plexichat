@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
+from ..limits import MAX_REASON_LENGTH, bounded_reason, clip_text
 from ..models import (
     RuleAction,
     ActionType,
@@ -56,6 +57,10 @@ class ActionMixin(AutoModProtocol):
             context = {}
         context.setdefault("__system_context__", True)
         context.setdefault("__automod_caller__", True)
+        # A match can quote arbitrary message text. Clip it before it is
+        # written to the violation/audit rows and to the log-facing reason.
+        safe_matched = clip_text(match.matched_content or "", MAX_REASON_LENGTH)
+
         now = self._get_timestamp()
         violation_id = self._generate_id()
 
@@ -86,7 +91,7 @@ class ActionMixin(AutoModProtocol):
                     message_id=message_id,
                     rule_id=match.rule_id,
                     rule_type=match.rule_type,
-                    matched_content=match.matched_content or "",
+                    matched_content=safe_matched,
                     actions_taken=[],
                     severity=match.severity,
                     created_at=now,
@@ -121,7 +126,7 @@ class ActionMixin(AutoModProtocol):
                 message_id,
                 match.rule_id,
                 match.rule_type.value,
-                match.matched_content or "",
+                safe_matched,
                 json.dumps([a.value for a in actions_taken]),
                 match.severity.value,
                 json.dumps(metadata),
@@ -146,7 +151,7 @@ class ActionMixin(AutoModProtocol):
                 user_id,
                 None,
                 match.rule_id,
-                match.matched_content or "AutoMod violation",
+                safe_matched or "AutoMod violation",
                 json.dumps(
                     {
                         "violation_id": violation_id,
@@ -167,7 +172,7 @@ class ActionMixin(AutoModProtocol):
             message_id=message_id,
             rule_id=match.rule_id,
             rule_type=match.rule_type,
-            matched_content=match.matched_content or "",
+            matched_content=safe_matched,
             actions_taken=actions_taken,
             severity=match.severity,
             created_at=now,
@@ -230,6 +235,11 @@ class ActionMixin(AutoModProtocol):
             logger.warning(
                 f"AutoMod manual action REFUSED: invalid action type {action_type!r}"
             )
+            return False
+        try:
+            reason = bounded_reason(reason, "action reason")
+        except ValueError:
+            logger.warning("AutoMod manual action REFUSED: invalid reason")
             return False
 
         required = MANUAL_ACTION_PERMISSION.get(action_type, "server.automod")
