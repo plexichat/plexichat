@@ -7,7 +7,7 @@ import utils.config as config
 import utils.logger as logger
 from src.api.schemas.servers import ChannelResponse
 from src.api.schemas.common import SnowflakeID
-from src.core.security.hardening import parse_id
+from src.core.security.hardening import bounded_int, parse_id
 
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
@@ -27,6 +27,33 @@ def require_channel_snowflake(value: Any, field: str = "channel_id") -> int:
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid channel ID"}},
         ) from exc
+
+
+MAX_PAGE_LIMIT = 200
+MAX_PAGE_OFFSET = 100_000
+
+
+def require_pagination(limit: Any, offset: Any) -> tuple[int, int]:
+    """Bound ``limit``/``offset`` for a channel list endpoint.
+
+    The two list endpoints here previously had no page size at all, so a
+    single request could materialise every webhook or ratchet interval for a
+    channel. Both values now pass through the shared integer range guard and
+    an abusive value is a 400 rather than an unbounded scan.
+    """
+    try:
+        safe_limit = bounded_int(
+            limit, "limit", minimum=1, maximum=MAX_PAGE_LIMIT, default=100
+        )
+        safe_offset = bounded_int(
+            offset, "offset", minimum=0, maximum=MAX_PAGE_OFFSET, default=0
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid pagination parameters"}},
+        ) from exc
+    return safe_limit, safe_offset
 
 
 def _channel_to_response(

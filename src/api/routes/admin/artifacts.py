@@ -204,7 +204,7 @@ async def admin_set_server_retention(
     # This mutates a per-server retention override, so require the same scoped
     # permission as the neighbouring feature-settings write; authentication
     # alone must not be enough to change retention policy.
-    admin_id = require_admin_permission(request, "admin.artifacts.manage")
+    require_admin_permission(request, "admin.artifacts.manage")
 
     try:
         try:

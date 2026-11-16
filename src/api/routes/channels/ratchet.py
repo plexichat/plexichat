@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 import src.api as api
 import utils.logger as logger
@@ -28,7 +28,7 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from src.utils.encryption.channel_ratchet import ChannelRatchetManager
 from src.utils.encryption.channel_ratchet.gate import ratchet_encryption_licensed
 
-from .helpers import require_channel_snowflake
+from .helpers import require_channel_snowflake, require_pagination
 
 
 def _resolve_manager(db: Any) -> Optional[ChannelRatchetManager]:
@@ -149,6 +149,8 @@ async def get_channel_ratchet(
 
 async def get_channel_ratchet_intervals(
     channel_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: Optional[int] = Query(None, ge=0, le=100_000),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return every ratchet interval for a channel, newest first.
@@ -158,6 +160,7 @@ async def get_channel_ratchet_intervals(
     resolve historical ciphertext. Each entry carries the same fields as
     the active-interval endpoint's ``interval``.
     """
+    safe_limit, safe_offset = require_pagination(limit, offset)
     cid = _parse_channel_id(channel_id)
     _require_channel_access(cid, current_user.user_id)
 
@@ -167,7 +170,10 @@ async def get_channel_ratchet_intervals(
     intervals = manager.snapshot_list(cid) if manager is not None else []
     return {
         "channel_id": str(cid),
-        "intervals": [_stringify_ids(item) for item in intervals],
+        "intervals": [
+            _stringify_ids(item)
+            for item in intervals[safe_offset : safe_offset + safe_limit]
+        ],
         "enabled": enabled,
     }
 

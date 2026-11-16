@@ -16,6 +16,7 @@ from fastapi.params import Query as QueryParam
 from starlette.requests import Request
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.approvals as approvals_routes
 import src.api.routes.admin.artifacts as artifacts_routes
 import src.api.routes.admin.ui as ui_routes
 import src.api.routes.admin.security as security_routes
@@ -191,6 +192,20 @@ class TestRetentionOverrideGate:
         source = inspect.getsource(artifacts_routes.admin_set_server_retention)
         assert 'require_admin_permission(request, "admin.artifacts.manage")' in source
         assert "get_admin_from_token(request)" not in source
+
+
+class TestApprovalFilterBounds:
+    def test_approval_list_filters_bounded(self):
+        assert (
+            _constraint(approvals_routes.list_approvals, "status", "MaxLen").max_length
+            == 32
+        )
+        assert (
+            _constraint(
+                approvals_routes.list_approvals, "action_type", "MaxLen"
+            ).max_length
+            == 64
+        )
 
 
 class TestAuditExportBounds:

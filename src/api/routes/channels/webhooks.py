@@ -1,6 +1,6 @@
-from typing import List
+from typing import List, Optional
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
 
 import src.api as api
@@ -11,7 +11,7 @@ from src.api.schemas.common import ErrorResponse, SnowflakeID
 import utils.logger as logger
 
 from .base import ChannelBase
-from .helpers import require_channel_snowflake
+from .helpers import require_channel_snowflake, require_pagination
 from ..exception_mapping import raise_mapped
 
 
@@ -33,7 +33,11 @@ class ChannelWebhooksMixin(ChannelBase):
         )
 
     async def _get_channel_webhooks(
-        self, channel_id: str, current_user: TokenInfo = Depends(get_current_user)
+        self,
+        channel_id: str,
+        limit: Optional[int] = Query(None, ge=1, le=200),
+        offset: Optional[int] = Query(None, ge=0, le=100_000),
+        current_user: TokenInfo = Depends(get_current_user),
     ) -> List[WebhookResponse]:
         webhooks_mod = api.get_webhooks()
         if not webhooks_mod:
@@ -51,6 +55,8 @@ class ChannelWebhooksMixin(ChannelBase):
             except HTTPException:
                 logger.warning(f"Invalid channel ID format: {channel_id}")
                 raise
+
+            safe_limit, safe_offset = require_pagination(limit, offset)
 
             # F8 FIX: existence/access pre-check consistent with channel CRUD
             # so correctness does not depend on the webhooks module raising
@@ -120,7 +126,7 @@ class ChannelWebhooksMixin(ChannelBase):
                         avatar_url=w.avatar_url,
                         created_at=w.created_at,
                     )
-                    for w in (webhooks or [])
+                    for w in (webhooks or [])[safe_offset : safe_offset + safe_limit]
                 ]
             except Exception as e:
                 raise_mapped(

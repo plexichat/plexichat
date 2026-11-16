@@ -61,3 +61,39 @@ class TestChannelMixinIdBounds:
             with pytest.raises(HTTPException) as exc:
                 require_channel_snowflake(bad)
             assert exc.value.status_code == 400
+
+
+class TestChannelPaginationBounds:
+    def test_default_page_is_bounded(self):
+        from src.api.routes.channels.helpers import require_pagination
+
+        assert require_pagination(None, None) == (100, 0)
+
+    @pytest.mark.parametrize(
+        "limit,offset", [(0, 0), (201, 0), (10, -1), (10, 100_001), ("x", 0)]
+    )
+    def test_abusive_page_values_are_rejected(self, limit, offset):
+        from src.api.routes.channels.helpers import require_pagination
+
+        with pytest.raises(HTTPException) as exc:
+            require_pagination(limit, offset)
+        assert exc.value.status_code == 400
+
+    def test_both_list_endpoints_expose_bounded_page_params(self):
+        import inspect
+
+        from fastapi.params import Query as QueryParam
+
+        from src.api.routes.channels.ratchet import get_channel_ratchet_intervals
+        from src.api.routes.channels.webhooks import ChannelWebhooksMixin
+
+        for handler in (
+            ChannelWebhooksMixin._get_channel_webhooks,
+            get_channel_ratchet_intervals,
+        ):
+            params = inspect.signature(handler).parameters
+            for name in ("limit", "offset"):
+                assert isinstance(params[name].default, QueryParam)
+                assert any(
+                    type(m).__name__ == "Le" for m in params[name].default.metadata
+                )
