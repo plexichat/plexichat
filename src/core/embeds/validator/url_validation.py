@@ -17,6 +17,8 @@ try:
 except ImportError:
     config = None
 
+from src.core.security.hardening import HardeningViolation, require_http_url
+
 from .constants import (
     MAX_URL_LENGTH,
     URL_ATTRIBUTE_BREAKOUT_PATTERN,
@@ -129,11 +131,17 @@ def validate_url(url: str, field_name: str = "url") -> str:
             return url
         url = base.rstrip("/") + url
 
-    # Must be http or https (absolute URLs only from here on)
-    if not (url.lower().startswith("http://") or url.lower().startswith("https://")):
+    # Must be http(s), absolute, with a host and no embedded credentials.
+    # Delegate to the shared hardening primitive so this rule cannot drift
+    # from the rest of the codebase (which already rejects user:pass@host).
+    try:
+        url = require_http_url(url, field_name)
+    except HardeningViolation as exc:
         raise InvalidUrlError(
-            f"URL must use http or https protocol in {field_name}", url
-        )
+            f"URL must be an absolute http(s) URL without credentials "
+            f"in {field_name}: {exc}",
+            url,
+        ) from exc
 
     # Normalise internationalised (non-ASCII) hostnames to punycode so IDN
     # sites pass the ASCII shape check and resolve correctly downstream.

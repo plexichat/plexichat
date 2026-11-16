@@ -13,6 +13,13 @@ submodules (``constants``, ``models``, ``url_validation``, ``content``,
 
 from __future__ import annotations
 
+from .bounds import (
+    MAX_EMBED_NESTING_DEPTH,
+    MAX_EMBED_TOTAL_NODES,
+    MAX_EMBED_TOTAL_TEXT_CHARS,
+    EmbedBudget,
+    enforce_embed_budget,
+)
 from .color import validate_color
 from .constants import (
     AUTHOR_NAME_MAX_LENGTH,
@@ -37,6 +44,7 @@ from .content import sanitize_content
 from .length import validate_string_length
 from .message import sanitize_message_embeds
 from .models import ValidationResult
+from .ssrf_gate import enforce_ssrf_gate, reject_non_http_url, validate_embed_url
 from .schema import _coerce_dimension, calculate_embed_chars, validate_embed_data
 from .timestamp import validate_timestamp
 from .url_validation import (
@@ -57,6 +65,9 @@ __all__ = [
     "ValidationResult",
     # Validation functions
     "validate_url",
+    "validate_embed_url",
+    "reject_non_http_url",
+    "enforce_ssrf_gate",
     "validate_color",
     "validate_timestamp",
     "sanitize_content",
@@ -69,6 +80,12 @@ __all__ = [
     "InvalidUrlError",
     "InvalidColorError",
     "EmbedSanitizationError",
+    # Structural resource bounds
+    "MAX_EMBED_NESTING_DEPTH",
+    "MAX_EMBED_TOTAL_NODES",
+    "MAX_EMBED_TOTAL_TEXT_CHARS",
+    "EmbedBudget",
+    "enforce_embed_budget",
     # Limits
     "TITLE_MAX_LENGTH",
     "DESCRIPTION_MAX_LENGTH",

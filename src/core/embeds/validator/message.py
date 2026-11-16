@@ -8,6 +8,13 @@ sanitized and URL-typed keys are validated for shape and SSRF.
 
 from typing import Any, Dict, List, Optional
 
+from .bounds import (
+    MAX_EMBED_NESTING_DEPTH,
+    MAX_EMBED_KEYS_PER_OBJECT,
+    MAX_EMBED_LIST_ITEMS,
+    EmbedBudget,
+    field_string_limit,
+)
 from .color import validate_color
 from .content import sanitize_content
 from .constants import (
@@ -17,6 +24,7 @@ from .constants import (
     MAX_FIELDS,
 )
 from .schema import _coerce_dimension
+from .ssrf_gate import validate_embed_url
 from .length import validate_string_length
 from .timestamp import validate_timestamp
 from .url_validation import validate_url
@@ -33,7 +41,7 @@ _MESSAGE_EMBED_DIMENSION_KEYS = {"width", "height"}
 # depth, so a small, deeply-nested payload could exhaust the interpreter stack
 # (RecursionError -> 500) before any field limit applies. Cap the recursion
 # explicitly and fail closed with a normal validation error.
-MAX_EMBED_NESTING_DEPTH = 8
+# Depth constant now lives in ``bounds``.
 
 
 def sanitize_message_embeds(
@@ -67,14 +75,21 @@ def sanitize_message_embeds(
             f"Message cannot have more than {MAX_EMBEDS_PER_MESSAGE} embeds",
             [f"embeds: {len(embeds)}/{MAX_EMBEDS_PER_MESSAGE}"],
         )
+    # One budget is shared by every embed in the message so a large batch of
+    # individually-legal embeds cannot collectively exhaust the process.
+    budget = EmbedBudget()
     return [
-        _sanitize_message_embed(embed, f"embeds[{i}]", depth=0)
+        _sanitize_message_embed(embed, f"embeds[{i}]", depth=0, budget=budget)
         for i, embed in enumerate(embeds)
     ]
 
 
-def _sanitize_message_embed(embed: Any, path: str, depth: int = 0) -> Dict[str, Any]:
+def _sanitize_message_embed(
+    embed: Any, path: str, depth: int = 0, budget: EmbedBudget | None = None
+) -> Dict[str, Any]:
     """Recursively sanitize a single message embed dict."""
+    if budget is None:
+        budget = EmbedBudget()
     if depth > MAX_EMBED_NESTING_DEPTH:
         raise EmbedValidationError(
             f"{path} exceeds maximum embed nesting depth ({MAX_EMBED_NESTING_DEPTH})",
@@ -83,54 +98,71 @@ def _sanitize_message_embed(embed: Any, path: str, depth: int = 0) -> Dict[str, 
     if not isinstance(embed, dict):
         raise EmbedValidationError(f"{path} must be an object", [path])
 
+    budget.charge_node(path)
+    if len(embed) > MAX_EMBED_KEYS_PER_OBJECT:
+        raise EmbedValidationError(
+            f"{path} has too many keys ({len(embed)}/{MAX_EMBED_KEYS_PER_OBJECT})",
+            [path],
+        )
+
     sanitized: Dict[str, Any] = {}
     for key, value in embed.items():
+        child_path = f"{path}.{key}"
+        budget.charge_node(child_path)
         if value is None:
             sanitized[key] = None
             continue
         if key in _MESSAGE_EMBED_URL_KEYS:
-            validated = validate_url(str(value), f"{path}.{key}")
-            # Shape-valid https URLs can still carry XSS payloads in their
-            # path/query (e.g. an onerror= fragment for a client attribute
-            # sink): apply the dangerous-pattern blocklist to URL keys too.
-            sanitize_content(str(value), f"{path}.{key}")
+            validated = validate_embed_url(str(value), child_path, allow_relative=True)
+            sanitize_content(str(value), child_path)
+            budget.charge_text(value, child_path)
             sanitized[key] = validated
         elif key == "color":
-            sanitized[key] = _validate_message_color(value, f"{path}.color")
+            sanitized[key] = _validate_message_color(value, child_path)
         elif key == "timestamp":
+            budget.charge_text(value, child_path)
             sanitized[key] = validate_timestamp(str(value))
         elif key in _MESSAGE_EMBED_DIMENSION_KEYS:
             issues: List[str] = []
-            n = _coerce_dimension(value, f"{path}.{key}", issues)
+            n = _coerce_dimension(value, child_path, issues)
             if issues:
-                raise EmbedValidationError(issues[0], [f"{path}.{key}"])
+                raise EmbedValidationError(issues[0], [child_path])
             sanitized[key] = n
         elif key == "fields":
-            sanitized[key] = _sanitize_message_fields(value, f"{path}.fields")
+            sanitized[key] = _sanitize_message_fields(value, child_path, budget)
         elif isinstance(value, dict):
-            sanitized[key] = _sanitize_message_embed(
-                value, f"{path}.{key}", depth=depth + 1
-            )
+            sanitized[key] = _sanitize_message_embed(value, child_path, depth=depth + 1, budget=budget)
         elif isinstance(value, list):
-            sanitized[key] = [
-                _sanitize_message_embed(v, f"{path}.{key}[{j}]", depth=depth + 1)
-                if isinstance(v, dict)
-                else (
-                    sanitize_content(str(v), f"{path}.{key}[{j}]")
-                    if isinstance(v, str)
-                    else v
+            if len(value) > MAX_EMBED_LIST_ITEMS:
+                raise EmbedValidationError(
+                    f"{child_path} has too many items ({len(value)}/{MAX_EMBED_LIST_ITEMS})",
+                    [child_path],
                 )
-                for j, v in enumerate(value)
-            ]
+            items: List[Any] = []
+            for j, v in enumerate(value):
+                item_path = f"{child_path}[{j}]"
+                budget.charge_node(item_path)
+                if isinstance(v, dict):
+                    items.append(_sanitize_message_embed(v, item_path, depth=depth + 1, budget=budget))
+                elif isinstance(v, str):
+                    budget.charge_text(v, item_path, field_string_limit(key))
+                    items.append(sanitize_content(v, item_path))
+                else:
+                    items.append(v)
+            sanitized[key] = items
         elif isinstance(value, str):
-            sanitized[key] = sanitize_content(value, f"{path}.{key}")
+            budget.charge_text(value, child_path, field_string_limit(key))
+            sanitized[key] = sanitize_content(value, child_path)
         else:
             sanitized[key] = value
     return sanitized
 
-
-def _sanitize_message_fields(fields: Any, path: str) -> List[Dict[str, Any]]:
+def _sanitize_message_fields(
+    fields: Any, path: str, budget: EmbedBudget | None = None
+) -> List[Dict[str, Any]]:
     """Validate and sanitize an embed's ``fields`` list."""
+    if budget is None:
+        budget = EmbedBudget()
     if not isinstance(fields, list):
         raise EmbedValidationError(f"{path} must be a list", [path])
     if len(fields) > MAX_FIELDS:
@@ -141,6 +173,8 @@ def _sanitize_message_fields(fields: Any, path: str) -> List[Dict[str, Any]]:
 
     result: List[Dict[str, Any]] = []
     for j, field in enumerate(fields):
+        field_path = f"{path}[{j}]"
+        budget.charge_node(field_path)
         if not isinstance(field, dict):
             raise EmbedValidationError(
                 f"{path}[{j}] must be an object", [f"{path}[{j}]"]
@@ -155,6 +189,8 @@ def _sanitize_message_fields(fields: Any, path: str) -> List[Dict[str, Any]]:
             raise EmbedValidationError(
                 f"{path}[{j}].value is required", [f"{path}[{j}].value"]
             )
+        budget.charge_text(name, f"{field_path}.name", FIELD_NAME_MAX_LENGTH)
+        budget.charge_text(value, f"{field_path}.value", FIELD_VALUE_MAX_LENGTH)
         result.append(
             {
                 "name": validate_string_length(

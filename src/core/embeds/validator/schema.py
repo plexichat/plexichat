@@ -7,6 +7,8 @@ checks, dimension coercion and total character accounting.
 
 from typing import Any, Dict, List, Optional
 
+from .bounds import enforce_embed_budget
+from .ssrf_gate import validate_embed_url
 from .color import validate_color
 from .content import sanitize_content
 from .constants import (
@@ -123,6 +125,9 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     issues: List[str] = []
     sanitized: Dict[str, Any] = {}
 
+    # Structural budget first; per-field lengths are reported as issues.
+    enforce_embed_budget(embed_data, "embed", enforce_field_lengths=False)
+
     # Validate title
     if embed_data.get("title"):
         try:
@@ -144,7 +149,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     # Validate URL
     if embed_data.get("url"):
         try:
-            sanitized["url"] = validate_url(str(embed_data["url"]), "url")
+            sanitized["url"] = validate_embed_url(str(embed_data["url"]), "url")
         except InvalidUrlError as e:
             issues.append(str(e))
 
@@ -179,7 +184,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
 
             if footer.get("icon_url"):
                 try:
-                    sanitized_footer["icon_url"] = validate_url(
+                    sanitized_footer["icon_url"] = validate_embed_url(
                         str(footer["icon_url"]), "footer.icon_url"
                     )
                 except InvalidUrlError as e:
@@ -197,7 +202,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
         if isinstance(image, dict):
             if image.get("url"):
                 try:
-                    sanitized_image["url"] = validate_url(
+                    sanitized_image["url"] = validate_embed_url(
                         str(image["url"]), "image.url"
                     )
                 except InvalidUrlError as e:
@@ -222,7 +227,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
         if isinstance(thumbnail, dict):
             if thumbnail.get("url"):
                 try:
-                    sanitized_thumbnail["url"] = validate_url(
+                    sanitized_thumbnail["url"] = validate_embed_url(
                         str(thumbnail["url"]), "thumbnail.url"
                     )
                 except InvalidUrlError as e:
@@ -259,7 +264,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
 
             if author.get("url"):
                 try:
-                    sanitized_author["url"] = validate_url(
+                    sanitized_author["url"] = validate_embed_url(
                         str(author["url"]), "author.url"
                     )
                 except InvalidUrlError as e:
@@ -267,7 +272,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
 
             if author.get("icon_url"):
                 try:
-                    sanitized_author["icon_url"] = validate_url(
+                    sanitized_author["icon_url"] = validate_embed_url(
                         str(author["icon_url"]), "author.icon_url"
                     )
                 except InvalidUrlError as e:
@@ -293,7 +298,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
 
             if provider.get("url"):
                 try:
-                    sanitized_provider["url"] = validate_url(
+                    sanitized_provider["url"] = validate_embed_url(
                         str(provider["url"]), "provider.url"
                     )
                 except InvalidUrlError as e:
