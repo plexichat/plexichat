@@ -11,6 +11,7 @@ import inspect
 from fastapi.params import Query as QueryParam
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.dashboard as dashboard_routes
 import src.api.routes.admin.telemetry as telemetry_routes
 
 
@@ -71,6 +72,30 @@ class TestTelemetryWindowBounds:
     def test_export_window_bounded(self):
         assert (
             _constraint(telemetry_routes.export_telemetry_stats, "hours", "Le").le
+            == 8760
+        )
+
+
+class TestSystemAlertBounds:
+    def test_alerts_limit_and_window_bounded(self):
+        assert _constraint(dashboard_routes.get_system_alerts, "limit", "Le").le == 200
+        assert _constraint(dashboard_routes.get_system_alerts, "hours", "Le").le == 8760
+        assert (
+            _constraint(
+                dashboard_routes.get_system_alerts, "source", "MaxLen"
+            ).max_length
+            == 64
+        )
+        assert (
+            _constraint(
+                dashboard_routes.get_system_alerts, "severity", "MaxLen"
+            ).max_length
+            == 32
+        )
+
+    def test_alert_stats_window_bounded(self):
+        assert (
+            _constraint(dashboard_routes.get_system_alert_stats, "hours", "Le").le
             == 8760
         )
 

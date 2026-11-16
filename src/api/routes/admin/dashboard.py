@@ -364,10 +364,10 @@ async def get_cross_worker_tuning_audit(
 )
 async def get_system_alerts(
     request: Request,
-    limit: int = 50,
-    hours: int = 24,
-    source: str | None = None,
-    severity: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    hours: int = Query(24, ge=1, le=8760),
+    source: str | None = Query(None, max_length=64),
+    severity: str | None = Query(None, max_length=32),
 ):
     """Return recent system alerts across all subsystems."""
     check_host_restriction(request)
@@ -445,7 +445,7 @@ async def get_system_alerts(
 )
 async def get_system_alert_stats(
     request: Request,
-    hours: int = 168,
+    hours: int = Query(168, ge=1, le=8760),
 ):
     """Return alert counts grouped by source and severity."""
     check_host_restriction(request)
