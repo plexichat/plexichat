@@ -2,10 +2,12 @@ import hmac
 import hashlib
 import time
 
+from src.core.security.hardening import bounded_int, reject_control_characters
+
 from ..exceptions import WebhookSignatureError
-
-
 from .protocol import ApplicationManagerProtocol
+
+MAX_SIGNATURE_LENGTH = 128
 
 
 class WebhookMixin(ApplicationManagerProtocol):
@@ -15,7 +17,18 @@ class WebhookMixin(ApplicationManagerProtocol):
         signature: str,
         timestamp: str,
     ) -> bool:
-        max_skew = self._config.get("webhook_signature_max_skew_seconds", 300)
+        max_skew = bounded_int(
+            self._config.get("webhook_signature_max_skew_seconds", 300),
+            "webhook_signature_max_skew_seconds",
+            minimum=0,
+            maximum=86_400,
+        )
+        try:
+            signature = reject_control_characters(signature, "signature")
+        except ValueError as exc:
+            raise WebhookSignatureError("Invalid webhook signature") from exc
+        if not signature or len(signature) > MAX_SIGNATURE_LENGTH:
+            raise WebhookSignatureError("Invalid webhook signature")
         try:
             ts = int(timestamp)
         except (ValueError, TypeError):

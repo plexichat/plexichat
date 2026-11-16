@@ -24,6 +24,7 @@ from ..validation import (
     validate_application_name,
     validate_homepage_url,
     validate_redirect_uris,
+    validate_webhook_url,
 )
 from src.core.security.hardening import (
     HardeningViolation,
@@ -55,6 +56,9 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         )
         privacy_policy_url = validate_homepage_url(
             privacy_policy_url, field="privacy_policy_url"
+        )
+        interactions_endpoint_url = validate_webhook_url(
+            interactions_endpoint_url, field="interactions_endpoint_url"
         )
 
         max_apps = self._config.get("max_applications_per_user", 25)
@@ -215,6 +219,9 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         )
         privacy_policy_url = validate_homepage_url(
             privacy_policy_url, field="privacy_policy_url"
+        )
+        interactions_endpoint_url = validate_webhook_url(
+            interactions_endpoint_url, field="interactions_endpoint_url"
         )
 
         updates = []

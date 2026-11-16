@@ -6,6 +6,9 @@ import time
 import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager
+from src.core.security.hardening import bounded_int
+
+from ..validation import validate_config_url_pattern
 
 from ..oauth import OAuth2Flow
 from ..commands import CommandRegistry
@@ -90,6 +93,18 @@ class ApplicationManager(
 
         app_config = config.get("applications", {})
         merged = {**defaults, **app_config}
+
+        oauth_config = dict(merged.get("oauth") or {})
+        oauth_config["allowed_redirect_uri_pattern"] = validate_config_url_pattern(
+            oauth_config.get("allowed_redirect_uri_pattern", "^https?://")
+        )
+        merged["oauth"] = oauth_config
+        merged["webhook_signature_max_skew_seconds"] = bounded_int(
+            merged.get("webhook_signature_max_skew_seconds", 300),
+            "webhook_signature_max_skew_seconds",
+            minimum=0,
+            maximum=86_400,
+        )
         merged["webhook_signature_secret"] = self._resolve_webhook_secret(app_config)
         return merged
 

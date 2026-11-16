@@ -9,6 +9,7 @@ caps (counts, lengths and scheme allow-lists).
 
 from __future__ import annotations
 
+import re
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 
@@ -35,6 +36,11 @@ MAX_APP_DESCRIPTION_LENGTH = 2000
 MAX_APP_SHORT_DESCRIPTION_LENGTH = 256
 MAX_HOMEPAGE_URL_LENGTH = 2048
 MAX_APPLICATION_FILTER_LENGTH = 128
+
+# Webhook/interaction endpoints are server-to-server targets. They must be
+# HTTPS, and the configured redirect pattern must be a compilable, bounded regex.
+MAX_WEBHOOK_URL_LENGTH = 2048
+MAX_URL_PATTERN_LENGTH = 512
 
 
 def require_oauth_redirect_url(value: Any, *, field: str = "redirect URI") -> str:
@@ -128,3 +134,32 @@ def validate_homepage_url(value: Any, *, field: str = "url") -> Optional[str]:
             f"{field} exceeds {MAX_HOMEPAGE_URL_LENGTH} characters"
         )
     return require_http_url(text, field)
+
+
+def validate_webhook_url(value: Any, *, field: str = "webhook_url") -> Optional[str]:
+    """Constrain a server-to-server callback target to absolute HTTPS."""
+    if value is None:
+        return None
+    text = reject_control_characters(value, field).strip()
+    if len(text) > MAX_WEBHOOK_URL_LENGTH:
+        raise HardeningViolation(f"{field} exceeds {MAX_WEBHOOK_URL_LENGTH} characters")
+    url = require_https_url(text, field)
+    if urlparse(url).fragment:
+        raise HardeningViolation(f"{field} must not contain a fragment")
+    return url
+
+
+def validate_config_url_pattern(
+    value: Any, *, field: str = "allowed_redirect_uri_pattern"
+) -> Optional[str]:
+    """Validate the configured redirect-URI regex before it is compiled/used."""
+    if value is None:
+        return None
+    text = reject_control_characters(value, field)
+    if len(text) > MAX_URL_PATTERN_LENGTH:
+        raise HardeningViolation(f"{field} exceeds {MAX_URL_PATTERN_LENGTH} characters")
+    try:
+        re.compile(text)
+    except re.error as exc:
+        raise HardeningViolation(f"{field} is not a valid regular expression") from exc
+    return text
