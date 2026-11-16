@@ -46,6 +46,7 @@ class MigrationMixin(AdminMixinBase):
         rb1_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
+            json={"confirmation": "ROLLBACK MIGRATION"},
             timeout=10,
         )
         rb1_ok = 200 <= resp.status_code < 300
@@ -86,6 +87,7 @@ class MigrationMixin(AdminMixinBase):
         mig_apply_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_apply}",
+            params={"confirmation": "APPLY MIGRATION"},
             timeout=10,
         )
         duration = (time.time() - mig_apply_start) * 1000
@@ -125,6 +127,7 @@ class MigrationMixin(AdminMixinBase):
         mig_rollback_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_path_rollback}",
+            json={"confirmation": "ROLLBACK MIGRATION"},
             timeout=10,
         )
         duration = (time.time() - mig_rollback_start) * 1000
@@ -226,6 +229,7 @@ class MigrationMixin(AdminMixinBase):
         rb_start = time.time()
         resp = session.post(
             f"{self.ctx.base_url}{mig_rollback}",
+            json={"confirmation": "ROLLBACK MIGRATION"},
             timeout=10,
         )
         duration = (time.time() - rb_start) * 1000

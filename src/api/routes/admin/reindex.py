@@ -5,6 +5,7 @@ from .utils import (
     check_host_restriction,
     require_admin_permission,
     require_approved_request,
+    require_destructive_confirmation,
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 import src.core.search as search_module
@@ -33,6 +34,9 @@ _cancel_event = threading.Event()
 
 class ReindexRequest(BaseModel):
     force: bool = False
+    # A full rebuild rewrites the whole index and re-decrypts every message;
+    # it requires an exact, explicit confirmation phrase.
+    confirmation: str | None = None
 
 
 def _require_search_ready() -> None:
@@ -61,12 +65,18 @@ async def reindex_search(request: Request, body: ReindexRequest | None = None):
     """
     check_host_restriction(request)
     require_admin_permission(request, "admin.data.reindex")
+    # A full rebuild is destructive: elevated scope + explicit confirmation
+    # on top of the single-use approval gate.
+    require_admin_permission(request, "maintenance")
     # Mass-decrypts messages page-by-page into the search index: require an
     # approved approval request just like the standalone path.
     require_approved_request("search.reindex")
+    force = bool(body.force) if body else False
+    require_destructive_confirmation(
+        "search.reindex", body.confirmation if body else None, dry_run=not force
+    )
     _require_search_ready()
 
-    force = bool(body.force) if body else False
     try:
         started = time.perf_counter()
         with _reindex_lock:
@@ -115,17 +125,23 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
     page (default 200 messages) of decrypted content regardless of table
     size.
 
-    Pass {"force": true} in the body to do a full rebuild; otherwise the
-    reindex is incremental (skips messages whose source has not changed
-    since the last index). POST /search/reindex/cancel stops a running job.
+    Pass {"force": true, "confirmation": "REBUILD SEARCH INDEX"} in the body
+    to do a full rebuild; otherwise the reindex is incremental (skips
+    messages whose source has not changed since the last index). POST
+    /search/reindex/cancel stops a running job.
     """
     global _reindex_status
 
     check_host_restriction(request)
     # Mass-decrypts messages into the search index (in bounded pages):
-    # elevated permission plus an approved approval request are required.
+    # elevated scope plus an approved approval request are required.
     require_admin_permission(request, "admin.data.reindex")
+    require_admin_permission(request, "maintenance")
     require_approved_request("search.reindex")
+    force = bool(body.force) if body else False
+    require_destructive_confirmation(
+        "search.reindex", body.confirmation if body else None, dry_run=not force
+    )
     _require_search_ready()
 
     # Atomically claim the in-progress flag so two simultaneous requests can
@@ -140,11 +156,10 @@ async def reindex_standalone(request: Request, body: ReindexRequest | None = Non
             )
         _reindex_status["in_progress"] = True
         _reindex_status["last_error"] = None
-        _reindex_status["last_incremental"] = not (bool(body.force) if body else False)
+        _reindex_status["last_incremental"] = not force
         _reindex_status["indexed_so_far"] = 0
         _reindex_status["cancel_requested"] = False
 
-    force = bool(body.force) if body else False
     _cancel_event.clear()
 
     def _do_reindex():
@@ -258,7 +273,9 @@ async def reindex_conversation(
 
     force = bool(body.force) if body else False
     try:
-        indexed = search_module._manager.reindex_conversation(conversation_id, force)
+        indexed = await run_in_threadpool(
+            search_module._manager.reindex_conversation, conversation_id, force
+        )
         return {
             "success": True,
             "indexed": indexed,
