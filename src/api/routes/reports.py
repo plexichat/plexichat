@@ -14,7 +14,11 @@ from src.api.schemas.reports import (
 )
 from src.api.schemas.common import ErrorResponse
 from src.core.reports import ReportCategory
-from src.core.security.hardening import HardeningViolation, reject_control_characters
+from src.core.security.hardening import (
+    HardeningViolation,
+    parse_id,
+    reject_control_characters,
+)
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -81,6 +85,26 @@ def _bounded_report_field(
             return text[:maximum]
         raise _bad_report_field(field)
     return text
+
+
+def _parse_report_id(value, field: str) -> int:
+    """Parse a report ID through the shared snowflake range guard.
+
+    ``int()`` accepted negatives, zero and identifiers beyond 2**63-1, which
+    then reached lookup queries and dedup keys. Reject them here with the
+    endpoint's 400 contract before any storage access.
+    """
+    if isinstance(value, str):
+        if len(value) > MAX_EVIDENCE_ID_LENGTH:
+            raise _bad_report_field(field)
+        try:
+            value = reject_control_characters(value, field)
+        except HardeningViolation:
+            raise _bad_report_field(field) from None
+    try:
+        return parse_id(value, field)
+    except HardeningViolation:
+        raise _bad_report_field(field) from None
 
 
 def _bounded_evidence_ids(values):
@@ -176,9 +200,13 @@ async def report_message(
 
     try:
         try:
-            message_id = int(body.message_id)
-            channel_id = int(body.channel_id)
-            server_id = int(body.server_id) if body.server_id else None
+            message_id = _parse_report_id(body.message_id, "message_id")
+            channel_id = _parse_report_id(body.channel_id, "channel_id")
+            server_id = (
+                _parse_report_id(body.server_id, "server_id")
+                if body.server_id
+                else None
+            )
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid ID format for message report: message_id={body.message_id}, channel_id={body.channel_id}"
@@ -350,7 +378,7 @@ async def report_user(
 
     try:
         try:
-            reported_user_id = int(body.user_id)
+            reported_user_id = _parse_report_id(body.user_id, "user_id")
         except ValueError:
             logger.warning(
                 f"User {current_user.user_id} provided invalid user ID for user report: {body.user_id}"
@@ -394,7 +422,10 @@ async def report_user(
         evidence_ids = None
         if evidence_values:
             try:
-                evidence_ids = [int(mid) for mid in evidence_values]
+                evidence_ids = [
+                    _parse_report_id(mid, "evidence_message_id")
+                    for mid in evidence_values
+                ]
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
