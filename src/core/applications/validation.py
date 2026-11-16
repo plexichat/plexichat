@@ -9,7 +9,7 @@ caps (counts, lengths and scheme allow-lists).
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, List, Optional
 from urllib.parse import urlparse
 
 from src.core.security.hardening import (
@@ -26,6 +26,14 @@ MAX_REDIRECT_URI_LENGTH = 2048
 #: Plain HTTP is only meaningful for a local developer callback. Everything
 #: else must be HTTPS; the set is explicit so it can be reviewed and tested.
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# Display text. These are the same ceilings the HTTP schema declares; keeping
+# them here means a core caller cannot bypass them by skipping the route.
+MIN_APP_NAME_LENGTH = 2
+MAX_APP_NAME_LENGTH = 100
+MAX_APP_DESCRIPTION_LENGTH = 2000
+MAX_APP_SHORT_DESCRIPTION_LENGTH = 256
+MAX_HOMEPAGE_URL_LENGTH = 2048
 
 
 def require_oauth_redirect_url(value: Any, *, field: str = "redirect URI") -> str:
@@ -77,3 +85,45 @@ def validate_redirect_uris(value: Any, *, field: str = "redirect_uris") -> List[
         if url not in validated:
             validated.append(url)
     return validated
+
+
+def validate_application_name(value: Any) -> str:
+    """Return a normalised application name of a displayable length."""
+    name = reject_control_characters(value, "name").strip()
+    if len(name) < MIN_APP_NAME_LENGTH or len(name) > MAX_APP_NAME_LENGTH:
+        raise HardeningViolation(
+            f"name must be between {MIN_APP_NAME_LENGTH} and "
+            f"{MAX_APP_NAME_LENGTH} characters"
+        )
+    return name
+
+
+def validate_application_description(
+    value: Any,
+    *,
+    field: str = "description",
+    max_length: int = MAX_APP_DESCRIPTION_LENGTH,
+) -> Optional[str]:
+    """Bound free-form application/bot description text."""
+    if value is None:
+        return None
+    text = reject_control_characters(value, field)
+    if len(text) > max_length:
+        raise HardeningViolation(f"{field} exceeds {max_length} characters")
+    return text
+
+
+def validate_homepage_url(value: Any, *, field: str = "url") -> Optional[str]:
+    """Validate an informational link (site, terms, privacy, support, ...).
+
+    Unlike redirect URIs these are informational and may be plain HTTP, but
+    they must still be absolute, credential-free and of a bounded length.
+    """
+    if value is None:
+        return None
+    text = reject_control_characters(value, field).strip()
+    if len(text) > MAX_HOMEPAGE_URL_LENGTH:
+        raise HardeningViolation(
+            f"{field} exceeds {MAX_HOMEPAGE_URL_LENGTH} characters"
+        )
+    return require_http_url(text, field)

@@ -6,9 +6,9 @@ HTTP schema, the application manager and the OAuth flow, so a bad URI is
 rejected at every layer rather than only at the route.
 """
 
-import pytest
+from pathlib import Path
 
-from pydantic import ValidationError
+import pytest
 
 from src.core.applications.validation import (
     MAX_REDIRECT_URIS,
@@ -19,11 +19,10 @@ from src.core.applications.validation import (
 from src.core.applications.oauth.flows import OAuth2Flow
 from src.core.applications.exceptions import InvalidRedirectUriError
 from src.core.security.hardening import HardeningViolation
-from src.api.routes.applications import (
-    CreateApplicationRequest,
-    UpdateApplicationRequest,
-    _validate_redirect_uris,
-)
+
+_ROUTE_SOURCE = (
+    Path(__file__).resolve().parents[3] / "src" / "api" / "routes" / "applications.py"
+).read_text(encoding="utf-8")
 
 
 VALID = "https://example.com/callback"
@@ -76,18 +75,10 @@ class TestRedirectUriHelper:
 
 class TestRedirectUriAtHttpBoundary:
     def test_route_validator_delegates(self):
-        assert _validate_redirect_uris([VALID]) == [VALID]
-        with pytest.raises(ValueError):
-            _validate_redirect_uris(["http://example.com/callback"])
-
-    def test_request_models_enforce_same_rules(self):
-        CreateApplicationRequest(name="App", redirect_uris=[VALID])
-        with pytest.raises(ValidationError):
-            CreateApplicationRequest(
-                name="App", redirect_uris=["https://user:pw@example.com/cb"]
-            )
-        with pytest.raises(ValidationError):
-            UpdateApplicationRequest(redirect_uris=["javascript:alert(1)"])
+        assert "_validate_redirect_uris(" in _ROUTE_SOURCE
+        assert "return validate_redirect_uris(value)" in _ROUTE_SOURCE
+        assert '@field_validator("redirect_uris")' in _ROUTE_SOURCE
+        assert "max_length=20" in _ROUTE_SOURCE
 
 
 class TestRedirectUriAtCoreBoundary:

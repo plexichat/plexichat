@@ -19,7 +19,13 @@ from ..exceptions import (
     InvalidApplicationNameError,
 )
 from ..oauth.tokens import generate_client_secret
-from ..validation import validate_redirect_uris
+from ..validation import (
+    validate_application_description,
+    validate_application_name,
+    validate_homepage_url,
+    validate_redirect_uris,
+)
+from src.core.security.hardening import HardeningViolation
 from .row_mappers import row_to_application
 from .protocol import ApplicationManagerProtocol
 
@@ -39,6 +45,13 @@ class AppCRUDMixin(ApplicationManagerProtocol):
     ) -> Application:
         name = self._validate_app_name(name)
         redirect_uris = validate_redirect_uris(redirect_uris)
+        description = validate_application_description(description)
+        terms_of_service_url = validate_homepage_url(
+            terms_of_service_url, field="terms_of_service_url"
+        )
+        privacy_policy_url = validate_homepage_url(
+            privacy_policy_url, field="privacy_policy_url"
+        )
 
         max_apps = self._config.get("max_applications_per_user", 25)
         count = self._db.fetch_one(
@@ -166,6 +179,13 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         if redirect_uris is not None:
             redirect_uris = validate_redirect_uris(redirect_uris)
+        description = validate_application_description(description)
+        terms_of_service_url = validate_homepage_url(
+            terms_of_service_url, field="terms_of_service_url"
+        )
+        privacy_policy_url = validate_homepage_url(
+            privacy_policy_url, field="privacy_policy_url"
+        )
 
         updates = []
         params = []
@@ -247,20 +267,12 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         return True
 
     def _validate_app_name(self, name: str) -> str:
-        if not name or not name.strip():
-            raise InvalidApplicationNameError("Application name cannot be empty")
-
-        name = name.strip()
-        if len(name) < 2:
-            raise InvalidApplicationNameError(
-                "Application name too short (min 2 characters)"
-            )
-        if len(name) > 100:
-            raise InvalidApplicationNameError(
-                "Application name too long (max 100 characters)"
-            )
-
-        return name
+        # Delegate to the shared rule so control characters are rejected too,
+        # but keep the domain exception existing callers already handle.
+        try:
+            return validate_application_name(name)
+        except HardeningViolation as exc:
+            raise InvalidApplicationNameError(str(exc)) from exc
 
     def regenerate_client_secret(
         self, user_id: SnowflakeID, application_id: SnowflakeID

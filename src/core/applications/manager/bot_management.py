@@ -24,6 +24,11 @@ from ..exceptions import (
     InstallationExistsError,
     InstallationNotFoundError,
 )
+from ..validation import (
+    MAX_APP_SHORT_DESCRIPTION_LENGTH,
+    validate_application_description,
+    validate_homepage_url,
+)
 from .row_mappers import row_to_approved_bot, row_to_bot_request, row_to_bot_profile
 from .protocol import ApplicationManagerProtocol
 
@@ -420,6 +425,16 @@ class BotManagementMixin(ApplicationManagerProtocol):
             raise ApplicationNotFoundError("Application not found")
         if app.owner_id != user_id:
             raise ApplicationAccessDeniedError("You do not own this application")
+
+        description = validate_application_description(description)
+        short_description = validate_application_description(
+            short_description,
+            field="short_description",
+            max_length=MAX_APP_SHORT_DESCRIPTION_LENGTH,
+        )
+        website_url = validate_homepage_url(website_url, field="website_url")
+        support_url = validate_homepage_url(support_url, field="support_url")
+        github_url = validate_homepage_url(github_url, field="github_url")
 
         existing = self.get_bot_profile(application_id, viewer_id=user_id)
         now = self._get_timestamp()

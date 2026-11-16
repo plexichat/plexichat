@@ -66,6 +66,15 @@ def _validate_redirect_uris(value):
     return validate_redirect_uris(value)
 
 
+def _validate_description(value):
+    """Descriptions share the core ceiling and reject embedded controls."""
+    if value is None:
+        return value
+    from src.core.applications.validation import validate_application_description
+
+    return validate_application_description(value)
+
+
 class CreateApplicationRequest(BaseModel):
     """Request to create an application."""
 
@@ -80,6 +89,11 @@ class CreateApplicationRequest(BaseModel):
     @classmethod
     def _redirect_uris(cls, value):
         return _validate_redirect_uris(value)
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value):
+        return _validate_description(value)
 
 
 class UpdateApplicationRequest(BaseModel):
@@ -96,6 +110,11 @@ class UpdateApplicationRequest(BaseModel):
     @classmethod
     def _redirect_uris(cls, value):
         return _validate_redirect_uris(value)
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value):
+        return _validate_description(value)
 
 
 class BotTokenResponse(BaseModel):
