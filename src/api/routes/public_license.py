@@ -26,6 +26,14 @@ _MAX_NONCE_LEN = 128
 _MAX_SIGNATURE_LEN = 512
 _DEFAULT_TTL_SECONDS = 300
 
+# Purging expired nonces is pure memory hygiene: ``consume()`` already rejects
+# an expired entry, so correctness never depends on sweeping eagerly. Doing a
+# full dict scan on every issue() made the challenge endpoint O(n) in the
+# number of outstanding challenges. Amortize the sweep instead: only after a
+# threshold of stored nonces AND at most once per interval.
+_PURGE_MIN_INTERVAL_SECONDS = 5.0
+_PURGE_MIN_NONCES = 64
+
 
 # ---------------------------------------------------------------------------
 # Nonce store
@@ -63,6 +71,7 @@ class NonceStore:
         self._nonces: Dict[str, float] = {}
         self._valkey = None
         self._valkey_checked = False
+        self._last_purge = 0.0
 
     def _get_valkey(self):
         """Return the configured Valkey client, or ``None`` if unavailable.
@@ -120,10 +129,18 @@ class NonceStore:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="License challenge store is unavailable",
                 )
-        expires_at = time.time() + self._ttl_seconds
+        now = time.time()
         with self._lock:
-            self._purge_expired_locked()
-            self._nonces[nonce] = expires_at
+            # Amortized sweep: only when enough nonces have accumulated and
+            # not more than once per interval. Expired nonces are still
+            # rejected by ``consume`` even if they linger in the dict.
+            if (
+                len(self._nonces) >= _PURGE_MIN_NONCES
+                and (now - self._last_purge) >= _PURGE_MIN_INTERVAL_SECONDS
+            ):
+                self._purge_expired_locked(now)
+                self._last_purge = now
+            self._nonces[nonce] = now + self._ttl_seconds
         return nonce, self._ttl_seconds
 
     def consume(self, nonce: str) -> bool:
@@ -163,8 +180,9 @@ class NonceStore:
                 return False
             return True
 
-    def _purge_expired_locked(self) -> None:
-        now = time.time()
+    def _purge_expired_locked(self, now: Optional[float] = None) -> None:
+        if now is None:
+            now = time.time()
         expired = [k for k, v in self._nonces.items() if v < now]
         for k in expired:
             del self._nonces[k]
@@ -202,6 +220,14 @@ nonce_store = NonceStore(ttl_seconds=_DEFAULT_TTL_SECONDS)
 # ---------------------------------------------------------------------------
 
 
+# The public key is fixed for the lifetime of a licensing setup. Decode it
+# once and reuse it across challenge/info/export requests; keying by the raw
+# base64 string means a hot-swap decodes the new key transparently. Bounded so
+# a pathological key rotation cannot grow the cache without limit.
+_MAX_CACHED_PUBLIC_KEYS = 8
+_public_key_cache: Dict[str, bytes] = {}
+
+
 def _get_public_key_bytes() -> Optional[bytes]:
     """Return the license verification public key as raw bytes."""
     try:
@@ -214,6 +240,9 @@ def _get_public_key_bytes() -> Optional[bytes]:
                 "did licensing.setup() run at startup?"
             )
             return None
+        cached = _public_key_cache.get(key_b64)
+        if cached is not None:
+            return cached
         try:
             raw = base64.b64decode(key_b64, validate=True)
         except Exception as e:
@@ -224,6 +253,9 @@ def _get_public_key_bytes() -> Optional[bytes]:
                 f"Configured license public key is {len(raw)} bytes, expected 32"
             )
             return None
+        if len(_public_key_cache) >= _MAX_CACHED_PUBLIC_KEYS:
+            _public_key_cache.clear()
+        _public_key_cache[key_b64] = raw
         return raw
     except Exception as e:
         logger.error(f"Failed to load license public key: {e}")
