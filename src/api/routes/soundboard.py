@@ -8,6 +8,8 @@ bytes are validated and stored through the shared media pipeline.
 
 from src.api.request_guards import MAX_SOUND_UPLOAD, read_upload_capped
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Depends, UploadFile
@@ -48,6 +50,16 @@ router = APIRouter(tags=["Soundboard"])
 # Hard ceiling applied at the HTTP boundary so a single request cannot buffer
 # an unbounded body into memory before the manager's own size check runs.
 _HTTP_UPLOAD_CEILING_BYTES = 10 * 1024 * 1024
+
+
+def _bounded_sound_size(value: object) -> int:
+    """Clamp the configured sound size cap to the HTTP upload ceiling."""
+    return bounded_int(
+        value,
+        "soundboard.max_sound_size",
+        minimum=1,
+        maximum=_HTTP_UPLOAD_CEILING_BYTES,
+    )
 
 
 def _sound_to_response(sound) -> SoundResponse:
@@ -293,7 +305,14 @@ async def upload_sound(
     if emoji:
         emoji = _reject_ui_text_chars(emoji, "sound emoji")
 
-    max_size = int(config.get("soundboard.max_sound_size", 2097152) or 2097152)
+    try:
+        max_size = _bounded_sound_size(
+            config.get("soundboard.max_sound_size", 2097152) or 2097152
+        )
+    except HardeningViolation as exc:
+        raise HTTPException(
+            status_code=400, detail="Invalid sound size configuration"
+        ) from exc
     declared_size = getattr(file, "size", None)
     if declared_size is not None and declared_size > max_size:
         raise HTTPException(status_code=413, detail="Sound file is too large")
