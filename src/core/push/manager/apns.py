@@ -17,6 +17,11 @@ from .base import PushManagerBase
 # opaque alphanumeric hex/ASCII strings, so this still admits every real one.
 _APNS_TOKEN_FORBIDDEN = re.compile(r"[\x00-\x20\x7f/?#@:%\\]")
 
+# APNs caps the whole custom-data section at ~4 KB. A single oversized value
+# from a caller would otherwise bloat every APNs request, so each coerced
+# value is bounded here (and dropped, like other uncoercible values).
+MAX_APNS_DATA_VALUE_LENGTH = 4096
+
 
 def _safe_apns_token(token: Any) -> str:
     value = str(token or "")
@@ -160,11 +165,16 @@ class ApnsMixin(PushManagerBase):
                 for k, v in data.items():
                     try:
                         if isinstance(v, str):
-                            payload_dict[str(k)] = v
+                            coerced = v
                         elif isinstance(v, (dict, list)):
-                            payload_dict[str(k)] = json.dumps(v)
+                            coerced = json.dumps(v)
                         else:
-                            payload_dict[str(k)] = str(v)
+                            coerced = str(v)
+                        if len(coerced) > MAX_APNS_DATA_VALUE_LENGTH:
+                            raise ValueError(
+                                f"value exceeds {MAX_APNS_DATA_VALUE_LENGTH} chars"
+                            )
+                        payload_dict[str(k)] = coerced
                     except Exception as e:
                         logger.debug(f"APNs payload key {k!r} dropped: {e}")
 

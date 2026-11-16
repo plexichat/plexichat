@@ -159,3 +159,10 @@ class TestWebhookAvatarCredentials:
 
         parsed = urlparse("https://example.com/a.png")
         assert parsed.username is None and parsed.password is None
+
+
+class TestApnsDataCaps:
+    def test_cap_constant_is_finite(self):
+        from src.core.push.manager.apns import MAX_APNS_DATA_VALUE_LENGTH
+
+        assert MAX_APNS_DATA_VALUE_LENGTH == 4096
