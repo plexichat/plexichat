@@ -29,6 +29,7 @@ from src.core.servers.exceptions import (
 )
 
 
+from src.api.routes.messages.helpers import require_snowflake
 from .base import MessagesCRUDBase
 from .broadcast import BroadcastMixin
 
@@ -60,7 +61,9 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
         try:
             try:
                 url_cid = parse_id(channel_id, "channel_id")
-                mid = int(message_id)
+                # The delete target is an untrusted snowflake; range-check it
+                # before resolving or mutating the message.
+                mid = require_snowflake(message_id, "message_id", "Invalid message ID")
             except ValueError:
                 raise HTTPException(
                     status_code=400,

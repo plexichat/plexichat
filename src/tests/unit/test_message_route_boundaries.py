@@ -102,3 +102,9 @@ def test_get_message_rejects_out_of_range_id():
     from src.api.routes.messages.messages_crud.retrieve import RetrieveMixin
 
     _rejects_bad_id(RetrieveMixin().get_message, ("123", "-5"))
+
+
+def test_delete_message_rejects_out_of_range_id():
+    from src.api.routes.messages.messages_crud.delete import DeleteMixin
+
+    _rejects_bad_id(DeleteMixin().delete_message, ("123", "0"))
