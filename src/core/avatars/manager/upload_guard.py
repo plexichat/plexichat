@@ -27,6 +27,7 @@ from pathlib import Path
 __all__ = [
     "UploadContentError",
     "PathGuardError",
+    "DecompressionLimitError",
     "normalize_mime",
     "detect_containers",
     "contains_active_content",
@@ -51,6 +52,10 @@ class UploadContentError(ValueError):
 
 class PathGuardError(ValueError):
     """Raised when a generated filename/path would escape its base directory."""
+
+
+class DecompressionLimitError(ValueError):
+    """Raised when decoded data exceeds a hard ceiling or compression ratio."""
 
 
 # Content types that must never be accepted for, or served as, raster media.
@@ -456,3 +461,110 @@ def extension_for_content_type(
 ) -> str:
     """Map a media type to a confined, lowercase file extension."""
     return _MIME_EXTENSIONS.get(normalize_mime(content_type), default)
+
+
+# ---------------------------------------------------------------------------
+# Decompression limits (image decodes and archive extraction)
+# ---------------------------------------------------------------------------
+
+# Hard ceiling on the *decoded* byte count of any single upload. Well above
+# every legitimate avatar/emoji/sticker payload we accept.
+MAX_DECODED_BYTES = 256 * 1024 * 1024
+
+# Refuse a decoded payload that is more than this many times larger than its
+# compressed form, but only once the output is big enough that a legitimate
+# compressible image (e.g. a flat-colour logo) cannot trip the check.
+MAX_DECOMPRESSION_RATIO = 2048
+_RATIO_MIN_DECODED_BYTES = 8 * 1024 * 1024
+
+# Archive extraction caps.
+MAX_ARCHIVE_ENTRIES = 1024
+MAX_ARCHIVE_TOTAL_BYTES = 256 * 1024 * 1024
+
+
+def check_decompression_ratio(
+    compressed_bytes: int,
+    decoded_bytes: int,
+    *,
+    hard_ceiling: int = MAX_DECODED_BYTES,
+    max_ratio: int = MAX_DECOMPRESSION_RATIO,
+    label: str = "payload",
+) -> int:
+    """Enforce a hard decoded-byte ceiling and a maximum expansion ratio.
+
+    Returns ``decoded_bytes`` on success. Raises
+    :class:`DecompressionLimitError` (fail closed) when either limit is
+    exceeded. The ratio check only engages for outputs above a small floor so
+    highly-compressible but legitimate small images are not rejected.
+    """
+    try:
+        decoded = int(decoded_bytes)
+        compressed = int(compressed_bytes)
+    except (TypeError, ValueError) as exc:
+        raise DecompressionLimitError(f"Invalid {label} size") from exc
+    if decoded < 0 or compressed < 0:
+        raise DecompressionLimitError(f"Invalid {label} size")
+    if decoded > hard_ceiling:
+        raise DecompressionLimitError(
+            f"Decoded {label} size {decoded} exceeds hard ceiling {hard_ceiling}"
+        )
+    if (
+        decoded > _RATIO_MIN_DECODED_BYTES
+        and compressed > 0
+        and decoded // compressed > max_ratio
+    ):
+        raise DecompressionLimitError(
+            f"Decoded {label} expansion ratio exceeds {max_ratio}:1"
+        )
+    return decoded
+
+
+def check_image_decode_limits(
+    compressed_bytes: int,
+    width: int,
+    height: int,
+    *,
+    frames: int = 1,
+    bytes_per_pixel: int = 4,
+) -> int:
+    """Estimate decoded image bytes (including all frames) and cap them."""
+    try:
+        frames = max(1, int(frames))
+        estimated = int(width) * int(height) * int(bytes_per_pixel) * frames
+    except (TypeError, ValueError) as exc:
+        raise DecompressionLimitError("Invalid image dimensions") from exc
+    return check_decompression_ratio(compressed_bytes, estimated, label="image")
+
+
+def check_archive_entries(
+    entries: list[tuple[str, int]],
+    *,
+    total_bytes: int | None = None,
+) -> int:
+    """Validate archive metadata before extracting anything.
+
+    ``entries`` is a list of ``(name, uncompressed_size)`` pairs. Enforces a
+    maximum entry count, a cumulative byte ceiling and a per-entry expansion
+    ratio. Returns the total uncompressed size on success.
+    """
+    if len(entries) > MAX_ARCHIVE_ENTRIES:
+        raise DecompressionLimitError("Archive has too many entries")
+    declared = (
+        int(total_bytes)
+        if total_bytes is not None
+        else sum(int(size) for _, size in entries)
+    )
+    if declared > MAX_ARCHIVE_TOTAL_BYTES:
+        raise DecompressionLimitError(
+            f"Archive declares {declared} bytes, above hard ceiling"
+        )
+    total = 0
+    for name, size in entries:
+        # Reject traversal-bearing member names before any extraction.
+        if not name or ".." in str(name) or "/" in str(name).replace("\\", "/"):
+            raise PathGuardError("Unsafe archive member name")
+        entry_size = int(size)
+        total += entry_size
+        if total > MAX_ARCHIVE_TOTAL_BYTES:
+            raise DecompressionLimitError("Archive total size exceeds hard ceiling")
+    return total

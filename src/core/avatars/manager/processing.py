@@ -88,8 +88,10 @@ class AvatarProcessingMixin(AvatarProtocol):
         # is rejected rather than silently re-labelled. The generic ValueError
         # is mapped by the HTTP layer to the standard "Invalid image file" 400.
         from .upload_guard import (
+            DecompressionLimitError,
             UploadContentError,
             assert_safe_media_payload,
+            check_image_decode_limits,
             declared_type_matches_bytes,
         )
 
@@ -127,6 +129,20 @@ class AvatarProcessingMixin(AvatarProtocol):
             original_format = img.format
             n_frames = getattr(img, "n_frames", 1)
             is_animated = bool(getattr(img, "is_animated", False)) or (n_frames > 1)
+
+            # DEEP: refuse an image whose decoded size (across every frame)
+            # blows past the hard byte ceiling or the expansion ratio. This
+            # runs before Pillow ever loads pixel data, so a tiny header that
+            # declares a huge canvas cannot force a large allocation.
+            try:
+                check_image_decode_limits(
+                    len(image_data), width, height, frames=n_frames
+                )
+            except DecompressionLimitError as exc:
+                raise ValueError(
+                    "Invalid image file: decompression limit exceeded"
+                ) from exc
+
             # Capture the animation loop count while positioned on the first
             # frame: Pillow keeps the loop extension on frame 0, so reading
             # img.info after seeking to later frames may lose it.
