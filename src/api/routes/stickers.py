@@ -45,6 +45,10 @@ _STICKER_CLIENT_ERRORS = (
 
 router = APIRouter(tags=["Stickers"])
 
+#: Bounds on the raw comma-separated tag field and the suggestion query.
+MAX_STICKER_TAG_PAYLOAD = 400
+MAX_STICKER_SUGGESTION_QUERY = 256
+
 
 def _build_shared_ratelimit_storage():
     """Build the shared/persistent storage backend used at startup.
@@ -294,6 +298,16 @@ async def create_sticker(
     name = _reject_ui_text_chars(name, "sticker name")
     tag_list = []
     if tags:
+        if len(tags) > MAX_STICKER_TAG_PAYLOAD:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": 400,
+                        "message": "A sticker may have at most 10 tags of 32 characters",
+                    }
+                },
+            )
         tag_list = [
             _reject_ui_text_chars(t.strip(), "sticker tag")
             for t in tags.split(",")
@@ -494,7 +508,7 @@ async def send_sticker_usage(
     summary="Get sticker suggestions",
 )
 async def get_sticker_suggestions(
-    content: str = Query(...),
+    content: str = Query(..., max_length=MAX_STICKER_SUGGESTION_QUERY),
     server_id: Optional[str] = Query(None),
     limit: int = Query(default=5, ge=1, le=20),
     current_user: TokenInfo = Depends(get_current_user),
