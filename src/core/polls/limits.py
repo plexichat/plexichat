@@ -26,6 +26,12 @@ MIN_QUESTION_LENGTH = 1
 MAX_QUESTION_LENGTH = 300
 MIN_OPTION_LENGTH = 1
 MAX_OPTION_LENGTH = 100
+MIN_DURATION_HOURS = 1
+MAX_DURATION_HOURS = 168
+# Milliseconds since epoch; 4102444800000 is 2100-01-01. Anything beyond
+# that is a corrupt/attacker-controlled clock, not a real close time.
+MIN_TIMESTAMP_MS = 0
+MAX_TIMESTAMP_MS = 4_102_444_800_000
 
 
 def bound_count(
@@ -58,6 +64,8 @@ class PollFieldLimits:
     max_options: int
     max_question_length: int
     max_option_length: int
+    min_duration_hours: int
+    max_duration_hours: int
 
 
 def resolve_field_limits(config: Mapping[str, Any]) -> PollFieldLimits:
@@ -95,11 +103,30 @@ def resolve_field_limits(config: Mapping[str, Any]) -> PollFieldLimits:
         maximum=MAX_OPTION_LENGTH,
         default=MAX_OPTION_LENGTH,
     )
+    min_duration_hours = bound_count(
+        config.get("min_duration_hours", MIN_DURATION_HOURS),
+        "polls.min_duration_hours",
+        minimum=MIN_DURATION_HOURS,
+        maximum=MAX_DURATION_HOURS,
+        default=MIN_DURATION_HOURS,
+    )
+    max_duration_hours = bound_count(
+        config.get("max_duration_hours", MAX_DURATION_HOURS),
+        "polls.max_duration_hours",
+        minimum=MIN_DURATION_HOURS,
+        maximum=MAX_DURATION_HOURS,
+        default=MAX_DURATION_HOURS,
+    )
+    if min_duration_hours > max_duration_hours:
+        min_duration_hours = max_duration_hours
+
     return PollFieldLimits(
         min_options=min_options,
         max_options=max_options,
         max_question_length=max_question_length,
         max_option_length=max_option_length,
+        min_duration_hours=min_duration_hours,
+        max_duration_hours=max_duration_hours,
     )
 
 
@@ -168,6 +195,20 @@ def validate_option_text(value: Any, config: Mapping[str, Any]) -> str:
     return text
 
 
+def bound_timestamp(value: Any, field: str = "timestamp") -> int:
+    """Range-check an epoch-millisecond close/created time.
+
+    A negative or absurd timestamp flows into ``ends_at`` arithmetic and
+    comparisons, so it is rejected rather than trusted.
+    """
+    return bounded_int(
+        value,
+        field,
+        minimum=MIN_TIMESTAMP_MS,
+        maximum=MAX_TIMESTAMP_MS,
+    )
+
+
 def bound_option_count(options: Any, config: Mapping[str, Any]) -> int:
     """Return the validated option count, or raise ``PollOptionLimitError``."""
     from .exceptions import PollOptionLimitError
@@ -187,12 +228,17 @@ def bound_option_count(options: Any, config: Mapping[str, Any]) -> int:
 
 __all__ = [
     "MAX_OPTIONS",
+    "MAX_DURATION_HOURS",
     "MAX_OPTION_LENGTH",
+    "MAX_TIMESTAMP_MS",
+    "MIN_DURATION_HOURS",
+    "MIN_TIMESTAMP_MS",
     "MAX_VOTE_SELECTIONS",
     "MAX_QUESTION_LENGTH",
     "MIN_OPTIONS",
     "PollFieldLimits",
     "bound_count",
+    "bound_timestamp",
     "bound_option_count",
     "validate_option_ids",
     "resolve_field_limits",

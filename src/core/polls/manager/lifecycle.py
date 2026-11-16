@@ -9,6 +9,7 @@ from ..exceptions import (
     PollError,
     PollNotFoundError,
 )
+from ..limits import bound_timestamp
 from ..models import Poll
 from .base import PollManagerBase
 
@@ -146,7 +147,7 @@ class LifecycleMixin(PollManagerBase):
 
     def _end_poll(self, poll_id: SnowflakeID):
         """Mark a poll as ended."""
-        now = self._get_timestamp()
+        now = bound_timestamp(self._get_timestamp(), "poll ended_at")
         self._db.execute(
             "UPDATE poll_polls SET ended_at = ? WHERE id = ?", (now, poll_id)
         )

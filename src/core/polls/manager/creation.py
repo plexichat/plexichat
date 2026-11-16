@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 import utils.logger as logger
+from src.core.security.hardening import HardeningViolation, bounded_int
 from ...base import SnowflakeID
 
 from ..exceptions import (
@@ -14,6 +15,8 @@ from ..exceptions import (
 )
 from ..limits import (
     bound_option_count,
+    bound_timestamp,
+    resolve_field_limits,
     validate_option_text,
     validate_question_text,
 )
@@ -85,7 +88,7 @@ class CreationMixin(PollManagerBase):
         validated_options = [self._validate_option(opt) for opt in options]
         duration_hours = self._validate_duration(duration_hours)
 
-        now = self._get_timestamp()
+        now = bound_timestamp(self._get_timestamp(), "poll created_at")
         poll_id = self._generate_id()
 
         ends_at = None
@@ -179,14 +182,25 @@ class CreationMixin(PollManagerBase):
         if duration_hours is None:
             return None
 
-        min_hours = self._config.get("min_duration_hours", 1)
-        max_hours = self._config.get("max_duration_hours", 168)
-
-        if duration_hours < min_hours or duration_hours > max_hours:
+        limits = resolve_field_limits(self._config)
+        min_hours = limits.min_duration_hours
+        max_hours = limits.max_duration_hours
+        if isinstance(duration_hours, bool) or not isinstance(duration_hours, int):
             raise InvalidPollDurationError(
                 f"Poll duration must be between {min_hours} and {max_hours} hours",
                 min_hours,
                 max_hours,
             )
-
-        return duration_hours
+        try:
+            return bounded_int(
+                duration_hours,
+                "duration_hours",
+                minimum=min_hours,
+                maximum=max_hours,
+            )
+        except HardeningViolation as exc:
+            raise InvalidPollDurationError(
+                f"Poll duration must be between {min_hours} and {max_hours} hours",
+                min_hours,
+                max_hours,
+            ) from exc

@@ -12,6 +12,7 @@ import utils.logger as logger
 from ...base import BaseManager, SnowflakeID
 
 from ..exceptions import PollConfigurationError
+from ..limits import resolve_field_limits
 from ..models import Poll, PollResults
 
 
@@ -96,7 +97,21 @@ class PollManagerBase(BaseManager):
         }
 
         poll_config = config.get("polls", {})
-        return {**defaults, **poll_config}
+        if not isinstance(poll_config, dict):
+            poll_config = {}
+        merged = {**defaults, **poll_config}
+        limits = resolve_field_limits(merged)
+        # Every consumer reads ``self._config``; sanitising it here guarantees
+        # no other call site can observe an out-of-envelope value.
+        merged.update(
+            min_options=limits.min_options,
+            max_options=limits.max_options,
+            max_question_length=limits.max_question_length,
+            max_option_length=limits.max_option_length,
+            min_duration_hours=limits.min_duration_hours,
+            max_duration_hours=limits.max_duration_hours,
+        )
+        return merged
 
     # -- Implemented by the behaviour mixins ------------------------------
     def get_poll(self, poll_id: SnowflakeID, user_id: SnowflakeID) -> Optional[Poll]:
