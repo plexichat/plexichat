@@ -16,12 +16,18 @@ from src.api.schemas.webhooks import (
     WebhookExecuteRequest,
     WebhookMessageResponse,
 )
-from src.core.database.cache import invalidate_pattern
 from src.core.embeds.exceptions import EmbedError
 from src.core.webhooks.exceptions import InvalidWebhookTokenError
 from .exception_mapping import raise_mapped
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+
+# NOTE: the webhook write routes used to call ``invalidate_pattern("webhooks:*")``
+# after every create/update/delete/regenerate. Nothing in the codebase ever
+# caches under a ``webhooks:`` key (the core webhook manager is uncached), so
+# that call was a pure full-keyspace scan on Valkey plus an in-memory key sweep
+# on every write. State changes are still broadcast to gateway clients via
+# ``emit_webhooks_update``; no cache invalidation is required.
 
 
 def _webhook_to_response(webhook, include_token: bool = False) -> WebhookResponse:
@@ -101,8 +107,6 @@ async def regenerate_webhook_token(
             logger.info(
                 f"User {current_user.user_id} regenerated token for webhook {wid}"
             )
-            # Invalidate webhook cache for this server
-            invalidate_pattern("webhooks:*")
             return _webhook_to_response(webhook, include_token=True)
         except Exception as e:
             raise_mapped(
@@ -178,8 +182,6 @@ async def create_webhook(
             logger.info(
                 f"User {current_user.user_id} created webhook {webhook.id} in channel {cid}"
             )
-            # Invalidate webhook cache for this server
-            invalidate_pattern("webhooks:*")
             try:
                 from src.core.events.gateway_emit import emit_webhooks_update
 
@@ -339,8 +341,6 @@ async def update_webhook(
                 require_signed_deliveries=body.require_signed_deliveries,
             )
             logger.info(f"User {current_user.user_id} updated webhook {wid}")
-            # Invalidate webhook cache for this server
-            invalidate_pattern("webhooks:*")
             try:
                 from src.core.events.gateway_emit import emit_webhooks_update
 
@@ -423,8 +423,6 @@ async def delete_webhook(
 
             webhooks.delete_webhook(current_user.user_id, wid)
             logger.info(f"User {current_user.user_id} deleted webhook {wid}")
-            # Invalidate webhook cache for this server
-            invalidate_pattern("webhooks:*")
             try:
                 from src.core.events.gateway_emit import emit_webhooks_update
 
