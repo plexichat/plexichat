@@ -1,6 +1,8 @@
 import re
 import threading
 
+from src.core.security.hardening import require_identifier
+
 # Regex pattern to match ? placeholders (not inside single or double quotes)
 _PLACEHOLDER_PATTERN = re.compile(r"""('(?:''|[^'])*'|"(?:""|[^"])*")|(\?)""")
 
@@ -91,9 +93,13 @@ def sanitize_identifier(identifier: str, db_type: str) -> str:
     """
     Sanitize database identifiers (table/column names).
     Ensures safe identifier naming and applies engine-specific quoting.
+
+    The old local regex accepted names of any length; a 10k-character name
+    still produced a valid-looking (but planner-hostile) statement. Delegate
+    to the shared rule so the 63-character bound and the single definition of
+    "safe identifier" are enforced everywhere.
     """
-    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", identifier):
-        raise ValueError(f"Invalid database identifier: {identifier}")
+    require_identifier(identifier, "database identifier")
 
     if db_type == "postgres":
         return f'"{identifier}"'

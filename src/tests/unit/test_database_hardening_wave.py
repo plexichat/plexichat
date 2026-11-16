@@ -24,3 +24,17 @@ class TestPoolSizeBounds:
 
         with pytest.raises(ValueError, match="min_size cannot exceed max_size"):
             ConnectionPool(lambda: object(), 5, 2)
+
+
+class TestIdentifierBound:
+    def test_rejects_overlong_identifier(self):
+        from src.core.database.dialect import sanitize_identifier
+
+        with pytest.raises(HardeningViolation):
+            sanitize_identifier("a" * 64, "sqlite")
+
+    def test_accepts_normal_identifier(self):
+        from src.core.database.dialect import sanitize_identifier
+
+        assert sanitize_identifier("msg_messages", "sqlite") == "`msg_messages`"
+        assert sanitize_identifier("msg_messages", "postgres") == '"msg_messages"'
