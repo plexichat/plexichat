@@ -14,6 +14,7 @@ import src.api as api
 from src.core.auth.models import TokenInfo
 from src.core.auth.exceptions import AuthError
 
+from .policy_cache import get_static_policy
 from .request_context import (
     bind_current_context,
     cached_is_self_test,
@@ -27,21 +28,6 @@ from .request_context import (
 import utils.logger as logger
 
 security = HTTPBearer(auto_error=False)
-
-
-def _resolve_api_prefix() -> str:
-    """Resolve the configurable API prefix, falling back to the default.
-
-    Request-path comparisons in this middleware must follow
-    ``api.api_prefix``; hardcoded ``/api/v1`` literals break as soon as an
-    operator renames the prefix.
-    """
-    try:
-        from src.api.config import get_api_config
-
-        return get_api_config().api_prefix.rstrip("/") or "/api/v1"
-    except Exception:
-        return "/api/v1"
 
 
 class AuthenticationMiddleware:
@@ -144,10 +130,17 @@ class AuthenticationMiddleware:
             request = Request(scope)
             path = scope.get("path", "")
 
-            # Skip for admin routes which manage their own sessions, and public status/health routes
+            # Derived routing policy (prefix, public endpoints, docs path) is
+            # static until configuration changes. Build it once and cache it
+            # with safe invalidation instead of rebuilding per request. The
+            # prefix-independent entries stay literal; admin paths are still
+            # resolved here because they may be patched at runtime.
+            policy = get_static_policy()
+            api_prefix = policy.api_prefix
+
+            # Skip for admin routes which manage their own sessions.
             admin_paths = ["/admin"]
             admin_path = "/admin"
-            api_prefix = _resolve_api_prefix()
             try:
                 import utils.config as config
 
@@ -164,57 +157,24 @@ class AuthenticationMiddleware:
                 for candidate in admin_paths
             )
 
-            # M3: these paths must follow the CONFIGURABLE api_prefix. The old
-            # hardcoded /api/v1 literals stopped matching as soon as an
-            # operator changed api_prefix, silently locking users out of
-            # login/register (or, worse, turning the endpoint list into a
-            # permissive no-op if the prefix was renamed). Prefix-independent
-            # health/docs entries stay literal.
-            public_endpoints = [
-                f"{api_prefix}/auth/login",
-                f"{api_prefix}/auth/register",
-                f"{api_prefix}/auth/verify-email",
-                f"{api_prefix}/auth/resend-verification",
-                f"{api_prefix}/status",
-                f"{api_prefix}/health",
-                f"{api_prefix}/capabilities",
-                f"{api_prefix}/version",
-                f"{api_prefix}/auth/password-requirements",
-                f"{api_prefix}/telemetry/csp-report",
-                f"{api_prefix}/public/license/info",
-                f"{api_prefix}/public/license/challenge",
-                f"{api_prefix}/public/license/export",
-                "/health",
-                "/status",
-                "/docs",
-                "/redoc",
-                "/openapi.json",
-                "/",
-            ]
-            is_docs_path = False
-            try:
-                from src.api.routes.docs import get_docs_config
-
-                docs_path = get_docs_config().path or "/docs/api"
-                docs_path = docs_path if docs_path.startswith("/") else f"/{docs_path}"
-                docs_path = docs_path.rstrip("/")
-                if path == docs_path or path.startswith(f"{docs_path}/"):
-                    is_docs_path = True
-            except Exception:
-                is_docs_path = False
+            docs_path = policy.docs_path
+            is_docs_path = bool(
+                docs_path
+                and (path == docs_path or path.startswith(f"{docs_path}/"))
+            )
 
             path_parts = path.split("/")
             is_webhook_execute = (
                 scope.get("method") == "POST"
-                and path.startswith(f"{api_prefix}/webhooks/")
+                and path.startswith(policy.webhook_execute_prefix)
                 and len(path_parts) == 6
                 and path_parts[-1] != "regenerate-token"
             )
 
             is_public_endpoint = (
-                path in public_endpoints
+                path in policy.public_endpoints
                 or is_docs_path
-                or path.startswith(f"{api_prefix}/auth/password-requirements")
+                or path.startswith(policy.password_requirements_prefix)
                 or is_webhook_execute
             )
 
@@ -731,7 +691,7 @@ async def get_current_user(request: Request) -> TokenInfo:
         )
         # Allow GET @me (to see current status) and PATCH @me (to fix the username)
         # Also allow logout
-        _api_prefix = _resolve_api_prefix()
+        _api_prefix = get_static_policy().api_prefix
         is_me_path = path == f"{_api_prefix}/users/@me"
         is_allowed_me_method = request.method in ("GET", "PATCH")
 
