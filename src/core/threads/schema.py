@@ -40,6 +40,13 @@ CREATE INDEX IF NOT EXISTS idx_thread_owner ON thread_threads(owner_id);
 CREATE INDEX IF NOT EXISTS idx_thread_parent_message ON thread_threads(parent_message_id);
 CREATE INDEX IF NOT EXISTS idx_thread_conversation ON thread_threads(conversation_id);
 -- Note: idx_thread_state and idx_thread_type removed - low cardinality, rarely queried alone
+-- Composite covering indexes for the channel listing queries. The active and
+-- archived listings filter on (channel_id, state, deleted) and then order by a
+-- fourth column; with only the single-column indexes above SQLite had to build
+-- a TEMP B-tree for every ORDER BY. These let the equality filters and the
+-- sort resolve from the index itself.
+CREATE INDEX IF NOT EXISTS idx_thread_active_listing ON thread_threads(channel_id, state, deleted, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_thread_archived_listing ON thread_threads(channel_id, state, deleted, archived_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_archived_at ON thread_threads(archived_at);
 CREATE INDEX IF NOT EXISTS idx_thread_last_message ON thread_threads(last_message_at);
 
