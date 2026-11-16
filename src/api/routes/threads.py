@@ -151,9 +151,26 @@ def _parse_type(threads_mod, value: str):
         )
 
 
+#: Auto-archive is a fixed set of durations, not an arbitrary integer.
+MAX_AUTO_ARCHIVE_MINUTES = 10080
+ALLOWED_AUTO_ARCHIVE_MINUTES = frozenset({60, 1440, 4320, 10080})
+
+
 def _parse_duration(threads_mod, value: int):
     try:
-        return threads_mod.AutoArchiveDuration(int(value))
+        minutes = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid auto-archive duration"}},
+        )
+    if minutes < 60 or minutes > MAX_AUTO_ARCHIVE_MINUTES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid auto-archive duration"}},
+        )
+    try:
+        return threads_mod.AutoArchiveDuration(minutes)
     except (ValueError, KeyError):
         raise HTTPException(
             status_code=400,

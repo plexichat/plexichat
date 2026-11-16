@@ -23,6 +23,10 @@ import utils.logger as logger
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
+#: Opaque pagination cursors are short signed tokens; never accept an
+#: unbounded blob as a cursor key.
+MAX_SEARCH_CURSOR_LENGTH = 512
+
 
 @router.get(
     "/messages",
@@ -41,7 +45,9 @@ async def search_messages(
     channel_id: Optional[str] = Query(None, description="Limit to channel"),
     author_id: Optional[str] = Query(None, description="Limit to author"),
     limit: int = Query(default=25, ge=1, le=100),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(
+        None, max_length=MAX_SEARCH_CURSOR_LENGTH, description="Cursor for pagination"
+    ),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> MessageSearchPageResponse:
     """
@@ -117,7 +123,9 @@ async def search_users(
     query: str = Query(..., max_length=256, description="Username or display name"),
     server_id: Optional[str] = Query(None, description="Limit to server members"),
     limit: int = Query(default=25, ge=1, le=100),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(
+        None, max_length=MAX_SEARCH_CURSOR_LENGTH, description="Cursor for pagination"
+    ),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> UserSearchPageResponse:
     """Search for users across the platform or within a specific server."""
@@ -198,7 +206,9 @@ async def search_servers(
         None, max_length=64, description="Filter by category"
     ),
     limit: int = Query(default=25, ge=1, le=100),
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(
+        None, max_length=MAX_SEARCH_CURSOR_LENGTH, description="Cursor for pagination"
+    ),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> ServerSearchPageResponse:
     """Search for public servers to join."""
