@@ -73,3 +73,23 @@ class TestClonerIdentifiers:
         cloner = DataCloner.__new__(DataCloner)
         with pytest.raises(HardeningViolation):
             cloner.clone_table("bad-name")
+
+
+class TestFtsQueryBounds:
+    def test_build_fts_query_caps_length_and_terms(self):
+        from src.core.search.indexer.sqlite_fts import (
+            _FTS_MAX_QUERY_CHARS,
+            SQLiteFTS5Indexer,
+        )
+
+        indexer = SQLiteFTS5Indexer.__new__(SQLiteFTS5Indexer)
+        huge = " ".join(f"term{i}" for i in range(500))
+        result = indexer._build_fts_query(huge)
+        assert len(result) <= _FTS_MAX_QUERY_CHARS + 32
+        assert result.count(" OR ") < 16
+
+    def test_build_fts_query_normal(self):
+        from src.core.search.indexer.sqlite_fts import SQLiteFTS5Indexer
+
+        indexer = SQLiteFTS5Indexer.__new__(SQLiteFTS5Indexer)
+        assert indexer._build_fts_query("hello world") == '"hello"* OR "world"*'

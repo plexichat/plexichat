@@ -27,6 +27,15 @@ from ..exceptions import SearchIndexError, SearchBackendError
 # table with a different layout (e.g. created by an older schema) cannot be
 # altered in place by CREATE VIRTUAL TABLE IF NOT EXISTS, so it is detected
 # at bootstrap and reported as an actionable, once-per-startup failure.
+# The search manager validates these limits at its entry points, but the
+# indexer is also callable directly (rebuilds, tests, internal callers). Bound
+# the MATCH expression here too so an unbounded string can never reach SQLite:
+# a multi-KB needle or thousands of OR'd terms make FTS5 planning expensive
+# regardless of the result LIMIT.
+_FTS_MAX_QUERY_CHARS = 256
+_FTS_MAX_TERMS = 16
+_FTS_MAX_TERM_CHARS = 64
+
 _FTS_EXPECTED_COLUMNS = {
     "search_messages_fts": [
         "message_id",
@@ -579,8 +588,11 @@ class SQLiteFTS5Indexer(BaseIndexer):
         return None
 
     def _build_fts_query(self, query: str) -> str:
-        """Build FTS5 query from user query."""
-        query = query.strip()
+        """Build FTS5 query from user query (bounded in length and terms)."""
+        # Cap before any tokenization: a hostile caller cannot make SQLite
+        # parse an arbitrarily large MATCH expression. Truncation keeps normal
+        # queries untouched and avoids turning a search into an error.
+        query = str(query or "").strip()[:_FTS_MAX_QUERY_CHARS]
 
         special_chars = ["(", ")", "*", ":", "-", "+", "^", "~"]
         clean_query = query
@@ -599,8 +611,8 @@ class SQLiteFTS5Indexer(BaseIndexer):
             safe_phrase = phrase.replace('"', "")
             if safe_phrase:
                 all_tokens.append(f'"{safe_phrase}"')
-        for term in terms:
-            safe_term = term.replace('"', "")
+        for term in terms[:_FTS_MAX_TERMS]:
+            safe_term = term.replace('"', "")[:_FTS_MAX_TERM_CHARS]
             if safe_term:
                 all_tokens.append(f'"{safe_term}"*')
 
