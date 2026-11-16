@@ -91,6 +91,11 @@ VIDEO_CRF_PRESETS = {
 }
 
 
+def _bounded_image_quality(value: object) -> int:
+    """Coerce an image quality setting into Pillow's 1..100 range."""
+    return bounded_int(value, "compression image quality", minimum=1, maximum=100)
+
+
 class ImageCompressor:
     """Handles image compression and format conversion."""
 
@@ -173,15 +178,20 @@ class ImageCompressor:
 
             # Determine quality
             if quality is None or quality == CompressionQuality.ORIGINAL:
-                q = self._config["quality"]
+                q = _bounded_image_quality(self._config["quality"])
             else:
                 presets = IMAGE_QUALITY_PRESETS.get(
                     quality, IMAGE_QUALITY_PRESETS[CompressionQuality.MEDIUM]
                 )
-                q = presets.get(fmt, 80)
+                q = _bounded_image_quality(presets.get(fmt, 80))
 
             # Resize if too large
-            max_dim = self._config["max_dimension"]
+            max_dim = bounded_int(
+                self._config["max_dimension"],
+                "compression max_dimension",
+                minimum=1,
+                maximum=16384,
+            )
             if img.width > max_dim or img.height > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
