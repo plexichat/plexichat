@@ -2,7 +2,7 @@
 DSAR (Data Subject Access Request) schemas - Request/response models for data export endpoints.
 """
 
-from typing import Optional, List
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
 from src.api.schemas.common import SnowflakeID
@@ -14,7 +14,7 @@ class DSARRequestBody(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     password: str = Field(..., description="Current password for verification")
-    format: Optional[str] = Field(
+    format: Optional[Literal["json", "zip"]] = Field(
         default="json", description="Export format ('json' or 'zip')"
     )
 
