@@ -31,6 +31,17 @@ class WebhookRetryQueue:
     CLEANUP_INTERVAL_MS = 3600 * 1000  # 1 hour between cleanups
     MAX_PAYLOAD_SIZE = 1024 * 1024  # 1MB max stored payload
 
+    # Hard ceilings on untrusted/tamperable queue parameters. A row written by
+    # an older version (or a tampered DB) must not be able to request an
+    # unbounded retry budget, a multi-gigabyte exponent, or an unbounded batch.
+    MAX_ALLOWED_RETRIES = 20
+    MAX_BACKOFF_EXPONENT = 30
+    MAX_LIMIT = 1000
+    MAX_ENDPOINT_URL_LENGTH = 2048
+    MAX_EVENT_TYPE_LENGTH = 128
+    MAX_HEADER_NAME_LENGTH = 128
+    MAX_HEADER_VALUE_LENGTH = 4096
+
     def __init__(self, db, webhook_manager=None):
         self._db = db
         self._webhook_manager = webhook_manager
@@ -47,9 +58,18 @@ class WebhookRetryQueue:
         Calculate exponential backoff delay with jitter.
 
         Delay = min(base * 2^attempt, max_delay) + random(0, jitter)
+
+        ``attempt`` comes from a persisted row and may be corrupt or hostile;
+        clamping it before the exponentiation keeps ``2**attempt`` from
+        becoming a CPU/memory denial-of-service vector.
         """
+        try:
+            exponent = int(attempt)
+        except (TypeError, ValueError):
+            exponent = 0
+        exponent = max(0, min(exponent, self.MAX_BACKOFF_EXPONENT))
         delay = min(
-            self.BASE_DELAY_MS * (2**attempt),
+            self.BASE_DELAY_MS * (2**exponent),
             self.MAX_DELAY_MS,
         )
         jitter = secrets.randbelow(self.JITTER_MS + 1)
@@ -90,6 +110,27 @@ class WebhookRetryQueue:
                 endpoint URL fails SSRF validation.
         """
         now = self._get_timestamp()
+
+        # Bound the untrusted queue inputs before any work or persistence.
+        if (
+            not isinstance(endpoint_url, str)
+            or not endpoint_url
+            or len(endpoint_url) > self.MAX_ENDPOINT_URL_LENGTH
+        ):
+            raise ValueError("Webhook endpoint URL is missing or too long")
+        if (
+            not isinstance(event_type, str)
+            or not event_type
+            or len(event_type) > self.MAX_EVENT_TYPE_LENGTH
+        ):
+            raise ValueError("Webhook event type is missing or too long")
+        if signing_headers:
+            for name, value in signing_headers.items():
+                if (
+                    len(str(name)) > self.MAX_HEADER_NAME_LENGTH
+                    or len(str(value)) > self.MAX_HEADER_VALUE_LENGTH
+                ):
+                    raise ValueError("Webhook signing header is too long")
 
         # SECURITY (SSRF): never persist an endpoint we would refuse to
         # POST to. Rejection happens here AND again at delivery time.
@@ -200,8 +241,18 @@ class WebhookRetryQueue:
         if not row:
             raise ValueError(f"Retry record {retry_id} not found")
 
-        current_attempt = row["attempt_count"]
-        max_attempts = row["max_attempts"]
+        # Clamp counters read from the DB: a tampered ``max_attempts`` must
+        # not turn a transient failure into an unbounded retry loop.
+        try:
+            current_attempt = int(row["attempt_count"])
+        except (TypeError, ValueError):
+            current_attempt = 0
+        try:
+            max_attempts = int(row["max_attempts"])
+        except (TypeError, ValueError):
+            max_attempts = self.MAX_RETRIES
+        current_attempt = max(0, min(current_attempt, self.MAX_ALLOWED_RETRIES))
+        max_attempts = max(1, min(max_attempts, self.MAX_ALLOWED_RETRIES))
         new_attempt = current_attempt + 1
 
         if new_attempt >= max_attempts:
@@ -297,6 +348,11 @@ class WebhookRetryQueue:
         self, webhook_id: Optional[int] = None, limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Get permanently failed webhook deliveries."""
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, self.MAX_LIMIT))
         if webhook_id:
             rows = self._db.fetch_all(
                 """SELECT * FROM webhook_retry_queue

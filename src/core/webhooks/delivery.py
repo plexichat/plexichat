@@ -23,6 +23,7 @@ a conditional ``UPDATE ... SET status='delivering'`` guarded by rowcount,
 so concurrent workers can never double-deliver the same record).
 """
 
+import json
 import threading
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -54,6 +55,38 @@ MAX_REDIRECTS = 3
 # can legitimately exceed that, so a stored signature older than the
 # window is refreshed (or stripped) before the HTTP call.
 SIGNATURE_STALE_AFTER_MS = 5 * 60 * 1000
+
+# Delivery-time ceilings. Enqueue checks are not enough: a row can be
+# persisted by an older version or tampered with after insertion, so the
+# payload and every header are bounded again immediately before the POST.
+MAX_DELIVERY_PAYLOAD_BYTES = 1024 * 1024
+MAX_HEADER_NAME_LENGTH = 128
+MAX_HEADER_VALUE_LENGTH = 4096
+MAX_BATCH_LIMIT = 1000
+MAX_INTERVAL_SECONDS = 86400
+
+
+def _bounded_headers(headers: Dict[str, Any]) -> Dict[str, str]:
+    """Drop header names/values that are oversized or carry control chars.
+
+    Bounds are applied at the last moment before the HTTP client sees them,
+    so an oversized or CRLF-bearing stored header cannot turn into a request
+    smuggling / header injection vector.
+    """
+    cleaned: Dict[str, str] = {}
+    for raw_name, raw_value in (headers or {}).items():
+        name = str(raw_name)
+        value = str(raw_value)
+        if (
+            not name
+            or len(name) > MAX_HEADER_NAME_LENGTH
+            or len(value) > MAX_HEADER_VALUE_LENGTH
+            or any(ch in name or ch in value for ch in ("\r", "\n", "\x00"))
+        ):
+            logger.warning("Dropping an oversized or malformed webhook delivery header")
+            continue
+        cleaned[name] = value
+    return cleaned
 
 
 class WebhookDeliveryError(Exception):
@@ -243,6 +276,22 @@ class WebhookDeliverer:
                 "retry record missing endpoint_url or a dict payload"
             )
 
+        # Bound the payload at delivery time as well: a tampered/stale queue
+        # row must not be able to push an arbitrarily large body downstream.
+        try:
+            payload_size = len(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise WebhookDeliveryError("payload is not JSON serializable") from exc
+        if payload_size > MAX_DELIVERY_PAYLOAD_BYTES:
+            raise WebhookDeliveryError(
+                f"payload exceeds maximum delivery size "
+                f"({MAX_DELIVERY_PAYLOAD_BYTES} bytes)"
+            )
+
         # SECURITY (SSRF): re-validate immediately before the fetch. A row
         # persisted by an older version, or mutated after enqueue, must
         # never reach an internal target. Fail closed on validation errors
@@ -343,6 +392,11 @@ def process_due_retries(
     if deliverer is None:
         deliverer = WebhookDeliverer()
 
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, MAX_BATCH_LIMIT))
     due = retry_queue.get_pending_retries(limit=limit)
     stats = {"processed": 0, "delivered": 0, "failed": 0, "transport_errors": 0}
 
@@ -399,7 +453,9 @@ class WebhookDeliveryJob:
             interval = DEFAULT_INTERVAL_SECONDS
         if interval <= 0:
             return None
-        return interval
+        # Cap an operator-supplied interval so a typo cannot stall the
+        # delivery worker (and its retry backlog) for effectively forever.
+        return min(interval, MAX_INTERVAL_SECONDS)
 
     def start(self) -> None:
         """Start the background delivery loop."""
