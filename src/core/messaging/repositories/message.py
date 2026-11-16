@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from src.core.database import cached, invalidate_pattern
 from ..models import Message, MessageType
+from ..pagination import MessageCursor, MessagePage
 from .base import BaseRepository
 from src.core.base import SnowflakeID
 from src.utils.encryption import decrypt_message, is_message_encrypted, decrypt_data
@@ -155,6 +156,57 @@ class MessageRepository(BaseRepository[Message]):
         params.append(limit)
 
         return self._fetch_all(query, tuple(params))
+
+    def get_by_conversation_page(
+        self,
+        conversation_id: SnowflakeID,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+        ascending: bool = False,
+    ) -> MessagePage:
+        """Return one keyset page and the cursor for the following page.
+
+        Unlike an OFFSET, the range predicate (``id < ?`` / ``id > ?``) is an
+        index seek on the message primary key, so page cost does not grow with
+        page depth. One extra row is fetched purely to compute ``has_more`` and
+        ``next_cursor``; it is never returned to the caller.
+
+        The opaque cursor carries both the anchor id and the direction, so a
+        client paging backwards (the common channel-scroll case) cannot be
+        tricked into a forward scan by a stale token.
+        """
+        limit = max(0, min(int(limit), 100))
+        if limit == 0:
+            return MessagePage(items=[], next_cursor=None, has_more=False)
+
+        direction, cursor_id = MessageCursor.decode(cursor)
+        query = "SELECT * FROM msg_messages WHERE conversation_id = ?"
+        params: List[Any] = [conversation_id]
+
+        if cursor_id is not None and direction == "before":
+            query += " AND id < ?"
+            params.append(cursor_id)
+            descending = True
+        elif cursor_id is not None and direction == "after":
+            query += " AND id > ?"
+            params.append(cursor_id)
+            descending = False
+        else:
+            descending = not ascending
+
+        query += " ORDER BY id " + ("DESC" if descending else "ASC")
+        query += " LIMIT ?"
+        params.append(limit + 1)
+
+        rows = self._fetch_all(query, tuple(params))
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        next_cursor = None
+        if has_more and items:
+            next_cursor = MessageCursor.encode(
+                "before" if descending else "after", items[-1]["id"]
+            )
+        return MessagePage(items=items, next_cursor=next_cursor, has_more=has_more)
 
     def _get_conv_id(self, msg_id: SnowflakeID) -> Optional[SnowflakeID]:
         """Get conversation ID for a message."""

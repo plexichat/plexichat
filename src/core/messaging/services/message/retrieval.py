@@ -9,6 +9,7 @@ from src.core.base import SnowflakeID
 from src.core.database import cache_get, cache_set
 
 from ...models import Message
+from ...pagination import MessagePage
 from ...exceptions import ConversationAccessDeniedError
 from ..base import BaseService
 from .protocol import MessageServiceProtocol
@@ -175,6 +176,46 @@ class RetrievalMixin(BaseService, MessageServiceProtocol):
                 logger.debug(f"Failed to populate recent messages cache: {e}")
 
         return messages
+
+    def get_messages_page(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+    ) -> MessagePage:
+        """Get one keyset page of messages for a participant.
+
+        Kept separate from ``get_messages`` so the cached recent-list fast
+        path (which only applies to the first, uncursored page) cannot hide a
+        stale page boundary. Pins and attachments are still batch-fetched for
+        the rows on this page, so paging deeper adds no per-message queries.
+        """
+        if not self._participant_svc.is_participant(conversation_id, user_id):
+            raise ConversationAccessDeniedError(
+                "Not a participant in this conversation"
+            )
+
+        limit = max(0, min(int(limit), 100))
+        page = self._repo.get_by_conversation_page(conversation_id, limit, cursor)
+        if not page.items:
+            return MessagePage(items=[], next_cursor=None, has_more=False)
+
+        message_ids = [row["id"] for row in page.items]
+        pins_map = self._pin_repo.get_batch_by_messages(message_ids)
+        attachments_map = self._attachment_repo.get_batch_by_messages(message_ids)
+
+        messages = []
+        for row in page.items:
+            msg = self._repo.row_to_model(row, pins_map.get(row["id"]))
+            msg.attachments = attachments_map.get(row["id"], [])
+            messages.append(msg)
+
+        return MessagePage(
+            items=messages,
+            next_cursor=page.next_cursor,
+            has_more=page.has_more,
+        )
 
     @staticmethod
     def _rebuild_recent_list_atomic(client, list_key: str, mids: list) -> bool:

@@ -23,6 +23,7 @@ from .models import (
     MessageStatusType,
     ParticipantRole,
 )
+from .pagination import MessagePage
 from .exceptions import (
     ConversationNotFoundError,
     ConversationAccessDeniedError,
@@ -593,6 +594,18 @@ class MessagingManager(BaseManager):
                 ) == str(user_id)
 
         return messages
+
+    def get_messages_page(
+        self,
+        user_id: SnowflakeID,
+        conversation_id: SnowflakeID,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+    ) -> MessagePage:
+        """Get one keyset page of messages (no OFFSET scans)."""
+        return self._message_svc.get_messages_page(
+            user_id, conversation_id, limit, cursor
+        )
 
     def search_messages(
         self,
