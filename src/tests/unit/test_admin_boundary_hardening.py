@@ -16,6 +16,7 @@ from fastapi.params import Query as QueryParam
 from starlette.requests import Request
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.artifacts as artifacts_routes
 import src.api.routes.admin.ui as ui_routes
 import src.api.routes.admin.security as security_routes
 import src.api.routes.admin.moderation as moderation_routes
@@ -183,6 +184,13 @@ class TestBundledAssetSizeBounds:
     def test_every_bundled_asset_read_is_guarded(self):
         source = inspect.getsource(ui_routes)
         assert source.count("_check_admin_asset_size(") >= 5
+
+
+class TestRetentionOverrideGate:
+    def test_retention_write_requires_scoped_permission(self):
+        source = inspect.getsource(artifacts_routes.admin_set_server_retention)
+        assert 'require_admin_permission(request, "admin.artifacts.manage")' in source
+        assert "get_admin_from_token(request)" not in source
 
 
 class TestAuditExportBounds:

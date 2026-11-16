@@ -201,12 +201,10 @@ async def admin_set_server_retention(
     reverts to the global ``default_retention_days``.
     """
     check_host_restriction(request)
-    admin_id = get_admin_from_token(request)
-    if admin_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": {"code": 403, "message": "Admin token required"}},
-        )
+    # This mutates a per-server retention override, so require the same scoped
+    # permission as the neighbouring feature-settings write; authentication
+    # alone must not be enough to change retention policy.
+    admin_id = require_admin_permission(request, "admin.artifacts.manage")
 
     try:
         try:
