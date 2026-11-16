@@ -22,14 +22,144 @@ Security model:
 
 from src.api.request_guards import MAX_FEDERATION_BODY, read_body_capped
 from src.core.security.hardening import HardeningViolation, require_https_url
+from src.utils.security import URLValidator
 
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Optional
+from urllib.parse import urljoin, urlparse
 
 from fastapi import APIRouter, HTTPException, Request
 
 import utils.logger as logger
 
 router = APIRouter()
+
+
+# --- SSRF hardening for remote federation endpoints ----------------------
+#
+# ``remote_url`` is attacker-supplied in a signed join-request envelope. It is
+# persisted for admin review and later becomes an *outbound* federation target,
+# so validating only its shape (as ``require_https_url`` does) is not enough: a
+# URL such as ``https://169.254.169.254/latest/meta-data/`` is a valid absolute
+# HTTPS URL but points at the cloud metadata service. Every remote endpoint is
+# therefore resolved once here, every resolved address is checked against the
+# shared SSRF rules, and the approved address is what callers must connect to.
+# Redirect targets are resolved *again* — a hostname that answers a public IP
+# for the first lookup and a private one for the next is the classic DNS
+# rebinding attack, and re-checking on each hop is what defeats it.
+
+MAX_URL_LENGTH = 2048
+MAX_REDIRECTS = 5
+
+
+class FederationEndpointRejected(ValueError):
+    """A remote federation endpoint failed the SSRF gate."""
+
+
+@dataclass(frozen=True)
+class ResolvedEndpoint:
+    """An endpoint whose hostname has been resolved and address approved.
+
+    ``address`` is the only address a connection may use; reconnecting by
+    ``hostname`` re-opens the DNS rebinding window the resolution closed.
+    """
+
+    url: str
+    hostname: str
+    address: str
+
+
+def _reject_forbidden_address(host: str, field: str) -> None:
+    """Reject an IP literal in a non-global range (defence in depth).
+
+    ``URLValidator.is_private_ip`` already covers loopback, link-local (the
+    ``169.254.0.0/16`` metadata range), CGNAT, NAT64, IPv4-mapped IPv6,
+    multicast, reserved and unspecified addresses. Running it on literals
+    before DNS (and again on the resolved IP) means an obfuscated numeric host
+    that a resolver accepts cannot slip past the gate.
+    """
+    import ipaddress
+
+    candidate = host.strip("[]")
+    try:
+        addr = ipaddress.ip_address(candidate)
+    except ValueError:
+        return  # a DNS name; its resolved addresses are checked by the caller
+    if URLValidator().is_private_ip(str(addr)):
+        raise FederationEndpointRejected(f"{field} targets a non-public address")
+
+
+def resolve_remote_endpoint(
+    value: Any, field: str = "remote_url", *, require_https: bool = False
+) -> ResolvedEndpoint:
+    """Resolve and validate an attacker-supplied federation endpoint.
+
+    Returns the approved ``ResolvedEndpoint`` or raises
+    ``FederationEndpointRejected``. The exception detail never includes the
+    resolved IP, so a rejected URL is not a free internal port scan.
+    """
+    candidate = str(value or "").strip()
+    if not candidate:
+        raise FederationEndpointRejected(f"{field} must not be empty")
+    if len(candidate) > MAX_URL_LENGTH:
+        raise FederationEndpointRejected(f"{field} is too long")
+
+    parsed = urlparse(candidate)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise FederationEndpointRejected(f"{field} must use http or https")
+    if require_https and scheme != "https":
+        raise FederationEndpointRejected(f"{field} must use https")
+    if not parsed.hostname:
+        raise FederationEndpointRejected(f"{field} must include a host")
+    if parsed.username or parsed.password:
+        raise FederationEndpointRejected(f"{field} must not embed credentials")
+
+    # Literal IPs (including integer/hex forms a resolver may accept) before DNS.
+    _reject_forbidden_address(parsed.hostname, field)
+
+    try:
+        hostname, address = URLValidator().validate_url_for_request(candidate)
+    except Exception as exc:
+        # Log the reason server-side; the caller sees only the field name.
+        logger.warning("Rejected federation %s failing SSRF check: %s", field, exc)
+        raise FederationEndpointRejected(
+            f"{field} resolves to a forbidden address"
+        ) from exc
+    _reject_forbidden_address(address, field)
+    return ResolvedEndpoint(url=candidate, hostname=hostname, address=address)
+
+
+def validate_redirect_chain(
+    initial_url: Any,
+    locations: Iterable[Any],
+    field: str = "remote_url",
+    *,
+    require_https: bool = True,
+) -> ResolvedEndpoint:
+    """Validate an endpoint and every redirect target in its chain.
+
+    Each ``Location`` is resolved relative to the current URL and passed back
+    through :func:`resolve_remote_endpoint`, so a redirect to loopback, a
+    metadata address, or a hostname that resolves to a private IP on the second
+    lookup is rejected. The hop count and a visited-set bound traffic that tries
+    to loop forever.
+    """
+    endpoint = resolve_remote_endpoint(
+        initial_url, field, require_https=require_https
+    )
+    visited = {endpoint.url}
+    for index, location in enumerate(locations):
+        if index >= MAX_REDIRECTS:
+            raise FederationEndpointRejected(f"{field} exceeded the redirect limit")
+        target = urljoin(endpoint.url, str(location or ""))
+        if target in visited:
+            raise FederationEndpointRejected(f"{field} redirect loop")
+        visited.add(target)
+        endpoint = resolve_remote_endpoint(
+            target, field, require_https=require_https
+        )
+    return endpoint
 
 
 def _get_plexijoin_manager():
@@ -277,8 +407,14 @@ async def join_request_inbound(request: Request):
     remote_url = str(payload.get("remote_url") or conn.get("remote_url") or "")
     if remote_url:
         try:
+            # Shape check first (absolute, no embedded credentials), then the
+            # full SSRF gate: resolve DNS and reject private/link-local/
+            # metadata addresses before the target is ever persisted.
             remote_url = require_https_url(remote_url, "remote_url")
-        except HardeningViolation as exc:
+            remote_url = resolve_remote_endpoint(
+                remote_url, "remote_url", require_https=True
+            ).url
+        except (HardeningViolation, FederationEndpointRejected) as exc:
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": str(exc)}},
