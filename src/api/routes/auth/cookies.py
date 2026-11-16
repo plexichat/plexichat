@@ -61,8 +61,11 @@ def session_cookie_max_age(expires_at_ms: Optional[int] = None) -> int:
     if expires_at_ms is not None:
         try:
             return max(1, (int(expires_at_ms) - _now_ms()) // 1000)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError, OverflowError):
+            # An explicit but malformed/foreign expiry is untrusted auth
+            # context: fail closed with a near-immediate expiry rather than
+            # silently advertising the (much longer) configured default.
+            return 1
     expire_hours = _sessions_config().get("expire_hours", 720)
     try:
         return max(1, int(expire_hours)) * 3600

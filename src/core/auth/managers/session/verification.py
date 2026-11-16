@@ -1,6 +1,5 @@
 """Token verification for session, bot and gateway tickets."""
 
-import hashlib
 from typing import Dict, Optional
 
 import utils.logger as logger
@@ -9,7 +8,13 @@ from src.core.database import cached
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AccountType, TokenInfo
 from ...permissions import permissions_from_json
-from ...tokens import is_expired, parse_token, verify_token_hash
+from ...tokens import (
+    is_expired,
+    is_malformed_token_input,
+    parse_token,
+    safe_token_cache_key,
+    verify_token_hash,
+)
 from ..protocol import AuthManagerProtocol
 
 # CORRECTNESS FIX: verify_token is wrapped in @cached, so a cache hit
@@ -28,11 +33,15 @@ class VerificationMixin(AuthManagerProtocol):
         prefix="token_verify",
         # Never embed the raw bearer token in the cache key: hash it so that
         # anyone with cache visibility cannot recover live session tokens.
+        # The helper also tolerates non-string / oversized input, so a bad auth
+        # header becomes a clean denial inside the function instead of an
+        # AttributeError raised by the decorator.
         key_builder=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            f"token_verify:str:{hashlib.sha256(token.encode()).hexdigest()}"
+            safe_token_cache_key(token)
         ),
         skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            (
+            is_malformed_token_input(token)
+            or (
                 # Single-use WS tickets must NEVER be served from cache: a replay
                 # within the TTL would bypass the atomic consumption below.
                 isinstance(token, str) and token.startswith("wst.")
@@ -50,6 +59,9 @@ class VerificationMixin(AuthManagerProtocol):
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
     ) -> TokenInfo:
+        # Fail closed on missing/malformed auth context before any lookup.
+        if is_malformed_token_input(token):
+            raise TokenInvalidError("Invalid token")
         security_cfg = self._config.get("security", {})
         rate_limit = security_cfg.get("token_verify_rate_limit")
         if rate_limit and ip_address and not is_selftest:

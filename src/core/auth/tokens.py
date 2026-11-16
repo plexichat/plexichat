@@ -177,6 +177,25 @@ def is_expired(expires_at: Any, now_ms: Optional[int] = None) -> bool:
     return parsed <= now_ms
 
 
+def is_malformed_token_input(token: Any) -> bool:
+    """Whether a value can even be considered a token credential.
+
+    Used before hashing/DB work so a missing, non-string or oversized auth
+    context is denied cleanly instead of raising deep in a cache key builder
+    (which previously turned a bad header into a 500 instead of a 401).
+    """
+    return (
+        not isinstance(token, str) or not token or len(token) > MAX_TOKEN_LENGTH
+    )
+
+
+def safe_token_cache_key(token: Any) -> str:
+    """Build a verification cache key without dereferencing untrusted input."""
+    if is_malformed_token_input(token):
+        return "token_verify:invalid"
+    return f"token_verify:str:{hashlib.sha256(token.encode('utf-8')).hexdigest()}"
+
+
 def verify_token_hash(token_secret: str, stored_hash: str) -> bool:
     """Verify a token secret against its stored hash."""
     computed_hash = hash_token(token_secret)
@@ -341,6 +360,8 @@ __all__ = [
     "parse_token",
     "parse_expiry_ms",
     "is_expired",
+    "is_malformed_token_input",
+    "safe_token_cache_key",
     "verify_token_hash",
     "create_api_access_token",
     "list_api_access_tokens",

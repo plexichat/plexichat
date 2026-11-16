@@ -1,7 +1,5 @@
 """Session lifecycle: create, extend, refresh, revoke and list sessions."""
 
-import hashlib
-
 from typing import List, Optional
 
 import utils.logger as logger
@@ -14,7 +12,9 @@ from ...tokens import (
     create_session_token,
     hash_token,
     is_expired,
+    is_malformed_token_input,
     parse_token,
+    safe_token_cache_key,
     verify_token_hash,
 )
 from ..protocol import AuthManagerProtocol
@@ -129,10 +129,11 @@ class LifecycleMixin(AuthManagerProtocol):
         # Never embed the raw bearer token in the cache key: hash it so that
         # anyone with cache visibility cannot recover live session tokens.
         key_builder=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            f"token_verify:str:{hashlib.sha256(token.encode()).hexdigest()}"
+            safe_token_cache_key(token)
         ),
         skip_cache_if=lambda self, token, ip_address=None, user_agent=None, is_selftest=False: (
-            (
+            is_malformed_token_input(token)
+            or (
                 # Single-use WS tickets must NEVER be served from cache: a replay
                 # within the TTL would bypass the atomic consumption below.
                 isinstance(token, str) and token.startswith("wst.")
@@ -150,6 +151,8 @@ class LifecycleMixin(AuthManagerProtocol):
         user_agent: Optional[str] = None,
         is_selftest: bool = False,
     ) -> TokenInfo:
+        if is_malformed_token_input(token):
+            raise TokenInvalidError("Invalid token")
         security_cfg = self._config.get("security", {})
         rate_limit = security_cfg.get("token_verify_rate_limit")
         if rate_limit and ip_address and not is_selftest:
