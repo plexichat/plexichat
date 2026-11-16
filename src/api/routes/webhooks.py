@@ -533,21 +533,43 @@ async def execute_webhook(
                 )
 
         try:
-            # F8: signature enforcement is only meaningful when the webhook
-            # REQUIRES signed deliveries. A token holder can otherwise just
-            # omit the headers; with the flag enabled, unsigned requests are
-            # rejected even though the token itself is valid.
-            requires_signature = False
-            if not (x_signature and x_timestamp):
+            # Signature headers come as a PAIR. A caller that supplies only
+            # one of them must never fall through to the unsigned path -- that
+            # would silently downgrade a signed delivery to token-only auth.
+            if bool(x_signature) != bool(x_timestamp):
+                logger.warning(
+                    f"Incomplete signature header pair on webhook {wid} execution"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error": {
+                            "code": 401,
+                            "message": "Incomplete webhook signature headers",
+                        }
+                    },
+                )
+
+            has_signature = bool(x_signature and x_timestamp)
+            # F8: fail CLOSED. The only webhook allowed to execute unsigned is
+            # one whose persisted record explicitly says signatures are not
+            # required. An unreadable record (or a DB error) must be treated
+            # as requiring a signature instead of silently disabling the
+            # check.
+            requires_signature = True
+            if not has_signature:
                 try:
                     webhook_record = webhooks.get_webhook(wid)
                     requires_signature = bool(
-                        getattr(webhook_record, "require_signed_deliveries", False)
+                        getattr(webhook_record, "require_signed_deliveries", True)
                     )
-                except Exception:
-                    requires_signature = False
+                except Exception as e:
+                    logger.error(
+                        f"Could not read signature policy for webhook {wid}: {e}"
+                    )
+                    requires_signature = True
 
-            if x_signature and x_timestamp:
+            if has_signature:
                 # Canonicalize the thread id to its decimal string so the
                 # signed bytes agree no matter which source won above: ``tid``
                 # is an int (query param or parsed body) while
@@ -584,7 +606,7 @@ async def execute_webhook(
             elif requires_signature:
                 logger.warning(
                     f"Unsigned execution refused for webhook {wid} "
-                    f"(require_signed_deliveries enabled)"
+                    f"(require_signed_deliveries enabled or policy unreadable)"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,

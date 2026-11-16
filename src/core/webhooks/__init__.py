@@ -15,6 +15,8 @@ Usage:
 
 from typing import Optional, List, Dict, Any
 
+import utils.logger as logger
+
 from .models import (
     Webhook,
     WebhookMessage,
@@ -75,6 +77,9 @@ __all__ = [
     # Webhook execution
     "execute_webhook",
     "execute_webhook_by_url",
+    # Payload signing / verification
+    "sign_payload",
+    "verify_payload",
     # Outbound delivery + retries
     "WebhookRetryQueue",
     "WebhookDeliverer",
@@ -214,3 +219,41 @@ def execute_webhook_by_url(
     return _get_manager().execute_webhook_by_url(
         webhook_url, content, username, avatar_url, embeds, thread_id, wait
     )
+
+
+# === Payload signing / verification ===
+
+
+def sign_payload(webhook_id: int, payload: Dict[str, Any]) -> Dict[str, str]:
+    """Sign an outbound payload with a webhook's Ed25519 key.
+
+    Exposed at module level so the API layer (which talks to this module, not
+    to the private manager singleton) can produce verifiable deliveries.
+    """
+    return _get_manager().sign_payload(webhook_id, payload)
+
+
+def verify_payload(
+    webhook_id: int,
+    payload: Dict[str, Any],
+    signature_header: Optional[str],
+    timestamp_header: Optional[str],
+    now_ms: Optional[int] = None,
+) -> bool:
+    """Verify a signed inbound delivery, failing CLOSED on any error.
+
+    The manager performs the Ed25519 check (constant-time in the cryptography
+    backend) and enforces the replay cache. This wrapper guarantees that an
+    unavailable or partially configured manager can never be mistaken for a
+    valid signature: every error path returns ``False`` so the caller rejects
+    the delivery instead of executing it unverified.
+    """
+    try:
+        return bool(
+            _get_manager().verify_payload(
+                webhook_id, payload, signature_header, timestamp_header, now_ms
+            )
+        )
+    except Exception as exc:
+        logger.error(f"Webhook signature verification unavailable for {webhook_id}: {exc}")
+        return False

@@ -4,6 +4,7 @@ Webhook payload signing using Ed25519.
 
 import base64
 import hashlib
+import hmac
 import json
 import time
 from typing import Dict, Any, Optional
@@ -16,6 +17,8 @@ from src.core.base import SnowflakeID
 from src.utils.encryption import decrypt_data
 
 from .constants import (
+    MAX_SIGNATURE_HEADER_LENGTH,
+    MAX_TIMESTAMP_HEADER_LENGTH,
     SIGNATURE_HEADER,
     SIGNATURE_TIMESTAMP_HEADER,
     SIGNATURE_VERSION,
@@ -31,6 +34,25 @@ WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60
 # replay window after capture; recording it for twice that duration
 # guarantees the cache entry outlives any possible reuse of the pair.
 _REPLAY_CACHE_TTL_SECONDS = WEBHOOK_REPLAY_WINDOW_SECONDS * 2
+
+# An Ed25519 signature is exactly 64 bytes. Checking the length in constant
+# time before the public-key operation rejects malformed/oversized headers
+# without leaking which byte differed.
+ED25519_SIGNATURE_LENGTH = 64
+_REPLAY_MARKER = "1"
+
+
+def _signature_length_is_valid(signature: bytes) -> bool:
+    """Constant-time check that ``signature`` is a full Ed25519 signature.
+
+    ``hmac.compare_digest`` compares the encoded lengths in constant time, so
+    a caller probing with different signature sizes cannot use timing to learn
+    anything about the expected shape of a valid signature.
+    """
+    return hmac.compare_digest(
+        len(signature).to_bytes(4, "big"),
+        ED25519_SIGNATURE_LENGTH.to_bytes(4, "big"),
+    )
 
 
 def _replay_cache_key(webhook_id: SnowflakeID, signature: bytes) -> str:
@@ -135,7 +157,14 @@ class SignatureMixin(WebhookManagerTrait):
         Returns:
             True if the signature is valid AND not replayed.
         """
-        if not signature_header or not timestamp_header:
+        # Bound untrusted header values BEFORE decoding/verification so a
+        # hostile caller cannot make the verifier churn on megabyte inputs.
+        if (
+            not signature_header
+            or not timestamp_header
+            or len(signature_header) > MAX_SIGNATURE_HEADER_LENGTH
+            or len(timestamp_header) > MAX_TIMESTAMP_HEADER_LENGTH
+        ):
             return False
 
         try:
@@ -192,6 +221,15 @@ class SignatureMixin(WebhookManagerTrait):
             )
             return False
 
+        # A well-formed Ed25519 signature is exactly 64 bytes. Reject any
+        # other size in constant time before the public-key verification.
+        if not _signature_length_is_valid(signature):
+            logger.warning(
+                f"Webhook signature had invalid length for {webhook_id}: "
+                f"{len(signature)} bytes (expected {ED25519_SIGNATURE_LENGTH})"
+            )
+            return False
+
         # Replay protection: a valid (webhook_id, signature) pair seen
         # inside the ±window must never be accepted twice. The cache tier
         # (Valkey with in-memory fallback) records seen pairs with a TTL
@@ -202,7 +240,16 @@ class SignatureMixin(WebhookManagerTrait):
 
         replay_key = _replay_cache_key(webhook_id, signature)
         try:
-            if cache_get(replay_key) is not None:
+            consumed = cache_get(replay_key)
+            if consumed is not None:
+                # Validate the stored marker in constant time. Any unexpected
+                # value is logged but STILL treated as a replay: a corrupted
+                # cache entry must never downgrade to "fresh" and let the
+                # signature through a second time.
+                if not hmac.compare_digest(str(consumed), _REPLAY_MARKER):
+                    logger.error(
+                        f"Unexpected webhook replay-cache marker for {webhook_id}"
+                    )
                 logger.warning(
                     f"Webhook signature rejected as REPLAY for {webhook_id} "
                     f"(signature/timestamp pair already used within the "
@@ -227,7 +274,7 @@ class SignatureMixin(WebhookManagerTrait):
             # Mark this (webhook_id, signature) pair as consumed BEFORE
             # reporting success so a racing duplicate cannot slip through.
             try:
-                cache_set(replay_key, True, ttl=_REPLAY_CACHE_TTL_SECONDS)
+                cache_set(replay_key, _REPLAY_MARKER, ttl=_REPLAY_CACHE_TTL_SECONDS)
             except Exception as e:
                 logger.error(f"Replay-cache store failed for webhook {webhook_id}: {e}")
                 return False
