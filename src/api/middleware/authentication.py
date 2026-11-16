@@ -17,6 +17,7 @@ from src.core.auth.exceptions import AuthError
 from .policy_cache import get_static_policy
 from .request_context import (
     bind_current_context,
+    cached_client_ip,
     cached_is_self_test,
     get_request_user,
     lookup_token_result,
@@ -81,7 +82,7 @@ class AuthenticationMiddleware:
                         if auth:
                             from src.utils.net import get_client_ip
 
-                            ip = get_client_ip(request)
+                            ip = cached_client_ip(request, resolver=get_client_ip)
                             ua = request.headers.get("User-Agent")
 
                             def _verify_token(token_str, client_ip, user_agent):
@@ -137,6 +138,17 @@ class AuthenticationMiddleware:
             # resolved here because they may be patched at runtime.
             policy = get_static_policy()
             api_prefix = policy.api_prefix
+
+            # Fast path: every gate below is scoped to the API prefix (the
+            # access-token gate, bearer verification and the cookie fallback
+            # all require it), so a non-API route that presents no credentials
+            # cannot be authenticated here. Skip the admin/docs/config work
+            # for static assets and other non-API traffic.
+            if not path.startswith(api_prefix) and not request.headers.get(
+                "Authorization"
+            ):
+                await self.app(scope, receive, send)
+                return
 
             # Skip for admin routes which manage their own sessions.
             admin_paths = ["/admin"]
@@ -219,7 +231,7 @@ class AuthenticationMiddleware:
 
                         from src.utils.net import get_client_ip
 
-                        client_ip = get_client_ip(request)
+                        client_ip = cached_client_ip(request, resolver=get_client_ip)
                         client_user_agent = request.headers.get("User-Agent")
                         request_path = request.url.path
                         request_method = request.method
@@ -297,7 +309,7 @@ class AuthenticationMiddleware:
                             # SECURITY: Use hardened utility to extract real client IP from trusted proxies
                             from src.utils.net import get_client_ip
 
-                            ip = get_client_ip(request)
+                            ip = cached_client_ip(request, resolver=get_client_ip)
                             ua = request.headers.get("User-Agent")
 
                             # Verify token in a threadpool to avoid blocking the event loop
@@ -426,7 +438,7 @@ class AuthenticationMiddleware:
                                 from src.utils.net import get_client_ip
                                 from fastapi.concurrency import run_in_threadpool
 
-                                ip = get_client_ip(request)
+                                ip = cached_client_ip(request, resolver=get_client_ip)
                                 ua = request.headers.get("User-Agent")
 
                                 def _verify_cookie(token_str, client_ip, user_agent):
@@ -603,7 +615,7 @@ class AuthenticationMiddleware:
                 return None
             result = await ratelimit.acheck_rate_limit(
                 user_id=None,
-                ip_address=get_client_ip(request) or "unknown",
+                ip_address=cached_client_ip(request, resolver=get_client_ip) or "unknown",
                 route=f"{request.method} {request.url.path}",
             )
             if not result.allowed:

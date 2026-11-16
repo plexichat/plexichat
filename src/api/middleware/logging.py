@@ -132,6 +132,12 @@ class LoggingMiddleware:
         method = scope.get("method", "UNKNOWN")
         path = scope.get("path", "/")
 
+        # Skip high-volume health/favicon probes before doing ANY per-request
+        # work: they must not pay for trusted-proxy parsing or a DB reset.
+        if path in SKIP_PATHS:
+            await self.app(scope, receive, send)
+            return
+
         # Get client IP. M1: use the trusted-proxy-aware extractor so the IP
         # logged here matches what authentication/rate-limiting record (raw
         # ``scope["client"]`` logs the reverse-proxy address instead).
@@ -149,13 +155,6 @@ class LoggingMiddleware:
         except Exception:
             client = scope.get("client")
             client_ip = client[0] if client else "unknown"
-
-        # Check if we should log this request
-        should_log = path not in SKIP_PATHS
-
-        if not should_log:
-            await self.app(scope, receive, send)
-            return
 
         # Reset DB metrics for the new request context
         try:
