@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict, Optional
 
 import utils.logger as logger
+from src.core.security.hardening import HardeningViolation, require_https_url
 
 from .base import PushManagerBase
 
@@ -48,6 +49,18 @@ class WebPushMixin(PushManagerBase):
         endpoint = token_record.get("token")
         if not p256dh or not auth or not endpoint:
             logger.debug("Web Push subscription missing p256dh/auth/endpoint")
+            return None
+
+        # The stored ``token`` is the subscription endpoint the browser push
+        # service handed us. pywebpush POSTs the encrypted payload straight to
+        # it, so an endpoint that is relative, uses a non-HTTPS scheme or
+        # embeds ``user:pass@`` credentials must never reach the transport.
+        # Refuse such rows here (skip, leaving the subscription intact) rather
+        # than letting a malformed record turn into an off-origin request.
+        try:
+            endpoint = require_https_url(endpoint, "Web Push endpoint")
+        except HardeningViolation as exc:
+            logger.warning(f"Refusing Web Push delivery: {exc}")
             return None
 
         try:

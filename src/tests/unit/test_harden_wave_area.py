@@ -1,0 +1,73 @@
+"""Focused regression tests for the wave of boundary hardening fixes in the
+DSAR / push / routes / webhooks area.
+
+Each guard rejects input that previously reached an outbound transport, a SQL
+statement or a storage lookup unchecked. These tests pin the rejection so a
+later refactor cannot quietly drop it.
+"""
+
+import sys
+import types
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
+def _bare_push_manager():
+    """A PushManager instance with no DB work, for pure sender tests."""
+    from src.core.push.manager import PushManager
+
+    mgr = object.__new__(PushManager)
+    mgr._vapid_available = True
+    mgr._fcm_available = False
+    mgr._apns_available = False
+    return mgr
+
+
+def _fake_pywebpush(monkeypatch):
+    calls = []
+
+    fake = types.ModuleType("pywebpush")
+
+    class WebPushException(Exception):
+        pass
+
+    def webpush(**kwargs):
+        calls.append(kwargs)
+
+    fake.WebPushException = WebPushException
+    fake.webpush = webpush
+    monkeypatch.setitem(sys.modules, "pywebpush", fake)
+    return calls
+
+
+class TestWebPushEndpoint:
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "/relative/path",
+            "push.example/ep",
+            "http://push.example/ep",
+            "https://user:pass@push.example/ep",
+            "javascript:alert(1)",
+        ],
+    )
+    def test_non_https_or_credentialed_endpoint_is_refused(self, monkeypatch, endpoint):
+        calls = _fake_pywebpush(monkeypatch)
+        mgr = _bare_push_manager()
+        rec = {"token": endpoint, "p256dh": "key", "auth": "secret"}
+        assert mgr._send_web_push(rec, "t", "b", None, {}) is None
+        assert calls == []
+
+    def test_https_endpoint_is_delivered(self, monkeypatch):
+        calls = _fake_pywebpush(monkeypatch)
+        mgr = _bare_push_manager()
+        rec = {
+            "token": "https://push.example/ep",
+            "p256dh": "key",
+            "auth": "secret",
+        }
+        config = {"vapid_private_key": "k", "vapid_subject": "mailto:a@b.c"}
+        assert mgr._send_web_push(rec, "t", "b", None, config) is True
+        assert calls[0]["subscription_info"]["endpoint"] == "https://push.example/ep"

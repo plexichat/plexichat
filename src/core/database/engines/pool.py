@@ -10,6 +10,13 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.core.security.hardening import bounded_int
+
+#: Hard ceiling on connections a single pool may hold. ``min_size`` connections
+#: are created synchronously in ``__init__``, so an unbounded config value here
+#: is a startup-time resource-exhaustion primitive, not a harmless typo.
+MAX_POOL_SIZE = 10_000
+
 # The periodic monitor reclaims idle checked-out connections on a longer
 # window than the exhaustion-time reclaim, so the middleware's per-request-
 # thread keep-alive connections are not churned on every monitor tick.
@@ -45,6 +52,16 @@ class ConnectionPool:
         idle_reclaim_seconds: float = 5.0,
         label: str = "database",
     ):
+        # ``min_size`` connections are opened in the loop below before the
+        # constructor returns. Bound both sizes and keep them ordered so a
+        # mis-set (or hostile) config cannot allocate an unbounded number of
+        # sockets/databases on the first request, nor spin forever waiting for
+        # a pool whose max is below its min.
+        min_size = bounded_int(min_size, "min_size", minimum=0, maximum=MAX_POOL_SIZE)
+        max_size = bounded_int(max_size, "max_size", minimum=1, maximum=MAX_POOL_SIZE)
+        if min_size > max_size:
+            raise ValueError("min_size cannot exceed max_size")
+
         self._create_conn = create_conn
         self._min_size = min_size
         self._max_size = max_size

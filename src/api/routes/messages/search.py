@@ -33,7 +33,11 @@ router = APIRouter(tags=["Messages"])
 @cached(ttl=60, prefix="search_messages_api")
 async def search_messages(
     channel_id: str,
-    content: str = Query(..., description="Search query"),
+    # A search term is fed to the messaging engine's (blind-index) query
+    # builder; an unbounded string lets a caller force an arbitrarily large
+    # index scan / allocation. Real search terms are short, so cap at the
+    # boundary rather than trusting the engine to bound its own input.
+    content: str = Query(..., max_length=200, description="Search query"),
     limit: int = Query(default=25, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ) -> List[MessageResponse]:
