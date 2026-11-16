@@ -7,7 +7,8 @@ import tempfile
 import threading
 import time
 
-from typing import Any, Dict
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List
 
 from .schema import (
     PLEXISUM_FORMAT_VERSION,
@@ -18,6 +19,7 @@ from .manager_protocol import SumManagerProtocol
 from ._shared import (
     SUM_SESSION_MAX_ENTRIES,
     SumConflictError,
+    SumNotFoundError,
     SumStorageError,
     _LiveSession,
     _SESSION_GUARD,
@@ -44,6 +46,69 @@ class SumManagerSessions(SumManagerProtocol):
     def _cache_current_file(self, workbook_id: int, revision: int, data: bytes) -> None:
         """Publish just-committed file bytes to the read cache."""
         _WORKBOOK_FILE_CACHE.put((int(workbook_id), int(revision)), data)
+
+    # ── read-only access to the live workbook ───────────────────────────────
+
+    @contextmanager
+    def _live_connection(self, workbook_id: int) -> Iterator["sqlite3.Connection"]:
+        """Yield the materialized workbook connection under its session lock.
+
+        Read-only callers (sheet listings, sheet existence checks, CSV export)
+        used to round-trip through ``_file_bytes`` -> container decode -> a
+        fresh SQLite connection that re-ran the whole additive-schema upgrade
+        on every request. The live connection is already materialized at the
+        current revision and carries the validated schema, so the same reads
+        can run in place with no serialization or DDL replay. Holding the
+        per-workbook lock for the whole block keeps the shared connection safe
+        against a concurrent writer promoting a new blob.
+        """
+        with self._session_lock(int(workbook_id)):
+            yield self._materialized_connection_unlocked(int(workbook_id))
+
+    def _sheets_from_connection(
+        self, connection: "sqlite3.Connection"
+    ) -> List[Dict[str, Any]]:
+        """Project sheet metadata from an already-open workbook connection."""
+        try:
+            rows = connection.execute(
+                "SELECT id, name, position, created_at, updated_at "
+                "FROM sum_sheets ORDER BY position, id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise SumStorageError("Workbook file schema is invalid") from exc
+        return [
+            {
+                "id": str(row["id"]),
+                "name": row["name"],
+                "position": int(row["position"]),
+                "created_at": int(row["created_at"]),
+                "updated_at": int(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    def _read_sheets(self, workbook_id: int) -> List[Dict[str, Any]]:
+        """Return sheet metadata straight from the live workbook connection."""
+        with self._live_connection(int(workbook_id)) as connection:
+            return self._sheets_from_connection(connection)
+
+    def _ensure_sheet_live(self, workbook_id: int, sheet_id: str) -> None:
+        """Fail fast when ``sheet_id`` is absent from the live workbook.
+
+        Equivalent to ``_ensure_sheet(self._file_bytes(...), sheet_id)`` but
+        without serializing the workbook to a container and reopening it just
+        to run one existence query.
+        """
+        with self._live_connection(int(workbook_id)) as connection:
+            try:
+                row = connection.execute(
+                    "SELECT id FROM sum_sheets WHERE id = ? AND deleted = 0",
+                    (str(sheet_id),),
+                ).fetchone()
+            except sqlite3.Error as exc:
+                raise SumStorageError("Workbook file schema is invalid") from exc
+        if row is None:
+            raise SumNotFoundError("Sheet not found")
 
     # ── live sessions (coalesced writes) ────────────────────────────────────
 

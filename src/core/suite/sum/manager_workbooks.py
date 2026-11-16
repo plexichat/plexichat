@@ -323,7 +323,10 @@ class SumManagerWorkbooks(SumManagerProtocol):
 
     def get_workbook(self, user_id: int, workbook_id: int) -> Dict[str, Any]:
         row = self._workbook(user_id, workbook_id)
-        sheets = self._read_sheets_from_file(self._file_bytes(workbook_id))
+        # Read sheet metadata from the already-materialized live connection
+        # rather than serializing the whole workbook into a container and
+        # reopening it (and replaying additive-schema DDL) just to list sheets.
+        sheets = self._read_sheets(workbook_id)
         return {
             "id": str(row["id"]),
             "artifact_id": str(row["artifact_id"])

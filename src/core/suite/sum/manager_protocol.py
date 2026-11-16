@@ -103,6 +103,9 @@ class SumManagerProtocol:
     def _ensure_sheet(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
+    def _ensure_sheet_live(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
     def _evict_sessions(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
@@ -116,6 +119,12 @@ class SumManagerProtocol:
         raise NotImplementedError
 
     def _file_bytes(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _grant_permissions(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _live_connection(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
     def _filter_cell_value(self, *args: Any, **kwargs: Any) -> Any:
@@ -190,7 +199,13 @@ class SumManagerProtocol:
     def _read_file(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
+    def _read_sheets(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
     def _read_sheets_from_file(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def _sheets_from_connection(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
     def _read_viewport_metadata(self, *args: Any, **kwargs: Any) -> Any:

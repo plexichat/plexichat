@@ -269,7 +269,7 @@ class SumManagerAdmin(SumManagerProtocol):
         permission: str,
     ) -> Dict[str, Any]:
         self._workbook(user_id, workbook_id, mutation=True)
-        self._ensure_sheet(self._file_bytes(workbook_id), str(sheet_id))
+        self._ensure_sheet_live(workbook_id, str(sheet_id))
         if permission not in ("read_only", "editable"):
             raise SumValidationError("permission must be read_only or editable")
         row_start, row_end = int(row_start), int(row_end)
@@ -346,7 +346,7 @@ class SumManagerAdmin(SumManagerProtocol):
         self, user_id: int, workbook_id: int, sheet_id: int
     ) -> List[Dict[str, Any]]:
         self._workbook(user_id, workbook_id)
-        self._ensure_sheet(self._file_bytes(workbook_id), str(sheet_id))
+        self._ensure_sheet_live(workbook_id, str(sheet_id))
         rows = self._db.fetch_all(
             "SELECT id, row_start, row_end, column_start, column_end, permission, created_at FROM sum_range_permissions WHERE workbook_id = ? AND sheet_id = ? ORDER BY created_at ASC",
             (int(workbook_id), int(sheet_id)),
