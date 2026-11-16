@@ -3,13 +3,14 @@ from typing import Any
 
 from ..models import (
     Rule,
-    RuleType,
     RuleAction,
-    ActionType,
     Violation,
-    ViolationSeverity,
     UserReputation,
     AuditEntry,
+    ViolationSeverity,
+    coerce_action_type,
+    coerce_rule_type,
+    coerce_severity,
 )
 
 
@@ -22,25 +23,44 @@ def safe_json_loads(value: Any, default: Any = None) -> Any:
         return default
 
 
+def _allowlisted_or_none(coerce, value: Any):
+    """Coerce a stored enum value, returning ``None`` when it is unknown.
+
+    A rule's ``actions`` / ``actions_taken`` columns are JSON written by an
+    older or third-party client. One bogus entry used to raise from the Enum
+    constructor and make ``get_rule()`` / the whole audit listing unusable;
+    with the allowlist helpers an unknown value is simply skipped.
+    """
+    try:
+        return coerce(value)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def row_to_rule(row) -> Rule:
     actions_data = safe_json_loads(row["actions"], []) or []
-    actions = [
-        RuleAction(
-            action_type=ActionType(a["action_type"]),
-            duration_seconds=a.get("duration_seconds"),
-            reason=a.get("reason"),
-            notify_user=a.get("notify_user", True),
-            metadata=a.get("metadata", {}),
+    actions = []
+    for entry in actions_data:
+        if not isinstance(entry, dict) or "action_type" not in entry:
+            continue
+        action_type = _allowlisted_or_none(coerce_action_type, entry["action_type"])
+        if action_type is None:
+            continue
+        actions.append(
+            RuleAction(
+                action_type=action_type,
+                duration_seconds=entry.get("duration_seconds"),
+                reason=entry.get("reason"),
+                notify_user=entry.get("notify_user", True),
+                metadata=entry.get("metadata", {}),
+            )
         )
-        for a in actions_data
-        if isinstance(a, dict) and "action_type" in a
-    ]
 
     return Rule(
         id=row["id"],
         server_id=row["server_id"],
         name=row["name"],
-        rule_type=RuleType(row["rule_type"]),
+        rule_type=coerce_rule_type(row["rule_type"]),
         enabled=bool(row["enabled"]),
         config=safe_json_loads(row["config"], {}),
         actions=actions,
@@ -64,10 +84,16 @@ def row_to_violation(row) -> Violation:
         user_id=row["user_id"],
         message_id=row["message_id"],
         rule_id=row["rule_id"],
-        rule_type=RuleType(row["rule_type"]),
+        rule_type=coerce_rule_type(row["rule_type"]),
         matched_content=row["matched_content"],
-        actions_taken=[ActionType(a) for a in actions_taken_raw if isinstance(a, str)],
-        severity=ViolationSeverity(row["severity"]),
+        actions_taken=[
+            coerced
+            for a in actions_taken_raw
+            if isinstance(a, str)
+            and (coerced := _allowlisted_or_none(coerce_action_type, a)) is not None
+        ],
+        severity=_allowlisted_or_none(coerce_severity, row["severity"])
+        or ViolationSeverity.MEDIUM,
         created_at=row["created_at"],
         metadata=safe_json_loads(row.get("metadata"), {}),
     )
@@ -90,7 +116,7 @@ def row_to_audit_entry(row) -> AuditEntry:
     return AuditEntry(
         id=row["id"],
         server_id=row["server_id"],
-        action_type=ActionType(row["action_type"]),
+        action_type=coerce_action_type(row["action_type"]),
         target_user_id=row["target_user_id"],
         moderator_id=row["moderator_id"],
         rule_id=row["rule_id"],

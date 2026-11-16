@@ -19,6 +19,7 @@ from ..exceptions import (
     InvalidApplicationNameError,
 )
 from ..oauth.tokens import generate_client_secret
+from ..validation import validate_redirect_uris
 from .row_mappers import row_to_application
 from .protocol import ApplicationManagerProtocol
 
@@ -37,6 +38,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         interactions_endpoint_url: Optional[str] = None,
     ) -> Application:
         name = self._validate_app_name(name)
+        redirect_uris = validate_redirect_uris(redirect_uris)
 
         max_apps = self._config.get("max_applications_per_user", 25)
         count = self._db.fetch_one(
@@ -55,7 +57,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         client_secret, secret_hash = generate_client_secret()
 
-        uris_json = json.dumps(redirect_uris or [])
+        uris_json = json.dumps(redirect_uris)
 
         self._db.execute(
             """INSERT INTO app_applications
@@ -96,7 +98,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             bot_require_code_grant=bot_require_code_grant,
             terms_of_service_url=terms_of_service_url,
             privacy_policy_url=privacy_policy_url,
-            redirect_uris=redirect_uris or [],
+            redirect_uris=redirect_uris,
             interactions_endpoint_url=interactions_endpoint_url,
             created_at=now,
             updated_at=now,
@@ -161,6 +163,9 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         if app.owner_id != user_id:
             raise ApplicationAccessDeniedError("You do not own this application")
+
+        if redirect_uris is not None:
+            redirect_uris = validate_redirect_uris(redirect_uris)
 
         updates = []
         params = []

@@ -9,8 +9,6 @@ import time
 import logging
 import re
 
-from src.core.security.hardening import bounded_int
-
 logger = logging.getLogger(__name__)
 
 _db: Any = None
@@ -162,20 +160,6 @@ def _cfg(key: str, default):
         return default
 
 
-#: Retention/cardinality settings are integers read from config and then used
-#: as buffer sizes and ``LIMIT`` clauses. A non-integer or an arbitrary-large
-#: value (e.g. ``10**30``) is a misconfiguration, not a request to retain
-#: unlimited data, and is rejected at the point of use.
-MAX_DISTINCT_ENDPOINTS = 100_000
-MAX_TOTAL_ROWS = 10_000_000
-MAX_PERCENTILE_SAMPLE_ROWS = 1_000_000
-
-
-def _bounded_cfg(key: str, default: int, minimum: int, maximum: int) -> int:
-    """Read an integer config value, refusing out-of-range/overflow values."""
-    return bounded_int(_cfg(key, default), key, minimum=minimum, maximum=maximum)
-
-
 def register_route_templates(paths) -> None:
     """Register server route templates used to allowlist client endpoints."""
     global _templates_registered
@@ -202,9 +186,7 @@ def get_cardinality_stats() -> Dict[str, Any]:
     """Expose cardinality-cap counters for admin dashboards/tests."""
     return {
         "distinct_endpoints": len(_seen_endpoints),
-        "max_distinct_endpoints": _bounded_cfg(
-            "telemetry.max_distinct_endpoints", 500, 1, MAX_DISTINCT_ENDPOINTS
-        ),
+        "max_distinct_endpoints": int(_cfg("telemetry.max_distinct_endpoints", 500)),
         "cardinality_rejections": _cardinality_rejections,
         "overflow_bucket": OVERFLOW_BUCKET,
     }
@@ -256,9 +238,7 @@ def submit_response_times(
     db = _get_db()
     now = int(time.time() * 1000)
     batch_data = []
-    max_distinct = _bounded_cfg(
-        "telemetry.max_distinct_endpoints", 500, 1, MAX_DISTINCT_ENDPOINTS
-    )
+    max_distinct = int(_cfg("telemetry.max_distinct_endpoints", 500))
 
     try:
         from src.utils.encryption import generate_snowflake_id
@@ -344,7 +324,7 @@ def submit_response_times(
 
 def _enforce_total_row_cap(db: Any, incoming: int) -> None:
     """Hard-cap total stored rows by trimming the oldest measurements."""
-    max_rows = _bounded_cfg("telemetry.max_total_rows", 100000, 0, MAX_TOTAL_ROWS)
+    max_rows = int(_cfg("telemetry.max_total_rows", 100000))
     if max_rows <= 0:
         return
     try:
@@ -458,9 +438,7 @@ def get_endpoint_stats(
         raw_params.append(client_id_filter)
     # Bound the second pass in SQL so a busy window cannot materialize every
     # raw row in memory; the per-endpoint cap below still applies on top.
-    sample_budget = _bounded_cfg(
-        "telemetry.percentile_sample_rows", 25000, 1, MAX_PERCENTILE_SAMPLE_ROWS
-    )
+    sample_budget = max(1, int(_cfg("telemetry.percentile_sample_rows", 25000)))
     raw_lookup += f" LIMIT {sample_budget}"
 
     by_key: Dict[tuple, List[float]] = {}

@@ -54,6 +54,60 @@ class ViolationSeverity(Enum):
     CRITICAL = "critical"
 
 
+# Explicit allowlists for every enum-shaped value that can arrive from a rule
+# definition, a database row or a manual action. An ``Enum(...)`` constructor
+# is itself an allowlist, but callers previously reached fields such as
+# ``RULE_CLASSES.get(rule_type)`` with an arbitrary string first: an unknown
+# value skipped validation and then crashed later on ``rule_type.value``.
+# Centralising the coercion gives every ingress the same, early rejection.
+RULE_TYPE_VALUES = frozenset(member.value for member in RuleType)
+ACTION_TYPE_VALUES = frozenset(member.value for member in ActionType)
+AI_BACKEND_VALUES = frozenset(member.value for member in AIBackendType)
+VIOLATION_SEVERITY_VALUES = frozenset(member.value for member in ViolationSeverity)
+
+
+def _allowlisted(value: Any, values: frozenset, label: str) -> str:
+    """Return the canonical string for ``value`` or raise ``ValueError``.
+
+    Accepts an enum member, its ``value``, or a plain string; anything else is
+    refused. ``ValueError`` is deliberate: existing ``except ValueError``
+    handlers and the API validation layer keep treating these as bad input.
+    """
+    if isinstance(value, str):
+        candidate = value.strip()
+    elif hasattr(value, "value") and isinstance(value.value, str):
+        candidate = value.value.strip()
+    else:
+        raise ValueError(f"Invalid {label}: expected one of {sorted(values)}")
+    if candidate not in values:
+        raise ValueError(f"Invalid {label}: {value!r}")
+    return candidate
+
+
+def coerce_rule_type(value: Any) -> RuleType:
+    """Validate a rule type against the allowlist and return its enum."""
+    return RuleType(_allowlisted(value, RULE_TYPE_VALUES, "rule type"))
+
+
+def coerce_action_type(value: Any) -> ActionType:
+    """Validate an action type against the allowlist and return its enum."""
+    return ActionType(_allowlisted(value, ACTION_TYPE_VALUES, "action type"))
+
+
+def coerce_ai_backend(value: Any) -> AIBackendType:
+    """Validate an AI backend against the allowlist and return its enum."""
+    return AIBackendType(_allowlisted(value, AI_BACKEND_VALUES, "AI backend"))
+
+
+def coerce_severity(
+    value: Any, default: ViolationSeverity = ViolationSeverity.MEDIUM
+) -> ViolationSeverity:
+    """Validate a severity against the allowlist; ``None`` maps to ``default``."""
+    if value is None:
+        return default
+    return ViolationSeverity(_allowlisted(value, VIOLATION_SEVERITY_VALUES, "severity"))
+
+
 @dataclass
 class RuleAction:
     """Action to take when a rule is triggered."""

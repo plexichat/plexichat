@@ -10,7 +10,10 @@ from urllib.parse import urlencode
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
 
+from src.core.security.hardening import HardeningViolation
+
 from ..models import OAuth2Token, OAuth2AuthorizationCode
+from ..validation import require_oauth_redirect_url
 from ..exceptions import (
     InvalidClientError,
     InvalidGrantError,
@@ -108,6 +111,11 @@ class OAuth2Flow:
             InvalidRedirectUriError: Invalid redirect URI
             InvalidScopeError: Invalid scopes
         """
+        try:
+            redirect_uri = require_oauth_redirect_url(redirect_uri)
+        except HardeningViolation as exc:
+            raise InvalidRedirectUriError(str(exc)) from exc
+
         app = self._db.fetch_one(
             "SELECT id, name, redirect_uris, icon_url FROM app_applications WHERE id = ?",
             (application_id,),
@@ -153,6 +161,11 @@ class OAuth2Flow:
         Returns:
             OAuth2AuthorizationCode
         """
+        try:
+            redirect_uri = require_oauth_redirect_url(redirect_uri)
+        except HardeningViolation as exc:
+            raise InvalidRedirectUriError(str(exc)) from exc
+
         code_id = generate_snowflake_id()
         now = self._current_time()
         expires_at = now + int(self._config.get("code_expiry_seconds", 600)) * 1000

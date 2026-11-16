@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 from typing import Optional, List
 
@@ -7,6 +7,11 @@ import utils.logger as logger
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
+from src.core.security.hardening import (
+    HardeningViolation,
+    reject_control_characters,
+    require_http_url,
+)
 from src.core.events.snowflakes import stringify_snowflake_ids
 from .common import (
     parse_id,
@@ -200,17 +205,40 @@ async def _is_safe_url_async(url: str) -> bool:
     return await run_in_threadpool(_is_safe_url, url)
 
 
+# Feedback/report payloads are stored verbatim and copied into moderator UIs.
+# Bound the human-authored fields and enumerate the machine-chosen ones so an
+# unbounded category or reason cannot poison the queue or the rendering path.
+MAX_REASON_LENGTH = 1000
+MAX_DETAILS_LENGTH = 2000
+MAX_RESOLUTION_LENGTH = 2000
+MAX_EVIDENCE_URLS = 5
+MAX_EVIDENCE_URL_LENGTH = 2048
+
+
+def _bounded_text(value, field: str, maximum: int) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError(f"{field} is too long")
+    try:
+        return reject_control_characters(value, field)
+    except HardeningViolation as exc:
+        raise ValueError(str(exc)) from exc
+
+
 class EnhancedReportRequest(BaseModel):
     target_type: str = Field(..., description="'message' or 'user'")
     target_id: str = Field(..., description="ID of the reported message or user")
-    reason: str = Field(..., min_length=1, max_length=1000, description="Report reason")
+    reason: str = Field(
+        ..., min_length=1, max_length=MAX_REASON_LENGTH, description="Report reason"
+    )
     category: str = Field("other", description="Report category")
     priority: str = Field("medium", description="Priority: low, medium, high, critical")
     details: Optional[str] = Field(
-        None, max_length=2000, description="Additional details"
+        None, max_length=MAX_DETAILS_LENGTH, description="Additional details"
     )
     evidence_urls: Optional[List[str]] = Field(
-        None, description="URLs of evidence (screenshots, etc.)"
+        None, max_length=MAX_EVIDENCE_URLS, description="URLs of evidence"
     )
     channel_id: Optional[str] = Field(
         None, description="Channel ID (for message reports)"
@@ -218,6 +246,47 @@ class EnhancedReportRequest(BaseModel):
     server_id: Optional[str] = Field(
         None, description="Server ID (for message reports)"
     )
+
+    @field_validator("category")
+    @classmethod
+    def _valid_category(cls, value: str, info):
+        if value not in VALID_REPORT_CATEGORIES:
+            raise ValueError("Invalid report category")
+        return value
+
+    @field_validator("priority")
+    @classmethod
+    def _valid_priority(cls, value: str, info):
+        if value not in VALID_REPORT_PRIORITIES:
+            raise ValueError("Invalid priority")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def _safe_reason(cls, value: str, info):
+        return _bounded_text(value, info.field_name, MAX_REASON_LENGTH)
+
+    @field_validator("details")
+    @classmethod
+    def _safe_details(cls, value, info):
+        return _bounded_text(value, info.field_name, MAX_DETAILS_LENGTH)
+
+    @field_validator("evidence_urls")
+    @classmethod
+    def _safe_evidence_urls(cls, value, info):
+        if value is None:
+            return value
+        if len(value) > MAX_EVIDENCE_URLS:
+            raise ValueError("Too many evidence URLs")
+        checked = []
+        for raw in value:
+            if not isinstance(raw, str) or len(raw) > MAX_EVIDENCE_URL_LENGTH:
+                raise ValueError("Invalid evidence URL")
+            try:
+                checked.append(require_http_url(raw, info.field_name))
+            except HardeningViolation as exc:
+                raise ValueError(str(exc)) from exc
+        return checked
 
 
 class ReportStatusUpdateRequest(BaseModel):
@@ -227,10 +296,33 @@ class ReportStatusUpdateRequest(BaseModel):
     )
     priority: Optional[str] = Field(None, description="Updated priority")
     assigned_to: Optional[str] = Field(None, description="Admin user ID to assign")
-    admin_notes: Optional[str] = Field(None, max_length=2000, description="Admin notes")
-    resolution: Optional[str] = Field(
-        None, max_length=2000, description="Resolution description"
+    admin_notes: Optional[str] = Field(
+        None, max_length=MAX_RESOLUTION_LENGTH, description="Admin notes"
     )
+    resolution: Optional[str] = Field(
+        None, max_length=MAX_RESOLUTION_LENGTH, description="Resolution description"
+    )
+
+    @field_validator("status")
+    @classmethod
+    def _valid_status(cls, value: str, info):
+        if value not in VALID_REPORT_STATUSES:
+            raise ValueError("Invalid report status")
+        return value
+
+    @field_validator("priority")
+    @classmethod
+    def _valid_priority(cls, value, info):
+        if value is None:
+            return value
+        if value not in VALID_REPORT_PRIORITIES:
+            raise ValueError("Invalid priority")
+        return value
+
+    @field_validator("admin_notes", "resolution")
+    @classmethod
+    def _safe_text(cls, value, info):
+        return _bounded_text(value, info.field_name, MAX_RESOLUTION_LENGTH)
 
 
 @router.post(

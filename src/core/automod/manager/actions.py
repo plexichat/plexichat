@@ -10,6 +10,7 @@ from ..models import (
     Violation,
     ViolationSeverity,
     RuleType,
+    coerce_action_type,
 )
 
 
@@ -219,6 +220,18 @@ class ActionMixin(AutoModProtocol):
         ``user_id`` would let any caller ban, kick or delete on any server.
         Refuses (returns False) when the permission cannot be resolved.
         """
+        # Validate the action against the allowlist before any permission
+        # lookup or DB write. An unknown value used to fall through to the
+        # generic "server.automod" permission and reach the audit INSERT with
+        # ``action_type.value``, i.e. an arbitrary string from a caller.
+        try:
+            action_type = coerce_action_type(action_type)
+        except ValueError:
+            logger.warning(
+                f"AutoMod manual action REFUSED: invalid action type {action_type!r}"
+            )
+            return False
+
         required = MANUAL_ACTION_PERMISSION.get(action_type, "server.automod")
         servers = self._servers
         if servers is None:

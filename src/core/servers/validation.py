@@ -17,12 +17,17 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlparse
 
+from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening.text import reject_control_characters
 from src.core.security.hardening.urls import require_http_url
 from src.core.security.outbound import parse_outbound_url
 
 #: Longest description accepted at the core boundary. Matches the HTTP schema
 #: so an internal caller cannot persist a description the API would reject.
 MAX_SERVER_DESCRIPTION_LENGTH = 1000
+#: A URL longer than this is never legitimate for an icon/banner. Capping it
+#: also keeps a hostile value from being stored and echoed to every client.
+MAX_SERVER_MEDIA_URL_LENGTH = 2048
 
 
 def validate_server_media_url(
@@ -43,9 +48,11 @@ def validate_server_media_url(
     """
     if value is None:
         return None
-    url = str(value).strip()
+    url = reject_control_characters(value, field).strip()
     if not url:
         return None
+    if len(url) > MAX_SERVER_MEDIA_URL_LENGTH:
+        raise HardeningViolation(f"{field} is too long")
 
     parsed = urlparse(url)
     # Same-origin absolute path: no scheme, no authority, no embedded

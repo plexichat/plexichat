@@ -52,26 +52,18 @@ class ApplicationResponse(BaseModel):
 
 
 def _validate_redirect_uris(value):
-    """Redirect URIs are the OAuth callback allow-list; reject unsafe shapes."""
+    """Redirect URIs are the OAuth callback allow-list; reject unsafe shapes.
+
+    The rules now live in the applications core so the HTTP schema, the
+    manager and the OAuth flow enforce exactly the same thing.
+    ``HardeningViolation`` is a ``ValueError`` subclass, so pydantic still
+    reports a validation error.
+    """
     if value is None:
         return value
-    if len(value) > 20:
-        raise ValueError("at most 20 redirect URIs are allowed")
-    from urllib.parse import urlparse
+    from src.core.applications.validation import validate_redirect_uris
 
-    for uri in value:
-        if len(uri) > 2048:
-            raise ValueError("redirect URI is too long")
-        parsed = urlparse(uri)
-        if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.netloc
-            or parsed.fragment
-        ):
-            raise ValueError(
-                "redirect URI must be an absolute http(s) URL without a fragment"
-            )
-    return value
+    return validate_redirect_uris(value)
 
 
 class CreateApplicationRequest(BaseModel):

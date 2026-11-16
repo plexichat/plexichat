@@ -31,7 +31,6 @@ from src.core.media.exceptions import StorageQuotaExceededError
 from src.core.security.hardening import (
     HardeningViolation,
     bounded_int,
-    parse_id,
     reject_control_characters,
 )
 
@@ -48,9 +47,6 @@ _UNLIMITED_MB = -1
 #: be an arbitrary-precision integer that overflows byte arithmetic downstream.
 MAX_OVERRIDE_NOTE_LENGTH = 500
 MAX_OVERRIDE_LIMIT_BYTES = 100 * 1024**4  # 100 TiB
-#: Largest quota (in MiB) any config/tier source may declare. Anything above
-#: this is a misconfiguration, not a real tier, and is rejected as overflow.
-MAX_CONFIG_QUOTA_MB = MAX_OVERRIDE_LIMIT_BYTES // MIB
 
 
 def _bounded_override_note(note: Any) -> Optional[str]:
@@ -104,16 +100,7 @@ class StorageQuotaManager:
 
     def _default_limit_bytes(self) -> int:
         value = self._storage_config().get("default_quota_mb", DEFAULT_QUOTA_MB)
-        # Config integers reach byte arithmetic and LIMIT clauses: validate the
-        # type and cap the magnitude instead of silently accepting a huge value
-        # (which used to overflow downstream computations).
-        mb = bounded_int(
-            value,
-            "storage.default_quota_mb",
-            minimum=-1,
-            maximum=MAX_CONFIG_QUOTA_MB,
-            default=DEFAULT_QUOTA_MB,
-        )
+        mb = _as_int(value, DEFAULT_QUOTA_MB)
         if mb < 0:
             return -1
         return mb * MIB
@@ -122,13 +109,7 @@ class StorageQuotaManager:
         value = self._storage_config().get(
             "reservation_ttl_seconds", DEFAULT_RESERVATION_TTL_SECONDS
         )
-        return bounded_int(
-            value,
-            "storage.reservation_ttl_seconds",
-            minimum=60,
-            maximum=3600,
-            default=DEFAULT_RESERVATION_TTL_SECONDS,
-        )
+        return max(60, min(3600, _as_int(value, DEFAULT_RESERVATION_TTL_SECONDS)))
 
     def _user_tier(self, user_id: int) -> str:
         try:
@@ -150,13 +131,7 @@ class StorageQuotaManager:
             from src.core import features
 
             limits = features.get_tier_limits(tier)
-            mb = bounded_int(
-                getattr(limits, "max_storage_mb", None),
-                "tier.max_storage_mb",
-                minimum=-1,
-                maximum=MAX_CONFIG_QUOTA_MB,
-                default=0,
-            )
+            mb = _as_int(getattr(limits, "max_storage_mb", None), 0)
             if mb == _UNLIMITED_MB:
                 return -1
             if mb > 0:
@@ -396,12 +371,6 @@ class StorageQuotaManager:
                 maximum=MAX_OVERRIDE_LIMIT_BYTES,
             )
         safe_note = _bounded_override_note(note)
-        # Every id written by an override is an untrusted-number boundary too:
-        # a negative or >snowflake value would poison audit rows and lookups.
-        safe_user_id = parse_id(user_id, "user_id")
-        safe_updated_by = (
-            parse_id(updated_by, "updated_by") if updated_by is not None else None
-        )
         self._ensure_schema()
         now = int(time.time() * 1000)
         self._db.execute(
@@ -415,11 +384,11 @@ class StorageQuotaManager:
             "updated_by = excluded.updated_by, "
             "updated_at = excluded.updated_at",
             (
-                safe_user_id,
+                int(user_id),
                 normalized_limit,
                 1 if unlimited else 0,
                 safe_note,
-                safe_updated_by,
+                int(updated_by) if updated_by is not None else None,
                 now,
             ),
         )

@@ -3,13 +3,43 @@ from typing import Optional, List, Dict, Any
 
 import utils.logger as logger
 from src.core.base import SnowflakeID
-from ..models import Rule, RuleType, RuleAction, ActionType
+from ..models import (
+    Rule,
+    RuleType,
+    RuleAction,
+    coerce_action_type,
+    coerce_rule_type,
+)
 from ..exceptions import (
     RuleNotFoundError,
     RuleValidationError,
 )
 from .converters import row_to_rule
 from .protocol import AutoModProtocol
+
+
+def _parse_action(action_data: Any) -> RuleAction:
+    """Build a RuleAction after checking its shape and action-type allowlist.
+
+    ``actions`` is caller-supplied (an admin route deserialises it straight
+    from JSON). A non-dict entry used to raise ``AttributeError`` from
+    ``.get()`` and an unknown action type used to reach ``ActionType(...)``;
+    both are now rejected here with one consistent validation error.
+    """
+    if not isinstance(action_data, dict):
+        raise RuleValidationError("Each action must be an object")
+    action_type_str = action_data.get("action_type", action_data.get("type"))
+    try:
+        action_type = coerce_action_type(action_type_str)
+    except ValueError:
+        raise RuleValidationError(f"Invalid action type: {action_type_str!r}") from None
+    return RuleAction(
+        action_type=action_type,
+        duration_seconds=action_data.get("duration_seconds"),
+        reason=action_data.get("reason"),
+        notify_user=action_data.get("notify_user", True),
+        metadata=action_data.get("metadata", {}),
+    )
 
 
 class RuleOpsMixin(AutoModProtocol):
@@ -32,11 +62,20 @@ class RuleOpsMixin(AutoModProtocol):
         if not name or not name.strip():
             raise RuleValidationError("Rule name is required")
 
-        if not actions:
+        if not isinstance(actions, (list, tuple)) or not actions:
             raise RuleValidationError("At least one action is required")
 
         if not _skip_authz:
             self._authorize_automod_mutation(server_id, user_id)
+
+        # Validate the rule type against the allowlist *before* using it as a
+        # dict key. A raw string from an API body previously skipped config
+        # validation when it was not in RULE_CLASSES, then failed on
+        # ``rule_type.value`` while serialising the INSERT.
+        try:
+            rule_type = coerce_rule_type(rule_type)
+        except ValueError:
+            raise RuleValidationError(f"Invalid rule type: {rule_type!r}") from None
 
         rule_class = self.RULE_CLASSES.get(rule_type)
         if rule_class:
@@ -44,23 +83,7 @@ class RuleOpsMixin(AutoModProtocol):
             if not valid:
                 raise RuleValidationError("Invalid rule configuration", issues)
 
-        parsed_actions = []
-        for action_data in actions:
-            action_type_str = action_data.get("action_type", action_data.get("type"))
-            try:
-                action_type = ActionType(action_type_str)
-            except ValueError:
-                raise RuleValidationError(f"Invalid action type: {action_type_str}")
-
-            parsed_actions.append(
-                RuleAction(
-                    action_type=action_type,
-                    duration_seconds=action_data.get("duration_seconds"),
-                    reason=action_data.get("reason"),
-                    notify_user=action_data.get("notify_user", True),
-                    metadata=action_data.get("metadata", {}),
-                )
-            )
+        parsed_actions = [_parse_action(action_data) for action_data in actions]
 
         now = self._get_timestamp()
         rule_id = self._generate_id()
@@ -156,24 +179,23 @@ class RuleOpsMixin(AutoModProtocol):
             params.append(json.dumps(rule_config))
 
         if actions is not None:
-            parsed_actions = []
-            for action_data in actions:
-                action_type_str = action_data.get(
-                    "action_type", action_data.get("type")
-                )
-                try:
-                    action_type = ActionType(action_type_str)
-                except ValueError:
-                    raise RuleValidationError(f"Invalid action type: {action_type_str}")
-                parsed_actions.append(
-                    {
-                        "action_type": action_type.value,
-                        "duration_seconds": action_data.get("duration_seconds"),
-                        "reason": action_data.get("reason"),
-                        "notify_user": action_data.get("notify_user", True),
-                        "metadata": action_data.get("metadata", {}),
-                    }
-                )
+            if not isinstance(actions, (list, tuple)):
+                raise RuleValidationError("actions must be a list")
+            # Same allowlist as create_rule: an unknown action type is
+            # rejected here instead of being persisted into a config that
+            # row_to_rule() will later refuse to load.
+            parsed_actions = [
+                {
+                    "action_type": _parse_action(action_data).action_type.value,
+                    "duration_seconds": action_data.get("duration_seconds"),
+                    "reason": action_data.get("reason"),
+                    "notify_user": action_data.get("notify_user", True),
+                    "metadata": action_data.get("metadata", {}),
+                }
+                for action_data in actions
+            ]
+            if not parsed_actions:
+                raise RuleValidationError("At least one action is required")
             updates.append("actions = ?")
             params.append(json.dumps(parsed_actions))
 
