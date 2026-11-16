@@ -24,17 +24,26 @@ def _resolve_member_user_id(db, server_id: int, member_or_user_id: int):
     All four member-mutation routes accept either a ``srv_members.id`` or a
     ``user_id`` in the path and previously issued two sequential ``fetch_one``
     calls to work out which: first keyed by ``id``, then a fallback keyed by
-    ``user_id``. Both were constrained to the same server, so a single
-    disjunctive query returns the same row while halving the database
-    round-trips on these hot endpoints. ``ORDER BY (id = ?) DESC`` preserves
-    the original precedence for the (anomalous) case where both a member-id
-    and a user-id row match the same number.
+    ``user_id``. A single query returns the same row while halving the database
+    round-trips on these hot endpoints.
+
+    Each disjunct restates the ``server_id`` predicate so SQLite's multi-index
+    OR planner uses two point lookups (primary key + ``(server_id, user_id)``
+    unique index) instead of scanning every row in the server. ``ORDER BY
+    (id = ?) DESC`` preserves the original precedence for the (anomalous) case
+    where both a member-id and a user-id row match the same number.
     """
     return db.fetch_one(
         "SELECT user_id FROM srv_members "
-        "WHERE server_id = ? AND (id = ? OR user_id = ?) "
+        "WHERE (id = ? AND server_id = ?) OR (server_id = ? AND user_id = ?) "
         "ORDER BY (id = ?) DESC LIMIT 1",
-        (server_id, member_or_user_id, member_or_user_id, member_or_user_id),
+        (
+            member_or_user_id,
+            server_id,
+            server_id,
+            member_or_user_id,
+            member_or_user_id,
+        ),
     )
 
 

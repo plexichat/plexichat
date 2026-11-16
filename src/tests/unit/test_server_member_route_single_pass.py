@@ -44,7 +44,7 @@ def test_resolves_by_member_id_in_a_single_query():
     assert len(db.calls) == 1
     sql, params = db.calls[0]
     assert "OR" in sql and "LIMIT 1" in sql
-    assert params == (1, 10, 10, 10)
+    assert params == (10, 1, 1, 10, 10)
 
 
 def test_resolves_by_user_id_in_a_single_query():
@@ -68,6 +68,35 @@ def test_rows_from_other_servers_are_ignored():
 def test_missing_member_returns_none():
     db = _Conn([])
     assert _resolve_member_user_id(db, 1, 123) is None
+
+
+def test_resolution_uses_multi_index_or_not_a_server_wide_scan():
+    # The OR must keep the two point lookups of the original pair of queries.
+    # A single `server_id = ? AND (id = ? OR user_id = ?)` decays into a scan
+    # over every member of the server on SQLite's planner.
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE srv_members (
+            id INTEGER PRIMARY KEY,
+            server_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            UNIQUE(server_id, user_id)
+        );
+        CREATE INDEX idx_srv_members_server ON srv_members(server_id);
+        CREATE INDEX idx_srv_members_user ON srv_members(user_id);
+        """
+    )
+    db = _Conn([])
+    db._conn = conn
+    db._conn.row_factory = sqlite3.Row
+    _resolve_member_user_id(db, 1, 10)
+    sql, _ = db.calls[0]
+    plan = [
+        row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, (10, 1, 1, 10, 10))
+    ]
+    assert any("MULTI-INDEX OR" in step for step in plan), plan
+    assert not any("SCAN srv_members" in step for step in plan), plan
 
 
 def test_all_four_mutation_routes_use_the_single_pass_helper():
