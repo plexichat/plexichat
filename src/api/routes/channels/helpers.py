@@ -232,6 +232,22 @@ def require_order(value: Any, field: str = "order") -> Optional[str]:
     return order
 
 
+def require_target_user_id(value: Any, field: str = "user_id") -> int:
+    """Parse a grant/recipient target id with the snowflake range guard.
+
+    DM recipients and invite inviter ids identify who receives channel access.
+    A bare int() let zero, negatives and oversized ids reach lookups and
+    response models; reject them at the boundary instead.
+    """
+    try:
+        return parse_id(value, field)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid target user ID"}},
+        ) from exc
+
+
 def _channel_to_response(
     channel, current_user_id: Optional[int] = None
 ) -> ChannelResponse:
@@ -281,6 +297,9 @@ def _channel_to_response(
                             recipient_id = participants[0]
 
                     if recipient_id:
+                        recipient_id = require_target_user_id(
+                            recipient_id, "recipient_id"
+                        )
                         from ..users import _get_user_cached, _user_to_public_response
 
                         user_data = _get_user_cached(int(recipient_id))

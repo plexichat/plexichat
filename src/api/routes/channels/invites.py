@@ -23,6 +23,7 @@ from .helpers import (
     require_channel_snowflake,
     require_invite_code,
     require_invite_limits,
+    require_target_user_id,
 )
 from ..exception_mapping import raise_mapped, map_invite_join_error
 
@@ -259,6 +260,18 @@ class ChannelInvitesMixin(ChannelBase):
                             f"invite server name lookup failed: {server_error}"
                         )
 
+                raw_inviter_id = getattr(invite, "inviter_id", None)
+                safe_inviter_id = (
+                    require_target_user_id(raw_inviter_id, "inviter_id")
+                    if raw_inviter_id
+                    else None
+                )
+                raw_inviter_id = getattr(invite, "inviter_id", None)
+                safe_inviter_id = (
+                    require_target_user_id(raw_inviter_id, "inviter_id")
+                    if raw_inviter_id
+                    else None
+                )
                 return InviteInfoResponse(
                     code=invite.code,
                     server_id=SnowflakeID(invite.server_id)
@@ -268,8 +281,8 @@ class ChannelInvitesMixin(ChannelBase):
                     channel_id=SnowflakeID(invite.channel_id)
                     if hasattr(invite, "channel_id")
                     else None,
-                    inviter_id=SnowflakeID(invite.inviter_id)
-                    if hasattr(invite, "inviter_id")
+                    inviter_id=SnowflakeID(safe_inviter_id)
+                    if safe_inviter_id
                     else None,
                     uses=getattr(invite, "uses", 0),
                     max_uses=getattr(invite, "max_uses", 0),

@@ -272,3 +272,32 @@ class TestListOrderingAllowlists:
         ):
             params = inspect.signature(handler).parameters
             assert "sort" in params and "order" in params
+
+
+class TestTargetUserIdBounds:
+    def test_target_ids_accept_real_snowflakes(self):
+        from src.api.routes.channels.helpers import require_target_user_id
+
+        assert require_target_user_id("123456789") == 123456789
+        assert require_target_user_id(42) == 42
+
+    @pytest.mark.parametrize("bad", ["0", "-3", "9223372036854775808", "abc", None])
+    def test_target_ids_reject_out_of_range_values(self, bad):
+        from src.api.routes.channels.helpers import require_target_user_id
+
+        with pytest.raises(HTTPException) as exc:
+            require_target_user_id(bad)
+        assert exc.value.status_code == 400
+
+    def test_invite_and_dm_paths_use_the_guard(self):
+        from src.api.routes.channels.invites import ChannelInvitesMixin
+
+        assert (
+            "require_target_user_id"
+            in ChannelInvitesMixin._get_invite_info.__code__.co_names
+        )
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        source = (root / "src/api/routes/channels/helpers.py").read_text()
+        assert "require_target_user_id(" in source
