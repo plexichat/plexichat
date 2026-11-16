@@ -138,19 +138,28 @@ class MessagesCRUDBase:
         embeds: Optional[list],
         servers_mod: Any,
         messaging: Any,
+        _channel_ctx: Optional[dict] = None,
     ) -> tuple:
         """
         Send a message with fallback logic: try server channel first, then DM conversation.
 
         Returns:
             Tuple of (message, server_id)
+
+        ``_channel_ctx`` optionally carries the channel resolved earlier in
+        the request (by ``_resolve_server_id``). Reusing it avoids a second
+        ``get_channel`` round-trip on every send; callers that do not pass a
+        context keep the original lookup behaviour.
         """
         msg = None
         server_id = None
 
         if servers_mod:
             try:
-                channel = servers_mod.get_channel(channel_id, user_id)
+                if _channel_ctx is not None and "channel" in _channel_ctx:
+                    channel = _channel_ctx["channel"]
+                else:
+                    channel = servers_mod.get_channel(channel_id, user_id)
                 if channel:
                     server_id = getattr(channel, "server_id", None)
                     conversation_id = getattr(channel, "conversation_id", None)
@@ -329,13 +338,29 @@ class MessagesCRUDBase:
         return msg, server_id
 
     def _resolve_server_id(
-        self, channel_id: int, user_id: int, servers_mod: Any
+        self,
+        channel_id: int,
+        user_id: int,
+        servers_mod: Any,
+        _channel_ctx: Optional[dict] = None,
     ) -> Optional[int]:
-        """Return the server id for a channel, or None for DM conversations."""
+        """Return the server id for a channel, or None for DM conversations.
+
+        When ``_channel_ctx`` is provided the resolved channel is stored under
+        ``"channel"`` so later helpers can reuse it instead of re-fetching the
+        same row. A failed lookup is deliberately NOT cached, preserving the
+        existing fallback where a later helper re-attempts the lookup and can
+        surface an access-denied error as a 403.
+        """
         if not servers_mod:
             return None
         try:
-            channel = servers_mod.get_channel(channel_id, user_id)
+            if _channel_ctx is not None and "channel" in _channel_ctx:
+                channel = _channel_ctx["channel"]
+            else:
+                channel = servers_mod.get_channel(channel_id, user_id)
+                if _channel_ctx is not None:
+                    _channel_ctx["channel"] = channel
             if channel:
                 return getattr(channel, "server_id", None)
         except Exception:
@@ -350,6 +375,7 @@ class MessagesCRUDBase:
         servers_mod: Any,
         messaging: Any,
         source: str,
+        _channel_ctx: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Populate automod fast-path context for the live message pipeline.
 
@@ -361,7 +387,7 @@ class MessagesCRUDBase:
         context: Dict[str, Any] = {"source": source}
 
         recent = self._recent_messages_for_automod(
-            channel_id, user_id, servers_mod, messaging
+            channel_id, user_id, servers_mod, messaging, _channel_ctx
         )
         if recent:
             context["recent_messages"] = recent
@@ -377,6 +403,7 @@ class MessagesCRUDBase:
         user_id: int,
         servers_mod: Any,
         messaging: Any,
+        _channel_ctx: Optional[dict] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch the last N messages of the target conversation (bounded)."""
         if not messaging:
@@ -385,7 +412,9 @@ class MessagesCRUDBase:
         if getter is None:
             return []
 
-        conversation_id = self._conversation_for_channel(channel_id, servers_mod)
+        conversation_id = self._conversation_for_channel(
+            channel_id, servers_mod, _channel_ctx
+        )
         try:
             messages = getter(user_id, int(conversation_id), limit=25) or []
         except Exception as e:
@@ -406,9 +435,24 @@ class MessagesCRUDBase:
             )
         return recent
 
-    def _conversation_for_channel(self, channel_id: int, servers_mod: Any) -> int:
+    def _conversation_for_channel(
+        self,
+        channel_id: int,
+        servers_mod: Any,
+        _channel_ctx: Optional[dict] = None,
+    ) -> int:
         """Map a URL channel id onto its conversation (server channels link to
-        one; DM/group conversations ARE their own channel id)."""
+        one; DM/group conversations ARE their own channel id).
+
+        A channel resolved earlier in the request is reused so no second
+        ``get_channel_conversation_id`` lookup is issued.
+        """
+        if _channel_ctx is not None and "channel" in _channel_ctx:
+            channel = _channel_ctx["channel"]
+            if channel is not None:
+                linked = getattr(channel, "conversation_id", None)
+                if linked:
+                    return int(linked)
         if servers_mod:
             getter = getattr(servers_mod, "get_channel_conversation_id", None)
             if getter is not None:

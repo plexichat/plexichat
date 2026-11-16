@@ -235,7 +235,13 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
             # BEFORE the message is created or broadcast. A match blocks the
             # send entirely, so other clients never see the message. AI
             # moderation is intentionally excluded here and runs async (phase 2).
-            server_id = self._resolve_server_id(cid, current_user.user_id, servers_mod)
+            # Resolve the channel once and share it across the server-id,
+            # automod-context and send helpers. Without this ctx each of those
+            # helpers re-fetched the same channel row (2+ extra queries/send).
+            _channel_ctx: dict = {}
+            server_id = self._resolve_server_id(
+                cid, current_user.user_id, servers_mod, _channel_ctx
+            )
             if server_id:
                 # Channel slowmode is enforced here as well as in the core
                 # servers send path, which the REST route bypasses entirely.
@@ -248,6 +254,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                         servers_mod,
                         messaging,
                         "message_create",
+                        _channel_ctx,
                     )
                     fast_result = automod.check_message_fast(
                         server_id=server_id,
@@ -324,6 +331,7 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                 body.embeds,
                 servers_mod,
                 messaging,
+                _channel_ctx,
             )
 
             if msg is None:

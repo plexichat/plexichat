@@ -91,10 +91,14 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
             real_cid = int(getattr(msg, "conversation_id"))
 
             server_id = None
+            # Share the resolved channel with the automod-context helper so it
+            # does not re-resolve the conversation with a second lookup.
+            _channel_ctx: dict = {}
             if servers_mod:
                 try:
                     channel = servers_mod.get_channel(cid, current_user.user_id)
                     if channel:
+                        _channel_ctx["channel"] = channel
                         server_id = getattr(channel, "server_id", None)
                         if server_id and hasattr(servers_mod, "is_timed_out"):
                             if servers_mod.is_timed_out(
@@ -131,6 +135,7 @@ class EditMixin(BroadcastMixin, MessagesCRUDBase):
                         servers_mod,
                         messaging,
                         "message_edit",
+                        _channel_ctx,
                     )
                     fast_result = automod.check_message_fast(
                         server_id=server_id,
