@@ -59,11 +59,15 @@ class RelationshipStatusMixin(RelationshipHelpersMixin, RelationshipMixinProtoco
                 status=RelationshipStatus.NONE,
             )
 
-        if self._is_blocked(user_id, target_id):
-            block = self._db.fetch_one(
-                "SELECT created_at FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
-                (user_id, target_id),
-            )
+        # A single SELECT covers both "is there a relationship?" and the
+        # created_at needed for the response. The old pattern ran an existence
+        # probe (_is_blocked / _are_friends) and then re-queried the same row,
+        # costing two round trips per branch on this read-heavy path.
+        block = self._db.fetch_one(
+            "SELECT created_at FROM rel_blocked WHERE blocker_id = ? AND blocked_id = ?",
+            (user_id, target_id),
+        )
+        if block is not None:
             return Relationship(
                 user_id=user_id,
                 target_user_id=target_id,
@@ -71,11 +75,11 @@ class RelationshipStatusMixin(RelationshipHelpersMixin, RelationshipMixinProtoco
                 created_at=block["created_at"] if block else 0,
             )
 
-        if self._are_friends(user_id, target_id):
-            friend = self._db.fetch_one(
-                "SELECT created_at FROM rel_friends WHERE user_id = ? AND friend_id = ?",
-                (user_id, target_id),
-            )
+        friend = self._db.fetch_one(
+            "SELECT created_at FROM rel_friends WHERE user_id = ? AND friend_id = ?",
+            (user_id, target_id),
+        )
+        if friend is not None:
             return Relationship(
                 user_id=user_id,
                 target_user_id=target_id,
