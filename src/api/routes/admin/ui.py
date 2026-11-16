@@ -18,6 +18,18 @@ def _admin_static_path(*parts: str) -> Path:
     return Path(safe_join(str(_ADMIN_TEMPLATE_DIR), *parts))
 
 
+# Bundled assets ship with the server rather than arriving from a request, but
+# a corrupt/tampered checkout can still leave one enormous. Check the on-disk
+# size before every read so one request cannot allocate an unbounded buffer.
+_MAX_ADMIN_STATIC_ASSET = 2 * 1024 * 1024
+
+
+def _check_admin_asset_size(path: Path, label: str) -> None:
+    """Fail closed when a bundled asset is larger than the read cap."""
+    if path.stat().st_size > _MAX_ADMIN_STATIC_ASSET:
+        raise HTTPException(status_code=500, detail=f"{label} asset too large")
+
+
 router = APIRouter()
 
 
@@ -90,6 +102,7 @@ async def admin_favicon(request: Request):
     icon_path = _admin_static_path("favicon.svg")
     if not icon_path.exists():
         return HTMLResponse(content="<!-- icon not found -->", status_code=404)
+    _check_admin_asset_size(icon_path, "favicon")
     with open(icon_path, "rb") as f:
         icon_content = f.read()
     return Response(
@@ -118,6 +131,7 @@ async def admin_chart_js(request: Request):
     if not js_path.exists():
         return HTMLResponse(content="/* JS file not found */", status_code=404)
 
+    _check_admin_asset_size(js_path, "chart")
     with open(js_path, "rb") as f:
         js_content = f.read()
 
@@ -143,6 +157,7 @@ async def admin_dashboard_css(request: Request):
     if not css_path.exists():
         return HTMLResponse(content="/* CSS file not found */", status_code=404)
 
+    _check_admin_asset_size(css_path, "dashboard.css")
     # Re-read only when the stylesheet changes; this route is hit on every
     # dashboard navigation and the file is ~28 KB.
     signature = css_path.stat().st_mtime_ns
@@ -211,6 +226,7 @@ async def admin_dashboard_js(request: Request):
         js_path = _admin_static_path("dashboard.js")
         if not js_path.exists():
             return HTMLResponse(content="/* JS file not found */", status_code=404)
+        _check_admin_asset_size(js_path, "dashboard.js")
         with open(js_path, "r", encoding="utf-8") as f:
             js_content = f.read()
 

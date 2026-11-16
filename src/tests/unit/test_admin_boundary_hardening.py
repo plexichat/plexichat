@@ -9,6 +9,9 @@ the route signatures/constants so a future edit that drops a bound fails loudly.
 import asyncio
 import inspect
 
+import pytest
+
+from fastapi import HTTPException
 from fastapi.params import Query as QueryParam
 from starlette.requests import Request
 
@@ -166,6 +169,20 @@ class TestStaticResponseHeaders:
         )
         response = asyncio.run(ui_routes.admin_favicon(request))
         assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+class TestBundledAssetSizeBounds:
+    def test_oversized_bundled_asset_is_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ui_routes, "_MAX_ADMIN_STATIC_ASSET", 8)
+        asset = tmp_path / "asset.bin"
+        asset.write_bytes(b"x" * 32)
+        with pytest.raises(HTTPException) as exc:
+            ui_routes._check_admin_asset_size(asset, "test")
+        assert exc.value.status_code == 500
+
+    def test_every_bundled_asset_read_is_guarded(self):
+        source = inspect.getsource(ui_routes)
+        assert source.count("_check_admin_asset_size(") >= 5
 
 
 class TestAuditExportBounds:
