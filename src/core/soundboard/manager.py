@@ -11,6 +11,11 @@ from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
+from src.core.avatars.manager.upload_guard import (
+    UploadContentError,
+    normalize_mime,
+    verify_upload_content,
+)
 from src.core.base import BaseManager
 
 from .models import (
@@ -263,6 +268,30 @@ class SoundboardManager(BaseManager, SoundboardPlaybackMixin):
             raise InvalidSoundFormatError(
                 f"Format {detected} not allowed", detected, allowed
             )
+
+        # DEEP: pin verification to the format derived from the magic bytes.
+        # A client declaring a non-audio type (or smuggling markup after a
+        # valid audio header) is rejected even though the header matches.
+        declared = normalize_mime(content_type)
+        if (
+            declared
+            and declared != "application/octet-stream"
+            and not declared.startswith("audio/")
+        ):
+            raise InvalidSoundFormatError(
+                "Declared content type is not audio", declared, allowed
+            )
+        try:
+            verify_upload_content(
+                content_type,
+                file_data,
+                expected_mime=f"audio/{detected}",
+                allow_unspecified=True,
+            )
+        except UploadContentError as exc:
+            raise InvalidSoundFormatError(
+                "Uploaded audio bytes failed content verification", detected, allowed
+            ) from exc
 
         media = getattr(self, "_media", None)
         if media is None or not hasattr(media, "upload_file"):

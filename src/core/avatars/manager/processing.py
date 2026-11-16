@@ -83,11 +83,28 @@ class AvatarProcessingMixin(AvatarProtocol):
         # Do not allow images with more than 16k width/height
         max_dim = self._get_config("max_dimension", 16384)
 
-        # Detect actual content type from bytes to prevent spoofing
-        actual_type = self._detect_content_type(image_data, content_type)
-        if actual_type != content_type:
+        # Detect actual content type from bytes to prevent spoofing. DEEP: the
+        # declared type must honestly match the magic signature; a mismatch
+        # is rejected rather than silently re-labelled. The generic ValueError
+        # is mapped by the HTTP layer to the standard "Invalid image file" 400.
+        from .upload_guard import (
+            UploadContentError,
+            assert_safe_media_payload,
+            declared_type_matches_bytes,
+        )
+
+        declared_type = content_type
+        try:
+            assert_safe_media_payload(image_data)
+        except UploadContentError as exc:
+            raise ValueError("Invalid image file: unsafe payload") from exc
+        if not declared_type_matches_bytes(declared_type, image_data):
+            raise ValueError("Invalid image file: content does not match declared type")
+
+        actual_type = self._detect_content_type(image_data, declared_type)
+        if actual_type != declared_type:
             logger.info(
-                f"Avatar: Detected actual type {actual_type} for file claimed as {content_type}"
+                f"Avatar: Detected actual type {actual_type} for file claimed as {declared_type}"
             )
             content_type = actual_type
 

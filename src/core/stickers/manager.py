@@ -8,6 +8,10 @@ from typing import Optional, List, Dict, Any
 
 import utils.config as config
 import utils.logger as logger
+from src.core.avatars.manager.upload_guard import (
+    UploadContentError,
+    verify_upload_content,
+)
 from src.core.base import timestamp_ms, generate_id
 
 from ._discovery import StickerUsageDiscoveryMixin
@@ -152,6 +156,17 @@ class StickerManager(StickerUsageDiscoveryMixin):
             raise InvalidStickerFormatError(
                 f"Unsupported content type: {content_type}", content_type, allowed
             )
+
+        # DEEP: reject polyglots and payloads carrying active markup even when
+        # the leading magic bytes matched (e.g. a PNG followed by <script>).
+        try:
+            verify_upload_content(content_type, image_data, expected_mime=content_type)
+        except UploadContentError as exc:
+            raise InvalidStickerFormatError(
+                "Sticker bytes failed content verification",
+                content_type,
+                ["png", "apng", "json"],
+            ) from exc
 
         # Reject oversized uploads before contacting storage.
         max_size = self._config.get("max_sticker_size", 524288)

@@ -24,6 +24,10 @@ from src.api.schemas.common import (
     SuccessResponse,
     _reject_ui_text_chars,
 )
+from src.core.avatars.manager.upload_guard import (
+    UploadContentError,
+    verify_upload_content,
+)
 
 router = APIRouter(tags=["Emojis"])
 
@@ -495,6 +499,18 @@ async def create_emoji(
             )
 
         content_type = image.content_type or "application/octet-stream"
+
+        # DEEP: the declared emoji media type must match the actual magic
+        # bytes, and the payload must not be a polyglot / carry active markup.
+        # Without this, an SVG-with-script sent as image/png survives as a
+        # stored-XSS vector in every emoji picker and reaction render.
+        try:
+            verify_upload_content(content_type, image_data)
+        except UploadContentError:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid image file"}},
+            )
 
         try:
             emoji = reactions.create_custom_emoji(
