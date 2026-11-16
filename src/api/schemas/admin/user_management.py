@@ -5,6 +5,7 @@ User management schemas.
 from typing import List, Optional, Union
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
+from ..common import SnowflakeID
 
 
 class UserTierUpdate(BaseModel):
@@ -136,7 +137,7 @@ class ScheduledDeletionListResponse(BaseModel):
 class ForceLogoutRequest(BaseModel):
     """Request to force logout a user."""
 
-    user_id: str = Field(..., description="User ID to logout")
+    user_id: SnowflakeID = Field(..., description="User ID to logout")
 
 
 class ForceUsernameChangeRequest(BaseModel):
@@ -151,9 +152,12 @@ class ForceUsernameChangeRequest(BaseModel):
 class UserLockRequest(BaseModel):
     """Request to lock/suspend a user account."""
 
-    user_id: str = Field(..., description="User ID to lock")
+    user_id: SnowflakeID = Field(..., description="User ID to lock")
     duration_seconds: Optional[int] = Field(
-        None, description="Lock duration in seconds (null for permanent)"
+        None,
+        ge=1,
+        le=31_536_000,
+        description="Lock duration in seconds (null for permanent, max one year)",
     )
 
 
