@@ -21,7 +21,12 @@ Security model:
 """
 
 from src.api.request_guards import MAX_FEDERATION_BODY, read_body_capped
-from src.core.security.hardening import HardeningViolation, require_https_url
+from src.core.security.hardening import (
+    SNOWFLAKE_MAX,
+    HardeningViolation,
+    bounded_int,
+    require_https_url,
+)
 from src.utils.security import URLValidator, pinned_request_target
 
 from dataclasses import dataclass
@@ -29,6 +34,8 @@ from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urljoin, urlparse
 
 from fastapi import APIRouter, HTTPException, Request
+
+import re
 
 import utils.logger as logger
 
@@ -239,6 +246,78 @@ def build_pinned_target(endpoint: ResolvedEndpoint) -> PinnedTarget:
         headers=headers,
         extensions=extensions,
     )
+
+
+# --- Strict format/range checks for federation identifiers ---------------
+#
+# Remote ids, op/message types and invite codes all arrive inside a signed
+# envelope, but a valid signature only proves the peer sent them — it does not
+# make the values safe to persist, log, or use in a lookup. Bind each to a
+# restrictive character class and length, and numeric ids to the snowflake
+# range, so a peer cannot smuggle control characters, oversized strings or
+# sentinel integers past the boundary.
+
+MAX_REMOTE_ID_LENGTH = 128
+MAX_INVITE_CODE_LENGTH = 64
+MAX_TYPE_LENGTH = 128
+
+_REMOTE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_TYPE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def _bad_field(field: str) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+    )
+
+
+def validate_remote_id(value: Any, field: str = "instance_id") -> str:
+    """Return a bounded remote instance id free of control characters."""
+    if not isinstance(value, str):
+        raise _bad_field(field)
+    text = value.strip()
+    if not text or len(text) > MAX_REMOTE_ID_LENGTH or not _REMOTE_ID_RE.match(text):
+        raise _bad_field(field)
+    return text
+
+
+def validate_invite_code(value: Any, field: str = "invite_code") -> str:
+    """Return a well-formed invite code or reject it."""
+    if not isinstance(value, str) or not _INVITE_CODE_RE.match(value):
+        raise _bad_field(field)
+    return value
+
+
+def validate_numeric_id(value: Any, field: str, *, minimum: int = 1) -> int:
+    """Parse a numeric federation id inside the snowflake range."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise _bad_field(field)
+    try:
+        return bounded_int(value, field, minimum=minimum, maximum=SNOWFLAKE_MAX)
+    except (ValueError, TypeError, HardeningViolation):
+        raise _bad_field(field)
+
+
+def validate_type_field(value: Any, field: str) -> str:
+    """Return a bounded op/message type token."""
+    if not isinstance(value, str) or not _TYPE_RE.match(value):
+        raise _bad_field(field)
+    return value
+
+
+def validate_invite_codes(value: Any, field: str = "payload") -> None:
+    """Recursively validate any ``invite_code`` fields in a signed payload."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str) and "invite_code" in key:
+                validate_invite_code(item, key)
+            else:
+                validate_invite_codes(item, key if isinstance(key, str) else field)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            validate_invite_codes(item, field)
 
 
 def _get_plexijoin_manager():
@@ -615,11 +694,8 @@ async def message_inbound(request: Request):
         )
 
     payload = _parse_json_body(body)
-    if not payload.get("message_type"):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "message_type is required"}},
-        )
+    validate_type_field(payload.get("message_type"), "message_type")
+    validate_invite_codes(payload)
 
     try:
         manager.record_traffic(int(conn["id"]), "inbound", 1)

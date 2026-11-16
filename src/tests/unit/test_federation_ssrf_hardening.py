@@ -22,7 +22,12 @@ from src.api.routes.federation import (
     build_pinned_target,
     require_secure_remote_endpoint,
     resolve_remote_endpoint,
+    validate_invite_code,
+    validate_invite_codes,
+    validate_numeric_id,
     validate_redirect_chain,
+    validate_remote_id,
+    validate_type_field,
 )
 
 
@@ -244,4 +249,81 @@ def test_wide_payload_is_rejected():
 def test_oversized_text_field_is_rejected():
     with pytest.raises(HTTPException) as exc:
         _parse_json_body(json.dumps({"note": "x" * 5000}).encode())
+    assert exc.value.status_code == 400
+
+
+# --- Strict identifier validation ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["plexichat-1234", "abc.def:123", "local-42", "a" * 128],
+)
+def test_valid_remote_ids_accepted(value):
+    assert validate_remote_id(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "has spaces", "bad\nnewline", "semi;colon", "a" * 129, 123, None, "/etc/passwd"],
+)
+def test_invalid_remote_ids_rejected(value):
+    with pytest.raises(HTTPException) as exc:
+        validate_remote_id(value)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("value", ["abc123", "INV-_9", "a" * 64])
+def test_valid_invite_codes_accepted(value):
+    assert validate_invite_code(value) == value
+
+
+@pytest.mark.parametrize("value", ["", "bad code", "bad/code", "x" * 65, 12, None])
+def test_invalid_invite_codes_rejected(value):
+    with pytest.raises(HTTPException) as exc:
+        validate_invite_code(value)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("value", [1, "990000000000000000", 2**63 - 1])
+def test_valid_numeric_ids_accepted(value):
+    assert validate_numeric_id(value, "artifact_id") == int(value)
+
+
+@pytest.mark.parametrize(
+    "value", [0, -1, "0", 2**63, "99999999999999999999", 1.5, True, "abc", None]
+)
+def test_invalid_numeric_ids_rejected(value):
+    with pytest.raises(HTTPException) as exc:
+        validate_numeric_id(value, "artifact_id")
+    assert exc.value.status_code == 400
+
+
+def test_actor_id_allows_zero():
+    assert validate_numeric_id(0, "actor_id", minimum=0) == 0
+
+
+def test_nested_invite_codes_are_validated():
+    payload = {
+        "message_type": "join",
+        "invite_code": "valid_CODE-1",
+        "nested": [{"child_invite_code": "also-valid"}, {"ok": 1}],
+    }
+    validate_invite_codes(payload)  # does not raise
+
+    bad = {"nested": [{"invite_code": "bad code"}]}
+    with pytest.raises(HTTPException) as exc:
+        validate_invite_codes(bad)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("value", ["op.edit", "message_send", "a.b:c-1"])
+def test_valid_type_fields_accepted(value):
+    assert validate_type_field(value, "message_type") == value
+
+
+@pytest.mark.parametrize("value", ["", "has space", "a" * 129, None, 7])
+def test_invalid_type_fields_rejected(value):
+    with pytest.raises(HTTPException) as exc:
+        validate_type_field(value, "message_type")
     assert exc.value.status_code == 400
