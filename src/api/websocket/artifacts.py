@@ -23,6 +23,7 @@ import threading
 import utils.logger as logger
 from src.core.events.snowflakes import stringify_snowflake_ids
 
+from src.api.websocket.boundaries import subscription_allowed
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
 from src.api.websocket.session import SessionManager
@@ -45,13 +46,23 @@ class ArtifactSubscriptionRegistry:
 
     def subscribe(
         self, user_id: int, artifact_id: int, connection_id: Optional[str] = None
-    ) -> None:
-        """Subscribe a user/connection to an artifact."""
+    ) -> bool:
+        """Subscribe a user/connection to an artifact.
+
+        Returns False (and does nothing) when the connection is already at its
+        subscription cap and this is a new artifact. Re-subscribing to an
+        already-held artifact is always allowed.
+        """
         with self._lock:
+            if connection_id:
+                held = self._connection_subs.get(connection_id, set())
+                if not subscription_allowed(len(held), artifact_id, held):
+                    return False
             self._subs.setdefault(artifact_id, set()).add(user_id)
             if connection_id:
                 self._connection_subs.setdefault(connection_id, set()).add(artifact_id)
                 self._connection_users[connection_id] = int(user_id)
+        return True
 
     def unsubscribe(
         self, user_id: int, artifact_id: int, connection_id: Optional[str] = None

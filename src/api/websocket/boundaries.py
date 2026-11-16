@@ -14,6 +14,8 @@ parsing or allocation on its behalf.
 
 from __future__ import annotations
 
+import json
+
 from typing import Any
 
 from src.core.security.hardening import HardeningViolation, bounded_int
@@ -79,3 +81,45 @@ def validate_parsed_structure(value: Any, _depth: int = 0) -> None:
 def clamp_configured_limit(value: Any, field: str, ceiling: int, default: int) -> int:
     """Return a config-provided byte limit clamped into ``[1, ceiling]``."""
     return bounded_int(value, field, minimum=1, maximum=ceiling, default=default)
+
+
+def decode_gateway_frame(raw: bytes) -> dict:
+    """Decode one raw text frame into a bounded JSON object.
+
+    Combines the pre-parse byte ceiling, UTF-8 decoding, JSON parsing, the
+    object-shape requirement and the structural bound into one call so a new
+    receive path cannot accidentally skip one of them. Raises
+    :class:`HardeningViolation` on any failure.
+    """
+    if not validate_frame_bytes(raw):
+        raise HardeningViolation("gateway frame exceeds the byte ceiling")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HardeningViolation("gateway frame is not valid UTF-8") from exc
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HardeningViolation("gateway frame is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise HardeningViolation("gateway frame is not a JSON object")
+    validate_parsed_structure(value)
+    return value
+
+
+# --- Subscription caps (commit 3) ------------------------------------------
+
+#: A single connection may hold at most this many artifact/workbook
+#: subscriptions. Without a cap one socket can grow the registry without
+#: limit and force every relay to fan out to thousands of phantom targets.
+MAX_SUBSCRIPTIONS_PER_CONNECTION = 128
+
+
+def subscription_allowed(existing_count: int, artifact_id: int, subscribed_ids) -> bool:
+    """Whether a connection may add ``artifact_id`` to its subscription set.
+
+    Re-subscribing to an id it already holds is always allowed (idempotent).
+    """
+    if artifact_id in subscribed_ids:
+        return True
+    return int(existing_count) < MAX_SUBSCRIPTIONS_PER_CONNECTION

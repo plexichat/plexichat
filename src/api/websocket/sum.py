@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 import utils.logger as logger
 from src.core.events.snowflakes import stringify_snowflake_ids
 
+from src.api.websocket.boundaries import subscription_allowed
 from src.api.websocket.opcodes import GatewayOpcode
 from src.api.websocket.connection import Connection
 
@@ -44,15 +45,23 @@ class SumSubscriptionRegistry:
 
     def subscribe(
         self, user_id: int, workbook_id: int, connection_id: Optional[str] = None
-    ) -> None:
-        """Subscribe a user/connection to a workbook."""
+    ) -> bool:
+        """Subscribe a user/connection to a workbook.
+
+        Returns False (and does nothing) when the connection is already at its
+        subscription cap and this is a new workbook.
+        """
         with self._lock:
-            self._subs.setdefault(int(workbook_id), set()).add(int(user_id))
+            wid = int(workbook_id)
             if connection_id:
-                self._connection_subs.setdefault(connection_id, set()).add(
-                    int(workbook_id)
-                )
+                held = self._connection_subs.get(connection_id, set())
+                if not subscription_allowed(len(held), wid, held):
+                    return False
+            self._subs.setdefault(wid, set()).add(int(user_id))
+            if connection_id:
+                self._connection_subs.setdefault(connection_id, set()).add(wid)
                 self._connection_users[connection_id] = int(user_id)
+        return True
 
     def unsubscribe(
         self, user_id: int, workbook_id: int, connection_id: Optional[str] = None

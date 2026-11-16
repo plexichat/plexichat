@@ -105,9 +105,14 @@ class SumHandler:
             )
             return None, None, None
 
-        self._registry.subscribe(
+        if not self._registry.subscribe(
             connection.user_id, workbook_id, connection.connection_id
-        )
+        ):
+            logger.warning(
+                f"Connection {connection.connection_id} exhausted its workbook "
+                f"subscription budget; subscribe ignored"
+            )
+            return None, None, None
         logger.debug(f"User {connection.user_id} subscribed to workbook {workbook_id}")
 
         base_revision = 0

@@ -152,9 +152,14 @@ class ArtifactHandler:
             )
             return None, None, None
 
-        self._registry.subscribe(
+        if not self._registry.subscribe(
             connection.user_id, artifact_id, connection.connection_id
-        )
+        ):
+            logger.warning(
+                f"Connection {connection.connection_id} exhausted its artifact "
+                f"subscription budget; subscribe ignored"
+            )
+            return None, None, None
         logger.debug(f"User {connection.user_id} subscribed to artifact {artifact_id}")
 
         # L36: a payload can reach ~1 MB; cap what the gateway ships to a
