@@ -1,7 +1,11 @@
 from src.core.security.hardening import require_https_url
+import base64
 import hmac as hmac_module
+import json as _json
 import re
-from typing import List, Optional
+import secrets as _secrets
+import time
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 import httpx
@@ -128,6 +132,202 @@ def _bounded_oauth_field(value: object, field: str, maximum: int) -> str:
     if len(text) > maximum:
         raise ValueError(f"{field} exceeds maximum length of {maximum}")
     return text
+
+
+# ------------------------------- ID token claims --------------------------------
+#
+# The IdP token endpoint is trusted over TLS, but the returned ``id_token`` is
+# still attacker-influenced data (a stolen code or a compromised client can
+# submit one). Decode it under hard size limits and reject alg confusion plus
+# unbounded/missing time, audience and issuer claims before it drives a login.
+MAX_ID_TOKEN_LENGTH = 8192
+MAX_ID_TOKEN_CLAIM_LENGTH = 512
+ID_TOKEN_CLOCK_SKEW_SECONDS = 30
+ID_TOKEN_MAX_LIFETIME_SECONDS = 86_400
+# Asymmetric algorithms only. ``none`` and symmetric algorithms (HS*) are the
+# classic alg-confusion primitives and are never accepted.
+ID_TOKEN_ALLOWED_ALGS = frozenset({"RS256", "ES256", "PS256"})
+OIDC_EXPECTED_ISSUERS = {
+    "google": ("https://accounts.google.com", "accounts.google.com"),
+    "gitlab": ("https://gitlab.com",),
+}
+_MICROSOFT_ISSUER_RE = re.compile(
+    r"^https://login\.microsoftonline\.com/[0-9a-fA-F-]{8,}/v2\.0$"
+    r"|^https://sts\.windows\.net/[0-9a-fA-F-]{8,}/$"
+)
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _id_token_segment(segment: str) -> Dict[str, Any]:
+    """Decode one bounded base64url JSON segment of an ID token."""
+    if not segment or len(segment) > MAX_ID_TOKEN_LENGTH or not _B64URL_RE.fullmatch(segment):
+        raise ValueError("invalid base64url segment")
+    padding = "=" * (-len(segment) % 4)
+    raw = base64.urlsafe_b64decode(segment + padding)
+    if len(raw) > MAX_ID_TOKEN_LENGTH:
+        raise ValueError("oversized id_token segment")
+    value = _json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("id_token segment is not a JSON object")
+    return value
+
+
+def _decode_id_token(id_token: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Return ``(header, claims)`` for a structurally valid ID token."""
+    if not isinstance(id_token, str) or not id_token or len(id_token) > MAX_ID_TOKEN_LENGTH:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token"}},
+        )
+    parts = id_token.split(".")
+    if len(parts) != 3 or not all(parts):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token"}},
+        )
+    try:
+        return _id_token_segment(parts[0]), _id_token_segment(parts[1])
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token"}},
+        )
+
+
+def _claim_int(claims: Dict[str, Any], name: str, *, required: bool = True) -> Optional[int]:
+    value = claims.get(name)
+    if value is None:
+        if required:
+            raise HTTPException(
+                status_code=401,
+                detail={"error": {"code": 401, "message": f"Missing {name} claim"}},
+            )
+        return None
+    # bool is a subclass of int but is never a valid NumericDate claim.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": f"Invalid {name} claim"}},
+        )
+    return value
+
+
+def _issuer_is_expected(issuer: str, provider: str, provider_config: dict) -> bool:
+    configured = provider_config.get("issuers") or provider_config.get("issuer")
+    if configured:
+        candidates = [configured] if isinstance(configured, str) else list(configured)
+        # An explicit operator allow-list is authoritative: no silent fallback.
+        return issuer in candidates
+    expected = OIDC_EXPECTED_ISSUERS.get(provider)
+    if expected and issuer in expected:
+        return True
+    if provider == "microsoft" and _MICROSOFT_ISSUER_RE.fullmatch(issuer):
+        return True
+    return False
+
+
+def _validate_id_token_claims(
+    header: Dict[str, Any],
+    claims: Dict[str, Any],
+    provider: str,
+    client_id: str,
+) -> None:
+    """Reject algorithm confusion and unbound/malformed ID token claims.
+
+    Error messages deliberately avoid the word "nonce": the nonce binding gate
+    runs first so callers can distinguish a nonce failure from a claim failure.
+    """
+    alg = header.get("alg")
+    if alg not in ID_TOKEN_ALLOWED_ALGS:
+        logger.warning(f"Rejected id_token with algorithm {alg!r} for {provider}")
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token algorithm"}},
+        )
+    if "crit" in header:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Unsupported id_token header"}},
+        )
+    typ = header.get("typ")
+    if typ is not None and (not isinstance(typ, str) or typ.upper() != "JWT"):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token header"}},
+        )
+
+    oauth_config = config_util.get("oauth", {}) if config_util else {}
+    provider_config = (oauth_config.get(provider, {}) or {}) if isinstance(oauth_config, dict) else {}
+
+    issuer = claims.get("iss")
+    if (
+        not isinstance(issuer, str)
+        or not issuer
+        or len(issuer) > MAX_ID_TOKEN_CLAIM_LENGTH
+        or not _issuer_is_expected(issuer, provider, provider_config)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token issuer"}},
+        )
+
+    expected_aud = provider_config.get("audience") or client_id
+    audience = claims.get("aud")
+    if isinstance(audience, str):
+        audiences = [audience]
+    elif isinstance(audience, list) and 1 <= len(audience) <= 10 and all(
+        isinstance(item, str) and len(item) <= MAX_ID_TOKEN_CLAIM_LENGTH
+        for item in audience
+    ):
+        audiences = audience
+    else:
+        audiences = []
+    if not audiences or expected_aud not in audiences:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token audience"}},
+        )
+
+    now = int(time.time())
+    exp = _claim_int(claims, "exp")
+    iat = _claim_int(claims, "iat")
+    nbf = _claim_int(claims, "nbf", required=False)
+    if exp <= now - ID_TOKEN_CLOCK_SKEW_SECONDS:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Expired id_token"}},
+        )
+    if exp > now + ID_TOKEN_MAX_LIFETIME_SECONDS:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token expiry"}},
+        )
+    if iat > now + ID_TOKEN_CLOCK_SKEW_SECONDS or exp <= iat:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token issued-at"}},
+        )
+    if nbf is not None and nbf > now + ID_TOKEN_CLOCK_SKEW_SECONDS:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token not-before"}},
+        )
+
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not subject or len(subject) > MAX_ID_TOKEN_CLAIM_LENGTH:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token subject"}},
+        )
+    presented_nonce = claims.get("nonce")
+    if presented_nonce is not None and (
+        not isinstance(presented_nonce, str)
+        or len(presented_nonce) > MAX_OAUTH_STATE_LENGTH
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": 401, "message": "Invalid id_token claim value"}},
+        )
 
 
 def _oauth_cookie_params(max_age: int) -> dict:
@@ -571,10 +771,6 @@ async def oauth_callback(
         stored_nonce_hash = getattr(state_record, "nonce", None)
         legacy_nonce_raw = getattr(state_record, "nonce_value", None)
         if stored_nonce_hash or legacy_nonce_raw:
-            import base64
-            import json as _json
-            import secrets as _secrets
-
             if not id_token or not isinstance(id_token, str):
                 logger.warning(
                     f"OAuth nonce check failed for {provider}: "
@@ -589,22 +785,8 @@ async def oauth_callback(
                         }
                     },
                 )
-            try:
-                parts = id_token.split(".")
-                if len(parts) < 2:
-                    raise ValueError("malformed id_token")
-                payload = parts[1]
-                padding = "=" * (-len(payload) % 4)
-                claims = _json.loads(base64.urlsafe_b64decode(payload + padding))
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Failed to decode id_token from {provider}: {e}")
-                raise HTTPException(
-                    status_code=401,
-                    detail={"error": {"code": 401, "message": "Invalid id_token"}},
-                )
-            presented_nonce = claims.get("nonce") if isinstance(claims, dict) else None
+            header, claims = _decode_id_token(id_token)
+            presented_nonce = claims.get("nonce")
             if stored_nonce_hash:
                 nonce_ok = verify_oauth_nonce(stored_nonce_hash, presented_nonce)
             else:
@@ -624,6 +806,14 @@ async def oauth_callback(
                     status_code=401,
                     detail={"error": {"code": 401, "message": "OAuth nonce mismatch"}},
                 )
+
+        # Bound every remaining claim AFTER the nonce gate. This ordering lets
+        # nonce-bound tests and callers distinguish a nonce failure from a
+        # malformed/unsafe token, while still rejecting alg confusion, wrong
+        # audience/issuer and unbounded or expired time claims before login.
+        if id_token:
+            header, claims = _decode_id_token(id_token)
+            _validate_id_token_claims(header, claims, provider, client_id)
 
         user_info_headers = {"Authorization": f"Bearer {access_token}"}
         try:
