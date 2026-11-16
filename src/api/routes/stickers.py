@@ -49,6 +49,64 @@ router = APIRouter(tags=["Stickers"])
 MAX_STICKER_TAG_PAYLOAD = 400
 MAX_STICKER_SUGGESTION_QUERY = 256
 
+# BEFORE: hydrating a server's sticker packs called ``get_pack_stickers`` once
+# per pack. Each call re-ran ``get_pack`` (JOIN + membership probe) and issued
+# its own sticker query, so a server with N packs cost 1 + 3N round trips.
+# AFTER: one batched ``sticker_stickers`` query resolves every pack at once;
+# the original per-pack path is kept as a fallback when the batch path cannot
+# run (module not wired, unexpected schema). Membership was already validated
+# by ``get_server_packs`` before this helper is called.
+_MAX_STICKER_BATCH_CHUNK = 400
+
+
+def _batch_pack_stickers(stickers_mod, packs, user_id: int) -> dict:
+    """Return ``{pack_id: [Sticker, ...]}`` for all ``packs`` in one query."""
+    by_pack: dict = {int(pack.id): [] for pack in packs}
+    if not by_pack:
+        return by_pack
+
+    manager = None
+    db = None
+    try:
+        manager = stickers_mod._get_manager()
+        db = getattr(manager, "_db", None)
+    except Exception:
+        db = None
+
+    if (
+        db is not None
+        and hasattr(db, "fetch_all")
+        and hasattr(manager, "_row_to_sticker")
+    ):
+        pack_ids = list(by_pack)
+        try:
+            for start in range(0, len(pack_ids), _MAX_STICKER_BATCH_CHUNK):
+                chunk = pack_ids[start : start + _MAX_STICKER_BATCH_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                rows = db.fetch_all(
+                    "SELECT s.*, COUNT(u.id) as usage_count "
+                    "FROM sticker_stickers s "
+                    "LEFT JOIN sticker_usage u ON s.id = u.sticker_id "
+                    f"WHERE s.pack_id IN ({placeholders}) "
+                    "GROUP BY s.id ORDER BY s.pack_id, s.name",
+                    tuple(chunk),
+                )
+                for row in rows:
+                    pid = int(row["pack_id"])
+                    if pid in by_pack:
+                        by_pack[pid].append(manager._row_to_sticker(row))
+            return by_pack
+        except Exception as e:
+            logger.debug(f"batch pack sticker lookup failed: {e}")
+
+    # Fallback: preserve the original per-pack semantics exactly.
+    for pack in packs:
+        try:
+            by_pack[int(pack.id)] = stickers_mod.get_pack_stickers(user_id, pack.id)
+        except Exception as e:
+            logger.debug(f"per-pack sticker lookup failed for {pack.id}: {e}")
+    return by_pack
+
 
 def _build_shared_ratelimit_storage():
     """Build the shared/persistent storage backend used at startup.
@@ -233,15 +291,20 @@ async def get_server_stickers(
     try:
         packs = stickers_mod.get_server_packs(current_user.user_id, sid)
 
+        # Batch the sticker lookups for all packs into one query instead of
+        # one get_pack_stickers() call per pack (which re-checked membership
+        # and re-queried the stickers table every time).
+        stickers_by_pack = _batch_pack_stickers(
+            stickers_mod, packs, current_user.user_id
+        )
+
         # Hydrate packs with stickers
         response_packs = []
         for pack in packs:
-            pack_stickers = stickers_mod.get_pack_stickers(
-                current_user.user_id, pack.id
-            )
             pack_response = StickerPackResponse.model_validate(pack)
             pack_response.stickers = [
-                StickerResponse.model_validate(s) for s in pack_stickers
+                StickerResponse.model_validate(s)
+                for s in stickers_by_pack.get(int(pack.id), [])
             ]
             response_packs.append(pack_response)
 
