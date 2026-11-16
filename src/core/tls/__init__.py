@@ -22,6 +22,14 @@ from typing import Any, List, Optional, Tuple
 import utils.config as config
 import utils.logger as logger
 
+from .ssl_settings import (
+    SECURE_CIPHERS,
+    TLSHardeningError,
+    hardened_ssl_kwargs,
+    validate_cipher_string,
+    validate_min_tls_version,
+)
+
 try:
     import fcntl
 except ImportError:
@@ -413,16 +421,27 @@ def _generate_self_signed_cert(
     logger.info(f"Generated self-signed certificate valid for {validity_days} days")
 
 
-def get_ssl_context(cert_path: str, key_path: str):
+def get_ssl_context(
+    cert_path: str,
+    key_path: str,
+    *,
+    min_version: Any = None,
+    ciphers: Optional[str] = None,
+) -> dict:
     """
-    Create an SSL context for use with uvicorn.
+    Create hardened SSL settings for uvicorn.
 
     Args:
         cert_path: Path to certificate file
         key_path: Path to private key file
+        min_version: Optional minimum TLS version (must be TLS 1.2 or newer)
+        ciphers: Optional operator cipher list (weak ciphers are rejected)
 
     Returns:
-        SSL context dictionary for uvicorn
+        SSL settings dictionary for uvicorn. ``ssl_context_factory`` is the
+        part that actually enforces the TLS floor, server cipher preference,
+        disabled compression and the refusal of legacy renegotiation; uvicorn's
+        own context builder leaves those at insecure OpenSSL defaults.
     """
     cert_path = _normalize_path(cert_path)
     key_path = _normalize_path(key_path)
@@ -431,10 +450,12 @@ def get_ssl_context(cert_path: str, key_path: str):
     if not os.path.exists(key_path):
         raise FileNotFoundError(f"Private key not found: {key_path}")
 
-    return {
-        "ssl_certfile": cert_path,
-        "ssl_keyfile": key_path,
-    }
+    try:
+        return hardened_ssl_kwargs(
+            cert_path, key_path, min_version=min_version, ciphers=ciphers
+        )
+    except TLSHardeningError as exc:
+        raise TLSConfigError(str(exc)) from exc
 
 
 def is_tls_enabled() -> bool:
@@ -478,7 +499,20 @@ def get_tls_config() -> dict:
         if not os.path.isfile(key_path):
             raise TLSConfigError(f"TLS private key not found: {key_path}")
 
-    return get_ssl_context(cert_path, key_path)
+    # Validate protocol/cipher overrides from configuration before they reach
+    # the SSL context. A weak override aborts startup instead of silently
+    # lowering the floor (fail closed).
+    try:
+        min_version = validate_min_tls_version(tls_config.get("min_version"))
+        ciphers = (
+            validate_cipher_string(tls_config["ciphers"])
+            if "ciphers" in tls_config
+            else SECURE_CIPHERS
+        )
+    except TLSHardeningError as exc:
+        raise TLSConfigError(str(exc)) from exc
+
+    return get_ssl_context(cert_path, key_path, min_version=min_version, ciphers=ciphers)
 
 
 __all__ = [
