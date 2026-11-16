@@ -28,6 +28,7 @@ from ...artifacts_export import (
     sanitize_rich_html,
 )
 from ...artifacts_helpers import (
+    _AuthCache,
     _artifact_capability_for_type,
     _artifact_response,
     _author_profile_cache,
@@ -81,6 +82,7 @@ __all__ = [
     "router",
     "sanitize_rich_html",
     "sanitize_header_filename",
+    "_AuthCache",
     "_artifact_board_text",
     "_artifact_capability_for_type",
     "_artifact_export_html",

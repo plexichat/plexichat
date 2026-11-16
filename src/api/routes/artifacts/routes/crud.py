@@ -23,6 +23,7 @@ from src.api.schemas.common import (
 from src.core.artifacts.models import ArtifactStatus, ArtifactType
 
 from ...artifacts_helpers import (
+    _AuthCache,
     _artifact_response,
     _author_profile_cache,
     _authorize_scope,
@@ -170,12 +171,14 @@ async def list_artifacts(
             if auth_id is not None
             else (current_user.user_id if conv_id is None and srv_id is None else None)
         )
+        auth_cache = _AuthCache()
         _authorize_scope(
             current_user.user_id,
             conv_id,
             srv_id,
             "artifact.view",
             author_id=scope_author_id,
+            cache=auth_cache,
         )
         if (
             auth_id is not None
@@ -252,7 +255,8 @@ async def list_artifacts(
 
         author_cache = _author_profile_cache(artifacts)
         items = [
-            _artifact_response(current_user.user_id, a, author_cache) for a in artifacts
+            _artifact_response(current_user.user_id, a, author_cache, auth_cache)
+            for a in artifacts
         ]
         if not include_payload:
             for item in items:
@@ -300,16 +304,18 @@ async def get_artifact(
                 detail={"error": {"code": 404, "message": "Artifact not found"}},
             )
 
+        auth_cache = _AuthCache()
         _authorize_scope(
             current_user.user_id,
             artifact.conversation_id,
             artifact.server_id,
             "artifact.view",
             author_id=artifact.author_id,
+            cache=auth_cache,
         )
         _require_artifact_capability(artifact.artifact_type)
 
-        return _artifact_response(current_user.user_id, artifact)
+        return _artifact_response(current_user.user_id, artifact, auth_cache=auth_cache)
     except HTTPException:
         raise
     except Exception as e:
@@ -353,12 +359,14 @@ async def update_artifact(
 
         _require_artifact_capability(artifact.artifact_type)
 
+        auth_cache = _AuthCache()
         _authorize_scope(
             current_user.user_id,
             artifact.conversation_id,
             artifact.server_id,
             "artifact.edit",
             author_id=artifact.author_id,
+            cache=auth_cache,
         )
 
         update_fields: Dict[str, Any] = {}
@@ -474,7 +482,7 @@ async def update_artifact(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"error": {"code": 404, "message": "Artifact not found"}},
                 )
-        return _artifact_response(current_user.user_id, updated)
+        return _artifact_response(current_user.user_id, updated, auth_cache=auth_cache)
     except HTTPException:
         raise
     except Exception as e:
@@ -518,6 +526,7 @@ async def delete_artifact(
             artifact.server_id,
             "artifact.delete",
             author_id=artifact.author_id,
+            cache=_AuthCache(),
         )
 
         if not manager.delete(aid):

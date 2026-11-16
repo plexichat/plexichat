@@ -33,8 +33,29 @@ from src.core.artifacts.revision import (
 # === Permission helpers ===
 
 
+class _AuthCache:
+    """Per-request memo for repeated authorization lookups.
+
+    A listing previously re-ran the same server-permission check, conversation
+    membership check and ``msg_conversations`` metadata query once per artifact
+    (and again in ``_authorize_scope``). All three are read-only for the life
+    of a request, so one small cache collapses that N+1 into a single lookup
+    per distinct scope. It is never shared across requests.
+    """
+
+    __slots__ = ("server_permissions", "memberships", "conversation_servers")
+
+    def __init__(self) -> None:
+        self.server_permissions: Dict[tuple, bool] = {}
+        self.memberships: Dict[tuple, bool] = {}
+        self.conversation_servers: Dict[int, Optional[int]] = {}
+
+
 def _require_server_permission(
-    user_id: int, server_id: Optional[int], permission: str
+    user_id: int,
+    server_id: Optional[int],
+    permission: str,
+    cache: Optional[_AuthCache] = None,
 ) -> bool:
     """Return True if the user holds ``permission`` in ``server_id``.
 
@@ -43,6 +64,18 @@ def _require_server_permission(
     """
     if server_id is None:
         return False
+    key = (user_id, server_id, permission)
+    if cache is not None and key in cache.server_permissions:
+        return cache.server_permissions[key]
+    result = _require_server_permission_uncached(user_id, server_id, permission)
+    if cache is not None:
+        cache.server_permissions[key] = result
+    return result
+
+
+def _require_server_permission_uncached(
+    user_id: int, server_id: Optional[int], permission: str
+) -> bool:
     servers_mod = api.get_servers()
     if servers_mod is None:
         return False
@@ -59,22 +92,44 @@ def _require_server_permission(
 
 
 def _is_conversation_member(
-    messaging_mod: Any, conversation_id: Optional[int], user_id: int
+    messaging_mod: Any,
+    conversation_id: Optional[int],
+    user_id: int,
+    cache: Optional[_AuthCache] = None,
 ) -> bool:
     """Return True if ``user_id`` participates in / owns the conversation."""
     if conversation_id is None or messaging_mod is None:
         return False
+    key = (conversation_id, user_id)
+    if cache is not None and key in cache.memberships:
+        return cache.memberships[key]
     try:
-        return messaging_mod.is_participant(conversation_id, user_id)
+        result = bool(messaging_mod.is_participant(conversation_id, user_id))
     except Exception as e:  # pragma: no cover - defensive
         logger.debug(f"membership check failed for conv {conversation_id}: {e}")
-        return False
+        result = False
+    if cache is not None:
+        cache.memberships[key] = result
+    return result
 
 
-def _conversation_server_id(conversation_id: Optional[int]) -> Optional[int]:
+def _conversation_server_id(
+    conversation_id: Optional[int], cache: Optional[_AuthCache] = None
+) -> Optional[int]:
     """Return the server_id a conversation is bound to, or ``None``."""
     if conversation_id is None:
         return None
+    if cache is not None and conversation_id in cache.conversation_servers:
+        return cache.conversation_servers[conversation_id]
+    result = _conversation_server_id_uncached(conversation_id)
+    if cache is not None:
+        cache.conversation_servers[conversation_id] = result
+    return result
+
+
+def _conversation_server_id_uncached(
+    conversation_id: Optional[int],
+) -> Optional[int]:
     db = api.get_db()
     if db is None:
         return None
@@ -105,6 +160,7 @@ def _authorize_scope(
     server_id: Optional[int],
     permission: str,
     author_id: Optional[int] = None,
+    cache: Optional[_AuthCache] = None,
 ) -> None:
     """Authorize a server-scoped, conversation-scoped, or personal action.
 
@@ -117,14 +173,14 @@ def _authorize_scope(
     ``server_id`` and ``conversation_id`` are ``None``) is only accessible to
     the author, matching the WebSocket subscribe handler's behavior.
     """
-    if _require_server_permission(user_id, server_id, permission):
+    if _require_server_permission(user_id, server_id, permission, cache):
         return
     messaging_mod = api.get_messaging()
-    if _is_conversation_member(messaging_mod, conversation_id, user_id):
+    if _is_conversation_member(messaging_mod, conversation_id, user_id, cache):
         # Membership alone must not grant access to an unrelated server scope:
         # the conversation must actually be bound to the requested server (or
         # the request is unscoped).
-        conv_server = _conversation_server_id(conversation_id)
+        conv_server = _conversation_server_id(conversation_id, cache)
         if server_id is None or conv_server is None or conv_server == int(server_id):
             return
     # Author-only access applies to the personal scope only (no server and no
@@ -310,7 +366,9 @@ def _validate_artifact_scope(
     return conversation_id, channel_id, server_id
 
 
-def _my_permissions(user_id: int, artifact: Any) -> Dict[str, Any]:
+def _my_permissions(
+    user_id: int, artifact: Any, cache: Optional[_AuthCache] = None
+) -> Dict[str, Any]:
     """Compute authoritative ``can_edit``/``can_view`` for the current user.
 
     Mirrors ``_authorize_scope`` without raising, so the client renders
@@ -325,10 +383,12 @@ def _my_permissions(user_id: int, artifact: Any) -> Dict[str, Any]:
     author_id = int(raw_author) if raw_author is not None else 0
 
     def _allowed(permission: str) -> bool:
-        if _require_server_permission(user_id, server_id, permission):
+        if _require_server_permission(user_id, server_id, permission, cache):
             return True
-        if _is_conversation_member(api.get_messaging(), conversation_id, user_id):
-            conv_server = _conversation_server_id(conversation_id)
+        if _is_conversation_member(
+            api.get_messaging(), conversation_id, user_id, cache
+        ):
+            conv_server = _conversation_server_id(conversation_id, cache)
             if (
                 server_id is None
                 or conv_server is None
@@ -383,15 +443,17 @@ def _artifact_response(
     user_id: int,
     artifact: Any,
     author_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+    auth_cache: Optional[_AuthCache] = None,
 ) -> ArtifactResponse:
     """Build an artifact response with server-computed permissions attached.
 
     When ``author_cache`` is not supplied the author profile is resolved for
     this single artifact; batch callers should pass a cache from
-    ``_author_profile_cache`` to avoid N+1 lookups.
+    ``_author_profile_cache`` to avoid N+1 lookups. ``auth_cache`` likewise
+    shares the permission/membership lookups across every item in a listing.
     """
     response = ArtifactResponse.model_validate(artifact)
-    response.my_permissions = _my_permissions(user_id, artifact)
+    response.my_permissions = _my_permissions(user_id, artifact, auth_cache)
 
     raw_author_id = getattr(artifact, "author_id", None)
     if raw_author_id is not None:

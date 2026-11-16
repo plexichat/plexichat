@@ -18,6 +18,7 @@ from src.core.security.hardening import bounded_int
 
 from ..validation import parse_snowflake_id
 from ...artifacts_helpers import (
+    _AuthCache,
     _artifact_response,
     _authorize_scope,
     _emit_artifact_message,
@@ -123,14 +124,15 @@ async def _convert_upload_impl(
 
         source_conv_id = msg_data["conversation_id"]
         messaging_mod = api.get_messaging()
+        auth_cache = _AuthCache()
         if source_conv_id is not None and not _is_conversation_member(
-            messaging_mod, source_conv_id, current_user.user_id
+            messaging_mod, source_conv_id, current_user.user_id, auth_cache
         ):
             # Conversation non-members may still convert the upload if they hold
             # the server-level ``artifact.create`` permission (e.g. a server
             # admin acting on a channel they don't personally participate in).
             if not _require_server_permission(
-                current_user.user_id, server_id, "artifact.create"
+                current_user.user_id, server_id, "artifact.create", auth_cache
             ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -228,6 +230,7 @@ async def _convert_upload_impl(
             server_id,
             "artifact.create",
             author_id=current_user.user_id,
+            cache=auth_cache,
         )
 
         manager = _get_manager()
@@ -247,7 +250,7 @@ async def _convert_upload_impl(
         }
         _emit_artifact_message(ArtifactResponse.model_validate(artifact), author)
 
-        return _artifact_response(current_user.user_id, artifact)
+        return _artifact_response(current_user.user_id, artifact, auth_cache=auth_cache)
     except HTTPException:
         raise
     except Exception as e:

@@ -20,6 +20,7 @@ from ...artifacts_export import (
     _artifact_native_bytes,
 )
 from ...artifacts_helpers import (
+    _AuthCache,
     _authorize_scope,
     _get_manager,
     _require_artifact_capability,
@@ -69,6 +70,7 @@ async def _export_artifact_impl(
             artifact.server_id,
             "artifact.view",
             author_id=artifact.author_id,
+            cache=_AuthCache(),
         )
         _require_artifact_capability(artifact.artifact_type)
 
@@ -176,6 +178,7 @@ async def _list_artifact_ops_impl(
             artifact.server_id,
             "artifact.view",
             author_id=artifact.author_id,
+            cache=_AuthCache(),
         )
         _require_artifact_capability(artifact.artifact_type)
 
