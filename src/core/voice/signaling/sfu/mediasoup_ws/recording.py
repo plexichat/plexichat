@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ....boundaries import validate_recording_id
+
 import os
 import time
 from pathlib import Path
@@ -227,7 +229,7 @@ class RecordingMixin(MediasoupWSAdapterCore):
         if failures is None:
             failures = self._recording_teardown_failures = {}
         failures[room_id] = {
-            "recording_id": info.get("recording_id"),
+            "recording_id": validate_recording_id(info.get("recording_id", "")),
             "consumer_ids": list(info.get("consumer_ids") or []),
             "transport_id": info.get("transport_id"),
             "reason": reason,

@@ -12,6 +12,8 @@ with the call manager is guarded and logged, and a missing call manager simply
 means no call records are produced.
 """
 
+from src.core.security.hardening import parse_id
+from ..boundaries import validate_transcription_config
 import utils.logger as logger
 from typing import Optional
 
@@ -229,6 +231,8 @@ class CallLifecycleMixin(VoiceProtocol):
                 return
             if not transcription_cfg.get("auto_transcribe", False):
                 return
+            transcription_cfg = validate_transcription_config(transcription_cfg)
+            call_id = parse_id(call_id, "call_id")
 
             db = getattr(self, "_db", None)
             if db is None:

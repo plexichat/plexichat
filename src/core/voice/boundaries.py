@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from typing import Any, Iterable, List, Optional
 
-from src.core.security.hardening import HardeningViolation, require_http_url
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    parse_id,
+    require_http_url,
+)
 
 #: A client only needs a handful of ICE endpoints; cap the fan-out.
 MAX_ICE_SERVERS = 16
@@ -258,4 +263,75 @@ def validate_quality_metrics(metrics: dict, field: str = "metrics") -> dict:
             text = str(value).lower()
             if text in {"excellent", "good", "fair", "poor", "critical"}:
                 result[key] = text
+    return result
+
+
+# --- transcription / recording payload boundaries (commit 8) ---
+MAX_TRANSCRIPT_TEXT_LENGTH = 1_000_000
+MAX_TRANSCRIPT_SEGMENTS = 10_000
+MAX_RECORDING_ID_LENGTH = 128
+MAX_TRANSCRIPTION_CONFIG_STRING = 256
+
+
+def validate_recording_id(value: object, field: str = "recording_id") -> str:
+    """Validate a recording id before it is used in a filepath or response."""
+    text = str(value or "").strip()
+    if not text or len(text) > MAX_RECORDING_ID_LENGTH:
+        raise ValueError(f"{field} is empty or too long")
+    for ch in text:
+        code = ord(ch)
+        if code < 0x20 or code == 0x7F or ch in '/\\..':
+            raise ValueError(f"{field} contains invalid characters")
+    return text
+
+
+def validate_transcription_config(cfg: object) -> dict:
+    """Bound the config dict passed to the transcription worker."""
+    if not isinstance(cfg, dict):
+        raise ValueError("transcription config must be an object")
+    result: dict = {}
+    for key in ("provider", "language", "model", "model_size"):
+        if key in cfg and cfg[key] is not None:
+            text = str(cfg[key]).strip()
+            if not text or len(text) > MAX_TRANSCRIPTION_CONFIG_STRING:
+                raise ValueError(f"transcription config {key} is invalid")
+            if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text):
+                raise ValueError(f"transcription config {key} contains control chars")
+            result[key] = text
+    for key in ("max_duration_seconds", "chunk_seconds", "max_segments"):
+        if key in cfg and cfg[key] is not None:
+            result[key] = bounded_int(
+                cfg[key], key, minimum=1, maximum=86_400
+            )
+    return result
+
+
+def validate_transcription_payload(payload: object) -> dict:
+    """Bound a transcription result before it is persisted or returned."""
+    if not isinstance(payload, dict):
+        raise ValueError("transcription payload must be an object")
+    segments = payload.get("segments", [])
+    if not isinstance(segments, list):
+        raise ValueError("transcription segments must be a list")
+    if len(segments) > MAX_TRANSCRIPT_SEGMENTS:
+        raise ValueError("transcription has too many segments")
+
+    total = 0
+    valid_segments = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise ValueError("transcription segment must be an object")
+        text = str(segment.get("text", "") or "")
+        if len(text) > MAX_TRANSCRIPT_TEXT_LENGTH:
+            raise ValueError("transcript segment is too large")
+        total += len(text)
+        if total > MAX_TRANSCRIPT_TEXT_LENGTH:
+            raise ValueError("transcript payload is too large")
+        valid_segments.append({"text": text})
+
+    result = {"segments": valid_segments, "total_chars": total}
+    if payload.get("call_id") is not None:
+        result["call_id"] = parse_id(payload["call_id"], "call_id")
+    if payload.get("recording_id") is not None:
+        result["recording_id"] = validate_recording_id(payload["recording_id"])
     return result

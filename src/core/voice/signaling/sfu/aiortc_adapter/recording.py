@@ -15,6 +15,7 @@ from .runtime import (
     _make_media_recorder,
     _media_recorder_cls,
 )
+from ....boundaries import validate_recording_id, validate_sfu_identifier
 from .validation import validate_recording_output_dir, validate_room_id
 
 
@@ -38,7 +39,9 @@ async def record_audio_track(
         logger.warning("Recording requested but MediaRecorder is not available")
         return
 
-    rec_producer_id = str(uuid.uuid4())
+    rec_producer_id = validate_recording_id(str(uuid.uuid4()), "producer_id")
+    peer_id = validate_sfu_identifier(peer_id, "peer_id")
+    recording["recording_id"] = validate_recording_id(recording["recording_id"])
     filepath = os.path.join(
         recording["output_dir"],
         f"{recording['recording_id']}_{peer_id}_{rec_producer_id}.webm",
@@ -80,7 +83,7 @@ class RecordingMixin:
             logger.warning("Recording requested but MediaRecorder is not available")
             return {"recording_id": "", "file_count": 0, "unsupported": True}
         safe_dir = validate_recording_output_dir(output_dir)
-        recording_id = str(uuid.uuid4())
+        recording_id = validate_recording_id(str(uuid.uuid4()))
         os.makedirs(safe_dir, exist_ok=True)
         recorders: List[Dict[str, Any]] = []
         for pid, peer in self._rooms[room_id].items():
