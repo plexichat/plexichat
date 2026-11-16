@@ -22,7 +22,7 @@ class UserUpdateRequest(BaseModel):
     username: Optional[UIText] = Field(
         None, min_length=3, max_length=32, description="New username"
     )
-    email: Optional[str] = Field(None, description="New email")
+    email: Optional[str] = Field(None, max_length=254, description="New email")
     avatar_url: Optional[str] = Field(
         None,
         max_length=2048,
