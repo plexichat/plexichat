@@ -37,6 +37,26 @@ MAX_EVIDENCE_ID_LENGTH = 32
 # Report listings live on the admin routes, but the same page contract belongs
 # beside the submission route so every caller uses one bounded definition.
 MAX_REPORT_PAGE_SIZE = 100
+# Total UTF-8 bytes of all free text plus evidence ids attached to one report.
+MAX_EVIDENCE_PAYLOAD_BYTES = 4096
+MAX_REPORT_PAYLOAD_BYTES = 8192
+
+
+def _bounded_report_payload(reason, details, message_content, evidence_ids):
+    """Reject a report whose combined payload exceeds the storage budget.
+
+    Each field has its own cap, but a caller could still fill every field to
+    its cap. Bound the total as well so one report cannot store an arbitrary
+    amount of evidence text and content.
+    """
+    parts = [reason or "", details or "", message_content or ""]
+    evidence_text = ",".join(str(item) for item in (evidence_ids or []))
+    total = sum(len(part.encode("utf-8")) for part in parts + [evidence_text])
+    if total > MAX_REPORT_PAYLOAD_BYTES:
+        raise _bad_report_field("report payload")
+    if len(evidence_text.encode("utf-8")) > MAX_EVIDENCE_PAYLOAD_BYTES:
+        raise _bad_report_field("evidence payload")
+    return total
 
 
 def _bounded_page_params(limit, offset):
@@ -285,6 +305,8 @@ async def report_message(
                 message="Report already submitted",
             )
 
+        _bounded_report_payload(reason, details, message_content, None)
+
         try:
             report = reports.report_message(
                 reporter_id=current_user.user_id,
@@ -445,6 +467,8 @@ async def report_user(
                 report_id=str(existing.id),
                 message="Report already submitted",
             )
+
+        _bounded_report_payload(reason, details, None, evidence_ids)
 
         try:
             report = reports.report_user(
