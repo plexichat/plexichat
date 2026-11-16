@@ -6,8 +6,8 @@ Handles user application CRUD, bot token management, and interaction responses.
 
 import hashlib
 import logging
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, status
+from typing import Annotated, Optional, List, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, Query, status
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -30,6 +30,11 @@ from src.core.applications.exceptions import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/applications", tags=["Applications"])
+
+# Listing is a bounded page, not "every row this user has ever created".
+MAX_APPLICATION_PAGE_SIZE = 100
+MAX_APPLICATION_OFFSET = 100_000
+MAX_APPLICATION_FILTER_LENGTH = 128
 
 
 # === Schemas ===
@@ -194,10 +199,20 @@ def _application_to_response(app) -> ApplicationResponse:
 )
 async def list_applications(
     current_user: TokenInfo = Depends(get_current_user),
+    limit: Annotated[int, Query(ge=1, le=MAX_APPLICATION_PAGE_SIZE)] = 50,
+    offset: Annotated[int, Query(ge=0, le=MAX_APPLICATION_OFFSET)] = 0,
+    name_filter: Annotated[
+        Optional[str], Query(max_length=MAX_APPLICATION_FILTER_LENGTH)
+    ] = None,
 ):
-    """Get all applications owned by the current user."""
+    """Get a bounded page of applications owned by the current user."""
     try:
-        apps = applications.get_user_applications(current_user.user_id)
+        apps = applications.get_user_applications(
+            current_user.user_id,
+            limit=limit,
+            offset=offset,
+            name_filter=name_filter,
+        )
         return [_application_to_response(app) for app in apps]
     except Exception:
         logger.exception("Unhandled error in applications API")

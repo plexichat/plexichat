@@ -327,9 +327,17 @@ def get_application(
     return _get_manager().get_application(application_id, user_id)
 
 
-def get_user_applications(user_id: int) -> List[Application]:
-    """Get all applications owned by a user."""
-    return _get_manager().get_user_applications(user_id)
+def get_user_applications(
+    user_id: int,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    name_filter: Optional[str] = None,
+) -> List[Application]:
+    """Get a bounded page of applications owned by a user."""
+    return _get_manager().get_user_applications(
+        user_id, limit=limit, offset=offset, name_filter=name_filter
+    )
 
 
 def update_application(

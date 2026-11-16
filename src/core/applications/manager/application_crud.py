@@ -25,7 +25,11 @@ from ..validation import (
     validate_homepage_url,
     validate_redirect_uris,
 )
-from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    reject_control_characters,
+)
 from .row_mappers import row_to_application
 from .protocol import ApplicationManagerProtocol
 
@@ -144,14 +148,40 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         return app
 
-    def get_user_applications(self, user_id: SnowflakeID) -> List[Application]:
+    def get_user_applications(
+        self,
+        user_id: SnowflakeID,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        name_filter: Optional[str] = None,
+    ) -> List[Application]:
+        """Return a bounded, optionally name-filtered page of applications."""
+        from ..validation import MAX_APPLICATION_FILTER_LENGTH
+
+        bounded_limit = bounded_int(limit, "limit", minimum=1, maximum=100)
+        bounded_offset = bounded_int(offset, "offset", minimum=0, maximum=100_000)
+
+        where = ""
+        params: List[Any] = [user_id]
+        if name_filter is not None:
+            text = reject_control_characters(name_filter, "name_filter").strip()
+            if not text or len(text) > MAX_APPLICATION_FILTER_LENGTH:
+                raise HardeningViolation("name_filter is outside the allowed length")
+            # Escape LIKE wildcards so a filter string cannot broaden the match.
+            escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            where = " AND name LIKE ? ESCAPE '\\'"
+            params.append(f"%{escaped}%")
+        params.extend([bounded_limit, bounded_offset])
+
         rows = self._db.fetch_all(
             """SELECT id, owner_id, name, description, icon_url, bot_id, bot_public,
                       bot_require_code_grant, terms_of_service_url, privacy_policy_url,
                       redirect_uris, interactions_endpoint_url, created_at, updated_at
-               FROM app_applications WHERE owner_id = ?
-               ORDER BY created_at DESC""",
-            (user_id,),
+               FROM app_applications WHERE owner_id = ?"""
+            + where
+            + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            tuple(params),
         )
 
         return [row_to_application(row) for row in rows]
