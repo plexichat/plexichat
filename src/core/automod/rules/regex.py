@@ -11,6 +11,11 @@ import utils.logger as logger
 from typing import Dict, Any, Optional, List
 
 from .base import BaseRule
+from ..limits import (
+    MAX_PATTERN_NAME_LENGTH,
+    MAX_PATTERNS_PER_RULE,
+    MAX_TOTAL_PATTERN_CHARS,
+)
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity, coerce_severity
 
 # Try to use google-re2 for ReDoS protection, fallback to standard re
@@ -177,12 +182,21 @@ class RegexRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._patterns: List[Dict[str, Any]] = self.config.get("patterns", [])
+        raw_patterns = self.config.get("patterns", [])
+        self._patterns: List[Dict[str, Any]] = (
+            raw_patterns if isinstance(raw_patterns, list) else []
+        )
         self._compiled_patterns: List[tuple] = []
+        # Compile-time budget: cap both the number of patterns and the total
+        # characters fed to the regex compiler. A stored config with thousands
+        # of patterns previously compiled them all on every worker start.
+        compiled_chars = 0
 
-        for pattern_config in self._patterns:
+        for pattern_config in self._patterns[:MAX_PATTERNS_PER_RULE]:
+            if not isinstance(pattern_config, dict):
+                continue
             pattern_str = pattern_config.get("pattern", "")
-            if not pattern_str:
+            if not pattern_str or not isinstance(pattern_str, str):
                 continue
 
             try:
@@ -191,6 +205,8 @@ class RegexRule(BaseRule):
                     raise ValueError(
                         f"pattern exceeds maximum length of {MAX_PATTERN_LENGTH}"
                     )
+                if compiled_chars + len(pattern_str) > MAX_TOTAL_PATTERN_CHARS:
+                    raise ValueError("pattern compile budget exhausted")
 
                 # Get settings with defaults
                 case_sensitive = pattern_config.get("case_sensitive", False)
@@ -229,8 +245,11 @@ class RegexRule(BaseRule):
                 severity = self._parse_severity(
                     pattern_config.get("severity", "medium")
                 )
-                name = pattern_config.get("name", pattern_str[:30])
+                name = str(pattern_config.get("name", pattern_str[:30]))[
+                    :MAX_PATTERN_NAME_LENGTH
+                ]
                 self._compiled_patterns.append((compiled, severity, name, pattern_str))
+                compiled_chars += len(pattern_str)
                 logger.debug(
                     f"Compiled automod regex '{pattern_str}' (case_sensitive={case_sensitive}, multiline={multiline})"
                 )
@@ -314,6 +333,19 @@ class RegexRule(BaseRule):
         elif not isinstance(patterns, list):
             issues.append("patterns must be a list")
         else:
+            if len(patterns) > MAX_PATTERNS_PER_RULE:
+                issues.append(
+                    f"patterns list exceeds maximum of {MAX_PATTERNS_PER_RULE}"
+                )
+            total_chars = sum(
+                len(p.get("pattern", ""))
+                for p in patterns
+                if isinstance(p, dict) and isinstance(p.get("pattern"), str)
+            )
+            if total_chars > MAX_TOTAL_PATTERN_CHARS:
+                issues.append(
+                    f"patterns exceed total compile budget of {MAX_TOTAL_PATTERN_CHARS} chars"
+                )
             for i, p in enumerate(patterns):
                 if not isinstance(p, dict):
                     issues.append(f"pattern {i} must be a dictionary")
@@ -322,6 +354,9 @@ class RegexRule(BaseRule):
                 pattern_str = p.get("pattern")
                 if not pattern_str:
                     issues.append(f"pattern {i} missing 'pattern' field")
+                    continue
+                if not isinstance(pattern_str, str):
+                    issues.append(f"pattern {i} must be a string")
                     continue
 
                 # Length cap applies on every engine path.

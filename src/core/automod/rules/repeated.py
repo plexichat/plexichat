@@ -7,7 +7,10 @@ Detects messages with excessive repeated characters (e.g., "hellooooooo").
 import re
 from typing import Dict, Any, Optional
 
+from src.core.security.hardening import HardeningViolation, bounded_int
+
 from .base import BaseRule
+from ..limits import MAX_REPEATS
 from ..models import Rule, RuleMatch, RuleType, ViolationSeverity
 
 
@@ -18,8 +21,28 @@ class RepeatedCharsRule(BaseRule):
 
     def __init__(self, rule: Rule):
         super().__init__(rule)
-        self._max_repeats: int = self.config.get("max_repeats", 5)
-        self._min_occurrences: int = self.config.get("min_occurrences", 3)
+        # Stored configs bypass validate_config(); bound the values here so a
+        # huge max_repeats cannot produce a giant regex quantifier.
+        try:
+            self._max_repeats = bounded_int(
+                self.config.get("max_repeats", 5),
+                "max_repeats",
+                minimum=2,
+                maximum=MAX_REPEATS,
+                default=5,
+            )
+        except HardeningViolation:
+            self._max_repeats = 5
+        try:
+            self._min_occurrences = bounded_int(
+                self.config.get("min_occurrences", 3),
+                "min_occurrences",
+                minimum=1,
+                maximum=MAX_REPEATS,
+                default=3,
+            )
+        except HardeningViolation:
+            self._min_occurrences = 3
         self._ignore_whitespace: bool = self.config.get("ignore_whitespace", True)
         self._ignore_numbers: bool = self.config.get("ignore_numbers", False)
 
@@ -81,12 +104,24 @@ class RepeatedCharsRule(BaseRule):
         issues = []
 
         max_repeats = config.get("max_repeats", 5)
-        if not isinstance(max_repeats, int) or max_repeats < 2:
-            issues.append("max_repeats must be an integer >= 2")
+        if (
+            not isinstance(max_repeats, int)
+            or isinstance(max_repeats, bool)
+            or max_repeats < 2
+            or max_repeats > MAX_REPEATS
+        ):
+            issues.append(f"max_repeats must be an integer between 2 and {MAX_REPEATS}")
 
         min_occurrences = config.get("min_occurrences", 3)
-        if not isinstance(min_occurrences, int) or min_occurrences < 1:
-            issues.append("min_occurrences must be a positive integer")
+        if (
+            not isinstance(min_occurrences, int)
+            or isinstance(min_occurrences, bool)
+            or min_occurrences < 1
+            or min_occurrences > MAX_REPEATS
+        ):
+            issues.append(
+                f"min_occurrences must be an integer between 1 and {MAX_REPEATS}"
+            )
 
         for field in ["ignore_whitespace", "ignore_numbers"]:
             if field in config and not isinstance(config[field], bool):

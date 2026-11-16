@@ -162,11 +162,31 @@ class InviteLinkRule(BaseRule):
             if not isinstance(config["code_length"], int) or config["code_length"] < 1:
                 issues.append("code_length must be a positive integer")
 
+        if "code_length" in config:
+            from ..limits import MAX_CODE_LENGTH
+
+            if config["code_length"] > MAX_CODE_LENGTH:
+                issues.append(f"code_length exceeds {MAX_CODE_LENGTH}")
+
+        if "allowed_codes" in config and isinstance(config["allowed_codes"], list):
+            if len(config["allowed_codes"]) > 200:
+                issues.append("allowed_codes exceeds 200 entries")
+
         if "pattern" in config:
-            try:
-                re.compile(config["pattern"])
-            except re.error as e:
-                issues.append(f"invalid regex pattern: {e}")
+            from .regex import MAX_PATTERN_LENGTH, _has_redos_risk
+
+            pattern = config["pattern"]
+            if not isinstance(pattern, str):
+                issues.append("pattern must be a string")
+            elif len(pattern) > MAX_PATTERN_LENGTH:
+                issues.append(f"pattern exceeds maximum length of {MAX_PATTERN_LENGTH}")
+            elif _has_redos_risk(pattern):
+                issues.append("pattern has ReDoS risk on the fallback engine")
+            else:
+                try:
+                    re.compile(pattern)
+                except re.error as e:
+                    issues.append(f"invalid regex pattern: {e}")
 
         return len(issues) == 0, issues
 
