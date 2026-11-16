@@ -1,7 +1,21 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 from .common import _reject_ui_text_chars
+
+#: Categories the report store knows how to bucket (``ReportCategory``). The
+#: routes already reject anything else at runtime; declaring the set here moves
+#: that rejection to validation so a bogus category cannot enter the pipeline.
+ReportCategoryValue = Literal[
+    "harassment",
+    "spam",
+    "inappropriate",
+    "illegal",
+    "hate_speech",
+    "threats",
+    "impersonation",
+    "other",
+]
 
 
 class MessageReportRequest(BaseModel):
@@ -12,7 +26,7 @@ class MessageReportRequest(BaseModel):
     reason: str = Field(
         ..., min_length=1, max_length=500, description="Reason for report"
     )
-    category: str = Field("other", description="Report category")
+    category: ReportCategoryValue = Field("other", description="Report category")
     details: Optional[str] = Field(
         None, max_length=2000, description="Additional details"
     )
@@ -33,7 +47,7 @@ class UserReportRequest(BaseModel):
     reason: str = Field(
         ..., min_length=1, max_length=500, description="Reason for report"
     )
-    category: str = Field("other", description="Report category")
+    category: ReportCategoryValue = Field("other", description="Report category")
     details: Optional[str] = Field(
         None, max_length=2000, description="Additional details"
     )
