@@ -468,6 +468,15 @@ class AuditChain:
             raise AuditChainError(error)
         return False, count, error
 
+    def assert_intact(self) -> int:
+        """Verify the chain and return the row count, failing closed on tamper.
+
+        Callers that consume audit data (exports, compliance reports) should
+        use this rather than ignoring a ``verify_chain()`` false result.
+        """
+        self.verify_chain(strict=True)
+        return int(self._read_head()["count"])
+
 
 def verify_audit_chain(
     path: Optional[str] = None, *, strict: bool = False
