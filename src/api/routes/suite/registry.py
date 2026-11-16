@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from src.api.middleware.authentication import TokenInfo, get_current_user
 from src.api.routes.artifacts import _get_manager, _require_server_permission
 from src.api.schemas.common import ErrorResponse
+from src.core.security.hardening import HardeningViolation, parse_id
 from src.core.artifacts.capabilities import (
     capability_allows_artifact,
     get_capability,
@@ -66,6 +67,32 @@ _VALID_APP_IDS = frozenset(
         "plexiboard",
     }
 )
+
+
+def safe_suite_id(value: Any) -> Optional[str]:
+    """Serialize a suite id only when it is a positive snowflake.
+
+    Ids in the launcher payload are opaque strings, but storing an arbitrary
+    object (or a locally rejected huge integer) as an id breaks dedupe keys and
+    can be reflected into a client route. Validate once at the projection.
+    """
+    if value is None:
+        return None
+    try:
+        return str(parse_id(value, "suite item ID"))
+    except (HardeningViolation, TypeError, ValueError):
+        return None
+
+
+def safe_timestamp(value: Any) -> int:
+    """Bound a timestamp used for ordering scatter/gather results."""
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if number < 0 or number > 4102444800000:
+        return 0
+    return number
 
 
 def safe_app_id(value: Any, default: str = "plexichat") -> str:
@@ -143,7 +170,7 @@ def _manifest_dict(
 def _artifact_home_item(artifact: Artifact) -> Dict[str, Any]:
     """Return the small, launcher-safe projection of an artifact."""
     return {
-        "id": str(artifact.id),
+        "id": safe_suite_id(artifact.id),
         "appId": safe_app_id(
             _ARTIFACT_APP_IDS.get(artifact.artifact_type.value, "plexichat")
         ),
@@ -152,15 +179,9 @@ def _artifact_home_item(artifact: Artifact) -> Dict[str, Any]:
         "summary": artifact.summary,
         "status": artifact.status.value,
         "scope": {
-            "conversationId": str(artifact.conversation_id)
-            if artifact.conversation_id is not None
-            else None,
-            "channelId": str(artifact.channel_id)
-            if artifact.channel_id is not None
-            else None,
-            "serverId": str(artifact.server_id)
-            if artifact.server_id is not None
-            else None,
+            "conversationId": safe_suite_id(artifact.conversation_id),
+            "channelId": safe_suite_id(artifact.channel_id),
+            "serverId": safe_suite_id(artifact.server_id),
         },
         "createdAt": artifact.created_at,
         "updatedAt": artifact.updated_at,
@@ -170,16 +191,14 @@ def _artifact_home_item(artifact: Artifact) -> Dict[str, Any]:
 def _stash_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Project Stash metadata without exposing storage references."""
     return {
-        "id": str(item["id"]),
+        "id": safe_suite_id(item["id"]),
         "appId": safe_app_id("plexistash"),
         "artifactType": "stash",
         "title": item.get("title") or "Untitled item",
         "summary": item.get("description"),
         "status": "active",
         "pinned": bool(item.get("pinned", False)),
-        "scope": {
-            "serverId": str(item["server_id"]) if item.get("server_id") else None
-        },
+        "scope": {"serverId": safe_suite_id(item["server_id"])},
         "createdAt": item.get("created_at"),
         "updatedAt": item.get("updated_at"),
     }
@@ -188,15 +207,13 @@ def _stash_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
 def _sum_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Project workbook metadata into the shared launcher contract."""
     return {
-        "id": str(item["id"]),
+        "id": safe_suite_id(item["id"]),
         "appId": safe_app_id("plexisum"),
         "artifactType": "sum",
         "title": item.get("title") or "Untitled workbook",
-        "summary": f"Revision {int(item.get('current_revision', 0))}",
+        "summary": f"Revision {safe_timestamp(item.get('current_revision', 0))}",
         "status": "active",
-        "scope": {
-            "serverId": str(item["server_id"]) if item.get("server_id") else None
-        },
+        "scope": {"serverId": safe_suite_id(item["server_id"])},
         "createdAt": item.get("created_at"),
         "updatedAt": item.get("updated_at"),
     }
@@ -208,7 +225,7 @@ def _sort_and_bound(
     """Sort a bounded scatter/gather result without trusting client data."""
     return sorted(
         items,
-        key=lambda item: int(item.get("updatedAt") or item.get("createdAt") or 0),
+        key=lambda item: safe_timestamp(item.get("updatedAt") or item.get("createdAt")),
         reverse=True,
     )[:limit]
 
@@ -349,7 +366,7 @@ def _shared_items(
     items.extend(_shared_artifacts(user_id, server_ids, limit, search=search))
     return sorted(
         items,
-        key=lambda item: int(item.get("updatedAt") or item.get("createdAt") or 0),
+        key=lambda item: safe_timestamp(item.get("updatedAt") or item.get("createdAt")),
         reverse=True,
     )
 
@@ -548,7 +565,7 @@ async def list_suite_activity(
     )
     items = [
         {
-            "id": str(row["id"]),
+            "id": safe_suite_id(row["id"]),
             "appId": safe_app_id(
                 "plexistash" if row["domain"] == "stash" else "plexisum"
             ),
@@ -558,7 +575,7 @@ async def list_suite_activity(
                 row.get("details_json"), row["action"], row["resource_type"]
             ),
             "status": "activity",
-            "resourceId": str(row["resource_id"]) if row.get("resource_id") else None,
+            "resourceId": safe_suite_id(row.get("resource_id")),
             "createdAt": row["created_at"],
             "updatedAt": row["created_at"],
         }
