@@ -1,5 +1,7 @@
 import json
-from typing import Optional, List, Dict, Any
+import threading
+import time
+from typing import Optional, List, Dict, Any, Tuple
 
 import utils.config as config
 import utils.logger as logger
@@ -38,6 +40,58 @@ from .protocol import ApplicationManagerProtocol
 # as *unlimited* -- so a negative limit dumped every public bot instead of an
 # empty page. The route clamps too, but the manager backs internal callers.
 MAX_DIRECTORY_PAGE_SIZE = 100
+
+
+# The directory is read far more often than it changes, and each read ran a
+# COUNT query plus a page query with LIKE/tag filters. Keep a small, short-lived
+# cache of fully built slices so repeated directory requests skip both the SQL
+# round trips and the per-row JSON decoding. Writes that can change what is
+# visible in a directory call ``invalidate_bot_directory_cache`` so a change is
+# reflected on the very next read. The TTL is only a guard for writes performed
+# through another process / a raw DB handle that bypasses these hooks.
+_DIRECTORY_CACHE_TTL_SECONDS = 5.0
+_DIRECTORY_CACHE_MAX_ENTRIES = 64
+_directory_cache: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
+_directory_cache_lock = threading.Lock()
+
+
+def invalidate_bot_directory_cache() -> None:
+    """Drop every cached directory slice after a directory-visible write."""
+    with _directory_cache_lock:
+        _directory_cache.clear()
+
+
+def _directory_cache_get(key: Tuple) -> Optional[Dict[str, Any]]:
+    with _directory_cache_lock:
+        entry = _directory_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if expires_at <= time.monotonic():
+            _directory_cache.pop(key, None)
+            return None
+        # Hand out a fresh container so callers cannot mutate the cached slice.
+        return {
+            "bot_list": [dict(bot) for bot in value["bot_list"]],
+            "total": value["total"],
+        }
+
+
+def _directory_cache_put(key: Tuple, value: Dict[str, Any]) -> None:
+    with _directory_cache_lock:
+        if len(_directory_cache) >= _DIRECTORY_CACHE_MAX_ENTRIES:
+            # Dicts keep insertion order, so the first key is the oldest entry.
+            _directory_cache.pop(next(iter(_directory_cache)), None)
+        # Store a copy: the caller keeps the original and must not be able to
+        # mutate the cached slice through it.
+        snapshot = {
+            "bot_list": [dict(bot) for bot in value["bot_list"]],
+            "total": value["total"],
+        }
+        _directory_cache[key] = (
+            time.monotonic() + _DIRECTORY_CACHE_TTL_SECONDS,
+            snapshot,
+        )
 
 
 class BotManagementMixin(ApplicationManagerProtocol):
@@ -125,6 +179,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
         logger.info(
             f"Bot {application_id} approved on server {server_id} by {approved_by}"
         )
+        invalidate_bot_directory_cache()
 
         return ApprovedBot(
             id=bot_id,
@@ -175,6 +230,7 @@ class BotManagementMixin(ApplicationManagerProtocol):
             f"Bot {application_id} removed from server {server_id} "
             f"({rows} row(s) transitioned)"
         )
+        invalidate_bot_directory_cache()
         return True
 
     def get_approved_bots(
@@ -504,6 +560,8 @@ class BotManagementMixin(ApplicationManagerProtocol):
             )
 
         logger.info(f"Bot profile updated for application {application_id}")
+        # Profile text/tags/visibility are part of directory entries.
+        invalidate_bot_directory_cache()
 
         result = self.get_bot_profile(application_id, viewer_id=user_id)
         if result is None:
@@ -604,6 +662,13 @@ class BotManagementMixin(ApplicationManagerProtocol):
         limit = max(0, min(limit, MAX_DIRECTORY_PAGE_SIZE))
         offset = max(0, offset)
 
+        # Cache key uses the normalized arguments so equivalent calls share a
+        # slice regardless of how the caller spelled the (nullable) filters.
+        cache_key = (server_id, bool(include_public), limit, offset, q, tag)
+        cached = _directory_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         base_where = ["a.bot_id IS NOT NULL"]
         params = []
 
@@ -663,7 +728,9 @@ class BotManagementMixin(ApplicationManagerProtocol):
                 }
             )
 
-        return {"bot_list": bots, "total": total}
+        result = {"bot_list": bots, "total": total}
+        _directory_cache_put(cache_key, result)
+        return result
 
     def _check_bot_license(self) -> bool:
         try:
