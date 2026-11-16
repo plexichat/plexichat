@@ -9,7 +9,9 @@ rate limited via the route rate-limit config ("POST /auth/verify-email",
 """
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from src.core.security.hardening import reject_control_characters
 
 import src.api as api
 import utils.logger as logger
@@ -19,11 +21,27 @@ router = APIRouter(tags=["Email Verification"])
 
 
 class VerifyEmailRequest(BaseModel):
-    token: str = Field(..., min_length=1, description="Email verification token")
+    # Public endpoint: bound the token that is hashed/looked up so an
+    # anonymous caller cannot force work proportional to an arbitrary body.
+    token: str = Field(
+        ..., min_length=1, max_length=512, description="Email verification token"
+    )
+
+    @field_validator("token")
+    @classmethod
+    def _clean_token(cls, value: str) -> str:
+        return reject_control_characters(value.strip(), "token")
 
 
 class ResendVerificationRequest(BaseModel):
-    email: str = Field(..., min_length=3, description="Account email address")
+    email: str = Field(
+        ..., min_length=3, max_length=320, description="Account email address"
+    )
+
+    @field_validator("email")
+    @classmethod
+    def _clean_email(cls, value: str) -> str:
+        return reject_control_characters(value.strip(), "email")
 
 
 @router.post(
