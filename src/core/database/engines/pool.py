@@ -28,6 +28,19 @@ MONITOR_IDLE_RECLAIM_SECONDS = 60.0
 # capacity are reclaimed instead of leaking forever. No real SQLite/PostgreSQL
 # transaction pauses between statements for this long.
 IN_TRANSACTION_ALIVE_GRACE_SECONDS = 60.0
+MAX_ACQUIRE_TIMEOUT_SECONDS = 300.0
+
+
+def _bounded_acquire_timeout(timeout) -> float:
+    """Clamp a configured pool acquisition timeout to a sane range.
+
+    An unbounded value parks a request thread forever when the pool is
+    exhausted; a negative one makes every acquisition fail immediately.
+    """
+    try:
+        return min(max(float(timeout), 0.0), MAX_ACQUIRE_TIMEOUT_SECONDS)
+    except (TypeError, ValueError):
+        return 30.0
 
 
 class ConnectionPool:
@@ -86,7 +99,7 @@ class ConnectionPool:
             self._total_created += 1
 
     def get_connection(self, timeout: float = 30.0) -> Any:
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + _bounded_acquire_timeout(timeout)
         with self._condition:
             if not self._available and self._total_created >= self._max_size:
                 # Exhausted: before blocking for the connect timeout, reclaim
