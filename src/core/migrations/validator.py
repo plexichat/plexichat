@@ -10,9 +10,25 @@ import logging
 import importlib.util
 import inspect
 import re
-from typing import List, Tuple, Optional, Iterable
+import threading
+from typing import Dict, List, Tuple, Optional, Iterable
 
 logger = logging.getLogger(__name__)
+
+# Directory scans are the hot path for admin migration status/detail/rollback
+# endpoints: every call used to re-list and re-sort the migrations directory.
+# The file list only changes when entries are added/removed/renamed, which
+# updates the directory mtime, so cache by that stamp. File *content* changes
+# (checksums) are still read fresh by callers and never served from here.
+_FILES_CACHE: Dict[str, Tuple[Optional[int], Tuple[Tuple[str, str], ...]]] = {}
+_FILES_CACHE_LOCK = threading.Lock()
+
+
+def _clear_files_cache() -> None:
+    """Drop cached migration file listings (used by tests and tooling)."""
+    with _FILES_CACHE_LOCK:
+        _FILES_CACHE.clear()
+
 
 # These versions were consolidated into migration 000. Their history records
 # remain valid evidence of an older installation and must not make integrity
@@ -208,6 +224,15 @@ def get_migration_files(migrations_dir: str) -> List[Tuple[str, str]]:
         logger.error(f"Migrations directory not found: {migrations_dir}")
         raise NotADirectoryError(f"Migrations directory not found: {migrations_dir}")
 
+    try:
+        stamp = os.stat(migrations_dir).st_mtime_ns
+    except OSError:
+        stamp = None
+    with _FILES_CACHE_LOCK:
+        cached = _FILES_CACHE.get(migrations_dir)
+        if cached is not None and cached[0] == stamp:
+            return list(cached[1])
+
     warn_stale_pycache(migrations_dir)
 
     migrations = []
@@ -229,7 +254,10 @@ def get_migration_files(migrations_dir: str) -> List[Tuple[str, str]]:
     migrations.sort(key=lambda x: int(x[0]))
 
     logger.info(f"Found {len(migrations)} migration files in {migrations_dir}")
-    return migrations
+    result = tuple(migrations)
+    with _FILES_CACHE_LOCK:
+        _FILES_CACHE[migrations_dir] = (stamp, result)
+    return list(result)
 
 
 def calculate_checksum(content: bytes) -> str:
