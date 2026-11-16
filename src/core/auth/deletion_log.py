@@ -9,6 +9,7 @@ msvcrt is available (CRITICAL log so the operator notices).
 
 import os
 import json
+import hmac
 import hashlib
 import time
 from pathlib import Path
@@ -16,6 +17,29 @@ from typing import ContextManager, Optional, Dict, Tuple, Any, cast
 
 import utils.config as config
 import utils.logger as logger
+
+
+_SHA256_HEX_LEN = 64
+
+
+def _constant_time_hex_equal(left: Any, right: Any) -> bool:
+    """Compare two SHA-256 hex digests without leaking their prefix via timing.
+
+    Both the audit-log chain links (``prev_hash``) and the per-record
+    ``checksum`` are integrity values. A byte-by-byte ``==``/``!=`` short
+    circuits on the first differing character, giving an attacker who can
+    submit crafted records a length/prefix oracle. :func:`hmac.compare_digest`
+    keeps the work proportional to the digest length instead.
+
+    The helper fails closed: missing values, non-strings and anything that
+    is not a full 64-character hex digest are rejected without an exception
+    so a truncated or tampered record simply breaks the chain.
+    """
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    if len(left) != _SHA256_HEX_LEN or len(right) != _SHA256_HEX_LEN:
+        return False
+    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +359,9 @@ class DeletionLog:
                     stored_checksum = entry.pop("checksum", None)
                     stored_prev_hash = entry.get("prev_hash")
 
-                    if stored_prev_hash != expected_prev_hash:
+                    if not _constant_time_hex_equal(
+                        stored_prev_hash, expected_prev_hash
+                    ):
                         return (
                             False,
                             count,
@@ -347,7 +373,9 @@ class DeletionLog:
                         (stored_prev_hash + content).encode()
                     ).hexdigest()
 
-                    if calculated_checksum != stored_checksum:
+                    if not _constant_time_hex_equal(
+                        calculated_checksum, stored_checksum
+                    ):
                         return (
                             False,
                             count,
