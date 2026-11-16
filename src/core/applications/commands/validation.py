@@ -6,6 +6,8 @@ import re
 from typing import Dict, Any, Tuple, List
 
 from ..models import CommandType
+from ..oauth.scopes import validate_permission_string
+from src.core.security.hardening import HardeningViolation
 
 
 COMMAND_NAME_PATTERN = re.compile(r"^[\w-]{1,32}$")
@@ -128,8 +130,10 @@ def validate_command(command_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     default_perms = command_data.get("default_member_permissions")
     if default_perms is not None:
         try:
-            int(default_perms)
-        except (ValueError, TypeError):
+            validate_permission_string(
+                default_perms, field="default_member_permissions"
+            )
+        except (HardeningViolation, TypeError, ValueError):
             issues.append(
                 "default_member_permissions must be a valid permission integer string"
             )

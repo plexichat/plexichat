@@ -2,7 +2,23 @@
 OAuth2 scopes - Scope definitions and validation.
 """
 
-from typing import List, Tuple
+import re
+from typing import Any, List, Tuple
+
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    reject_control_characters,
+)
+
+#: A token carries only the handful of scopes an application actually needs.
+MAX_SCOPES_PER_REQUEST = 20
+MAX_SCOPE_LENGTH = 64
+SCOPE_PATTERN = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
+
+#: Permission bitfields are decimal strings; a 64-bit mask needs at most 20.
+MAX_PERMISSION_LENGTH = 20
+PERMISSION_MAX = 2**64 - 1
 
 
 VALID_SCOPES = {
@@ -55,11 +71,63 @@ def validate_scopes(scopes: List[str]) -> Tuple[bool, List[str]]:
         issues.append("At least one scope is required")
         return False, issues
 
+    if len(scopes) > MAX_SCOPES_PER_REQUEST:
+        issues.append(f"At most {MAX_SCOPES_PER_REQUEST} scopes are allowed")
+
     invalid = set(scopes) - VALID_SCOPES
     if invalid:
         issues.append(f"Invalid scopes: {', '.join(sorted(invalid))}")
+    malformed = [
+        scope
+        for scope in scopes
+        if len(scope) > MAX_SCOPE_LENGTH or not SCOPE_PATTERN.fullmatch(scope)
+    ]
+    if malformed:
+        issues.append("Malformed scope strings")
 
     return len(issues) == 0, issues
+
+
+def require_valid_scopes(value: Any, *, field: str = "scopes") -> List[str]:
+    """Strict form of :func:`validate_scopes` for core/OAuth call sites.
+
+    Returns a de-duplicated list; raises :class:`HardeningViolation` instead of
+    returning an issue list so callers cannot accidentally ignore the result.
+    """
+    if value is None:
+        raise HardeningViolation(f"{field} is required")
+    try:
+        candidates = list(value)
+    except TypeError as exc:
+        raise HardeningViolation(f"{field} must be a list") from exc
+    if not candidates:
+        raise HardeningViolation("At least one scope is required")
+    if len(candidates) > MAX_SCOPES_PER_REQUEST:
+        raise HardeningViolation(
+            f"{field} may contain at most {MAX_SCOPES_PER_REQUEST} entries"
+        )
+
+    validated: List[str] = []
+    for index, candidate in enumerate(candidates):
+        label = f"{field}[{index}]"
+        scope = reject_control_characters(candidate, label)
+        if len(scope) > MAX_SCOPE_LENGTH or not SCOPE_PATTERN.fullmatch(scope):
+            raise HardeningViolation(f"{label} is not a valid scope string")
+        if scope not in VALID_SCOPES:
+            raise HardeningViolation(f"{label} is not a known scope: {scope}")
+        if scope not in validated:
+            validated.append(scope)
+    return validated
+
+
+def validate_permission_string(value: Any, *, field: str = "permissions") -> str:
+    """Return a canonical decimal permission bitfield of bounded size."""
+    if value is None:
+        return "0"
+    text = reject_control_characters(value, field).strip()
+    if not text or len(text) > MAX_PERMISSION_LENGTH or not text.isdigit():
+        raise HardeningViolation(f"{field} must be a decimal permission bitfield")
+    return str(bounded_int(text, field, minimum=0, maximum=PERMISSION_MAX))
 
 
 def parse_scopes(scope_string: str) -> List[str]:

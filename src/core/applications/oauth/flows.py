@@ -23,7 +23,7 @@ from ..exceptions import (
     TokenExpiredError,
     TokenRevokedError,
 )
-from .scopes import validate_scopes
+from .scopes import require_valid_scopes, validate_permission_string
 from .tokens import (
     generate_authorization_code,
     generate_access_token,
@@ -51,6 +51,24 @@ class OAuth2Flow:
         """Get current Unix timestamp."""
         return int(time.time() * 1000)
 
+    @staticmethod
+    def _require_scopes(scopes: List[str]) -> List[str]:
+        """Validate scopes, translating the core error into the OAuth error."""
+        try:
+            return require_valid_scopes(scopes)
+        except HardeningViolation as exc:
+            raise InvalidScopeError(str(exc)) from exc
+
+    @staticmethod
+    def _require_permissions(permissions: Optional[str]) -> Optional[str]:
+        """Validate an optional bot permission bitfield."""
+        if permissions is None:
+            return None
+        try:
+            return validate_permission_string(permissions)
+        except HardeningViolation as exc:
+            raise InvalidScopeError(str(exc)) from exc
+
     def generate_authorization_url(
         self,
         application_id: int,
@@ -72,6 +90,8 @@ class OAuth2Flow:
         Returns:
             Authorization URL
         """
+        scopes = self._require_scopes(scopes)
+        permissions = self._require_permissions(permissions)
         base_url = self._config.get("authorization_endpoint", "/oauth2/authorize")
 
         params = {
@@ -130,9 +150,7 @@ class OAuth2Flow:
                 f"Redirect URI not registered: {redirect_uri}"
             )
 
-        valid, issues = validate_scopes(scopes)
-        if not valid:
-            raise InvalidScopeError(", ".join(issues))
+        scopes = self._require_scopes(scopes)
 
         return {
             "application_id": app["id"],
@@ -165,6 +183,7 @@ class OAuth2Flow:
             redirect_uri = require_oauth_redirect_url(redirect_uri)
         except HardeningViolation as exc:
             raise InvalidRedirectUriError(str(exc)) from exc
+        scopes = self._require_scopes(scopes)
 
         code_id = generate_snowflake_id()
         now = self._current_time()
