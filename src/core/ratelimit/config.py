@@ -14,15 +14,34 @@ authoritative definition and update both together.
 
 from typing import Dict, Optional, Any
 import utils.config as app_config
+from .config_validation import (
+    coerce_burst,
+    coerce_multiplier,
+    coerce_optional_int,
+    coerce_requests,
+    coerce_window,
+)
 from .models import RateLimitConfig, BucketType, RateLimitAlgorithm
 
 
 def _build_global_limit() -> RateLimitConfig:
     """Build global rate limit from config (fallbacks: config_defaults)."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.global.requests", 25000),
-        window_seconds=app_config.get("rate_limiting.global.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.global.burst", 5000),
+        requests=coerce_requests(
+            app_config.get("rate_limiting.global.requests", 25000),
+            "rate_limiting.global.requests",
+            25000,
+        ),
+        window_seconds=coerce_window(
+            app_config.get("rate_limiting.global.window_seconds", 60.0),
+            "rate_limiting.global.window_seconds",
+            60.0,
+        ),
+        burst=coerce_burst(
+            app_config.get("rate_limiting.global.burst", 5000),
+            "rate_limiting.global.burst",
+            5000,
+        ),
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         scope=BucketType.GLOBAL,
         include_in_global=False,
@@ -32,26 +51,70 @@ def _build_global_limit() -> RateLimitConfig:
 def _build_user_limit() -> RateLimitConfig:
     """Build user rate limit from config (fallbacks: config_defaults)."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.user.requests", 10000),
-        window_seconds=app_config.get("rate_limiting.user.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.user.burst", 2500),
+        requests=coerce_requests(
+            app_config.get("rate_limiting.user.requests", 10000),
+            "rate_limiting.user.requests",
+            10000,
+        ),
+        window_seconds=coerce_window(
+            app_config.get("rate_limiting.user.window_seconds", 60.0),
+            "rate_limiting.user.window_seconds",
+            60.0,
+        ),
+        burst=coerce_burst(
+            app_config.get("rate_limiting.user.burst", 2500),
+            "rate_limiting.user.burst",
+            2500,
+        ),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.USER,
-        hourly_limit=app_config.get("rate_limiting.user.hourly_limit", 300000),
-        daily_limit=app_config.get("rate_limiting.user.daily_limit", 5000000),
+        hourly_limit=coerce_optional_int(
+            app_config.get("rate_limiting.user.hourly_limit", 300000),
+            "rate_limiting.user.hourly_limit",
+            maximum=50_000_000,
+            default=300000,
+        ),
+        daily_limit=coerce_optional_int(
+            app_config.get("rate_limiting.user.daily_limit", 5000000),
+            "rate_limiting.user.daily_limit",
+            maximum=50_000_000,
+            default=5000000,
+        ),
     )
 
 
 def _build_ip_limit() -> RateLimitConfig:
     """Build IP rate limit from config (fallbacks: config_defaults)."""
     return RateLimitConfig(
-        requests=app_config.get("rate_limiting.ip.requests", 5000),
-        window_seconds=app_config.get("rate_limiting.ip.window_seconds", 60.0),
-        burst=app_config.get("rate_limiting.ip.burst", 1500),
+        requests=coerce_requests(
+            app_config.get("rate_limiting.ip.requests", 5000),
+            "rate_limiting.ip.requests",
+            5000,
+        ),
+        window_seconds=coerce_window(
+            app_config.get("rate_limiting.ip.window_seconds", 60.0),
+            "rate_limiting.ip.window_seconds",
+            60.0,
+        ),
+        burst=coerce_burst(
+            app_config.get("rate_limiting.ip.burst", 1500),
+            "rate_limiting.ip.burst",
+            1500,
+        ),
         algorithm=RateLimitAlgorithm.SLIDING_WINDOW,
         scope=BucketType.IP,
-        hourly_limit=app_config.get("rate_limiting.ip.hourly_limit", 150000),
-        daily_limit=app_config.get("rate_limiting.ip.daily_limit", 1000000),
+        hourly_limit=coerce_optional_int(
+            app_config.get("rate_limiting.ip.hourly_limit", 150000),
+            "rate_limiting.ip.hourly_limit",
+            maximum=50_000_000,
+            default=150000,
+        ),
+        daily_limit=coerce_optional_int(
+            app_config.get("rate_limiting.ip.daily_limit", 1000000),
+            "rate_limiting.ip.daily_limit",
+            maximum=50_000_000,
+            default=1000000,
+        ),
     )
 
 
@@ -72,12 +135,20 @@ def get_ip_limit() -> RateLimitConfig:
 
 def get_bot_multiplier() -> float:
     """Get bot rate limit multiplier."""
-    return app_config.get("rate_limiting.bot_multiplier", 1.5)
+    return coerce_multiplier(
+        app_config.get("rate_limiting.bot_multiplier", 1.5),
+        "rate_limiting.bot_multiplier",
+        1.5,
+    )
 
 
 def get_webhook_multiplier() -> float:
     """Get webhook rate limit multiplier."""
-    return app_config.get("rate_limiting.webhook_multiplier", 1.0)
+    return coerce_multiplier(
+        app_config.get("rate_limiting.webhook_multiplier", 1.0),
+        "rate_limiting.webhook_multiplier",
+        1.0,
+    )
 
 
 def get_user_multiplier(user_id: int) -> float:
