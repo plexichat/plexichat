@@ -86,9 +86,12 @@ from .exceptions import (
     InvalidBadgeError,
 )
 from .validation import (
+    MAX_ROLLOUT_TARGETS,
+    feature_enabled_for,
     validate_feature_flags,
     validate_feature_key,
     validate_feature_value,
+    validate_tier_limits,
 )
 
 _db: Any = None
@@ -162,7 +165,7 @@ def get_tier_limits(tier: str) -> TierLimits:
             return DEFAULT_TIER_LIMITS[tier]
         raise InvalidTierError(f"Unknown tier: {tier}")
 
-    tier_config = tiers_config[tier]
+    tier_config = validate_tier_limits(tiers_config[tier])
     return TierLimits(
         name=tier,
         multiplier=tier_config.get("multiplier", 1.0),
@@ -366,8 +369,14 @@ def get_user_badges(user_id: int) -> List[str]:
     if not features:
         return []
 
-    # Respect display limit
-    limit = _get_config("badge_display_limit", 5)
+    # Respect a bounded display limit; a negative or huge config value used to
+    # slice everything (or nothing) without an explicit decision.
+    limit = bounded_int(
+        _get_config("badge_display_limit", 5),
+        "badge_display_limit",
+        minimum=0,
+        maximum=MAX_ROLLOUT_TARGETS,
+    )
     return features.badges[:limit]
 
 
@@ -631,4 +640,5 @@ __all__ = [
     "validate_feature_key",
     "validate_feature_value",
     "validate_feature_flags",
+    "feature_enabled_for",
 ]
