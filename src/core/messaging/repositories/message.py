@@ -514,6 +514,14 @@ class MessageRepository(BaseRepository[Message]):
 
     def invalidate_conversation_cache(self, conversation_id: SnowflakeID) -> None:
         """Invalidate all message list caches for a conversation."""
+        # Bump the in-process render generation FIRST so a hot LRU page is
+        # stale even if the Redis/Valkey pattern invalidation below fails.
+        try:
+            from ..render_generation import bump
+
+            bump(conversation_id)
+        except Exception:
+            pass
         try:
             # Use wider globs to catch various argument serializations (str:ID vs int:ID)
             # Add leading wildcards to catch keys like 'cache:src.api.routes.messages.get_channel_messages:channel_id:int:...'

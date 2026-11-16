@@ -25,6 +25,8 @@ from src.core.messaging.exceptions import (
     ConversationNotFoundError,
     ConversationAccessDeniedError,
 )
+from src.core.messaging.render_generation import get as get_render_generation
+from .render_cache import get_render_cache
 from .helpers import (
     _message_to_response,
     batch_embed_suppressed_ids,
@@ -93,6 +95,23 @@ async def get_channel_messages(
         after_id = (
             require_snowflake(after, "after", "Invalid after ID") if after else None
         )
+
+        # Bounded in-process LRU of fully normalized pages. The conversation's
+        # generation is part of the key, so any message write in this
+        # conversation (which bumps it) makes every cached page miss at once.
+        render_key = (
+            "messages_api",
+            current_user.user_id,
+            cid,
+            limit,
+            before_id,
+            after_id,
+            get_render_generation(cid),
+        )
+        render_cache = get_render_cache()
+        cached_page = render_cache.get(render_key)
+        if cached_page is not None:
+            return list(cached_page)
 
         messages = None
 
@@ -360,6 +379,7 @@ async def get_channel_messages(
                     f"Skipping malformed message in channel {channel_id}: {message_error}"
                 )
 
+        render_cache.put(render_key, result)
         return result
     except HTTPException:
         raise
