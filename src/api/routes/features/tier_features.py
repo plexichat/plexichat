@@ -11,6 +11,8 @@ Public endpoint for users to view their own features.
 
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 
+import re
+
 import utils.logger as logger
 
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -26,11 +28,75 @@ from src.api.schemas.features import (
     TierLimitsResponse,
 )
 from src.api.schemas.common import ErrorResponse
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    parse_id,
+    reject_control_characters,
+)
 
 router = APIRouter(tags=["User Features"])
 
+# An admin may set a tier and an expiry, but the payload is still client data.
+# Bound every field so a hostile admin session (or a MITM with a leaked token)
+# cannot persist a megabyte-long tier name, control-character-laden notes, or a
+# timestamp that turns the expiry calculation into an absurd value.
+_MAX_TIER_NAME_LENGTH = 50
+_MAX_FEATURE_NOTES_LENGTH = 2000
+_MAX_EXPIRES_AT = 4102444800  # 2100-01-01T00:00:00Z
+_TIER_NAME = re.compile(r"^[A-Za-z0-9_.\-]{1,%d}$" % _MAX_TIER_NAME_LENGTH)
+
 
 # === Helper Functions ===
+
+
+def _feature_user_id(raw: str) -> int:
+    """Parse an admin-targeted user id inside the snowflake range."""
+    try:
+        return parse_id(raw, "user ID")
+    except HardeningViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": str(exc)}},
+        ) from exc
+
+
+def _validate_feature_settings(body: UpdateFeaturesRequest) -> None:
+    """Constrain the keys/values of a raw feature-settings update payload."""
+    if body.rate_limit_tier is not None:
+        tier = str(body.rate_limit_tier)
+        if len(tier) > _MAX_TIER_NAME_LENGTH or not _TIER_NAME.match(tier):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Invalid rate limit tier"}},
+            )
+    if body.notes is not None:
+        notes = str(body.notes)
+        if len(notes) > _MAX_FEATURE_NOTES_LENGTH:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": "Admin notes are too long"}},
+            )
+        try:
+            reject_control_characters(notes, "notes")
+        except HardeningViolation as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
+    if body.expires_at is not None:
+        try:
+            bounded_int(
+                body.expires_at,
+                "expires_at",
+                minimum=0,
+                maximum=_MAX_EXPIRES_AT,
+            )
+        except HardeningViolation as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
 
 
 async def get_admin_access(
@@ -155,14 +221,7 @@ async def get_user_features(
         )
 
     try:
-        try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for features request: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
+        uid = _feature_user_id(user_id)
 
         if not _user_exists(uid):
             raise HTTPException(
@@ -231,6 +290,7 @@ async def update_user_features(
     Can update feature flags, tier, and expiration.
     """
     _check_admin(current_user)
+    _validate_feature_settings(body)
 
     features = _get_features_module()
     if not features:
@@ -241,14 +301,7 @@ async def update_user_features(
         )
 
     try:
-        try:
-            uid = int(user_id)
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid user ID format for features update: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": {"code": 400, "message": "Invalid user ID"}},
-            )
+        uid = _feature_user_id(user_id)
 
         if not _user_exists(uid):
             raise HTTPException(
