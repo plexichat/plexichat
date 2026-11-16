@@ -381,3 +381,66 @@ class DSARLog:
         except Exception as e:
             logger.error(f"Failed to read requests from log: {e}")
             return results
+
+    @staticmethod
+    def _integrity_hash(metadata: Dict[str, Any]) -> str:
+        """Deterministic hash of an event's metadata payload."""
+        canonical = json.dumps(metadata, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _log_integrity_event(
+        self, user_id: int, action: str, identifier: str, metadata: Dict[str, Any]
+    ) -> Optional[str]:
+        """Append an event carrying a self-verifying metadata hash.
+
+        ``log_event`` already hash-chains the whole entry; the extra
+        ``integrity_hash`` binds the event's own payload so an operator can
+        verify a single export/deletion record without replaying the chain.
+        """
+        payload = dict(metadata)
+        payload["integrity_hash"] = self._integrity_hash(payload)
+        return self.log_event(user_id, action, identifier, payload)
+
+    def log_export_event(
+        self,
+        user_id: int,
+        request_id: int,
+        checksum: str,
+        file_size: int,
+        storage_backend: str,
+        storage_path: str,
+    ) -> Optional[str]:
+        """Record that a DSAR export artifact was generated."""
+        return self._log_integrity_event(
+            user_id,
+            "EXPORTED",
+            f"dsar_request:{request_id}",
+            {
+                "request_id": request_id,
+                "artifact_sha256": checksum,
+                "file_size": file_size,
+                "storage_backend": storage_backend,
+                "storage_path": storage_path,
+            },
+        )
+
+    def log_deletion_event(
+        self,
+        user_id: int,
+        request_id: int,
+        storage_backend: str,
+        storage_path: str,
+        deleted: bool,
+    ) -> Optional[str]:
+        """Record that a DSAR export artifact was (or was not) deleted."""
+        return self._log_integrity_event(
+            user_id,
+            "DELETED",
+            f"dsar_request:{request_id}",
+            {
+                "request_id": request_id,
+                "storage_backend": storage_backend,
+                "storage_path": storage_path,
+                "deleted": bool(deleted),
+            },
+        )

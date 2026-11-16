@@ -462,6 +462,14 @@ class DSARManager:
                     f"generation; deleting generated artifact"
                 )
                 generator.delete(storage_path)
+                audit_log = self._get_audit_log()
+                audit_log.log_deletion_event(
+                    user_id,
+                    request_id,
+                    generator.backend_name,
+                    storage_path,
+                    True,
+                )
                 raise ValueError(
                     f"Request {request_id} was cancelled during generation"
                 )
@@ -476,6 +484,14 @@ class DSARManager:
                     "admin_id": admin_id,
                     "file_size": file_size,
                 },
+            )
+            audit_log.log_export_event(
+                user_id,
+                request_id,
+                checksum,
+                file_size,
+                generator.backend_name,
+                storage_path,
             )
 
             logger.info(
@@ -576,6 +592,23 @@ class DSARManager:
             logger.warning(
                 f"DSAR: local fallback delete failed for "
                 f"request {request.get('id')} at {storage_path}: {e}"
+            )
+
+        # Every deletion must be audited with a self-verifying integrity
+        # hash, including failed attempts (``deleted`` records the outcome).
+        # An audit-write failure must never stop the actual scrub.
+        try:
+            self._get_audit_log().log_deletion_event(
+                int(request.get("user_id") or 0),
+                int(request.get("id") or 0),
+                str(storage_backend or "local"),
+                str(storage_path),
+                removed,
+            )
+        except Exception as audit_error:
+            logger.error(
+                f"DSAR: failed to audit deletion of export for request "
+                f"{request.get('id')}: {audit_error}"
             )
 
         return removed

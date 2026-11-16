@@ -413,7 +413,16 @@ class DSARHarvester:
                     f"Harvester: request {request_id} was cancelled during "
                     f"generation; deleting generated artifact"
                 )
+                from .audit_log import DSARLog
+
                 generator.delete(storage_path)
+                DSARLog().log_deletion_event(
+                    user_id,
+                    request_id,
+                    generator.backend_name,
+                    storage_path,
+                    True,
+                )
                 return
 
             from .audit_log import DSARLog
@@ -424,6 +433,14 @@ class DSARHarvester:
                 "READY",
                 f"user:{user_id}",
                 {"request_id": request_id, "file_size": file_size},
+            )
+            audit_log.log_export_event(
+                user_id,
+                request_id,
+                checksum,
+                file_size,
+                generator.backend_name,
+                storage_path,
             )
 
             logger.info(
@@ -443,7 +460,19 @@ class DSARHarvester:
             )
             if storage_path:
                 try:
-                    ExportFormatGenerator(db=self._db).delete(storage_path)
+                    from .audit_log import DSARLog
+
+                    # A partial artifact from a failed generation is still a
+                    # deletion of a DSAR export and must be audited.
+                    generator = ExportFormatGenerator(db=self._db)
+                    deleted = generator.delete(storage_path)
+                    DSARLog().log_deletion_event(
+                        user_id,
+                        request_id,
+                        generator.backend_name,
+                        storage_path,
+                        deleted,
+                    )
                 except Exception as cleanup_error:
                     logger.debug(f"dsar export cleanup failed: {cleanup_error}")
 
