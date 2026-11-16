@@ -71,3 +71,29 @@ class TestWebPushEndpoint:
         config = {"vapid_private_key": "k", "vapid_subject": "mailto:a@b.c"}
         assert mgr._send_web_push(rec, "t", "b", None, config) is True
         assert calls[0]["subscription_info"]["endpoint"] == "https://push.example/ep"
+
+
+class TestApnsToken:
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "abc/../../admin",
+            "abc?topic=evil",
+            "abc#frag",
+            "user:pass@host",
+            "abc def",
+            "a" * 300,
+            "",
+        ],
+    )
+    def test_structural_token_is_refused(self, monkeypatch, token):
+        from src.core.push.manager.apns import _safe_apns_token
+
+        with pytest.raises(ValueError):
+            _safe_apns_token(token)
+
+    @pytest.mark.parametrize("token", ["device-token", "tok", "A" * 64, "a.b_c-1"])
+    def test_normal_token_is_accepted(self, token):
+        from src.core.push.manager.apns import _safe_apns_token
+
+        assert _safe_apns_token(token) == token

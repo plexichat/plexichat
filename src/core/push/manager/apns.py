@@ -3,11 +3,26 @@
 from src.core.security.hardening import require_https_url
 
 import json
+import re
 from typing import Any, Dict, Optional
 
 import utils.logger as logger
 
 from .base import PushManagerBase
+
+# The device token is concatenated into the APNs URL path. Characters that
+# are structural in a URL (``/ ? # @ : % \\``), whitespace and controls must
+# never appear in a token: they would let a malformed stored token rewrite
+# the request path/query or smuggle credentials. Legitimate APNs tokens are
+# opaque alphanumeric hex/ASCII strings, so this still admits every real one.
+_APNS_TOKEN_FORBIDDEN = re.compile(r"[\x00-\x20\x7f/?#@:%\\]")
+
+
+def _safe_apns_token(token: Any) -> str:
+    value = str(token or "")
+    if not value or len(value) > 256 or _APNS_TOKEN_FORBIDDEN.search(value):
+        raise ValueError("invalid APNs device token")
+    return value
 
 
 class ApnsMixin(PushManagerBase):
@@ -50,6 +65,15 @@ class ApnsMixin(PushManagerBase):
         intact — an operator-side config problem must never destroy
         valid iOS device registrations).
         """
+        # The token is appended verbatim to the APNs URL path below. Reject
+        # tokens that could alter the URL's structure before it ever gets
+        # there; a malformed token is skipped (None), never deleted.
+        try:
+            token = _safe_apns_token(token)
+        except ValueError:
+            logger.warning("Refusing APNs push: invalid device token")
+            return None
+
         if not self._apns_available:
             logger.debug(f"APNs not configured - would send push to {token[:16]}...")
             return None
