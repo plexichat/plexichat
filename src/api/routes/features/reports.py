@@ -1,3 +1,6 @@
+import json
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
@@ -5,11 +8,11 @@ from typing import Optional, List
 
 import utils.logger as logger
 import src.api as api
+from src.utils.encryption import generate_snowflake_id
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
 from src.core.security.hardening import (
     HardeningViolation,
-    parse_id,
     reject_control_characters,
     require_http_url,
 )
@@ -376,10 +379,6 @@ async def submit_enhanced_report(
     if not db:
         raise_internal("Database not available")
 
-    import json
-    from src.utils.encryption import generate_snowflake_id
-    import time
-
     target_id = parse_id(body.target_id, "target ID")
 
     # REP-5: evidence URLs must be well-formed http(s) links
@@ -527,6 +526,15 @@ async def submit_enhanced_report(
         raise_internal("Internal server error")
 
 
+def _gate_flag(row, key: str, index: int):
+    """Read a scalar column from a dict- or tuple-shaped DB row."""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
+    return row[index] if len(row) > index else None
+
+
 @router.patch(
     "/reports/{report_id}/status",
     summary="Update report status (admin)",
@@ -546,14 +554,18 @@ async def update_report_status(
     if not db:
         raise_internal("Database not available")
 
-    admin_row = db.fetch_one(
-        "SELECT id FROM admin_users WHERE id = ?",
-        (current_user.user_id,),
-    )
-    if not admin_row:
-        raise_forbidden("Admin access required")
-
     rid = report_id
+
+    # Resolve both gate checks in a single round-trip. Ordering is preserved:
+    # a non-admin gets 403 before any request validation, and a missing report
+    # is 404 only after validation succeeds.
+    gate = db.fetch_one(
+        "SELECT (SELECT 1 FROM admin_users WHERE id = ?) AS is_admin, "
+        "(SELECT 1 FROM reports WHERE id = ?) AS report_exists",
+        (current_user.user_id, rid),
+    )
+    if not _gate_flag(gate, "is_admin", 0):
+        raise_forbidden("Admin access required")
 
     if body.status not in VALID_REPORT_STATUSES:
         raise_bad_request(
@@ -570,10 +582,8 @@ async def update_report_status(
     # The response must reflect persisted state: updating a report that does
     # not exist previously returned success with the requested status because
     # the UPDATE matched no rows. Report the stored state honestly (404).
-    if not db.fetch_one("SELECT id FROM reports WHERE id = ?", (rid,)):
+    if not _gate_flag(gate, "report_exists", 1):
         raise_not_found("Report not found")
-
-    import time
 
     now = int(time.time() * 1000)
 
