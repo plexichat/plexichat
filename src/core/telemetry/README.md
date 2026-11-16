@@ -148,3 +148,11 @@ PEM private keys, named API-key prefixes). Depth, item count and string length
 are bounded. The audit store scrubs before persisting and again on read; the
 admin audit routes and the admin log viewer scrub everything they serve.
 
+### Privileged-action coverage
+
+`PRIVILEGED_ACTIONS` is the explicit registry of security-relevant actions.
+`record_privileged_action()` only writes entries for registered actions (failing
+closed on an unknown one), and `missing_privileged_actions()` reports which
+registered actions have no entry. Tests enumerate the registry and assert full
+coverage so a new privileged path cannot be added without an audit trail.
+

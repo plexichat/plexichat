@@ -21,6 +21,9 @@ from .audit import (
     AuditChain,
     AuditChainError,
     verify_audit_chain,
+    PRIVILEGED_ACTIONS,
+    record_privileged_action,
+    missing_privileged_actions,
 )
 from .scrubbing import REDACTED, redact_secrets, scrub_text
 
@@ -775,6 +778,9 @@ __all__ = [
     "AuditChain",
     "AuditChainError",
     "verify_audit_chain",
+    "PRIVILEGED_ACTIONS",
+    "record_privileged_action",
+    "missing_privileged_actions",
     "REDACTED",
     "redact_secrets",
     "scrub_text",

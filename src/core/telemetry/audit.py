@@ -476,10 +476,63 @@ def verify_audit_chain(
     return AuditChain(path).verify_chain(strict=strict)
 
 
+#: Security-relevant admin actions. Every one of these must leave an audit
+#: entry. Keeping the registry explicit (rather than trusting each call site
+#: to remember to log) lets tests enumerate the complete privileged surface and
+#: fail when a new action is added without audit coverage.
+PRIVILEGED_ACTIONS = frozenset(
+    {
+        "login",
+        "logout",
+        "password_change",
+        "otp_setup",
+        "role_assign",
+        "role_revoke",
+        "user.ban",
+        "user.unban",
+        "user.role_change",
+        "user.delete",
+        "server.delete",
+        "channel.delete",
+        "config.update",
+        "config.secret_rotate",
+        "approval.approve",
+        "approval.reject",
+        "security.revoke_sessions",
+        "token.revoke",
+        "license.update",
+    }
+)
+
+
+def record_privileged_action(
+    store: AuditChain, action: str, actor_id: Any, **kwargs: Any
+) -> Dict[str, Any]:
+    """Append an audit entry for a registered privileged action.
+
+    Fails closed for an unknown action so a newly added privileged path cannot
+    silently bypass the audit trail.
+    """
+    if action not in PRIVILEGED_ACTIONS:
+        raise HardeningViolation(
+            f"action is not a registered privileged action: {action}"
+        )
+    return store.append(action=action, actor_id=actor_id, **kwargs)
+
+
+def missing_privileged_actions(store: AuditChain) -> frozenset:
+    """Return the privileged actions with no entry in ``store``."""
+    seen = {row["entry"].get("action") for row in store.read_all(limit=MAX_READ_ROWS)}
+    return frozenset(PRIVILEGED_ACTIONS - seen)
+
+
 __all__ = [
     "GENESIS_HASH",
     "MAX_SEQUENCE",
     "AuditChain",
     "AuditChainError",
     "verify_audit_chain",
+    "PRIVILEGED_ACTIONS",
+    "record_privileged_action",
+    "missing_privileged_actions",
 ]
