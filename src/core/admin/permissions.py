@@ -119,6 +119,58 @@ PERMISSION_SCOPES = {
 }
 
 
+def _build_delegable_permissions() -> frozenset:
+    """Derive the closed vocabulary of keys a role request may contain.
+
+    ``PERMISSION_SCOPES`` doubles as the documentation of wildcard scopes
+    (``"*"`` and ``"scope.*"``).  Those are reserved for seeded system roles:
+    the permission check expands them for the holder, but they must never be
+    accepted from a role create/update payload.  Everything else in the table
+    is an explicit, delegable leaf scope.
+    """
+    return frozenset(
+        key
+        for key in PERMISSION_SCOPES
+        if key != "*" and not key.endswith(".*")
+    )
+
+
+DELEGABLE_PERMISSIONS = _build_delegable_permissions()
+
+
+def validate_delegable_permissions(permissions: Any) -> Dict[str, bool]:
+    """Validate a permission map submitted by a role-management request.
+
+    This is the single choke point for the closed vocabulary.  It rejects
+    wildcards, unknown keys, non-string keys and non-boolean values, so a
+    caller cannot smuggle a scope that was never declared in
+    :data:`PERMISSION_SCOPES` into a role.
+
+    Args:
+        permissions: The raw ``permissions`` mapping from the request body.
+
+    Returns:
+        A plain ``dict`` copy containing only validated leaf scopes.
+
+    Raises:
+        ValueError: If any key or value is not delegable.
+    """
+    if not isinstance(permissions, dict):
+        raise ValueError("permissions must be an object")
+    validated: Dict[str, bool] = {}
+    for name, granted in permissions.items():
+        if not isinstance(name, str):
+            raise ValueError("permission keys must be strings")
+        if name == "*" or name.endswith(".*"):
+            raise ValueError("wildcard permissions cannot be delegated")
+        if name not in DELEGABLE_PERMISSIONS:
+            raise ValueError(f"unknown permission scope: {name}")
+        if not isinstance(granted, bool):
+            raise ValueError("permission values must be booleans")
+        validated[name] = granted
+    return validated
+
+
 # Actions that require approval when not single-admin
 APPROVAL_REQUIRED_ACTIONS = {
     "users.force_purge": "Force purging user accounts",

@@ -304,28 +304,16 @@ async def create_role(request: Request, role_data: RoleCreate):
     now = int(time.time() * 1000)
     role_id = generate_snowflake_id()
 
-    # Only documented, non-wildcard scopes may be delegated. The wildcard
-    # permission is reserved for the seeded system super_admin role.
-    from src.core.admin.permissions import PERMISSION_SCOPES
+    # Only documented, non-wildcard scopes may be delegated. The closed
+    # vocabulary and wildcard rejection live in the core permission module.
+    from src.core.admin.permissions import validate_delegable_permissions
 
-    # ``PERMISSION_SCOPES`` is a module-level constant, so this membership
-    # scan is the cached permission vocabulary — no per-request lookup.
-    if not isinstance(role_data.permissions, dict) or any(
-        not isinstance(name, str)
-        or name == "*"
-        or name.endswith(".*")
-        or name not in PERMISSION_SCOPES
-        or not isinstance(granted, bool)
-        for name, granted in role_data.permissions.items()
-    ):
+    try:
+        permissions = validate_delegable_permissions(role_data.permissions)
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail={
-                "error": {
-                    "code": 400,
-                    "message": "Invalid or non-delegable permission scope",
-                }
-            },
+            detail={"error": {"code": 400, "message": str(exc)}},
         )
 
     # One query supplies both the actor's position and the duplicate-name
@@ -350,7 +338,7 @@ async def create_role(request: Request, role_data: RoleCreate):
         )
 
     try:
-        permissions_json = json.dumps(role_data.permissions)
+        permissions_json = json.dumps(permissions)
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=400,
@@ -426,27 +414,24 @@ async def update_role(
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Check if role exists and is not a system role
-    role = db.fetch_one(
-        "SELECT is_system, position FROM admin_roles WHERE id = ?", (role_id,)
-    )
-    if not role:
+    # Check role existence, system flag and hierarchy in one query.
+    hierarchy = _load_hierarchy(db, admin_id, admin_id, role_id)
+    if hierarchy["role_pos"] is None:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Role not found"}},
         )
 
-    is_system = bool(role["is_system"] if isinstance(role, dict) else role[0])
-    if is_system:
+    if hierarchy["role_is_system"]:
         raise HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": "Cannot modify system roles"}},
         )
 
-    # Enforce role hierarchy: can only modify roles at a lower position
-    from src.core.admin.permissions import can_manage_role
-
-    if not can_manage_role(db, admin_id, role_id):
+    # Enforce role hierarchy: can only modify roles at a lower position.
+    if not _can_manage_role_at(
+        hierarchy["current_pos"], hierarchy["role_pos"], hierarchy["role_is_system"]
+    ):
         raise HTTPException(
             status_code=403,
             detail={
@@ -469,27 +454,17 @@ async def update_role(
         params.append(role_data.description)
 
     if role_data.permissions is not None:
-        from src.core.admin.permissions import PERMISSION_SCOPES
+        from src.core.admin.permissions import validate_delegable_permissions
 
-        if not isinstance(role_data.permissions, dict) or any(
-            not isinstance(name, str)
-            or name == "*"
-            or name.endswith(".*")
-            or name not in PERMISSION_SCOPES
-            or not isinstance(granted, bool)
-            for name, granted in role_data.permissions.items()
-        ):
+        try:
+            permissions = validate_delegable_permissions(role_data.permissions)
+        except ValueError as exc:
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": {
-                        "code": 400,
-                        "message": "Invalid or non-delegable permission scope",
-                    }
-                },
+                detail={"error": {"code": 400, "message": str(exc)}},
             )
         try:
-            permissions_json = json.dumps(role_data.permissions)
+            permissions_json = json.dumps(permissions)
             updates.append("permissions = ?")
             params.append(permissions_json)
         except (TypeError, ValueError):
@@ -553,27 +528,24 @@ async def delete_role(request: Request, role_id: SnowflakeIDParam):
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Check if role exists and is not a system role
-    role = db.fetch_one(
-        "SELECT is_system, position FROM admin_roles WHERE id = ?", (role_id,)
-    )
-    if not role:
+    # Check role existence, system flag and hierarchy in one query.
+    hierarchy = _load_hierarchy(db, admin_id, admin_id, role_id)
+    if hierarchy["role_pos"] is None:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Role not found"}},
         )
 
-    is_system = bool(role["is_system"] if isinstance(role, dict) else role[0])
-    if is_system:
+    if hierarchy["role_is_system"]:
         raise HTTPException(
             status_code=403,
             detail={"error": {"code": 403, "message": "Cannot delete system roles"}},
         )
 
-    # Enforce role hierarchy: can only delete roles at a lower position
-    from src.core.admin.permissions import can_manage_role
-
-    if not can_manage_role(db, admin_id, role_id):
+    # Enforce role hierarchy: can only delete roles at a lower position.
+    if not _can_manage_role_at(
+        hierarchy["current_pos"], hierarchy["role_pos"], hierarchy["role_is_system"]
+    ):
         raise HTTPException(
             status_code=403,
             detail={
@@ -655,26 +627,29 @@ async def assign_role(request: Request, assignment: RoleAssignment):
 
     now = int(time.time() * 1000)
 
-    # Check if role exists
-    role = db.fetch_one("SELECT id FROM admin_roles WHERE id = ?", (target_role_id,))
-    if not role:
+    # Role existence, admin existence and both hierarchy positions in one
+    # query.  This replaces five separate lookups on the assign path (role
+    # row, admin row, actor position twice, target position, role hierarchy).
+    hierarchy = _load_hierarchy(db, admin_id, target_admin_id, target_role_id)
+    if hierarchy["role_pos"] is None:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Role not found"}},
         )
 
-    # Check if admin exists
-    admin = db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (target_admin_id,))
-    if not admin:
+    if not hierarchy["admin_exists"]:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Admin not found"}},
         )
 
     # Enforce hierarchy: can only assign roles if you can manage the target admin AND the role
-    from src.core.admin.permissions import can_manage_admin, can_manage_role
-
-    if not can_manage_admin(db, admin_id, target_admin_id):
+    if not _can_manage_admin_at(
+        admin_id,
+        target_admin_id,
+        hierarchy["current_pos"],
+        hierarchy["target_pos"],
+    ):
         raise HTTPException(
             status_code=403,
             detail={
@@ -684,7 +659,9 @@ async def assign_role(request: Request, assignment: RoleAssignment):
                 }
             },
         )
-    if not can_manage_role(db, admin_id, target_role_id):
+    if not _can_manage_role_at(
+        hierarchy["current_pos"], hierarchy["role_pos"], hierarchy["role_is_system"]
+    ):
         raise HTTPException(
             status_code=403,
             detail={
@@ -761,10 +738,15 @@ async def revoke_role(
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Enforce hierarchy: can only revoke roles if you can manage the target admin AND the role
-    from src.core.admin.permissions import can_manage_admin, can_manage_role
-
-    if not can_manage_admin(db, current_admin_id, admin_id):
+    # Enforce hierarchy: can only revoke roles if you can manage the target
+    # admin AND the role.  All inputs are resolved in a single query.
+    hierarchy = _load_hierarchy(db, current_admin_id, admin_id, role_id)
+    if not _can_manage_admin_at(
+        current_admin_id,
+        admin_id,
+        hierarchy["current_pos"],
+        hierarchy["target_pos"],
+    ):
         raise HTTPException(
             status_code=403,
             detail={
@@ -774,7 +756,9 @@ async def revoke_role(
                 }
             },
         )
-    if not can_manage_role(db, current_admin_id, role_id):
+    if not _can_manage_role_at(
+        hierarchy["current_pos"], hierarchy["role_pos"], hierarchy["role_is_system"]
+    ):
         raise HTTPException(
             status_code=403,
             detail={
