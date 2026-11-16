@@ -6,7 +6,7 @@ import json
 from functools import partial
 from typing import Optional, List, Any, Generic, TypeVar, Annotated
 
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, BeforeValidator, Field, ConfigDict, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
@@ -41,6 +41,29 @@ class APIJSONResponse(JSONResponse):
 
     def render(self, content: Any) -> bytes:
         return api_json_dumps(content).encode("utf-8")
+
+
+def validated_json_response(model: BaseModel, status_code: int = 200) -> Response:
+    """Serialize an already-validated response model straight to JSON bytes.
+
+    FastAPI's normal response path calls ``field.validate()`` on whatever a
+    handler returns, even when that value is already an instance of the
+    declared ``response_model``. A handler that constructs the model itself
+    (the root/health endpoints do) has already paid that validation cost at
+    construction time; this helper skips the duplicate ``validate_python``
+    pass and serializes through Pydantic's Rust core via ``model_dump_json`` —
+    byte-for-byte the same output FastAPI's own fast path produces.
+
+    Validation is not weakened: the caller must pass a real ``BaseModel``
+    instance (validated on construction), and the route keeps its explicit
+    ``response_model`` for OpenAPI/docs.
+    """
+    return Response(
+        content=model.model_dump_json(by_alias=True),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
 
 T = TypeVar("T")
 

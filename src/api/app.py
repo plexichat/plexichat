@@ -665,7 +665,11 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
         app.include_router(docs_router, prefix=docs_path)
         logger.info(f"Documentation server enabled at {docs_path}")
 
-    from .schemas.common import RootResponse, ErrorResponse
+    from .schemas.common import (
+        RootResponse,
+        ErrorResponse,
+        validated_json_response,
+    )
     from .routes.health import HealthResponse
 
     @app.get(
@@ -677,7 +681,7 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             500: {"model": ErrorResponse, "description": "Internal server error"},
         },
     )
-    async def root() -> RootResponse:
+    async def root() -> Response:
         """Root endpoint with API information."""
         try:
             response = {
@@ -688,7 +692,9 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             }
             if enable_docs and is_docs_enabled():
                 response["api_docs"] = docs_path
-            return RootResponse(**response)
+            # RootResponse validates on construction; skip FastAPI's second
+            # response-model validation pass on this hot, static endpoint.
+            return validated_json_response(RootResponse(**response))
         except Exception as e:
             logger.error(f"Root endpoint failed: {e}", exc_info=True)
             from fastapi import status
@@ -707,12 +713,14 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             500: {"model": ErrorResponse, "description": "Internal server error"},
         },
     )
-    async def health_redirect() -> HealthResponse:
+    async def health_redirect() -> Response:
         """Redirect or proxy to health check endpoint."""
         try:
             from .routes.health import health_check
 
-            return await health_check()
+            # health_check() already returns a validated HealthResponse; avoid
+            # re-validating it through FastAPI's response-model pipeline.
+            return validated_json_response(await health_check())
         except HTTPException:
             raise
         except Exception as e:
