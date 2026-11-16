@@ -245,26 +245,9 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
         # Action doesn't require approval
         return SuccessResponse(success=True, message="Action does not require approval")
 
-    # Check for single admin bypass
-    single_admin_bypass = approval_config.get("single_admin_bypass", True)
-    if single_admin_bypass:
-        import src.api as api
-
-        db = api.get_db()
-        if db is None:
-            raise HTTPException(
-                status_code=500,
-                detail={"error": {"code": 500, "message": "Database not available"}},
-            )
-        admin_count = db.fetch_one("SELECT COUNT(*) as count FROM admin_users")
-        count = (
-            admin_count["count"] if isinstance(admin_count, dict) else admin_count[0]
-        )
-
-        if count == 1:
-            return SuccessResponse(success=True, message="Single admin bypass")
-
-    # Create approval request
+    # Resolve the database once for both the bypass check and the insert,
+    # instead of calling get_db() (and repeating the availability check)
+    # twice on the same request.
     import src.api as api
 
     db = api.get_db()
@@ -274,6 +257,18 @@ async def request_approval(request: Request, approval_data: ApprovalRequest):
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
+    # Check for single admin bypass
+    single_admin_bypass = approval_config.get("single_admin_bypass", True)
+    if single_admin_bypass:
+        admin_count = db.fetch_one("SELECT COUNT(*) as count FROM admin_users")
+        count = (
+            admin_count["count"] if isinstance(admin_count, dict) else admin_count[0]
+        )
+
+        if count == 1:
+            return SuccessResponse(success=True, message="Single admin bypass")
+
+    # Create approval request (db resolved above)
     from src.utils.encryption import generate_snowflake_id
 
     now = int(time.time() * 1000)
