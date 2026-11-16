@@ -20,6 +20,54 @@ except ImportError:
 
 router = APIRouter()
 
+# The password policy is static configuration. Building the response used to
+# re-read three config keys on every request (this endpoint is public and
+# frequently polled by the client at startup). Cache the serialized response
+# and rebuild it only when the underlying config dicts actually change, so a
+# runtime config.set is still honoured.
+_password_policy_cache = None
+_password_policy_cache_key = None
+
+
+def _policy_config() -> tuple:
+    auth_config = config_util.get("authentication", {}) if config_util else {}
+    if not isinstance(auth_config, dict):
+        auth_config = {}
+
+    password_config = auth_config.get("password", {})
+    if not isinstance(password_config, dict):
+        password_config = {}
+
+    accounts_config = auth_config.get("accounts", {})
+    if not isinstance(accounts_config, dict):
+        accounts_config = {}
+
+    return password_config, accounts_config
+
+
+def _build_password_requirements(password_config: dict, accounts_config: dict):
+    from src.api.routes.docs import is_docs_enabled
+
+    return PasswordRequirementsResponse(
+        min_length=password_config.get("min_length", 12),
+        max_length=password_config.get("max_length", 128),
+        require_uppercase=password_config.get("require_uppercase", True),
+        require_lowercase=password_config.get("require_lowercase", True),
+        require_digit=password_config.get("require_digit", True),
+        require_special=password_config.get("require_special", True),
+        age_gate_enabled=accounts_config.get("age_gate_enabled", False),
+        age_verification_type=accounts_config.get("age_verification_type", "boolean"),
+        minimum_age=accounts_config.get("minimum_age", 13),
+        docs_enabled=is_docs_enabled(),
+    )
+
+
+def invalidate_password_policy_cache() -> None:
+    """Force a rebuild on the next request (tests / runtime config reload)."""
+    global _password_policy_cache, _password_policy_cache_key
+    _password_policy_cache = None
+    _password_policy_cache_key = None
+
 
 @router.get(
     "/password-requirements",
@@ -30,37 +78,20 @@ router = APIRouter()
     },
 )
 async def get_password_requirements() -> PasswordRequirementsResponse:
+    global _password_policy_cache, _password_policy_cache_key
     try:
-        auth_config = {}
-        if config_util:
-            auth_config = config_util.get("authentication", {})
-            if not isinstance(auth_config, dict):
-                auth_config = {}
+        password_config, accounts_config = _policy_config()
+        # repr() yields a hashable fingerprint that changes whether the config
+        # dicts are replaced or mutated in place.
+        cache_key = (repr(password_config), repr(accounts_config))
+        cached = _password_policy_cache
+        if cached is not None and cache_key == _password_policy_cache_key:
+            return cached
 
-        password_config = auth_config.get("password", {})
-        if not isinstance(password_config, dict):
-            password_config = {}
-
-        accounts_config = auth_config.get("accounts", {})
-        if not isinstance(accounts_config, dict):
-            accounts_config = {}
-
-        from src.api.routes.docs import is_docs_enabled
-
-        return PasswordRequirementsResponse(
-            min_length=password_config.get("min_length", 12),
-            max_length=password_config.get("max_length", 128),
-            require_uppercase=password_config.get("require_uppercase", True),
-            require_lowercase=password_config.get("require_lowercase", True),
-            require_digit=password_config.get("require_digit", True),
-            require_special=password_config.get("require_special", True),
-            age_gate_enabled=accounts_config.get("age_gate_enabled", False),
-            age_verification_type=accounts_config.get(
-                "age_verification_type", "boolean"
-            ),
-            minimum_age=accounts_config.get("minimum_age", 13),
-            docs_enabled=is_docs_enabled(),
-        )
+        response = _build_password_requirements(password_config, accounts_config)
+        _password_policy_cache = response
+        _password_policy_cache_key = cache_key
+        return response
     except Exception as e:
         logger.error(f"Failed to get password requirements: {e}", exc_info=True)
         raise HTTPException(
