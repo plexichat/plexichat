@@ -9,7 +9,7 @@ from src.core.database import cached
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AccountType, TokenInfo
 from ...permissions import permissions_from_json
-from ...tokens import parse_token, verify_token_hash
+from ...tokens import is_expired, parse_token, verify_token_hash
 from ..protocol import AuthManagerProtocol
 
 # CORRECTNESS FIX: verify_token is wrapped in @cached, so a cache hit
@@ -92,7 +92,8 @@ class VerificationMixin(AuthManagerProtocol):
             logger.warning(f"Attempted use of token for frozen user {row['user_id']}")
             raise TokenInvalidError("Account is scheduled for deletion")
 
-        if row["expires_at"] < self._get_timestamp():
+        now = self._get_timestamp()
+        if is_expired(row["expires_at"], now):
             raise TokenExpiredError("Expired")
 
         if self._config.get("security", {}).get("token_binding", False):
@@ -109,8 +110,6 @@ class VerificationMixin(AuthManagerProtocol):
             current_ua_index = self._ua_index(user_agent)
             if row.get("ua_index") and row["ua_index"] != current_ua_index:
                 raise TokenInvalidError("User-Agent Binding Mismatch")
-
-        now = self._get_timestamp()
 
         last_activity = row.get("last_activity", 0)
         should_update = (now - last_activity) > 60000

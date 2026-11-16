@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AccountType, TokenInfo
 from ...permissions import permissions_from_json
-from ...tokens import create_ws_ticket, verify_token_hash
+from ...tokens import create_ws_ticket, is_expired, verify_token_hash
 from ..protocol import AuthManagerProtocol
 
 
@@ -74,7 +74,7 @@ class TicketMixin(AuthManagerProtocol):
             raise TokenInvalidError("Invalid ticket")
         if row["used"]:
             raise TokenInvalidError("Ticket already used")
-        if row["expires_at"] < self._get_timestamp():
+        if is_expired(row["expires_at"], self._get_timestamp()):
             raise TokenExpiredError("Ticket expired")
 
         # Atomic single-use consumption: concurrent replays of the same
@@ -100,7 +100,7 @@ class TicketMixin(AuthManagerProtocol):
         if (
             not srow
             or srow["revoked"]
-            or srow["expires_at"] < self._get_timestamp()
+            or is_expired(srow["expires_at"], self._get_timestamp())
             or srow.get("deletion_status") == "frozen"
         ):
             raise TokenInvalidError("Ticket session no longer valid")

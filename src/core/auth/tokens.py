@@ -8,10 +8,30 @@ import base64
 import hashlib
 import hmac
 import os
+import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .models import AccessToken
 from ._lazy import _get_auth_manager
+
+
+# ---- Token format / expiry bounds -----------------------------------------
+# Every credential minted here is ``[prefix.]<id>.<base64url secret>``. The
+# limits below turn parse_token into a strict grammar rather than a generic
+# string splitter: oversized bodies are rejected before any hashing/DB work
+# (DoS bound), ids must be canonical positive integers, and secrets must be
+# base64url with the entropy our generators actually use.
+MAX_TOKEN_LENGTH = 512
+MAX_TOKEN_ID = 2**63 - 1
+MAX_TOKEN_ID_DIGITS = 19
+MIN_TOKEN_SECRET_LENGTH = 32
+MAX_TOKEN_SECRET_LENGTH = 128
+_TOKEN_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_TOKEN_ID_RE = re.compile(r"^[0-9]{1,19}$")
+# Upper bound on an expiry expressed in epoch milliseconds (year 2100).
+MAX_EXPIRY_MS = 4_102_444_800_000
+_EXPIRY_RE = re.compile(r"^[0-9]{1,16}$")
 
 
 def generate_token_secret(length: int = 32) -> str:
@@ -67,49 +87,94 @@ def create_ws_ticket(ticket_id: int, secret_length: int = 32) -> Tuple[str, str]
     return full_token, secret_hash
 
 
+def _parse_token_id(raw: Any) -> Optional[int]:
+    """Parse a canonical, bounded positive token id.
+
+    ``int()`` alone accepts signs, whitespace, underscores and arbitrarily
+    long digit strings. Those forms are never minted and only widen the
+    confusion/DoS surface, so require the exact decimal representation.
+    """
+    if not isinstance(raw, str) or not _TOKEN_ID_RE.fullmatch(raw):
+        return None
+    # Reject leading zeros (including "0"): minted ids start at 1.
+    if raw[0] == "0" or len(raw) > MAX_TOKEN_ID_DIGITS:
+        return None
+    value = int(raw)
+    if value < 1 or value > MAX_TOKEN_ID:
+        return None
+    return value
+
+
+def _valid_token_secret(raw: Any) -> bool:
+    """Whether ``raw`` is a plausible base64url token secret."""
+    return (
+        isinstance(raw, str)
+        and MIN_TOKEN_SECRET_LENGTH <= len(raw) <= MAX_TOKEN_SECRET_LENGTH
+        and bool(_TOKEN_SECRET_RE.fullmatch(raw))
+    )
+
+
 def parse_token(token: str) -> Optional[dict]:
-    """Parse a token into its components."""
-    if not token or not isinstance(token, str):
+    """Parse a token into its components, strictly.
+
+    Returns ``None`` for anything that is not a bounded, well-formed token:
+    non-strings, oversized bodies, non-canonical ids, short/non-base64url
+    secrets and unknown prefixes. Callers translate ``None`` into an
+    authentication denial; no partial/ambiguous token is ever produced.
+    """
+    if not isinstance(token, str) or not token or len(token) > MAX_TOKEN_LENGTH:
+        return None
+    # Any control character / whitespace is outside the minted grammar.
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in token):
         return None
 
     parts = token.split(".")
 
-    if len(parts) == 3 and parts[0] == "bot":
-        try:
-            bot_id = int(parts[1])
-            return {"token_type": "bot", "id": bot_id, "secret": parts[2]}
-        except ValueError:
+    prefixed = {"bot", "email", "2fa", "wst"}
+    if len(parts) == 3 and parts[0] in prefixed:
+        token_id = _parse_token_id(parts[1])
+        if token_id is None or not _valid_token_secret(parts[2]):
             return None
-
-    if len(parts) == 3 and parts[0] == "email":
-        try:
-            token_id = int(parts[1])
-            return {"token_type": "email", "id": token_id, "secret": parts[2]}
-        except ValueError:
-            return None
-
-    if len(parts) == 3 and parts[0] == "2fa":
-        try:
-            challenge_id = int(parts[1])
-            return {"token_type": "2fa", "id": challenge_id, "secret": parts[2]}
-        except ValueError:
-            return None
-
-    if len(parts) == 3 and parts[0] == "wst":
-        try:
-            ticket_id = int(parts[1])
-            return {"token_type": "wst", "id": ticket_id, "secret": parts[2]}
-        except ValueError:
-            return None
+        return {"token_type": parts[0], "id": token_id, "secret": parts[2]}
 
     if len(parts) == 2:
-        try:
-            session_id = int(parts[0])
-            return {"token_type": "session", "id": session_id, "secret": parts[1]}
-        except ValueError:
+        session_id = _parse_token_id(parts[0])
+        if session_id is None or not _valid_token_secret(parts[1]):
             return None
+        return {"token_type": "session", "id": session_id, "secret": parts[1]}
 
     return None
+
+
+def parse_expiry_ms(value: Any) -> Optional[int]:
+    """Strictly parse an epoch-millisecond expiry.
+
+    Fails closed (``None``) for booleans, floats, negatives, malformed
+    numeric strings, zero and out-of-range values. Stored expiries come from
+    our own writes, but a corrupted/partially migrated row must deny access
+    rather than compare as "not expired" and grant a permanent session.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and _EXPIRY_RE.fullmatch(value):
+        parsed = int(value)
+    else:
+        return None
+    if parsed < 1 or parsed > MAX_EXPIRY_MS:
+        return None
+    return parsed
+
+
+def is_expired(expires_at: Any, now_ms: Optional[int] = None) -> bool:
+    """Whether an expiry is expired or unparseable (fail closed)."""
+    parsed = parse_expiry_ms(expires_at)
+    if parsed is None:
+        return True
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    return parsed <= now_ms
 
 
 def verify_token_hash(token_secret: str, stored_hash: str) -> bool:
@@ -274,6 +339,8 @@ __all__ = [
     "create_2fa_challenge_token",
     "create_ws_ticket",
     "parse_token",
+    "parse_expiry_ms",
+    "is_expired",
     "verify_token_hash",
     "create_api_access_token",
     "list_api_access_tokens",
