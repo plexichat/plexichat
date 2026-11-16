@@ -7,7 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 import os
-import time
+
+from src.core.config.snapshot import VersionedConfigSnapshot, file_version
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 # No manual path manipulation needed; import via standard paths.
@@ -17,10 +18,20 @@ try:
 except ImportError:
     config = None
 
-# Module-level cache for API config (read on every request by auth middleware)
-_api_config_cache: Optional[APIConfig] = None
-_api_config_cache_time: float = 0
-_API_CONFIG_CACHE_TTL = 300  # 5 minutes
+
+def _config_state() -> tuple:
+    """Cheap version token for the API config source.
+
+    Includes the identity of the live loader and the mtime/size of its config
+    file: a new ``config.setup()`` (common in tests and reload paths) or an
+    on-disk edit both produce a new token, while an untouched config keeps the
+    same token so the cached value is reused without another read.
+    """
+    if config is None:
+        return (None, ())
+    loader = getattr(config, "_config_instance", None)
+    path = getattr(loader, "config_path", None)
+    return (id(loader), file_version(path))
 
 
 @dataclass
@@ -68,28 +79,19 @@ class APIConfig:
     max_worker_threads: int = 16
 
 
-def get_api_config() -> APIConfig:
-    """Load API configuration from config file (cached for 5 minutes)."""
-    global _api_config_cache, _api_config_cache_time
-    now = time.time()
-    if (
-        _api_config_cache is not None
-        and (now - _api_config_cache_time) < _API_CONFIG_CACHE_TTL
-    ):
-        return _api_config_cache
+def _build_api_config() -> APIConfig:
+    """Read, validate and materialise an :class:`APIConfig` from the source.
 
+    Only called by the versioned snapshot on a cache miss, so the relatively
+    expensive validation and version lookup run once per source change rather
+    than on a fixed timer.
+    """
     if config is None:
-        result = APIConfig()
-        _api_config_cache = result
-        _api_config_cache_time = now
-        return result
+        return APIConfig()
     try:
         api_conf = config.get("api", {})
     except RuntimeError:
-        result = APIConfig()
-        _api_config_cache = result
-        _api_config_cache_time = now
-        return result
+        return APIConfig()
 
     import utils.version as version
 
@@ -180,16 +182,26 @@ def get_api_config() -> APIConfig:
         max_request_body_size=api_conf.get("max_request_body_size", 10 * 1024 * 1024),
         max_worker_threads=api_conf.get("max_worker_threads", 16),
     )
-    _api_config_cache = result
-    _api_config_cache_time = now
     return result
 
 
+# A single versioned snapshot replaces the old five-minute TTL cache.  The
+# TTL paid the full read/validate cost on every expiry and hid on-disk edits
+# for up to five minutes; the snapshot reuses the value until the source
+# actually changes and observes edits on the next access.
+_api_config_snapshot = VersionedConfigSnapshot(
+    _build_api_config, version_fn=_config_state
+)
+
+
+def get_api_config() -> APIConfig:
+    """Return the current API config from the versioned snapshot."""
+    return _api_config_snapshot.snapshot()
+
+
 def clear_api_config_cache() -> None:
-    """Clear the cached API config so the next call re-reads from disk.
+    """Drop the cached API config so the next call re-reads from source.
 
     Useful for tests and admin config-reload operations.
     """
-    global _api_config_cache, _api_config_cache_time
-    _api_config_cache = None
-    _api_config_cache_time = 0
+    _api_config_snapshot.invalidate()
