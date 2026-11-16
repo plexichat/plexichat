@@ -29,6 +29,67 @@ def require_snowflake(value, field: str = "id", message: str = "Invalid ID") -> 
         ) from exc
 
 
+# BEFORE: ``_message_to_response`` called ``are_embeds_suppressed()`` once per
+# message, so a single 100-message list page issued 100 SQL queries just to
+# learn that none of them were suppressed.  After: one GROUP BY query over an
+# IN (...) list (chunked to stay below the SQLite/Postgres parameter ceiling)
+# resolves the whole page in a single round trip.  The per-id path remains as
+# a fallback so a missing/renamed embeds table can never drop suppression.
+_MAX_EMBED_SUPPRESSION_CHUNK = 500
+
+
+def batch_embed_suppressed_ids(message_ids, embeds_mod=None) -> set:
+    """Return the ids in ``message_ids`` whose embeds are ALL suppressed.
+
+    A message with no embed rows is *not* suppressed; a message whose every
+    embed row is flagged is.  This mirrors ``are_embeds_suppressed`` exactly
+    but resolves an entire list in one query instead of N.
+    """
+    ids = [int(mid) for mid in message_ids if mid is not None]
+    if not ids:
+        return set()
+    if embeds_mod is None:
+        embeds_mod = api.get_embeds()
+
+    db = None
+    try:
+        db = getattr(embeds_mod._get_manager(), "_db", None)
+    except Exception:
+        db = None
+
+    suppressed: set = set()
+    if db is not None and hasattr(db, "fetch_all"):
+        try:
+            for start in range(0, len(ids), _MAX_EMBED_SUPPRESSION_CHUNK):
+                chunk = ids[start : start + _MAX_EMBED_SUPPRESSION_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                rows = db.fetch_all(
+                    "SELECT message_id, COUNT(*) AS total, "
+                    "COALESCE(SUM(suppressed), 0) AS suppressed_count "
+                    f"FROM embed_message_embeds WHERE message_id IN ({placeholders}) "
+                    "GROUP BY message_id",
+                    tuple(chunk),
+                )
+                for row in rows:
+                    total = int(row["total"] or 0)
+                    suppressed_count = int(row["suppressed_count"] or 0)
+                    if total and suppressed_count >= total:
+                        suppressed.add(int(row["message_id"]))
+            return suppressed
+        except Exception as e:
+            logger.debug(f"batch embed suppression lookup failed: {e}")
+
+    # Fallback: preserve exact per-id semantics when the batch query is not
+    # available (embeds module not wired, unexpected schema, etc.).
+    for mid in ids:
+        try:
+            if embeds_mod and embeds_mod.are_embeds_suppressed(mid):
+                suppressed.add(mid)
+        except Exception as e:
+            logger.debug(f"embed suppression lookup failed for {mid}: {e}")
+    return suppressed
+
+
 def _poll_to_response(poll) -> PollResponse:
     options = [
         PollOptionResponse(
@@ -69,6 +130,7 @@ def _message_to_response(
     media_mod=None,
     viewer_user_id: Optional[int] = None,
     poll_viewer_user_id: Optional[int] = None,
+    suppress_embeds: Optional[bool] = None,
 ) -> MessageResponse:
     def get_attr(obj, name, default=None):
         if isinstance(obj, dict):
@@ -255,18 +317,24 @@ def _message_to_response(
     # the embeds from the response and mark the message so clients can
     # render an appropriate indicator.
     embeds_out = get_attr(msg, "embeds", []) or []
-    try:
-        embeds_module = api.get_embeds()
-        if (
-            embeds_module
-            and msg_id
-            and embeds_module.are_embeds_suppressed(int(msg_id))
-        ):
-            embeds_out = []
-            metadata = dict(metadata) if isinstance(metadata, dict) else {}
-            metadata["embeds_suppressed"] = True
-    except Exception as e:
-        logger.debug(f"Failed to evaluate embed suppression for {msg_id}: {e}")
+    # ``suppress_embeds`` lets a list route pass the value resolved by
+    # ``batch_embed_suppressed_ids`` so serialization adds zero queries. When
+    # absent (single-message callers) keep the original one-off lookup.
+    if suppress_embeds is None:
+        try:
+            embeds_module = api.get_embeds()
+            if (
+                embeds_module
+                and msg_id
+                and embeds_module.are_embeds_suppressed(int(msg_id))
+            ):
+                suppress_embeds = True
+        except Exception as e:
+            logger.debug(f"Failed to evaluate embed suppression for {msg_id}: {e}")
+    if suppress_embeds:
+        embeds_out = []
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        metadata["embeds_suppressed"] = True
 
     # Mention parity: clients (notifications.js) read ``mentions`` to
     # decide mention vs plain-message notifications. Parse user-mention

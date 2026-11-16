@@ -25,7 +25,11 @@ from src.core.messaging.exceptions import (
     ConversationNotFoundError,
     ConversationAccessDeniedError,
 )
-from .helpers import _message_to_response, require_snowflake
+from .helpers import (
+    _message_to_response,
+    batch_embed_suppressed_ids,
+    require_snowflake,
+)
 
 router = APIRouter(tags=["Messages"])
 
@@ -226,11 +230,24 @@ async def get_channel_messages(
                                     fname = att_url.split("/")[-1]
                                     if fname in file_map:
                                         metadata = _get_attr(att, "metadata")
-                                        if not metadata:
+                                        # BEFORE: a JSON *string* metadata value
+                                        # was truthy but not a dict, so the
+                                        # bulk file_id was never written and
+                                        # the serializer fell back to one
+                                        # get_file_by_filename() query per
+                                        # attachment. Normalize it to the dict
+                                        # the serializer would parse anyway.
+                                        if isinstance(metadata, str):
+                                            import json
+
+                                            try:
+                                                metadata = json.loads(metadata)
+                                            except (TypeError, ValueError):
+                                                metadata = None
+                                        if not isinstance(metadata, dict):
                                             metadata = {}
-                                            _set_attr(att, "metadata", metadata)
-                                        if isinstance(metadata, dict):
-                                            metadata["file_id"] = file_map[fname].id
+                                        _set_attr(att, "metadata", metadata)
+                                        metadata["file_id"] = file_map[fname].id
                 except Exception as e:
                     logger.debug(f"Failed to bulk fetch media files: {e}")
 
@@ -310,6 +327,13 @@ async def get_channel_messages(
             except Exception as e:
                 logger.warning(f"Failed to bulk fetch reader info: {e}")
 
+        # Resolve embed suppression for the whole page in one query instead of
+        # one are_embeds_suppressed() call per message during serialization.
+        suppressed_ids = batch_embed_suppressed_ids(
+            [mid for mid in (_get_attr(m, "id") for m in messages) if mid is not None],
+            embeds_mod=api.get_embeds(),
+        )
+
         result = []
         for m in messages:
             try:
@@ -328,6 +352,7 @@ async def get_channel_messages(
                         read_by_data=readers_cache.get(str(mid)),
                         media_mod=media_mod,
                         viewer_user_id=current_user.user_id,
+                        suppress_embeds=mid in suppressed_ids,
                     )
                 )
             except Exception as message_error:
@@ -465,6 +490,10 @@ async def get_pinned_messages(
                 }
                 for uid, u in users.items()
             }
+        suppressed_ids = batch_embed_suppressed_ids(
+            [m.id for m in messages if getattr(m, "id", None) is not None],
+            embeds_mod=api.get_embeds(),
+        )
         result = []
         for m in messages:
             author_id = m.author_id
@@ -477,6 +506,7 @@ async def get_pinned_messages(
                     author_badges=info.get("badges"),
                     media_mod=api.get_media(),
                     viewer_user_id=current_user.user_id,
+                    suppress_embeds=m.id in suppressed_ids,
                 )
             )
 
