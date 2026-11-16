@@ -21,6 +21,25 @@ import utils.logger as logger
 router = APIRouter()
 
 
+def _ticket_exists(ticket_id: int) -> bool:
+    """Cheap existence probe for a feedback ticket.
+
+    The write endpoints only need to know whether the ticket exists, so a
+    ``SELECT 1`` avoids the full ``feedback``/``auth_users`` JOIN, the dozen
+    selected columns and the FeedbackTicket construction that
+    ``admin.get_ticket`` performs purely to be thrown away.
+    """
+    import src.api as api
+
+    db = api.get_db()
+    if db is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": 500, "message": "Database not available"}},
+        )
+    return db.fetch_one("SELECT 1 FROM feedback WHERE id = ?", (ticket_id,)) is not None
+
+
 @router.get(
     "/tickets",
     response_model=List[TicketResponse],
@@ -127,7 +146,7 @@ async def update_ticket_status(
     admin_id = require_admin_permission(request, "tickets.close")
     from src.core import admin
 
-    if not admin.get_ticket(ticket_id):
+    if not _ticket_exists(ticket_id):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Ticket not found"}},
@@ -192,7 +211,7 @@ async def add_ticket_note(
     admin_id = require_admin_permission(request, "tickets.respond")
     from src.core import admin
 
-    if not admin.get_ticket(ticket_id):
+    if not _ticket_exists(ticket_id):
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": 404, "message": "Ticket not found"}},
