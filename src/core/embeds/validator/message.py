@@ -16,6 +16,7 @@ from .bounds import (
     field_string_limit,
 )
 from .color import validate_color
+from .field_policy import validate_color_field
 from .content import sanitize_content
 from .constants import (
     FIELD_NAME_MAX_LENGTH,
@@ -217,4 +218,4 @@ def _validate_message_color(value: Any, path: str) -> str:
         if value < 0 or value > 0xFFFFFF:
             raise InvalidColorError(f"{path} must be a valid hex color", str(value))
         return f"#{value:06X}"
-    return validate_color(str(value))
+    return validate_color_field(str(value), path)

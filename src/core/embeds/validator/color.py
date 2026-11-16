@@ -4,6 +4,7 @@ Color validation.
 Hex color normalization for embeds.
 """
 
+from .active_content import deny_active_content
 from .constants import COLOR_PATTERN
 from ..exceptions import InvalidColorError
 
@@ -25,6 +26,7 @@ def validate_color(color: str) -> str:
         return color
 
     color = color.strip()
+    deny_active_content(color, "color", InvalidColorError)
 
     if not COLOR_PATTERN.match(color):
         raise InvalidColorError(

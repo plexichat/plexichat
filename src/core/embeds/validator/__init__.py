@@ -20,7 +20,14 @@ from .bounds import (
     EmbedBudget,
     enforce_embed_budget,
 )
+from .active_content import deny_active_content
 from .color import validate_color
+from .field_policy import (
+    MAX_COLOR_FIELD_LENGTH,
+    MAX_PROVIDER_NAME_LENGTH,
+    validate_color_field,
+    validate_provider_fields,
+)
 from .constants import (
     AUTHOR_NAME_MAX_LENGTH,
     COLOR_PATTERN,
@@ -69,6 +76,11 @@ __all__ = [
     "reject_non_http_url",
     "enforce_ssrf_gate",
     "validate_color",
+    "validate_color_field",
+    "validate_provider_fields",
+    "deny_active_content",
+    "MAX_PROVIDER_NAME_LENGTH",
+    "MAX_COLOR_FIELD_LENGTH",
     "validate_timestamp",
     "sanitize_content",
     "validate_string_length",

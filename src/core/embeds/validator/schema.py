@@ -7,7 +7,9 @@ checks, dimension coercion and total character accounting.
 
 from typing import Any, Dict, List, Optional
 
+from .active_content import deny_active_content
 from .bounds import enforce_embed_budget
+from .field_policy import validate_color_field, validate_provider_fields
 from .ssrf_gate import validate_embed_url
 from .color import validate_color
 from .content import sanitize_content
@@ -163,7 +165,7 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
     # Validate color
     if embed_data.get("color"):
         try:
-            sanitized["color"] = validate_color(str(embed_data["color"]))
+            sanitized["color"] = validate_color_field(str(embed_data["color"]), "color")
         except InvalidColorError as e:
             issues.append(str(e))
 
@@ -285,29 +287,14 @@ def validate_embed_data(embed_data: Dict[str, Any]) -> ValidationResult:
 
     # Validate provider
     if embed_data.get("provider"):
-        provider = embed_data["provider"]
-        sanitized_provider = {}
-        if isinstance(provider, dict):
-            if provider.get("name"):
-                try:
-                    sanitized_provider["name"] = sanitize_content(
-                        str(provider["name"]), "provider.name"
-                    )
-                except EmbedSanitizationError as e:
-                    issues.append(str(e))
-
-            if provider.get("url"):
-                try:
-                    sanitized_provider["url"] = validate_embed_url(
-                        str(provider["url"]), "provider.url"
-                    )
-                except InvalidUrlError as e:
-                    issues.append(str(e))
-        else:
-            issues.append("provider must be an object")
-
-        if sanitized_provider:
-            sanitized["provider"] = sanitized_provider
+        try:
+            sanitized_provider = validate_provider_fields(
+                embed_data["provider"], "provider"
+            )
+            if sanitized_provider:
+                sanitized["provider"] = sanitized_provider
+        except (EmbedValidationError, EmbedSanitizationError, InvalidUrlError) as e:
+            issues.append(str(e))
 
     # Validate fields
     fields = embed_data.get("fields", [])
