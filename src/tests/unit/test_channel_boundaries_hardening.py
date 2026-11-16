@@ -301,3 +301,53 @@ class TestTargetUserIdBounds:
         root = Path(__file__).resolve().parents[3]
         source = (root / "src/api/routes/channels/helpers.py").read_text()
         assert "require_target_user_id(" in source
+
+
+class TestChannelUpdateBodyCap:
+    def test_update_route_installs_the_body_cap_dependency(self):
+        from src.api.routes.channels.composer import channels_router
+        from src.api.routes.channels.crud import _cap_channel_update_body
+
+        route = next(
+            r for r in channels_router.routes if "PATCH" in getattr(r, "methods", set())
+        )
+        calls = [d.call for d in route.dependant.dependencies]
+        assert _cap_channel_update_body in calls
+
+    def test_body_guard_uses_the_shared_capped_reader(self):
+        import asyncio
+
+        from fastapi import HTTPException
+
+        from src.api.routes.channels import crud as crud_routes
+        from src.api.request_guards import read_body_capped
+
+        class _Request:
+            def __init__(self, length, body):
+                self.headers = {"content-length": str(length)}
+                self._body = body
+
+            async def body(self):
+                return self._body
+
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                read_body_capped(
+                    _Request(crud_routes.MAX_CHANNEL_UPDATE_BODY + 1, b"x"), 1024
+                )
+            )
+        assert exc.value.status_code == 413
+
+        assert (
+            asyncio.run(
+                read_body_capped(
+                    _Request(5, b"hello"), crud_routes.MAX_CHANNEL_UPDATE_BODY
+                )
+            )
+            == b"hello"
+        )
+
+    def test_cap_constant_is_modest(self):
+        from src.api.routes.channels.crud import MAX_CHANNEL_UPDATE_BODY
+
+        assert 0 < MAX_CHANNEL_UPDATE_BODY <= 1024 * 1024

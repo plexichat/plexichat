@@ -1,11 +1,12 @@
 import asyncio
 from typing import Dict
 
-from fastapi import HTTPException, Depends
+from fastapi import HTTPException, Depends, Request
 from starlette.concurrency import run_in_threadpool
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
+from src.api.request_guards import read_body_capped
 from src.api.schemas.servers import ChannelResponse, ChannelUpdateRequest
 from src.api.schemas.common import ErrorResponse
 from src.core.database import cached
@@ -19,6 +20,16 @@ from .helpers import (
     validate_channel_fields,
 )
 from ..exception_mapping import raise_mapped
+
+
+# A PATCH only carries a handful of short fields; anything near this size is
+# an attempt to make the parser allocate on the server's behalf.
+MAX_CHANNEL_UPDATE_BODY = 64 * 1024
+
+
+async def _cap_channel_update_body(request: Request) -> None:
+    """Reject oversized channel-update bodies before Pydantic parses them."""
+    await read_body_capped(request, MAX_CHANNEL_UPDATE_BODY)
 
 
 class ChannelCRUDMixin(ChannelBase):
@@ -41,6 +52,7 @@ class ChannelCRUDMixin(ChannelBase):
             "/{channel_id}",
             self._update_channel,
             methods=["PATCH"],
+            dependencies=[Depends(_cap_channel_update_body)],
             response_model=ChannelResponse,
             summary="Update channel",
             responses={
