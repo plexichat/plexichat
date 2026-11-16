@@ -478,10 +478,21 @@ async def acknowledge_messages_bulk(
     try:
         import asyncio
 
+        # Validate the whole bulk map before any mutation: a negative or
+        # oversized channel/message id is rejected up front instead of being
+        # passed to mark_read and silently swallowed by the per-entry handler.
+        parsed_ids = {}
         for channel_id, message_id in body.items():
+            cid = require_snowflake(channel_id, "channel_id", "Invalid channel ID")
+            mid = (
+                require_snowflake(message_id, "message_id", "Invalid message ID")
+                if message_id
+                else None
+            )
+            parsed_ids[cid] = mid
+
+        for cid, mid in parsed_ids.items():
             try:
-                cid = parse_id(channel_id, "channel_id")
-                mid = int(message_id) if message_id else None
                 # ``mark_read`` is synchronous; keep it off the event loop so
                 # one request cannot block the whole worker.
                 marked = await run_in_threadpool(
@@ -514,6 +525,8 @@ async def acknowledge_messages_bulk(
                 logger.warning(f"Bulk ACK: Failed for channel {channel_id}: {e}")
 
         return SuccessResponse(success=True, message=None)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Bulk ACK failed: {e}", exc_info=True)
         raise HTTPException(
@@ -743,13 +756,7 @@ async def mark_all_server_read(
             detail={"error": {"code": 500, "message": "Module not available"}},
         )
 
-    try:
-        sid = int(server_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid server ID"}},
-        )
+    sid = require_snowflake(server_id, "server_id", "Invalid server ID")
 
     try:
         from starlette.concurrency import run_in_threadpool
