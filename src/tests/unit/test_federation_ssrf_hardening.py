@@ -14,6 +14,9 @@ import pytest
 from src.api.routes.federation import (
     FederationEndpointRejected,
     ResolvedEndpoint,
+    assert_tls_verification_enabled,
+    build_pinned_target,
+    require_secure_remote_endpoint,
     resolve_remote_endpoint,
     validate_redirect_chain,
 )
@@ -122,3 +125,64 @@ def test_redirect_chain_accepts_all_public_hops():
         )
     assert endpoint.url == "https://cdn.example/final"
     assert endpoint.address == "93.184.216.34"
+
+
+# --- HTTPS-only + pinned certificate policy -------------------------------
+
+
+def test_secure_endpoint_helper_rejects_plaintext():
+    with pytest.raises(FederationEndpointRejected):
+        require_secure_remote_endpoint("http://peer.example/")
+
+
+def test_http_redirect_downgrade_is_rejected():
+    with patch(
+        "src.utils.security.socket.getaddrinfo",
+        return_value=_addresses("93.184.216.34"),
+    ):
+        with pytest.raises(FederationEndpointRejected):
+            validate_redirect_chain(
+                "https://peer.example/start", ["http://peer.example/next"]
+            )
+
+
+def test_pinned_target_connects_to_approved_address_and_keeps_sni():
+    with patch(
+        "src.utils.security.socket.getaddrinfo",
+        return_value=_addresses("93.184.216.34"),
+    ):
+        endpoint = require_secure_remote_endpoint("https://peer.example:8443/federate")
+
+    target = build_pinned_target(endpoint)
+
+    # The authority is the approved IP, never the re-resolvable hostname.
+    assert "93.184.216.34" in target.request_url
+    assert "peer.example" not in target.request_url
+    assert target.headers["Host"] == "peer.example:8443"
+    assert target.extensions["sni_hostname"] == "peer.example"
+    assert target.tls_policy == "system-trust"
+
+
+def test_pinned_target_refuses_plaintext():
+    with patch(
+        "src.utils.security.socket.getaddrinfo",
+        return_value=_addresses("93.184.216.34"),
+    ):
+        endpoint = resolve_remote_endpoint("http://peer.example/")
+    with pytest.raises(FederationEndpointRejected):
+        build_pinned_target(endpoint)
+
+
+def test_tls_verification_cannot_be_disabled():
+    import ssl
+
+    assert assert_tls_verification_enabled(True) is True
+    assert assert_tls_verification_enabled("/etc/ssl/certs/ca.pem") is True
+
+    for disabled in (False, None):
+        with pytest.raises(FederationEndpointRejected):
+            assert_tls_verification_enabled(disabled)
+
+    unverified = ssl._create_unverified_context()
+    with pytest.raises(FederationEndpointRejected):
+        assert_tls_verification_enabled(unverified)

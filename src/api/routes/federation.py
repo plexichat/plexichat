@@ -22,7 +22,7 @@ Security model:
 
 from src.api.request_guards import MAX_FEDERATION_BODY, read_body_capped
 from src.core.security.hardening import HardeningViolation, require_https_url
-from src.utils.security import URLValidator
+from src.utils.security import URLValidator, pinned_request_target
 
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
@@ -160,6 +160,85 @@ def validate_redirect_chain(
             target, field, require_https=require_https
         )
     return endpoint
+
+
+# --- HTTPS-only transport with pinned certificate policy ------------------
+#
+# The shared key signed into every federation envelope is a bearer secret: it
+# must never cross the wire in cleartext. Remote endpoints are therefore
+# HTTPS-only, including after redirects. TLS also authenticates the peer, so a
+# connection must verify the certificate against the system trust store using
+# the *real* hostname for SNI/Host while connecting to the address the SSRF
+# gate approved. Disabling verification (``verify=False`` / an unverified SSL
+# context) would let an on-path attacker impersonate the peer and steal the
+# key, so the helper below makes that an explicit, testable refusal. This is a
+# policy helper rather than a socket wrapper because the transport lives in
+# the PlexiJoin manager; ``build_pinned_target`` returns exactly the pieces an
+# HTTP client needs and never hands back a raw, re-resolvable hostname URL.
+
+FEDERATION_TLS_POLICY = "system-trust"
+
+
+@dataclass(frozen=True)
+class PinnedTarget:
+    """The pinned request target for a validated federation endpoint."""
+
+    request_url: str
+    headers: Dict[str, str]
+    extensions: Dict[str, Any]
+    tls_policy: str = FEDERATION_TLS_POLICY
+
+
+def require_secure_remote_endpoint(
+    value: Any, field: str = "remote_url"
+) -> ResolvedEndpoint:
+    """Resolve an endpoint, requiring HTTPS on the initial URL and every hop.
+
+    ``validate_redirect_chain`` is fed by the outbound transport as each
+    ``Location`` is followed; its default ``require_https=True`` enforces the
+    same rule on redirects, so an HTTP downgrade mid-chain is rejected too.
+    """
+    return resolve_remote_endpoint(value, field, require_https=True)
+
+
+def assert_tls_verification_enabled(verify: Any) -> bool:
+    """Refuse the TLS-verification escapes a caller might pass to an client.
+
+    Federation traffic carries a shared secret, so ``verify=False`` (or an
+    equivalent unverified SSL context) is never acceptable. ``True`` and a
+    CA-bundle path are; the latter is the "pinned certificate policy where
+    feasible" escape hatch for deployments with a private CA.
+    """
+    if verify is False or verify is None:
+        raise FederationEndpointRejected("federation TLS verification must be enabled")
+    if hasattr(verify, "check_hostname") and not verify.check_hostname:
+        raise FederationEndpointRejected("federation TLS must verify the hostname")
+    if hasattr(verify, "verify_mode"):
+        import ssl
+
+        if verify.verify_mode == ssl.CERT_NONE:
+            raise FederationEndpointRejected("federation TLS must verify certificates")
+    return True
+
+
+def build_pinned_target(endpoint: ResolvedEndpoint) -> PinnedTarget:
+    """Build a request target that connects to the approved address only.
+
+    ``pinned_request_target`` rewrites the authority to the resolved IP while
+    keeping the real hostname as the ``Host`` header and TLS SNI, so virtual
+    hosts and certificate checks still work without a second DNS lookup.
+    """
+    scheme = (urlparse(endpoint.url).scheme or "").lower()
+    if scheme != "https":
+        raise FederationEndpointRejected("federation endpoints must use https")
+    request_url, headers, extensions = pinned_request_target(
+        endpoint.url, endpoint.hostname, endpoint.address
+    )
+    return PinnedTarget(
+        request_url=request_url,
+        headers=headers,
+        extensions=extensions,
+    )
 
 
 def _get_plexijoin_manager():
@@ -411,9 +490,7 @@ async def join_request_inbound(request: Request):
             # full SSRF gate: resolve DNS and reject private/link-local/
             # metadata addresses before the target is ever persisted.
             remote_url = require_https_url(remote_url, "remote_url")
-            remote_url = resolve_remote_endpoint(
-                remote_url, "remote_url", require_https=True
-            ).url
+            remote_url = require_secure_remote_endpoint(remote_url, "remote_url").url
         except (HardeningViolation, FederationEndpointRejected) as exc:
             raise HTTPException(
                 status_code=400,
