@@ -64,8 +64,33 @@ class UserUpdateRequest(BaseModel):
         return value
 
     social_links: Optional[List[dict]] = Field(
-        None, description="Social link objects (empty list clears all)"
+        None, max_length=20, description="Social link objects (empty list clears all)"
     )
+
+    @field_validator("social_links")
+    @classmethod
+    def _social_links(cls, value: Optional[List[dict]]) -> Optional[List[dict]]:
+        if value is None:
+            return value
+        from urllib.parse import urlparse
+
+        for link in value:
+            if not isinstance(link, dict):
+                raise ValueError("social_links must be objects")
+            url = link.get("url")
+            if not isinstance(url, str) or len(url) > 2048:
+                raise ValueError(
+                    "social link url must be a string of at most 2048 characters"
+                )
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError("social link url must be an absolute http(s) URL")
+            platform = link.get("platform", "")
+            if not isinstance(platform, str) or len(platform) > 32:
+                raise ValueError(
+                    "social link platform must be a string of at most 32 characters"
+                )
+        return value
 
 
 class UserDeletionRequest(BaseModel):
