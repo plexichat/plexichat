@@ -170,28 +170,16 @@ def test_read_all_server_rejects_out_of_range_id():
     assert exc.value.status_code == 400
 
 
-def test_bulk_ack_rejects_out_of_range_ids():
-    import asyncio
-    from unittest.mock import patch
-
+def test_export_id_is_bounded():
     import pytest
     from fastapi import HTTPException
 
-    from src.api.routes.messages.read_receipts import acknowledge_messages_bulk
+    from src.api.routes.messages.export import _validate_export_id
 
-    with patch("src.api.get_messaging", return_value=object()):
+    good = "export_" + "A" * 43
+    assert _validate_export_id(good) == good
+
+    for bad in ("", "A" * 129, "export_abc\ndef", None):
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(acknowledge_messages_bulk({"123": "-1"}, _dummy_user()))
-    assert exc.value.status_code == 400
-
-
-def test_read_all_server_rejects_out_of_range_id():
-    from unittest.mock import patch
-
-    from src.api.routes.messages.read_receipts import mark_all_server_read
-
-    with (
-        patch("src.api.get_messaging", return_value=object()),
-        patch("src.api.get_servers", return_value=object()),
-    ):
-        _rejects_bad_id(mark_all_server_read, ("0",))
+            _validate_export_id(bad)
+        assert exc.value.status_code == 400

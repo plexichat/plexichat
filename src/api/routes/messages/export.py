@@ -20,8 +20,28 @@ from src.api.schemas.messages import (
     TranscriptExportStatusResponse,
 )
 from src.api.schemas.common import ErrorResponse
+from .helpers import require_snowflake
 
 router = APIRouter(tags=["Messages"])
+
+# Export ids are server-generated (``export_`` + base64url entropy). The
+# service validates their exact shape, but the route should still refuse an
+# oversized/control-character token before handing it to path construction.
+_EXPORT_ID_MAX_LEN = 128
+
+
+def _validate_export_id(export_id: str) -> str:
+    if (
+        not isinstance(export_id, str)
+        or not export_id
+        or len(export_id) > _EXPORT_ID_MAX_LEN
+        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in export_id)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid export ID"}},
+        )
+    return export_id
 
 
 @router.post(
@@ -292,6 +312,8 @@ async def get_export_status(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> TranscriptExportStatusResponse:
     """Get the status of a transcript export request."""
+    require_snowflake(channel_id, "channel_id", "Invalid channel ID")
+    export_id = _validate_export_id(export_id)
     try:
         db = api.get_db()
         try:
@@ -353,6 +375,8 @@ async def download_transcript_export(
     current_user: TokenInfo = Depends(get_current_user),
 ):
     """Download a completed transcript export."""
+    require_snowflake(channel_id, "channel_id", "Invalid channel ID")
+    export_id = _validate_export_id(export_id)
     try:
         db = api.get_db()
         try:
