@@ -48,6 +48,10 @@ from .storage import (
     _cache_set_checksum as _cache_set_checksum,
     _avatar_checksum_cache as _avatar_checksum_cache,
     _icon_checksum_cache as _icon_checksum_cache,
+    _avatar_absent_cache as _avatar_absent_cache,
+    _icon_absent_cache as _icon_absent_cache,
+    _user_initials_cache as _user_initials_cache,
+    _server_initials_cache as _server_initials_cache,
     _invalidate_user_avatar_cache as _invalidate_user_avatar_cache,
     _invalidate_server_icon_cache as _invalidate_server_icon_cache,
 )
@@ -114,6 +118,10 @@ __all__ = [
     "_cache_set_checksum",
     "_avatar_checksum_cache",
     "_icon_checksum_cache",
+    "_avatar_absent_cache",
+    "_icon_absent_cache",
+    "_user_initials_cache",
+    "_server_initials_cache",
     "_MAX_CHECKSUM_CACHE_ENTRIES",
     "_CHECKSUM_CACHE_TTL_SEC",
     # Cache invalidation helpers (private names re-used across the repo)

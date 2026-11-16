@@ -49,6 +49,10 @@ from .storage import (
     _cache_set_checksum,
     _avatar_checksum_cache,
     _icon_checksum_cache,
+    _avatar_absent_cache,
+    _icon_absent_cache,
+    _user_initials_cache,
+    _server_initials_cache,
     _invalidate_user_avatar_cache,
     _invalidate_server_icon_cache,
 )
@@ -101,34 +105,38 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
     try:
         uid = user_id
 
-        # 1. Fast check for ETag
+        # 1. Fast check for ETag. A cached "no avatar" verdict skips both the
+        # checksum and the binary lookup (each a DB round-trip on a miss).
         etag_client = request.headers.get("If-None-Match")
+        avatar_absent = bool(_avatar_absent_cache.get(uid))
 
-        # Check local RAM cache for checksum first
-        checksum = _avatar_checksum_cache.get(uid)
-        if not checksum:
-            try:
-                checksum = avatars.get_user_avatar_checksum(uid)
-                if checksum:
-                    _cache_set_checksum(_avatar_checksum_cache, uid, checksum)
-            except Exception as cache_error:
-                # The avatar is still served; only the ETag cache misses.
-                logger.debug(f"avatar checksum cache store failed: {cache_error}")
+        checksum = None
+        if not avatar_absent:
+            # Check local RAM cache for checksum first
+            checksum = _avatar_checksum_cache.get(uid)
+            if not checksum:
+                try:
+                    checksum = avatars.get_user_avatar_checksum(uid)
+                    if checksum:
+                        _cache_set_checksum(_avatar_checksum_cache, uid, checksum)
+                except Exception as cache_error:
+                    # The avatar is still served; only the ETag cache misses.
+                    logger.debug(f"avatar checksum cache store failed: {cache_error}")
 
-        # Flexible ETag check (handles weak tags and quotes). Only an exact
-        # match is accepted - a substring check previously let any client ETag
-        # containing the checksum substring return 304.
-        if checksum and etag_client:
-            if (
-                etag_client == checksum
-                or etag_client == f'"{checksum}"'
-                or etag_client == f'W/"{checksum}"'
-            ):
-                return Response(status_code=304)
+            # Flexible ETag check (handles weak tags and quotes). Only an exact
+            # match is accepted - a substring check previously let any client ETag
+            # containing the checksum substring return 304.
+            if checksum and etag_client:
+                if (
+                    etag_client == checksum
+                    or etag_client == f'"{checksum}"'
+                    or etag_client == f'W/"{checksum}"'
+                ):
+                    return Response(status_code=304)
 
         # 2. Fetch full data (no threadpool - the module handles caching internally)
         try:
-            result = avatars.get_user_avatar_data(uid)
+            result = None if avatar_absent else avatars.get_user_avatar_data(uid)
             if result is not None:
                 # SECURITY: defense in depth - never serve a script-carrying
                 # SVG raw, even if a poisoned row bypasses the manager guard.
@@ -140,28 +148,41 @@ async def get_user_avatar(user_id: SnowflakeIDParam, request: Request):
                     )
                     result = None
             if not result:
+                # Remember the negative lookup so repeat requests skip both
+                # the checksum and the binary read for this user.
+                _cache_set_checksum(_avatar_absent_cache, uid, "1")
                 # Generate a default SVG avatar if none exists
                 from src.core.avatars import generate_default_svg
 
-                # Try to get username for initials (match frontend logic)
-                username = None
-                initials = "UC"
-                try:
-                    auth_mod = api.get_auth()
-                    if auth_mod:
-                        profiles = auth_mod.get_user_profiles_bulk([uid])
-                        user = profiles.get(str(uid)) if profiles else None
-                        if user:
-                            username = getattr(user, "get", None)
-                            username = (
-                                user.get("username", "User")
-                                if callable(username)
-                                else getattr(user, "username", "User")
-                            ).strip()
-                            if username:
-                                initials = username[: min(2, len(username))].upper()
-                except Exception as initial_error:
-                    logger.debug(f"avatar initials fallback failed: {initial_error}")
+                cached_initials = _user_initials_cache.get(uid)
+                if cached_initials is not None:
+                    cached_username, initials = cached_initials.split("|", 1)
+                    username = cached_username or None
+                else:
+                    # Try to get username for initials (match frontend logic)
+                    username = None
+                    initials = "UC"
+                    try:
+                        auth_mod = api.get_auth()
+                        if auth_mod:
+                            profiles = auth_mod.get_user_profiles_bulk([uid])
+                            user = profiles.get(str(uid)) if profiles else None
+                            if user:
+                                username = getattr(user, "get", None)
+                                username = (
+                                    user.get("username", "User")
+                                    if callable(username)
+                                    else getattr(user, "username", "User")
+                                ).strip()
+                                if username:
+                                    initials = username[: min(2, len(username))].upper()
+                    except Exception as initial_error:
+                        logger.debug(
+                            f"avatar initials fallback failed: {initial_error}"
+                        )
+                    _cache_set_checksum(
+                        _user_initials_cache, uid, f"{username or ''}|{initials}"
+                    )
 
                 svg_content = generate_default_svg(username or str(uid), initials)
                 # Ensure content is encoded before hashing
@@ -483,25 +504,31 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
     try:
         sid = server_id
 
-        # 1. Fast check for ETag
+        # 1. Fast check for ETag. A cached "no icon" verdict skips both the
+        # checksum and the binary lookup (each a DB round-trip on a miss).
         etag_client = request.headers.get("If-None-Match")
+        icon_absent = bool(_icon_absent_cache.get(sid))
 
-        # Check local RAM cache for checksum first
-        checksum = _icon_checksum_cache.get(sid)
-        if not checksum:
-            try:
-                checksum = avatars.get_server_icon_checksum(sid)
-                if checksum:
-                    _cache_set_checksum(_icon_checksum_cache, sid, checksum)
-            except Exception as cache_error:
-                logger.debug(f"server icon checksum cache store failed: {cache_error}")
+        checksum = None
+        if not icon_absent:
+            # Check local RAM cache for checksum first
+            checksum = _icon_checksum_cache.get(sid)
+            if not checksum:
+                try:
+                    checksum = avatars.get_server_icon_checksum(sid)
+                    if checksum:
+                        _cache_set_checksum(_icon_checksum_cache, sid, checksum)
+                except Exception as cache_error:
+                    logger.debug(
+                        f"server icon checksum cache store failed: {cache_error}"
+                    )
 
-        if checksum and etag_client == f'"{checksum}"':
-            return Response(status_code=304)
+            if checksum and etag_client == f'"{checksum}"':
+                return Response(status_code=304)
 
         # 2. Fetch full data
         try:
-            result = avatars.get_server_icon_data(sid)
+            result = None if icon_absent else avatars.get_server_icon_data(sid)
             if result is not None:
                 # SECURITY: defense in depth - never serve a script-carrying
                 # SVG raw. Fall through to the safe generated default below.
@@ -512,28 +539,35 @@ async def get_server_icon(server_id: SnowflakeIDParam, request: Request):
                     )
                     result = None
             if not result:
+                # Remember the negative lookup so repeat requests skip both
+                # the checksum and the binary read for this server.
+                _cache_set_checksum(_icon_absent_cache, sid, "1")
                 # Generate a default SVG icon if none exists
                 from src.core.avatars import generate_default_svg
 
-                # Try to get server name for initials
-                initials = "S"
-                try:
-                    db = api.get_db()
-                    if db:
-                        row = db.fetch_one(
-                            "SELECT name FROM srv_servers WHERE id = ?", (sid,)
-                        )
-                        if row and row.get("name"):
-                            name = str(row["name"]).strip()
-                            if name:
-                                # Get first character of first two words, or just first two chars
-                                words = name.split()
-                                if len(words) >= 2:
-                                    initials = (words[0][0] + words[1][0]).upper()
-                                else:
-                                    initials = name[: min(2, len(name))].upper()
-                except Exception as e:
-                    logger.debug(f"Failed to get server name for initials: {e}")
+                initials = _server_initials_cache.get(sid)
+                if initials is None:
+                    # Try to get server name for initials
+                    initials = "S"
+                    try:
+                        db = api.get_db()
+                        if db:
+                            row = db.fetch_one(
+                                "SELECT name FROM srv_servers WHERE id = ?", (sid,)
+                            )
+                            if row and row.get("name"):
+                                name = str(row["name"]).strip()
+                                if name:
+                                    # First characters of the first two words,
+                                    # or just the first two characters.
+                                    words = name.split()
+                                    if len(words) >= 2:
+                                        initials = (words[0][0] + words[1][0]).upper()
+                                    else:
+                                        initials = name[: min(2, len(name))].upper()
+                    except Exception as e:
+                        logger.debug(f"Failed to get server name for initials: {e}")
+                    _cache_set_checksum(_server_initials_cache, sid, initials)
 
                 try:
                     svg_content = generate_default_svg(sid, initials)

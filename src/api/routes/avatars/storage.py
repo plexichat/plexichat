@@ -121,6 +121,15 @@ class _BoundedChecksumCache:
 _avatar_checksum_cache = _BoundedChecksumCache()
 _icon_checksum_cache = _BoundedChecksumCache()
 
+# Negative lookups and default-avatar initials are as expensive as a positive
+# checksum read (a DB round-trip each) yet repeat on every request for users
+# and servers that have never uploaded an image. Keep them in bounded caches
+# with the same TTL as the checksum caches; uploads invalidate them eagerly.
+_avatar_absent_cache = _BoundedChecksumCache()
+_icon_absent_cache = _BoundedChecksumCache()
+_user_initials_cache = _BoundedChecksumCache()
+_server_initials_cache = _BoundedChecksumCache()
+
 
 def _cache_set_checksum(cache: Any, key: int, checksum: str) -> None:
     """Insert into a checksum cache, evicting the oldest entry at the cap."""
@@ -147,6 +156,8 @@ def _invalidate_user_avatar_cache(user_id: int) -> None:
     cleared or clients keep receiving ``304 Not Modified`` for the old avatar.
     """
     _avatar_checksum_cache.pop(user_id, None)
+    _avatar_absent_cache.pop(user_id, None)
+    _user_initials_cache.pop(user_id, None)
     try:
         from src.core.database import invalidate_pattern
 
@@ -160,6 +171,8 @@ def _invalidate_user_avatar_cache(user_id: int) -> None:
 def _invalidate_server_icon_cache(server_id: int) -> None:
     """Drop all cached server-icon state so a re-upload/deletion is reflected."""
     _icon_checksum_cache.pop(server_id, None)
+    _icon_absent_cache.pop(server_id, None)
+    _server_initials_cache.pop(server_id, None)
 
     try:
         from src.core.database import invalidate_pattern
@@ -186,6 +199,10 @@ __all__ = [
     "_cache_set_checksum",
     "_avatar_checksum_cache",
     "_icon_checksum_cache",
+    "_avatar_absent_cache",
+    "_icon_absent_cache",
+    "_user_initials_cache",
+    "_server_initials_cache",
     "_invalidate_user_avatar_cache",
     "_invalidate_server_icon_cache",
     "invalidate_avatar_caches",
