@@ -274,53 +274,65 @@ class SumManagerBase(SumManagerProtocol):
         except Exception:
             return False
 
-    def _has_grant(
-        self, workbook_id: int, user_id: int, permission: str = "view"
-    ) -> bool:
+    def _grant_permissions(self, workbook_id: int, user_id: int) -> frozenset:
+        """All live grant permissions for ``user_id`` on ``workbook_id``.
+
+        The authorization and viewer-permission paths used to probe the same
+        grant rows two or three times per request (``edit``, then ``view``,
+        then ``edit`` again), each with a fresh ``now`` so the database query
+        cache could not collapse them. Resolve the rows once and decode every
+        permission string with the same list/comma handling ``_has_grant``
+        used, so permission semantics stay identical while the hot path issues
+        a single grant query per check.
+        """
         now = int(time.time() * 1000)
         rows = self._db.fetch_all(
             "SELECT permissions FROM sum_grants WHERE workbook_id = ? AND subject_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
             (int(workbook_id), int(user_id), now),
         )
-        if not rows:
-            return False
+        permissions: set = set()
         for row in rows:
             perms = self._decode(row.get("permissions"), [])
-            if isinstance(perms, list) and permission in perms:
-                return True
-            if isinstance(perms, str) and permission in perms.split(","):
-                return True
-        return False
+            if isinstance(perms, list):
+                permissions.update(p for p in perms if isinstance(p, str))
+            elif isinstance(perms, str):
+                permissions.update(perms.split(","))
+        return frozenset(permissions)
+
+    def _has_grant(
+        self, workbook_id: int, user_id: int, permission: str = "view"
+    ) -> bool:
+        return permission in self._grant_permissions(workbook_id, user_id)
 
     def _authorize(
         self, workbook: Dict[str, Any], user_id: int, mutation: bool = False
     ) -> None:
-        if int(workbook["owner_id"]) == int(user_id):
+        uid = int(user_id)
+        if int(workbook["owner_id"]) == uid:
             return
-        if self._has_grant(int(workbook["id"]), int(user_id), "edit"):
+        wb_id = int(workbook["id"])
+        grants = self._grant_permissions(wb_id, uid)
+        if "edit" in grants:
             return
-        if not mutation and self._has_grant(int(workbook["id"]), int(user_id), "view"):
+        if not mutation and "view" in grants:
             return
         server_id = workbook.get("server_id")
-        if (
-            workbook["scope"] == "server"
-            and server_id is not None
-            and self._is_member(user_id, int(server_id))
-        ):
-            if not mutation:
-                return
-            try:
-                if self._servers and self._servers.has_permission(
-                    user_id, int(server_id), "server.manage"
-                ):
+        if workbook["scope"] == "server" and server_id is not None:
+            if self._is_member(uid, int(server_id)):
+                if not mutation:
                     return
-            except Exception as permission_error:
-                import utils.logger as logger
+                try:
+                    if self._servers and self._servers.has_permission(
+                        uid, int(server_id), "server.manage"
+                    ):
+                        return
+                except Exception as permission_error:
+                    import utils.logger as logger
 
-                logger.debug(
-                    f"sum workbook permission probe failed: {permission_error}"
-                )
-        if mutation and self._has_grant(int(workbook["id"]), int(user_id), "view"):
+                    logger.debug(
+                        f"sum workbook permission probe failed: {permission_error}"
+                    )
+        if mutation and "view" in grants:
             raise SumPermissionError("You have view-only access to this workbook")
         raise SumPermissionError("Not authorized to access this workbook")
 
@@ -354,40 +366,42 @@ class SumManagerBase(SumManagerProtocol):
         if workbook is None:
             workbook = self._workbook(user_id, workbook_id)
         wb_id = int(workbook["id"])
-        is_owner = int(workbook["owner_id"]) == int(user_id)
+        uid = int(user_id)
+        is_owner = int(workbook["owner_id"]) == uid
+        # One grant query per call replaces the up-to-three ``_has_grant``
+        # probes this method used to make (edit, view, then edit again).
+        grants = frozenset() if is_owner else self._grant_permissions(wb_id, uid)
 
-        can_edit = is_owner
-        if not can_edit and self._has_grant(wb_id, int(user_id), "edit"):
-            can_edit = True
-        if not can_edit:
-            server_id = workbook.get("server_id")
-            if (
-                workbook.get("scope") == "server"
-                and server_id is not None
-                and self._is_member(int(user_id), int(server_id))
-            ):
-                try:
-                    if self._servers and self._servers.has_permission(
-                        int(user_id), int(server_id), "server.manage"
-                    ):
-                        can_edit = True
-                except Exception as grant_error:
-                    import utils.logger as logger
+        can_edit = is_owner or "edit" in grants
+        server_id = workbook.get("server_id")
+        member: Optional[bool] = None
 
-                    logger.debug(f"sum edit grant probe failed: {grant_error}")
+        def is_server_member() -> bool:
+            nonlocal member
+            if member is None:
+                member = (
+                    workbook.get("scope") == "server"
+                    and server_id is not None
+                    and self._is_member(uid, int(server_id))
+                )
+            return member
+
+        if not can_edit and is_server_member():
+            try:
+                if self._servers and self._servers.has_permission(
+                    uid, int(server_id), "server.manage"
+                ):
+                    can_edit = True
+            except Exception as grant_error:
+                import utils.logger as logger
+
+                logger.debug(f"sum edit grant probe failed: {grant_error}")
 
         reason = None
         if not can_edit:
-            has_view = self._has_grant(wb_id, int(user_id), "view") or self._has_grant(
-                wb_id, int(user_id), "edit"
-            )
+            has_view = "view" in grants or "edit" in grants
             if not has_view:
-                server_id = workbook.get("server_id")
-                has_view = (
-                    workbook.get("scope") == "server"
-                    and server_id is not None
-                    and self._is_member(int(user_id), int(server_id))
-                )
+                has_view = is_server_member()
             # Unreachable via the public API (``_workbook`` already authorized
             # view access), but kept explicit for defensive callers.
             reason = None if has_view else "not_authorized"
