@@ -2,11 +2,16 @@
 Presence schemas - Request/response models for presence endpoints.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict
 from .policy_types import UIText
 
 from .common import SnowflakeID
+
+#: The presence states the manager and client render. The route already checks
+#: this list at runtime; declaring it here rejects an unknown state at the
+#: boundary (422) before it reaches the status manager or the database.
+PresenceStatus = Literal["online", "idle", "dnd", "invisible", "offline"]
 
 
 class PresenceUpdate(BaseModel):
@@ -14,7 +19,9 @@ class PresenceUpdate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    status: str = Field(..., description="Status: online, idle, dnd, invisible")
+    status: PresenceStatus = Field(
+        ..., description="Status: online, idle, dnd, invisible, offline"
+    )
     custom_status: Optional[UIText] = Field(
         None, max_length=128, description="Custom status text"
     )
