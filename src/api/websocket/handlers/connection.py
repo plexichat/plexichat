@@ -7,6 +7,12 @@ from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 import utils.logger as logger
 from starlette.concurrency import run_in_threadpool
 
+from src.api.websocket.boundaries import (
+    bounded_resume_sequence,
+    validate_properties,
+    validate_session_id,
+    validate_ticket,
+)
 from src.api.websocket.opcodes import GatewayOpcode, GatewayCloseCode
 from src.api.websocket.connection import Connection, ConnectionState
 from src.api.websocket.session import SessionManager
@@ -87,14 +93,20 @@ class ConnectionHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         token = data.get("token")
-        if not token:
+        try:
+            token = validate_ticket(token, "token")
+        except ValueError:
             return None, None, int(GatewayCloseCode.AUTHENTICATION_FAILED)
 
         intents = data.get("intents", DEFAULT_INTENTS)
         if not self._validate_intents(intents):
             return None, None, int(GatewayCloseCode.INVALID_INTENTS)
 
-        properties = data.get("properties", {})
+        try:
+            properties = validate_properties(data.get("properties", {}))
+        except ValueError as exc:
+            logger.warning(f"Rejecting identify with invalid properties: {exc}")
+            return None, None, int(GatewayCloseCode.DECODE_ERROR)
         connection.properties = properties
 
         user_agent = properties.get("browser") or properties.get("$browser")
@@ -168,12 +180,11 @@ class ConnectionHandler:
         session_id = data.get("session_id")
         raw_seq = data.get("seq", 0)
 
-        if not token or not session_id:
-            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
-        if isinstance(raw_seq, bool) or not isinstance(raw_seq, int):
-            return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
-        seq = raw_seq
-        if seq < 0:
+        try:
+            token = validate_ticket(token, "token")
+            session_id = validate_session_id(session_id)
+            seq = bounded_resume_sequence(raw_seq)
+        except ValueError:
             return int(GatewayOpcode.INVALID_SESSION), {"d": False}, None
 
         user_id = await self._verify_token(token, is_selftest=connection.is_selftest)

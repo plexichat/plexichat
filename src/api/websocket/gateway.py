@@ -16,6 +16,7 @@ from src.core.events.snowflakes import stringify_snowflake_ids
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
+from .boundaries import bounded_resume_sequence
 from .boundaries import (
     decode_gateway_frame,
     validate_frame_bytes,
@@ -533,7 +534,12 @@ async def _message_loop(
                 )
 
                 if event_type == "RESUMED":
-                    replay_seq: int = payload.get("seq", 0) if payload else 0
+                    try:
+                        replay_seq = bounded_resume_sequence(
+                            payload.get("seq", 0) if payload else 0
+                        )
+                    except ValueError:
+                        replay_seq = 0
                     await dispatcher.replay_events(connection, replay_seq)
             elif response_op == GatewayOpcode.HEARTBEAT_ACK:
                 await connection.send_json({"op": int(GatewayOpcode.HEARTBEAT_ACK)})

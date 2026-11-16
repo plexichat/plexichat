@@ -15,6 +15,7 @@ parsing or allocation on its behalf.
 from __future__ import annotations
 
 import json
+import re
 
 from typing import Any
 
@@ -279,3 +280,72 @@ MUTATING_OPCODES = frozenset(
 def requires_authentication(opcode: int) -> bool:
     """Whether ``opcode`` mutates state and therefore needs an identified user."""
     return int(opcode) in MUTATING_OPCODES
+
+
+# --- Reconnect / ticket bounds (commit 8) ---------------------------------
+#: Tickets are machine tokens, never free-form text: no whitespace, no C0
+#: controls, and a bounded length. The character class covers the URL-safe
+#: alphabet plus the separators used by existing token formats.
+TICKET_PATTERN = re.compile(r"^[A-Za-z0-9._~+/-:=@]+$")
+MIN_TICKET_LEN = 1
+MAX_TICKET_LEN = 4096
+MAX_SESSION_ID_LEN = 128
+SESSION_ID_PATTERN = re.compile(r"^[0-9a-fA-F]+$")
+MAX_RESUME_SEQUENCE = 1_000_000
+MIN_BACKOFF_MS = 0
+MAX_BACKOFF_MS = 300_000
+MAX_PROPERTY_LEN = 256
+MAX_PROPERTIES = 16
+
+
+def validate_ticket(value: object, field: str = "token") -> str:
+    """Return ``value`` as a well-formed, bounded auth ticket or raise."""
+    if not isinstance(value, str):
+        raise HardeningViolation(f"{field} must be a string")
+    text = reject_control_characters(value, field)
+    if not (MIN_TICKET_LEN <= len(text) <= MAX_TICKET_LEN):
+        raise HardeningViolation(f"{field} length is out of range")
+    if not TICKET_PATTERN.match(text):
+        raise HardeningViolation(f"{field} has an invalid format")
+    return text
+
+
+def validate_session_id(value: object) -> str:
+    """Validate a resume session id (hex token of bounded length)."""
+    if not isinstance(value, str) or not (1 <= len(value) <= MAX_SESSION_ID_LEN):
+        raise HardeningViolation("session_id length is out of range")
+    if not SESSION_ID_PATTERN.match(value):
+        raise HardeningViolation("session_id has an invalid format")
+    return value
+
+
+def bounded_resume_sequence(value: object) -> int:
+    """Bound a client-supplied resume sequence into a sane replay window."""
+    return bounded_int(
+        value,
+        "seq",
+        minimum=0,
+        maximum=MAX_RESUME_SEQUENCE,
+        default=0,
+    )
+
+
+def bounded_backoff(value: object, field: str = "backoff") -> int:
+    """Bound a reconnect/backoff duration in milliseconds."""
+    return bounded_int(
+        value, field, minimum=MIN_BACKOFF_MS, maximum=MAX_BACKOFF_MS, default=0
+    )
+
+
+def validate_properties(value: object) -> dict:
+    """Bound the IDENTIFY ``properties`` map without changing valid values."""
+    if not isinstance(value, dict):
+        raise HardeningViolation("properties must be an object")
+    if len(value) > MAX_PROPERTIES:
+        raise HardeningViolation("too many client properties")
+    for key, item in value.items():
+        if not isinstance(key, str) or len(key) > MAX_PROPERTY_LEN:
+            raise HardeningViolation("property key is too long")
+        if isinstance(item, str) and len(item) > MAX_PROPERTY_LEN:
+            raise HardeningViolation("property value is too long")
+    return value
