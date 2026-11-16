@@ -29,20 +29,19 @@ class SumManagerSnapshots(SumManagerProtocol):
         key = f"{int(workbook_id)}/snapshot-{snapshot_id}.plexisum"
         checksum = hashlib.sha256(data).hexdigest()
         now = int(time.time() * 1000)
-        connection = None
-        tmp_path = None
         try:
-            connection, tmp_path = self._open_sqlite(data)
-            cell_count = int(
-                connection.execute("SELECT COUNT(*) AS c FROM sum_cells").fetchone()[
-                    "c"
-                ]
-            )
+            # The materialized connection already carries the validated
+            # schema and the same cell state the blob was serialized from.
+            # Counting there avoids reopening the blob in a fresh temp SQLite
+            # database (and replaying additive-schema DDL) just for one COUNT.
+            with self._live_connection(workbook_id) as connection:
+                cell_count = int(
+                    connection.execute("SELECT COUNT(*) AS c FROM sum_cells").fetchone()[
+                        "c"
+                    ]
+                )
         except (sqlite3.Error, SumStorageError) as exc:
             raise SumStorageError("Snapshot source workbook could not be read") from exc
-        finally:
-            if connection is not None and tmp_path is not None:
-                self._close_sqlite(connection, tmp_path)
 
         # Validate the source before creating the external snapshot object. This
         # keeps schema/format failures from producing an unreachable blob.
@@ -176,7 +175,7 @@ class SumManagerSnapshots(SumManagerProtocol):
     def restore_snapshot(
         self, user_id: int, workbook_id: int, snapshot_id: int
     ) -> Dict[str, Any]:
-        self._workbook(user_id, workbook_id, mutation=True)
+        workbook = self._workbook(user_id, workbook_id, mutation=True)
         row = self._db.fetch_one(
             "SELECT revision, blob_path, checksum FROM sum_snapshots WHERE id = ? AND workbook_id = ?",
             (int(snapshot_id), int(workbook_id)),
@@ -197,11 +196,9 @@ class SumManagerSnapshots(SumManagerProtocol):
             actual = hashlib.sha256(db_bytes).hexdigest()
             if actual != row["checksum"]:
                 raise SumValidationError("Snapshot checksum mismatch")
-        current = self._db.fetch_one(
-            "SELECT current_revision FROM sum_workbooks WHERE id = ?",
-            (int(workbook_id),),
-        )
-        base_revision = int(current["current_revision"]) if current else 0
+        # ``workbook`` was already fetched for authorization and carries the
+        # current revision; the blob promotion below is the only writer.
+        base_revision = int(workbook["current_revision"])
         revision = base_revision + 1
         now = int(time.time() * 1000)
         path, size, checksum = self._publish_revision(
@@ -220,11 +217,9 @@ class SumManagerSnapshots(SumManagerProtocol):
             {"snapshot_id": str(snapshot_id), "revision": revision},
         )
         try:
-            row = self._db.fetch_one(
-                "SELECT * FROM sum_workbooks WHERE id = ?", (int(workbook_id),)
-            )
-            if row:
-                self._emit_update(row, revision, user_id)
+            # Identity/scope/owner are unchanged by a blob promotion, so the
+            # row fetched for authorization is sufficient for the update event.
+            self._emit_update(workbook, revision, user_id)
         except Exception:
             import utils.logger as logger
 

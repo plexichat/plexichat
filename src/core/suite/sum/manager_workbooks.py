@@ -597,7 +597,7 @@ class SumManagerWorkbooks(SumManagerProtocol):
         base_revision: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Replace the workbook file after validating it is a .plexisum file."""
-        self._workbook(user_id, workbook_id, mutation=True)
+        workbook = self._workbook(user_id, workbook_id, mutation=True)
         data = bound_workspace_payload(
             data,
             max_bytes=MAX_WORKSPACE_PAYLOAD_BYTES,
@@ -610,11 +610,9 @@ class SumManagerWorkbooks(SumManagerProtocol):
             db_bytes, _, _ = decode_container(data)
         else:
             db_bytes = data
-        current = self._db.fetch_one(
-            "SELECT current_revision FROM sum_workbooks WHERE id = ?",
-            (int(workbook_id),),
-        )
-        base = current["current_revision"] if current else 0
+        # Reuse the row fetched for authorization; the promotion below is the
+        # only writer and performs its own compare-and-swap on the revision.
+        base = workbook["current_revision"]
         if base_revision is not None and int(base_revision) != int(base):
             raise SumConflictError(f"Workbook revision is {base}")
         revision = int(base) + 1
@@ -635,11 +633,9 @@ class SumManagerWorkbooks(SumManagerProtocol):
             {"revision": revision, "size": size, "checksum": checksum[:16]},
         )
         try:
-            row = self._db.fetch_one(
-                "SELECT * FROM sum_workbooks WHERE id = ?", (int(workbook_id),)
-            )
-            if row:
-                self._emit_update(row, revision, user_id)
+            # Identity/scope/owner are unchanged by a blob promotion, so the
+            # row fetched for authorization is sufficient for the update event.
+            self._emit_update(workbook, revision, user_id)
         except Exception:
             import utils.logger as logger
 
