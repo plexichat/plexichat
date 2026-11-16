@@ -21,6 +21,7 @@ Security model:
 """
 
 from src.api.request_guards import MAX_FEDERATION_BODY, read_body_capped
+from src.core.security.hardening import HardeningViolation, require_https_url
 
 from typing import Any, Dict, Optional
 
@@ -268,9 +269,24 @@ async def join_request_inbound(request: Request):
             detail={"error": {"code": 400, "message": "instance_id is required"}},
         )
 
+    # The remote_url is attacker-supplied in the signed envelope and is later
+    # surfaced to an admin for approval, after which it becomes an outbound
+    # federation target. A relative URL or one carrying embedded credentials
+    # must never be persisted as a target. Keep the historical pass-through
+    # for an absent URL so a peer that omits it is still recorded.
+    remote_url = str(payload.get("remote_url") or conn.get("remote_url") or "")
+    if remote_url:
+        try:
+            remote_url = require_https_url(remote_url, "remote_url")
+        except HardeningViolation as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": str(exc)}},
+            ) from exc
+
     row = manager.submit_inbound_request(
         remote_instance_id=remote_instance_id,
-        remote_url=str(payload.get("remote_url") or conn.get("remote_url") or ""),
+        remote_url=remote_url,
         requested_by=payload.get("requested_by"),
         note=payload.get("note"),
     )

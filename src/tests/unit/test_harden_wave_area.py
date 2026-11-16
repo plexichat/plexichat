@@ -142,3 +142,76 @@ class TestPushTextBounds:
         from src.core.push.manager.delivery import _bounded_text
 
         assert _bounded_text("hello", "title", 256) == "hello"
+
+
+class TestFederationRemoteUrl:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "url",
+        ["/relative", "http://peer.example/fed", "https://u:p@peer.example/fed"],
+    )
+    async def test_non_https_or_credentialed_url_is_refused(self, monkeypatch, url):
+        import json
+
+        from src.api.routes import federation
+
+        stored = {}
+
+        class _Req:
+            headers = {
+                "x-plexijoin-signature": "s",
+                "x-plexijoin-timestamp": "1",
+                "x-plexijoin-nonce": "n",
+            }
+
+            async def body(self):
+                return json.dumps(
+                    {"instance_id": "peer", "remote_url": url}
+                ).encode()
+
+        class _Mgr:
+            def submit_inbound_request(self, **kwargs):
+                stored.update(kwargs)
+                return {"id": 1}
+
+        monkeypatch.setattr(federation, "_get_plexijoin_manager", lambda: _Mgr())
+        monkeypatch.setattr(
+            federation, "_authenticate", lambda *a, **k: {"id": 1, "remote_url": ""}
+        )
+        with pytest.raises(Exception) as exc:
+            await federation.join_request_inbound(_Req())
+        assert getattr(exc.value, "status_code", None) == 400
+        assert stored == {}
+
+    @pytest.mark.asyncio
+    async def test_https_url_is_stored(self, monkeypatch):
+        import json
+
+        from src.api.routes import federation
+
+        stored = {}
+
+        class _Req:
+            headers = {
+                "x-plexijoin-signature": "s",
+                "x-plexijoin-timestamp": "1",
+                "x-plexijoin-nonce": "n",
+            }
+
+            async def body(self):
+                return json.dumps(
+                    {"instance_id": "peer", "remote_url": "https://peer.example/fed"}
+                ).encode()
+
+        class _Mgr:
+            def submit_inbound_request(self, **kwargs):
+                stored.update(kwargs)
+                return {"id": 1}
+
+        monkeypatch.setattr(federation, "_get_plexijoin_manager", lambda: _Mgr())
+        monkeypatch.setattr(
+            federation, "_authenticate", lambda *a, **k: {"id": 1, "remote_url": ""}
+        )
+        result = await federation.join_request_inbound(_Req())
+        assert result["ok"] is True
+        assert stored["remote_url"] == "https://peer.example/fed"
