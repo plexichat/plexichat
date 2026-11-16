@@ -17,12 +17,17 @@ _SWEEP_MIN_INTERVAL_SEC = 5.0
 async def poll_expiry_sweep_loop() -> None:
     from src.core import polls as polls_module
 
+    # Resolve the serving loop once. ``asyncio.get_event_loop()`` used to run
+    # on every sweep tick (a lookup + deprecation-prone path); the loop never
+    # changes for the life of this task, so capture it once and reuse it for
+    # every executor hand-off below.
+    loop = asyncio.get_running_loop()
     interval = float(config.get("polls.expiry_sweep_interval_seconds", 60))
     interval = max(interval, _SWEEP_MIN_INTERVAL_SEC)
     while True:
         try:
             if polls_module.is_setup():
-                ended = await asyncio.get_event_loop().run_in_executor(
+                ended = await loop.run_in_executor(
                     None, polls_module.check_expired_polls
                 )
                 if ended:
@@ -36,7 +41,7 @@ async def poll_expiry_sweep_loop() -> None:
 
 def start_poll_expiry_sweep() -> asyncio.Task:
     """Start the sweep task; call from the running event loop (lifespan)."""
-    return asyncio.create_task(poll_expiry_sweep_loop())
+    return asyncio.get_running_loop().create_task(poll_expiry_sweep_loop())
 
 
 async def stop_poll_expiry_sweep(task: asyncio.Task) -> None:

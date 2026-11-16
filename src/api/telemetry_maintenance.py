@@ -18,13 +18,16 @@ _MIN_SWEEP_INTERVAL_SEC = 60.0
 async def telemetry_retention_sweep_loop() -> None:
     from src.core import telemetry as telemetry_module
 
+    # Resolve the serving loop once; the loop is fixed for the task's life, so
+    # each scheduled sweep reuses it instead of re-running get_event_loop().
+    loop = asyncio.get_running_loop()
     interval = float(config.get("telemetry.retention_sweep_interval_seconds", 3600))
     interval = max(interval, _MIN_SWEEP_INTERVAL_SEC)
     while True:
         try:
             if telemetry_module.is_setup():
                 days = int(config.get("telemetry.retention_days", 30))
-                deleted = await asyncio.get_event_loop().run_in_executor(
+                deleted = await loop.run_in_executor(
                     None, lambda: telemetry_module.cleanup_old_data(days=days)
                 )
                 if deleted:
@@ -41,7 +44,7 @@ async def telemetry_retention_sweep_loop() -> None:
 
 def start_telemetry_retention_sweep() -> asyncio.Task:
     """Start the retention sweep task; call from the running event loop."""
-    return asyncio.create_task(telemetry_retention_sweep_loop())
+    return asyncio.get_running_loop().create_task(telemetry_retention_sweep_loop())
 
 
 async def stop_telemetry_retention_sweep(task: asyncio.Task) -> None:

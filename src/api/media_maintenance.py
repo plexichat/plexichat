@@ -19,12 +19,12 @@ import utils.logger as logger
 _SWEEP_MIN_INTERVAL_SEC = 30.0
 
 
-async def _sweep_once() -> None:
+async def _sweep_once(loop: asyncio.AbstractEventLoop) -> None:
     import src.api as api_module  # lazy: avoid import cycles at module load
 
     media = api_module.get_media()
     if media is not None and hasattr(media, "cleanup_expired_upload_sessions"):
-        cleaned = await asyncio.get_event_loop().run_in_executor(
+        cleaned = await loop.run_in_executor(
             None, media.cleanup_expired_upload_sessions
         )
         if cleaned:
@@ -42,7 +42,7 @@ async def _sweep_once() -> None:
             retention_hours = int(
                 config.get("antispam.event_retention_hours", 168) or 168
             )
-            pruned = await asyncio.get_event_loop().run_in_executor(
+            pruned = await loop.run_in_executor(
                 None, detector.prune_old_events, retention_hours
             )
             if pruned:
@@ -60,9 +60,12 @@ async def media_maintenance_sweep_loop() -> None:
     except (TypeError, ValueError):
         interval = 300.0
     interval = max(interval, _SWEEP_MIN_INTERVAL_SEC)
+    # The loop is fixed for this task's life; resolve it once and pass it into
+    # each sweep instead of looking it up on every executor hand-off.
+    loop = asyncio.get_running_loop()
     while True:
         try:
-            await _sweep_once()
+            await _sweep_once(loop)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -72,7 +75,7 @@ async def media_maintenance_sweep_loop() -> None:
 
 def start_media_maintenance_sweep() -> asyncio.Task:
     """Start the sweep task; call from the running event loop (lifespan)."""
-    return asyncio.create_task(media_maintenance_sweep_loop())
+    return asyncio.get_running_loop().create_task(media_maintenance_sweep_loop())
 
 
 async def stop_media_maintenance_sweep(task: asyncio.Task) -> None:
