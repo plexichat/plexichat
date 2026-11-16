@@ -14,18 +14,17 @@ import utils.logger as logger
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
-from .boundaries import bounded_resume_sequence
 from .boundaries import (
+    bounded_resume_sequence,
     decode_gateway_frame,
-    validate_frame_bytes,
     validate_parsed_structure,
 )
 from .compression import (
     is_compressed,
     decompress_payload,
-    validate_message_size,
     CompressionError,
 )
+from .frames import FrameLimitExceeded, enforce_frame_size
 
 if TYPE_CHECKING:
     from .dispatcher import GatewayDispatcher
@@ -432,14 +431,19 @@ async def _message_loop(
 
         data: Optional[Dict[str, Any]] = None
         if "text" in message:
-            # Validate text message size
+            # Enforce the byte ceiling on the raw payload BEFORE any decoding,
+            # with a dedicated close code so clients can tell "too big" from
+            # malformed JSON.
             text_data: str = message["text"]
             frame_bytes = text_data.encode("utf-8")
-            if not validate_message_size(frame_bytes):
+            try:
+                enforce_frame_size(frame_bytes)
+            except FrameLimitExceeded as exc:
                 logger.warning(
-                    f"Connection {connection.connection_id}: message too large"
+                    f"Connection {connection.connection_id}: {exc}; "
+                    f"closing with {int(exc.close_code)}"
                 )
-                await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+                await _close_connection(connection, exc.close_code)
                 return
             try:
                 data = decode_gateway_frame(frame_bytes)
@@ -451,21 +455,27 @@ async def _message_loop(
                 return
         elif "bytes" in message:
             raw_bytes: bytes = message["bytes"]
-            # Validate the raw frame size before decompression or parsing.
-            if not validate_frame_bytes(raw_bytes) or not validate_message_size(
-                raw_bytes
-            ):
+            # Same pre-parse guard for binary frames (compressed or not), so a
+            # zip bomb or oversized raw frame is rejected before decompression.
+            try:
+                enforce_frame_size(raw_bytes)
+            except FrameLimitExceeded as exc:
                 logger.warning(
-                    f"Connection {connection.connection_id}: compressed message too large"
+                    f"Connection {connection.connection_id}: {exc}; "
+                    f"closing with {int(exc.close_code)}"
                 )
-                await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+                await _close_connection(connection, exc.close_code)
                 return
             if is_compressed(raw_bytes):
                 try:
                     data = decompress_payload(raw_bytes)
                 except CompressionError as e:
+                    # Decompression errors here are size-limit violations
+                    # (zip bomb), so use the same clear close code.
                     logger.warning(f"Connection {connection.connection_id}: {e}")
-                    await _close_connection(connection, GatewayCloseCode.DECODE_ERROR)
+                    await _close_connection(
+                        connection, GatewayCloseCode.MESSAGE_TOO_BIG
+                    )
                     return
             else:
                 try:

@@ -137,6 +137,10 @@ class GatewayCloseCode(IntEnum):
     VERSION_OUTDATED = 4015
     SERVER_MAINTENANCE = 4016
     SERVER_SHUTDOWN = 4017
+    # An inbound frame exceeded the configured/absolute byte ceiling. Kept
+    # distinct from DECODE_ERROR so clients and dashboards can tell a
+    # size violation apart from malformed JSON.
+    MESSAGE_TOO_BIG = 4019
 
     NORMAL_CLOSURE = 1000
     GOING_AWAY = 1001
@@ -160,6 +164,7 @@ CLOSE_CODE_MESSAGES = {
     GatewayCloseCode.VERSION_OUTDATED: "Client version outdated",
     GatewayCloseCode.SERVER_MAINTENANCE: "Server entering maintenance",
     GatewayCloseCode.SERVER_SHUTDOWN: "Server shutting down",
+    GatewayCloseCode.MESSAGE_TOO_BIG: "Message exceeds the maximum allowed size",
     GatewayCloseCode.NORMAL_CLOSURE: "Normal closure",
     GatewayCloseCode.GOING_AWAY: "Going away",
 }
@@ -169,6 +174,7 @@ RESUMABLE_CLOSE_CODES = {
     GatewayCloseCode.UNKNOWN_ERROR,
     GatewayCloseCode.UNKNOWN_OPCODE,
     GatewayCloseCode.DECODE_ERROR,
+    GatewayCloseCode.MESSAGE_TOO_BIG,
     GatewayCloseCode.NOT_AUTHENTICATED,
     GatewayCloseCode.ALREADY_AUTHENTICATED,
     GatewayCloseCode.INVALID_SEQ,
