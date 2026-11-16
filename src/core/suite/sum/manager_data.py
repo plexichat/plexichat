@@ -5,6 +5,7 @@ import time
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..boundaries import MAX_CSV_IMPORT_BYTES, bound_import_text
 from .formulas import FormulaEvaluator, is_error
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
@@ -282,8 +283,11 @@ class SumManagerData(SumManagerProtocol):
             # Match upload_file semantics: a null base revision targets the
             # current revision instead of failing the CAS check.
             base_revision = int(workbook_row["current_revision"])
-        if not isinstance(content, str) or len(content) > 2_000_000:
-            raise SumValidationError("CSV payload is too large")
+        content = bound_import_text(
+            content,
+            max_bytes=MAX_CSV_IMPORT_BYTES,
+            error_cls=SumValidationError,
+        )
         reader = csv_module.reader(io_module.StringIO(content))
         cells: List[Dict[str, Any]] = []
         row_count = 0

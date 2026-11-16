@@ -5,6 +5,12 @@ import time
 
 from typing import Any, Dict, List, Optional
 
+from ..boundaries import (
+    MAX_FORMULA_LENGTH,  # noqa: F401 - re-exported for boundary tests
+    MAX_XLSX_IMPORT_BYTES,
+    bound_formula_text,
+    bound_import_bytes,
+)
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
     MAX_CSV_COLUMNS,
@@ -124,12 +130,19 @@ class SumManagerExchange(SumManagerProtocol):
         self._workbook(user_id, workbook_id, mutation=True)
         if not isinstance(content_b64, str) or not content_b64:
             raise SumValidationError("XLSX content is required")
+        if len(content_b64) > MAX_XLSX_IMPORT_BYTES * 2:
+            # Refuse an absurd base64 string before allocating the decoded
+            # bytes at all.
+            raise SumValidationError("XLSX content is too large")
         try:
             raw = base64_module.b64decode(content_b64)
         except Exception:
             raise SumValidationError("XLSX content is not valid base64")
-        if len(raw) > 20 * 1024 * 1024:
-            raise SumValidationError("XLSX file is too large")
+        raw = bound_import_bytes(
+            raw,
+            max_bytes=MAX_XLSX_IMPORT_BYTES,
+            error_cls=SumValidationError,
+        )
         self._reject_zip_bomb(raw)
         try:
             import openpyxl
@@ -161,6 +174,7 @@ class SumManagerExchange(SumManagerProtocol):
                 if value is None or value == "":
                     continue
                 if cell.data_type == "f" and isinstance(value, str):
+                    value = bound_formula_text(value, error_cls=SumValidationError)
                     formula = value[1:] if value.startswith("=") else value
                     cells.append(
                         {

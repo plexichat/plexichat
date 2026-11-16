@@ -421,6 +421,11 @@ class _Parser:
 
 
 def parse_formula(text: str) -> Any:
+    from ..boundaries import bound_formula_text
+
+    # The parser recurses per parenthesised group; validate the source first
+    # so a hostile formula cannot blow the stack before any resource cap.
+    text = bound_formula_text(text)
     return _Parser(_tokenize(text)).parse()
 
 

@@ -25,6 +25,13 @@ MAX_WORKSPACE_FIELD_LENGTH = 1000
 MAX_WORKSPACE_TAG_LENGTH = 80
 MAX_WORKSPACE_TAG_COUNT = 100
 MAX_WORKSPACE_PAYLOAD_BYTES = 50 * 1024 * 1024
+# Imports and formulas are parsed recursively; bound both the source text
+# and its nesting before the parser is allowed to run.
+MAX_FORMULA_LENGTH = 8192
+MAX_FORMULA_NESTING_DEPTH = 128
+MAX_CSV_IMPORT_BYTES = 2_000_000
+MAX_XLSX_IMPORT_BYTES = 20 * 1024 * 1024
+MAX_IMPORT_CELLS = 1_000_000
 
 
 # The same catalog the registry serves. Kept here as an explicit allowlist so
@@ -98,6 +105,56 @@ def bound_workspace_text(
     return text or None
 
 
+def bound_formula_text(
+    value: Any,
+    *,
+    error_cls: Type[Exception] = HardeningViolation,
+) -> str:
+    """Bound formula source before it reaches the recursive parser.
+
+    The parser recurses once per parenthesised group, so a few kilobytes of
+    nested parentheses could otherwise exhaust the Python stack. A formula is
+    also copied into stored cells and audit records, so control characters are
+    refused here.
+    """
+    if not isinstance(value, str):
+        raise error_cls("Formula must be a string")
+    if len(value) > MAX_FORMULA_LENGTH:
+        raise error_cls(f"Formula exceeds {MAX_FORMULA_LENGTH} characters")
+    if value.count("(") > MAX_FORMULA_NESTING_DEPTH:
+        raise error_cls("Formula nesting is too deep")
+    reject_control_characters(value, "formula")
+    return value
+
+
+def bound_import_bytes(
+    value: Any,
+    *,
+    max_bytes: int,
+    error_cls: Type[Exception] = HardeningViolation,
+) -> bytes:
+    """Bound an already-decoded workbook import before parsing it."""
+    if not isinstance(value, bytes):
+        raise error_cls("Import payload must be bytes")
+    if len(value) > max_bytes:
+        raise error_cls(f"Import payload exceeds {max_bytes} bytes")
+    return value
+
+
+def bound_import_text(
+    value: Any,
+    *,
+    max_bytes: int,
+    error_cls: Type[Exception] = HardeningViolation,
+) -> str:
+    """Bound a text import by its encoded size."""
+    if not isinstance(value, str):
+        raise error_cls("Import payload must be text")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise error_cls(f"Import payload exceeds {max_bytes} bytes")
+    return value
+
+
 def bound_workspace_payload(
     data: Any,
     *,
@@ -129,7 +186,12 @@ def bound_workspace_tags(tags: Any) -> list[str]:
 
 
 __all__ = [
+    "MAX_CSV_IMPORT_BYTES",
+    "MAX_FORMULA_LENGTH",
+    "MAX_FORMULA_NESTING_DEPTH",
+    "MAX_IMPORT_CELLS",
     "MAX_WORKSPACE_DESCRIPTION_LENGTH",
+    "MAX_XLSX_IMPORT_BYTES",
     "MAX_WORKSPACE_FIELD_LENGTH",
     "MAX_WORKSPACE_PAYLOAD_BYTES",
     "MAX_WORKSPACE_TAG_COUNT",
@@ -138,6 +200,9 @@ __all__ = [
     "SUITE_APP_IDS",
     "SUITE_ARTIFACT_TYPES",
     "SUITE_CAPABILITIES",
+    "bound_formula_text",
+    "bound_import_bytes",
+    "bound_import_text",
     "bound_workspace_payload",
     "bound_workspace_tags",
     "bound_workspace_text",
