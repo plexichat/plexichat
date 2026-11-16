@@ -6,12 +6,14 @@ with special handling for irreversible migrations and emergency overrides.
 """
 
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends, status as http_status, Request
 from pydantic import BaseModel, Field
 
 import utils.config as config
 import utils.logger as logger
+from src.core.migrations import validator
 from src.core.migrations.manager import MigrationManager
 from .utils import (
     check_host_restriction,
@@ -310,19 +312,24 @@ async def get_migration_details(
         # Get migration status
         record = manager.tracker.get_migration_status(version)
         if not record:
-            # Check if it's a pending migration
-            pending = manager.get_pending_migrations()
-            migration = None
-            for m in pending:
-                if m.version == version:
-                    migration = m
-                    break
-
-            if not migration:
+            # Reuse the cached status snapshot rather than recomputing every
+            # pending migration (checksum + dependency reads for the whole
+            # directory) just to resolve one version's display name.
+            pending_versions = manager.get_migration_status()["pending_migrations"]
+            if version not in pending_versions:
                 raise HTTPException(
                     status_code=http_status.HTTP_404_NOT_FOUND,
                     detail=f"Migration {version} not found",
                 )
+
+            name = version
+            for candidate_version, file_path in validator.get_migration_files(
+                str(manager.migrations_dir)
+            ):
+                if candidate_version == version:
+                    stem = Path(file_path).stem
+                    name = stem.split("_", 1)[1] if "_" in stem else stem
+                    break
 
             metadata = manager.tracker.get_migration_metadata(version)
             delay_days = config.get(
@@ -330,12 +337,12 @@ async def get_migration_details(
             )
             delay_hours = delay_days * 24
             can_run, can_run_reason = manager.tracker.can_run_irreversible_migration(
-                version, delay_hours
+                version, delay_hours, metadata=metadata
             )
 
             return MigrationDetailResponse(
                 version=version,
-                name=migration.name,
+                name=name,
                 status="pending",
                 is_irreversible=metadata.get("irreversible", False),
                 can_run=can_run,
@@ -353,7 +360,7 @@ async def get_migration_details(
         )
         delay_hours = delay_days * 24
         can_run, can_run_reason = manager.tracker.can_run_irreversible_migration(
-            version, delay_hours
+            version, delay_hours, metadata=metadata
         )
 
         # Get migration logs

@@ -3,6 +3,9 @@
 import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
 from src.api.routes.admin import migrations as migrations_route
 
 
@@ -47,3 +50,48 @@ def test_list_migrations_parses_metadata_once_per_version():
         assert "metadata" in call.kwargs, (
             "gate re-looked-up metadata instead of reusing it"
         )
+
+
+def test_pending_detail_reuses_cached_status_snapshot():
+    manager = MagicMock()
+    manager.tracker.get_migration_status.return_value = None
+    manager.get_migration_status.return_value = {"pending_migrations": ["002"]}
+    manager.tracker.get_migration_metadata.return_value = {}
+    manager.tracker.can_run_irreversible_migration.return_value = (True, "ok")
+
+    with (
+        patch.object(
+            migrations_route.validator,
+            "get_migration_files",
+            return_value=[("002", "/tmp/002_add_widgets.py")],
+        ),
+        patch.object(migrations_route, "check_host_restriction"),
+        patch.object(migrations_route, "get_admin_from_token", return_value=1),
+    ):
+        result = asyncio.run(
+            migrations_route.get_migration_details(
+                MagicMock(), "002", manager=manager, admin_user=1
+            )
+        )
+
+    assert result.name == "add_widgets"
+    manager.get_pending_migrations.assert_not_called()
+
+
+def test_pending_detail_still_404s_for_unknown_version():
+    manager = MagicMock()
+    manager.tracker.get_migration_status.return_value = None
+    manager.get_migration_status.return_value = {"pending_migrations": []}
+
+    with (
+        patch.object(migrations_route, "check_host_restriction"),
+        patch.object(migrations_route, "get_admin_from_token", return_value=1),
+        pytest.raises(HTTPException) as exc,
+    ):
+        asyncio.run(
+            migrations_route.get_migration_details(
+                MagicMock(), "999", manager=manager, admin_user=1
+            )
+        )
+
+    assert exc.value.status_code == 404
