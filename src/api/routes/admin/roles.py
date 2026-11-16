@@ -306,7 +306,10 @@ async def create_role(request: Request, role_data: RoleCreate):
 
     # Only documented, non-wildcard scopes may be delegated. The closed
     # vocabulary and wildcard rejection live in the core permission module.
-    from src.core.admin.permissions import validate_delegable_permissions
+    from src.core.admin.permissions import (
+        can_delegate_permissions,
+        validate_delegable_permissions,
+    )
 
     try:
         permissions = validate_delegable_permissions(role_data.permissions)
@@ -314,6 +317,18 @@ async def create_role(request: Request, role_data: RoleCreate):
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": str(exc)}},
+        )
+
+    # Scope hierarchy: never let a caller grant privileges it does not hold.
+    if not can_delegate_permissions(db, admin_id, permissions):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot grant permissions you do not hold",
+                }
+            },
         )
 
     # One query supplies both the actor's position and the duplicate-name
@@ -454,7 +469,10 @@ async def update_role(
         params.append(role_data.description)
 
     if role_data.permissions is not None:
-        from src.core.admin.permissions import validate_delegable_permissions
+        from src.core.admin.permissions import (
+            can_delegate_permissions,
+            validate_delegable_permissions,
+        )
 
         try:
             permissions = validate_delegable_permissions(role_data.permissions)
@@ -462,6 +480,18 @@ async def update_role(
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": 400, "message": str(exc)}},
+            )
+        # Scope hierarchy applies to updates as well as creation: editing a
+        # low-position role must not become a privilege-escalation backdoor.
+        if not can_delegate_permissions(db, admin_id, permissions):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": 403,
+                        "message": "Cannot grant permissions you do not hold",
+                    }
+                },
             )
         try:
             permissions_json = json.dumps(permissions)
