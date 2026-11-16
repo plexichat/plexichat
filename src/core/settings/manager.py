@@ -3,6 +3,7 @@ Settings manager - handles CRUD operations for user settings.
 """
 
 import re
+import threading
 from typing import (
     Optional as Optional,
     Dict as Dict,
@@ -42,11 +43,62 @@ class SettingsManager(BaseManager):
         """
         super().__init__(db)
         self.config = config or SettingsConfig()
-        self._key_pattern = re.compile(f"[{self.config.key_charset}]+")
+        # Validating the config (bounds checks, charset regex compilation) used
+        # to run eagerly in __init__ even when a manager was constructed but
+        # never used -- e.g. at app setup or in test fixtures. Defer it to the
+        # first validating operation behind a one-time guard.
+        self._key_pattern = None
+        self._config_validated = False
+        self._config_lock = threading.Lock()
 
         logger.info(
             f"Settings manager initialized (max {self.config.max_settings_per_user} settings/user)"
         )
+
+    def _ensure_config_validated(self) -> None:
+        """Validate config and build derived validators exactly once.
+
+        The double-checked lock keeps the guard cheap on the hot path (a plain
+        boolean read after the first call) while remaining correct when the
+        first use is concurrent.
+        """
+        if self._config_validated:
+            return
+        with self._config_lock:
+            if self._config_validated:
+                return
+            config = self.config
+            if config.max_settings_per_user < 0:
+                raise ValueError("max_settings_per_user must be non-negative")
+            if config.max_key_length < 1:
+                raise ValueError("max_key_length must be at least 1")
+            if config.max_value_length < 0:
+                raise ValueError("max_value_length must be non-negative")
+            if config.max_bulk_entries < 0:
+                raise ValueError("max_bulk_entries must be non-negative")
+            if config.max_bulk_payload_bytes < 0:
+                raise ValueError("max_bulk_payload_bytes must be non-negative")
+            if not config.key_charset or not isinstance(config.key_charset, str):
+                raise ValueError("key_charset must be a non-empty string")
+            allowed_chars = (
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            )
+            if any(char not in allowed_chars for char in config.key_charset):
+                raise ValueError(f"Invalid key_charset: {config.key_charset}")
+            # Compiling an attacker/operator-supplied charset is the costly
+            # part; doing it here also surfaces a malformed charset as a
+            # config error at first use instead of a regex error mid-request.
+            try:
+                self._key_pattern = re.compile(f"[{config.key_charset}]+")
+            except re.error as exc:
+                raise ValueError(f"Invalid key_charset: {config.key_charset}") from exc
+            self._config_validated = True
+
+    @property
+    def key_pattern(self):
+        """The compiled key pattern, built lazily on first access."""
+        self._ensure_config_validated()
+        return self._key_pattern
 
     def _validate_key(self, key: str) -> None:
         """Validate a setting key for user-facing writes.
@@ -55,6 +107,7 @@ class SettingsManager(BaseManager):
         reserved-prefix namespaces (double underscore internals AND the
         single-underscore server-semantics namespace).
         """
+        self._ensure_config_validated()
         if not isinstance(key, str) or not key.strip():
             raise SettingsKeyInvalid("Key must be a non-empty string")
 
@@ -63,7 +116,7 @@ class SettingsManager(BaseManager):
                 f"Key exceeds maximum length of {self.config.max_key_length} characters"
             )
 
-        if not self._key_pattern.fullmatch(key):
+        if not self.key_pattern.fullmatch(key):
             raise SettingsKeyInvalid(
                 "Key may only contain letters, digits, hyphens and underscores"
             )
@@ -80,6 +133,7 @@ class SettingsManager(BaseManager):
         Server keys must satisfy charset/length but MAY live in the reserved
         single-underscore namespace, restricted to the known server key set.
         """
+        self._ensure_config_validated()
         if not isinstance(key, str) or not key.strip():
             raise SettingsKeyInvalid("Key must be a non-empty string")
 
@@ -88,7 +142,7 @@ class SettingsManager(BaseManager):
                 f"Key exceeds maximum length of {self.config.max_key_length} characters"
             )
 
-        if not self._key_pattern.fullmatch(key):
+        if not self.key_pattern.fullmatch(key):
             raise SettingsKeyInvalid(
                 "Key may only contain letters, digits, hyphens and underscores"
             )
@@ -108,7 +162,8 @@ class SettingsManager(BaseManager):
         read instead of poisoning API responses; recognised server-managed
         keys remain readable despite their underscore prefix.
         """
-        if isinstance(key, str) and self._key_pattern.fullmatch(key):
+        self._ensure_config_validated()
+        if isinstance(key, str) and self.key_pattern.fullmatch(key):
             return True
         return isinstance(key, str) and key in self.config.server_setting_keys
 
