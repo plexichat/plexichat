@@ -42,6 +42,50 @@ MAX_APPLICATION_FILTER_LENGTH = 128
 MAX_WEBHOOK_URL_LENGTH = 2048
 MAX_URL_PATTERN_LENGTH = 512
 
+#: A registered redirect URI is a literal callback address, never a pattern.
+#: Wildcard/regex metacharacters would turn the allow-list into an open
+#: redirector, so they are rejected both when storing and when matching.
+_REDIRECT_PATTERN_CHARS = frozenset("*[]{}()|\\^$+")
+
+
+def _contains_redirect_pattern(value: str) -> bool:
+    return any(char in value for char in _REDIRECT_PATTERN_CHARS)
+
+
+def require_exact_redirect_match(
+    candidate: Any, allowed_uris: Any, *, field: str = "redirect URI"
+) -> str:
+    """Return ``candidate`` only when it literally equals a registered URI.
+
+    The comparison is an exact string equality: no trailing-slash folding, no
+    case folding, no substring/prefix matching and no wildcard expansion. The
+    candidate is validated first so malformed or unsafe URLs never reach the
+    equality check. Pattern-like registered entries are ignored rather than
+    treated as wildcards.
+    """
+    text = reject_control_characters(candidate, field).strip()
+    if not text or len(text) > MAX_REDIRECT_URI_LENGTH:
+        raise HardeningViolation(f"{field} has an invalid length")
+    canonical = require_oauth_redirect_url(text, field=field)
+    if canonical != text:
+        raise HardeningViolation(f"{field} must be an exact registered URI")
+    if _contains_redirect_pattern(text):
+        raise HardeningViolation(f"{field} must not contain wildcard characters")
+
+    try:
+        entries = list(allowed_uris or [])
+    except TypeError as exc:
+        raise HardeningViolation(f"{field} allow-list is invalid") from exc
+    if len(entries) > MAX_REDIRECT_URIS:
+        raise HardeningViolation(f"{field} allow-list is too large")
+
+    for entry in entries:
+        if not isinstance(entry, str) or _contains_redirect_pattern(entry):
+            continue
+        if entry == text:
+            return text
+    raise HardeningViolation(f"{field} is not registered")
+
 
 def require_oauth_redirect_url(value: Any, *, field: str = "redirect URI") -> str:
     """Return an absolute, credential-free OAuth callback URL.
@@ -87,6 +131,10 @@ def validate_redirect_uris(value: Any, *, field: str = "redirect_uris") -> List[
                 f"{label} exceeds {MAX_REDIRECT_URI_LENGTH} characters"
             )
         url = require_oauth_redirect_url(text, field=label)
+        if _contains_redirect_pattern(url):
+            raise HardeningViolation(
+                f"{label} must not contain wildcard or pattern characters"
+            )
         # Exact-match allow-lists do not benefit from duplicates; dropping them
         # keeps the stored list canonical and bounded.
         if url not in validated:

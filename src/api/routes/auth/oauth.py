@@ -72,18 +72,31 @@ def _provider_allowed_redirects(provider: str) -> List[str]:
     return out
 
 
-def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
-    """Strict exact-match allow-list comparison.
+# Characters that only make sense to wildcard/regex allow-list engines. A
+# redirect URI is a literal callback address; accepting a pattern would turn
+# the allow-list into an open redirector and a code-interception primitive.
+_REDIRECT_PATTERN_CHARS = frozenset("*[]{}()|\\^$+")
 
-    No substring matching, no glob, no ``startswith`` — a single
-    mistyped character MUST reject. URL normalisation is done by
-    canonicalising trailing slashes only.
+
+def _redirect_uri_is_allowed(provider: str, redirect_uri: str) -> bool:
+    """Strict, literal exact-string allow-list comparison.
+
+    No substring matching, no glob, no ``startswith`` and — critically — no
+    trailing-slash folding or case folding. A single mistyped character, an
+    extra path segment or a look-alike subdomain MUST reject. Registered
+    entries containing wildcard metacharacters are never treated as patterns.
     """
-    if not redirect_uri:
+    if not isinstance(redirect_uri, str) or not redirect_uri:
         return False
-    target = redirect_uri.rstrip("/")
+    if any(ch in redirect_uri for ch in _REDIRECT_PATTERN_CHARS):
+        return False
     for candidate in _provider_allowed_redirects(provider):
-        if candidate.rstrip("/") == target:
+        if not isinstance(candidate, str) or any(
+            ch in candidate for ch in _REDIRECT_PATTERN_CHARS
+        ):
+            continue
+        # Deliberately plain equality: no rstrip(), no normalisation at all.
+        if candidate == redirect_uri:
             return True
     return False
 

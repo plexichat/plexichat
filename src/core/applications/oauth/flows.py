@@ -13,7 +13,7 @@ from src.utils.encryption import generate_snowflake_id
 from src.core.security.hardening import HardeningViolation
 
 from ..models import OAuth2Token, OAuth2AuthorizationCode
-from ..validation import require_oauth_redirect_url
+from ..validation import require_exact_redirect_match, require_oauth_redirect_url
 from ..exceptions import (
     InvalidClientError,
     InvalidGrantError,
@@ -223,10 +223,10 @@ class OAuth2Flow:
             raise InvalidClientError("Application not found")
 
         allowed_uris = json.loads(app["redirect_uris"])
-        if redirect_uri not in allowed_uris:
-            raise InvalidRedirectUriError(
-                f"Redirect URI not registered: {redirect_uri}"
-            )
+        try:
+            redirect_uri = require_exact_redirect_match(redirect_uri, allowed_uris)
+        except HardeningViolation as exc:
+            raise InvalidRedirectUriError(str(exc)) from exc
 
         scopes = self._require_scopes(scopes)
         bound_challenge = self._bind_pkce(code_challenge, code_challenge_method)
