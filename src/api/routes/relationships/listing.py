@@ -69,34 +69,64 @@ class ListingMixin:
                     },
                 )
 
-            all_user_ids = set()
             my_id = current_user.user_id
 
-            friends_ids = []
+            # Build lightweight descriptors for all relationships, then page
+            # *before* hydrating user/presence data. Previously every row's id
+            # was collected and both bulk lookups were issued for the entire
+            # graph, even though only ``limit`` rows are returned. With a
+            # populated graph that means a large IN(...) query and a full
+            # presence scan per request; hydrating just the page keeps those
+            # round trips proportional to the response size.
+            entries = []
             for f in friends:
                 f_uid = getattr(f, "user_id", 0)
                 f_fid = getattr(f, "friend_id", 0)
                 target_id = f_fid if f_uid == my_id else f_uid
-                friends_ids.append(target_id)
-                all_user_ids.add(target_id)
+                entries.append(
+                    {
+                        "uid": target_id,
+                        "status": "friend",
+                        "created_at": getattr(f, "created_at", None),
+                    }
+                )
 
-            pending_in_ids = []
             for r in pending_in:
-                uid = getattr(r, "sender_id", 0)
-                pending_in_ids.append(uid)
-                all_user_ids.add(uid)
+                entries.append(
+                    {
+                        "uid": getattr(r, "sender_id", 0),
+                        "status": "pending_incoming",
+                        "message": getattr(r, "message", None),
+                        "created_at": getattr(r, "created_at", None),
+                    }
+                )
 
-            pending_out_ids = []
             for r in pending_out:
-                uid = getattr(r, "recipient_id", 0)
-                pending_out_ids.append(uid)
-                all_user_ids.add(uid)
+                entries.append(
+                    {
+                        "uid": getattr(r, "recipient_id", 0),
+                        "status": "pending_outgoing",
+                        "created_at": getattr(r, "created_at", None),
+                    }
+                )
 
-            blocked_ids = []
             for b in blocked:
-                uid = getattr(b, "blocked_id", 0)
-                blocked_ids.append(uid)
-                all_user_ids.add(uid)
+                entries.append(
+                    {
+                        "uid": getattr(b, "blocked_id", 0),
+                        "status": "blocked",
+                        "created_at": getattr(b, "created_at", None),
+                    }
+                )
+
+            page = entries[offset : offset + limit]
+
+            all_user_ids = {entry["uid"] for entry in page}
+            # Blocked entries always render as offline, so they never need a
+            # presence lookup (their profile is still needed for name/avatar).
+            presence_ids = {
+                entry["uid"] for entry in page if entry["status"] != "blocked"
+            }
 
             user_info_map = {}
             presence_map = {}
@@ -106,94 +136,52 @@ class ListingMixin:
                     try:
                         users = auth.get_user_profiles_bulk(list(all_user_ids))
                         for uid_str, u in users.items():
-                            user_info_map[uid_str] = {
+                            user_info_map[str(uid_str)] = {
                                 "username": u.get("username"),
                                 "avatar_url": u.get("avatar_url"),
                             }
                     except Exception as e:
                         logger.debug(f"Failed bulk user fetch: {e}")
 
-                if presence:
+                if presence and presence_ids:
                     try:
                         presences = presence.get_visible_presences_bulk(
-                            my_id, list(all_user_ids)
+                            my_id, list(presence_ids)
                         )
                         for p_uid, p in presences.items():
                             p_status = getattr(p, "status", None)
                             if p_status and hasattr(p_status, "value"):
                                 p_status = p_status.value
-                            presence_map[p_uid] = PresenceInfo(
+                            presence_map[str(p_uid)] = PresenceInfo(
                                 status=p_status or "offline"
                             )
                     except Exception as e:
                         logger.debug(f"Failed bulk presence fetch: {e}")
 
             result = []
-
-            for idx, f in enumerate(friends):
-                uid = friends_ids[idx]
-                info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
-                result.append(
-                    DetailedRelationshipInfo(
-                        user_id=str(uid),
-                        username=info.get("username") or f"User {uid}",
-                        avatar_url=info.get("avatar_url"),
-                        status="friend",
-                        presence=presence_map.get(uid)
-                        or presence_map.get(str(uid))
-                        or PresenceInfo(status="offline"),
-                        created_at=getattr(f, "created_at", None),
+            for entry in page:
+                uid = entry["uid"]
+                status = entry["status"]
+                info = user_info_map.get(str(uid)) or {}
+                if status == "blocked":
+                    presence_info = PresenceInfo(status="offline")
+                else:
+                    presence_info = presence_map.get(str(uid)) or PresenceInfo(
+                        status="offline"
                     )
-                )
+                data = {
+                    "user_id": str(uid),
+                    "username": info.get("username") or f"User {uid}",
+                    "avatar_url": info.get("avatar_url"),
+                    "status": status,
+                    "presence": presence_info,
+                    "created_at": entry["created_at"],
+                }
+                if status == "pending_incoming":
+                    data["message"] = entry["message"]
+                result.append(DetailedRelationshipInfo(**data))
 
-            for idx, r in enumerate(pending_in):
-                uid = pending_in_ids[idx]
-                info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
-                result.append(
-                    DetailedRelationshipInfo(
-                        user_id=str(uid),
-                        username=info.get("username") or f"User {uid}",
-                        avatar_url=info.get("avatar_url"),
-                        status="pending_incoming",
-                        presence=presence_map.get(uid)
-                        or presence_map.get(str(uid))
-                        or PresenceInfo(status="offline"),
-                        message=getattr(r, "message", None),
-                        created_at=getattr(r, "created_at", None),
-                    )
-                )
-
-            for idx, r in enumerate(pending_out):
-                uid = pending_out_ids[idx]
-                info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
-                result.append(
-                    DetailedRelationshipInfo(
-                        user_id=str(uid),
-                        username=info.get("username") or f"User {uid}",
-                        avatar_url=info.get("avatar_url"),
-                        status="pending_outgoing",
-                        presence=presence_map.get(uid)
-                        or presence_map.get(str(uid))
-                        or PresenceInfo(status="offline"),
-                        created_at=getattr(r, "created_at", None),
-                    )
-                )
-
-            for idx, b in enumerate(blocked):
-                uid = blocked_ids[idx]
-                info = user_info_map.get(uid) or user_info_map.get(str(uid)) or {}
-                result.append(
-                    DetailedRelationshipInfo(
-                        user_id=str(uid),
-                        username=info.get("username") or f"User {uid}",
-                        avatar_url=info.get("avatar_url"),
-                        status="blocked",
-                        presence=PresenceInfo(status="offline"),
-                        created_at=getattr(b, "created_at", None),
-                    )
-                )
-
-            return result[offset : offset + limit]
+            return result
         except HTTPException:
             raise
         except Exception as e:
