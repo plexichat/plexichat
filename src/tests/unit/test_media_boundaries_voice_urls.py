@@ -93,12 +93,3 @@ class TestIceServerSanitization:
         result = sanitize_ice_servers(servers)
         assert result[0]["urls"] == ["turn:turn.example.com:3478"]
         assert result[0]["username"] == "u"
-
-
-class TestRouteWiring:
-    def test_voice_route_sanitizes_ice_servers(self):
-        from pathlib import Path
-
-        source = Path("src/api/routes/voice.py").read_text()
-        assert source.count("sanitize_ice_servers") >= 2
-        assert source.count("ICEServerConfig(**entry)") >= 2

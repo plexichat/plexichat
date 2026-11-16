@@ -8,6 +8,7 @@ import utils.logger as logger
 
 from ..exceptions import AlreadyConnectedError, NotConnectedError
 from ...exceptions import PermissionDeniedError
+from ...boundaries import validate_session_id
 from ..models import SignalingState, VoiceServerInfo, VoiceConnection
 
 
@@ -147,6 +148,8 @@ class ConnectionManagementMixin:
         from urllib.parse import urlencode
 
         endpoint = f"{mediasoup_url}/?{urlencode({'roomId': f'voice_{channel_id}', 'peerId': f'user_{user_id}', 'token': token})}"
+
+        session_id = validate_session_id(session_id, "session_id")
 
         return VoiceServerInfo(
             endpoint=endpoint,

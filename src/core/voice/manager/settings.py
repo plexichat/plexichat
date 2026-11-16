@@ -1,6 +1,7 @@
 from typing import Optional, List
 
 from ...base import SnowflakeID
+from ..boundaries import clamp_user_limit
 from ..models import VoiceChannel, VoiceRegion, DEFAULT_VOICE_REGIONS
 from ..exceptions import (
     ChannelNotFoundError,
@@ -34,7 +35,7 @@ class SettingsMixin(VoiceProtocol):
 
         self._db.execute(
             "UPDATE voice_channel_settings SET user_limit = ? WHERE channel_id = ?",
-            (max(0, limit), channel_id),
+            (clamp_user_limit(limit), channel_id),
         )
 
         result = self.get_voice_channel(channel_id, user_id)

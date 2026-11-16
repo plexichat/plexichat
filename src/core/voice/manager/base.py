@@ -7,6 +7,7 @@ from ..models import (
     VoiceChannel,
     VoiceChannelType,
 )
+from ..boundaries import clamp_participant_count, clamp_user_limit
 from ..exceptions import (
     AlreadySpeakerError,
     ChannelAccessDeniedError,
@@ -234,12 +235,12 @@ class VoiceManager(
             server_id=channel_row["server_id"],
             name=channel_row["name"],
             channel_type=channel_type,
-            user_limit=settings.get("user_limit", 0),
+            user_limit=clamp_user_limit(settings.get("user_limit", 0)),
             bitrate=settings.get("bitrate", 64000),
             region_id=settings.get("region_id"),
             position=channel_row.get("position", 0),
             category_id=channel_row.get("category_id"),
-            user_count=user_count,
+            user_count=clamp_participant_count(user_count),
             created_at=channel_row.get("created_at", 0),
             updated_at=channel_row.get("updated_at", 0),
         )

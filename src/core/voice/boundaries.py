@@ -123,3 +123,55 @@ def sanitize_ice_servers(servers: Iterable[Any]) -> List[dict]:
         )
         result.append({"urls": urls, "username": username, "credential": credential})
     return result
+
+
+
+# --- session/participant metadata (commit 6) ---
+MAX_SESSION_ID_LENGTH = 128
+MAX_SFU_ID_LENGTH = 128
+MAX_PARTICIPANTS_PER_CHANNEL = 100
+
+_INVISIBLE_ID_CHARS = frozenset(
+    {0x200B, 0x200C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D,
+     0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF}
+)
+
+
+def validate_text_identifier(value: object, field: str, max_length: int) -> str:
+    """Return a bounded, control-free text identifier."""
+    text = str(value or "")
+    if len(text) > max_length:
+        raise ValueError(f"{field} exceeds maximum length of {max_length}")
+    for ch in text:
+        code = ord(ch)
+        if code < 0x20 or code == 0x7F or code in _INVISIBLE_ID_CHARS:
+            raise ValueError(f"{field} contains invalid characters")
+    return text
+
+
+def validate_session_id(value: object, field: str = "session_id") -> str:
+    """Validate a voice session id returned to clients or stored on a connection."""
+    return validate_text_identifier(value, field, MAX_SESSION_ID_LENGTH)
+
+
+def validate_sfu_identifier(value: object, field: str = "sfu_id") -> str:
+    """Validate an SFU-scoped room/peer/transport identifier."""
+    return validate_text_identifier(value, field, MAX_SFU_ID_LENGTH)
+
+
+def clamp_user_limit(value: object, field: str = "user_limit") -> int:
+    """Clamp a stored or supplied channel user limit into a sane range."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(number, MAX_PARTICIPANTS_PER_CHANNEL))
+
+
+def clamp_participant_count(value: object) -> int:
+    """Clamp a participant count reported to clients."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(number, MAX_PARTICIPANTS_PER_CHANNEL))

@@ -3,6 +3,12 @@ Signaling models - Dataclasses for WebRTC signaling entities.
 """
 
 from dataclasses import dataclass, field
+
+from ..boundaries import (
+    validate_server_endpoint,
+    validate_session_id,
+    validate_sfu_identifier,
+)
 from enum import Enum
 from typing import Optional, List, Dict, Any
 
@@ -164,6 +170,13 @@ class VoiceServerInfo:
     user_id: int
     bitrate: int = 64000
 
+    def __post_init__(self) -> None:
+        """Bound the endpoint/session metadata before it reaches clients."""
+        self.endpoint = validate_server_endpoint(self.endpoint, "endpoint")
+        self.session_id = validate_session_id(self.session_id, "session_id")
+        self.channel_id = int(self.channel_id)
+        self.user_id = int(self.user_id)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -251,6 +264,27 @@ class VoiceConnection:
     # media-plane operations that are NOT already gateway-authenticated can
     # verify the caller was actually issued credentials for this session.
     media_token: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Bound session and SFU identifiers on every connection."""
+        self.session_id = validate_session_id(self.session_id, "session_id")
+        for attr in (
+            "transport_id",
+            "sfu_transport_id",
+            "sfu_room_id",
+            "sfu_peer_id",
+        ):
+            value = getattr(self, attr)
+            if value is not None:
+                setattr(self, attr, validate_sfu_identifier(value, attr))
+        self.sfu_producer_ids = [
+            validate_sfu_identifier(v, "sfu_producer_id")
+            for v in self.sfu_producer_ids
+        ]
+        self.sfu_consumer_ids = [
+            validate_sfu_identifier(v, "sfu_consumer_id")
+            for v in self.sfu_consumer_ids
+        ]
 
 
 # Quality thresholds for bitrate adjustment

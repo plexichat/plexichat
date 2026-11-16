@@ -6,6 +6,10 @@ from src.core.security.hardening import parse_id
 from src.core.voice.boundaries import (
     DEFAULT_PUBLIC_STUN_URLS,
     sanitize_ice_servers,
+    validate_session_id,
+    validate_session_id,
+    validate_session_id,
+    validate_session_id,
 )
 
 from typing import List
@@ -133,7 +137,7 @@ async def get_voice_channel_info(
             )
             return VoiceChannelInfoResponse(
                 channel_id=SnowflakeID(cid),
-                session_id=info.session_id,
+                session_id=validate_session_id(info.session_id, "session_id"),
                 ice_servers=ice_servers,
                 bitrate=info.bitrate,
             )
