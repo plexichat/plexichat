@@ -254,13 +254,15 @@ class BotManagementMixin(ApplicationManagerProtocol):
 
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
 
+        # Only approved-bot columns are consumed by callers (the response's
+        # app metadata fields are optional and never populated here). Reading
+        # them through a LEFT JOIN on app_applications added a join to every
+        # approved-bot listing for columns that were immediately discarded.
         rows = self._db.fetch_all(
             f"""SELECT ab.id, ab.server_id, ab.application_id, ab.approved_by,
                       ab.permissions, ab.bot_name, ab.bot_avatar_url, ab.status,
-                      ab.installed_at, ab.updated_at,
-                      a.name as app_name, a.icon_url as app_icon, a.bot_id
-               FROM app_approved_bots ab
-               LEFT JOIN app_applications a ON ab.application_id = a.id{where_clause}
+                      ab.installed_at, ab.updated_at
+               FROM app_approved_bots ab{where_clause}
                ORDER BY ab.installed_at DESC""",
             tuple(params),
         )

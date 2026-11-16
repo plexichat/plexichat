@@ -87,3 +87,34 @@ class TestBotDirectoryCache:
         first["bot_list"].append({"id": 999})
         first["total"] = -1
         assert app_manager.get_bot_directory() == {"bot_list": [], "total": 0}
+
+
+@pytest.mark.applications
+class TestApprovedBotListing:
+    def test_listing_does_not_join_unused_application_columns(
+        self, app_manager, test_user
+    ):
+        """Approved-bot listings read only the columns callers consume."""
+        app = app_manager.create_application(owner_id=test_user.id, name="Approved Bot")
+        app_manager._db.execute(
+            """INSERT INTO app_approved_bots
+               (id, server_id, application_id, approved_by, permissions,
+                bot_name, bot_avatar_url, status, installed_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (9001, 7001, app.id, test_user.id, "{}", "Approved", None, "approved", 1, 1),
+        )
+
+        real_fetch_all = app_manager._db.fetch_all
+        queries = []
+
+        def tracking_fetch_all(query, params=None):
+            queries.append(query)
+            return real_fetch_all(query, params)
+
+        with patch.object(app_manager._db, "fetch_all", side_effect=tracking_fetch_all):
+            bots = app_manager.get_approved_bots(server_id=7001, status="approved")
+
+        assert len(bots) == 1
+        assert bots[0].bot_name == "Approved"
+        assert "LEFT JOIN" not in queries[0]
+        assert "app_applications" not in queries[0]
