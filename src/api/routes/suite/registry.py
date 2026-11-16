@@ -52,6 +52,35 @@ _ARTIFACT_APP_IDS = {
     "whiteboard": "plexiboard",
 }
 
+#: The launcher routes an item to an app purely from ``appId``. An unexpected
+#: value (a renamed artifact type, a bad DB row, or a future manifest typo)
+#: must collapse to the safe chat fallback rather than become a dead card or a
+#: route to an app the caller cannot open. Keep the catalog closed.
+_VALID_APP_IDS = frozenset(
+    {
+        "plexichat",
+        "plexistash",
+        "plexisum",
+        "plexiscribe",
+        "plexiscript",
+        "plexiboard",
+    }
+)
+
+
+def safe_app_id(value: Any, default: str = "plexichat") -> str:
+    """Return ``value`` only when it names a known PlexiSuite app."""
+    candidate = str(value or "").strip()
+    if candidate in _VALID_APP_IDS:
+        return candidate
+    return default if default in _VALID_APP_IDS else "plexichat"
+
+
+# Fail fast if a future edit adds an artifact mapping outside the catalog.
+for _artifact_type, _mapped_app in _ARTIFACT_APP_IDS.items():
+    if _mapped_app not in _VALID_APP_IDS:
+        raise RuntimeError(f"Invalid suite app id for {_artifact_type}: {_mapped_app}")
+
 # Only artifact types that map to a dedicated PlexiSuite app belong in the
 # suite home feeds. Voice calls, uploads, files, and transcripts are chat
 # artifacts surfaced by the chat artifacts pane, not suite work; surfacing
@@ -115,7 +144,9 @@ def _artifact_home_item(artifact: Artifact) -> Dict[str, Any]:
     """Return the small, launcher-safe projection of an artifact."""
     return {
         "id": str(artifact.id),
-        "appId": _ARTIFACT_APP_IDS.get(artifact.artifact_type.value, "plexichat"),
+        "appId": safe_app_id(
+            _ARTIFACT_APP_IDS.get(artifact.artifact_type.value, "plexichat")
+        ),
         "artifactType": artifact.artifact_type.value,
         "title": artifact.title,
         "summary": artifact.summary,
@@ -140,7 +171,7 @@ def _stash_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Project Stash metadata without exposing storage references."""
     return {
         "id": str(item["id"]),
-        "appId": "plexistash",
+        "appId": safe_app_id("plexistash"),
         "artifactType": "stash",
         "title": item.get("title") or "Untitled item",
         "summary": item.get("description"),
@@ -158,7 +189,7 @@ def _sum_home_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Project workbook metadata into the shared launcher contract."""
     return {
         "id": str(item["id"]),
-        "appId": "plexisum",
+        "appId": safe_app_id("plexisum"),
         "artifactType": "sum",
         "title": item.get("title") or "Untitled workbook",
         "summary": f"Revision {int(item.get('current_revision', 0))}",
@@ -518,7 +549,9 @@ async def list_suite_activity(
     items = [
         {
             "id": str(row["id"]),
-            "appId": "plexistash" if row["domain"] == "stash" else "plexisum",
+            "appId": safe_app_id(
+                "plexistash" if row["domain"] == "stash" else "plexisum"
+            ),
             "artifactType": row["domain"],
             "title": f"{row['action']} {row['resource_type']}",
             "summary": _activity_summary(
