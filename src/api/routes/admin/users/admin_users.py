@@ -76,6 +76,64 @@ def _admin_user_query(where: str = "") -> str:
     """
 
 
+def _load_admin_hierarchy(db, current_admin_id: int, target_admin_id: int) -> dict:
+    """Resolve target existence/lock state and both positions in one query.
+
+    The mutating admin-user routes previously did a ``SELECT id`` existence
+    check, ``can_manage_admin`` (two more position queries) and, for the status
+    toggle, a separate ``SELECT account_locked``.  Scalar subqueries collapse
+    all of that into a single statement.
+    """
+    row = db.fetch_one(
+        """
+        SELECT
+            EXISTS(SELECT 1 FROM admin_users WHERE id = ?) AS target_exists,
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS current_pos,
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS target_pos,
+            (SELECT account_locked FROM auth_users WHERE id = ?) AS account_locked
+        """,
+        (target_admin_id, current_admin_id, target_admin_id, target_admin_id),
+    )
+    if not row:
+        return {
+            "target_exists": False,
+            "current_pos": 0,
+            "target_pos": 0,
+            "account_locked": 0,
+        }
+    if isinstance(row, dict):
+        exists = row.get("target_exists", False)
+        current_pos = row.get("current_pos") or 0
+        target_pos = row.get("target_pos") or 0
+        locked = row.get("account_locked") or 0
+    else:
+        exists = row[0]
+        current_pos = row[1] or 0
+        target_pos = row[2] or 0
+        locked = row[3] or 0
+    return {
+        "target_exists": bool(exists),
+        "current_pos": int(current_pos),
+        "target_pos": int(target_pos),
+        "account_locked": int(locked),
+    }
+
+
+def _can_manage_admin_at(
+    current_admin_id: int, target_admin_id: int, current_pos: int, target_pos: int
+) -> bool:
+    """Same rule as ``can_manage_admin`` using pre-fetched positions."""
+    if current_admin_id == target_admin_id:
+        return False
+    return current_pos > target_pos
+
+
 class AdminUsersMixin(AdminUsersRouterProtocol):
     async def list_admin_users(self, request: Request):
         """List administrator accounts from the canonical admin tables."""
@@ -262,22 +320,18 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
         try:
             db = self._get_db()
             uid = self._parse_user_id(user_id)
-            user = db.fetch_one(
-                "SELECT id, username FROM admin_users WHERE id = ?", (uid,)
-            )
-            if not user:
+            hierarchy = _load_admin_hierarchy(db, admin_id, uid)
+            if not hierarchy["target_exists"]:
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Admin user not found"}},
                 )
 
-            from src.core.admin.permissions import (
-                can_manage_admin,
-                can_manage_role,
-                log_admin_action,
-            )
+            from src.core.admin.permissions import can_manage_role, log_admin_action
 
-            if not can_manage_admin(db, admin_id, uid):
+            if not _can_manage_admin_at(
+                admin_id, uid, hierarchy["current_pos"], hierarchy["target_pos"]
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -405,15 +459,18 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                         }
                     },
                 )
-            if not db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (uid,)):
+            hierarchy = _load_admin_hierarchy(db, admin_id, uid)
+            if not hierarchy["target_exists"]:
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Admin user not found"}},
                 )
 
-            from src.core.admin.permissions import can_manage_admin, log_admin_action
+            from src.core.admin.permissions import log_admin_action
 
-            if not can_manage_admin(db, admin_id, uid):
+            if not _can_manage_admin_at(
+                admin_id, uid, hierarchy["current_pos"], hierarchy["target_pos"]
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -467,15 +524,18 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                         }
                     },
                 )
-            if not db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (uid,)):
+            hierarchy = _load_admin_hierarchy(db, admin_id, uid)
+            if not hierarchy["target_exists"]:
                 raise HTTPException(
                     status_code=404,
                     detail={"error": {"code": 404, "message": "Admin user not found"}},
                 )
 
-            from src.core.admin.permissions import can_manage_admin, log_admin_action
+            from src.core.admin.permissions import log_admin_action
 
-            if not can_manage_admin(db, admin_id, uid):
+            if not _can_manage_admin_at(
+                admin_id, uid, hierarchy["current_pos"], hierarchy["target_pos"]
+            ):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -485,10 +545,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                         }
                     },
                 )
-            row = db.fetch_one(
-                "SELECT account_locked FROM auth_users WHERE id = ?", (uid,)
-            )
-            current_locked = bool(_row_value(row, "account_locked", 0, 0))
+            current_locked = bool(hierarchy["account_locked"])
             new_status = 0 if current_locked else 1
             db.execute(
                 "UPDATE auth_users SET account_locked = ? WHERE id = ?",
