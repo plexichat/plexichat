@@ -6,11 +6,14 @@ scoped permission gates. The guards live in the route modules; these tests read
 the route signatures/constants so a future edit that drops a bound fails loudly.
 """
 
+import asyncio
 import inspect
 
 from fastapi.params import Query as QueryParam
+from starlette.requests import Request
 
 import src.api.routes.admin.audit as audit_routes
+import src.api.routes.admin.ui as ui_routes
 import src.api.routes.admin.security as security_routes
 import src.api.routes.admin.moderation as moderation_routes
 import src.api.routes.admin.tickets as tickets_routes
@@ -139,6 +142,30 @@ class TestAccessTokenDetailBounds:
             ).ge
             == 1
         )
+
+
+class TestStaticResponseHeaders:
+    def test_favicon_sets_nosniff(self, tmp_path, monkeypatch):
+        icon = tmp_path / "favicon.svg"
+        icon.write_text(
+            "<svg xmlns='http://www.w3.org/2000/svg'></svg>", encoding="utf-8"
+        )
+        monkeypatch.setattr(ui_routes, "check_host_restriction", lambda request: None)
+        monkeypatch.setattr(ui_routes, "_admin_static_path", lambda *parts: icon)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/static/favicon.svg",
+                "headers": [(b"host", b"testserver")],
+                "client": ("127.0.0.1", 12345),
+                "scheme": "http",
+                "server": ("testserver", 80),
+                "query_string": b"",
+            }
+        )
+        response = asyncio.run(ui_routes.admin_favicon(request))
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 
 class TestAuditExportBounds:

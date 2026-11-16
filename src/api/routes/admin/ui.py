@@ -95,7 +95,10 @@ async def admin_favicon(request: Request):
     return Response(
         content=icon_content,
         media_type="image/svg+xml",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
