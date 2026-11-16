@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from src.core.security.hardening import require_https_url
 from src.utils.security import URLValidator
 
 
@@ -390,10 +391,13 @@ class OpenAIWhisperProvider(TranscriptionProvider):
         super().__init__(config)
         self._api_key: str = str(self._config.get("openai_api_key", "") or "")
         self._model: str = str(self._config.get("openai_model", "whisper-1"))
-        self._api_url: str = str(
+        # The API key is sent to this endpoint as a Bearer token. Never let a
+        # misconfigured plain-HTTP or credential-bearing URL exfiltrate it.
+        self._api_url: str = require_https_url(
             self._config.get(
                 "openai_api_base", "https://api.openai.com/v1/audio/transcriptions"
-            )
+            ),
+            "openai_api_base",
         )
 
     def is_available(self) -> bool:
