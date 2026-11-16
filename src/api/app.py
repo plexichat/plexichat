@@ -523,6 +523,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
     # already handled.
     app.add_middleware(CompressionMiddleware)
 
+    # The preflight policy is static for the life of the app (``config`` is a
+    # versioned snapshot captured above, and CORSMiddleware is built from the
+    # same values). Joining these lists and scanning the origins list on every
+    # OPTIONS request is repeated work on a hot path, so resolve both once at
+    # setup time. The allowed-origin check and every emitted header stay
+    # byte-for-byte identical to the per-request version.
+    preflight_origins = frozenset(config.cors_origins)
+    preflight_static_headers = {
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": ", ".join(config.cors_allow_methods),
+        "Access-Control-Allow-Headers": ", ".join(config.cors_allow_headers),
+        "Access-Control-Expose-Headers": ", ".join(config.cors_expose_headers),
+        "Access-Control-Max-Age": "86400",
+    }
+
     # Explicit OPTIONS preflight handler for local dev - catches any
     # preflight that slips through the CORSMiddleware. Implemented as a
     # middleware that only intercepts OPTIONS so that unmatched non-OPTIONS
@@ -534,24 +549,10 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             if request.method != "OPTIONS":
                 return await call_next(request)
             origin = request.headers.get("origin")
-            if origin and origin in config.cors_origins:
-                return Response(
-                    status_code=200,
-                    headers={
-                        "Access-Control-Allow-Origin": origin,
-                        "Access-Control-Allow-Credentials": "true",
-                        "Access-Control-Allow-Methods": ", ".join(
-                            config.cors_allow_methods
-                        ),
-                        "Access-Control-Allow-Headers": ", ".join(
-                            config.cors_allow_headers
-                        ),
-                        "Access-Control-Expose-Headers": ", ".join(
-                            config.cors_expose_headers
-                        ),
-                        "Access-Control-Max-Age": "86400",
-                    },
-                )
+            if origin and origin in preflight_origins:
+                headers = {"Access-Control-Allow-Origin": origin}
+                headers.update(preflight_static_headers)
+                return Response(status_code=200, headers=headers)
             return Response(status_code=400)
 
     app.add_middleware(CORSPreflightMiddleware)
