@@ -17,6 +17,8 @@ import utils.logger as logger
 
 from src.core.security.errors import SecurityRejection
 
+from .request_context import cached_is_self_test
+
 try:
     from utils.logger import sanitize_log_message
 except ImportError:
@@ -162,9 +164,7 @@ def _debug_detail_allowed(request: Any) -> bool:
     except Exception:
         return False
     try:
-        import src.api as api
-
-        return bool(api.is_self_test_request(request))
+        return bool(cached_is_self_test(request))
     except Exception:
         return False
 
@@ -395,10 +395,8 @@ class ErrorHandlingMiddleware:
             # Check for self-test debug mode (uses centralized validation)
             include_traceback = False
 
-            import src.api as api
-
             selftest_config = config.get("selftest", {})
-            is_selftest = api.is_self_test_request(request)
+            is_selftest = cached_is_self_test(request)
 
             if selftest_config.get("capture_stack_traces", True) and is_selftest:
                 if request.headers.get("X-Plexichat-SelfTest-Debug") == "true":

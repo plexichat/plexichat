@@ -6,11 +6,12 @@ from typing import Optional, Dict, Any, Callable, Type
 
 from fastapi import Request
 
-import src.api as api
 import utils.config as config
 from src.core.ratelimit import RateLimitMiddlewareASGI as RateLimitMiddleware
 from src.core.ratelimit.middleware import extract_route_info
 from src.utils.net import get_client_ip
+
+from .request_context import cached_client_ip, cached_is_self_test
 
 import utils.logger as logger
 
@@ -27,7 +28,9 @@ def extract_ip(request: Request) -> Optional[str]:
     direct peer is a trusted proxy) rather than the proxy/relay IP.
     """
     try:
-        ip = get_client_ip(request)
+        # The same scope is visited by logging, IP blocking and authentication;
+        # resolve the trusted-proxy IP once and share the result.
+        ip = cached_client_ip(request, resolver=get_client_ip)
         if ip:
             return ip
     except Exception as exc:
@@ -69,7 +72,7 @@ def get_user_info_from_request(request: Request) -> Dict[str, Any]:
     # limiter before AuthenticationMiddleware marks request.state.is_internal.
     # Detect it directly so the self-test bypass remains effective.
     try:
-        if api.is_self_test_request(request):
+        if cached_is_self_test(request):
             user_info["is_internal"] = True
             return user_info
     except Exception as exc:

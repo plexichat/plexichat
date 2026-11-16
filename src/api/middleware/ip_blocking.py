@@ -7,6 +7,8 @@ from typing import Any, Dict, cast
 
 import utils.logger as logger
 
+from .request_context import cached_client_ip
+
 
 class IPBlockingMiddleware:
     """ASGI middleware to block blacklisted IP addresses."""
@@ -22,8 +24,9 @@ class IPBlockingMiddleware:
         import src.api as api
         from src.utils.net import get_client_ip
 
-        # Use scope directly or handle per type
-        client_ip = get_client_ip(cast(Dict[str, Any], scope))
+        # Use scope directly or handle per type. The resolved IP is shared
+        # with logging/authentication/rate limiting for this request.
+        client_ip = cached_client_ip(cast(Dict[str, Any], scope), resolver=get_client_ip)
 
         # Check if IP is blacklisted
         auth = api.get_auth()

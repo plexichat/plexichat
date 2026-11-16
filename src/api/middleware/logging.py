@@ -11,6 +11,8 @@ import time
 from fastapi.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Send, Scope, Message
 
+from .request_context import cached_client_ip
+
 
 def _get_logger():
     """Get the logger module dynamically to ensure we use the configured instance."""
@@ -138,7 +140,12 @@ class LoggingMiddleware:
 
             from src.utils.net import get_client_ip
 
-            client_ip = get_client_ip(cast(Dict[str, Any], scope)) or "unknown"
+            # IP blocking and authentication visit this scope too; reuse the
+            # trusted-proxy result instead of parsing X-Forwarded-For again.
+            client_ip = (
+                cached_client_ip(cast(Dict[str, Any], scope), resolver=get_client_ip)
+                or "unknown"
+            )
         except Exception:
             client = scope.get("client")
             client_ip = client[0] if client else "unknown"
