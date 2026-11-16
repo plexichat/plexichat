@@ -14,6 +14,7 @@ from src.api.schemas.relationships import (
     RelationshipResponse,
 )
 from src.api.schemas.common import SnowflakeID, SuccessResponse
+from src.core.security.hardening import parse_id
 from src.core.relationships.exceptions import (
     AlreadyFriendsError,
     FriendRequestExistsError,
@@ -132,7 +133,7 @@ class FriendRequestMixin:
 
         try:
             try:
-                target_id = int(body.user_id)
+                target_id = parse_id(body.user_id, "user_id")
             except (ValueError, TypeError):
                 logger.warning(
                     f"User {current_user.user_id} provided invalid target ID: {body.user_id}"
@@ -361,7 +362,7 @@ class FriendRequestMixin:
 
         try:
             try:
-                sender_id = int(user_id)
+                sender_id = parse_id(user_id, "user_id")
             except (ValueError, TypeError):
                 logger.warning(
                     f"User {current_user.user_id} provided invalid sender ID: {user_id}"
