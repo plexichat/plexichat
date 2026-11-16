@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Optional, Union
 from urllib.parse import urlparse
 
-from ..models import ChannelType
+from .models import ChannelType
 from src.core.security.hardening import HardeningViolation
 from src.core.security.hardening.text import reject_control_characters
 from src.core.security.hardening.urls import require_http_url
