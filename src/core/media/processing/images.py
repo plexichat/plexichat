@@ -13,6 +13,7 @@ from typing import Optional, Tuple, List, Dict, Any
 import utils.config as config
 import utils.logger as logger
 
+from .._result_cache import ResultCache, content_hash
 from ..models import ImageMetadata, ThumbnailSize
 from ..exceptions import ImageProcessingError
 
@@ -103,6 +104,17 @@ class ImageProcessor:
         """
         self._quality = quality
         self._optimize = optimize
+
+        # Thumbnails are pure functions of (content hash, size, format,
+        # quality). Memoize them so repeated requests for the same upload do
+        # not pay for another Pillow decode + encode; both the retained bytes
+        # and the number of concurrent computations are bounded.
+        self._thumbnail_cache = ResultCache(
+            maxsize=128,
+            max_bytes=32 * 1024 * 1024,
+            sizer=lambda value: max(1, len(value[0])) if value else 1,
+            max_inflight=4,
+        )
 
         # Load security limits from config
         img_config = _get_image_config()
@@ -229,6 +241,34 @@ class ImageProcessor:
             logger.error(f"Failed to extract image metadata: {e}")
             raise ImageProcessingError(f"Failed to extract metadata: {e}", "metadata")
 
+    def _thumbnail_key(
+        self,
+        digest: str,
+        size: int,
+        output_format: str,
+        maintain_aspect: bool = True,
+    ) -> tuple:
+        """Cache key: content hash plus every option that changes the bytes."""
+        return (
+            "thumbnail",
+            digest,
+            int(size),
+            str(output_format).upper(),
+            bool(maintain_aspect),
+            self._quality,
+            self._optimize,
+        )
+
+    def _encode_thumbnail(self, img, output_format: str):
+        output = io.BytesIO()
+        save_kwargs: Dict[str, Any] = {"format": output_format}
+        if output_format in ("JPEG", "WEBP"):
+            save_kwargs["quality"] = self._quality
+        if self._optimize and output_format in ("JPEG", "PNG"):
+            save_kwargs["optimize"] = True
+        img.save(output, **save_kwargs)
+        return output.getvalue(), img.width, img.height
+
     def create_thumbnail(
         self,
         image_data: bytes,
@@ -248,37 +288,36 @@ class ImageProcessor:
         Returns:
             Tuple of (thumbnail bytes, width, height)
         """
-        try:
-            img = self._Image.open(io.BytesIO(image_data))
+        key = self._thumbnail_key(
+            content_hash(image_data), size, output_format, maintain_aspect
+        )
 
-            # Security: Validate dimensions before processing
-            self._validate_image_dimensions(img)
+        def compute() -> Tuple[bytes, int, int]:
+            try:
+                img = self._Image.open(io.BytesIO(image_data))
 
-            if img.mode == "P" and "transparency" in img.info:
-                img = img.convert("RGBA")
+                # Security: Validate dimensions before processing
+                self._validate_image_dimensions(img)
 
-            if maintain_aspect:
-                img.thumbnail((size, size), self._Image.Resampling.LANCZOS)
-            else:
-                img = img.resize((size, size), self._Image.Resampling.LANCZOS)
+                if img.mode == "P" and "transparency" in img.info:
+                    img = img.convert("RGBA")
 
-            if output_format == "JPEG":
-                img = self._prepare_for_jpeg(img)
+                if maintain_aspect:
+                    img.thumbnail((size, size), self._Image.Resampling.LANCZOS)
+                else:
+                    img = img.resize((size, size), self._Image.Resampling.LANCZOS)
 
-            output = io.BytesIO()
-            save_kwargs: Dict[str, Any] = {"format": output_format}
+                if output_format == "JPEG":
+                    img = self._prepare_for_jpeg(img)
 
-            if output_format in ("JPEG", "WEBP"):
-                save_kwargs["quality"] = self._quality
-            if self._optimize and output_format in ("JPEG", "PNG"):
-                save_kwargs["optimize"] = True
+                return self._encode_thumbnail(img, output_format)
+            except Exception as e:
+                logger.error(f"Failed to create thumbnail: {e}")
+                raise ImageProcessingError(
+                    f"Failed to create thumbnail: {e}", "thumbnail"
+                )
 
-            img.save(output, **save_kwargs)
-
-            return output.getvalue(), img.width, img.height
-        except Exception as e:
-            logger.error(f"Failed to create thumbnail: {e}")
-            raise ImageProcessingError(f"Failed to create thumbnail: {e}", "thumbnail")
+        return self._thumbnail_cache.get_or_compute(key, compute)
 
     def create_thumbnails(
         self,
@@ -300,6 +339,21 @@ class ImageProcessor:
         if sizes is None:
             sizes = [s.value for s in ThumbnailSize]
 
+        # Serve every already-cached size directly and decode the source only
+        # for the missing ones (a second upload of the same image is free).
+        digest = content_hash(image_data)
+        results: Dict[int, Tuple[bytes, int, int]] = {}
+        misses = []
+        for size in sizes:
+            key = self._thumbnail_key(digest, size, output_format)
+            cached = self._thumbnail_cache.get(key)
+            if cached is not None:
+                results[size] = cached
+            else:
+                misses.append((size, key))
+        if not misses:
+            return results
+
         try:
             # Open source image once
             source_img = self._Image.open(io.BytesIO(image_data))
@@ -311,30 +365,22 @@ class ImageProcessor:
             elif source_img.mode == "P" and "transparency" in source_img.info:
                 source_img = source_img.convert("RGBA")
 
-            results = {}
-            for size in sizes:
+            for size, key in misses:
                 try:
                     # Use a copy for each thumbnail
                     img = source_img.copy()
                     img.thumbnail((size, size), self._Image.Resampling.LANCZOS)
-
-                    output = io.BytesIO()
-                    save_kwargs: Dict[str, Any] = {"format": output_format}
-
-                    if output_format in ("JPEG", "WEBP"):
-                        save_kwargs["quality"] = self._quality
-                    if self._optimize and output_format in ("JPEG", "PNG"):
-                        save_kwargs["optimize"] = True
-
-                    img.save(output, **save_kwargs)
-                    results[size] = (output.getvalue(), img.width, img.height)
+                    value = self._encode_thumbnail(img, output_format)
+                    results[size] = value
+                    self._thumbnail_cache.put(key, value)
+                    self._thumbnail_cache.record_compute()
                 except Exception as e:
                     logger.warning(f"Failed to create thumbnail at size {size}: {e}")
 
             return results
         except Exception as e:
             logger.error(f"Failed to process thumbnails: {e}")
-            return {}
+            return results
 
     def resize(
         self,

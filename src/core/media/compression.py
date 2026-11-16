@@ -22,6 +22,7 @@ from typing import Optional, Dict, Any
 
 import utils.logger as logger
 import utils.config as config
+from ._result_cache import ResultCache, content_hash
 from .processing import flatten_alpha_onto_white
 from .processing.video import resolve_ffprobe_path
 
@@ -302,6 +303,15 @@ class VideoCompressor:
         """Initialize video compressor."""
         self._config = self._load_config()
         self._ffmpeg_path = self._find_ffmpeg()
+        # Transcoding is deterministic for a given payload + settings. Reuse a
+        # bounded result set keyed by content hash so repeated uploads of the
+        # same video do not spawn another ffmpeg subprocess.
+        self._transcode_cache = ResultCache(
+            maxsize=32,
+            max_bytes=64 * 1024 * 1024,
+            sizer=lambda result: max(1, len(result.data or b"")),
+            max_inflight=2,
+        )
 
     def _load_config(self) -> dict:
         """Load compression configuration."""
@@ -360,8 +370,51 @@ class VideoCompressor:
         quality: Optional[CompressionQuality] = None,
         codec: Optional[VideoCodec] = None,
     ) -> CompressionResult:
+        """Compress a video, reusing a cached result for identical input.
+
+        Before: every call spawned a fresh ffmpeg subprocess even when the same
+        bytes and settings had already been transcoded. After: a successful
+        result is memoized under the content hash; failures and unavailable
+        dependencies are never cached.
         """
-        Compress a video.
+        if not self.is_available():
+            return self._compress_uncached(video_data, quality, codec)
+
+        settings = tuple((key, str(value)) for key, value in sorted(self._config.items()))
+        key = (
+            "transcode",
+            content_hash(video_data),
+            quality.value if quality is not None else None,
+            codec.value if codec is not None else None,
+            self._ffmpeg_path,
+            settings,
+        )
+        cached = self._transcode_cache.get(key)
+        if cached is not None:
+            return cached
+
+        result_box: list = []
+
+        def compute():
+            result = self._compress_uncached(video_data, quality, codec)
+            result_box.append(result)
+            # Returning None tells the cache not to retain this value: a
+            # transient ffmpeg failure must not poison later attempts.
+            if not result.success or result.data is None:
+                return None
+            return result
+
+        cached = self._transcode_cache.get_or_compute(key, compute)
+        return cached if cached is not None else result_box[0]
+
+    def _compress_uncached(
+        self,
+        video_data: bytes,
+        quality: Optional[CompressionQuality] = None,
+        codec: Optional[VideoCodec] = None,
+    ) -> CompressionResult:
+        """
+        Compress a video (uncached implementation).
 
         Args:
             video_data: Raw video bytes
