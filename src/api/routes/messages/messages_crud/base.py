@@ -167,19 +167,60 @@ class MessagesCRUDBase:
                                 },
                             )
 
-                    ensure = getattr(servers_mod, "ensure_channel_conversation", None)
-                    if ensure is not None and messaging:
-                        try:
-                            repaired = await run_in_threadpool(ensure, channel_id)
-                            if repaired:
-                                conversation_id = repaired
-                        except Exception as repair_error:
-                            logger.warning(
-                                f"Could not repair conversation link for channel "
-                                f"{channel_id}: {repair_error}"
-                            )
-
                     if conversation_id and messaging:
+                        # Fast path: the channel already carries a conversation
+                        # link (the common case). Skip the repair round-trip --
+                        # ensure_channel_conversation() re-fetches the channel
+                        # row and re-checks conversation_exists() on every send.
+                        # If the link is stale the send yields no message, and
+                        # we repair + retry below.
+                        msg = await run_in_threadpool(
+                            messaging.send_message,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            content=content,
+                            reply_to_id=reply_to_id,
+                            attachments=attachments,
+                            embeds=embeds,
+                        )
+                        if msg is None:
+                            ensure = getattr(
+                                servers_mod, "ensure_channel_conversation", None
+                            )
+                            if ensure is not None:
+                                try:
+                                    repaired = await run_in_threadpool(
+                                        ensure, channel_id
+                                    )
+                                except Exception as repair_error:
+                                    logger.warning(
+                                        f"Could not repair conversation link for "
+                                        f"channel {channel_id}: {repair_error}"
+                                    )
+                                    repaired = None
+                                if repaired and str(repaired) != str(conversation_id):
+                                    msg = await run_in_threadpool(
+                                        messaging.send_message,
+                                        user_id=user_id,
+                                        conversation_id=repaired,
+                                        content=content,
+                                        reply_to_id=reply_to_id,
+                                        attachments=attachments,
+                                        embeds=embeds,
+                                    )
+                    elif messaging:
+                        ensure = getattr(servers_mod, "ensure_channel_conversation", None)
+                        if ensure is not None:
+                            try:
+                                repaired = await run_in_threadpool(ensure, channel_id)
+                                if repaired:
+                                    conversation_id = repaired
+                            except Exception as repair_error:
+                                logger.warning(
+                                    f"Could not repair conversation link for channel "
+                                    f"{channel_id}: {repair_error}"
+                                )
+                        conversation_id = conversation_id or channel_id
                         msg = await run_in_threadpool(
                             messaging.send_message,
                             user_id=user_id,
