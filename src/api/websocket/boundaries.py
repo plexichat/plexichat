@@ -286,7 +286,7 @@ def requires_authentication(opcode: int) -> bool:
 #: Tickets are machine tokens, never free-form text: no whitespace, no C0
 #: controls, and a bounded length. The character class covers the URL-safe
 #: alphabet plus the separators used by existing token formats.
-TICKET_PATTERN = re.compile(r"^[A-Za-z0-9._~+/:=@-]+$")
+TICKET_PATTERN = re.compile(r"^[A-Za-z0-9._~+/-:=@]+$")
 MIN_TICKET_LEN = 1
 MAX_TICKET_LEN = 4096
 MAX_SESSION_ID_LEN = 128
@@ -321,8 +321,6 @@ def validate_session_id(value: object) -> str:
 
 def bounded_resume_sequence(value: object) -> int:
     """Bound a client-supplied resume sequence into a sane replay window."""
-    if isinstance(value, bool):
-        raise HardeningViolation("seq must be an integer")
     return bounded_int(
         value,
         "seq",
@@ -334,8 +332,6 @@ def bounded_resume_sequence(value: object) -> int:
 
 def bounded_backoff(value: object, field: str = "backoff") -> int:
     """Bound a reconnect/backoff duration in milliseconds."""
-    if isinstance(value, bool):
-        raise HardeningViolation(f"{field} must be an integer")
     return bounded_int(
         value, field, minimum=MIN_BACKOFF_MS, maximum=MAX_BACKOFF_MS, default=0
     )
