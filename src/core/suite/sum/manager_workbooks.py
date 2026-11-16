@@ -11,6 +11,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from .schema import (
     PLEXISUM_FORMAT_VERSION,
 )
+from ..boundaries import (
+    MAX_WORKSPACE_PAYLOAD_BYTES,
+    MAX_WORKSPACE_TITLE_LENGTH,
+    bound_workspace_payload,
+    bound_workspace_text,
+)
 from .manager_protocol import SumManagerProtocol
 from ._shared import (
     SumConflictError,
@@ -31,10 +37,14 @@ class SumManagerWorkbooks(SumManagerProtocol):
         template: bool = False,
     ) -> Dict[str, Any]:
         """Create an empty workbook (or a reusable template when ``template``)."""
-        title = str(title or "").strip()
+        title = bound_workspace_text(
+            title,
+            "title",
+            max_length=MAX_WORKSPACE_TITLE_LENGTH,
+            required=True,
+            error_cls=SumValidationError,
+        )
         scope = str(scope or "personal").strip().lower()
-        if not title or len(title) > 500:
-            raise SumValidationError("title must be between 1 and 500 characters")
         if scope not in ("personal", "server"):
             raise SumValidationError("scope must be personal or server")
         if scope == "server" and server_id is None:
@@ -116,9 +126,13 @@ class SumManagerWorkbooks(SumManagerProtocol):
         template = self._workbook(user_id, template_id)
         if not int(template.get("is_template") or 0):
             raise SumValidationError("Source workbook is not a template")
-        title = str(title or "").strip()
-        if not title or len(title) > 500:
-            raise SumValidationError("title must be between 1 and 500 characters")
+        title = bound_workspace_text(
+            title,
+            "title",
+            max_length=MAX_WORKSPACE_TITLE_LENGTH,
+            required=True,
+            error_cls=SumValidationError,
+        )
         scope = str(scope or "personal").strip().lower()
         if scope not in ("personal", "server"):
             raise SumValidationError("scope must be personal or server")
@@ -576,10 +590,11 @@ class SumManagerWorkbooks(SumManagerProtocol):
     ) -> Dict[str, Any]:
         """Replace the workbook file after validating it is a .plexisum file."""
         self._workbook(user_id, workbook_id, mutation=True)
-        if not isinstance(data, bytes) or not data:
-            raise SumValidationError("Workbook file is required")
-        if len(data) > 50 * 1024 * 1024:
-            raise SumValidationError("Workbook file is too large")
+        data = bound_workspace_payload(
+            data,
+            max_bytes=MAX_WORKSPACE_PAYLOAD_BYTES,
+            error_cls=SumValidationError,
+        )
         self._validate_workbook_file(data)
         if data[:4] == b"PXSM":
             from .container import decode_container

@@ -1,6 +1,12 @@
 import time
 from typing import Any, Dict, List, Optional
 
+from ...boundaries import (
+    MAX_WORKSPACE_DESCRIPTION_LENGTH,
+    MAX_WORKSPACE_TITLE_LENGTH,
+    bound_workspace_tags,
+    bound_workspace_text,
+)
 from .._shared import (
     StashNotFoundError,
     StashPermissionError,
@@ -32,9 +38,19 @@ class ItemCreationMixin(StashManagerProtocol):
         item_type = str(item_type).strip().lower()
         if item_type not in STASH_ITEM_TYPES:
             raise StashValidationError("Unsupported Stash item type")
-        title = str(title or "").strip()
-        if not title or len(title) > 500:
-            raise StashValidationError("title must be between 1 and 500 characters")
+        title = bound_workspace_text(
+            title,
+            "title",
+            max_length=MAX_WORKSPACE_TITLE_LENGTH,
+            required=True,
+            error_cls=StashValidationError,
+        )
+        description = bound_workspace_text(
+            description,
+            "description",
+            max_length=MAX_WORKSPACE_DESCRIPTION_LENGTH,
+            error_cls=StashValidationError,
+        )
         scope, server_id = self._validate_scope(scope, server_id)
         if (
             scope == "server"
@@ -47,9 +63,7 @@ class ItemCreationMixin(StashManagerProtocol):
         self._resolve_media_object(media_object_id, user_id)
         now = int(time.time() * 1000)
         item_id = self._generate_id()
-        clean_tags = sorted(
-            {str(tag).strip()[:80] for tag in (tags or []) if str(tag).strip()}
-        )[:100]
+        clean_tags = bound_workspace_tags(tags)
         self._db.execute(
             "INSERT INTO stash_items (id, owner_id, item_type, title, description, scope, server_id, collection_id, media_object_id, metadata_json, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
