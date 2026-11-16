@@ -44,6 +44,54 @@ import utils.config as config
 router = APIRouter()
 
 
+def _load_target_admin_context(
+    db, admin_id: int, target_user_id: int
+) -> tuple[bool, int, int]:
+    """Resolve everything the admin-hierarchy gate needs in ONE query.
+
+    The old flow probed ``admin_users`` and then called ``can_manage_admin``,
+    which in turn calls ``get_admin_max_position`` twice -- three round trips
+    per ban/unban.  Scalar subqueries keep the same decisions while collapsing
+    that to a single statement (the two position lookups are independent, so
+    there is nothing to gain from sequential reads).
+    """
+    row = db.fetch_one(
+        """
+        SELECT
+            EXISTS(SELECT 1 FROM admin_users WHERE id = ?) AS target_exists,
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS current_pos,
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS target_pos
+        """,
+        (target_user_id, admin_id, target_user_id),
+    )
+    if not row:
+        return False, 0, 0
+    if isinstance(row, dict):
+        exists = row.get("target_exists", False)
+        current_pos = row.get("current_pos") or 0
+        target_pos = row.get("target_pos") or 0
+    else:
+        exists = row[0]
+        current_pos = row[1] if len(row) > 1 else 0
+        target_pos = row[2] if len(row) > 2 else 0
+    return bool(exists), int(current_pos), int(target_pos)
+
+
+def _can_manage_admin_at(
+    admin_id: int, target_user_id: int, current_pos: int, target_pos: int
+) -> bool:
+    """Same rule as ``can_manage_admin`` but using pre-fetched positions."""
+    if int(admin_id) == int(target_user_id):
+        return False
+    return current_pos > target_pos
+
+
 def _ensure_can_target_admin(admin_id: int, target_user_id: int) -> None:
     """Platform-wide bans must not bypass the admin hierarchy.
 
@@ -56,12 +104,12 @@ def _ensure_can_target_admin(admin_id: int, target_user_id: int) -> None:
             status_code=500,
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
-    row = db.fetch_one("SELECT id FROM admin_users WHERE id = ?", (target_user_id,))
-    if not row:
+    exists, current_pos, target_pos = _load_target_admin_context(
+        db, admin_id, target_user_id
+    )
+    if not exists:
         return
-    from src.core.admin.permissions import can_manage_admin
-
-    if not can_manage_admin(db, int(admin_id), int(target_user_id)):
+    if not _can_manage_admin_at(admin_id, target_user_id, current_pos, target_pos):
         raise HTTPException(
             status_code=403,
             detail={
