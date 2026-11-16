@@ -7,6 +7,7 @@ from typing import Optional, Annotated
 from datetime import datetime, timezone
 import csv
 import io
+import time
 
 from pydantic import BeforeValidator
 
@@ -23,6 +24,69 @@ router = APIRouter()
 # window (a year of logs is well under this); cap the read so a single request
 # cannot turn an unbounded table scan into an unbounded allocation.
 _MAX_AUDIT_EXPORT_ROWS = 10_000
+
+# A filtered query still has to be bounded: the deepest reachable page is
+# capped and the widest date window is one retention year. Without an indexed
+# predicate the list/export paths would scan the entire table (and the count
+# query would too), so every scan is forced to carry one.
+_MAX_AUDIT_PAGE = 10_000
+_MAX_AUDIT_SCAN_DAYS = 366
+_MAX_AUDIT_DATE_RANGE_MS = _MAX_AUDIT_SCAN_DAYS * 24 * 60 * 60 * 1000
+
+
+def _audit_config() -> dict:
+    """Admin-audit query settings from config (best effort)."""
+    try:
+        import utils.config as config
+
+        return config.get("admin.audit", {}) or {}
+    except Exception:
+        return {}
+
+
+def _bounded_scan_days() -> int:
+    raw = _audit_config().get("max_scan_days", _MAX_AUDIT_SCAN_DAYS)
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        days = _MAX_AUDIT_SCAN_DAYS
+    return max(1, min(_MAX_AUDIT_SCAN_DAYS, days))
+
+
+def _validate_date_window(date_from, date_to) -> None:
+    """Reject inverted or unbounded-wide date ranges before they hit SQL."""
+    if date_from is None or date_to is None:
+        return
+    if date_to < date_from:
+        raise HTTPException(
+            status_code=400, detail="date_to must not precede date_from"
+        )
+    if date_to - date_from > _MAX_AUDIT_DATE_RANGE_MS:
+        raise HTTPException(
+            status_code=400, detail="Audit date range exceeds the maximum window"
+        )
+
+
+def _enforce_indexed_scan(conditions, params) -> None:
+    """Ensure an indexed predicate exists before any audit table scan.
+
+    Callers that supply no filter either get a hard 400 (when
+    ``admin.audit.require_indexed_filter`` is enabled) or an automatically
+    injected, bounded ``created_at`` lower bound. The latter keeps legacy
+    callers working while guaranteeing that no request ever scans the whole
+    table; ``idx_admin_audit_created`` (and every other audit index) keeps the
+    fan-out proportionate to the requested window.
+    """
+    if conditions:
+        return
+    if bool(_audit_config().get("require_indexed_filter", False)):
+        raise HTTPException(
+            status_code=400,
+            detail="An indexed filter is required for audit scans",
+        )
+    cutoff_ms = int(time.time() * 1000) - _bounded_scan_days() * 86400 * 1000
+    conditions.append("created_at >= ?")
+    params.append(cutoff_ms)
 
 
 def _coerce_nullable_int(value):
@@ -75,7 +139,7 @@ async def get_audit_logs(
     ),
     date_from: Annotated[NullableInt, Query(description="Start timestamp (ms)")] = None,
     date_to: Annotated[NullableInt, Query(description="End timestamp (ms)")] = None,
-    page: int = Query(1, ge=1, description="Page number"),
+    page: int = Query(1, ge=1, le=_MAX_AUDIT_PAGE, description="Page number"),
     per_page: int = Query(50, ge=1, le=200, description="Items per page"),
 ):
     """
@@ -120,6 +184,9 @@ async def get_audit_logs(
         if date_to is not None:
             conditions.append("created_at <= ?")
             params.append(date_to)
+
+        _validate_date_window(date_from, date_to)
+        _enforce_indexed_scan(conditions, params)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
@@ -181,6 +248,8 @@ async def get_audit_logs(
             "per_page": per_page,
             "pages": (total + per_page - 1) // per_page,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Audit logs retrieval error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -245,6 +314,8 @@ async def get_audit_stats(request: Request):
                 stats["by_action_family"][family] = count
 
         return stats
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Audit stats retrieval error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -320,6 +391,9 @@ async def export_audit_logs(
         if date_to is not None:
             conditions.append("created_at <= ?")
             params.append(date_to)
+
+        _validate_date_window(date_from, date_to)
+        _enforce_indexed_scan(conditions, params)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
@@ -404,6 +478,8 @@ async def export_audit_logs(
             media_type="text/csv",
             headers={"Content-Disposition": content_disposition("audit_logs.csv")},
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Audit export error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")

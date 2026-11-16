@@ -59,6 +59,10 @@ MAX_ACTOR_CHARS = 128
 MAX_STATUS_CHARS = 32
 MAX_PAYLOAD_CHARS = 16 * 1024
 MAX_READ_ROWS = 10_000
+MAX_QUERY_RESULTS = 1_000
+MAX_QUERY_OFFSET = 100_000
+MAX_QUERY_WINDOW_MS = 366 * 24 * 60 * 60 * 1000
+MAX_SCAN_ROWS = 100_000
 
 GENESIS = GENESIS_HASH  # convenient back-compat alias for callers/tests
 
@@ -307,6 +311,78 @@ class AuditChain:
                     if len(rows) >= limit:
                         break
         return rows
+
+    def query(
+        self,
+        *,
+        action: Optional[str] = None,
+        actor: Optional[str] = None,
+        target_id: Optional[str] = None,
+        since_ms: Optional[int] = None,
+        until_ms: Optional[int] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Selective, bounded read over the chain.
+
+        A full-file scan is never allowed: at least one selective filter (an
+        exact ``action``/``actor``/``target_id`` or a bounded time window) must
+        be supplied. Results and the number of inspected rows are capped, so a
+        privileged caller cannot walk the whole trail in one request.
+        """
+        has_selector = any(
+            value is not None
+            for value in (action, actor, target_id, since_ms, until_ms)
+        )
+        if not has_selector:
+            raise HardeningViolation("an indexed audit filter is required")
+        if since_ms is not None and until_ms is not None:
+            since_ms = bounded_int(
+                since_ms, "since_ms", minimum=0, maximum=MAX_TIMESTAMP_MS
+            )
+            until_ms = bounded_int(
+                until_ms, "until_ms", minimum=0, maximum=MAX_TIMESTAMP_MS
+            )
+            if until_ms < since_ms:
+                raise HardeningViolation("until_ms must not precede since_ms")
+            if until_ms - since_ms > MAX_QUERY_WINDOW_MS:
+                raise HardeningViolation("audit query window is too wide")
+        limit = bounded_int(limit, "limit", minimum=1, maximum=MAX_QUERY_RESULTS)
+        offset = bounded_int(offset, "offset", minimum=0, maximum=MAX_QUERY_OFFSET)
+
+        matches: List[Dict[str, Any]] = []
+        scanned = 0
+        matched = 0
+        with self._exclusive():
+            if not self.path.exists():
+                return []
+            with open(self.path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    scanned += 1
+                    if scanned > MAX_SCAN_ROWS:
+                        raise HardeningViolation("audit query scan budget exceeded")
+                    record = json.loads(line)
+                    entry = record.get("entry") or {}
+                    payload = entry.get("payload") or {}
+                    if action is not None and entry.get("action") != action:
+                        continue
+                    if actor is not None and entry.get("actor") != actor:
+                        continue
+                    if target_id is not None and payload.get("target_id") != target_id:
+                        continue
+                    ts = entry.get("ts", 0)
+                    if since_ms is not None and ts < since_ms:
+                        continue
+                    if until_ms is not None and ts > until_ms:
+                        continue
+                    matched += 1
+                    if matched > offset:
+                        matches.append(self._public_record(record))
+                        if len(matches) >= limit:
+                            break
+        return matches[:limit]
 
     def last_checksum(self) -> str:
         """Return the current head checksum (``GENESIS_HASH`` for an empty log)."""
