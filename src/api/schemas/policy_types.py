@@ -17,11 +17,44 @@ Usage::
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from pydantic import AfterValidator
 
+from src.core.security.errors import TextRejected
 from src.core.security.policies import TEXT_POLICIES, TextPolicy
+
+# Invisible characters that let one string render as another. C0 + DEL + C1
+# corrupt terminals and logs; the bidirectional controls reorder displayed
+# text so ``evil\u202eexe.exe`` reads as ``evilexe.exe`` without changing the
+# stored value. The zero-width joiner (U+200D) is deliberately absent: it is a
+# legitimate part of many emoji sequences and rejecting it would refuse ordinary
+# text.
+UNSAFE_UNICODE = re.compile(
+    r"[\x00-\x1f\x7f-\x9f"  # C0 controls, DEL, C1 controls
+    r"\u061c\u200e\u200f"  # Arabic/left/right directional marks
+    r"\u202a-\u202e\u2066-\u2069"  # bidi embedding, overrides and isolates
+    r"\u2028\u2029\u2060\ufeff]"  # line/paragraph separators, word joiner, BOM
+)
+
+
+def reject_unsafe_unicode(value: str, field: str = "value") -> str:
+    """Reject control characters and bidirectional text overrides.
+
+    This is the shared validator for every policy-annotated text field. It runs
+    ahead of the named policy in :func:`policy_checked`, so adding a new text
+    policy cannot accidentally opt a field out of this rule.
+    """
+    if not value:
+        return value
+    if UNSAFE_UNICODE.search(value):
+        raise TextRejected(
+            f"{field} must not contain control characters or bidirectional "
+            "text overrides",
+            field=field,
+        )
+    return value
 
 
 def policy_checked(policy_name: str) -> AfterValidator:
@@ -34,7 +67,9 @@ def policy_checked(policy_name: str) -> AfterValidator:
     policy: TextPolicy = TEXT_POLICIES[policy_name]
 
     def check(value: str) -> str:
-        return policy.check(value or "", "This field")
+        text = value or ""
+        reject_unsafe_unicode(text, "This field")
+        return policy.check(text, "This field")
 
     setattr(check, "__policy_name__", policy_name)
     setattr(check, "__policy__", policy)
