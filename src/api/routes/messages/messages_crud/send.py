@@ -486,6 +486,11 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                 channel_id=cid,
                 media_mod=api.get_media(),
                 viewer_user_id=current_user.user_id,
+                # A message that was just created cannot have suppressed
+                # embeds: suppression is a later moderator action. Supplying
+                # the flag keeps the serializer from issuing a one-off
+                # are_embeds_suppressed() query for every send response.
+                suppress_embeds=False,
             )
 
             await self._broadcast_message_create(
