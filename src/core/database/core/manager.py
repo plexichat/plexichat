@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional, Tuple
 import utils.config as config
 import utils.logger as logger
 
+from src.core.security.hardening import bounded_int
+
 from ..engines.base import BaseEngine
 from ..engines.sqlite import SqliteEngine
 from ..engines.postgres import PostgresEngine
@@ -91,13 +93,32 @@ class Database(
 
         monitoring_config = config.get("monitoring", {})
         alert_thresholds = monitoring_config.get("alert_thresholds", {})
-        self._slow_query_threshold_ms = alert_thresholds.get("query_time_ms", 5000)
+        # These values drive monitor timers and per-connection validation.
+        # A negative interval makes the monitor poll on every tick and an
+        # enormous idle time keeps dead connections alive indefinitely, so
+        # constrain them to sane ranges at the config boundary.
+        self._slow_query_threshold_ms = bounded_int(
+            alert_thresholds.get("query_time_ms", 5000),
+            "query_time_ms",
+            minimum=1,
+            maximum=3_600_000,
+        )
 
         pool_config = self.config.get("connection_pool", {})
         self._enable_validation = pool_config.get("enable_validation", True)
         self._validation_query = pool_config.get("validation_query", "SELECT 1")
-        self._validation_interval = pool_config.get("validation_interval", 60)
-        self._max_idle_time = pool_config.get("max_idle_time", 1800)
+        self._validation_interval = bounded_int(
+            pool_config.get("validation_interval", 60),
+            "validation_interval",
+            minimum=1,
+            maximum=86_400,
+        )
+        self._max_idle_time = bounded_int(
+            pool_config.get("max_idle_time", 1800),
+            "max_idle_time",
+            minimum=1,
+            maximum=86_400,
+        )
 
         max_age_hours = pool_config.get("max_connection_age_hours", 2.0)
         self._max_connection_age_seconds = max_age_hours * 3600

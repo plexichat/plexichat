@@ -169,3 +169,23 @@ class TestRateLimitInputBounds:
                 rl.check_rate_limit("probe", 10**9, 60)
         finally:
             rl.get_client = original
+
+
+class TestDatabaseTimingBounds:
+    def test_rejects_out_of_range_timing_config(self):
+        import utils.config as config
+
+        from src.core.database.core.manager import Database
+
+        original = config.get
+        try:
+            bad = {
+                "type": "sqlite",
+                "monitoring": {"alert_thresholds": {"query_time_ms": -5}},
+            }
+            config.get = lambda key, default=None: bad if key == "database" else default
+            db = object.__new__(Database)
+            with pytest.raises(HardeningViolation):
+                db._init_once()
+        finally:
+            config.get = original
