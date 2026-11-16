@@ -335,22 +335,100 @@ def _authenticate(
     return None
 
 
+def _invalid_payload() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"error": {"code": 400, "message": "Invalid federation payload"}},
+    )
+
+
+# A signed envelope is small and flat. Bound both the raw body (in
+# ``read_body_capped``) and the parsed structure so a valid HMAC over a huge or
+# deeply nested JSON document cannot force pathological parsing/allocation on
+# the receiver.
+MAX_PAYLOAD_KEYS = 128
+MAX_PAYLOAD_SEQUENCE = 256
+MAX_PAYLOAD_NESTING = 8
+MAX_PAYLOAD_TEXT = 4096
+MAX_PAYLOAD_KEY_LENGTH = 128
+MAX_PAYLOAD_INT = 2**63 - 1
+
+
+def _bound_payload_value(value: Any, depth: int = 0) -> None:
+    if depth > MAX_PAYLOAD_NESTING:
+        raise _invalid_payload()
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if abs(value) > MAX_PAYLOAD_INT:
+            raise _invalid_payload()
+        return
+    if isinstance(value, float):
+        return
+    if isinstance(value, str):
+        if len(value) > MAX_PAYLOAD_TEXT:
+            raise _invalid_payload()
+        return
+    if isinstance(value, dict):
+        if len(value) > MAX_PAYLOAD_KEYS:
+            raise _invalid_payload()
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key) > MAX_PAYLOAD_KEY_LENGTH:
+                raise _invalid_payload()
+            _bound_payload_value(item, depth + 1)
+        return
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_PAYLOAD_SEQUENCE:
+            raise _invalid_payload()
+        for item in value:
+            _bound_payload_value(item, depth + 1)
+        return
+    raise _invalid_payload()
+
+
+def _require_json_content_type(request: Request) -> None:
+    """Reject non-JSON bodies *before* they are read or parsed.
+
+    Federation peers sign a JSON envelope; anything else (HTML, form data, an
+    uploaded file) is either a probe or an attempt to make a parser consume a
+    different content type than the signature covered.
+    """
+    raw = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if raw != "application/json" and not (
+        raw.startswith("application/") and raw.endswith("+json")
+    ):
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "error": {
+                    "code": 415,
+                    "message": "Federation payloads must be application/json",
+                }
+            },
+        )
+
+
 def _parse_json_body(body: bytes) -> Dict[str, Any]:
     import json
 
     try:
         payload = json.loads(body.decode("utf-8"))
     except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid federation payload"}},
-        )
+        raise _invalid_payload()
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Invalid federation payload"}},
-        )
+        raise _invalid_payload()
+    _bound_payload_value(payload)
     return payload
+
+
+async def _read_federation_body(request: Request) -> bytes:
+    """Enforce the content type, then cap and return the raw HMAC-covered body.
+
+    Authentication still happens before JSON parsing; the content type is
+    checked first so an unexpected body never reaches a parser at all.
+    """
+    _require_json_content_type(request)
+    return await read_body_capped(request, MAX_FEDERATION_BODY)
 
 
 async def _relay_op(artifact_id, op, actor_id) -> int:
@@ -377,7 +455,7 @@ async def _relay_op(artifact_id, op, actor_id) -> int:
 async def artifact_op_inbound(request: Request):
     """Authenticate and relay a cross-instance artifact op."""
     manager = _get_plexijoin_manager()
-    body = await read_body_capped(request, MAX_FEDERATION_BODY)
+    body = await _read_federation_body(request)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")
@@ -414,7 +492,7 @@ async def artifact_event_inbound(request: Request):
     informational notification and is recorded, not applied to local state.
     """
     manager = _get_plexijoin_manager()
-    body = await read_body_capped(request, MAX_FEDERATION_BODY)
+    body = await _read_federation_body(request)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")
@@ -451,7 +529,7 @@ async def join_request_inbound(request: Request):
     admin review endpoints.
     """
     manager = _get_plexijoin_manager()
-    body = await read_body_capped(request, MAX_FEDERATION_BODY)
+    body = await _read_federation_body(request)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")
@@ -523,7 +601,7 @@ async def message_inbound(request: Request):
     message is acknowledged, accounted, and logged.
     """
     manager = _get_plexijoin_manager()
-    body = await read_body_capped(request, MAX_FEDERATION_BODY)
+    body = await _read_federation_body(request)
     signature = request.headers.get("x-plexijoin-signature")
     timestamp = request.headers.get("x-plexijoin-timestamp")
     nonce = request.headers.get("x-plexijoin-nonce")

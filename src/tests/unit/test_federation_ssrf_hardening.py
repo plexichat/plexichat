@@ -6,14 +6,18 @@ gate that resolves the hostname and rejects non-global addresses *before* the
 URL is persisted, and the re-check applied to every redirect hop.
 """
 
+import json
 import socket
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from src.api.routes.federation import (
     FederationEndpointRejected,
     ResolvedEndpoint,
+    _parse_json_body,
+    _require_json_content_type,
     assert_tls_verification_enabled,
     build_pinned_target,
     require_secure_remote_endpoint,
@@ -186,3 +190,58 @@ def test_tls_verification_cannot_be_disabled():
     unverified = ssl._create_unverified_context()
     with pytest.raises(FederationEndpointRejected):
         assert_tls_verification_enabled(unverified)
+
+
+# --- Bounded payloads + content-type gate ---------------------------------
+
+
+class _RequestStub:
+    def __init__(self, content_type):
+        self.headers = {"content-type": content_type} if content_type is not None else {}
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["application/json", "application/json; charset=utf-8", "APPLICATION/JSON", "application/vnd.plexichat+json"],
+)
+def test_json_content_types_are_accepted(content_type):
+    _require_json_content_type(_RequestStub(content_type))
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/html", "application/x-www-form-urlencoded", "multipart/form-data", "", None],
+)
+def test_unexpected_content_types_are_rejected_before_parsing(content_type):
+    with pytest.raises(HTTPException) as exc:
+        _require_json_content_type(_RequestStub(content_type))
+    assert exc.value.status_code == 415
+
+
+def test_valid_payload_parses():
+    assert _parse_json_body(b'{"artifact_id": 1, "op": {"op_type": "edit"}}') == {
+        "artifact_id": 1,
+        "op": {"op_type": "edit"},
+    }
+
+
+def test_deeply_nested_payload_is_rejected():
+    nested = {"x": 1}
+    for _ in range(12):
+        nested = {"x": nested}
+    with pytest.raises(HTTPException) as exc:
+        _parse_json_body(json.dumps(nested).encode())
+    assert exc.value.status_code == 400
+
+
+def test_wide_payload_is_rejected():
+    payload = {f"k{i}": i for i in range(200)}
+    with pytest.raises(HTTPException) as exc:
+        _parse_json_body(json.dumps(payload).encode())
+    assert exc.value.status_code == 400
+
+
+def test_oversized_text_field_is_rejected():
+    with pytest.raises(HTTPException) as exc:
+        _parse_json_body(json.dumps({"note": "x" * 5000}).encode())
+    assert exc.value.status_code == 400
