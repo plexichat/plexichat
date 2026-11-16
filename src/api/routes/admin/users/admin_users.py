@@ -134,6 +134,52 @@ def _can_manage_admin_at(
     return current_pos > target_pos
 
 
+def _load_role_for_delegation(db, name: str, admin_id: int) -> dict:
+    """Fetch a role by name plus the actor's position in a single query."""
+    row = db.fetch_one(
+        """
+        SELECT
+            (SELECT id FROM admin_roles WHERE name = ?) AS role_id,
+            (SELECT position FROM admin_roles WHERE name = ?) AS role_pos,
+            (SELECT is_system FROM admin_roles WHERE name = ?) AS role_system,
+            (SELECT COALESCE(MAX(r.position), 0)
+               FROM admin_roles r
+               JOIN admin_role_assignments a ON r.id = a.role_id
+              WHERE a.admin_id = ?) AS current_pos
+        """,
+        (name, name, name, admin_id),
+    )
+    if not row:
+        return {"role_id": None, "role_pos": None, "role_system": False, "current_pos": 0}
+    if isinstance(row, dict):
+        role_id = row.get("role_id")
+        role_pos = row.get("role_pos")
+        role_system = row.get("role_system", False)
+        current_pos = row.get("current_pos") or 0
+    else:
+        role_id = row[0]
+        role_pos = row[1] if len(row) > 1 else None
+        role_system = row[2] if len(row) > 2 else False
+        current_pos = row[3] or 0 if len(row) > 3 else 0
+    return {
+        "role_id": role_id,
+        "role_pos": None if role_pos is None else int(role_pos),
+        "role_system": bool(role_system),
+        "current_pos": int(current_pos),
+    }
+
+
+def _can_manage_role_at(
+    current_pos: int, role_pos: int | None, role_system: bool
+) -> bool:
+    """Same rule as ``can_manage_role`` using pre-fetched hierarchy."""
+    if role_pos is None:
+        return False
+    if role_system:
+        return current_pos >= 100
+    return current_pos > role_pos
+
+
 class AdminUsersMixin(AdminUsersRouterProtocol):
     async def list_admin_users(self, request: Request):
         """List administrator accounts from the canonical admin tables."""
@@ -203,13 +249,14 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
         try:
             db = self._get_db()
             auth = self._get_auth()
-            from src.core.admin.permissions import can_manage_role, log_admin_action
+            from src.core.admin.permissions import log_admin_action
 
             requested_role = user_data.role
-            role = db.fetch_one(
-                "SELECT id FROM admin_roles WHERE name = ?", (requested_role,)
-            )
-            if not role and requested_role == "admin":
+            role_ctx = _load_role_for_delegation(db, requested_role, admin_id)
+            role_id = role_ctx["role_id"]
+            role_pos = role_ctx["role_pos"]
+            role_system = role_ctx["role_system"]
+            if not role_id and requested_role == "admin":
                 import json
                 from src.utils.encryption import generate_snowflake_id
 
@@ -228,8 +275,10 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                         admin_id,
                     ),
                 )
-                role = {"id": role_id}
-            if not role:
+                # The freshly inserted built-in role has a known position.
+                role_pos = 10
+                role_system = False
+            if not role_id:
                 raise HTTPException(
                     status_code=400,
                     detail={
@@ -239,8 +288,8 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                         }
                     },
                 )
-            role_id = _required_row_value(role, "id", 0, int)
-            if not can_manage_role(db, admin_id, role_id):
+            role_id = _required_row_value({"id": role_id}, "id", 0, int)
+            if not _can_manage_role_at(role_ctx["current_pos"], role_pos, role_system):
                 raise HTTPException(
                     status_code=403,
                     detail={
@@ -327,7 +376,7 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                     detail={"error": {"code": 404, "message": "Admin user not found"}},
                 )
 
-            from src.core.admin.permissions import can_manage_role, log_admin_action
+            from src.core.admin.permissions import log_admin_action
 
             if not _can_manage_admin_at(
                 admin_id, uid, hierarchy["current_pos"], hierarchy["target_pos"]
@@ -384,10 +433,8 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
 
             if user_data.role:
                 requested_role = user_data.role
-                role = db.fetch_one(
-                    "SELECT id FROM admin_roles WHERE name = ?", (requested_role,)
-                )
-                if not role:
+                role_ctx = _load_role_for_delegation(db, requested_role, admin_id)
+                if not role_ctx["role_id"]:
                     raise HTTPException(
                         status_code=400,
                         detail={
@@ -397,8 +444,14 @@ class AdminUsersMixin(AdminUsersRouterProtocol):
                             }
                         },
                     )
-                role_id = _required_row_value(role, "id", 0, int)
-                if not can_manage_role(db, admin_id, role_id):
+                role_id = _required_row_value(
+                    {"id": role_ctx["role_id"]}, "id", 0, int
+                )
+                if not _can_manage_role_at(
+                    role_ctx["current_pos"],
+                    role_ctx["role_pos"],
+                    role_ctx["role_system"],
+                ):
                     raise HTTPException(
                         status_code=403,
                         detail={

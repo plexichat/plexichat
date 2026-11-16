@@ -148,3 +148,118 @@ def test_delete_admin_user_uses_one_hierarchy_lookup(monkeypatch):
     hierarchy_calls = [c for c in db.fetch_calls if "AS target_exists" in c[0]]
     assert len(hierarchy_calls) == 1
     assert len(db.fetch_calls) == 1
+
+
+class _SeqDB:
+    """DB double returning queued rows in call order."""
+
+    def __init__(self, rows):
+        self.queue = list(rows)
+        self.fetch_calls = []
+        self.execute_calls = []
+
+    def fetch_one(self, sql, params=()):
+        self.fetch_calls.append((sql, tuple(params)))
+        return self.queue.pop(0) if self.queue else None
+
+    def execute(self, sql, params=()):
+        self.execute_calls.append((sql, tuple(params)))
+
+
+def _role_ctx(role_id=5, role_pos=10, system=0, current_pos=100):
+    return {
+        "role_id": role_id,
+        "role_pos": role_pos,
+        "role_system": system,
+        "current_pos": current_pos,
+    }
+
+
+@pytest.mark.unit
+def test_load_role_for_delegation_is_one_query():
+    db = _CountingDB(_role_ctx())
+    result = au._load_role_for_delegation(db, "moderator", 1)
+    assert len(db.fetch_calls) == 1
+    assert db.fetch_calls[0][1] == ("moderator", "moderator", "moderator", 1)
+    assert result["role_id"] == 5
+    assert result["current_pos"] == 100
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "current_pos,role_pos,system",
+    [
+        (100, 50, False),
+        (50, 50, False),
+        (100, 0, True),
+        (99, 0, True),
+        (100, None, False),
+    ],
+)
+def test_role_decision_matches_core_helper(monkeypatch, current_pos, role_pos, system):
+    row = None if role_pos is None else {"position": role_pos, "is_system": int(system)}
+
+    class _Db:
+        def fetch_one(self, sql, params=()):
+            return row
+
+    monkeypatch.setattr(perm_core, "get_admin_max_position", lambda db, aid: current_pos)
+    expected = perm_core.can_manage_role(_Db(), 1, 3)
+    assert au._can_manage_role_at(current_pos, role_pos, system) is expected
+
+
+@pytest.mark.unit
+def test_create_admin_user_batches_role_lookup_with_hierarchy(monkeypatch):
+    db = _SeqDB([_role_ctx(), None, {"password_hash": "hash"}])
+    _patch(monkeypatch)
+    monkeypatch.setattr(api, "get_db", lambda: db)
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("create_admin_user must use the batched role lookup")
+
+    monkeypatch.setattr(perm_core, "can_manage_role", _unexpected)
+
+    class _Auth:
+        def register(self, **kwargs):
+            return SimpleNamespace(id=99)
+
+    monkeypatch.setattr(api, "get_auth", lambda: _Auth())
+
+    asyncio.run(
+        _Router().create_admin_user(
+            _request(),
+            au.AdminUserCreate(
+                username="mod", email="mod@example.com", password="pw", role="moderator"
+            ),
+        )
+    )
+
+    role_calls = [c for c in db.fetch_calls if "AS role_id" in c[0]]
+    assert len(role_calls) == 1
+    assert len(db.fetch_calls) == 3
+
+
+@pytest.mark.unit
+def test_update_role_change_batches_role_lookup_with_hierarchy(monkeypatch):
+    db = _SeqDB(
+        [
+            {
+                "target_exists": 1,
+                "current_pos": 100,
+                "target_pos": 50,
+                "account_locked": 0,
+            },
+            _role_ctx(),
+        ]
+    )
+    _patch(monkeypatch)
+    monkeypatch.setattr(api, "get_db", lambda: db)
+    monkeypatch.setattr(api, "get_auth", lambda: object())
+
+    asyncio.run(
+        _Router().update_admin_user(_request(), "2", au.AdminUserUpdate(role="moderator"))
+    )
+
+    role_calls = [c for c in db.fetch_calls if "AS role_id" in c[0]]
+    assert len(role_calls) == 1
+    assert len(db.fetch_calls) == 2
