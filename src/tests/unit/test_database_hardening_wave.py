@@ -105,3 +105,27 @@ class TestFtsPageBounds:
         assert _bounded_page(10**9, -5) == (_FTS_MAX_RESULTS, 0)
         assert _bounded_page(-1, 10) == (1, 10)
         assert _bounded_page("abc", "xyz") == (25, 0)
+
+
+class TestReportQueueIndexes:
+    def test_migration_indexes_are_static_identifiers(self):
+        import importlib.util
+        from pathlib import Path
+
+        import src.core.migrations.migrations as pkg
+
+        from src.core.security.hardening import require_identifier
+
+        path = Path(pkg.__file__).parent / "006_report_queue_indexes.py"
+        spec = importlib.util.spec_from_file_location("migration_006", path)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        covered = {(cols, name) for name, cols in migration.INDEXES}
+        assert len(covered) == len(migration.INDEXES)
+        for name, columns in migration.INDEXES:
+            require_identifier(name, "index name")
+            table, cols = columns.split("(", 1)
+            require_identifier(table, "table name")
+            for col in cols.rstrip(")").split(","):
+                require_identifier(col.strip(), "column name")
