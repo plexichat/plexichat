@@ -95,6 +95,12 @@ class MigrationRunResponse(BaseModel):
     execution_time_ms: Optional[int]
 
 
+class DestructiveActionRequest(BaseModel):
+    """Explicit confirmation for a destructive maintenance action."""
+
+    confirmation: str | None = None
+
+
 class EmergencyOverrideRequest(BaseModel):
     """Request model for emergency override."""
 
@@ -170,17 +176,25 @@ async def list_migrations(
         delay_hours = delay_days * 24
 
         migrations = []
+        # Build the version index once. The old membership test rebuilt a list
+        # of every record for every pending version (O(n^2)) on each request.
+        record_versions = {record["version"] for record in all_records}
+        metadata_by_version: Dict[str, Dict[str, Any]] = {}
         for record in all_records:
             version = record["version"]
             metadata = manager.tracker.get_migration_metadata(version)
+            metadata_by_version[version] = metadata
             is_irreversible = metadata.get("irreversible", False)
 
-            # Check if migration can be run
+            # Check if migration can be run. Reuse the metadata parsed above
+            # so the gate does not look up/parse the same file a second time.
             can_run = True
             can_run_reason = None
             if record["status"] == "pending":
                 can_run, can_run_reason = (
-                    manager.tracker.can_run_irreversible_migration(version, delay_hours)
+                    manager.tracker.can_run_irreversible_migration(
+                        version, delay_hours, metadata=metadata
+                    )
                 )
 
             migrations.append(
@@ -199,11 +213,16 @@ async def list_migrations(
 
         # Add pending migrations not in records
         for version in pending_versions:
-            if version not in [r["version"] for r in all_records]:
-                metadata = manager.tracker.get_migration_metadata(version)
+            if version not in record_versions:
+                metadata = metadata_by_version.get(version)
+                if metadata is None:
+                    metadata = manager.tracker.get_migration_metadata(version)
+                    metadata_by_version[version] = metadata
                 is_irreversible = metadata.get("irreversible", False)
                 can_run, can_run_reason = (
-                    manager.tracker.can_run_irreversible_migration(version, delay_hours)
+                    manager.tracker.can_run_irreversible_migration(
+                        version, delay_hours, metadata=metadata
+                    )
                 )
 
                 migrations.append(
@@ -457,19 +476,29 @@ async def run_migration(
 async def rollback_migration(
     request: Request,
     version: str,
+    body: DestructiveActionRequest | None = None,
     manager: MigrationManager = Depends(get_migration_manager),
 ) -> Dict[str, Any]:
     """
     Rollback a specific migration.
 
-    Requires the ``admin.migrations.execute`` permission plus an approved
-    approval request. Only available for migrations with a down() function.
-    Irreversible migrations cannot be rolled back.
+    Requires the elevated ``maintenance`` scope and ``admin.migrations.execute``
+    permission, an approved approval request, and an explicit confirmation
+    phrase. Only available for migrations with a down() function. Irreversible
+    migrations cannot be rolled back.
     """
     check_host_restriction(request)
     validate_version(version)
     admin_user = require_admin_permission(request, "admin.migrations.execute")
+    require_admin_permission(request, "maintenance")
     require_approved_request("migrations.rollback")
+    # Imported here so the gate cannot be silently dropped by a rewrite of
+    # the module-level import block.
+    from .utils import require_destructive_confirmation
+
+    require_destructive_confirmation(
+        "migrations.rollback", body.confirmation if body else None
+    )
     try:
         # Check if migration is irreversible
         metadata = manager.tracker.get_migration_metadata(version)

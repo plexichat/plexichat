@@ -352,7 +352,10 @@ class MigrationTracker(MigrationLockingMixin):
         return self._coerce_datetime(raw)
 
     def can_run_irreversible_migration(
-        self, version: str, delay_hours: int = 168
+        self,
+        version: str,
+        delay_hours: int = 168,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> tuple[bool, str]:
         """
         Check if an irreversible migration can be run based on uptime delay.
@@ -365,11 +368,14 @@ class MigrationTracker(MigrationLockingMixin):
         Args:
             version: Migration version to check
             delay_hours: Required uptime delay in hours (default 7 days)
+            metadata: Already-parsed metadata, when the caller fetched it for
+                the same version (list views parse it once for rendering).
 
         Returns:
             Tuple of (can_run, reason)
         """
-        metadata = self.get_migration_metadata(version)
+        if metadata is None:
+            metadata = self.get_migration_metadata(version)
         if not metadata.get("irreversible"):
             return True, "Migration is reversible"
 
