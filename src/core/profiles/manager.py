@@ -19,6 +19,7 @@ from src.core.security.errors import OutboundUrlRejected
 from src.core.security.hardening import (
     HardeningViolation,
     reject_control_characters,
+    require_http_url,
 )
 
 
@@ -112,6 +113,19 @@ def _ssrf_guard_url(url: str, field_name: str) -> None:
         )
 
 
+def _validate_profile_url(url: str, field_name: str) -> str:
+    """Apply the http(s) scheme allowlist and then the literal SSRF gate.
+
+    ``require_http_url`` rejects non-absolute URLs, embedded credentials and
+    dangerous schemes (``javascript:``, ``data:``, ``file:`` ...); the existing
+    host gate additionally refuses plainly internal addresses. Every stored
+    profile URL goes through both, so no caller can bypass either check.
+    """
+    candidate = require_http_url(url, field_name)
+    _ssrf_guard_url(candidate, field_name)
+    return candidate
+
+
 class ProfileManager:
     """Core profile manager handling all operations."""
 
@@ -170,19 +184,12 @@ class ProfileManager:
                 platform = "other"
             if not url:
                 continue
-            # Basic URL validation - must have a scheme
-            if not url.startswith(("http://", "https://")):
+            # A scheme-less host is a common shorthand; upgrade it to https so
+            # the shared allowlist can judge it. Anything with an explicit
+            # scheme is left as-is and rejected by require_http_url if unsafe.
+            if "://" not in url:
                 url = "https://" + url
-            # Reject dangerous schemes by *prefix* (not by substring), so a
-            # legitimate URL whose path happens to contain "javascript" is kept
-            # and only true javascript:/data: URIs are dropped.
-            lowered = url.lower()
-            if lowered.startswith(("javascript:", "data:")):
-                continue
-            # Defence in depth: SSRF gate the host so a social link cannot
-            # point at internal/loopback/link-local addresses (client-side
-            # SSRF-by-click when a victim opens the link).
-            _ssrf_guard_url(url, "social link url")
+            url = _validate_profile_url(url, "social link url")
             validated.append({"platform": platform, "url": url})
 
         if len(validated) > self.MAX_SOCIAL_LINKS:
@@ -311,21 +318,11 @@ class ProfileManager:
             params.append(bio if bio else None)
 
         if banner_url is not None:
-            # Validate URL scheme up-front so we never persist an
-            # invalid value, even with the dynamic SQL pattern.
+            # A single gate for both the scheme allowlist and internal hosts;
+            # the scheme validator also refuses embedded credentials.
             banner_url = _bounded_text(banner_url, "banner_url", MAX_PROFILE_URL_LENGTH)
-            if banner_url and not banner_url.startswith(("http://", "https://")):
-                raise ValueError("Banner URL must use http or https")
-            # Reject dangerous schemes by *prefix* (not substring), mirroring
-            # _validate_social_links: a legitimate URL whose path contains
-            # e.g. "database:" must not be rejected by a naive substring hit.
-            lowered = banner_url.lower()
-            if lowered.startswith(("javascript:", "data:", "vbscript:")):
-                raise ValueError("Invalid banner URL scheme")
-            # Defence in depth: SSRF gate the host so a banner cannot point at
-            # internal/loopback/link-local addresses.
             if banner_url:
-                _ssrf_guard_url(banner_url, "banner_url")
+                banner_url = _validate_profile_url(banner_url, "banner_url")
             sets.append("banner_url = ?")
             params.append(banner_url if banner_url else None)
 
