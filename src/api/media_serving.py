@@ -424,6 +424,11 @@ def register_attachment_route(app: FastAPI) -> None:
 
                 headers = {
                     "Content-Disposition": disposition,
+                    # Even with a safe Content-Disposition, a browser may sniff
+                    # the body and render a mis-declared HTML/SVG payload under
+                    # our origin. Pin the declared type for every attachment,
+                    # including the inline image/video/audio case.
+                    "X-Content-Type-Options": "nosniff",
                     "Cache-Control": "private, max-age=3600",
                     "ETag": etag,
                     "Accept-Ranges": "bytes",
