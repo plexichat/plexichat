@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Union
 import utils.config as config
 import utils.logger as logger
 from src.core.base import BaseManager, SnowflakeID
+from src.core.security.hardening import bounded_int
 from .models import (
     Artifact,
     ArtifactType,
@@ -553,8 +554,13 @@ class ArtifactManager(BaseManager):
         if attachment_id is None:
             raise ValueError("attachment must include an 'attachment_id' or 'id'")
 
-        max_size_mb = (self._artifacts_config or config.get("artifacts", {}) or {}).get(
-            "max_artifact_size_mb", 200
+        max_size_mb = bounded_int(
+            (self._artifacts_config or config.get("artifacts", {}) or {}).get(
+                "max_artifact_size_mb", 200
+            ),
+            "max_artifact_size_mb",
+            minimum=1,
+            maximum=10240,
         )
         max_size_bytes = max_size_mb * 1024 * 1024
         # L4: ``size`` may arrive as a string (form/JSON coercion); a raw
@@ -569,6 +575,12 @@ class ArtifactManager(BaseManager):
                 declared_size = int(raw_size)
             except (TypeError, ValueError):
                 raise ValueError("invalid size")
+        if declared_size < 0:
+            raise ValueError("invalid size")
+        if declared_size < 0:
+            raise ValueError("invalid size")
+        if declared_size < 0:
+            raise ValueError("invalid size")
         if declared_size > max_size_bytes:
             raise ValueError(f"Attachment exceeds maximum size of {max_size_mb} MB")
 
