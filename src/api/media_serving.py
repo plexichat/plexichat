@@ -7,13 +7,15 @@ malware-scan gating and range-aware streaming.
 """
 
 import unicodedata
-from typing import Any, AsyncGenerator, Optional
+from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException, status, Response
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 
 import utils.logger as logger
 
+from src.core.media._streaming import is_seekable_stream, iter_bounded_chunks
 from src.core.security.hardening import content_disposition, sanitize_header_filename
 
 from .config import get_api_config
@@ -385,13 +387,7 @@ def register_attachment_route(app: FastAPI) -> None:
                 ):
                     return Response(status_code=304)
 
-                import inspect
-
-                is_seekable = (
-                    not inspect.isgenerator(stream)
-                    and hasattr(stream, "seek")
-                    and hasattr(stream, "tell")
-                )
+                is_seekable = is_seekable_stream(stream)
                 range_header = request.headers.get("Range") if is_seekable else None
                 start, end, is_partial = _parse_byte_range(range_header, size)
 
@@ -442,61 +438,12 @@ def register_attachment_route(app: FastAPI) -> None:
                 if is_partial:
                     headers["Content-Range"] = f"bytes {start}-{end}/{size}"
 
-                # Helper to correctly slice any stream (file or generator)
-                async def get_response_iterator(
-                    s: Any, skip: int, limit: int
-                ) -> AsyncGenerator[bytes, None]:
-                    import inspect
-                    from starlette.concurrency import (
-                        iterate_in_threadpool,
-                        run_in_threadpool,
-                    )
-
-                    count = 0
-                    yielded = 0
-
-                    try:
-                        if (
-                            not inspect.isgenerator(s)
-                            and hasattr(s, "read")
-                            and hasattr(s, "seek")
-                        ):
-                            if skip > 0:
-                                await run_in_threadpool(s.seek, skip)
-                            while yielded < limit:
-                                chunk = await run_in_threadpool(
-                                    s.read, min(65536, limit - yielded)
-                                )
-                                if not chunk:
-                                    break
-                                yield chunk
-                                yielded += len(chunk)
-                            if hasattr(s, "close"):
-                                await run_in_threadpool(s.close)
-                        else:
-                            from typing import cast
-
-                            async for chunk in iterate_in_threadpool(s):
-                                chunk = cast(bytes, chunk)
-                                chunk_len = len(chunk)
-                                if count + chunk_len <= skip:
-                                    count += chunk_len
-                                    continue
-                                chunk_start = max(0, skip - count)
-                                chunk_end = min(
-                                    chunk_len, chunk_start + (limit - yielded)
-                                )
-                                if chunk_start < chunk_end:
-                                    part = chunk[chunk_start:chunk_end]
-                                    yield part
-                                    yielded += len(part)
-                                count += chunk_len
-                                if yielded >= limit:
-                                    break
-                    except Exception as e:
-                        logger.error(f"Media stream interrupted for {filename}: {e}")
-
-                response_iterator = get_response_iterator(stream, start, content_length)
+                # One bounded synchronous iterator drives the whole body:
+                # chunk sizing, range skipping and zero-copy slicing all run
+                # inside the threadpool instead of on the event loop, and the
+                # source stream is closed even on an early client disconnect.
+                body = iter_bounded_chunks(stream, start, content_length)
+                response_iterator = iterate_in_threadpool(body)
                 return StreamingResponse(
                     response_iterator,
                     status_code=status_code,
