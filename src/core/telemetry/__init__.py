@@ -9,6 +9,13 @@ import time
 import logging
 import re
 
+from src.core.security.hardening import (
+    SNOWFLAKE_MAX,
+    HardeningViolation,
+    bounded_int,
+    reject_control_characters,
+)
+
 logger = logging.getLogger(__name__)
 
 _db: Any = None
@@ -160,6 +167,44 @@ def _cfg(key: str, default):
         return default
 
 
+#: Retention/cardinality settings are integers read from config and then used
+#: as buffer sizes and ``LIMIT`` clauses. A non-integer or an arbitrary-large
+#: value (e.g. ``10**30``) is a misconfiguration, not a request to retain
+#: unlimited data, and is rejected at the point of use.
+MAX_DISTINCT_ENDPOINTS = 100_000
+MAX_TOTAL_ROWS = 10_000_000
+MAX_PERCENTILE_SAMPLE_ROWS = 1_000_000
+
+
+def _bounded_cfg(key: str, default: int, minimum: int, maximum: int) -> int:
+    """Read an integer config value, refusing out-of-range/overflow values."""
+    return bounded_int(_cfg(key, default), key, minimum=minimum, maximum=maximum)
+
+
+# ── Event payload / field-size caps ─────────────────────────────────────────
+# A batch is untrusted client data. Bound both the number of events and the
+# size of every field before anything is normalised, stored or logged, so a
+# single hostile flush cannot allocate an arbitrary buffer or mint giant
+# GROUP BY keys.
+MAX_BATCH_ENTRIES = 100
+MAX_ENDPOINT_CHARS = 255
+MAX_METHOD_CHARS = 10
+MAX_CLIENT_ID_CHARS = 96
+MAX_TOTAL_PAYLOAD_CHARS = 16 * 1024
+MAX_RESPONSE_TIME_MS = 24 * 60 * 60 * 1000
+MAX_DB_TIME_MS = 24 * 60 * 60 * 1000
+MAX_DB_QUERIES = 1_000_000
+MAX_STATUS_CODE = 999
+
+
+def _bounded_metric(value: Any, field: str, maximum: float) -> float:
+    """Return a non-negative metric bounded by ``maximum``."""
+    number = float(value)
+    if number < 0 or number > maximum:
+        raise HardeningViolation(f"{field} is outside the allowed range")
+    return number
+
+
 def register_route_templates(paths) -> None:
     """Register server route templates used to allowlist client endpoints."""
     global _templates_registered
@@ -186,7 +231,9 @@ def get_cardinality_stats() -> Dict[str, Any]:
     """Expose cardinality-cap counters for admin dashboards/tests."""
     return {
         "distinct_endpoints": len(_seen_endpoints),
-        "max_distinct_endpoints": int(_cfg("telemetry.max_distinct_endpoints", 500)),
+        "max_distinct_endpoints": _bounded_cfg(
+            "telemetry.max_distinct_endpoints", 500, 1, MAX_DISTINCT_ENDPOINTS
+        ),
         "cardinality_rejections": _cardinality_rejections,
         "overflow_bucket": OVERFLOW_BUCKET,
     }
@@ -238,7 +285,24 @@ def submit_response_times(
     db = _get_db()
     now = int(time.time() * 1000)
     batch_data = []
-    max_distinct = int(_cfg("telemetry.max_distinct_endpoints", 500))
+    max_distinct = _bounded_cfg(
+        "telemetry.max_distinct_endpoints", 500, 1, MAX_DISTINCT_ENDPOINTS
+    )
+
+    # Batch-level caps run before the per-entry loop so a hostile flush fails
+    # fast instead of building an arbitrarily large list of normalized keys.
+    if len(entries) > MAX_BATCH_ENTRIES:
+        raise HardeningViolation(f"telemetry batch exceeds {MAX_BATCH_ENTRIES} entries")
+    total_chars = sum(
+        len(str(entry.get("endpoint", ""))) + len(str(entry.get("method", "")))
+        for entry in entries
+    )
+    if total_chars > MAX_TOTAL_PAYLOAD_CHARS:
+        raise HardeningViolation("telemetry payload exceeds the size limit")
+    if client_id is not None:
+        client_id = reject_control_characters(client_id, "client_id")[
+            :MAX_CLIENT_ID_CHARS
+        ]
 
     try:
         from src.utils.encryption import generate_snowflake_id
@@ -251,13 +315,23 @@ def submit_response_times(
 
     for entry in entries:
         try:
-            endpoint = str(entry.get("endpoint", "")).strip()
+            endpoint = reject_control_characters(
+                str(entry.get("endpoint", "")).strip(), "endpoint"
+            )
             if not endpoint:
                 continue
+            if len(endpoint) > MAX_ENDPOINT_CHARS:
+                raise HardeningViolation("endpoint exceeds the length limit")
             response_time_ms = float(entry.get("response_time_ms", 0))
             if response_time_ms < 0:
                 continue
-            method = str(entry.get("method", "GET")).strip().upper()[:10]
+            if response_time_ms > MAX_RESPONSE_TIME_MS:
+                raise HardeningViolation("response_time_ms is out of range")
+            method = reject_control_characters(
+                str(entry.get("method", "GET")).strip().upper(), "method"
+            )
+            if len(method) > MAX_METHOD_CHARS:
+                raise HardeningViolation("method exceeds the length limit")
 
             # Parse numeric status codes; fall back to a leading numeric
             # prefix, else classify as an error (>=400 semantics preserved)
@@ -269,6 +343,9 @@ def submit_response_times(
             except (ValueError, TypeError):
                 prefix_match = re.match(r"\s*(\d{3})", str(status_code_raw))
                 status_code = int(prefix_match.group(1)) if prefix_match else 500
+            status_code = bounded_int(
+                status_code, "status_code", minimum=0, maximum=MAX_STATUS_CODE
+            )
 
             normalized = _normalize_endpoint(endpoint)[:255]
             # Allowlist: when route templates are registered, anything that
@@ -289,7 +366,20 @@ def submit_response_times(
             # Missing timestamp defaults to server-now (documented) instead
             # of silently dropping the entry.
             raw_ts = entry.get("timestamp")
-            ts_val = now if raw_ts is None else int(raw_ts)
+            ts_val = (
+                now
+                if raw_ts is None
+                else bounded_int(raw_ts, "timestamp", minimum=0, maximum=SNOWFLAKE_MAX)
+            )
+            db_queries = bounded_int(
+                entry.get("db_queries", 0),
+                "db_queries",
+                minimum=0,
+                maximum=MAX_DB_QUERIES,
+            )
+            db_time_ms = _bounded_metric(
+                entry.get("db_time_ms", 0.0), "db_time_ms", MAX_DB_TIME_MS
+            )
 
             batch_data.append(
                 (
@@ -300,8 +390,8 @@ def submit_response_times(
                     status_code,
                     ts_val,
                     client_id,
-                    int(entry.get("db_queries", 0)),
-                    float(entry.get("db_time_ms", 0.0)),
+                    db_queries,
+                    db_time_ms,
                 )
             )
         except Exception as sample_error:
@@ -324,7 +414,7 @@ def submit_response_times(
 
 def _enforce_total_row_cap(db: Any, incoming: int) -> None:
     """Hard-cap total stored rows by trimming the oldest measurements."""
-    max_rows = int(_cfg("telemetry.max_total_rows", 100000))
+    max_rows = _bounded_cfg("telemetry.max_total_rows", 100000, 0, MAX_TOTAL_ROWS)
     if max_rows <= 0:
         return
     try:
@@ -438,7 +528,9 @@ def get_endpoint_stats(
         raw_params.append(client_id_filter)
     # Bound the second pass in SQL so a busy window cannot materialize every
     # raw row in memory; the per-endpoint cap below still applies on top.
-    sample_budget = max(1, int(_cfg("telemetry.percentile_sample_rows", 25000)))
+    sample_budget = _bounded_cfg(
+        "telemetry.percentile_sample_rows", 25000, 1, MAX_PERCENTILE_SAMPLE_ROWS
+    )
     raw_lookup += f" LIMIT {sample_budget}"
 
     by_key: Dict[tuple, List[float]] = {}

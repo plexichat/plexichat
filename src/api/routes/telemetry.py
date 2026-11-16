@@ -12,6 +12,7 @@ import json
 import utils.config as config
 import utils.logger as logger
 from src.api.dependencies import get_optional_user
+from src.api.request_guards import read_body_capped
 from src.core.auth.models import TokenInfo
 from src.api.schemas.telemetry import TelemetrySubmission, TelemetryResponse
 from src.api.schemas.common import ErrorResponse
@@ -28,6 +29,9 @@ _MAX_CSP_REPORT_BYTES = 64 * 1024
 # cannot flood the log with oversized content.
 _MAX_CSP_URI_CHARS = 512
 _MAX_CSP_LOG_CHARS = 4096
+# Client telemetry flushes carry at most 100 small entries; anything larger is
+# abuse. Check the raw body length as well as the parsed entry count.
+_MAX_TELEMETRY_BODY_BYTES = 256 * 1024
 
 
 def _anonymize_client_id(user_id: Any) -> Optional[str]:
@@ -84,6 +88,10 @@ async def submit_response_times(
                 }
             },
         )
+
+    # Enforce the raw-body ceiling before the broad try/except below so an
+    # oversized flush returns 413 instead of being swallowed as a soft failure.
+    await read_body_capped(request, _MAX_TELEMETRY_BODY_BYTES)
 
     user_id = current_user.user_id if current_user else None
 
