@@ -369,18 +369,39 @@ async def get_enhanced_reports(
         clauses.append("status = ?")
         params.append(status_filter)
     where = (" AND ".join(clauses)) if clauses else "1=1"
+    # COUNT(*) OVER() gives the full filtered total alongside the page in a
+    # single scan: the window is evaluated over the whole WHERE set before
+    # LIMIT/OFFSET is applied.  This drops the separate COUNT round trip on
+    # the hot path.  The status/created_at composite index (or the created_at
+    # index when unfiltered) keeps the ordered scan index-backed.
     rows = db.fetch_all(
-        f"SELECT * FROM reports WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        f"SELECT *, COUNT(*) OVER() AS _report_total FROM reports WHERE {where} "
+        "ORDER BY created_at DESC LIMIT ? OFFSET ?",
         tuple(params + [limit, offset]),
     )
-    total_row = db.fetch_one(
-        f"SELECT COUNT(*) AS count FROM reports WHERE {where}", tuple(params)
-    )
-    total = int(total_row["count"]) if total_row else 0
+    if rows and isinstance(rows[0], dict):
+        total = int(rows[0]["_report_total"] or 0)
+        # Never mutate the row dicts: fetch_all caches them, so popping the
+        # helper column would corrupt every later identical request.
+        items = [{k: v for k, v in row.items() if k != "_report_total"} for row in rows]
+    elif rows:
+        total = int(rows[0][-1] or 0)
+        items = [dict(row) for row in rows]
+    elif offset:
+        # A page beyond the end has no row to carry the window total; one
+        # cheap COUNT keeps ``total`` accurate for that rare case.
+        total_row = db.fetch_one(
+            f"SELECT COUNT(*) AS count FROM reports WHERE {where}", tuple(params)
+        )
+        total = int(total_row["count"]) if total_row else 0
+        items = []
+    else:
+        total = 0
+        items = []
     return {
-        "items": [dict(row) for row in rows],
+        "items": items,
         "total": total,
-        "has_more": offset + len(rows) < total,
+        "has_more": offset + len(items) < total,
     }
 
 
