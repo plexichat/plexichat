@@ -65,6 +65,7 @@ Usage:
 """
 
 import json
+import threading
 import time
 from typing import Optional, List, Any
 
@@ -97,6 +98,23 @@ from .validation import (
 _db: Any = None
 _setup_complete = False
 
+# Tier/flag lookups all funnel through ``get_user_features``. Rate limiting and
+# several route helpers call it repeatedly for the same user, so keep a short
+# TTL cache in front of the DB read. Grants with an expiry are deliberately not
+# cached so the time-based checks in ``get_user_tier``/``has_feature`` stay
+# authoritative. Every mutation path invalidates the affected user.
+_FEATURES_CACHE_TTL = 5.0
+_FEATURES_CACHE_MAX = 1024
+_features_cache: dict[tuple[int, int], tuple[float, Optional[UserFeatures]]] = {}
+_features_cache_lock = threading.Lock()
+
+
+def _invalidate_user_features_cache(user_id: int) -> None:
+    """Drop cached feature rows for ``user_id`` across all configured DBs."""
+    with _features_cache_lock:
+        for key in [k for k in _features_cache if k[1] == user_id]:
+            _features_cache.pop(key, None)
+
 
 def setup(db: Any) -> None:
     """Initialize the features module."""
@@ -104,6 +122,8 @@ def setup(db: Any) -> None:
 
     _db = db
     _setup_complete = True
+    with _features_cache_lock:
+        _features_cache.clear()
     logger.info("User features module initialized")
 
 
@@ -243,6 +263,7 @@ def apply_new_user_features(user_id: int) -> Optional[UserFeatures]:
             "Auto-granted: Alpha registration",
         ),
     )
+    _invalidate_user_features_cache(user_id)
 
     logger.info(f"Applied alpha tester features to new user {user_id}")
 
@@ -267,6 +288,15 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
     """
     db = _get_db()
 
+    # Key on the DB identity as well as the user so re-setup with a fresh
+    # database can never serve a row cached from the previous one.
+    cache_key = (id(db), user_id)
+    now = time.monotonic()
+    with _features_cache_lock:
+        cached = _features_cache.get(cache_key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+
     row = db.fetch_one(
         """SELECT id, user_id, rate_limit_tier, badges,
                   granted_by, granted_at, expires_at, notes
@@ -275,25 +305,35 @@ def get_user_features(user_id: int) -> Optional[UserFeatures]:
     )
 
     if not row:
-        return None
+        result: Optional[UserFeatures] = None
+    else:
+        badges = []
+        if row["badges"]:
+            try:
+                badges = json.loads(row["badges"])
+            except (json.JSONDecodeError, TypeError):
+                badges = []
 
-    badges = []
-    if row["badges"]:
-        try:
-            badges = json.loads(row["badges"])
-        except (json.JSONDecodeError, TypeError):
-            badges = []
+        result = UserFeatures(
+            id=row["id"],
+            user_id=row["user_id"],
+            rate_limit_tier=row["rate_limit_tier"] or get_default_tier(),
+            badges=badges,
+            granted_by=row["granted_by"],
+            granted_at=row["granted_at"],
+            expires_at=row["expires_at"],
+            notes=row["notes"],
+        )
 
-    return UserFeatures(
-        id=row["id"],
-        user_id=row["user_id"],
-        rate_limit_tier=row["rate_limit_tier"] or get_default_tier(),
-        badges=badges,
-        granted_by=row["granted_by"],
-        granted_at=row["granted_at"],
-        expires_at=row["expires_at"],
-        notes=row["notes"],
-    )
+    # Time-bound grants are never cached: expiry is evaluated by callers on
+    # each read, so a cached object could otherwise keep a grant alive past
+    # its expiry for the length of the TTL.
+    if result is None or result.expires_at is None:
+        with _features_cache_lock:
+            if len(_features_cache) >= _FEATURES_CACHE_MAX:
+                _features_cache.clear()
+            _features_cache[cache_key] = (now + _FEATURES_CACHE_TTL, result)
+    return result
 
 
 def get_user_tier(user_id: int) -> str:
@@ -450,6 +490,7 @@ def set_user_features(
             f"UPDATE user_features SET {', '.join(updates)} WHERE user_id = ?",
             tuple(params),
         )
+        _invalidate_user_features_cache(user_id)
 
         logger.info(f"Updated features for user {user_id} by admin {admin_id}")
     else:
@@ -474,6 +515,7 @@ def set_user_features(
                 notes,
             ),
         )
+        _invalidate_user_features_cache(user_id)
 
         logger.info(f"Created features for user {user_id} by admin {admin_id}")
 
@@ -521,6 +563,7 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
             (json.dumps(badges), admin_id, int(time.time() * 1000), user_id),
         )
+        _invalidate_user_features_cache(user_id)
 
         # Invalidate profile cache
         try:
@@ -562,6 +605,7 @@ def remove_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
             "UPDATE user_features SET badges = ?, granted_by = ?, granted_at = ? WHERE user_id = ?",
             (json.dumps(badges), admin_id, int(time.time() * 1000), user_id),
         )
+        _invalidate_user_features_cache(user_id)
 
         # Invalidate profile cache
         try:
