@@ -269,12 +269,6 @@ class ChannelInvitesMixin(ChannelBase):
                     if raw_inviter_id
                     else None
                 )
-                raw_inviter_id = getattr(invite, "inviter_id", None)
-                safe_inviter_id = (
-                    require_target_user_id(raw_inviter_id, "inviter_id")
-                    if raw_inviter_id
-                    else None
-                )
                 return InviteInfoResponse(
                     code=invite.code,
                     server_id=SnowflakeID(invite.server_id)
@@ -340,121 +334,9 @@ class ChannelInvitesMixin(ChannelBase):
                     result if isinstance(result, (int, str)) else None
                 )
 
-                async def dispatch_join_events():
-                    try:
-                        from src.api.websocket import (
-                            get_dispatcher,
-                            is_setup as ws_is_setup,
-                        )
-
-                        if not ws_is_setup():
-                            return
-
-                        dispatcher = get_dispatcher()
-                        auth = api.get_auth()
-
-                        async def _fetch_sync(fn, *args):
-                            return await run_in_threadpool(fn, *args)
-
-                        results = await asyncio.gather(
-                            _fetch_sync(
-                                servers_mod.get_server, sid, current_user.user_id
-                            ),
-                            _fetch_sync(
-                                servers_mod.get_channels, current_user.user_id, sid
-                            ),
-                            _fetch_sync(
-                                servers_mod.get_roles, current_user.user_id, sid
-                            ),
-                            return_exceptions=True,
-                        )
-                        server, channels, roles = results
-                        if isinstance(roles, BaseException):
-                            roles = []
-                        if isinstance(channels, BaseException):
-                            channels = []
-                        channels = bounded_bulk_batch(channels, "channels")
-                        roles = bounded_bulk_batch(roles, "roles")
-                        channels = bounded_bulk_batch(channels, "channels")
-                        roles = bounded_bulk_batch(roles, "roles")
-                        channels = bounded_bulk_batch(channels, "channels")
-                        roles = bounded_bulk_batch(roles, "roles")
-                        channels = bounded_bulk_batch(channels, "channels")
-                        roles = bounded_bulk_batch(roles, "roles")
-                        channels = bounded_bulk_batch(channels, "channels")
-                        roles = bounded_bulk_batch(roles, "roles")
-                        channels = bounded_bulk_batch(channels, "channels")
-                        roles = bounded_bulk_batch(roles, "roles")
-                        if server and not isinstance(server, BaseException):
-                            event = events_mod.create_guild_create(
-                                server_id=int(sid or 0),
-                                name=server.name,
-                                owner_id=server.owner_id,
-                                member_count=getattr(server, "member_count", 0),
-                                channels=[
-                                    {
-                                        "id": str(c.id),
-                                        "name": c.name,
-                                        "type": getattr(
-                                            c.channel_type, "value", c.channel_type
-                                        )
-                                        if hasattr(c.channel_type, "value")
-                                        else c.channel_type,
-                                        "position": getattr(c, "position", 0),
-                                    }
-                                    for c in channels
-                                ],
-                                roles=[
-                                    {
-                                        "id": str(r.id),
-                                        "name": r.name,
-                                        "color": r.color,
-                                        "hoist": r.hoist,
-                                        "position": r.position,
-                                    }
-                                    for r in roles
-                                ],
-                            )
-                            await dispatcher.dispatch_event(
-                                event, [current_user.user_id]
-                            )
-
-                        user_data = None
-                        if auth:
-                            user = await run_in_threadpool(
-                                auth.get_user, current_user.user_id
-                            )
-                            if user:
-                                user_data = {
-                                    "id": str(user.id),
-                                    "username": user.username,
-                                    "avatar_url": user.avatar_url,
-                                }
-
-                        member_event = events_mod.create_guild_member_add(
-                            server_id=int(sid or 0),
-                            user_id=current_user.user_id,
-                            user=user_data,
-                        )
-
-                        member_ids = servers_mod.get_member_user_ids(
-                            sid, exclude_user_id=current_user.user_id
-                        )
-                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
-                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
-                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
-                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
-                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
-                        member_ids = bounded_bulk_batch(member_ids, "member_ids")
-                        if member_ids:
-                            await dispatcher.dispatch_event(member_event, member_ids)
-
-                    except Exception as de:
-                        logger.warning(
-                            f"Failed to dispatch join events for server {sid}: {de}"
-                        )
-
-                asyncio.create_task(dispatch_join_events())
+                asyncio.create_task(
+                    self._dispatch_invite_join_events(servers_mod, sid, current_user)
+                )
 
                 return InviteJoinResponse(
                     success=True,
@@ -478,6 +360,112 @@ class ChannelInvitesMixin(ChannelBase):
                     }
                 },
             )
+
+    async def _dispatch_invite_join_events(
+        self, servers_mod, sid, current_user: TokenInfo
+    ) -> None:
+        """Fan out GUILD_CREATE / member-add events for a successful join.
+
+        The four storage reads are independent, so they run in a single
+        ``asyncio.gather`` instead of three concurrent reads followed by a
+        sequential fourth. Each collection is capped exactly once. Kept as a
+        named coroutine (rather than an inline closure) so the query fan-out
+        is directly testable; failure handling and the ``ws_is_setup`` gate
+        are unchanged.
+        """
+        try:
+            from src.api.websocket import (
+                get_dispatcher,
+                is_setup as ws_is_setup,
+            )
+
+            if not ws_is_setup():
+                return
+
+            dispatcher = get_dispatcher()
+            auth = api.get_auth()
+
+            async def _fetch_sync(fn, *args, **kwargs):
+                return await run_in_threadpool(fn, *args, **kwargs)
+
+            async def _member_ids():
+                fetch = getattr(servers_mod, "get_member_user_ids", None)
+                if not fetch:
+                    return []
+                return await run_in_threadpool(
+                    fetch, sid, exclude_user_id=current_user.user_id
+                )
+
+            results = await asyncio.gather(
+                _fetch_sync(servers_mod.get_server, sid, current_user.user_id),
+                _fetch_sync(servers_mod.get_channels, current_user.user_id, sid),
+                _fetch_sync(servers_mod.get_roles, current_user.user_id, sid),
+                _member_ids(),
+                return_exceptions=True,
+            )
+            server, channels, roles, member_ids = results
+            if isinstance(server, BaseException):
+                server = None
+            if isinstance(roles, BaseException):
+                roles = []
+            if isinstance(channels, BaseException):
+                channels = []
+            if isinstance(member_ids, BaseException):
+                member_ids = []
+            channels = bounded_bulk_batch(channels, "channels")
+            roles = bounded_bulk_batch(roles, "roles")
+            member_ids = bounded_bulk_batch(member_ids, "member_ids")
+
+            if server:
+                event = events_mod.create_guild_create(
+                    server_id=int(sid or 0),
+                    name=server.name,
+                    owner_id=server.owner_id,
+                    member_count=getattr(server, "member_count", 0),
+                    channels=[
+                        {
+                            "id": str(c.id),
+                            "name": c.name,
+                            "type": getattr(c.channel_type, "value", c.channel_type)
+                            if hasattr(c.channel_type, "value")
+                            else c.channel_type,
+                            "position": getattr(c, "position", 0),
+                        }
+                        for c in channels
+                    ],
+                    roles=[
+                        {
+                            "id": str(r.id),
+                            "name": r.name,
+                            "color": r.color,
+                            "hoist": r.hoist,
+                            "position": r.position,
+                        }
+                        for r in roles
+                    ],
+                )
+                await dispatcher.dispatch_event(event, [current_user.user_id])
+
+            user_data = None
+            if auth:
+                user = await run_in_threadpool(auth.get_user, current_user.user_id)
+                if user:
+                    user_data = {
+                        "id": str(user.id),
+                        "username": user.username,
+                        "avatar_url": user.avatar_url,
+                    }
+
+            member_event = events_mod.create_guild_member_add(
+                server_id=int(sid or 0),
+                user_id=current_user.user_id,
+                user=user_data,
+            )
+            if member_ids:
+                await dispatcher.dispatch_event(member_event, member_ids)
+
+        except Exception as de:
+            logger.warning(f"Failed to dispatch join events for server {sid}: {de}")
 
     async def _delete_invite(
         self, invite_code: str, current_user: TokenInfo = Depends(get_current_user)
