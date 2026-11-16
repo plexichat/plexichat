@@ -15,6 +15,7 @@ from src.core.stickers.models import Sticker, StickerPack
 from src.api.routes.stickers import (
     _MAX_STICKER_BATCH_CHUNK,
     _batch_pack_stickers,
+    _dispatch_stickers_update,
     get_server_stickers,
 )
 
@@ -142,5 +143,59 @@ async def test_get_server_stickers_hydrates_packs_from_one_query(monkeypatch):
     assert [p.id for p in result] == ["1", "2"]
     assert [s.name for s in result[0].stickers] == ["sticker a"]
     assert [s.name for s in result[1].stickers] == ["sticker b"]
+    assert len(db.calls) == 1
+    assert stickers.per_pack_calls == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dispatch_update_batches_sticker_lookups(monkeypatch):
+    packs = [
+        StickerPack(id=1, name="pack one", pack_type="server", server_id=555),
+        StickerPack(id=2, name="pack two", pack_type="server", server_id=555),
+    ]
+    rows = [
+        {
+            "pack_id": 1,
+            "id": 101,
+            "name": "a",
+            "format": "png",
+            "url": "https://example.test/a.png",
+            "size": 1,
+            "tags": [],
+        },
+        {
+            "pack_id": 2,
+            "id": 102,
+            "name": "b",
+            "format": "png",
+            "url": "https://example.test/b.png",
+            "size": 2,
+            "tags": [],
+        },
+    ]
+    db = _FakeDB(rows)
+    stickers = _FakeStickers(db=db, packs=packs, to_sticker=lambda row: Sticker(**row))
+    monkeypatch.setattr(api, "get_stickers", lambda: stickers)
+    monkeypatch.setattr(
+        api, "get_servers", lambda: SimpleNamespace(get_member_user_ids=lambda *_: [7])
+    )
+
+    class _Dispatcher:
+        def __init__(self):
+            self.events = []
+
+        async def dispatch_event(self, event, user_ids):
+            self.events.append((event, user_ids))
+
+    dispatcher = _Dispatcher()
+    monkeypatch.setattr("src.api.websocket.get_dispatcher", lambda: dispatcher)
+    monkeypatch.setattr("src.api.websocket.is_setup", lambda: True)
+
+    await _dispatch_stickers_update(555, 7)
+
+    assert len(dispatcher.events) == 1
+    sent_packs = dispatcher.events[0][0].data["sticker_packs"]
+    assert [[s["name"] for s in p["stickers"]] for p in sent_packs] == [["a"], ["b"]]
     assert len(db.calls) == 1
     assert stickers.per_pack_calls == []

@@ -240,12 +240,13 @@ async def _dispatch_stickers_update(server_id: int, user_id: int):
         # membership check and silently suppressed the broadcast.
         packs = stickers_mod.get_server_packs(user_id, server_id)
 
+        stickers_by_pack = _batch_pack_stickers(stickers_mod, packs, user_id)
         response_packs = []
         for pack in packs:
-            pack_stickers = stickers_mod.get_pack_stickers(user_id, pack.id)
             pack_response = StickerPackResponse.model_validate(pack)
             pack_response.stickers = [
-                StickerResponse.model_validate(s) for s in pack_stickers
+                StickerResponse.model_validate(s)
+                for s in stickers_by_pack.get(int(pack.id), [])
             ]
             response_packs.append(pack_response.model_dump())
 
