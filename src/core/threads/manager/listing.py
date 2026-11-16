@@ -58,14 +58,24 @@ class ThreadListingMixin(ThreadProtocol):
 
         has_server_view = self._channel_view_allowed(user_id, channel, channel_id)
 
+        # One index-backed query replaces the thread scan plus a separate
+        # ``thread_members`` probe: the LEFT JOIN annotates each row with the
+        # caller's membership marker, so private-thread visibility stays
+        # membership-gated without a second round trip.
         rows = self._db.fetch_all(
-            """SELECT * FROM thread_threads 
-               WHERE channel_id = ? AND state = ? AND deleted = 0
-               ORDER BY last_message_at DESC NULLS LAST""",
-            (channel_id, ThreadState.ACTIVE.value),
+            """SELECT t.*, m.user_id AS membership_user_id
+               FROM thread_threads t
+               LEFT JOIN thread_members m
+                 ON m.thread_id = t.id AND m.user_id = ?
+               WHERE t.channel_id = ? AND t.state = ? AND t.deleted = 0
+               ORDER BY t.last_message_at DESC NULLS LAST""",
+            (user_id, channel_id, ThreadState.ACTIVE.value),
         )
 
         threads = []
+        member_thread_ids = {
+            row["id"] for row in rows if row.get("membership_user_id") is not None
+        }
         possible_threads = [
             _row_to_thread(row, self._encrypt_thread_names) for row in rows
         ]
@@ -83,21 +93,6 @@ class ThreadListingMixin(ThreadProtocol):
 
         if not active_threads:
             return []
-
-        private_thread_ids = {
-            t.id for t in active_threads if t.thread_type == ThreadType.PRIVATE
-        }
-        member_thread_ids = set()
-        if private_thread_ids:
-            if not all(isinstance(tid, int) for tid in private_thread_ids):
-                raise ValueError("All thread IDs must be integers")
-            placeholders = ",".join("?" * len(private_thread_ids))
-            rows = self._db.fetch_all(
-                f"""SELECT thread_id FROM thread_members
-                    WHERE user_id = ? AND thread_id IN ({placeholders})""",
-                (user_id, *private_thread_ids),
-            )
-            member_thread_ids = {r["thread_id"] for r in rows}
 
         # SECURITY: ``has_server_view`` was resolved above from the channel
         # itself, so an empty listing cannot bypass the check. Public threads
@@ -124,41 +119,35 @@ class ThreadListingMixin(ThreadProtocol):
 
         has_server_view = self._channel_view_allowed(user_id, channel, channel_id)
 
+        # Same single-query membership join as the active listing, with the
+        # archived-at cursor folded into the index-backed query.
+        _listing_sql = """SELECT t.*, m.user_id AS membership_user_id
+                   FROM thread_threads t
+                   LEFT JOIN thread_members m
+                     ON m.thread_id = t.id AND m.user_id = ?
+                   WHERE t.channel_id = ? AND t.state = ? AND t.deleted = 0 {archived_clause}
+                   ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"""
         if before_timestamp:
             rows = self._db.fetch_all(
-                """SELECT * FROM thread_threads 
-                   WHERE channel_id = ? AND state = ? AND deleted = 0 AND archived_at < ?
-                   ORDER BY archived_at DESC, id DESC LIMIT ?""",
-                (channel_id, ThreadState.ARCHIVED.value, before_timestamp, limit),
+                _listing_sql.format(
+                    archived_clause="AND t.archived_at < ?"
+                ),
+                (user_id, channel_id, ThreadState.ARCHIVED.value, before_timestamp, limit),
             )
         else:
             rows = self._db.fetch_all(
-                """SELECT * FROM thread_threads 
-                   WHERE channel_id = ? AND state = ? AND deleted = 0
-                   ORDER BY archived_at DESC, id DESC LIMIT ?""",
-                (channel_id, ThreadState.ARCHIVED.value, limit),
+                _listing_sql.format(archived_clause=""),
+                (user_id, channel_id, ThreadState.ARCHIVED.value, limit),
             )
 
+        member_thread_ids = {
+            row["id"] for row in rows if row.get("membership_user_id") is not None
+        }
         archived_threads = [
             _row_to_thread(row, self._encrypt_thread_names) for row in rows
         ]
         if not archived_threads:
             return []
-
-        private_thread_ids = {
-            t.id for t in archived_threads if t.thread_type == ThreadType.PRIVATE
-        }
-        member_thread_ids = set()
-        if private_thread_ids:
-            if not all(isinstance(tid, int) for tid in private_thread_ids):
-                raise ValueError("All thread IDs must be integers")
-            placeholders = ",".join("?" * len(private_thread_ids))
-            rows = self._db.fetch_all(
-                f"""SELECT thread_id FROM thread_members
-                    WHERE user_id = ? AND thread_id IN ({placeholders})""",
-                (user_id, *private_thread_ids),
-            )
-            member_thread_ids = {r["thread_id"] for r in rows}
 
         # SECURITY: same up-front, contents-independent check as
         # get_active_threads (and the same fail-closed default).

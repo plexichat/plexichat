@@ -21,21 +21,15 @@ from src.core.threads.schema import SCHEMA
 
 pytestmark = pytest.mark.unit
 
-_ACTIVE = (
-    "SELECT * FROM thread_threads "
-    "WHERE channel_id = ? AND state = ? AND deleted = 0 "
-    "ORDER BY last_message_at DESC NULLS LAST"
+_FROM = (
+    "SELECT t.*, m.user_id AS membership_user_id "
+    "FROM thread_threads t "
+    "LEFT JOIN thread_members m ON m.thread_id = t.id AND m.user_id = ? "
+    "WHERE t.channel_id = ? AND t.state = ? AND t.deleted = 0 "
 )
-_ARCHIVED = (
-    "SELECT * FROM thread_threads "
-    "WHERE channel_id = ? AND state = ? AND deleted = 0 "
-    "ORDER BY archived_at DESC, id DESC LIMIT ?"
-)
-_ARCHIVED_BEFORE = (
-    "SELECT * FROM thread_threads "
-    "WHERE channel_id = ? AND state = ? AND deleted = 0 AND archived_at < ? "
-    "ORDER BY archived_at DESC, id DESC LIMIT ?"
-)
+_ACTIVE = _FROM + "ORDER BY t.last_message_at DESC NULLS LAST"
+_ARCHIVED = _FROM + "ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"
+_ARCHIVED_BEFORE = _FROM + "AND t.archived_at < ? ORDER BY t.archived_at DESC, t.id DESC LIMIT ?"
 
 
 def _schema_statements() -> list[str]:
@@ -52,10 +46,7 @@ def _schema_statements() -> list[str]:
 def _thread_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     for stmt in _schema_statements():
-        # Only the thread_threads table and its indexes matter here; other
-        # module tables in SCHEMA are irrelevant to these plans.
-        if "THREAD_THREADS" in stmt.upper():
-            conn.execute(stmt)
+        conn.execute(stmt)
     return conn
 
 
@@ -74,18 +65,18 @@ def test_schema_declares_both_listing_indexes():
 
 
 def test_active_listing_uses_covering_index_without_temp_sort():
-    plan = _plan(_ACTIVE, (1, "active"))
+    plan = _plan(_ACTIVE, (42, 1, "active"))
     assert "idx_thread_active_listing" in plan, plan
     assert "TEMP B-TREE" not in plan.upper(), plan
 
 
 def test_archived_listing_uses_covering_index_without_temp_sort():
-    plan = _plan(_ARCHIVED, (1, "archived", 50))
+    plan = _plan(_ARCHIVED, (42, 1, "archived", 50))
     assert "idx_thread_archived_listing" in plan, plan
     assert "TEMP B-TREE" not in plan.upper(), plan
 
 
 def test_archived_before_cursor_uses_covering_index_without_temp_sort():
-    plan = _plan(_ARCHIVED_BEFORE, (1, "archived", 9_999_999, 50))
+    plan = _plan(_ARCHIVED_BEFORE, (42, 1, "archived", 9_999_999, 50))
     assert "idx_thread_archived_listing" in plan, plan
     assert "TEMP B-TREE" not in plan.upper(), plan
