@@ -14,7 +14,12 @@ from fastapi import APIRouter, Depends, Query
 from src.api.middleware.authentication import TokenInfo, get_current_user
 from src.api.routes.artifacts import _get_manager, _require_server_permission
 from src.api.schemas.common import ErrorResponse
-from src.core.security.hardening import HardeningViolation, parse_id
+from src.core.security.hardening import (
+    HardeningViolation,
+    bounded_int,
+    parse_id,
+    reject_control_characters,
+)
 from src.core.artifacts.capabilities import (
     capability_allows_artifact,
     get_capability,
@@ -67,6 +72,24 @@ _VALID_APP_IDS = frozenset(
         "plexiboard",
     }
 )
+
+
+_MAX_SEARCH_LENGTH = 200
+_MAX_SERVER_IDS = 100
+_MAX_ACTIVITY_PART_LENGTH = 120
+
+
+def clean_suite_search(value: Any) -> Optional[str]:
+    """Bound and sanitize a suite search term before fan-out."""
+    if value is None:
+        return None
+    candidate = str(value).strip()
+    if not candidate:
+        return None
+    if len(candidate) > _MAX_SEARCH_LENGTH:
+        candidate = candidate[:_MAX_SEARCH_LENGTH]
+    reject_control_characters(candidate, "search")
+    return candidate
 
 
 def safe_suite_id(value: Any) -> Optional[str]:
@@ -283,11 +306,20 @@ def _member_server_ids(user_id: int, limit: int = 100) -> List[int]:
     db = api.get_db()
     if db is None:
         return []
+    bounded = bounded_int(limit, "limit", minimum=1, maximum=_MAX_SERVER_IDS)
     rows = db.fetch_all(
         "SELECT server_id FROM srv_members WHERE user_id = ? LIMIT ?",
-        (int(user_id), int(limit)),
+        (int(user_id), bounded),
     )
-    return [int(row["server_id"]) for row in rows]
+    ids: List[int] = []
+    for row in rows:
+        try:
+            ids.append(parse_id(row["server_id"], "server ID"))
+        except (HardeningViolation, TypeError, ValueError):
+            continue
+        if len(ids) >= _MAX_SERVER_IDS:
+            break
+    return ids
 
 
 def _shared_artifacts(
@@ -303,14 +335,17 @@ def _shared_artifacts(
     # Single ``server_id IN (...)`` query across the caller's memberships
     # instead of one query per membership. Fetch a bounded multiple so the
     # post-query authorization/capability filtering cannot starve the feed.
-    fetch_limit = min(max(int(limit) * len(server_ids), int(limit)), 2000)
+    fetch_limit = min(
+        max(bounded_int(limit, "limit", minimum=1, maximum=50) * len(server_ids), 1),
+        2000,
+    )
     filters: Dict[str, Any] = {
         "sort_by": "updated_at",
         "sort_order": "desc",
         "limit": fetch_limit,
     }
     if search:
-        filters["search"] = search
+        filters["search"] = clean_suite_search(search)
     artifacts = manager.list_with_filters(filters=filters, server_id=server_ids)
 
     # Authorize lazily: RBAC is checked only for servers that actually
@@ -535,7 +570,7 @@ def _activity_summary(
     if details.get("version_id") is not None:
         parts.append(f"version {details['version_id']}")
     if parts:
-        return ", ".join(parts)
+        return ", ".join(part[:_MAX_ACTIVITY_PART_LENGTH] for part in parts)
     return None
 
 
@@ -599,7 +634,7 @@ async def search_suite(
     current_user: TokenInfo = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Search bounded metadata through existing per-domain visibility rules."""
-    query = q.strip()
+    query = clean_suite_search(q)
     if not query:
         return {"schemaVersion": 1, "items": [], "total": 0, "hasMore": False}
     manager = _get_manager()
