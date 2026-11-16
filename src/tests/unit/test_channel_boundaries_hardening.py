@@ -97,3 +97,41 @@ class TestChannelPaginationBounds:
                 assert any(
                     type(m).__name__ == "Le" for m in params[name].default.metadata
                 )
+
+
+class TestChannelFieldConstraints:
+    def test_allowed_channel_types_and_lengths_pass(self):
+        from src.api.routes.channels.helpers import validate_channel_fields
+
+        validate_channel_fields(
+            {
+                "channel_type": "text",
+                "name": "a" * 100,
+                "topic": "b" * 1024,
+            }
+        )
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"channel_type": "arbitrary-type"},
+            {"channel_type": ""},
+            {"name": "a" * 101},
+            {"topic": "b" * 1025},
+            {"name": "bad\x00name"},
+        ],
+    )
+    def test_bad_types_and_oversized_or_control_text_fail(self, payload):
+        from src.api.routes.channels.helpers import validate_channel_fields
+
+        with pytest.raises(HTTPException) as exc:
+            validate_channel_fields(payload)
+        assert exc.value.status_code == 400
+
+    def test_update_route_invokes_the_guard(self):
+        import inspect
+
+        from src.api.routes.channels.crud import ChannelCRUDMixin
+
+        unwrapped = inspect.unwrap(ChannelCRUDMixin._update_channel)
+        assert "validate_channel_fields" in unwrapped.__code__.co_names

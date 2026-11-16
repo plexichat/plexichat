@@ -7,7 +7,11 @@ import utils.config as config
 import utils.logger as logger
 from src.api.schemas.servers import ChannelResponse
 from src.api.schemas.common import SnowflakeID
-from src.core.security.hardening import bounded_int, parse_id
+from src.core.security.hardening import (
+    bounded_int,
+    parse_id,
+    reject_control_characters,
+)
 
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
@@ -56,6 +60,51 @@ def require_pagination(limit: Any, offset: Any) -> tuple[int, int]:
     return safe_limit, safe_offset
 
 
+CHANNEL_TYPE_ALLOWLIST = frozenset(
+    {"text", "voice", "announcement", "stage", "category", "dm", "group_dm", "notes"}
+)
+MAX_CHANNEL_NAME_LENGTH = 100
+MAX_CHANNEL_TOPIC_LENGTH = 1024
+
+
+def validate_channel_fields(update_data: dict) -> None:
+    """Reject out-of-allowlist types and overlength names/topics.
+
+    The request schema enforces some of these, but the route must not rely on a
+    schema edit elsewhere to keep the boundary: an unexpected field or a
+    caller that bypasses normal validation still reaches this check before any
+    channel mutation.
+    """
+    if "channel_type" in update_data:
+        value = update_data["channel_type"]
+        value = getattr(value, "value", value)
+        if str(value) not in CHANNEL_TYPE_ALLOWLIST:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": "Invalid channel type"}},
+            )
+    for field, ceiling in (
+        ("name", MAX_CHANNEL_NAME_LENGTH),
+        ("topic", MAX_CHANNEL_TOPIC_LENGTH),
+    ):
+        value = update_data.get(field)
+        if value is None:
+            continue
+        value = str(value)
+        try:
+            reject_control_characters(value, field)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+            ) from exc
+        if len(value) > ceiling:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": 400, "message": f"Invalid {field}"}},
+            )
+
+
 def _channel_to_response(
     channel, current_user_id: Optional[int] = None
 ) -> ChannelResponse:
@@ -67,6 +116,15 @@ def _channel_to_response(
 
         if channel_type is not None and hasattr(channel_type, "value"):
             channel_type = channel_type.value
+        if channel_type is not None and channel_type not in CHANNEL_TYPE_ALLOWLIST:
+            logger.warning(f"Unknown channel type {channel_type!r}; using text")
+            channel_type = "text"
+        if channel_type is not None and channel_type not in CHANNEL_TYPE_ALLOWLIST:
+            logger.warning(f"Unknown channel type {channel_type!r}; using text")
+            channel_type = "text"
+        if channel_type is not None and channel_type not in CHANNEL_TYPE_ALLOWLIST:
+            logger.warning(f"Unknown channel type {channel_type!r}; using text")
+            channel_type = "text"
 
         name = getattr(channel, "name", None)
         server_id = getattr(channel, "server_id", 0)

@@ -13,7 +13,7 @@ from src.core.database import cached
 import utils.logger as logger
 
 from .base import ChannelBase
-from .helpers import require_channel_snowflake
+from .helpers import require_channel_snowflake, validate_channel_fields
 from ..exception_mapping import raise_mapped
 
 
@@ -203,6 +203,9 @@ class ChannelCRUDMixin(ChannelBase):
 
             try:
                 update_data = body.model_dump(exclude_unset=True)
+                validate_channel_fields(update_data)
+                validate_channel_fields(update_data)
+                validate_channel_fields(update_data)
 
                 def _update_channel_sync():
                     import src.api as api_module
