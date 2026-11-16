@@ -17,7 +17,10 @@ class FeedbackCreate(BaseModel):
         ..., min_length=10, max_length=2000, description="Feedback content"
     )
     category: Optional[str] = Field(
-        None, max_length=50, description="Feedback category"
+        None,
+        max_length=50,
+        pattern=r"^[a-z0-9_-]+$",
+        description="Feedback category",
     )
     rating: Optional[int] = Field(None, ge=1, le=5, description="Feedback rating (1-5)")
 
