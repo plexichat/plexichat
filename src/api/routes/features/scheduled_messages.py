@@ -1,22 +1,51 @@
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 import src.api as api
 from src.api.middleware.authentication import get_current_user, TokenInfo
 from src.api.schemas.common import ErrorResponse
 from src.core.events.snowflakes import stringify_snowflake_ids
+from src.core.security.hardening import bounded_int, reject_control_characters
 from .common import parse_id, call_or_raise
 
 router = APIRouter()
+
+MAX_CONTENT_LENGTH = 4000
+MAX_SCHEDULED_AT_MS = 4102444800000  # 2100-01-01 in milliseconds
+VALID_SCHEDULE_STATUSES = frozenset(
+    {"pending", "scheduled", "sent", "cancelled", "failed"}
+)
 
 
 class ScheduledMessageRequest(BaseModel):
     conversation_id: str = Field(..., description="Target conversation ID")
     content: str = Field(
-        ..., min_length=1, max_length=4000, description="Message content"
+        ...,
+        min_length=1,
+        max_length=MAX_CONTENT_LENGTH,
+        description="Message content",
     )
-    scheduled_at: int = Field(..., description="Timestamp (ms) when to send")
+    scheduled_at: int = Field(
+        ...,
+        ge=1,
+        le=MAX_SCHEDULED_AT_MS,
+        description="Timestamp (ms) when to send",
+    )
+
+    @field_validator("content")
+    @classmethod
+    def _safe_content(cls, value: str, info):
+        if not value or not value.strip():
+            raise ValueError("content must not be blank")
+        # Newlines and tabs are legitimate in a scheduled message; NUL, DEL
+        # and the remaining C0 controls are never valid in stored text.
+        if any(ord(ch) < 32 and ch not in "\t\n\r" for ch in value) or "\x7f" in value:
+            raise ValueError("content contains control characters")
+        reject_control_characters(
+            value.replace("\t", "").replace("\n", "").replace("\r", ""), info.field_name
+        )
+        return value
 
 
 @router.post(
@@ -56,10 +85,17 @@ async def create_scheduled_message(
 )
 async def list_scheduled_messages(
     conversation_id: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[str] = Field(None, max_length=32),
     limit: int = Query(50, ge=1, le=100),
     current_user: TokenInfo = Depends(get_current_user),
 ):
+    if status is not None and status not in VALID_SCHEDULE_STATUSES:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Invalid schedule status"}},
+        )
     db = api.get_db()
     from src.core.messaging.services.scheduled import ScheduledMessageService
 
