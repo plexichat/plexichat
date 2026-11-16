@@ -11,8 +11,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import src.api as api
 import utils.logger as logger
 
-from src.core.events.snowflakes import stringify_snowflake_ids
-
 from .opcodes import GatewayOpcode, GatewayCloseCode, get_close_message
 from .connection import Connection, ConnectionState
 from .handlers import OpcodeHandler
@@ -538,7 +536,7 @@ async def _message_loop(
                         "op": int(GatewayOpcode.DISPATCH),
                         "t": event_type,
                         "s": seq,
-                        "d": stringify_snowflake_ids(event_data),
+                        "d": connection.render_dispatch_data(event_data),
                     }
                 )
 
@@ -570,7 +568,7 @@ async def _message_loop(
                 await connection.send_json(
                     {
                         "op": int(response_op),
-                        "d": stringify_snowflake_ids(response_data),
+                        "d": connection.render_dispatch_data(response_data),
                     }
                 )
 

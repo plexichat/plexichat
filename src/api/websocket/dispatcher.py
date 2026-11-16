@@ -15,6 +15,7 @@ from .opcodes import GatewayOpcode
 from .connection import Connection
 from .session import SessionManager
 from .intents import filter_event_by_intents
+from .rendering import PayloadRenderCache
 
 if TYPE_CHECKING:
     from src.core.events.manager import EventManager
@@ -73,6 +74,15 @@ class GatewayDispatcher:
         # :meth:`get_rate_limit_metrics` instead of being silently
         # debug-dropped.
         self._rate_limited_events = 0
+        # Shared fan-out rendering memo: an event's ``d`` payload is identical
+        # for every recipient, so render it once per distinct payload instead
+        # of once per connection. Per-connection caches (on Connection) cover
+        # frames rendered outside a fan-out.
+        self._render_cache = PayloadRenderCache()
+
+    def get_render_cache_stats(self) -> Dict[str, int]:
+        """Expose payload-render cache hit/miss counters for observability."""
+        return self._render_cache.stats()
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the event loop for async dispatch.
@@ -279,7 +289,11 @@ class GatewayDispatcher:
             # Central backstop (matches _build_dispatch_payload): a raw
             # DISPATCH frame bypasses Event construction, so stringify here
             # or a hand-built dict leaks a numeric snowflake to JS clients.
-            payload["d"] = stringify_snowflake_ids(data or {})
+            # Cached: repeated raw DISPATCH frames (e.g. RATCHET_UPDATE
+            # broadcasts) reuse the identical rendering.
+            payload["d"] = self._render_cache.render(
+                data or {}, stringify_snowflake_ids
+            )
 
             if connection.session_id:
                 self._session_manager.record_event(connection.session_id, payload)
@@ -287,7 +301,7 @@ class GatewayDispatcher:
             # Non-DISPATCH frames (VOICE_SPEAKING, VOICE_SDP_*, HELLO, ...)
             # carry ids too; stringify id keys so a future caller cannot
             # leak a numeric snowflake. Scalars (bool/None) pass through.
-            payload["d"] = stringify_snowflake_ids(data)
+            payload["d"] = self._render_cache.render(data, stringify_snowflake_ids)
 
         return await self._send_to_connection(connection, payload)
 
@@ -449,8 +463,10 @@ class GatewayDispatcher:
             "t": event.event_type.value,
             "s": seq,
             # Central backstop: every id that crosses the wire is a decimal
-            # string, regardless of how the event was built.
-            "d": stringify_snowflake_ids(event.data),
+            # string, regardless of how the event was built. Rendered through
+            # the shared cache: a presence/type event fanned out to N
+            # connections is stringified once, not N times.
+            "d": self._render_cache.render(event.data, stringify_snowflake_ids),
         }
 
         if connection.session_id:

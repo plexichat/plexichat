@@ -17,6 +17,8 @@ from .batching import (
     DEFAULT_MAX_BATCH,
     DEFAULT_QUEUE_SIZE,
 )
+from .rendering import PayloadRenderCache
+from src.core.events.snowflakes import stringify_snowflake_ids
 
 
 class ConnectionState(Enum):
@@ -66,6 +68,12 @@ class Connection:
         default=None, repr=False
     )
     _batcher_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    # Per-connection rendering cache. Frames rendered outside a fan-out (inline
+    # ACKs, raw opcodes, resume responses) reuse their snowflake rendering
+    # instead of re-walking an identical payload on every send.
+    _render_cache: PayloadRenderCache = field(
+        default_factory=PayloadRenderCache, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.compress and self._zlib_context is None:
@@ -232,6 +240,14 @@ class Connection:
     def outbound_batcher(self) -> Optional[OutboundFrameBatcher]:
         """The active batcher (used by tests/observability), if any."""
         return self._outbound_batcher
+
+    def render_dispatch_data(self, data: Any) -> Any:
+        """Return the snowflake-rendered form of ``data`` for this connection.
+
+        Identical payloads (periodic presence re-asserts, repeated typing
+        payloads) are rendered once per connection and reused thereafter.
+        """
+        return self._render_cache.render(data, stringify_snowflake_ids)
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         """Close the connection.
