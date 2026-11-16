@@ -12,7 +12,10 @@ import inspect
 import sqlite3
 
 from src.api.routes.servers import members
-from src.api.routes.servers.members import _resolve_member_user_id
+from src.api.routes.servers.members import (
+    _resolve_member_user_id,
+    _unique_member_user_ids,
+)
 
 
 class _Conn:
@@ -80,3 +83,28 @@ def test_all_four_mutation_routes_use_the_single_pass_helper():
         assert "_resolve_member_user_id(db, sid, mid)" in body, name
         assert "fetch_one" not in body, name
     assert source.count("_resolve_member_user_id(db, sid, mid)") == 4
+
+
+def test_bulk_lookup_ids_are_deduplicated_in_first_seen_order():
+    rows = [
+        {"user_id": 30},
+        {"user_id": 10},
+        {"user_id": 30},  # duplicate membership row
+        {"user_id": 20},
+        {"user_id": 10},
+        {"user_id": 0},  # falsy ids are skipped, as before
+    ]
+    assert _unique_member_user_ids(rows) == [30, 10, 20]
+
+
+def test_bulk_lookup_ids_accept_member_objects():
+    class Member:
+        def __init__(self, user_id):
+            self.user_id = user_id
+
+    assert _unique_member_user_ids([Member(7), Member(7), Member(8)]) == [7, 8]
+
+
+def test_member_list_route_uses_the_dedup_helper():
+    source = inspect.getsource(members.get_server_members)
+    assert "_unique_member_user_ids(members)" in source

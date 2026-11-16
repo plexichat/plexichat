@@ -38,6 +38,24 @@ def _resolve_member_user_id(db, server_id: int, member_or_user_id: int):
     )
 
 
+def _unique_member_user_ids(members) -> list:
+    """Collect distinct user ids from member rows, preserving first-seen order.
+
+    A server can carry more than one row for a user (temporary memberships),
+    and the bulk user/presence lookups below are keyed by user id. Deduplicating
+    here keeps those bulk calls proportional to distinct users rather than to
+    raw membership rows.
+    """
+    user_ids = []
+    seen = set()
+    for m in members:
+        uid = getattr(m, "user_id", None) or m.get("user_id")
+        if uid and uid not in seen:
+            seen.add(uid)
+            user_ids.append(uid)
+    return user_ids
+
+
 @router.get(
     "/{server_id}/members",
     response_model=MemberListResponse,
@@ -105,11 +123,7 @@ def get_server_members(
         if len(members) == 0:
             return MemberListResponse(items=[], has_more=False)
 
-        user_ids = []
-        for m in members:
-            uid = getattr(m, "user_id", None) or m.get("user_id")
-            if uid:
-                user_ids.append(uid)
+        user_ids = _unique_member_user_ids(members)
 
         users_map = {}
         if auth and user_ids:
