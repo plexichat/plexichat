@@ -161,6 +161,11 @@ class DataCloner:
             )
             column_names = [row["column_name"] for row in columns_info]
 
+        # Column names are quoted (not parameterized) in cols_str/order_col
+        # below. A source schema carrying a backtick or quote in a column name
+        # could otherwise break out of the quoting, so constrain them too.
+        column_names = [require_identifier(c, "column name") for c in column_names]
+
         if not column_names:
             logger.warning(f"No columns found for table {table_name}, skipping.")
             return {"rows": 0, "status": "skipped"}
@@ -359,11 +364,13 @@ class DataCloner:
         Returns None when the table is empty (an empty table matches any
         empty table).
         """
+        require_identifier(table, "table name")
         first = db.fetch_one(f"SELECT * FROM {table} LIMIT 1")
         if not first:
             return None
         column_names = list(first.keys())
         order_key = "id" if "id" in column_names else column_names[0]
+        require_identifier(order_key, "order column")
         quote = '"' if db.type == "postgres" else "`"
         order_col = f"{quote}{order_key}{quote}"
         digest = hashlib.sha256()
@@ -402,6 +409,7 @@ class DataCloner:
         verified_count = 0
 
         for table in self._stats.keys():
+            require_identifier(table, "table name")
             s_count = self.source.fetch_one(f"SELECT COUNT(*) as count FROM {table}")[
                 "count"
             ]

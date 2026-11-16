@@ -57,3 +57,19 @@ class TestMigrationVersionPath:
         # Known migration files parse without raising; an unknown numeric one
         # simply yields no metadata.
         assert isinstance(tracker.get_migration_metadata("999"), dict)
+
+
+class TestClonerIdentifiers:
+    def test_content_signature_rejects_hostile_table(self):
+        from src.core.migrations.cloner import DataCloner
+
+        cloner = DataCloner.__new__(DataCloner)
+        with pytest.raises(HardeningViolation):
+            cloner._content_signature(None, "users; DROP TABLE users")
+
+    def test_clone_table_rejects_hostile_table(self):
+        from src.core.migrations.cloner import DataCloner
+
+        cloner = DataCloner.__new__(DataCloner)
+        with pytest.raises(HardeningViolation):
+            cloner.clone_table("bad-name")
