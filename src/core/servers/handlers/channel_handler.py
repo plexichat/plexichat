@@ -16,6 +16,7 @@ from ..exceptions import (
     ServerNotFoundError,
 )
 from ..permission_utils import has_permission as check_permission
+from src.core.servers.validation import coerce_channel_type
 from ..manager.converters import _row_to_channel, _row_to_category
 from src.core.database import cache_delete, valkey_available
 from src.core.database.cache import cached, invalidate_pattern

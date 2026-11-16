@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Optional, Union
 from urllib.parse import urlparse
 
+from ..models import ChannelType
 from src.core.security.hardening import HardeningViolation
 from src.core.security.hardening.text import reject_control_characters
 from src.core.security.hardening.urls import require_http_url
@@ -93,7 +94,7 @@ def validate_server_description(
     return text
 
 
-def coerce_channel_type(value: Union["ChannelType", str]) -> "ChannelType":
+def coerce_channel_type(value: Union[ChannelType, str]) -> ChannelType:
     """Return the ChannelType enum for *value*, refusing bare/invalid strings.
 
     Callers used to pass any string and fall back to TEXT when it did not match,
@@ -101,8 +102,6 @@ def coerce_channel_type(value: Union["ChannelType", str]) -> "ChannelType":
     ChannelType unchanged; for text, normalise case and require an exact member
     of the enum, otherwise raise ValueError at the boundary.
     """
-    from ..models import ChannelType
-
     if isinstance(value, ChannelType):
         return value
     if not isinstance(value, str):
