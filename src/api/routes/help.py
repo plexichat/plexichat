@@ -6,6 +6,8 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from pathlib import Path
 
+from src.core.security.hardening.paths import safe_join
+
 router = APIRouter(tags=["Help"])
 robots_router = APIRouter()
 
@@ -22,15 +24,19 @@ _HELP_CSP = (
 
 
 def _resolve_robots_txt() -> Path | None:
-    """Locate robots.txt independent of the process working directory."""
-    candidates = [
-        Path(__file__).resolve().parent.parent.parent.parent / "static" / "robots.txt",
-        Path.cwd() / "static" / "robots.txt",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
+    """Locate robots.txt within a trusted static directory.
+
+    The old CWD-based candidate let a process started from a hostile directory
+    serve an arbitrary ``static/robots.txt``. Resolve the file through the
+    shared confinement helper so the served path can never leave the shipped
+    static tree.
+    """
+    static_dir = Path(__file__).resolve().parent.parent.parent.parent / "static"
+    try:
+        candidate = Path(safe_join(str(static_dir), "robots.txt"))
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
 
 
 @robots_router.get("/robots.txt", include_in_schema=False)

@@ -20,6 +20,14 @@ from src.core import ratelimit
 
 router = APIRouter(prefix="/feedback", tags=["Feedback"])
 
+#: Feedback categories are a closed set at the HTTP boundary; the
+#: schema also constrains the charset and length.
+KNOWN_FEEDBACK_CATEGORIES = frozenset(
+    {"bug", "feature", "idea", "suggestion", "question",
+     "complaint", "support", "general", "other", "feedback"}
+)
+MAX_FEEDBACK_CONTENT_LENGTH = 2000
+
 
 @router.post(
     "",
@@ -44,6 +52,20 @@ async def submit_feedback(
     Rate limited to prevent spam.
     """
     user_id = current_user.user_id
+
+    # Defence in depth: the schema bounds content and category shape, but a
+    # caller constructing the model directly must still obey the same limits.
+    category = feedback_data.category
+    if category is not None and category not in KNOWN_FEEDBACK_CATEGORIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid feedback category"}},
+        )
+    if len(feedback_data.content) > MAX_FEEDBACK_CONTENT_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": 400, "message": "Invalid feedback content"}},
+        )
 
     try:
         # Check if feedback is enabled
