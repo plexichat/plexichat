@@ -97,3 +97,29 @@ class TestApnsToken:
         from src.core.push.manager.apns import _safe_apns_token
 
         assert _safe_apns_token(token) == token
+
+
+class TestPushCredentialBounds:
+    def test_oversized_token_is_refused(self):
+        from src.core.push.manager.tokens import MAX_TOKEN_LENGTH, _bounded_credential
+
+        with pytest.raises(ValueError):
+            _bounded_credential("x" * (MAX_TOKEN_LENGTH + 1), "token", MAX_TOKEN_LENGTH)
+
+    def test_required_empty_is_refused(self):
+        from src.core.push.manager.tokens import _bounded_credential
+
+        with pytest.raises(ValueError):
+            _bounded_credential("", "token", 100, required=True)
+        with pytest.raises(ValueError):
+            _bounded_credential(None, "token", 100, required=True)
+
+    def test_optional_none_passes(self):
+        from src.core.push.manager.tokens import _bounded_credential
+
+        assert _bounded_credential(None, "p256dh", 100) is None
+
+    def test_in_range_passes(self):
+        from src.core.push.manager.tokens import _bounded_credential
+
+        assert _bounded_credential("abc", "token", 100) == "abc"

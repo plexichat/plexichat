@@ -13,6 +13,33 @@ from src.utils.encryption import blind_index, generate_snowflake_id
 from ..exceptions import PermissionDeniedError
 from .base import PUSH_TOKEN_BLIND_INDEX_SCOPE, PushManagerBase
 
+# Device credentials reach encryption, blind indexing and storage at
+# registration. Without bounds a caller could submit a multi-megabyte
+# "token"/subscription and force unbounded CPU + memory work (and a huge
+# row) before any of the per-user limits were reached. Real credentials are
+# short: APNs/FCM tokens are a few hundred bytes, a Web Push endpoint a few
+# hundred, p256dh/auth a hundred or so.
+MAX_TOKEN_LENGTH = 2048
+MAX_P256DH_LENGTH = 512
+MAX_AUTH_LENGTH = 512
+MAX_DEVICE_ID_LENGTH = 256
+MAX_APP_VERSION_LENGTH = 64
+
+
+def _bounded_credential(
+    value: Any, field: str, maximum: int, *, required: bool = False
+) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError(f"{field} is required")
+        return None
+    text = str(value)
+    if not text and required:
+        raise ValueError(f"{field} is required")
+    if len(text) > maximum:
+        raise ValueError(f"{field} exceeds maximum length of {maximum}")
+    return text
+
 
 class TokenMixin(PushManagerBase):
     """Register, refresh, list, and retire device push tokens."""
