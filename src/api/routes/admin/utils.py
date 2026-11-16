@@ -24,6 +24,43 @@ _MIGRATION_VERSION_RE = re.compile(r"[0-9]{3}")
 _SAFE_CSP_NONCE_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _MAX_ADMIN_TEMPLATE_BYTES = 2 * 1024 * 1024
 
+# Destructive maintenance actions need a deliberate, exact confirmation
+# phrase in addition to the approval gate and the elevated permission scope.
+# The phrase is action-specific so a confirmation for one operation can never
+# authorize a different one, and dry runs are exempt because they mutate
+# nothing.
+_DESTRUCTIVE_CONFIRMATIONS = {
+    "migrations.rollback": "ROLLBACK MIGRATION",
+    "migrations.apply": "APPLY MIGRATION",
+    "migrations.apply_all": "APPLY ALL MIGRATIONS",
+    "search.reindex": "REBUILD SEARCH INDEX",
+}
+
+
+def require_destructive_confirmation(
+    action: str, confirmation: Optional[str], *, dry_run: bool = False
+) -> None:
+    """Fail closed unless the caller supplied the exact confirmation phrase.
+
+    This is a second, explicit step after the single-use approval gate and
+    the elevated ``maintenance`` scope: an accidental or coerced approval can
+    no longer trigger an irreversible rebuild/rollback on its own.
+    """
+    if dry_run:
+        return
+    expected = _DESTRUCTIVE_CONFIRMATIONS.get(action)
+    if expected is None:
+        # Unknown action: never grant a destructive capability by default.
+        raise HTTPException(status_code=500, detail="Unknown destructive action")
+    if not isinstance(confirmation, str) or confirmation != expected:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Action '{action}' requires explicit confirmation: "
+                f'send confirmation="{expected}"'
+            ),
+        )
+
 
 def validate_migration_version(version: object) -> str:
     """Return a validated migration version or raise a 400.

@@ -68,8 +68,13 @@ class TestRequireApprovedRequest:
 
             def fetch_one(self, query, params=None):
                 q = query.lower()
-                if "count(*)" in q:
-                    return {"c": admins}
+                # The gate now reads the admin count and the candidate
+                # approval id in a single scalar-subquery statement.
+                if "count(*)" in q and "admin_count" in q:
+                    return {
+                        "admin_count": admins,
+                        "approval_id": approved_row["id"] if approved_row else None,
+                    }
                 return approved_row
 
             def execute(self, query, params=None):
@@ -108,11 +113,12 @@ class TestRequireApprovedRequest:
 
             def fetch_one(self, query, params=None):
                 q = query.lower()
-                if "count(*)" in q:
-                    return {"c": 3}
-                # After the claim UPDATE, nothing approved remains.
-                if not self.claimed:
-                    return {"id": 42}
+                if "count(*)" in q and "admin_count" in q:
+                    # After the claim UPDATE, nothing approved remains.
+                    return {
+                        "admin_count": 3,
+                        "approval_id": 42 if not self.claimed else None,
+                    }
                 return None
 
             def execute(self, query, params=None):
@@ -126,9 +132,12 @@ class TestRequireApprovedRequest:
         class PostConsumptionDB(ConsumedDB):
             def fetch_one(self, query, params=None):
                 q = query.lower()
-                if "count(*)" in q:
-                    return {"c": 3}
-                return None  # approval already 'consumed'
+                if "count(*)" in q and "admin_count" in q:
+                    return {
+                        "admin_count": 3,
+                        "approval_id": None,  # approval already 'consumed'
+                    }
+                return None
 
         with patch("src.api.get_db", return_value=PostConsumptionDB()):
             with pytest.raises(HTTPException) as exc:
@@ -145,9 +154,9 @@ class TestRequireApprovedRequest:
         class RacyDB:
             def fetch_one(self, query, params=None):
                 q = query.lower()
-                if "count(*)" in q:
-                    return {"c": 3}
-                return {"id": 7}
+                if "count(*)" in q and "admin_count" in q:
+                    return {"admin_count": 3, "approval_id": 7}
+                return None
 
             def execute(self, query, params=None):
                 return Cursor()
