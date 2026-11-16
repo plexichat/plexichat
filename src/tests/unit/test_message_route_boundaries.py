@@ -183,3 +183,20 @@ def test_export_id_is_bounded():
         with pytest.raises(HTTPException) as exc:
             _validate_export_id(bad)
         assert exc.value.status_code == 400
+
+
+def test_bulk_delete_rejects_out_of_range_ids():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import pytest
+    from fastapi import HTTPException
+
+    from src.api.routes.messages.messages_crud.delete import DeleteMixin
+
+    body = SimpleNamespace(message_ids=["0"])
+    with patch("src.api.get_messaging", return_value=object()):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(DeleteMixin().bulk_delete_messages("123", body, _dummy_user()))
+    assert exc.value.status_code == 400

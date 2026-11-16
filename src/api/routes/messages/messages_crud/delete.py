@@ -268,13 +268,13 @@ class DeleteMixin(BroadcastMixin, MessagesCRUDBase):
                         }
                     },
                 )
-            try:
-                message_ids = [int(m) for m in raw_ids]
-            except (TypeError, ValueError):
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": {"code": 400, "message": "Invalid message ID"}},
-                )
+            # SnowflakeID already checks numeric shape, but it admits 0 and
+            # imposes no 64-bit ceiling; range-check each id before passing the
+            # batch to the bulk delete path.
+            message_ids = [
+                require_snowflake(m, "message_id", "Invalid message ID")
+                for m in raw_ids
+            ]
             if not message_ids:
                 return SuccessResponse(success=True, message=None)
 
