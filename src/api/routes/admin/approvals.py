@@ -597,41 +597,51 @@ async def reject_request(
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Get approval request
-    approval = db.fetch_one(
+    now = int(time.time() * 1000)
+
+    # Single conditional UPDATE is the fast path: reject only while the
+    # approval is still pending and unexpired. The previous implementation
+    # spent a read round trip on every successful reject; on the rare failure
+    # path we do one diagnostic read to reproduce the exact 400/404 error.
+    cursor = db.execute(
         """
-        SELECT id, status, requested_by, expires_at
-        FROM admin_approvals
+        UPDATE admin_approvals
+        SET status = 'rejected', rejected_by = ?, rejection_reason = ?, updated_at = ?
         WHERE id = ?
+          AND status = 'pending'
+          AND (expires_at IS NULL OR expires_at > ?)
     """,
-        (approval_id,),
+        (admin_id, decision.reason, now, approval_id, now),
     )
 
-    if not approval:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": {"code": 404, "message": "Approval request not found"}},
+    if getattr(cursor, "rowcount", 0) <= 0:
+        approval = db.fetch_one(
+            "SELECT status, expires_at FROM admin_approvals WHERE id = ?",
+            (approval_id,),
         )
+        if not approval:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": {"code": 404, "message": "Approval request not found"}
+                },
+            )
 
-    if isinstance(approval, dict):
-        status = approval["status"]
-    else:
-        status = approval[1]
+        if isinstance(approval, dict):
+            status = approval["status"]
+            expires_at = approval.get("expires_at")
+        else:
+            status = approval[1]
+            expires_at = approval[2] if len(approval) > 2 else None
 
-    # Expired requests cannot be rejected or otherwise mutated.
-    expires_at = (
-        approval.get("expires_at")
-        if isinstance(approval, dict)
-        else (approval[3] if len(approval) > 3 else None)
-    )
-    if expires_at is not None and int(expires_at) <= int(time.time() * 1000):
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": 400, "message": "Approval request has expired"}},
-        )
+        if expires_at is not None and int(expires_at) <= now:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {"code": 400, "message": "Approval request has expired"}
+                },
+            )
 
-    # Check if approval is still pending
-    if status != "pending":
         raise HTTPException(
             status_code=400,
             detail={
@@ -641,17 +651,6 @@ async def reject_request(
                 }
             },
         )
-
-    now = int(time.time() * 1000)
-
-    db.execute(
-        """
-        UPDATE admin_approvals
-        SET status = 'rejected', rejected_by = ?, rejection_reason = ?, updated_at = ?
-        WHERE id = ?
-    """,
-        (admin_id, decision.reason, now, approval_id),
-    )
 
     from src.core.admin.permissions import log_admin_action
 
