@@ -5,11 +5,18 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import utils.logger as logger
 
+from src.core.security.hardening import bounded_int
+
 from .. import dialect
 from .metrics import _query_count, _query_time_ms
 from .types import DbConnection, DbCursor
 
 _QUERY_CACHE_MAX = 100
+
+# SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999. Leave headroom so a
+# batched IN(...) lookup can never trip that limit even when the statement
+# carries a few extra bound parameters from a surrounding query.
+_MAX_BATCH_PARAMS = 900
 
 _DDL_STATEMENT_PREFIXES = ("CREATE", "ALTER")
 
@@ -110,6 +117,15 @@ class _DatabaseExecutionProtocol(Protocol):
     def fetch_one(
         self, query: str, params: Optional[Tuple] = None
     ) -> Optional[Dict[str, Any]]: ...
+
+    def fetch_many_by_ids(
+        self,
+        table: str,
+        ids: Any,
+        key_column: str = "id",
+        columns: Optional[List[str]] = None,
+        batch_size: int = _MAX_BATCH_PARAMS,
+    ) -> Dict[Any, Dict[str, Any]]: ...
 
     def insert_or_ignore(
         self, table: str, columns: List[str], values: Tuple
@@ -635,6 +651,78 @@ class DatabaseExecutionMixin:
         self._cache_put(cache_key, final_results, self._query_cache_ttl)
 
         return final_results
+
+    def fetch_many_by_ids(
+        self: _DatabaseExecutionProtocol,
+        table: str,
+        ids: Any,
+        key_column: str = "id",
+        columns: Optional[List[str]] = None,
+        batch_size: int = _MAX_BATCH_PARAMS,
+    ) -> Dict[Any, Dict[str, Any]]:
+        """Batch-load rows by key in O(ceil(n/batch)) queries, never O(n).
+
+        This is the data-layer primitive for the N+1 read pattern that shows up
+        in the hot repository paths::
+
+            out = {}
+            for entity_id in ids:
+                row = db.fetch_one("SELECT * FROM things WHERE id = ?",
+                                   (entity_id,))
+                if row:
+                    out[entity_id] = row
+
+        With ``n`` ids that issues ``n`` statements, each paying a full
+        execute/commit/cache round trip. One ``IN (?, ?, ...)`` statement per
+        bounded chunk returns the same rows in a handful of round trips. The
+        returned mapping is keyed by ``key_column``; ids with no row are simply
+        absent, so callers can distinguish "not found" without a second query.
+
+        ``table``, ``key_column`` and ``columns`` are validated as identifiers
+        before interpolation, so the only dynamic part of the SQL is the
+        placeholder list -- values always travel as bound parameters.
+        """
+        unique_ids: List[Any] = []
+        seen = set()
+        for value in ids:
+            if value is None or value in seen:
+                continue
+            seen.add(value)
+            unique_ids.append(value)
+        if not unique_ids:
+            return {}
+
+        chunk_size = bounded_int(
+            batch_size, "batch_size", minimum=1, maximum=_MAX_BATCH_PARAMS
+        )
+        safe_table = dialect.sanitize_identifier(table, self.type)
+        safe_key = dialect.sanitize_identifier(key_column, self.type)
+
+        if columns:
+            projected = list(columns)
+            if key_column not in projected:
+                # The key must be selected for the caller to get a mapping.
+                projected.insert(0, key_column)
+            safe_columns = [
+                dialect.sanitize_identifier(column, self.type) for column in projected
+            ]
+            projection = ", ".join(safe_columns)
+        else:
+            projection = "*"
+
+        result: Dict[Any, Dict[str, Any]] = {}
+        for start in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[start : start + chunk_size]
+            placeholders = ", ".join("?" for _ in chunk)
+            query = (
+                f"SELECT {projection} FROM {safe_table} "
+                f"WHERE {safe_key} IN ({placeholders})"
+            )
+            for row in self.fetch_all(query, tuple(chunk)):
+                key = row.get(key_column) if isinstance(row, dict) else None
+                if key is not None:
+                    result[key] = row
+        return result
 
     def table_exists(self: _DatabaseExecutionProtocol, table_name: str) -> bool:
         query, params = self.engine.get_table_exists_query(table_name)
