@@ -100,6 +100,9 @@ def _warm_openapi(app: Any) -> None:
         return
     try:
         app.openapi()
+        from src.api.openapi_cache import save_cached_openapi
+
+        save_cached_openapi(app)
     except Exception as e:
         logger.debug(f"Startup warm-up OpenAPI generation failed: {e}")
 

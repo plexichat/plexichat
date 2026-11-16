@@ -116,6 +116,21 @@ def create_app(enable_rate_limiting: bool = True, enable_docs: bool = True) -> F
             f"{config.max_worker_threads} concurrent worker threads"
         )
 
+        # All routes are registered by the time the lifespan runs, so this is
+        # the first point where the OpenAPI cache digest is final. Loading it
+        # here (off the event loop) makes the first GET /openapi.json a memory
+        # read instead of a 12-24s schema build.
+        try:
+            import asyncio as _asyncio
+
+            from .openapi_cache import load_cached_openapi
+
+            await _asyncio.get_running_loop().run_in_executor(
+                None, load_cached_openapi, app
+            )
+        except Exception as e:
+            logger.debug(f"OpenAPI cache preload skipped: {e}")
+
         # A process only starts on a build, so every cached version payload
         # belongs to the build this process replaced. ``/version`` caches its
         # response for an hour, which meant an operator who upgraded and then
