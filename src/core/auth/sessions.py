@@ -83,6 +83,19 @@ def revoke_session(user_id: int, session_id: int) -> bool:
     return _get_auth_manager().get_instance().revoke_session(user_id, session_id)
 
 
+def revoke_sessions_bulk(
+    user_id: int,
+    session_ids: List[int],
+    except_session_id: Optional[int] = None,
+) -> int:
+    """Revoke many of a user's sessions in one write. Returns the count."""
+    return (
+        _get_auth_manager()
+        .get_instance()
+        .revoke_sessions_bulk(user_id, session_ids, except_session_id)
+    )
+
+
 def create_ws_ticket_for_session(
     user_id: int, session_id: Optional[int]
 ) -> "tuple[str, int]":
@@ -135,6 +148,7 @@ __all__ = [
     "logout_all_users",
     "get_sessions",
     "revoke_session",
+    "revoke_sessions_bulk",
     "create_ws_ticket_for_session",
     "schedule_account_deletion",
     "cancel_account_deletion",

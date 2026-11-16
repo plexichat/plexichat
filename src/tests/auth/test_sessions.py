@@ -247,6 +247,50 @@ class TestSessions:
         success = auth_manager.revoke_session(user2.id, session_id)
         assert success is False
 
+    def test_revoke_sessions_bulk_respects_owner_and_exclusion(self, db, auth_manager):
+        """Bulk revoke clears the batch in one write but keeps the safeguards."""
+        from src.utils import encryption
+
+        with patch.object(encryption, "hash_password", return_value="fake_hash_$test"):
+            user = auth_manager.register(
+                username="bulkrevoke_test",
+                email="bulkrevoke_test@example.com",
+                password="TestPass123!",
+            )
+            other = auth_manager.register(
+                username="bulkrevoke_other",
+                email="bulkrevoke_other@example.com",
+                password="TestPass123!",
+            )
+
+        with patch.object(encryption, "verify_password", return_value=True):
+            auth_manager.login("bulkrevoke_test", "TestPass123!")
+            auth_manager.login("bulkrevoke_test", "TestPass123!")
+            auth_manager.login("bulkrevoke_test", "TestPass123!")
+            other_session = auth_manager.login("bulkrevoke_other", "TestPass123!")
+
+        sessions = auth_manager.get_sessions(user.id)
+        assert len(sessions) == 3
+        current = sessions[0].id
+        ids = [s.id for s in sessions]
+
+        with patch(
+            "src.core.auth.managers.session.lifecycle.invalidate_pattern"
+        ) as invalidate:
+            revoked = auth_manager.revoke_sessions_bulk(
+                user.id, ids, except_session_id=current
+            )
+        assert revoked == 2
+        # A single invalidation for the whole batch, not one per session.
+        invalidate.assert_called_once_with("token_verify:*")
+
+        remaining = auth_manager.get_sessions(other.id)
+        assert len(remaining) == 1
+        assert remaining[0].id == int(other_session.token.split(".")[0])
+
+        remaining = auth_manager.get_sessions(user.id)
+        assert [s.id for s in remaining] == [current]
+
     def test_session_token_format(self, db, auth_manager):
         """Test session token has correct format."""
         from src.utils import encryption

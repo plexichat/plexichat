@@ -9,7 +9,7 @@ from src.core.database import invalidate_pattern
 
 from ...exceptions import TokenExpiredError, TokenInvalidError
 from ...models import AuditEventType, Session
-from ...tokens import create_session_token, parse_token, verify_token_hash
+from ...tokens import create_session_token, is_expired, parse_token, verify_token_hash
 from ..protocol import AuthManagerProtocol
 
 
@@ -185,7 +185,7 @@ class LifecycleMixin(AuthManagerProtocol):
             logger.warning(f"Attempted use of token for frozen user {row['user_id']}")
             raise TokenInvalidError("Account is scheduled for deletion")
 
-        if row["expires_at"] < self._get_timestamp():
+        if is_expired(row["expires_at"], self._get_timestamp()):
             raise TokenExpiredError("Expired")
 
         if self._config.get("security", {}).get("token_binding", False):
@@ -368,7 +368,7 @@ class LifecycleMixin(AuthManagerProtocol):
             raise TokenInvalidError("Invalid ticket")
         if row["used"]:
             raise TokenInvalidError("Ticket already used")
-        if row["expires_at"] < self._get_timestamp():
+        if is_expired(row["expires_at"], self._get_timestamp()):
             raise TokenExpiredError("Ticket expired")
 
         # Atomic single-use consumption: concurrent replays of the same
@@ -394,7 +394,7 @@ class LifecycleMixin(AuthManagerProtocol):
         if (
             not srow
             or srow["revoked"]
-            or srow["expires_at"] < self._get_timestamp()
+            or is_expired(srow["expires_at"], self._get_timestamp())
             or srow.get("deletion_status") == "frozen"
         ):
             raise TokenInvalidError("Ticket session no longer valid")
@@ -430,7 +430,7 @@ class LifecycleMixin(AuthManagerProtocol):
             or not verify_token_hash(parsed["secret"], row["token_hash"])
         ):
             return None
-        if row["expires_at"] < self._get_timestamp():
+        if is_expired(row["expires_at"], self._get_timestamp()):
             return None
         now = self._get_timestamp()
         # Trusted-device sessions must keep their longer TTL across a refresh:
@@ -575,3 +575,64 @@ class LifecycleMixin(AuthManagerProtocol):
                 logger.debug(f"session_revoked alert not emitted: {exc}")
             return True
         return False
+
+    def revoke_sessions_bulk(
+        self,
+        user_id: int,
+        session_ids: List[int],
+        except_session_id: Optional[int] = None,
+    ) -> int:
+        """Revoke many of a user's sessions in one write.
+
+        Used by the ``revoke-all`` route, which used to issue one UPDATE, one
+        cache invalidation, one audit insert and one security alert *per*
+        session. All revocations are now a single ``UPDATE ... IN (...)`` with
+        one post-write invalidation, while keeping every security invariant:
+
+        * only rows owned by ``user_id`` are touched (same predicate as
+          :meth:`revoke_session`);
+        * the token cache is invalidated after the write so a concurrent
+          verification cannot re-cache a still-valid row;
+        * an audit event and a security alert are still recorded.
+
+        Returns the number of sessions actually revoked.
+        """
+        targets: List[int] = []
+        for session_id in session_ids:
+            if session_id is None:
+                continue
+            try:
+                sid = int(session_id)
+            except (TypeError, ValueError):
+                continue
+            if except_session_id is not None and sid == int(except_session_id):
+                continue
+            targets.append(sid)
+
+        if not targets:
+            return 0
+
+        placeholders = ",".join("?" for _ in targets)
+        cursor = self._db.execute(
+            "UPDATE auth_sessions SET revoked = 1 "
+            f"WHERE user_id = ? AND revoked = 0 AND id IN ({placeholders})",
+            (user_id, *targets),
+        )
+        revoked = int(getattr(cursor, "rowcount", 0) or 0)
+        if revoked:
+            # Invalidate after the write so a concurrent verify_token cannot
+            # re-cache a still-valid row in between.
+            invalidate_pattern("token_verify:*")
+            self._log_audit(
+                AuditEventType.SESSION_REVOKED,
+                user_id,
+                True,
+                details={"revoked_count": revoked},
+            )
+            try:
+                from src.core.events.gateway_emit import emit_security_alert
+
+                emit_security_alert(user_id, "session_revoked")
+            except Exception as exc:
+                logger.debug(f"session_revoked alert not emitted: {exc}")
+        return revoked
