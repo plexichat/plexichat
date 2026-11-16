@@ -26,11 +26,34 @@ from src.api.schemas.artifacts import (
     ServerRetentionResponse,
 )
 from src.api.schemas.common import ErrorResponse, SnowflakeIDParam
+from src.core.artifacts.repository import row_to_artifact
 
 
 ALLOWED_FEATURES = {"plexiscribe", "plexiscript", "plexiboard", "whiteboard", "voice"}
 
 router = APIRouter(prefix="/artifacts", tags=["Admin", "Artifacts"])
+
+
+def _list_with_total(db, limit: int, offset: int):
+    """Fetch one page and the unpaged total in a single database round trip.
+
+    ``COUNT(*) OVER()`` is evaluated across every row that satisfies the
+    (empty) filter before ``LIMIT``/``OFFSET`` trims the page, so it returns
+    exactly what a separate ``SELECT COUNT(*)`` would. The previous code issued
+    two queries for every list request; this folds them into one.
+
+    Returns ``(items, total_or_None)``. ``total`` is ``None`` when the requested
+    page is past the end (no rows carry the window value); the caller then
+    falls back to an explicit count so the response contract is unchanged.
+    """
+    rows = db.fetch_all(
+        "SELECT a.*, COUNT(*) OVER() AS _total FROM artifacts a "
+        "ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    )
+    if not rows:
+        return [], None
+    return [row_to_artifact(row) for row in rows], int(rows[0]["_total"])
 
 
 def _get_manager():
@@ -83,8 +106,12 @@ async def admin_list_artifacts(request: Request) -> Dict[str, Any]:
     try:
         manager = _get_manager()
         filters = {"limit": limit, "offset": offset}
-        artifacts = manager.list_with_filters(filters=filters)
-        total = manager.count(filters)
+        artifacts, total = _list_with_total(manager.db, limit, offset)
+        if total is None:
+            # Empty page (offset past the end): the window function has no row
+            # to report a total from, so fall back to the explicit count.
+            artifacts = manager.list_with_filters(filters=filters)
+            total = manager.count(filters)
         return {
             "total": total,
             "items": [
@@ -128,12 +155,17 @@ async def admin_delete_artifact(artifact_id: str, request: Request) -> Dict[str,
             )
 
         manager = _get_manager()
-        if manager.get(aid) is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"error": {"code": 404, "message": "Artifact not found"}},
-            )
+        # ``manager.delete`` already fetches the row internally before removing
+        # it. Use that result instead of a separate pre-flight ``get``; on the
+        # success path this saves one database round trip. Only on a failed
+        # delete do a single follow-up read to distinguish "already gone"
+        # (404) from a genuine deletion failure (500), preserving the contract.
         if not manager.delete(aid):
+            if manager.get(aid) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"error": {"code": 404, "message": "Artifact not found"}},
+                )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={"error": {"code": 500, "message": "Failed to delete"}},
