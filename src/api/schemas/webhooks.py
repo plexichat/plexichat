@@ -5,6 +5,7 @@ Webhook schemas - Request/response models for webhook endpoints.
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from .policy_types import UIText
+from .url_types import HttpUrl
 
 from .common import SnowflakeID
 from src.core.security.hardening import require_http_url
@@ -28,7 +29,7 @@ class WebhookCreateRequest(BaseModel):
 
     channel_id: SnowflakeID = Field(..., description="Channel ID for the webhook")
     name: UIText = Field(..., min_length=1, max_length=80, description="Webhook name")
-    avatar_url: Optional[str] = Field(
+    avatar_url: Optional[HttpUrl] = Field(
         None, max_length=2048, description="Webhook avatar URL"
     )
     require_signed_deliveries: bool = Field(
@@ -50,7 +51,7 @@ class WebhookUpdateRequest(BaseModel):
     name: Optional[UIText] = Field(
         None, min_length=1, max_length=80, description="Webhook name"
     )
-    avatar_url: Optional[str] = Field(
+    avatar_url: Optional[HttpUrl] = Field(
         None, max_length=2048, description="Webhook avatar URL"
     )
     channel_id: Optional[SnowflakeID] = Field(None, description="New channel ID")
@@ -94,7 +95,7 @@ class WebhookExecuteRequest(BaseModel):
     username: Optional[UIText] = Field(
         None, max_length=80, description="Override username"
     )
-    avatar_url: Optional[str] = Field(
+    avatar_url: Optional[HttpUrl] = Field(
         None, max_length=2048, description="Override avatar URL"
     )
     embeds: Optional[List[Dict[str, Any]]] = Field(
