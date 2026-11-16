@@ -142,3 +142,15 @@ class TestMigrationFilenameBounds:
         assert len(files) == 1
         assert files[0].parent == migrations
         assert "evil" in files[0].name
+
+
+class TestClonerBatchSize:
+    def test_batch_size_bounded(self):
+        from src.core.migrations.cloner import DataCloner
+
+        cloner = DataCloner.__new__(DataCloner)
+        cloner.batch_size = 500
+        assert cloner.batch_size == 500
+        for bad in (0, -1, 10**9):
+            with pytest.raises(HardeningViolation):
+                cloner.batch_size = bad
