@@ -1,6 +1,8 @@
 from typing import Any, Dict, Optional, List
 
 from src.core.base import SnowflakeID
+from src.core.security.hardening import HardeningViolation
+from src.core.security.hardening.text import reject_control_characters
 from ..exceptions import (
     InvalidServerNameError,
     InvalidChannelNameError,
@@ -118,6 +120,11 @@ class CacheOpsMixin(ServerProtocol):
     def _validate_server_name(self, name: str) -> str:
         if not name or not name.strip():
             raise InvalidServerNameError("Server name cannot be empty")
+
+        try:
+            name = reject_control_characters(name, "Server name")
+        except HardeningViolation as exc:
+            raise InvalidServerNameError(str(exc), name) from exc
 
         name = name.strip()
         min_len = self._config.get("server_name_min_length", 2)

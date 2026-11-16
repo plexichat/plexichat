@@ -26,7 +26,10 @@ from ..exceptions import (
     ServerLimitReachedError,
 )
 from src.core.database.cache import cached
-from src.core.servers.validation import validate_server_media_url
+from src.core.servers.validation import (
+    validate_server_description,
+    validate_server_media_url,
+)
 from .converters import _row_to_server, _server_to_dict, _dict_to_server
 from .protocol import ServerProtocol
 
@@ -93,6 +96,8 @@ class ServerOpsMixin(ServerProtocol):
                     )
         except (RuntimeError, ImportError):
             pass
+
+        description = validate_server_description(description)
 
         now = self._get_timestamp()
         server_id = self._generate_id()
@@ -331,6 +336,7 @@ class ServerOpsMixin(ServerProtocol):
             changes["name"] = {"old": server.name, "new": name}
 
         if description is not None:
+            description = validate_server_description(description)
             if self._encrypt_descriptions:
                 from src.utils.encryption import encrypt_data
 

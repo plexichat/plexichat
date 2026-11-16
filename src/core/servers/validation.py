@@ -74,3 +74,20 @@ def validate_server_media_url(
     require_http_url(url, field)
     parse_outbound_url(url, field)
     return url
+
+
+def validate_server_description(
+    value: object, field: str = "Server description"
+) -> Optional[str]:
+    """Bound a server description and refuse embedded control characters.
+
+    Descriptions are rendered to every member of a server. Enforcing the same
+    length ceiling and control-character rule as the HTTP schema at the core
+    boundary closes the direct-caller bypass.
+    """
+    if value is None:
+        return None
+    text = reject_control_characters(value, field)
+    if len(text) > MAX_SERVER_DESCRIPTION_LENGTH:
+        raise HardeningViolation(f"{field} is too long")
+    return text
