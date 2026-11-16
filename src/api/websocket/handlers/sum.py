@@ -22,7 +22,12 @@ from typing import Any, Dict, Optional, Tuple
 
 import utils.logger as logger
 
-from src.api.websocket.boundaries import MAX_OP_PAYLOAD_BYTES, payload_size
+from src.core.security.hardening import bounded_int
+from src.api.websocket.boundaries import (
+    MAX_OP_PAYLOAD_BYTES,
+    parse_snowflake,
+    payload_size,
+)
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.sum import (
@@ -51,10 +56,9 @@ def _workbook_id(data: Optional[Dict[str, Any]]) -> Optional[int]:
     if raw is None:
         return None
     try:
-        value = int(raw)
+        return parse_snowflake(raw, "workbook_id")
     except (TypeError, ValueError):
         return None
-    return value if value > 0 else None
 
 
 class SumHandler:
@@ -221,8 +225,10 @@ class SumHandler:
         if sheet_id is None or base_revision is None:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
         try:
-            sheet_id = int(sheet_id)
-            base_revision = int(base_revision)
+            sheet_id = parse_snowflake(sheet_id, "sheet_id")
+            base_revision = bounded_int(
+                base_revision, "base_revision", minimum=0, maximum=2**63 - 1
+            )
         except (TypeError, ValueError):
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
         if not isinstance(cells, list) or not cells or len(cells) > MAX_OP_CELLS:

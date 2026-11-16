@@ -23,7 +23,11 @@ import src.api as api
 import utils.config as config
 import utils.logger as logger
 
-from src.api.websocket.boundaries import payload_size, bounded_batch
+from src.api.websocket.boundaries import (
+    bounded_batch,
+    parse_snowflake,
+    payload_size,
+)
 from src.core.security.hardening import bounded_int
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
@@ -119,11 +123,9 @@ class ArtifactHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
-            artifact_id = int(artifact_id)
+            artifact_id = parse_snowflake(artifact_id, "artifact_id")
         except (ValueError, TypeError):
-            logger.warning(
-                f"Invalid artifact_id type in subscribe: {type(artifact_id)}"
-            )
+            logger.warning(f"Invalid artifact_id in subscribe: {artifact_id!r}")
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         if not connection.user_id:
@@ -237,11 +239,9 @@ class ArtifactHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
-            artifact_id = int(artifact_id)
+            artifact_id = parse_snowflake(artifact_id, "artifact_id")
         except (ValueError, TypeError):
-            logger.warning(
-                f"Invalid artifact_id type in unsubscribe: {type(artifact_id)}"
-            )
+            logger.warning(f"Invalid artifact_id in unsubscribe: {artifact_id!r}")
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         if not connection.user_id:
@@ -288,9 +288,9 @@ class ArtifactHandler:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
-            artifact_id = int(artifact_id)
+            artifact_id = parse_snowflake(artifact_id, "artifact_id")
         except (ValueError, TypeError):
-            logger.warning(f"Invalid artifact_id type in op: {type(artifact_id)}")
+            logger.warning(f"Invalid artifact_id in op: {artifact_id!r}")
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         if not connection.user_id:

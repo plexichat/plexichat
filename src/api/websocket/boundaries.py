@@ -18,7 +18,7 @@ import json
 
 from typing import Any
 
-from src.core.security.hardening import HardeningViolation, bounded_int
+from src.core.security.hardening import HardeningViolation, bounded_int, parse_id
 
 # --- Frame / message size bounds (commit 1) ---------------------------------
 
@@ -154,3 +154,14 @@ def bounded_batch(value: object, default: int = MAX_OP_BATCH) -> int:
     return bounded_int(
         value, "batch size", minimum=1, maximum=MAX_OP_BATCH, default=default
     )
+
+
+# --- Snowflake ids (commit 5) ---------------------------------------------
+def parse_snowflake(value: object, field: str = "id") -> int:
+    """Parse an id in ``[1, 2**63-1]`` from an untrusted gateway payload.
+
+    Bare ``int()`` accepted negatives and oversized values that then flowed
+    into repository lookups, replay offsets and delta fan-out. Delegates to
+    the shared range guard so the rule stays identical across boundaries.
+    """
+    return parse_id(value, field)
