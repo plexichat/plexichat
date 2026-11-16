@@ -12,6 +12,7 @@ from src.core.database.valkey_client import (
     ValkeyError,
     ValkeyOperationError,
 )
+from ..exceptions import RateLimitStoreUnavailable
 from .base import RateLimitStorage
 
 
@@ -564,16 +565,24 @@ class ValkeyStorage(RateLimitStorage):
 
         full_key = self._get_key(key)
         token = await self.aacquire_lock(key, timeout=5.0)
+        # SECURITY: without the distributed lock the get->mutate->set sequence
+        # is a lost-update race across workers: two requests can both spend
+        # the same token. Never fall through to an unlocked mutation.
+        if not token:
+            raise RateLimitStoreUnavailable(
+                f"could not acquire distributed rate-limit lock for {key!r}"
+            )
         try:
             state = cast(Dict[str, Any], await client.aget_json(full_key) or {})
             mutate_fn(state)
             int_ttl = int(ttl) if ttl is not None else self.DEFAULT_BUCKET_TTL
             await client.aset_json(full_key, state, ttl=int_ttl)
-        except ValkeyError:
-            pass
+        except ValkeyError as exc:
+            raise RateLimitStoreUnavailable(
+                f"rate-limit bucket write failed for {key!r}: {exc}"
+            ) from exc
         finally:
-            if token:
-                await self.arelease_lock(key, token)
+            await self.arelease_lock(key, token)
 
     async def aclose(self) -> None:
         """Valkey bucket state is server-side; nothing to close locally."""

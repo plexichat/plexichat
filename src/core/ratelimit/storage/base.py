@@ -10,6 +10,8 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Callable, Optional, List, Dict, Any
 
+from ..exceptions import RateLimitStoreUnavailable
+
 
 class RateLimitStorage(ABC):
     """Abstract base class for rate limit storage.
@@ -233,11 +235,21 @@ class RateLimitStorage(ABC):
             mutate_fn: Callable that mutates the state dict in place.
             ttl: Optional TTL to apply when writing back.
         """
-        token: Optional[str] = None
+        # SECURITY: an unlocked read-modify-write is a double-spend primitive.
+        # If the distributed lock cannot be acquired (timeout, backend error),
+        # two workers can both read the same snapshot and the later write
+        # clobbers the earlier deduction. Refuse to touch the bucket at all;
+        # the manager turns the raised error into a fail-closed denial.
         try:
             token = self.acquire_lock(key, timeout=5.0)
-        except Exception:
-            token = None
+        except Exception as exc:
+            raise RateLimitStoreUnavailable(
+                f"could not acquire rate-limit lock for {key!r}: {exc}"
+            ) from exc
+        if not token:
+            raise RateLimitStoreUnavailable(
+                f"could not acquire rate-limit lock for {key!r}"
+            )
         try:
             state = self.get_bucket(key) or {}
             mutate_fn(state)
