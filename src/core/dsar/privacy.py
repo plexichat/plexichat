@@ -201,9 +201,7 @@ def scrub_third_party_pii(
     The input is never mutated: a new structure of the same shape is returned.
     """
     required = frozenset(legally_required)
-    pii_values = (
-        _collect_pii_values(value, fields, required) if scrub_inline else set()
-    )
+    pii_values = _collect_pii_values(value, fields, required) if scrub_inline else set()
     # Longest first so an overlapping value cannot leave a longer name behind
     # after a shorter prefix has already been replaced.
     tokens: Tuple[str, ...] = tuple(sorted(pii_values, key=len, reverse=True))
@@ -226,7 +224,9 @@ def _scrub(
                 result[key] = _scrub(child, fields, legally_required, redacted, tokens)
         return result
     if isinstance(value, list):
-        return [_scrub(child, fields, legally_required, redacted, tokens) for child in value]
+        return [
+            _scrub(child, fields, legally_required, redacted, tokens) for child in value
+        ]
     if isinstance(value, tuple):
         return tuple(
             _scrub(child, fields, legally_required, redacted, tokens) for child in value
@@ -240,6 +240,103 @@ def _scrub(
     return value
 
 
+class ExportQuotaExceeded(ValueError):
+    """Raised when an export would exceed a configured resource bound."""
+
+
+class ExportIncompleteError(ValueError):
+    """Raised when collection failed partially and the export is incomplete."""
+
+
+ENVELOPE_KEYS = frozenset(
+    {"exported_at", "user_id", "export_version", "export_metadata"}
+)
+
+
+def _count_records(value: Any) -> int:
+    """Count row-like records in one category payload."""
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        nested = sum(_count_records(child) for child in value.values())
+        return nested if nested else 1
+    return 0
+
+
+def export_record_counts(data: Dict[str, Any]) -> Dict[str, int]:
+    """Return {category: record_count} for every collected category."""
+    return {
+        category: _count_records(payload)
+        for category, payload in data.items()
+        if category not in ENVELOPE_KEYS
+    }
+
+
+def enforce_export_quotas(
+    data: Dict[str, Any],
+    *,
+    max_records_per_category: int,
+    max_total_records: int,
+    max_export_bytes: int,
+) -> None:
+    """Fail closed if ``data`` would produce an oversized export.
+
+    Bounds every category independently, the overall record count, and the
+    serialized payload size. A runaway collector query (a missing LIMIT, a
+    self-referential join) can no longer exhaust memory or disk by generating
+    an unbounded compliance artifact.
+
+    Raises:
+        ExportQuotaExceeded: describing the first bound that was breached.
+    """
+    counts = export_record_counts(data)
+    for category, count in counts.items():
+        if count > max_records_per_category:
+            raise ExportQuotaExceeded(
+                f"category {category!r} has {count} records, exceeding "
+                f"max_records_per_category={max_records_per_category}"
+            )
+
+    total = sum(counts.values())
+    if total > max_total_records:
+        raise ExportQuotaExceeded(
+            f"export has {total} records, exceeding "
+            f"max_total_records={max_total_records}"
+        )
+
+    serialized = json.dumps(data, default=str).encode("utf-8")
+    size = len(serialized)
+    if size > max_export_bytes:
+        raise ExportQuotaExceeded(
+            f"export payload is {size} bytes, exceeding "
+            f"max_export_bytes={max_export_bytes}"
+        )
+
+
+def assert_export_complete(data: Dict[str, Any]) -> None:
+    """Fail closed when any collector reported a partial failure.
+
+    An incomplete compliance artifact is worse than no artifact: it tells the
+    subject they received everything when categories are missing. Generation
+    callers invoke this before writing any bytes so a partial collection
+    leaves the request in ``failed`` instead of shipping a false-complete
+    export.
+    """
+    metadata = data.get("export_metadata")
+    if isinstance(metadata, dict) and metadata.get("complete") is False:
+        warnings = metadata.get("warnings", [])
+        raise ExportIncompleteError(
+            "DSAR collection was incomplete; refusing to generate export: "
+            + "; ".join(str(warning) for warning in warnings)
+        )
+
+
+def assert_export_ready(data: Dict[str, Any], quotas: Dict[str, int]) -> None:
+    """All pre-generation gates in one call: complete + within quotas."""
+    assert_export_complete(data)
+    enforce_export_quotas(data, **quotas)
+
+
 __all__ = [
     "REDACTED",
     "THIRD_PARTY_PII_FIELDS",
@@ -247,4 +344,11 @@ __all__ = [
     "SUBJECT_ID_FIELDS",
     "verify_export_scope",
     "scrub_third_party_pii",
+    "ExportQuotaExceeded",
+    "ExportIncompleteError",
+    "ENVELOPE_KEYS",
+    "export_record_counts",
+    "enforce_export_quotas",
+    "assert_export_complete",
+    "assert_export_ready",
 ]

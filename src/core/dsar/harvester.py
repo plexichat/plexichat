@@ -6,7 +6,8 @@ import utils.config as config
 import utils.logger as logger
 from .collector import DataCollector
 from .export_formats import ExportFormatGenerator
-from .config import get_dsar_config
+from .config import export_quotas, get_dsar_config
+from .privacy import assert_export_ready
 
 
 class DSARHarvester:
@@ -362,6 +363,9 @@ class DSARHarvester:
         try:
             collector = DataCollector(self._db)
             data = collector.collect_all(user_id)
+            # Bound generation and fail closed on partial collection. An
+            # over-quota or incomplete export leaves the row 'failed'.
+            assert_export_ready(data, export_quotas(get_dsar_config(self._config)))
 
             generator = ExportFormatGenerator(db=self._db)
 

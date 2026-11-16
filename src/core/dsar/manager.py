@@ -5,7 +5,8 @@ from typing import List, Optional, Dict, Any
 import utils.config as config
 import utils.logger as logger
 from src.utils.encryption import generate_snowflake_id
-from .config import auto_approve_after_hours
+from .config import auto_approve_after_hours, export_quotas
+from .privacy import assert_export_ready
 
 
 # Hard upper bound for the admin listing endpoint. Mirrors the ``le=200``
@@ -410,6 +411,9 @@ class DSARManager:
         try:
             collector = DataCollector(self._db)
             data = collector.collect_all(user_id)
+            # Bound generation and fail closed: an incomplete or oversized
+            # collection must leave this request 'failed', never 'ready'.
+            assert_export_ready(data, export_quotas())
 
             generator = ExportFormatGenerator(db=self._db)
 

@@ -151,3 +151,31 @@ def legally_required_pii_fields() -> List[str]:
     if not isinstance(fields, list):
         return []
     return [f.strip() for f in fields if isinstance(f, str) and f.strip()]
+
+
+def export_quotas(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    """Resolve hard bounds for a single DSAR export.
+
+    ``dsar.export_quotas`` may lower any of these bounds; malformed or
+    non-positive values fall back to safe defaults. Zero or negative limits
+    are never honoured because they would make every export fail (or, if
+    treated as unlimited, allow a single runaway export).
+    """
+
+    effective = get_dsar_config() if cfg is None else cfg
+    raw = effective.get("export_quotas", {}) or {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    defaults = {
+        "max_records_per_category": 100_000,
+        "max_total_records": 500_000,
+        "max_export_bytes": 100 * 1024 * 1024,
+    }
+    quotas: Dict[str, int] = {}
+    for key, default in defaults.items():
+        try:
+            quotas[key] = max(1, int(raw.get(key, default)))
+        except (TypeError, ValueError):
+            quotas[key] = default
+    return quotas
