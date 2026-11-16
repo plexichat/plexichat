@@ -123,3 +123,34 @@ def subscription_allowed(existing_count: int, artifact_id: int, subscribed_ids) 
     if artifact_id in subscribed_ids:
         return True
     return int(existing_count) < MAX_SUBSCRIPTIONS_PER_CONNECTION
+
+
+# --- Queued operation bounds (commit 4) -----------------------------------
+#: Upper bound for a single relayed/persisted operation envelope.
+MAX_OP_PAYLOAD_BYTES = 256 * 1024
+
+#: Upper bound for a replay/batch of operations returned in one frame.
+MAX_OP_BATCH = 500
+
+#: Upper bound for one event stored in a session's replay buffer.
+MAX_REPLAY_EVENT_BYTES = 256 * 1024
+
+
+def payload_size(value: object) -> int:
+    """Serialized byte size of a payload; oversized/unserializable -> too big.
+
+    Uses ``default=str`` so an unusual but JSON-friendly object is still
+    measurable; anything that cannot be serialized is treated as exceeding
+    the cap rather than allowed through.
+    """
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    except (TypeError, ValueError, RecursionError):
+        return MAX_OP_PAYLOAD_BYTES + 1
+
+
+def bounded_batch(value: object, default: int = MAX_OP_BATCH) -> int:
+    """Coerce a replay/batch limit into ``[1, MAX_OP_BATCH]``."""
+    return bounded_int(
+        value, "batch size", minimum=1, maximum=MAX_OP_BATCH, default=default
+    )

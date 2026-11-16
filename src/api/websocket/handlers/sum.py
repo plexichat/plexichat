@@ -18,11 +18,11 @@ deltas and snapshots on top of it.
 """
 
 import asyncio
-import json
 from typing import Any, Dict, Optional, Tuple
 
 import utils.logger as logger
 
+from src.api.websocket.boundaries import MAX_OP_PAYLOAD_BYTES, payload_size
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.sum import (
@@ -38,7 +38,7 @@ from src.core.suite.sum.manager import (
     SumValidationError,
 )
 
-MAX_OP_BYTES = 256 * 1024
+MAX_OP_BYTES = MAX_OP_PAYLOAD_BYTES
 MAX_OP_CELLS = 2000
 MAX_OPERATION_ID_LEN = 200
 
@@ -201,10 +201,7 @@ class SumHandler:
 
         # Bound the op envelope: oversized payloads are rejected before any
         # parsing or persistence work happens.
-        try:
-            if len(json.dumps(op, ensure_ascii=False).encode("utf-8")) > MAX_OP_BYTES:
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
-        except (TypeError, ValueError):
+        if payload_size(op) > MAX_OP_BYTES:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         operation_id = op.get("operation_id")

@@ -23,6 +23,8 @@ import src.api as api
 import utils.config as config
 import utils.logger as logger
 
+from src.api.websocket.boundaries import payload_size, bounded_batch
+from src.core.security.hardening import bounded_int
 from src.api.websocket.opcodes import GatewayCloseCode
 from src.api.websocket.connection import Connection
 from src.api.websocket.artifacts import (
@@ -174,7 +176,9 @@ class ArtifactHandler:
         ops: list = []
         base_seq = data.get("base_seq") or 0
         try:
-            base_seq = int(base_seq)
+            base_seq = bounded_int(
+                base_seq, "base_seq", minimum=0, maximum=2**63 - 1, default=0
+            )
         except (TypeError, ValueError):
             base_seq = 0
         if api.get_db() is not None:
@@ -184,7 +188,9 @@ class ArtifactHandler:
                 manager = ArtifactManager(
                     api.get_db(), config.get("artifacts", {}) or {}
                 )
-                ops = manager.list_ops(artifact_id, after_seq=base_seq, limit=500)
+                ops = manager.list_ops(
+                    artifact_id, after_seq=base_seq, limit=bounded_batch(500)
+                )
             except Exception as e:
                 logger.debug(f"Failed to load artifact ops for replay: {e}")
 
@@ -278,12 +284,7 @@ class ArtifactHandler:
             normalized_client_id = str(raw_client_id)[:128]
             if normalized_client_id:
                 op["client_id"] = normalized_client_id
-        try:
-            import json
-
-            if len(json.dumps(op, ensure_ascii=False).encode("utf-8")) > 256 * 1024:
-                return None, None, int(GatewayCloseCode.DECODE_ERROR)
-        except (TypeError, ValueError):
+        if payload_size(op) > 256 * 1024:
             return None, None, int(GatewayCloseCode.DECODE_ERROR)
 
         try:
