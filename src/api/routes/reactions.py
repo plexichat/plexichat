@@ -2,6 +2,7 @@
 Reaction routes - Message reaction endpoints.
 """
 
+from src.core.reactions.manager.bounds import validate_route_emoji
 from src.core.security.hardening import parse_id
 
 import asyncio
@@ -21,21 +22,18 @@ router = APIRouter(tags=["Reactions"])
 
 
 def _validated_emoji(emoji: str) -> str:
-    """URL-decode and validate an emoji path segment.
+    """Decode, validate and normalize an emoji path segment.
 
-    Emoji arrive as path parameters and are persisted/displayed to everyone who
-    can see the message. Reject empty, oversized and control-character payloads
-    before they reach the reactions table.
+    All emoji routes (add, remove, moderator wipe, reactor lookup) call this
+    helper, so the same boundary check now applies to every one of them.
     """
-    import urllib.parse
-
-    decoded = urllib.parse.unquote(emoji or "")
-    if not decoded or len(decoded) > 32 or any(ord(ch) < 0x20 for ch in decoded):
+    try:
+        return validate_route_emoji(emoji)
+    except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": {"code": 400, "message": "Invalid emoji"}},
-        )
-    return decoded
+        ) from exc
 
 
 def _validate_message_in_channel(reactions, mid: int, cid: int) -> int:
@@ -187,7 +185,7 @@ async def add_reaction(
 
     try:
         try:
-            mid = int(message_id)
+            mid = parse_id(message_id, "message_id")
         except (ValueError, TypeError):
             logger.warning(f"Invalid message ID format for reaction: {message_id}")
             raise HTTPException(
@@ -370,7 +368,7 @@ async def clear_reactions_for_emoji(
         )
 
     try:
-        mid = int(message_id)
+        mid = parse_id(message_id, "message_id")
         cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
@@ -487,7 +485,7 @@ async def remove_reaction(
 
     try:
         try:
-            mid = int(message_id)
+            mid = parse_id(message_id, "message_id")
         except (ValueError, TypeError):
             logger.warning(
                 f"Invalid message ID format for reaction removal: {message_id}"
@@ -645,7 +643,7 @@ async def clear_reactions(
         )
 
     try:
-        mid = int(message_id)
+        mid = parse_id(message_id, "message_id")
         cid = parse_id(channel_id, "channel_id")
     except (ValueError, TypeError):
         raise HTTPException(
@@ -728,7 +726,7 @@ async def get_reaction_users(
 
     try:
         try:
-            mid = int(message_id)
+            mid = parse_id(message_id, "message_id")
         except (ValueError, TypeError):
             logger.warning(
                 f"Invalid message ID format for reaction users: {message_id}"
@@ -833,7 +831,7 @@ async def get_reactions(
 
     try:
         try:
-            mid = int(message_id)
+            mid = parse_id(message_id, "message_id")
         except (ValueError, TypeError):
             logger.warning(f"Invalid message ID format for reactions: {message_id}")
             raise HTTPException(

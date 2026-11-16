@@ -19,6 +19,7 @@ from ..exceptions import (
 )
 
 
+from .bounds import validate_bulk_message_ids
 from .protocol import ReactionProtocol
 
 
@@ -468,6 +469,7 @@ class ReactionOpsMixin(ReactionProtocol):
     ) -> Dict[int, List[Dict[str, Any]]]:
         if not message_ids:
             return {}
+        message_ids = validate_bulk_message_ids(message_ids)
 
         logger.debug(f"Batch fetching reactions for {len(message_ids)} messages")
 
@@ -576,6 +578,7 @@ class ReactionOpsMixin(ReactionProtocol):
     ) -> List[int]:
         if not message_ids:
             return []
+        message_ids = validate_bulk_message_ids(message_ids)
 
         placeholders = ",".join("?" * len(message_ids))
         rows = self._db.fetch_all(
