@@ -63,6 +63,51 @@ from .base import MessagesCRUDBase
 _EMBED_TEXT_MAX_DEPTH = 8
 _EMBED_TEXT_MAX_CHARS = 8000
 
+# The send route copies every attachment into automod text and walks every
+# embed dict before the messaging layer applies its own limits. Bound the
+# list lengths at the boundary so a single request cannot force unbounded
+# work in that synchronous fast path.
+_MAX_ATTACHMENTS_PER_MESSAGE = 10
+_MAX_EMBEDS_PER_MESSAGE = 10
+
+
+def _check_payload_counts(body) -> None:
+    from fastapi import HTTPException
+
+    if body.attachments and len(body.attachments) > _MAX_ATTACHMENTS_PER_MESSAGE:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Too many attachments"}},
+        )
+    if body.embeds and len(body.embeds) > _MAX_EMBEDS_PER_MESSAGE:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Too many embeds"}},
+        )
+
+
+# The send route copies every attachment into automod text and walks every
+# embed dict before the messaging layer applies its own limits. Bound the
+# list lengths at the boundary so a single request cannot force unbounded
+# work in that synchronous fast path.
+_MAX_ATTACHMENTS_PER_MESSAGE = 10
+_MAX_EMBEDS_PER_MESSAGE = 10
+
+
+def _check_payload_counts(body) -> None:
+    from fastapi import HTTPException
+
+    if body.attachments and len(body.attachments) > _MAX_ATTACHMENTS_PER_MESSAGE:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Too many attachments"}},
+        )
+    if body.embeds and len(body.embeds) > _MAX_EMBEDS_PER_MESSAGE:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": "Too many embeds"}},
+        )
+
 
 def _collect_embed_text(value, _depth: int = 0, _budget: Optional[list] = None) -> list:
     if _budget is None:
@@ -125,6 +170,9 @@ class SendMixin(BroadcastMixin, MessagesCRUDBase):
                         }
                     },
                 )
+
+            # Cap list lengths before any copy/iteration for automod.
+            _check_payload_counts(body)
 
             try:
                 reply_to = int(body.reply_to_id) if body.reply_to_id else None

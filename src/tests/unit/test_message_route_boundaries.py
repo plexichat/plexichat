@@ -108,3 +108,24 @@ def test_delete_message_rejects_out_of_range_id():
     from src.api.routes.messages.messages_crud.delete import DeleteMixin
 
     _rejects_bad_id(DeleteMixin().delete_message, ("123", "0"))
+
+
+def test_send_payload_counts_are_capped():
+    import pytest
+    from fastapi import HTTPException
+    from types import SimpleNamespace
+
+    from src.api.routes.messages.messages_crud.send import _check_payload_counts
+
+    ok = SimpleNamespace(attachments=[object()] * 10, embeds=[{}] * 10)
+    _check_payload_counts(ok)
+
+    too_many_attachments = SimpleNamespace(attachments=[object()] * 11, embeds=None)
+    with pytest.raises(HTTPException) as exc:
+        _check_payload_counts(too_many_attachments)
+    assert exc.value.status_code == 400
+
+    too_many_embeds = SimpleNamespace(attachments=None, embeds=[{}] * 11)
+    with pytest.raises(HTTPException) as exc:
+        _check_payload_counts(too_many_embeds)
+    assert exc.value.status_code == 400
