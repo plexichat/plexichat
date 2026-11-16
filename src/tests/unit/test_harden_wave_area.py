@@ -165,9 +165,7 @@ class TestFederationRemoteUrl:
             }
 
             async def body(self):
-                return json.dumps(
-                    {"instance_id": "peer", "remote_url": url}
-                ).encode()
+                return json.dumps({"instance_id": "peer", "remote_url": url}).encode()
 
         class _Mgr:
             def submit_inbound_request(self, **kwargs):
@@ -215,3 +213,27 @@ class TestFederationRemoteUrl:
         result = await federation.join_request_inbound(_Req())
         assert result["ok"] is True
         assert stored["remote_url"] == "https://peer.example/fed"
+
+
+class TestOAuthFieldBounds:
+    def test_overlong_code_is_refused(self):
+        from src.api.routes.auth.oauth import (
+            MAX_OAUTH_CODE_LENGTH,
+            _bounded_oauth_field,
+        )
+
+        with pytest.raises(ValueError):
+            _bounded_oauth_field(
+                "x" * (MAX_OAUTH_CODE_LENGTH + 1), "code", MAX_OAUTH_CODE_LENGTH
+            )
+
+    def test_empty_state_is_refused(self):
+        from src.api.routes.auth.oauth import _bounded_oauth_field
+
+        with pytest.raises(ValueError):
+            _bounded_oauth_field("", "state", 512)
+
+    def test_normal_field_passes(self):
+        from src.api.routes.auth.oauth import _bounded_oauth_field
+
+        assert _bounded_oauth_field("abc", "code", 4096) == "abc"

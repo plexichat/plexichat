@@ -98,6 +98,25 @@ _PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
 OAUTH_STATE_COOKIE = "plexichat_oauth_state"
 
 
+# The callback body is public and its fields are round-tripped to the IdP's
+# token endpoint (``code``), compared against a stored state (``state``) and
+# hashed for PKCE (``code_verifier``). Unbounded strings here meant an
+# anonymous caller could make us forward megabytes to the provider or hash
+# arbitrary-size inputs. These are generous ceilings over real-world values.
+MAX_OAUTH_CODE_LENGTH = 4096
+MAX_OAUTH_STATE_LENGTH = 512
+MAX_OAUTH_VERIFIER_LENGTH = 256
+
+
+def _bounded_oauth_field(value: object, field: str, maximum: int) -> str:
+    text = value if isinstance(value, str) else ("" if value is None else str(value))
+    if not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > maximum:
+        raise ValueError(f"{field} exceeds maximum length of {maximum}")
+    return text
+
+
 def _oauth_cookie_params(max_age: int) -> dict:
     from src.api.config import get_api_config
 
@@ -357,6 +376,21 @@ async def oauth_callback(
             status_code=500,
             detail={"error": {"code": 500, "message": "Auth module unavailable"}},
         )
+
+    # Reject oversized callback fields before any of them are forwarded to
+    # the provider's token endpoint, hashed for PKCE or used for lookup.
+    try:
+        _bounded_oauth_field(callback_data.code, "code", MAX_OAUTH_CODE_LENGTH)
+        _bounded_oauth_field(callback_data.state, "state", MAX_OAUTH_STATE_LENGTH)
+        if callback_data.code_verifier is not None:
+            _bounded_oauth_field(
+                callback_data.code_verifier, "code_verifier", MAX_OAUTH_VERIFIER_LENGTH
+            )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": 400, "message": str(exc)}},
+        ) from exc
 
     if not _redirect_uri_is_allowed(provider, callback_data.redirect_uri):
         logger.warning(
