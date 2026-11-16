@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List
 
 from src.api.schemas.common import SnowflakeID, _reject_ui_text_chars
+from src.api.schemas.url_types import HttpUrl
 from src.core.security.outbound import resolve_outbound_url
 
 
@@ -31,7 +32,7 @@ class HashReportRequest(BaseModel):
     message_id: Optional[SnowflakeID] = Field(
         None, description="Message ID containing the attachment"
     )
-    attachment_url: Optional[str] = Field(
+    attachment_url: Optional[HttpUrl] = Field(
         None, max_length=2000, description="URL of the attachment"
     )
     block_uploader: bool = Field(False, description="Request to block the uploader")

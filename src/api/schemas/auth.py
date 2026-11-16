@@ -5,6 +5,7 @@ Auth schemas - Request/response models for authentication endpoints.
 from typing import Optional, List
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from .policy_types import UIText
+from .url_types import HttpUrl
 
 from .common import SnowflakeID
 
@@ -279,7 +280,7 @@ class OAuthCallbackRequest(BaseModel):
 
     code: str = Field(..., description="OAuth authorization code")
     state: str = Field(..., description="CSRF state token")
-    redirect_uri: str = Field(..., description="OAuth redirect URI")
+    redirect_uri: HttpUrl = Field(..., min_length=1, description="OAuth redirect URI")
     code_verifier: Optional[str] = Field(
         None, description="PKCE code verifier (required if PKCE was used)"
     )

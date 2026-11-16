@@ -5,6 +5,7 @@ Server schemas - Request/response models for server/guild endpoints.
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from .policy_types import UIText
+from .url_types import HttpUrl
 
 from .common import SnowflakeID, _reject_ui_text_chars
 from .users import UserPublicResponse
@@ -30,7 +31,7 @@ class ServerCreateRequest(BaseModel):
     description: Optional[str] = Field(
         None, max_length=1000, description="Server description"
     )
-    icon_url: Optional[str] = Field(None, description="Server icon URL")
+    icon_url: Optional[HttpUrl] = Field(None, description="Server icon URL")
 
     @field_validator("name", "description")
     @classmethod
@@ -56,7 +57,7 @@ class ServerUpdateRequest(BaseModel):
     description: Optional[str] = Field(
         None, max_length=1000, description="Server description"
     )
-    icon_url: Optional[str] = Field(None, description="Server icon URL")
+    icon_url: Optional[HttpUrl] = Field(None, description="Server icon URL")
     default_channel_id: Optional[SnowflakeID] = Field(
         None, description="Default channel ID to select when joining"
     )

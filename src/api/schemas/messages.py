@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from .common import SnowflakeID
+from .url_types import HttpUrl
 from .reactions import ReactionResponse
 from .polls import PollInlineCreateRequest, PollResponse, PollResultsResponse
 
@@ -35,7 +36,9 @@ class AttachmentRequest(BaseModel):
         ..., max_length=_MAX_CONTENT_TYPE_LEN, description="MIME type"
     )
     size: int = Field(..., ge=0, description="File size in bytes")
-    url: str = Field(..., max_length=_MAX_ATTACHMENT_URL_LEN, description="File URL")
+    url: HttpUrl = Field(
+        ..., min_length=1, max_length=_MAX_ATTACHMENT_URL_LEN, description="File URL"
+    )
     hash: Optional[str] = Field(None, description="SHA-256 hash for content reporting")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Attachment metadata")
 

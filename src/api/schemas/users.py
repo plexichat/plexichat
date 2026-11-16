@@ -5,6 +5,7 @@ User schemas - Request/response models for user endpoints.
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from .policy_types import UIText
+from .url_types import HttpUrl, validate_http_url
 
 from .common import SnowflakeID
 
@@ -47,21 +48,9 @@ class UserUpdateRequest(BaseModel):
     timezone: Optional[str] = Field(
         None, max_length=64, description="Timezone (empty string clears)"
     )
-    banner_url: Optional[str] = Field(
+    banner_url: Optional[HttpUrl] = Field(
         None, max_length=2048, description="Banner image URL (empty string clears)"
     )
-
-    @field_validator("banner_url")
-    @classmethod
-    def _banner_url(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return value
-        from urllib.parse import urlparse
-
-        parsed = urlparse(value)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("banner_url must be an absolute http(s) URL")
-        return value
 
     social_links: Optional[List[dict]] = Field(
         None, max_length=20, description="Social link objects (empty list clears all)"
@@ -72,19 +61,14 @@ class UserUpdateRequest(BaseModel):
     def _social_links(cls, value: Optional[List[dict]]) -> Optional[List[dict]]:
         if value is None:
             return value
-        from urllib.parse import urlparse
 
         for link in value:
             if not isinstance(link, dict):
                 raise ValueError("social_links must be objects")
             url = link.get("url")
-            if not isinstance(url, str) or len(url) > 2048:
-                raise ValueError(
-                    "social link url must be a string of at most 2048 characters"
-                )
-            parsed = urlparse(url)
-            if parsed.scheme not in ("http", "https") or not parsed.netloc:
-                raise ValueError("social link url must be an absolute http(s) URL")
+            if not isinstance(url, str):
+                raise ValueError("social link url must be a string")
+            validate_http_url(url, "social link url")
             platform = link.get("platform", "")
             if not isinstance(platform, str) or len(platform) > 32:
                 raise ValueError(
