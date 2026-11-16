@@ -325,4 +325,15 @@ class ParamValueMixin(DataGeneratorBase):
                 val = str(self.ctx.test_artifact_id or _gen_snowflake())
             else:
                 val = _gen_snowflake()
+
+        # Strictly validated fields need realistic values; the generic
+        # placeholders ("1", "string") are rejected by design.
+        if name_low == "ip_address":
+            val = "192.0.2.1"
+        elif name_low == "format" and "/qr" in path:
+            val = "png"
+        elif name_low == "status" and "scheduled-messages" in path:
+            val = "pending"
+        elif name_low == "state" and "capabilities" in path:
+            val = "available"
         return val

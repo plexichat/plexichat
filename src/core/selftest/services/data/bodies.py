@@ -41,6 +41,12 @@ class MinimalBodyMixin(DataGeneratorBase):
                 body["server_id"] = int(self.ctx.test_server_id or 1)
                 body["settings"] = {"selftest": "enabled"}
 
+            # block-ip validates the address with ipaddress and bounds the
+            # duration; schema placeholders ("1", "string") would 400.
+            if "admin/security/block-ip" in path and method == "POST":
+                body["ip_address"] = "192.0.2.1"
+                body["duration_hours"] = 1
+
             if "auth/register" in path:
                 body["username"] = f"user_{random.randint(10000, 99999)}"
 
