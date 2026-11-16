@@ -27,3 +27,23 @@ include:
   - local: .gitlab/ci/live-smoke.yml
     rules:
       - if: '$RUN_LIVE_SMOKE == "1"'
+
+# Supply-chain gates live in this file, not in either included pipeline, so a
+# normal pipeline and a live-smoke run cannot disagree about whether a lock is
+# hashed. The `RUN_LIVE_SMOKE != "1"` rule keeps them out of the smoke pipeline,
+# which is deliberately a single job.
+
+# Every direct dependency must be an exact `name==version` pin, every compiled
+# lock entry must carry a sha256 artifact hash, and the two must agree. A new
+# unpinned addition -- in an .in file or a hand-edited lock -- fails here.
+supplychain:pinned_deps:
+  stage: security
+  timeout: 10m
+  image: python:3.14-slim
+  needs: []
+  rules:
+    - if: '$RUN_LIVE_SMOKE != "1"'
+  before_script: []
+  script:
+    - python ci-tooling/check_pinned_deps.py
+  allow_failure: false
