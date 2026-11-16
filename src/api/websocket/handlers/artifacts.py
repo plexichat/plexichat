@@ -48,6 +48,40 @@ if TYPE_CHECKING:
     from src.api.websocket.dispatcher import GatewayDispatcher
 
 
+#: Payload keys a client may use to claim a scope for an artifact opcode.
+#: The artifact's stored row is the only authority for its scope; a claim that
+#: disagrees is rejected so a caller cannot pivot from a server/conversation
+#: it can access to one it cannot (cross-server artifact attack).
+SCOPE_CLAIM_KEYS = ("server_id", "guild_id", "channel_id", "conversation_id")
+
+
+def scope_claims_match(data: Optional[Dict[str, Any]], artifact: Any) -> bool:
+    """Whether every client-supplied scope claim agrees with ``artifact``.
+
+    Absent claims are fine — the client may simply not send them. A present
+    claim must be a valid snowflake equal to the artifact's stored scope; a
+    missing/forbidden artifact never matches. ``server_id`` and its legacy
+    alias ``guild_id`` both map to the artifact's server.
+    """
+    if artifact is None:
+        return False
+    if not isinstance(data, dict):
+        return True
+    for key in SCOPE_CLAIM_KEYS:
+        if key not in data or data[key] is None:
+            continue
+        try:
+            claimed = parse_snowflake(data[key], key)
+        except (ValueError, TypeError):
+            return False
+        actual = getattr(
+            artifact, "server_id" if key in ("server_id", "guild_id") else key, None
+        )
+        if actual is None or claimed != int(actual):
+            return False
+    return True
+
+
 class ArtifactHandler:
     """Handles artifact-related real-time opcodes.
 
@@ -193,6 +227,11 @@ class ArtifactHandler:
                 f"User {connection.user_id} subscribed to unknown artifact {artifact_id}; ignoring"
             )
             return None, None, None
+        if not scope_claims_match(data, artifact):
+            logger.warning(
+                f"Scope claim mismatch for artifact {artifact_id}; ignoring subscribe"
+            )
+            return None, None, None
         if not self._has_artifact_access(connection, artifact):
             logger.debug(
                 f"User {connection.user_id} denied access to artifact {artifact_id}; "
@@ -293,6 +332,20 @@ class ArtifactHandler:
         if not connection.user_id:
             return None, None, int(GatewayCloseCode.NOT_AUTHENTICATED)
 
+        # Unsubscribing is self-scoped, so it must still work for a deleted
+        # artifact (stale-subscription cleanup). But a client that *claims* a
+        # scope must not be able to pivot the request to a different server:
+        # any scope claim must match the artifact's stored row.
+        if any(data.get(key) is not None for key in SCOPE_CLAIM_KEYS):
+            db = api.get_db()
+            artifact = get_artifact(db, artifact_id) if db else None
+            if not scope_claims_match(data, artifact):
+                logger.warning(
+                    f"Scope claim mismatch for artifact {artifact_id}; "
+                    "ignoring unsubscribe"
+                )
+                return None, None, None
+
         self._registry.unsubscribe(
             connection.user_id, artifact_id, connection.connection_id
         )
@@ -351,7 +404,7 @@ class ArtifactHandler:
         # denial. Drop the op instead; the connection stays alive.
         db = api.get_db()
         artifact = get_artifact(db, artifact_id) if db else None
-        if artifact is None or not self._has_artifact_access(
+        if not scope_claims_match(data, artifact) or not self._has_artifact_access(
             connection, artifact, "artifact.edit"
         ):
             logger.debug(
