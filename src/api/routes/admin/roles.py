@@ -702,6 +702,22 @@ async def assign_role(request: Request, assignment: RoleAssignment):
             },
         )
 
+    # Object-level check on the concrete role being granted: holding
+    # ``admin.roles`` and outranking the role is not enough if that role
+    # carries scopes the actor itself does not hold.
+    from src.core.admin.permissions import can_grant_existing_role
+
+    if not can_grant_existing_role(db, admin_id, target_role_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "code": 403,
+                    "message": "Cannot assign a role carrying permissions you do not hold",
+                }
+            },
+        )
+
     # Check if assignment already exists
     existing = db.fetch_one(
         "SELECT admin_id FROM admin_role_assignments WHERE admin_id = ? AND role_id = ?",

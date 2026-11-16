@@ -305,6 +305,33 @@ def can_delegate_permissions(db, admin_id: int, permissions: Dict[str, bool]) ->
     return True
 
 
+def can_grant_existing_role(db, admin_id: int, role_id: int) -> bool:
+    """Object-level authorization for assigning a concrete role object.
+
+    Route-level scopes and the position hierarchy answer "may this admin
+    manage roles at all".  This answers the object-level question "may this
+    admin hand out *this* role": a role that grants scopes the actor does not
+    hold must not become a privilege-laundering path, even when its position
+    sits below the actor's.
+
+    Returns False when the role cannot be read or its permission payload is
+    malformed, so a broken row can never fail open.
+    """
+    row = db.fetch_one(
+        "SELECT permissions FROM admin_roles WHERE id = ?", (role_id,)
+    )
+    if not row:
+        return False
+    raw = row["permissions"] if isinstance(row, dict) else row[0]
+    try:
+        permissions = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(permissions, dict):
+        return False
+    return can_delegate_permissions(db, admin_id, permissions)
+
+
 def check_admin_permission(
     admin_id: int, required_permission: str, db, config: Optional[Dict[str, Any]] = None
 ) -> bool:
