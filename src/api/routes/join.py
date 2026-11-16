@@ -29,9 +29,18 @@ body matching what the web client parses (``body.error.message``) — never
 nested under a FastAPI ``detail`` envelope.
 """
 
+import json
+import re
+import inspect
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from src.api.request_guards import read_body_capped
+from src.core.security.hardening import (
+    HardeningViolation,
+    reject_control_characters,
+)
 
 import utils.logger as logger
 from src.api.middleware.authentication import get_current_user, TokenInfo
@@ -52,6 +61,85 @@ class JoinApiError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.message = message
+
+
+# --- Join payload boundaries ----------------------------------------------
+#: A signed join request carries little more than a URL and a note. Reading a
+#: whole JSON body unchecked let a hostile admin-session client allocate an
+#: arbitrary amount of memory before any field was validated.
+MAX_JOIN_BODY = 64 * 1024
+MAX_NOTE_LEN = 512
+MAX_MESSAGE_TYPE_LEN = 128
+MAX_PAYLOAD_BYTES = 32 * 1024
+MAX_PAYLOAD_KEYS = 128
+MAX_TEXT_FIELD = 2048
+MAX_SELECTED_SERVERS = 100
+MAX_NESTING = 8
+INVITE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _bounded_text(value: Any, field: str, limit: int) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HardeningViolation(f"{field} must be a string")
+    text = reject_control_characters(value, field)
+    if len(text) > limit:
+        raise HardeningViolation(f"{field} exceeds {limit} characters")
+    return text
+
+
+def validate_invite_code(value: Any, field: str = "invite_code") -> str:
+    """Return a well-formed invite code or raise :class:`HardeningViolation`."""
+    text = _bounded_text(value, field, 64)
+    if not text or not INVITE_CODE_PATTERN.match(text):
+        raise HardeningViolation(f"{field} has an invalid format")
+    return text
+
+
+def validate_join_payload(value: Any, _depth: int = 0) -> None:
+    """Recursively bound a federated message payload and any invite codes."""
+    if _depth > MAX_NESTING:
+        raise HardeningViolation("federated payload nesting too deep")
+    if isinstance(value, str):
+        _bounded_text(value, "payload field", MAX_TEXT_FIELD)
+        return
+    if isinstance(value, dict):
+        if len(value) > MAX_PAYLOAD_KEYS:
+            raise HardeningViolation("federated payload has too many fields")
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key) > 128:
+                raise HardeningViolation("federated payload key is too long")
+            if "invite_code" in key:
+                validate_invite_code(item, key)
+            else:
+                validate_join_payload(item, _depth + 1)
+        return
+    if isinstance(value, list):
+        if len(value) > MAX_PAYLOAD_KEYS:
+            raise HardeningViolation("federated payload sequence too long")
+        for item in value:
+            validate_join_payload(item, _depth + 1)
+
+
+async def _read_join_json(request: Request) -> Dict[str, Any]:
+    """Read and decode a bounded JSON body for a mutating /Join route."""
+    try:
+        if hasattr(request, "body"):
+            raw = await read_body_capped(request, MAX_JOIN_BODY)
+            body = json.loads(raw.decode("utf-8"))
+        else:
+            # Lightweight request doubles (unit tests) expose only .json();
+            # the real ASGI path always goes through the capped reader above.
+            result = request.json()
+            body = await result if inspect.isawaitable(result) else result
+    except HTTPException:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise _error(400, "Invalid JSON body") from exc
+    if not isinstance(body, dict):
+        raise _error(400, "Body must be a JSON object")
+    return body
 
 
 def _get_manager(request):
@@ -166,6 +254,10 @@ async def list_joins(
     """
     _require_view(request, current_user)
     try:
+        try:
+            status = _bounded_text(status, "status", MAX_MESSAGE_TYPE_LEN)
+        except HardeningViolation as exc:
+            raise _error(400, str(exc))
         manager = _get_manager(request)
         result = manager.list_connections(status=status)
         return {
@@ -208,10 +300,15 @@ async def request_join(
     """
     admin_id = _require_manage(request, current_user)
     try:
-        body = await request.json()
+        body = await _read_join_json(request)
         remote_url = body.get("remote_url")
         if not remote_url or not isinstance(remote_url, str):
             raise _error(400, "remote_url is required")
+        try:
+            remote_url = _bounded_text(remote_url, "remote_url", MAX_TEXT_FIELD)
+            note = _bounded_text(body.get("note"), "note", MAX_NOTE_LEN)
+        except HardeningViolation as exc:
+            raise _error(400, str(exc))
 
         from src.core.plexijoin import RemoteURLBlockedError, validate_remote_url
 
@@ -251,7 +348,7 @@ async def request_join(
             remote_instance_id=remote_instance_id,
             remote_url=remote_url,
             shared_key=manager.generate_shared_key(),
-            note=body.get("note"),
+            note=note,
             admin_id=admin_id,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
@@ -305,11 +402,25 @@ async def send_join_message(
     """
     _require_manage(request, current_user)
     try:
-        body = await request.json()
+        body = await _read_join_json(request)
         message_type = body.get("message_type")
         payload = body.get("payload")
         if not message_type or not isinstance(payload, dict):
             raise _error(400, "message_type and payload are required")
+        try:
+            message_type = _bounded_text(
+                message_type, "message_type", MAX_MESSAGE_TYPE_LEN
+            )
+            validate_join_payload(payload)
+            if (
+                len(
+                    json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+                )
+                > MAX_PAYLOAD_BYTES
+            ):
+                raise HardeningViolation("federated payload exceeds size limit")
+        except HardeningViolation as exc:
+            raise _error(400, str(exc))
 
         manager = _get_manager(request)
         result = await manager.send_message(join_id, message_type, payload)
@@ -397,13 +508,17 @@ async def approve_join(
     """
     admin_id = _require_manage(request, current_user)
     try:
-        body = await request.json()
+        body = await _read_join_json(request)
+    except JoinApiError:
+        raise
     except Exception:
         body = {}
     # Contract compatibility: selected_servers accepted, currently unused.
     selected_servers = body.get("selected_servers")
     if selected_servers is not None and not isinstance(selected_servers, list):
         raise _error(400, "selected_servers must be a list")
+    if selected_servers is not None and len(selected_servers) > MAX_SELECTED_SERVERS:
+        raise _error(400, "selected_servers has too many entries")
 
     try:
         manager = _get_manager(request)
