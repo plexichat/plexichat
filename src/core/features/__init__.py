@@ -71,6 +71,8 @@ from typing import Optional, List, Any
 import utils.logger as logger
 import utils.config as config
 
+from src.core.security.hardening import SNOWFLAKE_MAX, bounded_int
+
 from .models import (
     UserFeatures,
     TierLimits,
@@ -82,6 +84,11 @@ from .exceptions import (
     FeatureError,
     InvalidTierError,
     InvalidBadgeError,
+)
+from .validation import (
+    validate_feature_flags,
+    validate_feature_key,
+    validate_feature_value,
 )
 
 _db: Any = None
@@ -330,6 +337,10 @@ def has_feature(user_id: int, feature: str) -> bool:
     Returns:
         True if user has the feature
     """
+    # SECURITY: the key is caller-supplied; reject dunder/attribute-style names
+    # before it can be used with getattr on the UserFeatures instance.
+    feature = validate_feature_key(feature)
+
     features = get_user_features(user_id)
     if not features:
         return False
@@ -392,6 +403,12 @@ def set_user_features(
             raise InvalidTierError(
                 f"Invalid tier '{rate_limit_tier}'. Available: {available}"
             )
+
+    notes = validate_feature_value(notes, field="notes")
+    if expires_at is not None:
+        expires_at = bounded_int(
+            expires_at, "expires_at", minimum=0, maximum=SNOWFLAKE_MAX
+        )
 
     existing = get_user_features(user_id)
     now = int(time.time() * 1000)
@@ -471,6 +488,7 @@ def add_badge(user_id: int, admin_id: int, badge: str) -> List[str]:
     """
     db = _get_db()
 
+    badge = validate_feature_key(badge, field="badge")
     # Validate badge
     available = _get_config("available_badges", AVAILABLE_BADGES)
     if badge not in available:
@@ -610,4 +628,7 @@ __all__ = [
     "FeatureError",
     "InvalidTierError",
     "InvalidBadgeError",
+    "validate_feature_key",
+    "validate_feature_value",
+    "validate_feature_flags",
 ]
