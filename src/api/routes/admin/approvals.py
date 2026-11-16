@@ -828,28 +828,30 @@ async def add_approval_comment(
             detail={"error": {"code": 500, "message": "Database not available"}},
         )
 
-    # Verify approval exists
-    approval = db.fetch_one(
-        "SELECT id FROM admin_approvals WHERE id = ?", (approval_id,)
-    )
-    if not approval:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": {"code": 404, "message": "Approval request not found"}},
-        )
-
     from src.utils.encryption import generate_snowflake_id
 
     now = int(time.time() * 1000)
     comment_id = generate_snowflake_id()
 
-    db.execute(
+    # Fold the former standalone "approval exists" SELECT into the INSERT:
+    # the SELECT ... WHERE guard inserts only when the parent approval exists,
+    # so a rowcount of 0 means the approval was not found (404). This removes
+    # one read round trip on the common path while preserving the 404.
+    cursor = db.execute(
         """
         INSERT INTO admin_approval_comments (id, approval_id, admin_id, comment, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        SELECT ?, ?, ?, ?, ?
+        FROM admin_approvals
+        WHERE id = ?
     """,
-        (comment_id, approval_id, admin_id, body.comment, now),
+        (comment_id, approval_id, admin_id, body.comment, now, approval_id),
     )
+
+    if getattr(cursor, "rowcount", 0) <= 0:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": 404, "message": "Approval request not found"}},
+        )
 
     from src.core.admin.permissions import log_admin_action
 
