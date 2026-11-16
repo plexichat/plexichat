@@ -196,6 +196,17 @@ MAX_DB_TIME_MS = 24 * 60 * 60 * 1000
 MAX_DB_QUERIES = 1_000_000
 MAX_STATUS_CODE = 999
 
+# ── Query-window / aggregation bounds ───────────────────────────────────────
+# The admin surface bounds these in the route layer; the same limits must hold
+# for every internal caller of the core functions so a wide window or tiny
+# bucket cannot force an unbounded aggregation/scan.
+MAX_QUERY_HOURS = 8760  # one year
+MAX_BUCKET_MINUTES = 1440
+MAX_ENDPOINT_FILTER_CHARS = 256
+MAX_CLIENT_FILTER_CHARS = 64
+MAX_PER_ENDPOINT_SAMPLES = 5000
+MAX_CLEANUP_DAYS = 36500
+
 
 def _bounded_metric(value: Any, field: str, maximum: float) -> float:
     """Return a non-negative metric bounded by ``maximum``."""
@@ -203,6 +214,21 @@ def _bounded_metric(value: Any, field: str, maximum: float) -> float:
     if number < 0 or number > maximum:
         raise HardeningViolation(f"{field} is outside the allowed range")
     return number
+
+
+def _bounded_window(hours: Any) -> int:
+    """Return a query window in hours, capped at one year."""
+    return bounded_int(hours, "hours", minimum=1, maximum=MAX_QUERY_HOURS)
+
+
+def _bounded_filter(value: Any, field: str, maximum: int) -> Optional[str]:
+    """Return a length-bounded, control-character-free query filter."""
+    if value is None:
+        return None
+    text = reject_control_characters(value, field)
+    if len(text) > maximum:
+        raise HardeningViolation(f"{field} exceeds the length limit")
+    return text
 
 
 def register_route_templates(paths) -> None:
@@ -441,6 +467,13 @@ def get_endpoint_stats(
     client_id_filter: Optional[str] = None,
 ) -> List[EndpointStats]:
     """Get aggregated statistics using optimized SQL GROUP BY."""
+    hours = _bounded_window(hours)
+    endpoint_filter = _bounded_filter(
+        endpoint_filter, "endpoint_filter", MAX_ENDPOINT_FILTER_CHARS
+    )
+    client_id_filter = _bounded_filter(
+        client_id_filter, "client_id_filter", MAX_CLIENT_FILTER_CHARS
+    )
     db = _get_db()
     cutoff = int((time.time() - hours * 3600) * 1000)
 
@@ -510,8 +543,8 @@ def get_endpoint_stats(
 
     # ---- second pass: pull raw response_time_ms samples so the
     # percentiles below can be computed correctly.  Gated by a
-    # ``5000-sample cap per endpoint`` to bound memory on busy
-    # instances; if more than 5000 events landed in the window the
+    # per-endpoint sample cap to bound memory on busy instances; if more
+    # than MAX_PER_ENDPOINT_SAMPLES events landed in the window the
     # percentile distribution is still representative but we emit a
     # one-shot warning so operators know the cap was hit.
     raw_lookup = """
@@ -546,7 +579,7 @@ def get_endpoint_stats(
                 raw["method"],
             )
             bucket = by_key.setdefault(key, [])
-            if len(bucket) < 5000:
+            if len(bucket) < MAX_PER_ENDPOINT_SAMPLES:
                 bucket.append(ms)
             else:
                 cap_hit = True
@@ -557,9 +590,11 @@ def get_endpoint_stats(
 
     if cap_hit:
         logger.warning(
-            "telemetry: per-endpoint sample cap (5000) reached; "
-            "p50/p95/p99 are computed over the first 5000 samples "
-            "in the window"
+            "telemetry: per-endpoint sample cap (%d) reached; "
+            "p50/p95/p99 are computed over the first %d samples "
+            "in the window",
+            MAX_PER_ENDPOINT_SAMPLES,
+            MAX_PER_ENDPOINT_SAMPLES,
         )
 
     stats = []
@@ -648,6 +683,12 @@ def get_response_time_history(
 
     Aggregates measurements into time-based buckets for trend visualization.
     """
+    hours = _bounded_window(hours)
+    bucket_minutes = bounded_int(
+        bucket_minutes, "bucket_minutes", minimum=1, maximum=MAX_BUCKET_MINUTES
+    )
+    endpoint = _bounded_filter(endpoint, "endpoint", MAX_ENDPOINT_FILTER_CHARS) or ""
+    method = _bounded_filter(method, "method", MAX_METHOD_CHARS) or "GET"
     db = _get_db()
     cutoff = int((time.time() - hours * 3600) * 1000)
     bucket_ms = bucket_minutes * 60 * 1000
@@ -702,6 +743,7 @@ def cleanup_old_data(days: int = 30) -> int:
     """
     Remove telemetry measurements older than the specified number of days.
     """
+    days = bounded_int(days, "days", minimum=0, maximum=MAX_CLEANUP_DAYS)
     db = _get_db()
     cutoff = int((time.time() - days * 86400) * 1000)
     cursor = db.execute(
