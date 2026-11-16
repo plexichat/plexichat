@@ -7,6 +7,11 @@ from .policy_types import UIText
 
 from .common import SnowflakeID
 
+#: Base64 payload ceiling shared by the workbook/XLSX upload routes (70M
+#: encoded characters ~ 50 MiB decoded). Declaring it on the field rejects an
+#: oversized body at validation, before it is decoded into memory.
+MAX_BASE64_UPLOAD_CHARS = 70_000_000
+
 
 class SumWorkbookCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
@@ -316,7 +321,11 @@ class SumWorkbookFileResponse(BaseModel):
 
 
 class SumWorkbookUploadRequest(BaseModel):
-    content: str = Field(..., description="Base64-encoded .plexisum file bytes")
+    content: str = Field(
+        ...,
+        max_length=MAX_BASE64_UPLOAD_CHARS,
+        description="Base64-encoded .plexisum file bytes",
+    )
     base_revision: Optional[int] = Field(None, ge=0)
 
 
@@ -432,7 +441,11 @@ class SumXlsxExportResponse(BaseModel):
 
 
 class SumXlsxImportRequest(BaseModel):
-    content: str = Field(..., description="Base64-encoded XLSX file bytes")
+    content: str = Field(
+        ...,
+        max_length=MAX_BASE64_UPLOAD_CHARS,
+        description="Base64-encoded XLSX file bytes",
+    )
     base_revision: int = Field(..., ge=0)
 
 
