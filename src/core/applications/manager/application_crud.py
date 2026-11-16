@@ -19,6 +19,7 @@ from ..exceptions import (
     InvalidApplicationNameError,
 )
 from ..oauth.tokens import generate_client_secret
+from ..oauth.scopes import VALID_SCOPES, require_allowed_scopes
 from ..validation import (
     validate_application_description,
     validate_application_name,
@@ -36,6 +37,13 @@ from .protocol import ApplicationManagerProtocol
 from .bot_management import invalidate_bot_directory_cache
 
 
+def validate_allowed_scopes_for_app(value: Optional[List[str]]) -> List[str]:
+    """Default a new application to all known scopes or validate the ceiling."""
+    if value is None:
+        return sorted(VALID_SCOPES)
+    return require_allowed_scopes(value)
+
+
 class AppCRUDMixin(ApplicationManagerProtocol):
     def create_application(
         self,
@@ -48,9 +56,11 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         terms_of_service_url: Optional[str] = None,
         privacy_policy_url: Optional[str] = None,
         interactions_endpoint_url: Optional[str] = None,
+        allowed_scopes: Optional[List[str]] = None,
     ) -> Application:
         name = self._validate_app_name(name)
         redirect_uris = validate_redirect_uris(redirect_uris)
+        allowed_scopes = validate_allowed_scopes_for_app(allowed_scopes)
         description = validate_application_description(description)
         terms_of_service_url = validate_homepage_url(
             terms_of_service_url, field="terms_of_service_url"
@@ -80,14 +90,15 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         client_secret, secret_hash = generate_client_secret()
 
         uris_json = json.dumps(redirect_uris)
+        scopes_json = json.dumps(allowed_scopes)
 
         self._db.execute(
             """INSERT INTO app_applications
                (id, owner_id, name, description, icon_url, bot_id, bot_public,
                 bot_require_code_grant, terms_of_service_url, privacy_policy_url,
-                redirect_uris, interactions_endpoint_url, client_secret_hash,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                redirect_uris, allowed_scopes, interactions_endpoint_url,
+                client_secret_hash, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 app_id,
                 owner_id,
@@ -100,6 +111,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
                 terms_of_service_url,
                 privacy_policy_url,
                 uris_json,
+                scopes_json,
                 interactions_endpoint_url,
                 secret_hash,
                 now,
@@ -126,6 +138,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             updated_at=now,
             client_secret=client_secret,
             client_secret_hash=secret_hash,
+            allowed_scopes=allowed_scopes,
         )
 
     def get_application(
@@ -134,7 +147,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         row = self._db.fetch_one(
             """SELECT id, owner_id, name, description, icon_url, bot_id, bot_public,
                       bot_require_code_grant, terms_of_service_url, privacy_policy_url,
-                      redirect_uris, interactions_endpoint_url, created_at, updated_at
+                      redirect_uris, allowed_scopes, interactions_endpoint_url,
+                      created_at, updated_at
                FROM app_applications WHERE id = ?""",
             (application_id,),
         )
@@ -160,6 +174,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         limit: int = 100,
         offset: int = 0,
         name_filter: Optional[str] = None,
+        parse_redirect_uris: bool = True,
     ) -> List[Application]:
         """Return a bounded, optionally name-filtered page of applications."""
         from ..validation import MAX_APPLICATION_FILTER_LENGTH
@@ -189,7 +204,10 @@ class AppCRUDMixin(ApplicationManagerProtocol):
             tuple(params),
         )
 
-        return [row_to_application(row) for row in rows]
+        return [
+            row_to_application(row, parse_redirect_uris=parse_redirect_uris)
+            for row in rows
+        ]
 
     def update_application(
         self,
@@ -204,6 +222,7 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         terms_of_service_url: Optional[str] = None,
         privacy_policy_url: Optional[str] = None,
         interactions_endpoint_url: Optional[str] = None,
+        allowed_scopes: Optional[List[str]] = None,
     ) -> Application:
         app = self.get_application(application_id)
         if not app:
@@ -214,6 +233,8 @@ class AppCRUDMixin(ApplicationManagerProtocol):
 
         if redirect_uris is not None:
             redirect_uris = validate_redirect_uris(redirect_uris)
+        if allowed_scopes is not None:
+            allowed_scopes = validate_allowed_scopes_for_app(allowed_scopes)
         description = validate_application_description(description)
         terms_of_service_url = validate_homepage_url(
             terms_of_service_url, field="terms_of_service_url"
@@ -244,6 +265,10 @@ class AppCRUDMixin(ApplicationManagerProtocol):
         if redirect_uris is not None:
             updates.append("redirect_uris = ?")
             params.append(json.dumps(redirect_uris))
+
+        if allowed_scopes is not None:
+            updates.append("allowed_scopes = ?")
+            params.append(json.dumps(allowed_scopes))
 
         if bot_public is not None:
             updates.append("bot_public = ?")

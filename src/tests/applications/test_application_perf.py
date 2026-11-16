@@ -198,3 +198,23 @@ class TestBotProfileReadPath:
         assert app_manager.get_bot_profile(app.id) is None
         assert app_manager.get_bot_profile(app.id, viewer_id=other.id) is None
         assert app_manager.get_bot_profile(app.id, viewer_id=owner.id) is not None
+
+
+@pytest.mark.applications
+class TestApplicationListMapping:
+    def test_list_can_skip_redirect_uri_decoding(self, app_manager, test_user):
+        """The list path can omit redirect URIs while detail reads keep them."""
+        app_manager.create_application(
+            owner_id=test_user.id,
+            name="List App",
+            redirect_uris=["https://example.com/cb"],
+        )
+
+        full = app_manager.get_user_applications(test_user.id)[0]
+        assert full.redirect_uris == ["https://example.com/cb"]
+
+        summary = app_manager.get_user_applications(
+            test_user.id, parse_redirect_uris=False
+        )[0]
+        assert summary.name == "List App"
+        assert summary.redirect_uris == []

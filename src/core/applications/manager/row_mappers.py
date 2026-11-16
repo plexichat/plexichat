@@ -10,8 +10,26 @@ from ..models import (
 )
 
 
-def row_to_application(row) -> Application:
-    redirect_uris = json.loads(row["redirect_uris"]) if row["redirect_uris"] else []
+def _row_get(row, key, default=None):
+    """Read a column that older row shapes may not carry."""
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
+def row_to_application(row, *, parse_redirect_uris: bool = True) -> Application:
+    # Listing responses never expose redirect URIs. Callers that only need the
+    # summary columns can skip decoding that JSON for every row in the page.
+    redirect_uris = (
+        json.loads(row["redirect_uris"])
+        if parse_redirect_uris and row["redirect_uris"]
+        else []
+    )
+    allowed_scopes_raw = _row_get(row, "allowed_scopes")
+    allowed_scopes = json.loads(allowed_scopes_raw) if allowed_scopes_raw else []
     return Application(
         id=row["id"],
         owner_id=row["owner_id"],
@@ -27,6 +45,7 @@ def row_to_application(row) -> Application:
         interactions_endpoint_url=row["interactions_endpoint_url"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        allowed_scopes=allowed_scopes,
     )
 
 

@@ -53,6 +53,7 @@ class ApplicationResponse(BaseModel):
     bot: bool = False
     bot_public: bool = True
     capabilities: Optional[Dict[str, bool]] = None
+    allowed_scopes: List[str] = Field(default_factory=list)
     created_at: int
 
 
@@ -80,6 +81,15 @@ def _validate_description(value):
     return validate_application_description(value)
 
 
+def _validate_allowed_scopes(value):
+    """Scope ceilings share the core allow-list with the OAuth flow."""
+    if value is None:
+        return value
+    from src.core.applications.oauth.scopes import require_allowed_scopes
+
+    return require_allowed_scopes(value)
+
+
 class CreateApplicationRequest(BaseModel):
     """Request to create an application."""
 
@@ -87,6 +97,7 @@ class CreateApplicationRequest(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
     icon_emoji: Optional[str] = Field(None, max_length=16)
     redirect_uris: Optional[List[str]] = Field(None, max_length=20)
+    allowed_scopes: Optional[List[str]] = Field(None, max_length=20)
     bot_public: bool = True
     bot_require_code_grant: bool = False
 
@@ -94,6 +105,11 @@ class CreateApplicationRequest(BaseModel):
     @classmethod
     def _redirect_uris(cls, value):
         return _validate_redirect_uris(value)
+
+    @field_validator("allowed_scopes")
+    @classmethod
+    def _allowed_scopes(cls, value):
+        return _validate_allowed_scopes(value)
 
     @field_validator("description")
     @classmethod
@@ -108,6 +124,7 @@ class UpdateApplicationRequest(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
     icon_emoji: Optional[str] = Field(None, max_length=16)
     redirect_uris: Optional[List[str]] = Field(None, max_length=20)
+    allowed_scopes: Optional[List[str]] = Field(None, max_length=20)
     bot_public: Optional[bool] = None
     bot_require_code_grant: Optional[bool] = None
 
@@ -115,6 +132,11 @@ class UpdateApplicationRequest(BaseModel):
     @classmethod
     def _redirect_uris(cls, value):
         return _validate_redirect_uris(value)
+
+    @field_validator("allowed_scopes")
+    @classmethod
+    def _allowed_scopes(cls, value):
+        return _validate_allowed_scopes(value)
 
     @field_validator("description")
     @classmethod
@@ -167,6 +189,7 @@ def _application_to_response(app) -> ApplicationResponse:
             bot=raw_bot_id is not None,
             bot_public=app.get("bot_public", True),
             capabilities=None,
+            allowed_scopes=list(app.get("allowed_scopes") or []),
             created_at=app.get("created_at", 0),
         )
     raw_bot_id = getattr(app, "bot_id", None)
@@ -181,6 +204,7 @@ def _application_to_response(app) -> ApplicationResponse:
         bot=raw_bot_id is not None,
         bot_public=getattr(app, "bot_public", True),
         capabilities=None,
+        allowed_scopes=list(getattr(app, "allowed_scopes", None) or []),
         created_at=getattr(app, "created_at", 0),
     )
 
@@ -212,6 +236,9 @@ async def list_applications(
             limit=limit,
             offset=offset,
             name_filter=name_filter,
+            # ApplicationResponse never exposes redirect URIs; skip decoding
+            # that JSON for every row in the page.
+            parse_redirect_uris=False,
         )
         return [_application_to_response(app) for app in apps]
     except Exception:
@@ -243,6 +270,7 @@ async def create_application(
             name=body.name,
             description=body.description,
             redirect_uris=body.redirect_uris,
+            allowed_scopes=body.allowed_scopes,
             bot_public=body.bot_public,
             bot_require_code_grant=body.bot_require_code_grant,
         )
@@ -324,6 +352,7 @@ async def update_application(
             name=body.name,
             description=body.description,
             redirect_uris=body.redirect_uris,
+            allowed_scopes=body.allowed_scopes,
             bot_public=body.bot_public,
             bot_require_code_grant=body.bot_require_code_grant,
         )

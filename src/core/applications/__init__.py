@@ -333,11 +333,19 @@ def get_user_applications(
     limit: int = 100,
     offset: int = 0,
     name_filter: Optional[str] = None,
+    parse_redirect_uris: bool = True,
 ) -> List[Application]:
     """Get a bounded page of applications owned by a user."""
-    return _get_manager().get_user_applications(
-        user_id, limit=limit, offset=offset, name_filter=name_filter
-    )
+    kwargs = {
+        "limit": limit,
+        "offset": offset,
+        "name_filter": name_filter,
+    }
+    # Only forward the opt-out so default callers keep the historical
+    # manager-call shape (and its forwarding contract).
+    if not parse_redirect_uris:
+        kwargs["parse_redirect_uris"] = False
+    return _get_manager().get_user_applications(user_id, **kwargs)
 
 
 def update_application(
